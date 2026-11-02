@@ -28,15 +28,20 @@ HTTP Gateway replicas raises that limit with no change in design.
 - **Configuration owners** approve or reject the harness analyzer's proposals.
   An approved proposal becomes a pull request against `config/`.
 
-### A task in, a pull request out
+### Tasks in, pull requests out
 
-A task names a repo, a task type, a priority, a title and description, and the
+Callers submit tasks at any rate, and the meta-harness runs dozens of them at
+once, each in its own sandbox on its own harness and model. Admission holds
+the rest in priority order until a slot opens (section 10), and adding
+sandbox capacity raises the number that run at once.
+
+Each task names a repo, a task type, a priority, a title and description, and the
 acceptance checks that define success. It may also name the paths it touches,
 a complexity hint, a highest tier, a dollar cap, or a pin to one exact harness
 and model (section 11).
 
-The meta-harness answers with one pull request per task, labeled
-`ai:meta-harness`, and a recorded outcome: the routing decision, every attempt
+For each task the meta-harness opens one pull request, labeled
+`ai:meta-harness`, and records the outcome: the routing decision, every attempt
 with its harness, model, thinking level, time and cost, and whether the pull
 request merged. Follow-up runs add commits to the same pull request until it
 merges or closes, or until the task uses its profile's last follow-up.
