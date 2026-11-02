@@ -11,7 +11,7 @@ model call, and records the outcome, usually a pull request.
 Tasks run independently, on different harness profiles and on models from
 different providers, so one task's failure or one provider's outage does not
 stop the others. A developer driving one agent session works through one task
-at a time. The meta-harness works through as many tasks at once as sandbox
+at a time. The meta-harness runs dozens of tasks at once, as many as sandbox
 capacity, caller quotas and spend caps allow (section 10). Adding sandboxes and
 HTTP Gateway replicas raises that limit with no change in design.
 
@@ -23,22 +23,18 @@ HTTP Gateway replicas raises that limit with no change in design.
 - **Reviewers** review the pull requests on the code host as they review any
   other. Review comments and failed checks come back as code-host webhooks and
   start follow-up runs on the same branch.
-- **Operators** watch every task, run, model call and dollar in the console,
-  and can cancel a run or stop all runs with the kill switch.
+- **Operators** watch tasks, runs and model calls, with their cost, in the
+  console, and can cancel a run or stop all runs with the kill switch.
 - **Configuration owners** approve or reject the harness analyzer's proposals.
   An approved proposal becomes a pull request against `config/`.
 
 ### Tasks in, pull requests out
 
-Callers submit tasks at any rate, and the meta-harness runs dozens of them at
-once, each in its own sandbox on its own harness and model. Admission holds
-the rest in priority order until a slot opens (section 10), and adding
-sandbox capacity raises the number that run at once.
-
 Each task names a repo, a task type, a priority, a title and description, and the
 acceptance checks that define success. It may also name the paths it touches,
-a complexity hint, a highest tier, a dollar cap, or a pin to one exact harness
-and model (section 11).
+a complexity hint, a highest tier, a dollar cap, or a pin to one harness and
+model (section 11). Tasks beyond the current limit wait in priority order until
+a slot opens (section 10).
 
 For each task the meta-harness opens one pull request, labeled
 `ai:meta-harness`, and records the outcome: the routing decision, every attempt
@@ -48,8 +44,8 @@ merges or closes, or until the task uses its profile's last follow-up.
 
 ### Components
 
-Each component has one job and owns its own data (principle 8). The groups
-match the boxes in every sequence diagram.
+The table groups the components the way the sequence diagrams box them. Each
+component owns its data (principle 8).
 
 | Component | What it does | Code |
 |---|---|---|
@@ -61,7 +57,7 @@ match the boxes in every sequence diagram.
 | Event service | Keeps the ordered record of every meta-harness event. Every other component appends and reads through it. | `events/` |
 | Metering | Computes cost, time and success for each attempt and task, including dollar-hours per completed task by harness profile, model, thinking level and task type. | `metering/` |
 | Harness analyzer | Turns metering evidence into proposed changes to tiers, profiles and task policy. | `analyzer/` |
-| Console | Shows operators everything. Its only actions are cancel, the kill switch and proposal approval, each sent to the owning service. | `console/` |
+| Console | Shows operators tasks, runs, events, spend and sandbox state. Its only actions are cancel, the kill switch and proposal approval, each sent to the owning service. | `console/` |
 | **ai-api-unified library**, in the run service process | | the `ai-api-unified` repo |
 | Router | Classifies a task with a direct classifier-model call, picks a tier, tries the tier's harness-and-model candidates in order, and escalates when the tier runs out. | `AiRouterCompletions` |
 | harness engine | Runs one candidate as one blocking call: lease a sandbox, start the run, wait, return the result and its cost. | `AiHarnessCompletions` |
@@ -94,7 +90,7 @@ and consumes those features and reimplements none of them.
 - **The agent loop.** pi runs it. The meta-harness configures pi through
   harness profiles and the model client.
 - **Agent model access.** The HTTP Gateway holds the provider keys for every
-  model call a run makes, and no sandbox ever holds one. The run service holds
+  model call a run makes, and no sandbox holds one. The run service holds
   a single key that serves only the router's classifier (section 14).
 - **Producing tasks.** Callers decide what work to submit.
 - **Merging and deploying.** The meta-harness opens and updates pull requests.
