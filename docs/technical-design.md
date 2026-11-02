@@ -267,8 +267,9 @@ On every turn the model client:
 
 1. Takes pi's transcript context, reading the current system prompt and tools
    from the transcript helpers, and builds the HTTP Gateway's conversation
-   request: system prompt, messages, tools, prompt-cache hint on the stable
-   prefix, and the thinking level the run started with.
+   request: system prompt, messages, tools, the thinking level the run
+   started with, and the `prompt_cache` field set to
+   `{"retention": "extended", "key": <harness_session_id>}`.
 2. Attaches per-call hints. Requests the extension has marked as compaction or
    auxiliary (commit message, PR description) carry `route: trivial`; agent
    turns carry none, so the token's pin or band decides.
@@ -279,8 +280,26 @@ On every turn the model client:
    `toolcall_end`, and exactly one `done` or `error`. A tool-use turn arrives
    from the HTTP Gateway as one response, so the model client emits text once per
    turn; with the streaming additions in section 6.5 it emits text token by token.
-5. Finalizes the assistant message with the HTTP Gateway's input, output and cached
-   tokens, the per-turn cost from the response, and the stop reason.
+5. Finalizes the assistant message with the HTTP Gateway's input, output,
+   cached input and cache-write tokens, the per-turn cost from the response,
+   and the stop reason. It adds `cached_input_tokens` and the cache-write
+   counts from each turn's `usage` to the run's totals for `GET /usage`.
+
+**Prompt caching.** Every turn sends the whole history, so caching sets most
+of a turn's cost: a cached prefix bills at about a tenth of the input rate on
+Anthropic.
+
+- **The hint on every turn.** The `prompt_cache` field above asks for the
+  extended lifetime: 1 hour on Anthropic and Bedrock, 24 hours on OpenAI. A
+  run often waits more than 5 minutes between turns while tests or builds
+  run, and the default cache would expire in that gap. `harness_session_id`
+  as the key sends every turn of a session to the same OpenAI cache.
+- **A byte-identical prefix.** The model client keeps the system prompt and
+  tool list byte-identical for the whole run: no timestamps, no run ids, and
+  a fixed tool order. A compaction rewrites the history, so the turn after it
+  writes a new cache once.
+- **No HTTP Gateway change.** The HTTP Gateway already accepts `prompt_cache`
+  on the conversation turn and returns the cached-token fields in `usage`.
 
 A guardrail block from the HTTP Gateway names the tool-call ids whose results the guardrail blocked. The
 provider replaces those tool results with a short notice, resends the turn,
@@ -597,7 +616,8 @@ the router call's return value, never from library events.
 
 | Where | Fields |
 |---|---|
-| Result | `route_tier`, `route_method`, `route_confidence`, `model_pin`, `provider_engine`, `model_name`, `thinking`, and `harness_run` (`run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`) |
+| Result | `route_tier`, `route_method`, `route_confidence`, `model_pin`, `provider_engine`, `model_name`, `thinking`, and `harness_run` (`run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`, `cache_hit_rate`) |
+| `result.usage` | The run's token totals: input, output, cached input and cache-write tokens |
 | `result.cost` | `request_id`, `status`, `elapsed_ms`, `tags` (`config_id`, `config_version`, `run_id`), `total_usd`, `classifier_usd`, `wasted_usd`, `failed_calls`, and `calls[]`, one line per try: `call_id`, `outcome`, `fallback_reason`, `served`, `elapsed_ms`, `usd_cost` |
 | `exception.cost` | The same cost report, attached to the raised exception when every candidate fails. The dispatcher reads a failed task's attempts and dollars from the exception, not from the shared client |
 | `preview_route()` | Before a run: tier, confidence and `usd_max`, used for the run's budget (section 6.2) |
@@ -645,7 +665,7 @@ sandbox's event stream (section 7).
 | Token | The harness engine requests a run token from the HTTP Gateway, which mints it and keeps the registry; the engine revokes it when the run ends. The token is opaque and holds the run id, tags, the candidate's inner model as a pin (or a band when the profile says so), the spend cap, and an expiry at `max_minutes` plus grace. |
 | Start | When `session_state` is `new`, `POST /run` on the sandbox's harness server with the prompt, acceptance checks, profile, limits and token. When it is `kept` or `restored`, `POST /followup` with the new input and token. |
 | Wait | Follows the harness server's event stream until `run_finished`. The call's `request_timeout_seconds`, set to the lease TTL, is the hard upper bound: on expiry the engine cancels the run and raises `timeout`. A cancel from the control plane reaches the sandbox directly (section 7) and ends the call through the run's terminal state. |
-| Collect | Reads `/usage`, revokes the run token with the HTTP Gateway, releases the lease, and returns the result. The engine revokes the token before it releases the lease on every end, including failure, timeout and cancel. The result has its `harness_run` summary (run id, sandbox id, profile, end reason, turns, PR URL, elapsed time) and a cost line. The cost line's `call_id` is the run id, and its dollars are the run's HTTP Gateway total, recorded as a reported-dollar cost. |
+| Collect | Reads `/usage`, revokes the run token with the HTTP Gateway, releases the lease, and returns the result. The engine revokes the token before it releases the lease on every end, including failure, timeout and cancel. The result has its `harness_run` summary (run id, sandbox id, profile, end reason, turns, PR URL, elapsed time, cache hit rate), the run's token totals in `result.usage`, and a cost line. The cost line's `call_id` is the run id, and its dollars are the run's HTTP Gateway total, recorded as a reported-dollar cost. |
 | Fail | Maps failures to the library's fallback reasons. No sandbox within `ready_timeout` is `unavailable`. An inner model's rate limit or quota error, as the harness reports it, is `rate_limited` or `quota_exhausted`. The lease TTL is `timeout`. A run ending in `ERROR` or on a limit is `run_failed`, which starts no cooldown. |
 
 Each candidate the engine tries is one run and one sandbox, visible to the
@@ -699,7 +719,7 @@ refuses an older library version.
 | Library, PR A | The candidate index in the request context, so the harness engine can name each try. |
 | Library, PR B: engine (3.30.0) | The `harness` completions engine (section 6.3), the pool and Run API client, and an HTTP Gateway client that mints and revokes run tokens. The engine has a registry entry and model-string parsing. Its startup probe delegates to the inner model's probe and checks the pool URL, and its capability table delegates to the inner model's. |
 | Library, PR B | `providers.harness` in `models.json`, carrying the pool and HTTP Gateway URLs. Credentials stay in the environment. |
-| Library, PR B | A `harness_run` summary on the result: `run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`. |
+| Library, PR B | A `harness_run` summary on the result: `run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`, `cache_hit_rate`. The run's token totals, cached input and cache-write tokens included, in `result.usage`. |
 | HTTP Gateway | Run-scoped tokens: the harness engine requests a run token from the HTTP Gateway, which mints it and keeps the registry; the engine revokes it when the run ends. Tokens are opaque and sit on top of the existing per-caller attribution. The engine authenticates to mint and revoke with an HTTP Gateway API key from its environment. A token holds run identity, tags, model pin or band, spend cap and expiry. The token overrides the request body's engine and model. |
 | HTTP Gateway | `route` accepted in the conversation request body. On a pinned token, a body `route` switches that call from pin to band with the pinned model's tier as ceiling; agent turns without `route` stay pinned. |
 | HTTP Gateway | A per-run spend counter in Redis, the running total on every conversation response, and a budget rejection error. |
@@ -1079,7 +1099,7 @@ nothing from terminal output.
 | `GET /events` | Server-sent events, resumable with `Last-Event-ID` | mapped from `message_update`, tool and compaction events, `agent_end`, `agent_settled` |
 | `GET /status` | `CREATING`, `RUNNING`, `FINISHED`, `ERROR`, `CANCELED`, `EXPIRED`, plus the last heartbeat | `get_state` |
 | `POST /cancel` | Stop pi and flush session state | `abort`, `clear_queue` |
-| `GET /usage` | Token counts, call counts and the HTTP Gateway's running total as the model client recorded them, for reconciliation against HTTP Gateway events | `get_session_stats` |
+| `GET /usage` | Input, output, cached input and cache-write token totals, call counts, and the HTTP Gateway's running total, as the model client recorded them, for reconciliation against the run's `model_call` events | `get_session_stats` |
 | `GET /metrics` | OpenTelemetry metrics: turns, tool calls, files changed, test runs, elapsed time | server-side counters |
 
 The server never sends `set_model`, `cycle_model`, `set_thinking_level` or
@@ -1262,6 +1282,14 @@ Metering tails the event service and owns its projection tables: one
 `spend` per caller and period. Other components query these through
 metering's interface, never the tables.
 
+**Cache hit rate.** Metering reports the cache hit rate, cached input tokens
+divided by input tokens, per run, harness profile and model, from each
+`model_call` event's `cached_input_tokens` and `input_tokens`. The engine's
+`harness_run.cache_hit_rate` and `result.usage` totals are the cross-check. A
+low rate means something in the prompt prefix changes between turns, which
+multiplies the cost of every turn after it, so it raises an alert (section
+13).
+
 ### Spend controls
 
 - **Per turn:** the HTTP Gateway rejects a turn once the run's cap is spent.
@@ -1352,8 +1380,8 @@ Postgres schema under its own role. No other role has a grant on it.
 | Pool manager | lease | run_id, call_id, sandbox_id, harness_session_id, session_state (new, kept, restored), granted_at, expires_at, released_at, release_reason |
 | Event service | event | event_id (UUID, unique), position (assigned on insert, monotonic), event_type, schema_version, time_utc, source (task, scheduler, dispatcher, watch, workflow, pool, analyzer), actor, run_id, task_id, session_id, request_id, seq, trace_id, config_id, config_version, tags (jsonb), payload (jsonb) |
 | Event service | event_type | name, schema_version, json_schema, retention_class |
-| Metering | model_call | run_id, seq, turn, purpose (turn, compaction, auxiliary), tier, method, engine, model, thinking, input_tokens, cached_tokens, output_tokens, usd, latency_ms |
-| Metering | attempt_usage | run_id, usd_total, calls, tokens_total, active_hours |
+| Metering | model_call | run_id, seq, turn, purpose (turn, compaction, auxiliary), tier, method, engine, model, thinking, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, usd, latency_ms |
+| Metering | attempt_usage | run_id, usd_total, calls, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cache_hit_rate, active_hours |
 | Metering | check_result | task_id, check_name, kind (ci, acceptance, merge), passed, observed_at |
 | Metering | task_outcome | task_id, ci_share, merged, total_usd, wasted_usd, active_hours, dollar_hours, closed_at |
 | Metering | spend | caller, period, cap_usd, spent_usd |
@@ -1483,11 +1511,11 @@ from the events it reads. The HTTP Gateway's per-turn redaction applies to what 
 | Overview | Tasks in each state, runs active, sandboxes by state, spend today against caps, HTTP Gateway health, kill-switch state |
 | Queue | Admitted and waiting tasks with the reason each waiting task is held: concurrency, caller cap, repo lock, no sandbox |
 | Tasks | One task: spec, every routing decision, every run including fallbacks, every check result, outcome, PR link |
-| Run | Live timeline of the run's events; each turn with its model call (model, thinking, tokens, cost, latency), tool calls, file changes, test runs, compactions and guardrail blocks; the trace; the sandbox it ran in |
+| Run | Live timeline of the run's events; each turn with its model call (model, thinking, input, cached input, cache-write and output tokens, cost, latency), tool calls, file changes, test runs, compactions and guardrail blocks; the trace; the sandbox it ran in |
 | Routing | Tier picked versus candidate that served; classifier confidence; floors, ceilings, fallbacks between candidates and escalations between tiers |
 | Pool | Sandboxes by image and state; warm targets versus actual; provisioning and lease latency; health failures and orphans destroyed; image rollover progress |
 | HTTP Gateway | Turns per second, latency, error rate, fallbacks and cooldowns per provider, budget rejections |
-| Spend | Cost by caller, harness profile, model, tier and task type; dollar-hours per successfully completed task over time |
+| Spend | Cost by caller, harness profile, model, tier and task type; dollar-hours per successfully completed task over time; cache hit rate by harness profile and model |
 | Configuration | The active tier candidates, harness profiles and task policy, their version history, and the analyzer's pending proposals with their evidence |
 | Audit | Every operator action and configuration change |
 
@@ -1501,8 +1529,9 @@ with the operator as actor. The console never writes a table.
 Alerts tail the event service and read OpenTelemetry metrics. They fire on: a run
 stalled past its heartbeat window, lease TTL expiries, warm pool below target
 for longer than the provisioning time, HTTP Gateway error rate or latency past its
-SLO, a task failing with every tier exhausted, spend past 80% of any cap, and
-usage reconciliation gaps over 5%.
+SLO, a task failing with every tier exhausted, spend past 80% of any cap,
+usage reconciliation gaps over 5%, and a harness profile and model whose
+cache hit rate falls below its configured floor.
 
 ## 14. Security
 
