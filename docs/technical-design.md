@@ -58,13 +58,13 @@ match the boxes in every sequence diagram.
 | Harness analyzer | Turns metering evidence into proposed changes to tiers, profiles and task policy. | `analyzer/` |
 | Console | Shows operators everything. Its only actions are cancel, the kill switch and proposal approval, each sent to the owning service. | `console/` |
 | **ai-api-unified library**, in the run service process | | the `ai-api-unified` repo |
-| Router | Classifies a task, picks a tier, tries the tier's harness-and-model candidates in order, and escalates when the tier runs out. | `AiRouterCompletions` |
+| Router | Classifies a task with a direct classifier-model call, picks a tier, tries the tier's harness-and-model candidates in order, and escalates when the tier runs out. | `AiRouterCompletions` |
 | harness engine | Runs one candidate as one blocking call: lease a sandbox, start the run, wait, return the result and its cost. | `AiHarnessCompletions` |
 | **Sandbox**, one per run | | `images/harness-pi/` in this repo |
 | Harness server | Exposes the Run API and drives pi. | `server/` |
 | pi | The coding agent: agent loop, tools, context, session. Third-party (pi.dev), used unmodified. | the pi package |
 | Model client | A pi extension that sends every model call pi makes to the HTTP Gateway. | `extension/` |
-| **HTTP Gateway** | The only model endpoint a sandbox can reach. Holds the provider keys and run tokens, pins each run's model, applies guardrails, and enforces each run's spend cap. | the `ai-api-unified-http` repo |
+| **HTTP Gateway** | The only model endpoint a sandbox can reach. Holds the provider keys for agent model calls and the run tokens, pins each run's model, applies guardrails, and enforces each run's spend cap. | the `ai-api-unified-http` repo |
 | **Outside the system** | Used by the meta-harness and built elsewhere. | |
 | Code host | Repositories, pull requests, checks, reviews and webhooks. | |
 | Model providers | Cloud model APIs, or local models served by vLLM. | |
@@ -88,8 +88,9 @@ and consumes those features and reimplements none of them.
   fallback, cooldowns and per-call pricing belong to `ai-api-unified`.
 - **The agent loop.** pi runs it. The meta-harness configures pi through
   harness profiles and the model client.
-- **Provider keys.** Only the HTTP Gateway holds them. No sandbox and no
-  control-plane service sees one.
+- **Agent model access.** The HTTP Gateway holds the provider keys for every
+  model call a run makes, and no sandbox ever holds one. The run service holds
+  a single key that serves only the router's classifier (section 14).
 - **Producing tasks.** Callers decide what work to submit.
 - **Merging and deploying.** The meta-harness opens and updates pull requests.
   People and the repository's branch rules decide whether one merges, and the
@@ -1466,7 +1467,10 @@ usage reconciliation gaps over 5%.
 - **Identity.** A code-host app installed per repo, with repo-scoped tokens
   minted per run and expiring within an hour.
 - **Secrets.** Secret Manager mounts each secret only into its owner's pods.
-  Provider keys live only in the HTTP Gateway. Sandboxes hold a
+  The HTTP Gateway holds the provider keys for every model call a run makes.
+  The run service holds one more: a key for the classifier model only, issued
+  from a provider project limited to that model and given its own spend limit,
+  so a leaked key exposes classification and nothing else. Sandboxes hold a
   run-scoped HTTP Gateway token and a code-host token, both short-lived. No secret appears in
   prompts, task specs or logs.
 - **Untrusted text.** Task descriptions, review comments, CI logs and every
@@ -1581,7 +1585,7 @@ flowchart TB
 | Memorystore for Redis | Standard tier with a replica. One key prefix per owner: HTTP Gateway (run tokens, spend counters), scheduler (repo-area locks), run service (code-host token buckets), event service (commit notification fallback, unused while `NOTIFY` suffices). | Failover keeps the data. If spend counters or run tokens are lost, the HTTP Gateway fails closed and rejects turns for any run it cannot verify or meter. Those runs end, and the run service retries them as new attempts. If locks are lost, the scheduler stops admitting until it rebuilds them from the run service's active runs. |
 | Cloud Storage | One bucket per owner: pool manager (session directories), run service (run artifacts), event service (exports). | Drain retries collection, and a sandbox stays in `draining` until its artifacts are saved or a limit passes. Follow-ups that need a saved session wait. |
 | Artifact Registry | Every image: the harness image and one per control-plane component. | Pods cannot pull uncached images. Running services and warm sandboxes are unaffected, and image rollover pauses. |
-| Secret Manager | Each secret is mounted only into its owner's pods. Provider API keys go only to the HTTP Gateway. | Secrets are read at pod start, so an outage blocks new pods only. |
+| Secret Manager | Each secret is mounted only into its owner's pods. Provider API keys go to the HTTP Gateway, except the classifier-only key, which goes to the run service. | Secrets are read at pod start, so an outage blocks new pods only. |
 | Cloud NAT and Secure Web Proxy | All egress. The proxy enforces the sandbox allowlist. | Fails closed: sandbox egress stops, runs fail on clone or push, and the run service retries them. No bypass route exists. |
 
 ### Network and identity
