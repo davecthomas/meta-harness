@@ -20,9 +20,9 @@ features; it does not reimplement them.
 1. **Task API.** Accept, validate, de-duplicate and persist coding tasks.
 2. **Dispatch.** Send each task through the router, which classifies it, picks
    a tier, and runs it on that tier's harness-and-model candidates in order.
-3. **Harness.** Run pi as the coding agent, with an owned provider extension
-   that sends every one of its model calls through `ai-api-unified` and an
-   owned server that exposes it through the Run API.
+3. **Harness.** Run pi as the coding agent, with an owned model client (a pi
+   extension) that sends every one of its model calls through `ai-api-unified`
+   and an owned server that exposes it through the Run API.
 4. **Execution.** Run one harness per task in its own sandbox, invoked through
    the Run API, with the HTTP Gateway as its only model endpoint. The HTTP
    Gateway is `ai-api-unified-http`, the separate HTTP service that wraps the
@@ -52,15 +52,15 @@ features; it does not reimplement them.
 2. **Every model call goes through ai-api-unified.** The dispatcher calls the
    router in-process to run a task. The harness calls the HTTP Gateway's
    native conversation API with a run-scoped token. No sandbox holds a provider
-   key. No call is translated through another vendor's wire protocol.
-3. **The harness is invoked through an API.** Start, follow up, stream events,
-   status, cancel and usage are API calls on the harness server. Nothing is
-   driven by a command line or by parsing terminal output.
+   key. No component translates a call into another vendor's wire protocol.
+3. **An API drives the harness.** Start, follow up, stream events,
+   status, cancel and usage are API calls on the harness server. No step
+   uses a command line or parses terminal output.
 4. **Fail at startup, not during a run.** Startup validates every harness
    profile and every tier candidate against the images and the
    `ai-api-unified` configuration. A missing model, profile or image stops the
    service and names the setting.
-5. **Every run is metered and recorded**, failures included. A failed attempt
+5. **The meta-harness meters and records every run**, failures included. A failed attempt
    counts against cost and time.
 6. **Durable by default.** A run lasts minutes to hours. Any process can die
    and the run resumes from its last recorded step.
@@ -110,7 +110,7 @@ flowchart TB
 
     subgraph POOL["Sandbox: one per run"]
         HS[Harness server<br/>Run API]
-        HX[pi + HTTP Gateway provider extension]
+        HX[pi + model client extension]
         HS --> HX
     end
 
@@ -157,10 +157,10 @@ flowchart TB
 
 | Component | Objective | Owns | Exposes | Consumes | Scales by | Fails how |
 |---|---|---|---|---|---|---|
-| Task service | Accept, de-duplicate and track tasks. The Task API (section 11) is its HTTP face. | `task` | create (idempotent on `external_ref`), get, list, set status, cancel; the code-host webhook receiver | Run service (signal PR events, cancel, run reads), event service (append) | Stateless replicas | No new tasks or status reads. Running tasks continue. The run service retries status updates and the code host retries webhooks. |
+| Task service | Accept, de-duplicate and track tasks. The Task API (section 11) is its HTTP interface. | `task` | create (idempotent on `external_ref`), get, list, set status, cancel; the code-host webhook receiver | Run service (signal PR events, cancel, run reads), event service (append) | Stateless replicas | No new tasks or status reads. Running tasks continue. The run service retries status updates and the code host retries webhooks. |
 | Scheduler | Decide what runs next: priority, concurrency, caps, repo-area locks (section 10). | Repo-area locks (Redis keyspace) | None to other components. Admission decisions go to the event service. | Task service (queued tasks), run service (start), metering (caller and global spend), pool manager (capacity), event service (append) | One logical scheduler, leader-elected | No new admissions. Running tasks continue. Locks expire by TTL if the leader dies holding them. |
 | Run service | Run each task's state machine from admission to outcome (section 7). The dispatcher is one activity inside it. It is the only caller of the `ai-api-unified` router. | `run`, `routing_decision`, `config_version`, its Temporal namespace, code-host rate-limit buckets | start, follow up, cancel, kill switch, status, run and profile reads | Router and harness engine (in-process), pool manager, harness server Run API, task service, event service, guardrails library | Temporal workers | Workflows pause and resume from their last step on restart. Sandboxes keep running under their lease TTL. The watch activity re-attaches with `Last-Event-ID` and the router call re-attaches by call id. |
-| Pool manager | Provide healthy sandboxes and never leave one behind (section 8.4). | `sandbox`, `lease`, the artifact store | lease, release, lookup by run id or call id, capacity, health | Executor, harness server health and drain endpoints, event service, guardrails library | One logical manager, leader-elected | No new leases, so new runs wait. Running sandboxes continue. Reconciliation enforces TTLs on recovery. |
+| Pool manager | Provide healthy sandboxes and leave no orphaned sandbox running (section 8.4). | `sandbox`, `lease`, the artifact store | lease, release, lookup by run id or call id, capacity, health | Executor, harness server health and drain endpoints, event service, guardrails library | One logical manager, leader-elected | No new leases, so new runs wait. Running sandboxes continue. Reconciliation enforces TTLs on recovery. |
 | Event service | One validated, ordered record of every meta-harness domain event (section 13). It calls no other component. | `event`, the per-type schema registry, partitions, retention, the commit notification | append(events), idempotent on `event_id` and validated per type; read(run_id, from_position); tail(filter, from_position) | Nothing | Stateless replicas over one Postgres schema | Producers' client libraries buffer and retry, so runs continue. Consumers lag, then catch up from their cursor. |
 | Metering | Turn events into cost, time and success per attempt and task (section 9). | Projection tables: `model_call`, `attempt_usage`, `check_result`, `task_outcome`, `spend` | Queries by caller, profile, model, tier and task type; caller and global spend | Event service (tail) | Stateless workers, one cursor per projection | Projections lag. Runs continue, and the HTTP Gateway still enforces each run's cap. The scheduler treats spend older than its staleness limit as at cap and holds new tasks for capped callers. |
 | Harness analyzer | Propose tier and profile changes from evidence. | `proposal` | List, get evidence, approve, reject | Metering (queries), event service (read, append), code host (config PRs) | Batch jobs plus a small API | No new proposals. No effect on runs. |
@@ -185,11 +185,11 @@ its own Redis keyspace. Grants give no role access to another owner's schema.
 ## 4. The harness
 
 The harness is pi, running headless inside the sandbox in its RPC mode and
-driven by the harness server. Two owned pieces make it the meta-harness's
+driven by the harness server. These owned pieces make it the meta-harness's
 agent and keep every model call inside `ai-api-unified`:
 
-- the **HTTP Gateway provider**, a pi extension that is the only model
-  provider in the image and sends every turn to the HTTP Gateway;
+- the **model client**, a pi extension. It registers the only model provider
+  pi can see in the image and sends every turn to the HTTP Gateway;
 - the **harness server** (section 8.2), which exposes the Run API and drives
   pi's RPC protocol.
 
@@ -197,18 +197,18 @@ The library never knows which agent an image runs. Any image that implements
 the Run API and honors the run's model can be the harness half of a
 candidate, and a harness profile names the image.
 
-### HTTP Gateway provider
+### Model client
 
 The extension registers one complete provider with `pi.registerProvider()`
 and its own `streamSimple`. The provider exposes a single model, "the run's
 model", with zero cost metadata, because cost comes from the HTTP Gateway.
 
-On every turn the provider:
+On every turn the model client:
 
 1. Takes pi's transcript context, reading the current system prompt and tools
    from the transcript helpers, and builds the HTTP Gateway's conversation
    request: system prompt, messages, tools, prompt-cache hint on the stable
-   prefix, and the thinking level the run was started with.
+   prefix, and the thinking level the run started with.
 2. Attaches per-call hints. Requests the extension has marked as compaction or
    auxiliary (commit message, PR description) carry `route: trivial`; agent
    turns carry none, so the token's pin or band decides.
@@ -217,19 +217,19 @@ On every turn the provider:
 4. Maps the turn result into pi's event sequence: `start`, balanced text and
    thinking events, tool-call events whose arguments are parsed input by
    `toolcall_end`, and exactly one `done` or `error`. A tool-use turn arrives
-   from the HTTP Gateway as one response, so text is emitted once per turn; with
-   the streaming additions in section 6.5 it becomes token by token.
+   from the HTTP Gateway as one response, so the model client emits text once per
+   turn; with the streaming additions in section 6.5 it emits text token by token.
 5. Finalizes the assistant message with the HTTP Gateway's input, output and cached
    tokens, the per-turn cost from the response, and the stop reason.
 
-A guardrail block from the HTTP Gateway names the tool-call ids that fired. The
+A guardrail block from the HTTP Gateway names the tool-call ids whose results the guardrail blocked. The
 provider replaces those tool results with a short notice, resends the turn,
 and the harness server emits `guardrail_blocked`. A budget rejection ends the
 turn with `error`, and the harness server ends the run on its spend limit.
 
-pi's built-in providers have no credentials in the sandbox and are not listed
-in the image's settings. The harness server never sends `set_model`,
-`cycle_model` or `set_thinking_level`, so pi's model switching is inert and
+pi's built-in providers have no credentials in the sandbox, and the image's
+settings do not list them. The harness server never sends `set_model`,
+`cycle_model` or `set_thinking_level`, so pi never switches models and
 the token decides the real model.
 
 ### Tools
@@ -243,7 +243,7 @@ the token decides the real model.
 | `open_pr` | owned extension tool | Commits, pushes and opens one PR per run; branch protection blocks default branches |
 | `ask_for_followup` | owned extension tool | Records a question for the PR description instead of stopping |
 
-A profile's `tools` list is applied through pi's tool configuration. A profile
+A profile's `tools` list sets pi's tool configuration. A profile
 may remove tools but not add arbitrary ones.
 
 ### Loop policy
@@ -253,13 +253,13 @@ The extension and the harness server enforce the profile's `loop` settings:
 - **Turn and time limits.** The harness server counts turns from pi's events
   and sends `abort` at `max_turns` or `max_minutes`.
 - **Plan first.** The first prompt requires a plan before edits; the
-  tool-call hook refuses writes until a plan has been emitted.
+  tool-call hook refuses writes until pi has emitted a plan.
 - **Test before PR.** `open_pr` refuses until `run_tests` has passed in the
   current session.
 - **Compaction.** pi's automatic compaction runs at the profile's threshold of
-  the model's context window; the stable prefix (task spec, acceptance
-  checks, the repo's `AGENTS.md`) is kept verbatim, and the compaction call is
-  routed `trivial` by the provider.
+  the model's context window; compaction keeps the stable prefix (task spec,
+  acceptance checks, the repo's `AGENTS.md`) verbatim, and the model client routes
+  the compaction call `trivial`.
 
 ### Session state
 
@@ -272,7 +272,7 @@ the conversation keeps its tool history on the same model.
 
 The harness server maps pi's RPC events to the Run API's typed events, each
 with run id, sequence number and timestamp: `turn_started`, `model_call`
-(model, thinking, tokens, cost, latency, as the provider recorded them from
+(model, thinking, tokens, cost, latency, as the model client recorded them from
 the HTTP Gateway), `tool_call`, `tool_result`, `file_changed`, `tests_run`,
 `guardrail_blocked`, `compacted`, `turn_finished`, `heartbeat`,
 `run_finished`. `agent_settled` from pi marks the end of a turn that will not
@@ -316,7 +316,7 @@ candidate.
 | Concern | Choice | Reason |
 |---|---|---|
 | Language | Python 3.12 for the control plane; TypeScript inside the sandbox image only | ai-api-unified is Python and the dispatcher uses it in-process; pi and its extensions are TypeScript |
-| Harness | pi in RPC mode, with an owned provider extension and Run API server | A maintained agent loop, tools, compaction and session format; its extension points let one provider carry every model call to the HTTP Gateway |
+| Harness | pi in RPC mode, with an owned model client extension and Run API server | A maintained agent loop, tools, compaction and session format; its extension points let the model client send every model call to the HTTP Gateway |
 | API | FastAPI | Matches ai-api-unified-http |
 | Durable workflows | Temporal Cloud | Runs last hours, wait on external events, retry with backoff, survive restarts. Timers, signals and per-run history come built in. |
 | Platform | Google Cloud: one GKE Autopilot cluster (section 15) | Sandboxes need Kubernetes with gVisor, and one platform for everything is simpler. No Cloud Run. |
@@ -340,6 +340,12 @@ model call inside a run, in the HTTP Gateway. The tier candidates and the
 profiles change only through `models.json` and `harness_profiles.json`.
 The harness analyzer proposes those changes as config PRs (section 3, harness analyzer).
 
+Every sequence diagram in this document groups its participants in boxes by
+owner: the meta-harness control plane, the ai-api-unified library running
+inside the run service process, the sandbox (a meta-harness image, one per
+run), the HTTP Gateway service (ai-api-unified-http), and parties outside
+the system (callers, the code host, model providers).
+
 **Level 1: per task, in the run service.** The router classifies the task,
 then tries the tier's candidates in order. Here both `standard` candidates
 fail on the task and the router escalates to `complex`.
@@ -347,11 +353,19 @@ fail on the task and the router escalates to `complex`.
 ```mermaid
 sequenceDiagram
     autonumber
+    box rgba(66,135,245,0.12) Meta-harness control plane
     participant RS as Run service (dispatcher)
-    participant RT as Router (ai-api-unified)
-    participant CL as Classifier model
+    end
+    box rgba(52,168,83,0.14) ai-api-unified library (in the run service process)
+    participant RT as ai-api-unified router
     participant HE as harness engine
-    participant SB as Sandbox (pi)
+    end
+    box rgba(251,188,5,0.16) Sandbox (meta-harness image, one per run)
+    participant SB as Sandbox: harness server + pi
+    end
+    box rgba(128,128,128,0.14) External model providers
+    participant CL as Classifier model
+    end
 
     RS->>RT: send_conversation(task spec as latest user message, route_floor, harness_call_id)
     RT->>CL: classify(task spec)
@@ -375,17 +389,23 @@ sequenceDiagram
 
 **Level 2: per model call, in the HTTP Gateway.** The run token pins the
 candidate's model. Agent turns stay on that model. A compaction call
-carries `route: trivial`, which the HTTP Gateway turns into a band so the summary
+sets `route: trivial`, which the HTTP Gateway turns into a band so the summary
 runs on a cheap tier.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant PI as pi (in sandbox)
-    participant EX as HTTP Gateway provider (in pi)
-    participant GW as HTTP Gateway (ai-api-unified-http)
-    participant GR as HTTP Gateway router (ai-api-unified)
+    box rgba(251,188,5,0.16) Sandbox (meta-harness image, one per run)
+    participant PI as pi
+    participant EX as model client (pi extension)
+    end
+    box rgba(156,39,176,0.12) HTTP Gateway service (ai-api-unified-http)
+    participant GW as HTTP Gateway
+    participant GR as ai-api-unified router (in the HTTP Gateway)
+    end
+    box rgba(128,128,128,0.14) External model providers
     participant PV as Model provider
+    end
 
     Note over PI,GW: run token pins claude:claude-opus-5-5
     PI->>EX: agent turn (history, tools)
@@ -443,8 +463,8 @@ harness profile and the model the harness will use.
 
 A candidate name is the catalog's `engine:model` form, split at the first
 colon: the engine is `harness`, and its model string is the harness profile, a
-slash, and the inner model reference. The model string is private to the
-harness engine, which parses it. The inner reference must itself be a
+slash, and the inner model reference. Only the harness engine parses the
+model string. The inner reference must itself be a
 configured `ai-api-unified` model: the harness engine's startup probe
 resolves it and delegates to the inner engine's probe, and its capability
 table delegates to the inner model's.
@@ -453,9 +473,9 @@ The classifier reads the latest user message, so the dispatcher sends the
 task spec as that message and keeps instructions in the system prompt.
 
 The library loads `models.json` once per process and reads settings only when
-a client is built, so the dispatcher builds one router client per process and
-configuration identity and shares it across tasks; per-call state lives in
-context variables, which makes sharing safe. The meta-harness's own
+it builds a client. So the dispatcher builds one router client per process and
+configuration identity, and shares it across tasks. Sharing is safe because
+per-call state lives in context variables. The meta-harness's own
 configuration (`harness_profiles.json`, `task_policy.json`, `callers.json`)
 follows the same pattern: loaded and validated at startup, held in memory,
 reloaded on a file change with the new version recorded in `config_version`.
@@ -470,7 +490,7 @@ harness candidates:
   timeout, or the run ending in `run_failed`) moves to the next candidate in
   the tier. Infrastructure reasons start the library's cooldown for the
   failed candidate; `run_failed` starts none, because one hard task says
-  nothing about a candidate's health and must not bench it for every
+  nothing about a candidate's health and must not put it in cooldown for every
   concurrent run.
 - **Escalate** when the tier is exhausted. A task that the classifier called
   hard fails visibly rather than running on a weaker tier. A failed run is
@@ -481,15 +501,15 @@ harness candidates:
   The call skips the classifier, ignores `route`, `route_floor` and
   `route_ceiling`, and never escalates. If the pinned run fails with a
   trigger reason, the chain tries its own configured candidates. The pair
-  need not appear in a tier; it is built on first use. The catalog's allow
+  need not appear in a tier; the library builds it on first use. The catalog's allow
   and deny lists still apply, and a denied pair fails before any lease. The
-  result carries `route_method: model_pin` and the pair. Three
+  result includes `route_method: model_pin` and the pair. Three
   callers use it: a follow-up pins the original candidate; exploration pins a
   challenger; and a task submitted with a `pin` field runs on exactly that
   harness and model.
-- **Floors per call.** Every router call carries its own `route_floor` and
-  `route_ceiling`. The router's client-wide follow-up setting is not used,
-  because one dispatcher serves many concurrent tasks.
+- **Floors per call.** Every router call sets its own `route_floor` and
+  `route_ceiling`. The dispatcher leaves the router's client-wide follow-up
+  setting unused, because it serves many concurrent tasks.
 
 Caller hints use the router's per-call options:
 
@@ -505,7 +525,7 @@ the router call's return value, never from library events.
 |---|---|
 | Result | `route_tier`, `route_method`, `route_confidence`, `model_pin`, `provider_engine`, `model_name`, `thinking`, and `harness_run` (`run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`) |
 | `result.cost` | `request_id`, `status`, `elapsed_ms`, `tags` (`config_id`, `config_version`, `run_id`), `total_usd`, `classifier_usd`, `wasted_usd`, `failed_calls`, and `calls[]`, one line per try: `call_id`, `outcome`, `fallback_reason`, `served`, `elapsed_ms`, `usd_cost` |
-| `exception.cost` | The same cost report, attached to the raised exception when every candidate fails, so a failed task's attempts and dollars are read from the exception, not from the shared client |
+| `exception.cost` | The same cost report, attached to the raised exception when every candidate fails. The dispatcher reads a failed task's attempts and dollars from the exception, not from the shared client |
 | `preview_route()` | Before a run: tier, confidence and `usd_max`, used for the run's budget (section 6.2) |
 
 A harness try's `call_id` is its run id, so each cost line joins the pool
@@ -528,8 +548,8 @@ its difficulty.
 ```
 
 - **Floors by task type** become `route_floor` on the router call.
-- **Exploration.** A configured share of eligible tasks is pinned to a
-  challenger candidate with the `model` provider option so the analyzer keeps
+- **Exploration.** The dispatcher pins a configured share of eligible tasks to a
+  challenger candidate with the `model` provider option, so the analyzer keeps
   current data on every profile and model. Complex and security tasks never
   explore.
 - **Budget.** A run's spend cap is `preview_route()`'s `usd_max` for the tier
@@ -540,19 +560,19 @@ its difficulty.
 The `harness` engine is an `ai-api-unified` completions engine whose single
 call is a whole run. The call blocks until the run ends and returns the
 terminal result with a cost report, so the router treats a run as it treats
-any completion: candidates in order, fallback reasons, escalation. Progress is
-not carried through the router. The workflow reads it out of band from the
+any completion: candidates in order, fallback reasons, escalation. Progress does
+not pass through the router. The workflow reads it out of band from the
 sandbox's event stream (section 7).
 
 | Step | The engine |
 |---|---|
-| Identify | Reads `harness_call_id` from the call's provider options, which the router and the fallback chain pass through untouched, and the candidate index that the chain places in the request context. `run_id` is the call id plus the candidate index. |
-| Lease | Asks the pool manager for an existing lease on `run_id` first, so a retried call re-attaches to a run already in progress; otherwise requests `lease(run_id, image, resources)` for the profile's image. The pool manager's lease record, keyed on `run_id`, is how the workflow and the console learn which sandbox serves which try. |
-| Token | Mints the run-scoped HTTP Gateway token: run id, tags, the candidate's inner model as a pin (or a band when the profile says so), the spend cap, and an expiry at `max_minutes` plus grace. |
+| Identify | Reads `harness_call_id` from the call's provider options, which the router and the fallback chain pass through untouched. Reads the candidate index that the chain places in the request context. `run_id` is the call id plus the candidate index. |
+| Lease | Asks the pool manager for an existing lease on `run_id` first, so a retried call re-attaches to a run already in progress; otherwise requests `lease(run_id, image, resources)` for the profile's image. The workflow and the console learn which sandbox serves which try from the pool manager's lease record, keyed on `run_id`. |
+| Token | Mints the run-scoped HTTP Gateway token. The token holds the run id, tags, the candidate's inner model as a pin (or a band when the profile says so), the spend cap, and an expiry at `max_minutes` plus grace. |
 | Start | `POST /run` on the sandbox's harness server with the prompt, acceptance checks, profile, limits and token. |
 | Wait | Follows the harness server's event stream until `run_finished`. The call's `request_timeout_seconds`, set to the lease TTL, is the hard upper bound: on expiry the engine cancels the run and raises `timeout`. A cancel from the control plane reaches the sandbox directly (section 7) and ends the call through the run's terminal state. |
-| Collect | Reads `/usage`, releases the lease, and returns the result with its `harness_run` summary (run id, sandbox id, profile, end reason, turns, PR URL, elapsed time) and a cost line whose `call_id` is the run id and whose dollars are the run's HTTP Gateway total, recorded as a reported-dollar cost. |
-| Fail | Maps failures to the library's fallback reasons: no sandbox within `ready_timeout` is `unavailable`; the inner model's rate limit or quota error, surfaced by the harness, is `rate_limited` or `quota_exhausted`; the lease TTL is `timeout`; a run ending in `ERROR` or on a limit is `run_failed`, which benches nothing. |
+| Collect | Reads `/usage`, releases the lease, and returns the result. The result has its `harness_run` summary (run id, sandbox id, profile, end reason, turns, PR URL, elapsed time) and a cost line. The cost line's `call_id` is the run id, and its dollars are the run's HTTP Gateway total, recorded as a reported-dollar cost. |
+| Fail | Maps failures to the library's fallback reasons. No sandbox within `ready_timeout` is `unavailable`. An inner model's rate limit or quota error, as the harness reports it, is `rate_limited` or `quota_exhausted`. The lease TTL is `timeout`. A run ending in `ERROR` or on a limit is `run_failed`, which starts no cooldown. |
 
 Each candidate the engine tries is one run and one sandbox, visible to the
 workflow through the lease it took.
@@ -570,30 +590,29 @@ with the run-scoped token. The HTTP Gateway:
    run, task, profile, harness and model.
 3. Sends the turn through its router. With a **pinned** policy (the default)
    the HTTP Gateway wraps the call in the library's model-pin scope for the
-   candidate's inner model, so the turn skips classification and runs on that
+   candidate's inner model. The turn skips classification and runs on that
    model with the library's fallback chain, cooldowns, guardrails and caching
-   intact. With a **banded** policy the turn carries `route_floor` and
+   intact. With a **banded** policy the turn sets `route_floor` and
    `route_ceiling` instead, and the router may answer easy turns from a
    cheaper tier. Under either policy the token decides the engine and model;
-   a request body that names a different one is rejected.
-4. Adds the turn's cost to the run's counter in Redis so the total is exact
-   across HTTP Gateway replicas, returns the turn's usage and the running total in
-   the response, and rejects the turn with a clear error once the cap is
+   the HTTP Gateway rejects a request body that names a different one.
+4. Adds the turn's cost to the run's counter in Redis, so the total is exact
+   across HTTP Gateway replicas. Returns the turn's usage and the running total in
+   the response. Rejects the turn with a clear error once the cap is
    spent. The pi extension reports the usage and total, and the harness emits
    them in its `model_call` events. The meta-harness reads no HTTP Gateway event
    output.
 
-A pinned call ignores route hints by design: pinned means pinned. So the
-harness's `route: trivial` on compaction and auxiliary calls is handled at the
-HTTP Gateway. When a request body carries `route`, the HTTP Gateway runs that one call
+A pinned call ignores route hints by design. So the HTTP Gateway handles the
+harness's `route: trivial` on compaction and auxiliary calls. When a request body includes `route`, the HTTP Gateway runs that one call
 as a band instead of a pin, with no floor and the pinned model's tier as the
-ceiling. The call lands on the named tier, an unknown or missing route still
-falls back to the pinned model, and agent turns, which carry no `route`, stay
-pinned. Under a banded policy the hint is honored as it is, within the band.
+ceiling. The call runs on the named tier, an unknown or missing route still
+falls back to the pinned model, and agent turns, which have no `route`, stay
+pinned. Under a banded policy the router honors the hint as it is, within the band.
 
 ### 6.5 Required additions to ai-api-unified
 
-The library work lands in two releases, specified in ai-api-unified's
+The library work ships in two releases, specified in ai-api-unified's
 `docs/harness_engine_design.md`. The meta-harness needs both, and startup
 refuses an older library version.
 
@@ -604,13 +623,13 @@ refuses an older library version.
 | Library, PR A | The request cost report attached to the raised exception as `exception.cost` when every candidate fails. |
 | Library, PR A | `route_confidence` on `AITurnResult` and `AIPromptResult`. |
 | Library, PR A | The candidate index in the request context, so the harness engine can name each try. |
-| Library, PR B: engine (3.30.0) | The `harness` completions engine (section 6.3): registry entry, model-string parsing, a startup probe that delegates to the inner model's probe and checks the pool URL, a capability table that delegates to the inner model's, and the pool and Run API client. |
+| Library, PR B: engine (3.30.0) | The `harness` completions engine (section 6.3) and the pool and Run API client. The engine has a registry entry and model-string parsing. Its startup probe delegates to the inner model's probe and checks the pool URL, and its capability table delegates to the inner model's. |
 | Library, PR B | `providers.harness` in `models.json`, carrying the pool and HTTP Gateway URLs. Credentials stay in the environment. |
 | Library, PR B | A `harness_run` summary on the result: `run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`. |
-| HTTP Gateway | Run-scoped tokens: minted by the harness engine, carrying run identity, tags, model pin or band, spend cap and expiry, on top of the existing per-caller attribution. The token overrides the request body's engine and model. |
+| HTTP Gateway | Run-scoped tokens, minted by the harness engine, on top of the existing per-caller attribution. A token holds run identity, tags, model pin or band, spend cap and expiry. The token overrides the request body's engine and model. |
 | HTTP Gateway | `route` accepted in the conversation request body. On a pinned token, a body `route` switches that call from pin to band with the pinned model's tier as ceiling; agent turns without `route` stay pinned. |
 | HTTP Gateway | A per-run spend counter in Redis, the running total on every conversation response, and a budget rejection error. |
-| Library, optional | A streaming form of `send_conversation` yielding typed events (text delta, tool-call start, arguments and end, usage, done), routed through router and chain with a candidate committed at its first delta. Not needed for the console's per-turn view; it makes model text token by token. PII redaction does not apply to streams. |
+| Library, optional | A streaming form of `send_conversation` that yields typed events (text delta, tool-call start, arguments and end, usage, done). It routes through router and chain and commits to a candidate at its first delta. The console's per-turn view does not need it; it streams model text token by token. PII redaction does not apply to streams. |
 | HTTP Gateway, optional | A server-sent-events form of the conversation endpoint, for the streaming form above. |
 | Library, optional, not scheduled | A cancel event on completions calls that engines poll. Until it exists, the Run API cancel and `request_timeout_seconds` cover cancellation (section 7). |
 
@@ -653,8 +672,8 @@ The run workflow lives in the run service, in Temporal terms:
 3. **Route and run.** One long-running activity sends the task through the
    router with the task's floors, ceilings, exploration pin, a
    `harness_call_id` for the attempt, and `request_timeout_seconds` equal to
-   the lease TTL. The router classifies, and the harness engine leases,
-   starts and waits. The call returns when the run ends, with the result and
+   the lease TTL. The router classifies the task, and the harness engine leases a
+   sandbox, starts the run and waits for it to end. The call returns when the run ends, with the result and
    the cost report. If every candidate fails, the router raises and the same
    report is on `exception.cost`. The dispatcher activity writes the
    `routing_decision` row, which the run service owns, and appends
@@ -665,15 +684,15 @@ The run workflow lives in the run service, in Temporal terms:
    call id. Each new lease is one candidate tried: the activity writes a
    `run` row, attaches to that sandbox's event stream through the executor
    as its only consumer, appends the events through the event service client
-   in batches, heartbeats the workflow, and marks the run stalled when a
-   heartbeat window is missed. Code-host webhooks for the run's PR (checks
+   in batches, heartbeats the workflow, and marks the run stalled when the
+   run misses a heartbeat window. Code-host webhooks for the run's PR (checks
    completed, review submitted, merged, closed) arrive at the task service,
    which signals the workflow.
 5. **Follow up.** Review comments or failed CI on the run's PR become a
-   follow-up run on the same branch: the router is called again inside the
-   model-pin scope for the original candidate, with the session state
-   reference, so the harness restores the conversation in a new sandbox and
-   continues.
+   follow-up run on the same branch. An activity calls the router again
+   inside the model-pin scope for the original candidate, with the session
+   state reference, and the harness restores the conversation in a new
+   sandbox and continues.
 6. **Close.** When the PR merges or closes, or when attempts and budget are
    spent, the workflow appends the outcome events and sets the task's
    terminal status through the task service, which reports it.
@@ -682,38 +701,49 @@ The run workflow lives in the run service, in Temporal terms:
    operator as actor. The workflow calls `POST /cancel` on the sandbox
    through the executor and releases the lease with the pool manager, which
    destroys the sandbox. The harness engine's blocking call sees the run's `CANCELED`
-   state and returns, so no cancel has to travel through the router.
+   state and returns, so the router never forwards a cancel.
 
-On every terminal state the lease is released. The pool manager collects
-artifacts into its artifact store and destroys the sandbox; a run never
-leaves one behind.
+Every terminal state releases the lease. The pool manager collects
+artifacts into its artifact store and destroys the sandbox.
 
-Timeouts are set per profile (`max_minutes`), with the hard ceiling from the
-task policy.
+Timeouts come from each profile (`max_minutes`), and the task policy sets the
+hard ceiling.
 
 ### Sequences
 
-Six end-to-end scenarios. Each diagram shows the whole system; the harness
-engine's internals (lease lookup by run id, candidate index, reported-cost
-ledger entry, cooldowns) are one note per diagram and are specified in
-`ai-api-unified`'s harness engine design.
+Six diagrams below each show one end-to-end scenario across the whole
+system. The harness engine's internals (lease lookup by run id, candidate
+index, reported-cost ledger entry, cooldowns) appear as one note per
+diagram; the harness engine design in `ai-api-unified` specifies them.
 
 **1. Happy path**
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant C as Caller
+    box rgba(128,128,128,0.14) Outside the system
+    participant C as Caller (Task API client)
+    end
+    box rgba(66,135,245,0.12) Meta-harness control plane
     participant TS as Task service
     participant S as Scheduler
     participant W as Run service
-    participant R as ai-api-unified router
     participant PM as Pool manager
-    participant SB as Sandbox: harness server + pi
-    participant X as pi HTTP Gateway provider
-    participant GW as HTTP Gateway
-    participant P as Model provider
     participant EV as Event service
+    end
+    box rgba(52,168,83,0.14) ai-api-unified library (in the run service process)
+    participant R as ai-api-unified router
+    end
+    box rgba(251,188,5,0.16) Sandbox (meta-harness image, one per run)
+    participant SB as Sandbox: harness server + pi
+    participant X as pi model client
+    end
+    box rgba(156,39,176,0.12) HTTP Gateway service (ai-api-unified-http)
+    participant GW as HTTP Gateway
+    end
+    box rgba(128,128,128,0.14) External model providers
+    participant P as Model provider
+    end
 
     C->>TS: POST /v1/tasks
     TS->>TS: task row (owned)
@@ -757,11 +787,15 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant SB as Sandbox: harness server
+    box rgba(66,135,245,0.12) Meta-harness control plane
     participant WA as Run service: watch activity
     participant PM as Pool manager
     participant EV as Event service
     participant CON as Console
+    end
+    box rgba(251,188,5,0.16) Sandbox (meta-harness image, one per run)
+    participant SB as Sandbox: harness server
+    end
 
     PM->>EV: append lease_granted (run_id, sandbox)
     WA->>SB: GET /events (only consumer)
@@ -785,11 +819,17 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
+    box rgba(251,188,5,0.16) Sandbox (meta-harness image, one per run)
     participant SB as pi
-    participant X as pi HTTP Gateway provider
+    participant X as pi model client
+    end
+    box rgba(156,39,176,0.12) HTTP Gateway service (ai-api-unified-http)
     participant GW as HTTP Gateway
-    participant R as Router in HTTP Gateway
+    participant R as ai-api-unified router (in the HTTP Gateway)
+    end
+    box rgba(128,128,128,0.14) External model providers
     participant P as Model provider
+    end
 
     SB->>X: compaction request
     X->>GW: /v1/conversations/turn, run token, route: trivial
@@ -808,14 +848,22 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
+    box rgba(66,135,245,0.12) Meta-harness control plane
     participant W as Run service
-    participant R as ai-api-unified router
     participant PM as Pool manager
-    participant SB as Sandbox: harness server + pi
-    participant X as pi HTTP Gateway provider
-    participant GW as HTTP Gateway
     participant EV as Event service
     participant TS as Task service
+    end
+    box rgba(52,168,83,0.14) ai-api-unified library (in the run service process)
+    participant R as ai-api-unified router
+    end
+    box rgba(251,188,5,0.16) Sandbox (meta-harness image, one per run)
+    participant SB as Sandbox: harness server + pi
+    participant X as pi model client
+    end
+    box rgba(156,39,176,0.12) HTTP Gateway service (ai-api-unified-http)
+    participant GW as HTTP Gateway
+    end
 
     X->>GW: /v1/conversations/turn, run token
     GW->>GW: run spend counter (owned) >= cap
@@ -841,14 +889,24 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
+    box rgba(128,128,128,0.14) Outside the system
     participant CH as Code host
+    end
+    box rgba(66,135,245,0.12) Meta-harness control plane
     participant TS as Task service
     participant W as Run service
-    participant R as ai-api-unified router
     participant PM as Pool manager
-    participant SB as Sandbox: harness server + pi
-    participant GW as HTTP Gateway
     participant EV as Event service
+    end
+    box rgba(52,168,83,0.14) ai-api-unified library (in the run service process)
+    participant R as ai-api-unified router
+    end
+    box rgba(251,188,5,0.16) Sandbox (meta-harness image, one per run)
+    participant SB as Sandbox: harness server + pi
+    end
+    box rgba(156,39,176,0.12) HTTP Gateway service (ai-api-unified-http)
+    participant GW as HTTP Gateway
+    end
 
     CH->>TS: webhook: changes requested or CI failed
     TS->>W: signal
@@ -874,13 +932,19 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
+    box rgba(66,135,245,0.12) Meta-harness control plane
     participant CON as Console
     participant W as Run service
     participant EX as Executor
-    participant SB as Sandbox: harness server + pi
-    participant R as ai-api-unified router
     participant PM as Pool manager
     participant EV as Event service
+    end
+    box rgba(52,168,83,0.14) ai-api-unified library (in the run service process)
+    participant R as ai-api-unified router
+    end
+    box rgba(251,188,5,0.16) Sandbox (meta-harness image, one per run)
+    participant SB as Sandbox: harness server + pi
+    end
 
     CON->>W: cancel (per run, caller, or global kill switch)
     W->>EV: append operator_action (actor, scope)
@@ -904,9 +968,9 @@ One sandbox per run, as a pod with the gVisor runtime class in the `sandbox`
 namespace (section 15).
 
 - **One image**, built from a common base: git, language toolchains, Node,
-  pi, the HTTP Gateway provider extension and the **harness server** (section
+  pi, the model client extension and the **harness server** (section
   8.2). Profiles select prompts, tools and limits on that image; a profile
-  may name a different image when a toolchain or a different agent demands
+  may name a different image when a toolchain or a different agent needs
   it.
 - **Repo** cloned with the run's code-host token on a fresh branch. Branch
   protection blocks pushes to default branches.
@@ -915,36 +979,36 @@ namespace (section 15).
 - **Egress** limited to the code host, package registries and the HTTP Gateway.
 - **Resources** from the profile; 2 vCPU and 4 GB by default.
 - **Lifecycle**: owned by the pool manager (section 8.4). A sandbox serves
-  exactly one run and is destroyed when the run ends.
+  exactly one run; the pool manager destroys it when the run ends.
 
 ### 8.2 Harness server and the Run API
 
 The harness server is a small service inside every sandbox. It exposes one
 authenticated HTTP API to the harness engine, starts pi as a child process in
 RPC mode, and drives it over pi's RPC protocol: one JSON record per line on
-pi's standard streams, with every command answered by a typed response and
-every state change reported as a typed event. Nothing is parsed from terminal
-output.
+pi's standard streams. On those streams, pi answers every command with a typed
+response and reports every state change as a typed event. The server parses
+nothing from terminal output.
 
 | Endpoint | Purpose | pi RPC commands used |
 |---|---|---|
-| `GET /health` | Readiness: pi started, HTTP Gateway provider registered, repo cloned, HTTP Gateway reachable | `get_state` |
-| `POST /run` | Start the task; body carries the prompt, acceptance checks, profile, limits and the run-scoped token | `new_session`, `set_auto_compaction`, `prompt` |
+| `GET /health` | Readiness: pi started, model client registered, repo cloned, HTTP Gateway reachable | `get_state` |
+| `POST /run` | Start the task; the body holds the prompt, acceptance checks, profile, limits and the run-scoped token | `new_session`, `set_auto_compaction`, `prompt` |
 | `POST /followup` | Restore session state and continue with new input | `switch_session`, `follow_up` |
 | `GET /events` | Server-sent events, resumable with `Last-Event-ID` | mapped from `message_update`, tool and compaction events, `agent_end`, `agent_settled` |
 | `GET /status` | `CREATING`, `RUNNING`, `FINISHED`, `ERROR`, `CANCELED`, `EXPIRED`, plus the last heartbeat | `get_state` |
 | `POST /cancel` | Stop pi and flush session state | `abort`, `clear_queue` |
-| `GET /usage` | Token counts, call counts and the HTTP Gateway's running total as the provider recorded them, for reconciliation against HTTP Gateway events | `get_session_stats` |
+| `GET /usage` | Token counts, call counts and the HTTP Gateway's running total as the model client recorded them, for reconciliation against HTTP Gateway events | `get_session_stats` |
 | `GET /metrics` | OpenTelemetry metrics: turns, tool calls, files changed, test runs, elapsed time | server-side counters |
 
 The server never sends `set_model`, `cycle_model`, `set_thinking_level` or
-`bash`; the model and thinking level come from the run's token and start body,
-and shell access exists only as the agent's tool under the profile's limits.
+`bash`. The model and thinking level come from the run's token and the `POST /run`
+body, and the agent gets shell access only through its tool, under the profile's limits.
 
 ### 8.3 Executor interface in the control plane
 
-The executor is the abstraction over where sandboxes run. Every
-implementation provides these operations:
+The executor is the interface to wherever sandboxes run. Every executor
+backend provides these operations:
 
 | Operation | Called by | Purpose |
 |---|---|---|
@@ -962,8 +1026,8 @@ services, and a fake that replays recorded event streams for tests.
 
 ### 8.4 Pool manager
 
-The pool manager is the one component that creates and destroys sandboxes.
-Nothing else does. It is a single leader-elected service that owns the
+The pool manager is the only component that creates and destroys sandboxes.
+It is a single leader-elected service that owns the
 `sandbox` and `lease` tables and the artifact store, with a reconciliation
 loop against the executor's actual inventory. Other components reach leases
 only through its interface.
@@ -988,10 +1052,10 @@ stateDiagram-v2
 - `provisioning`: pod created, image pulling, harness server starting.
 - `warm`: `/health` green, no repo, no credentials, no run. Idle, ready to
   lease.
-- `leased`: bound to one run. The run's code-host token and HTTP Gateway token are
-  injected at lease time, and the repo is cloned then.
-- `draining`: the run has ended; artifacts (session state, logs, `/usage`) are
-  being collected.
+- `leased`: bound to one run. The pool manager injects the run's code-host token
+  and HTTP Gateway token at lease time, and the sandbox clones the repo then.
+- `draining`: the run has ended; the manager is collecting artifacts (session
+  state, logs, `/usage`).
 - `destroyed`: pod deleted, record kept for audit.
 
 **Leases**
@@ -999,18 +1063,18 @@ stateDiagram-v2
 - The harness engine requests `lease(run_id, image, resources)`. The manager
   hands out a warm sandbox of that image if one exists, else provisions one.
   The request is idempotent on `run_id`.
-- A lease carries a TTL of the profile's `max_minutes` plus a grace period.
+- A lease has a TTL of the profile's `max_minutes` plus a grace period.
   When the TTL expires the manager destroys the sandbox whether or not the
-  lease was released, so a lost caller cannot leak a sandbox.
+  lease was released, so a caller that crashes cannot leak a sandbox.
 - The lease is the only path to a sandbox's address and credentials. The Run
   API accepts a per-lease bearer token, so a sandbox cannot be addressed
   outside its lease.
-- **Warm sticky.** The lease request carries the call's session id as a hint.
+- **Warm sticky.** The lease request includes the call's session id as a hint.
   When a run finishes, the manager may keep its sandbox alive for a short
   window (`sticky_window`, default 10 minutes) keyed by that session id, with
   the repo and session directory intact and the run token revoked. A
   follow-up for the same session inside the window gets that sandbox back and
-  skips the restore; otherwise the sandbox is drained and the follow-up
+  skips the restore; otherwise the manager drains the sandbox and the follow-up
   restores from the session directory in a fresh one. The window never
   extends a lease TTL, and a sticky sandbox is still single-session: it is
   never leased to another run.
@@ -1021,42 +1085,44 @@ stateDiagram-v2
   (`warm: 4`) and adjusted by the manager from queue depth: the number of
   admitted tasks waiting per image over the last few minutes.
 - Warm sandboxes hold no repo and no secrets, so they are safe to keep idle.
-- A warm sandbox older than `warm_ttl` (default 2 hours) is destroyed and
-  replaced, so no sandbox outlives a routine image or node change.
+- The manager destroys and replaces a warm sandbox older than `warm_ttl`
+  (default 2 hours), so no sandbox outlives a routine image or node change.
 - Per-image and global maximums cap total sandboxes; the node autoscaler
   follows the manager's demand.
 
 **Health**
 
 - Before a lease: `/health` must be green within `ready_timeout`, else the
-  sandbox is `unhealthy` and replaced; the lease request moves to the next
+  manager marks the sandbox `unhealthy` and replaces it; the lease request moves to the next
   warm sandbox.
 - During a run: the harness engine forwards missed heartbeats to the manager.
   Two missed windows mark the sandbox `unhealthy`; the manager destroys it
-  and the router's fallback decides whether another candidate runs. A sandbox
-  is never repaired in place.
-- Idle warm sandboxes are probed on an interval; a failed probe destroys them.
+  and the router's fallback decides whether another candidate runs. The manager
+  never repairs a sandbox in place.
+- The manager probes idle warm sandboxes on an interval and destroys any that
+  fail.
 - The reconciliation loop runs every 30 seconds: it lists the executor's
   actual sandboxes, destroys any with no record or whose lease has expired,
-  marks records whose pod has vanished, and tops up warm counts.
+  marks records whose pod has vanished, and provisions sandboxes until each
+  image is back at its warm target.
 
 **Recycling**
 
 - A sandbox serves exactly one session: one run, or that run and the
   follow-ups a warm-sticky window hands back to it. It is never reused across
   sessions. The repo, tokens, session and any files the agent created are
-  specific to that session, and a clean slate is the security boundary
-  between sessions.
+  specific to that session, and a fresh sandbox per session is the security
+  boundary between sessions.
 - Recycling therefore means: drain (collect artifacts to the artifact store,
-  read `/usage` for reconciliation), destroy the pod, and let the warm-pool
-  target provision a fresh replacement.
+  read `/usage` for reconciliation), destroy the pod, and provision a fresh
+  replacement to meet the warm-pool target.
 - **Image rollover.** When a profile changes its image version, the manager
   stops leasing the old image, destroys its warm sandboxes, provisions the
   new image to the warm target, and lets leased sandboxes on the old image
-  finish their runs. No run is interrupted by a rollover.
+  finish their runs.
 - **Node rollover.** The manager honors the orchestrator's drain signals:
-  warm sandboxes on a draining node are destroyed at once; leased sandboxes
-  get until their lease TTL, after which the node is released.
+  it destroys warm sandboxes on a draining node at once; leased sandboxes
+  get until their lease TTL, after which the autoscaler releases the node.
 
 **Metrics** (OpenTelemetry, alertable): sandboxes by state and image,
 provisioning time, time-to-lease, warm hit rate, health failures by cause,
@@ -1071,9 +1137,9 @@ dollar-hours per successfully completed task = Σi (Di × Hi) / Σi Ci
 
 | Term | Source |
 |---|---|
-| Di, dollars for attempt i | The harness's `model_call` events, tailed from the event service, which carry the HTTP Gateway's per-turn usage and cost (cached tokens included) and the run's running total, plus `classifier_usd` from the router call's cost report (or `exception.cost` when every candidate failed) and the control plane's own calls for the run |
+| Di, dollars for attempt i | The harness's `model_call` events, tailed from the event service. They hold the HTTP Gateway's per-turn usage and cost (cached tokens included) and the run's running total. Add `classifier_usd` from the router call's cost report (or `exception.cost` when every candidate failed) and the control plane's own calls for the run |
 | Hi, hours for attempt i | Active execution time from `RUNNING` to a terminal state, from the harness server's status |
-| Ci, success for the task | Unweighted share of the task's checks that passed: CI checks on the PR, acceptance checks named in the task, and merge, from the run service's `check_completed` and `task_closed` events |
+| Ci, success for the task | Unweighted share of the task's checks that passed: CI checks on the PR, acceptance checks named in the task, and merge. Read from the run service's `check_completed` and `task_closed` events |
 
 The HTTP Gateway returns the turn's usage and the run's running total on every
 response. The pi extension reports them and the harness emits them in each
@@ -1083,11 +1149,11 @@ streams.
 
 The harness's `model_call` events are the source for Di. The router call's
 cost report and the harness server's `/usage` are cross-checks. Each
-`calls[]` line has `call_id` equal to the run id, so it joins its run's
-events and lease record, nothing is counted twice, and any gap over 5% is
-flagged. A task whose every candidate failed still has its dollars: the
-dispatcher reads them from `exception.cost`. The report's `wasted_usd` is
-kept per task as the spend on failed tries.
+`calls[]` line has `call_id` equal to the run id, so metering joins it to its
+run's events and lease record, counts nothing twice, and flags any gap over
+5%. Metering still records the cost of a task whose every candidate failed:
+the dispatcher reads it from `exception.cost`. Metering keeps the report's
+`wasted_usd` per task as the spend on failed tries.
 
 Metering tails the event service and owns its projection tables: one
 `model_call` row per `model_call` event, one `attempt_usage` row per run, a
@@ -1166,7 +1232,7 @@ Task fields:
 Callers authenticate with a per-caller key. The key sets the caller's
 concurrency quota and daily cap.
 
-The Task API is the task service's HTTP face. It serves task routes from its
+The task service exposes the Task API over HTTP. It serves task routes from its
 own table and answers run, profile and event routes by calling the run
 service and the event service.
 
@@ -1193,7 +1259,8 @@ Postgres schema under its own role. No other role has a grant on it.
 | Harness analyzer | proposal | id, kind (tier, profile, task_policy), evidence, proposed_change, status (open, approved, rejected), decided_by, decided_at, config_pr_url |
 
 `model_call` holds one row per model call inside a run, so the analyzer can see
-which model answered each turn, not only the candidate the run was launched on.
+which model answered each turn; the run row records only the candidate the run
+started on.
 
 `event` is indexed on `(run_id, position)`, `(run_id, time_utc)` and
 `(event_type, time_utc)`, and partitioned by time and retention class. The
@@ -1209,23 +1276,21 @@ has one owner.
 ## 13. Observability
 
 Domain events go to one event service. Every producer appends to it and every
-consumer reads from it. The console is one of those readers, not the place
-events go. Operational logs, traces and metrics go to OpenTelemetry. Every
-event carries the trace id, so the two join. Nothing is observed by logging
-into a machine.
+consumer reads from it. The console is one of those readers. Operational logs, traces and metrics go to OpenTelemetry. Every
+event includes the trace id, so events and traces join on it. No one has to log
+into a machine to observe the system.
 
 ### Event service
 
 The event service is the system of record for what happened in every task
 and run. It owns the `event` table, the per-type schema registry, position
 assignment, partitions, retention and the commit notification (section 12).
-It calls no other component. It holds the meta-harness's own events only. ai-api-unified's events, cost ledger and logs stay on its side of the
-boundary, and the meta-harness learns routing and cost facts from the router
+It calls no other component. It holds the meta-harness's own events only. ai-api-unified keeps its own events, cost ledger and logs. The meta-harness learns routing and cost facts from the router
 call's return value and from the harness's run events.
 
 | Operation | Contract |
 |---|---|
-| `append(events)` | Idempotent on `event_id`. Each event is validated against its type's registered schema. An unknown type or invalid payload is rejected to the producer as a bug, never retried. |
+| `append(events)` | Idempotent on `event_id`. The service validates each event against its type's registered schema. It rejects an unknown type or invalid payload back to the producer as a bug, and the client never retries it. |
 | `read(run_id, from_position)` | A run's events in `position` order, paged |
 | `tail(filter, from_position)` | A live stream of events matching a filter (run, task, type, source), in `position` order, resumable from any position |
 
@@ -1252,11 +1317,10 @@ run.
 
 **Live delivery.** After an append commits, the event service sends a
 commit notification, Postgres `NOTIFY`, with the run id and the new highest
-`position`. The notification carries no event data and is internal: its listeners are the
+`position`. The notification contains no event data and is internal: its listeners are the
 event service's own `tail` handlers, which fetch the new rows and stream them
 to their callers. A missed notification costs latency, not data, because
-the next fetch catches up. `NOTIFY` fires only on commit, which is why it is
-preferred. Redis can carry the commit notification instead if volume outgrows Postgres.
+the next fetch catches up. The design uses `NOTIFY` because it fires only on commit. If notification volume exceeds what Postgres can handle, Redis can send the commit notification instead.
 
 **Ordering.** Each producer sets `seq` within its own stream. The event
 service assigns `position` on insert. Concurrent transactions can commit out
@@ -1276,8 +1340,8 @@ and a consumer can drop a repeat by `event_id`.
 
 **Retention.** The table is partitioned by time and by each type's retention
 class from the schema registry. Short-lived types (per-turn text, tool
-output) expire by dropping whole partitions rather than deleting rows. Run,
-routing, attempt and audit events are kept long.
+output) expire by dropping whole partitions rather than deleting rows. The
+event service keeps run, routing, attempt and audit events long.
 
 ### Signals
 
@@ -1310,9 +1374,8 @@ blocks, compactions, tokens and spend are live as they happen, the last two
 from the harness's `model_call` events. Model text arrives once per turn, and
 token by token once the streaming additions in section 6.5 exist.
 
-**Sensitive output.** Event payloads carry repository content. Secret
-scrubbing for the console is done console-side on the events it reads, with
-the HTTP Gateway's per-turn redaction applying to what the model receives.
+**Sensitive output.** Event payloads contain repository content. The console scrubs secrets
+from the events it reads. The HTTP Gateway's per-turn redaction applies to what the model receives.
 
 | View | Shows |
 |---|---|
@@ -1327,9 +1390,9 @@ the HTTP Gateway's per-turn redaction applying to what the model receives.
 | Configuration | The active tier candidates, harness profiles and task policy, their version history, and the analyzer's pending proposals with their evidence |
 | Audit | Every operator action and configuration change |
 
-Operator actions in the console are limited to cancel and kill switch,
-sent as commands to the run service, and approving or rejecting a proposal,
-sent to the analyzer. The receiving service records each as an audit event
+The console limits operator actions to cancel and kill switch, which it sends
+to the run service as commands, and approving or rejecting a proposal, which it
+sends to the analyzer. The receiving service records each as an audit event
 with the operator as actor. The console never writes a table.
 
 ### Alerts
@@ -1346,7 +1409,7 @@ usage reconciliation gaps over 5%.
   minted per run and expiring within an hour.
 - **Secrets.** Secret Manager mounts each secret only into its owner's pods.
   Provider keys live only in the HTTP Gateway. Sandboxes hold a
-  run-scoped HTTP Gateway token and a code-host token, both short-lived. Nothing in
+  run-scoped HTTP Gateway token and a code-host token, both short-lived. No secret appears in
   prompts, task specs or logs.
 - **Untrusted text.** Task descriptions, review comments, CI logs and every
   tool result pass ai-api-unified's prompt-injection and tool-result checks at
@@ -1364,7 +1427,7 @@ usage reconciliation gaps over 5%.
 
 The meta-harness runs on Google Cloud, one project per environment. Every
 managed service has one owning component (principle 8), and Workload
-Identity holds the same rule at the infrastructure layer. ai-api-unified is
+Identity enforces the same rule at the infrastructure layer. ai-api-unified is
 unchanged: it runs in-process in the run service and HTTP Gateway pods.
 
 ```mermaid
@@ -1457,7 +1520,7 @@ flowchart TB
 |---|---|---|
 | Cloud SQL for PostgreSQL | One regional high-availability instance on a private IP. One schema and database role per owning component (section 12), with IAM database authentication per component. The `event` table is partitioned by time and retention class, and the instance is sized for the event service, the heaviest writer. | Failover to the standby takes about a minute. Services retry, and event clients buffer. Sandboxes never touch it, so runs in progress keep working. New admissions and leases wait. |
 | Temporal Cloud | The run service, reached over Private Service Connect. Workflow history, timers and signals. | Workflows stop advancing, but sandboxes keep running and finish their work. When Temporal returns, activities retry and re-attach by call id and `Last-Event-ID`. A run whose lease TTL expires during the outage is lost and retried as a new attempt. |
-| Memorystore for Redis | Standard tier with a replica. One key prefix per owner: HTTP Gateway (run tokens, spend counters), scheduler (repo-area locks), run service (code-host token buckets), event service (commit notification fallback, unused while `NOTIFY` suffices). | Failover keeps the data. If spend counters or run tokens are lost, the HTTP Gateway fails closed: it rejects turns for any run it cannot verify or meter, those runs end, and the run service retries them as new attempts. If locks are lost, the scheduler stops admitting until it rebuilds them from the run service's active runs. |
+| Memorystore for Redis | Standard tier with a replica. One key prefix per owner: HTTP Gateway (run tokens, spend counters), scheduler (repo-area locks), run service (code-host token buckets), event service (commit notification fallback, unused while `NOTIFY` suffices). | Failover keeps the data. If spend counters or run tokens are lost, the HTTP Gateway fails closed and rejects turns for any run it cannot verify or meter. Those runs end, and the run service retries them as new attempts. If locks are lost, the scheduler stops admitting until it rebuilds them from the run service's active runs. |
 | Cloud Storage | One bucket per owner: pool manager (session directories), run service (run artifacts), event service (exports). | Drain retries collection, and a sandbox stays in `draining` until its artifacts are saved or a limit passes. Follow-ups that need a saved session wait. |
 | Artifact Registry | Every image: the harness image and one per control-plane component. | Pods cannot pull uncached images. Running services and warm sandboxes are unaffected, and image rollover pauses. |
 | Secret Manager | Each secret is mounted only into its owner's pods. Provider API keys go only to the HTTP Gateway. | Secrets are read at pod start, so an outage blocks new pods only. |
@@ -1468,8 +1531,8 @@ flowchart TB
 - **VPC.** The cluster is private in its own VPC, with Cloud NAT for egress.
 - **Sandbox egress.** The Secure Web Proxy allows the HTTP Gateway's internal
   address, the code host and package registries, and nothing else. A sandbox
-  never reaches a model provider. The default-deny NetworkPolicy backs it
-  inside the cluster.
+  never reaches a model provider. The default-deny NetworkPolicy enforces
+  the same limit inside the cluster.
 - **HTTP Gateway.** An internal HTTPS load balancer fronts the HTTP Gateway.
 - **Console and Task API.** An external HTTPS load balancer with
   Identity-Aware Proxy fronts both. Programmatic callers present a service
@@ -1484,17 +1547,17 @@ flowchart TB
   `sandbox`. Sandbox pods run under an account with no Google Cloud
   permissions.
 - **Redis prefixes.** Memorystore has no per-prefix IAM, so each owner's
-  client wrapper enforces its prefix. This is the one store where the rule is
-  held in code rather than by grants.
+  client wrapper enforces its prefix. This is the one store where code enforces
+  the rule rather than IAM grants.
 - **Run tokens** are application-level: minted by the harness engine and
   verified by the HTTP Gateway. They are not Google Cloud credentials.
 
 ### Observability
 
 An OpenTelemetry collector DaemonSet sends traces to Cloud Trace and logs to
-Cloud Logging. Cloud Monitoring carries the metrics behind the autoscalers
-and the alerts in section 13. The event service stays the domain record,
-joined to traces by trace id.
+Cloud Logging. Cloud Monitoring holds the metrics that drive the autoscalers
+and the alerts in section 13. The event service remains the record of domain
+events, and events join to traces by trace id.
 
 ### Local development
 
@@ -1515,8 +1578,8 @@ meta-harness/
     callers.json               # keys, quotas, caps, repo allowlists
     prompts/                   # versioned prompt sets
   images/
-    harness-pi/                # Node, pi, the HTTP Gateway provider extension, the harness server
-      extension/               # HTTP Gateway provider, tool-call hook, run_tests / open_pr / ask_for_followup tools
+    harness-pi/                # Node, pi, the model client extension, the harness server
+      extension/               # model client, tool-call hook, run_tests / open_pr / ask_for_followup tools
       server/                  # Run API over pi's RPC protocol
   src/meta_harness/
     # one package per component; each owns its tables, migrations and interface
@@ -1548,12 +1611,12 @@ meta-harness/
 | Risk | Effect | Mitigation |
 |---|---|---|
 | The HTTP Gateway is the single path for every agent token | An outage stops all runs | Autoscaled, multi-zone, canaried; the harness retries turns with backoff; the workflow pauses rather than fails |
-| A run is one long blocking router call | A control-plane restart mid-run loses the caller | Leases are idempotent on run id and TTL-bound; the retried activity re-enters the router call with the same call id and the engine re-attaches to the existing lease and its event stream with `Last-Event-ID` |
+| A run is one long blocking router call | A control-plane restart mid-run loses the caller | Leases are idempotent on run id and TTL-bound. The retried activity re-enters the router call with the same call id. The engine re-attaches to the existing lease and its event stream with `Last-Event-ID` |
 | Weak prompts or loop policy in a profile | Wasted spend | Profiles are configuration; the analyzer measures each profile and model; exploration keeps the data current |
-| pi's extension points prove insufficient | A model call escapes the HTTP Gateway, or policy cannot be enforced | A contract test drives one turn end to end: HTTP Gateway turn, pi events, tool call, tool result, cost per turn, model switching inert. pi is forked only if the provider interface cannot represent a library tool-call or finish-reason shape, pi's own catalog or pricing leaks into a session, a compaction or auxiliary call bypasses the registered provider, or the tool set and loop policy cannot be constrained from the extension. A fork replaces pi's model layer with the extension and hard-wires the Run API; nothing above the image changes |
+| pi's extension points prove insufficient | A model call bypasses the HTTP Gateway, or policy cannot be enforced | A contract test drives one turn end to end: HTTP Gateway turn, pi events, tool call, tool result, cost per turn, model switching disabled. Fork pi only when the test shows one of these failures. The provider interface cannot represent a library tool-call or finish-reason shape. pi's own catalog or pricing leaks into a session. A compaction or auxiliary call bypasses the registered provider. The extension cannot constrain the tool set and loop policy. A fork replaces pi's model layer with the extension and codes the Run API into pi directly; nothing above the image changes |
 | pi releases change the RPC protocol or provider interface | The image breaks | Pinned pi version per image; the contract test runs on every image build |
 | Event service outage or write backlog | Console, metering and alerts lag | The client library buffers and retries, keyed on `event_id`, and never blocks a run; consumers resume `tail` from their cursor |
-| A component reaches past an owner to its table | Hidden coupling, schema changes break other services | One schema and role per owner with no cross-grants; the console holds no database credentials |
+| A component reads or writes another owner's table directly | Hidden coupling, schema changes break other services | One schema and role per owner with no cross-grants; the console holds no database credentials |
 | Follow-up loops | Spend spikes | Per-turn cap at the HTTP Gateway, follow-up limits, caller caps, kill switch |
 | Agents weakening tests to pass checks | False Ci | Acceptance checks defined outside the agent's PR; protected test paths |
 | Parallel agents in one repo | Merge conflicts | Repo-area locks; rebase-and-retry follow-up |
@@ -1563,7 +1626,7 @@ meta-harness/
 ## 18. Open questions
 
 1. Whether a managed sandbox service is worth adding as a second pool for
-   burst capacity, on cost per run-hour and start latency against GKE
+   burst capacity, judged on cost per run-hour and start latency against GKE
    Autopilot.
 2. Pinned versus banded model policy: whether answering a run's easy turns from
    a cheaper tier changes its results. An A/B between the two policies on the
@@ -1571,6 +1634,6 @@ meta-harness/
 3. Whether the harness engine should count a run that ends on a limit
    (`max_turns`, `max_minutes`) as `run_failed` for fallback purposes, or as a
    completed attempt that only a retry on a higher tier may repeat.
-4. Whether pi's durable session package should carry the long-running session
+4. Whether pi's durable session package should handle the long-running session
    and follow-up restore, or the harness server keeps doing it from the
    session directory.
