@@ -62,8 +62,8 @@ component owns its data (principle 8).
 | Router | Classifies a task with a direct classifier-model call, picks a tier, tries the tier's harness-and-model candidates in order, and escalates when the tier runs out. | `AiRouterCompletions` |
 | harness engine | Runs one candidate as one blocking call: lease a sandbox, start the run, wait, return the result and its cost. | `AiHarnessCompletions` |
 | **Sandbox**, one per run | | `images/harness-pi/` in this repo |
-| Harness server | Exposes the Run API and drives pi. | `server/` |
-| pi | The coding agent: agent loop, tools, context, session. Third-party (pi.dev), used unmodified. | the pi package |
+| Harness server | Exposes the Run API and runs pi in-process through pi's SDK. | `server/` |
+| pi | The coding agent: agent loop, tools, context, session. Third-party (pi.dev), used unmodified through its SDK. | `@earendil-works/pi-coding-agent` |
 | Model client | A pi extension that sends every model call pi makes to the HTTP Gateway. | `extension/` |
 | **HTTP Gateway** | The only model endpoint a sandbox can reach. Holds the provider keys for agent model calls and the run tokens, pins each run's model, applies guardrails, and enforces each run's spend cap. | the `ai-api-unified-http` repo |
 | **Outside the system** | Used by the meta-harness and built elsewhere. | |
@@ -225,7 +225,7 @@ flowchart TB
 | Metering | Turn events into cost, time and success per attempt and task (section 9). | Projection tables: `model_call`, `attempt_usage`, `check_result`, `task_outcome`, `spend` | Queries by caller, profile, model, tier and task type; caller and global spend | Event service (tail) | Stateless workers, one cursor per projection | Projections lag. Runs continue, and the HTTP Gateway still enforces each run's cap. The scheduler treats spend older than its staleness limit as at cap and holds new tasks for capped callers. |
 | Harness analyzer | Propose tier and profile changes from evidence. | `proposal` | List, get evidence, approve, reject | Metering (queries), event service (read, append), code host (config PRs) | Batch jobs plus a small API | No new proposals. No effect on runs. |
 | Console | Let operators see everything and act on a few things (section 13). | Nothing | Web UI | Event service (read, tail), task service, run service, metering, analyzer, pool manager, traces and metrics backends | Stateless replicas | No visibility. Runs continue. |
-| HTTP Gateway | `ai-api-unified-http`, the harness's only model endpoint (section 6.4). | Run-token registry, per-run spend counters (Redis keyspace) | Conversation turn, mint and revoke run token | Router (in-process), model providers, guardrails library | Autoscaling replicas | Turns fail. The harness retries with backoff and the workflow pauses rather than fails (section 17). |
+| HTTP Gateway | `ai-api-unified-http`, the harness's only model endpoint (section 6.4). | Run-token registry, per-run spend counters (Redis keyspace) | Conversation turn, mint and revoke run token | Router (in-process), model providers, guardrails library | Autoscaling replicas | Turns fail, and pi does not retry them, so the run fails and the library's chain moves to the next candidate. The workflow pauses rather than fails (section 17). |
 | Router and harness engine | `ai-api-unified`, in-process in the run service. Classifies, picks a tier, tries candidates, escalates (sections 6.1 and 6.3). | Nothing | `AiRouterCompletions` | Pool manager, HTTP Gateway (mint token), harness server Run API, model providers (classifier) | With the run service | Fails with the run service. |
 | Harness server | One per sandbox. Exposes the Run API and drives pi (sections 4 and 8.2). | The run's session directory, until drain | Run API | HTTP Gateway, code host | One per sandbox, under the pool manager's targets | The run ends in `ERROR`. The harness engine maps it to a fallback reason. |
 
@@ -244,14 +244,16 @@ its own Redis keyspace. Grants give no role access to another owner's schema.
 
 ## 4. The harness
 
-The harness is pi, running headless inside the sandbox in its RPC mode and
-driven by the harness server. These owned pieces make it the meta-harness's
-agent and keep every model call inside `ai-api-unified`:
+The harness is pi's coding agent (`@earendil-works/pi-coding-agent`), which
+the harness server runs in-process through pi's SDK. pi's RPC documentation
+recommends the SDK for in-process Node.js integration, and the harness server
+is TypeScript in the same sandbox. These owned pieces make pi the
+meta-harness's agent and keep every model call inside `ai-api-unified`:
 
 - the **model client**, a pi extension. It registers the only model provider
   pi can see in the image and sends every turn to the HTTP Gateway;
-- the **harness server** (section 8.2), which exposes the Run API and drives
-  pi's RPC protocol.
+- the **harness server** (section 8.2), which exposes the Run API and runs
+  pi's `AgentSession` through the SDK.
 
 The library never knows which agent an image runs. Any image that implements
 the Run API and honors the run's model can be the harness half of a
@@ -260,8 +262,11 @@ candidate, and a harness profile names the image.
 ### Model client
 
 The extension registers one complete provider with `pi.registerProvider()`
-and its own `streamSimple`. The provider exposes a single model, "the run's
-model", with zero cost metadata, because cost comes from the HTTP Gateway.
+and its own `streamSimple`. It needs its own stream function because the HTTP
+Gateway's `/v1/conversations/turn` is not a protocol pi implements. The
+provider exposes a single model, "the run's model", with zero cost metadata,
+because cost comes from the HTTP Gateway, and no `promptCache` lifetime, so
+pi never warms its cache (see Prompt caching below).
 
 On every turn the model client:
 
@@ -270,19 +275,23 @@ On every turn the model client:
    request: system prompt, messages, tools, the thinking level the run
    started with, and the `prompt_cache` field set to
    `{"retention": "extended", "key": <harness_session_id>}`.
-2. Attaches per-call hints. Requests the extension has marked as compaction or
-   auxiliary (commit message, PR description) carry `route: trivial`; agent
-   turns carry none, so the token's pin or band decides.
+2. Attaches per-call hints. Agent turns carry no route hint, so the token's
+   pin or band decides. Calls the model client makes itself, for compaction
+   and for auxiliary text (commit message, PR description), carry
+   `route: trivial`.
 3. Calls the HTTP Gateway's native conversation endpoint with the run-scoped
-   token.
+   token. As pi's custom-provider contract requires, it calls
+   `options.onPayload` before sending and `options.onResponse` on the
+   response, awaits `options.onProviderStreamEvent` for each event, and
+   honors the abort signal.
 4. Maps the turn result into pi's event sequence: `start`, balanced text and
    thinking events, tool-call events whose arguments are parsed input by
    `toolcall_end`, and exactly one `done` or `error`. A tool-use turn arrives
    from the HTTP Gateway as one response, so the model client emits text once per
    turn; with the streaming additions in section 6.5 it emits text token by token.
-5. Finalizes the assistant message with the HTTP Gateway's input, output,
-   cached input and cache-write tokens, the per-turn cost from the response,
-   and the stop reason. It adds `cached_input_tokens`,
+5. Finalizes the assistant message with the HTTP Gateway's numbers: input,
+   output, cached input and cache-write tokens, the per-turn cost, the stop
+   reason, and the model the HTTP Gateway actually used. It adds `cached_input_tokens`,
    `cache_write_5m_tokens` and `cache_write_1h_tokens` from each turn's
    `usage` to the run's totals for `GET /usage`. Cache writes are split by
    lifetime because they bill at different rates: 1.25 times the input rate
@@ -292,11 +301,16 @@ On every turn the model client:
 of a turn's cost: a cached prefix bills at about a tenth of the input rate on
 Anthropic.
 
-- **The hint on every turn.** The `prompt_cache` field above asks for the
-  extended lifetime: 1 hour on Anthropic and Bedrock, 24 hours on OpenAI. A
-  run often waits more than 5 minutes between turns while tests or builds
-  run, and the default cache would expire in that gap. `harness_session_id`
-  as the key sends every turn of a session to the same OpenAI cache.
+- **The hint on every turn.** pi passes `cacheRetention` and `sessionId` to
+  the provider on every call. The image sets `PI_CACHE_RETENTION=long`, and
+  the model client maps `long` to the `prompt_cache` retention `extended`
+  above: 1 hour on Anthropic and Bedrock, 24 hours on OpenAI. A run often
+  waits more than 5 minutes between turns while tests or builds run, and the
+  default cache would expire in that gap. `harness_session_id` as the key
+  sends every turn of a session to the same OpenAI cache.
+- **No cache warming.** pi's `cacheWarming` setting is `off`, and the model
+  client's model declares no `promptCache` lifetime. Otherwise pi would send
+  billed cache-refresh calls through the HTTP Gateway.
 - **A byte-identical prefix.** The model client keeps the system prompt and
   tool list byte-identical for the whole run: no timestamps, no run ids, and
   a fixed tool order. A compaction rewrites the history, so the turn after it
@@ -305,14 +319,42 @@ Anthropic.
   on the conversation turn and returns the cached-token fields in `usage`.
 
 A guardrail block from the HTTP Gateway names the tool-call ids whose results the guardrail blocked. The
-provider replaces those tool results with a short notice, resends the turn,
+model client replaces those tool results with a short notice, resends the turn,
 and the harness server emits `guardrail_blocked`. A budget rejection ends the
 turn with `error`, and the harness server ends the run on its spend limit.
 
-pi's built-in providers have no credentials in the sandbox, and the image's
-settings do not list them. The harness server never sends `set_model`,
-`cycle_model` or `set_thinking_level`, so pi never switches models and
-the token decides the real model.
+### What pi loads
+
+The harness server creates the session with `createAgentSession()` and
+decides everything pi loads:
+
+- **Resources.** A custom `ResourceLoader` supplies only the model client and
+  the owned tools. Nothing loads from the cloned repo's `.pi/` directory: no
+  settings, extensions, skills or `SYSTEM.md`.
+- **Extensions left out.** SDK sessions do not load the CLI's built-in
+  `codemode`, `tool_search` and MCP extensions, and the harness server never
+  adds them. `codemode` can run classifier and image models with the
+  session's credentials.
+- **Models.** A `ModelRuntime` with no built-in credentials, so the model
+  client's model is the only one pi can call. The harness server never calls
+  `setModel`, so pi never switches models and the run token decides the real
+  model.
+- **Tools.** The SDK's `tools` option comes from the profile.
+- **Context files.** pi loads `AGENTS.md` and `CLAUDE.md` from the working
+  directory unless context loading is off, so the profile's `context_files`
+  setting decides. The dispatcher already puts the repo's `AGENTS.md` in the
+  first prompt (section 7), so turning context files on sends it twice.
+- **Settings.** `SettingsManager.inMemory(...)` holds these settings, and pi
+  reads no settings file:
+
+| Setting | Value | Reason |
+|---|---|---|
+| `compaction.reserveTokens`, `compaction.keepRecentTokens` | The profile's `loop.compaction` | See Loop policy |
+| `retry.enabled` | `false` | pi's default retry (3 retries, backoff up to 60 seconds) would stack on the HTTP Gateway's fallback chain. A failed turn fails the run, and the library's chain moves to the next harness candidate. Overflow recovery (compact, then retry) stays on. |
+| `cacheWarming` | `off` | See Prompt caching |
+
+pi also has virtual models (`registerVirtualModel`), which route each request.
+The design does not use them, because the run token decides the model.
 
 ### Tools
 
@@ -325,7 +367,7 @@ the token decides the real model.
 | `open_pr` | owned extension tool | Commits, pushes and opens one PR per run; branch protection blocks default branches |
 | `ask_for_followup` | owned extension tool | Records a question for the PR description instead of stopping |
 
-A profile's `tools` list sets pi's tool configuration. A profile
+A profile's `tools` list sets the SDK's `tools` option. A profile
 may remove tools but not add arbitrary ones.
 
 ### Loop policy
@@ -338,10 +380,16 @@ The extension and the harness server enforce the profile's `loop` settings:
   tool-call hook refuses writes until pi has emitted a plan.
 - **Test before PR.** `open_pr` refuses until `run_tests` has passed in the
   current session.
-- **Compaction.** pi's automatic compaction runs at the profile's threshold of
-  the model's context window; compaction keeps the stable prefix (task spec,
-  acceptance checks, the repo's `AGENTS.md`) verbatim, and the model client routes
-  the compaction call `trivial`.
+- **Compaction.** pi starts compaction when the context passes the window
+  minus a reserve (`contextTokens > contextWindow - reserveTokens`) and keeps
+  the most recent `keepRecentTokens` of history as they are. The profile's
+  `loop.compaction` sets both (pi's defaults are 16384 and 20000). The model
+  client handles pi's `session_before_compact` event: it makes the summary
+  call to the HTTP Gateway itself, with purpose `compaction`,
+  `route: trivial` and no `prompt_cache`, and returns
+  `{compaction: {summary, firstKeptEntryId, tokensBefore, usage}}`. pi's own
+  summary request never runs. The summary keeps the task spec and acceptance
+  checks verbatim.
 
 ### Sessions and where context lives
 
@@ -351,7 +399,7 @@ request continues the same conversation.
 
 | When | Where the conversation is | Owner |
 |---|---|---|
-| During a run | pi's session directory in the sandbox, written after every turn | The sandbox (harness server) |
+| During a run | pi's session directory in the sandbox, set through the SDK's `SessionManager`. pi creates the session file once the conversation has its first message, then appends each entry. | The sandbox (harness server) |
 | Between runs | A copy of that directory in the pool manager's Cloud Storage bucket, stored under `harness_session_id` when the run ends | Pool manager |
 | Between runs, briefly | The finished sandbox itself, kept for the session for up to `sticky_window` (default 10 minutes) | Pool manager |
 | On each model turn | The request the model client sends to the HTTP Gateway, which forwards it and keeps no copy | Nobody: the HTTP Gateway keeps no state between turns |
@@ -364,9 +412,22 @@ session or copies the session directory from its bucket into a fresh one
 (section 8.4). The harness server then switches pi to that session and
 continues it, so the conversation keeps its tool history on the same model.
 
+A pi session records its working directory and never changes it, and outside
+interactive mode pi exits with an error when that directory is missing. Every
+sandbox therefore clones the repo at the same path, `/workspace`, so a
+restored session finds its directory.
+
+pi's `@earendil-works/pi-durable` package stays out of v1. It is marked
+experimental, with an API that changes without notice, and it is a separate
+harness (`Harness.open(storage)`), not the coding agent. The design does not
+use `@earendil-works/pi-env` either, which runs Durable's tools on a remote
+machine.
+
 ### Events
 
-The harness server maps pi's RPC events to the Run API's typed events, each
+The harness server subscribes with `session.subscribe()` and maps pi's
+events (`message_update`, `tool_execution_*`, compaction, `agent_end`,
+`agent_settled`) to the Run API's typed events, each
 with run id, sequence number and timestamp: `turn_started`, `model_call`
 (model, thinking, tokens, cost, latency, as the model client recorded them from
 the HTTP Gateway), `tool_call`, `tool_result`, `file_changed`, `tests_run`,
@@ -386,12 +447,16 @@ candidate.
   "profiles": {
     "pi-lean":    {"image": "harness-pi:1.0", "prompts": "lean/v3",
                    "tools": ["read", "ls", "find", "grep", "edit", "bash", "run_tests", "open_pr"],
-                   "loop": {"max_turns": 60, "compact_at": 0.7, "plan_first": false},
+                   "loop": {"max_turns": 60, "plan_first": false,
+                            "compaction": {"reserve_tokens": 16384, "keep_recent_tokens": 20000}},
+                   "context_files": false,
                    "max_minutes": 20, "max_followups": 2, "budget_multiplier": 3,
                    "resources": {"cpu": 2, "memory_gb": 4}},
     "pi-careful": {"image": "harness-pi:1.0", "prompts": "careful/v2",
                    "tools": "*",
-                   "loop": {"max_turns": 200, "compact_at": 0.6, "plan_first": true, "test_before_pr": true},
+                   "loop": {"max_turns": 200, "plan_first": true, "test_before_pr": true,
+                            "compaction": {"reserve_tokens": 32768, "keep_recent_tokens": 40000}},
+                   "context_files": false,
                    "max_minutes": 120, "max_followups": 4, "budget_multiplier": 6,
                    "resources": {"cpu": 4, "memory_gb": 8}}
   }
@@ -401,8 +466,11 @@ candidate.
 - `image` names the sandbox image; a different agent is a different image.
 - `prompts` names a versioned prompt set: system prompt, task template,
   compaction template, PR template.
-- `loop` sets the policy: turn limit, compaction threshold, whether the first
-  turn must produce a plan, whether tests must pass before `open_pr`.
+- `loop` sets the policy: turn limit, whether the first turn must produce a
+  plan, whether tests must pass before `open_pr`, and `compaction`, which
+  maps to pi's `compaction.reserveTokens` and `compaction.keepRecentTokens`.
+- `context_files` decides whether pi loads `AGENTS.md` and `CLAUDE.md` from
+  the repo.
 - `max_minutes`, `max_followups` and `budget_multiplier` bound the run.
 - Startup validates every profile: the image exists, the prompt set exists,
   every tool name is known.
@@ -412,7 +480,7 @@ candidate.
 | Concern | Choice | Reason |
 |---|---|---|
 | Language | Python 3.12 for the control plane; TypeScript inside the sandbox image only | ai-api-unified is Python and the dispatcher uses it in-process; pi and its extensions are TypeScript |
-| Harness | pi in RPC mode, with an owned model client extension and Run API server | A maintained agent loop, tools, compaction and session format; its extension points let the model client send every model call to the HTTP Gateway |
+| Harness | pi's coding agent, run in-process through its SDK (`createAgentSession()`), with an owned model client extension and Run API server | A maintained agent loop, tools, compaction and session format; its extension points let the model client send every model call to the HTTP Gateway. pi recommends the SDK over RPC for in-process Node.js integration. |
 | API | FastAPI | Matches ai-api-unified-http |
 | Durable workflows | Temporal Cloud | Runs last hours, wait on external events, retry with backoff, survive restarts. Timers, signals and per-run history come built in. |
 | Platform | Google Cloud: one GKE Autopilot cluster (section 15) | Sandboxes need Kubernetes with gVisor, and one platform for everything is simpler. No Cloud Run. |
@@ -484,9 +552,9 @@ sequenceDiagram
 ```
 
 **Level 2: per model call, in the HTTP Gateway.** The run token pins the
-candidate's model. Agent turns stay on that model. A compaction call
-sets `route: trivial`, which the HTTP Gateway turns into a band so the summary
-runs on a cheap tier.
+candidate's model. Agent turns stay on that model. The model client's
+compaction call sets `route: trivial`, which the HTTP Gateway turns into a
+band so the summary runs on a cheap tier.
 
 ```mermaid
 sequenceDiagram
@@ -513,16 +581,16 @@ sequenceDiagram
     GR-->>GW: AITurnResult with cost
     GW-->>EX: turn, usage, running total for the run
     EX-->>PI: text and tool calls
-    Note over PI: context passes the profile's compaction threshold
-    PI->>EX: compaction call
-    EX->>GW: POST /v1/conversations/turn (run token, route trivial)
+    Note over PI: context passes the window minus the profile's reserve tokens
+    PI->>EX: session_before_compact event
+    EX->>GW: POST /v1/conversations/turn (run token, route trivial, no prompt_cache)
     Note over GW: a route hint turns the pin into a band with the pinned tier as ceiling
     GW->>GR: send_conversation(route trivial, route_ceiling complex)
     GR->>PV: summary on the trivial tier's model
     PV-->>GR: summary
     GR-->>GW: result with cost
     GW-->>EX: summary, usage, running total for the run
-    EX-->>PI: summary
+    EX-->>PI: compaction result (summary, firstKeptEntryId, tokensBefore, usage)
 ```
 
 ### 6.1 Task routing
@@ -933,16 +1001,18 @@ sequenceDiagram
     participant P as Model provider
     end
 
-    SB->>X: compaction request
-    X->>GW: /v1/conversations/turn, run token, route: trivial
+    SB->>X: session_before_compact event
+    X->>GW: /v1/conversations/turn, run token, route: trivial, no prompt_cache
     GW->>GW: body carries route: pin becomes band,<br/>ceiling = pinned model's tier
     GW->>R: send with route: trivial
     R->>P: trivial-tier model
     P-->>R: summary
     R-->>GW: turn
     GW-->>X: turn, usage, running total
-    X-->>SB: compacted context, model_call (purpose: compaction)
+    X-->>SB: compaction result (summary, firstKeptEntryId, tokensBefore, usage), model_call (purpose: compaction)
+    Note over SB: pi's own summary request never runs
     Note over SB,GW: agent turns carry no route and stay pinned
+    Note over X,GW: auxiliary calls (commit message, PR description) take the same route trivial path
 ```
 
 **4. Spend cap hit**
@@ -1075,7 +1145,8 @@ namespace (section 15).
   8.2). Profiles select prompts, tools and limits on that image; a profile
   may name a different image when a toolchain or a different agent needs
   it.
-- **Repo** cloned with the run's code-host token on a fresh branch. Branch
+- **Repo** cloned with the run's code-host token at `/workspace`, the same
+  path in every sandbox, on a fresh branch. Branch
   protection blocks pushes to default branches.
 - **Model endpoint**: the HTTP Gateway URL, set in the image, and the
   run-scoped token, which arrives in the `POST /run` or `POST /followup` body.
@@ -1087,27 +1158,30 @@ namespace (section 15).
 
 ### 8.2 Harness server and the Run API
 
-The harness server is a small service inside every sandbox. It exposes one
-authenticated HTTP API to the harness engine, starts pi as a child process in
-RPC mode, and drives it over pi's RPC protocol: one JSON record per line on
-pi's standard streams. On those streams, pi answers every command with a typed
-response and reports every state change as a typed event. The server parses
-nothing from terminal output.
+The harness server is a small TypeScript service inside every sandbox. It
+exposes one authenticated HTTP API to the harness engine and runs pi
+in-process through pi's SDK (`@earendil-works/pi-coding-agent`). It creates
+the session with `createAgentSession()` and the setup in section 4, and uses
+`AgentSessionRuntime` for `newSession()`, `switchSession()` and `fork()`. pi
+reports every state change as a typed event through `session.subscribe()`,
+so the server parses nothing from terminal output.
 
-| Endpoint | Purpose | pi RPC commands used |
+| Endpoint | Purpose | pi SDK calls |
 |---|---|---|
-| `GET /health` | Readiness: pi started, model client registered, repo cloned, HTTP Gateway reachable | `get_state` |
-| `POST /run` | Start a new session for the task; the body holds the prompt, acceptance checks, profile, limits and the run-scoped token | `new_session`, `set_auto_compaction`, `prompt` |
-| `POST /followup` | Continue the session the sandbox already holds, kept or restored by the pool manager before the lease returned. The body holds the new input and the run-scoped token, and no session reference. | `switch_session`, `follow_up` |
-| `GET /events` | Server-sent events, resumable with `Last-Event-ID` | mapped from `message_update`, tool and compaction events, `agent_end`, `agent_settled` |
-| `GET /status` | `CREATING`, `RUNNING`, `FINISHED`, `ERROR`, `CANCELED`, `EXPIRED`, plus the last heartbeat | `get_state` |
-| `POST /cancel` | Stop pi and flush session state | `abort`, `clear_queue` |
-| `GET /usage` | Token totals (input, output, `cached_input_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens`), call counts, and the HTTP Gateway's running total, as the model client recorded them, for reconciliation against the run's `model_call` events | `get_session_stats` |
+| `GET /health` | Readiness: session created, model client registered, repo cloned at `/workspace`, HTTP Gateway reachable | session state |
+| `POST /run` | Start a new session for the task; the body holds the prompt, acceptance checks, profile, limits and the run-scoped token | `newSession()`, `prompt()` |
+| `POST /followup` | Continue the session the sandbox already holds, kept or restored by the pool manager before the lease returned. The body holds the new input and the run-scoped token, and no session reference. | `switchSession()` for a restored session, then `prompt()` |
+| `GET /events` | Server-sent events, resumable with `Last-Event-ID` | `session.subscribe()`: `message_update`, `tool_execution_*`, compaction events, `agent_end`, `agent_settled` |
+| `GET /status` | `CREATING`, `RUNNING`, `FINISHED`, `ERROR`, `CANCELED`, `EXPIRED`, plus the last heartbeat | session state |
+| `POST /cancel` | Stop pi. The session file already holds every entry. | `abort()`, which waits until the session is idle |
+| `GET /usage` | Token totals (input, output, `cached_input_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens`), call counts, and the HTTP Gateway's running total, as the model client recorded them, for reconciliation against the run's `model_call` events | model client counters |
 | `GET /metrics` | OpenTelemetry metrics: turns, tool calls, files changed, test runs, elapsed time | server-side counters |
 
-The server never sends `set_model`, `cycle_model`, `set_thinking_level` or
-`bash`. The model and thinking level come from the run's token and the `POST /run`
-body, and the agent gets shell access only through its tool, under the profile's limits.
+The server waits with `waitForIdle()` and sends `steer()` or `followUp()` when
+input arrives while pi is still working. It never calls `setModel`: the model
+comes from the run's token and the thinking level from the `POST /run` body.
+The agent gets shell access only through its `bash` tool, under the profile's
+limits.
 
 ### 8.3 Executor interface in the control plane
 
@@ -1124,7 +1198,7 @@ backend provides these operations:
 | events | harness engine | The sandbox's event stream |
 | status, usage | harness engine and pool manager | The sandbox's status and usage endpoints |
 | save session | Pool manager, when a run ends | Copy the session directory to the pool manager's Cloud Storage bucket under `harness_session_id` |
-| restore session | Pool manager, before a `restored` lease returns | Copy a session directory from the bucket into a fresh sandbox |
+| restore session | Pool manager, before a `restored` lease returns | Copy a session directory from the bucket into a fresh sandbox, which has the repo cloned at `/workspace` |
 | artifacts | Pool manager, on drain | Logs and the final session directory, copied to the pool manager's bucket |
 
 Implementations: Kubernetes pods on GKE, Docker (development), managed sandbox
@@ -1162,7 +1236,8 @@ stateDiagram-v2
 - `warm`: `/health` green, no repo, no credentials, no run. Idle, ready to
   lease.
 - `leased`: bound to one run. The pool manager injects the run's code-host
-  token at lease time, and the sandbox clones the repo then. The run token
+  token at lease time, and the sandbox clones the repo then, always at
+  `/workspace`. The run token
   arrives later, in the `POST /run` or `POST /followup` body.
 - `kept`: the run has ended and the sandbox waits for the same session's
   next follow-up, for up to `sticky_window`. The manager has saved the
@@ -1181,7 +1256,9 @@ stateDiagram-v2
     window, so the manager hands it back.
   - `restored`: the bucket holds a session directory for that id, so the
     manager takes a warm sandbox of that image (or provisions one) and
-    copies the directory in before returning.
+    copies the directory in before returning. The repo is cloned at
+    `/workspace`, the working directory the pi session recorded, because pi
+    exits with an error when that directory is missing.
   - `new`: neither exists, so the manager hands out a warm sandbox of that
     image, or provisions one.
 - A lease has a TTL of the profile's `max_minutes` plus a grace period.
@@ -1722,7 +1799,7 @@ meta-harness/
   images/
     harness-pi/                # Node, pi, the model client extension, the harness server
       extension/               # model client, tool-call hook, run_tests / open_pr / ask_for_followup tools
-      server/                  # Run API over pi's RPC protocol
+      server/                  # Run API over pi's SDK (in-process AgentSession)
   src/meta_harness/
     # one package per component; each owns its tables, migrations and interface
     task_service/              # task table, Task API (FastAPI), code-host webhooks
@@ -1752,11 +1829,11 @@ meta-harness/
 
 | Risk | Effect | Mitigation |
 |---|---|---|
-| The HTTP Gateway is the single path for every agent token | An outage stops all runs | Autoscaled, multi-zone, canaried; the harness retries turns with backoff; the workflow pauses rather than fails |
+| The HTTP Gateway is the single path for every agent token | An outage stops all runs | Autoscaled, multi-zone, canaried. pi's own retry is off (section 4), so a failed turn fails the run and the library's chain moves to the next candidate. When every candidate fails this way, the workflow pauses rather than fails |
 | A run is one long blocking router call | A control-plane restart mid-run loses the caller | Leases are idempotent on run id and TTL-bound. The retried activity re-enters the router call with the same call id. The engine re-attaches to the existing lease and its event stream with `Last-Event-ID` |
 | Weak prompts or loop policy in a profile | Wasted spend | Profiles are configuration; the analyzer measures each profile and model; exploration keeps the data current |
-| pi's extension points prove insufficient | A model call bypasses the HTTP Gateway, or policy cannot be enforced | A contract test drives one turn end to end: HTTP Gateway turn, pi events, tool call, tool result, cost per turn, model switching disabled. Fork pi only when the test shows one of these failures. The provider interface cannot represent a library tool-call or finish-reason shape. pi's own catalog or pricing leaks into a session. A compaction or auxiliary call bypasses the registered provider. The extension cannot constrain the tool set and loop policy. A fork replaces pi's model layer with the extension and codes the Run API into pi directly; nothing above the image changes |
-| pi releases change the RPC protocol or provider interface | The image breaks | Pinned pi version per image; the contract test runs on every image build |
+| pi's extension points prove insufficient | A model call bypasses the HTTP Gateway, or policy cannot be enforced | A contract test drives one turn end to end: HTTP Gateway turn, pi events, tool call, tool result, cost per turn, model switching disabled. With the SDK setup in section 4, a leak of pi's own catalog or pricing and a compaction that bypasses the model client are both preventable, so the test only confirms them. Fork pi only when the test shows one of these failures. The provider interface cannot represent a library tool-call or finish-reason shape. pi's own catalog or pricing leaks into a session. A compaction or auxiliary call bypasses the model client. The extension cannot constrain the tool set and loop policy. A fork replaces pi's model layer with the extension and codes the Run API into pi directly; nothing above the image changes |
+| pi releases change the SDK API or provider interface | The image breaks | Pinned pi version per image; the contract test runs on every image build |
 | Event service outage or write backlog | Console, metering and alerts lag | The client library buffers and retries, keyed on `event_id`, and never blocks a run; consumers resume `tail` from their cursor |
 | A component reads or writes another owner's table directly | Hidden coupling, schema changes break other services | One schema and role per owner with no cross-grants; the console holds no database credentials |
 | Follow-up loops | Spend spikes | Per-turn cap at the HTTP Gateway, follow-up limits, caller caps, kill switch |
@@ -1776,6 +1853,3 @@ meta-harness/
 3. Whether the harness engine should count a run that ends on a limit
    (`max_turns`, `max_minutes`) as `run_failed` for fallback purposes, or as a
    completed attempt that only a retry on a higher tier may repeat.
-4. Whether pi's durable session package should handle the long-running session
-   and follow-up restore, or the harness server keeps doing it from the
-   session directory.
