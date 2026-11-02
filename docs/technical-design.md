@@ -2,10 +2,18 @@
 
 ## 1. Scope
 
-The meta-harness is a control plane that runs an AI coding agent. It accepts a
-coding task through an API, routes it to the harness-and-model combination that
-fits its difficulty, runs the harness in an isolated sandbox through the
-harness's Run API, meters every model call, and records the outcome.
+The meta-harness runs AI coding tasks in parallel, each on its own harness and
+model. A team submits coding tasks through an API. For each task the
+meta-harness picks the harness-and-model combination that fits its difficulty,
+runs it in its own isolated sandbox through the harness's Run API, meters every
+model call, and records the outcome, usually a pull request.
+
+Tasks run independently, on different harness profiles and on models from
+different providers, so one task's failure or one provider's outage does not
+stop the others. A developer driving one agent session works through one task
+at a time. The meta-harness works through as many tasks at once as sandbox
+capacity, caller quotas and spend caps allow (section 10). Adding sandboxes and
+HTTP Gateway replicas raises that limit with no change in design.
 
 `ai-api-unified` is the router at both levels. At the task level, a tier's
 candidates are harness-and-model combinations, the prompt is the coding task,
