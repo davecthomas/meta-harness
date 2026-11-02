@@ -15,42 +15,92 @@ at a time. The meta-harness works through as many tasks at once as sandbox
 capacity, caller quotas and spend caps allow (section 10). Adding sandboxes and
 HTTP Gateway replicas raises that limit with no change in design.
 
+### Who uses it
+
+- **Teams and their tools** submit tasks through the Task API: a person, a CI
+  job, or an issue-tracker integration. Each caller has a key that sets its
+  concurrency quota, its daily spend cap and the repos it may change.
+- **Reviewers** review the pull requests on the code host as they review any
+  other. Review comments and failed checks come back as code-host webhooks and
+  start follow-up runs on the same branch.
+- **Operators** watch every task, run, model call and dollar in the console,
+  and can cancel a run or stop all runs with the kill switch.
+- **Configuration owners** approve or reject the harness analyzer's proposals.
+  An approved proposal becomes a pull request against `config/`.
+
+### A task in, a pull request out
+
+A task names a repo, a task type, a priority, a title and description, and the
+acceptance checks that define success. It may also name the paths it touches,
+a complexity hint, a highest tier, a dollar cap, or a pin to one exact harness
+and model (section 11).
+
+The meta-harness answers with one pull request per task, labeled
+`ai:meta-harness`, and a recorded outcome: the routing decision, every attempt
+with its harness, model, thinking level, time and cost, and whether the pull
+request merged. Follow-up runs add commits to the same pull request until it
+merges or closes, or until the task uses its profile's last follow-up.
+
+### Components
+
+Each component has one job and owns its own data (principle 8). The groups
+match the boxes in every sequence diagram.
+
+| Component | What it does | Code |
+|---|---|---|
+| **Meta-harness control plane** | | `src/meta_harness/` in this repo |
+| Task service | Accepts, de-duplicates and tracks tasks. Serves the Task API and receives code-host webhooks. | `task_service/` |
+| Scheduler | Decides which task runs next: priority, caller quotas, spend caps, repo-area locks. | `scheduler/` |
+| Run service | Runs each task from admission to outcome as a durable workflow. It calls the `ai-api-unified` router, watches the sandbox, starts follow-ups and closes the task. It is the only caller of the router. | `run_service/` |
+| Pool manager | Supplies sandboxes: leases them by run id, keeps a warm pool, checks health, recycles them. | `pool/` |
+| Event service | Keeps the ordered record of every meta-harness event. Every other component appends and reads through it. | `events/` |
+| Metering | Computes cost, time and success for each attempt and task, including dollar-hours per completed task by harness profile, model, thinking level and task type. | `metering/` |
+| Harness analyzer | Turns metering evidence into proposed changes to tiers, profiles and task policy. | `analyzer/` |
+| Console | Shows operators everything. Its only actions are cancel, the kill switch and proposal approval, each sent to the owning service. | `console/` |
+| **ai-api-unified library**, in the run service process | | the `ai-api-unified` repo |
+| Router | Classifies a task, picks a tier, tries the tier's harness-and-model candidates in order, and escalates when the tier runs out. | `AiRouterCompletions` |
+| harness engine | Runs one candidate as one blocking call: lease a sandbox, start the run, wait, return the result and its cost. | `AiHarnessCompletions` |
+| **Sandbox**, one per run | | `images/harness-pi/` in this repo |
+| Harness server | Exposes the Run API and drives pi. | `server/` |
+| pi | The coding agent: agent loop, tools, context, session. Third-party (pi.dev), used unmodified. | the pi package |
+| Model client | A pi extension that sends every model call pi makes to the HTTP Gateway. | `extension/` |
+| **HTTP Gateway** | The only model endpoint a sandbox can reach. Holds the provider keys and run tokens, pins each run's model, applies guardrails, and enforces each run's spend cap. | the `ai-api-unified-http` repo |
+| **Outside the system** | Used by the meta-harness and built elsewhere. | |
+| Code host | Repositories, pull requests, checks, reviews and webhooks. | |
+| Model providers | Cloud model APIs, or local models served by vLLM. | |
+| Temporal Cloud, Google Cloud | The workflow engine and the infrastructure (section 15). | |
+
+Guardrails is a library, not a component. The run service, the pool manager
+and the HTTP Gateway call it to scope repository access and credentials per
+run, screen untrusted text, and enforce spend caps.
+
 `ai-api-unified` is the router at both levels. At the task level, a tier's
 candidates are harness-and-model combinations, the prompt is the coding task,
 and the router's classifier, fallback, escalation, cooldowns and metering apply
 to whole runs. At the model-call level, the harness makes every call through
-`ai-api-unified` as well, so routing, guardrails and spend caps apply to every
-token the agent spends. The meta-harness configures and consumes those
-features; it does not reimplement them.
-
-### Responsibilities
-
-1. **Task API.** Accept, validate, de-duplicate and persist coding tasks.
-2. **Dispatch.** Send each task through the router, which classifies it, picks
-   a tier, and runs it on that tier's harness-and-model candidates in order.
-3. **Harness.** Run pi as the coding agent, with an owned model client (a pi
-   extension) that sends every one of its model calls through `ai-api-unified`
-   and an owned server that exposes it through the Run API.
-4. **Execution.** Run one harness per task in its own sandbox, invoked through
-   the Run API, with the HTTP Gateway as its only model endpoint. The HTTP
-   Gateway is `ai-api-unified-http`, the separate HTTP service that wraps the
-   library.
-5. **Guardrails.** Scope repository access and credentials per run, screen
-   untrusted text, enforce spend caps, and provide a kill switch.
-6. **Metering.** Compute dollar-hours per successfully completed task for every
-   attempt, by harness profile, model, thinking level and task type.
-7. **Record.** Persist every task, routing decision, run, model call, check and
-   outcome, append every domain event to one event service, and expose them for
-   analysis.
-8. **Scale.** Add throughput by adding sandboxes and HTTP Gateway replicas, with no
-   change in design, on cloud or local models.
+`ai-api-unified` as well, through the HTTP Gateway, so routing, guardrails and
+spend caps apply to every token the agent spends. The meta-harness configures
+and consumes those features and reimplements none of them.
 
 ### Non-responsibilities
 
-- Difficulty classification, candidate selection within a tier, fallback,
-  cooldowns and per-call pricing. These are `ai-api-unified` features.
-- Producing tasks, reviewing code or deploying it. The meta-harness starts at
-  a task and ends at a pull request plus a recorded outcome.
+- **Choosing models.** Difficulty classification, candidate selection,
+  fallback, cooldowns and per-call pricing belong to `ai-api-unified`.
+- **The agent loop.** pi runs it. The meta-harness configures pi through
+  harness profiles and the model client.
+- **Provider keys.** Only the HTTP Gateway holds them. No sandbox and no
+  control-plane service sees one.
+- **Producing tasks.** Callers decide what work to submit.
+- **Merging and deploying.** The meta-harness opens and updates pull requests.
+  People and the repository's branch rules decide whether one merges, and the
+  team's own pipeline deploys it.
+
+### Where it runs
+
+On Google Cloud: one GKE Autopilot cluster for the services and the sandboxes,
+Cloud SQL for PostgreSQL, Memorystore for Redis, Cloud Storage and Temporal
+Cloud. Local development runs the same images on Docker Compose. Section 15
+covers both.
 
 ## 2. Principles
 
