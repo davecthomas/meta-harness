@@ -282,8 +282,11 @@ On every turn the model client:
    turn; with the streaming additions in section 6.5 it emits text token by token.
 5. Finalizes the assistant message with the HTTP Gateway's input, output,
    cached input and cache-write tokens, the per-turn cost from the response,
-   and the stop reason. It adds `cached_input_tokens` and the cache-write
-   counts from each turn's `usage` to the run's totals for `GET /usage`.
+   and the stop reason. It adds `cached_input_tokens`,
+   `cache_write_5m_tokens` and `cache_write_1h_tokens` from each turn's
+   `usage` to the run's totals for `GET /usage`. Cache writes are split by
+   lifetime because they bill at different rates: 1.25 times the input rate
+   for 5 minutes and 2 times for 1 hour on Anthropic and Bedrock.
 
 **Prompt caching.** Every turn sends the whole history, so caching sets most
 of a turn's cost: a cached prefix bills at about a tenth of the input rate on
@@ -617,7 +620,7 @@ the router call's return value, never from library events.
 | Where | Fields |
 |---|---|
 | Result | `route_tier`, `route_method`, `route_confidence`, `model_pin`, `provider_engine`, `model_name`, `thinking`, and `harness_run` (`run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`, `cache_hit_rate`) |
-| `result.usage` | The run's token totals: input, output, cached input and cache-write tokens |
+| `result.usage` | The run's token totals: input, output, `cached_input_tokens`, `cache_write_5m_tokens` and `cache_write_1h_tokens` |
 | `result.cost` | `request_id`, `status`, `elapsed_ms`, `tags` (`config_id`, `config_version`, `run_id`), `total_usd`, `classifier_usd`, `wasted_usd`, `failed_calls`, and `calls[]`, one line per try: `call_id`, `outcome`, `fallback_reason`, `served`, `elapsed_ms`, `usd_cost` |
 | `exception.cost` | The same cost report, attached to the raised exception when every candidate fails. The dispatcher reads a failed task's attempts and dollars from the exception, not from the shared client |
 | `preview_route()` | Before a run: tier, confidence and `usd_max`, used for the run's budget (section 6.2) |
@@ -719,7 +722,7 @@ refuses an older library version.
 | Library, PR A | The candidate index in the request context, so the harness engine can name each try. |
 | Library, PR B: engine (3.30.0) | The `harness` completions engine (section 6.3), the pool and Run API client, and an HTTP Gateway client that mints and revokes run tokens. The engine has a registry entry and model-string parsing. Its startup probe delegates to the inner model's probe and checks the pool URL, and its capability table delegates to the inner model's. |
 | Library, PR B | `providers.harness` in `models.json`, carrying the pool and HTTP Gateway URLs. Credentials stay in the environment. |
-| Library, PR B | A `harness_run` summary on the result: `run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`, `cache_hit_rate`. The run's token totals, cached input and cache-write tokens included, in `result.usage`. |
+| Library, PR B | A `harness_run` summary on the result: `run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`, `cache_hit_rate`. The run's token totals in `result.usage`, including `cached_input_tokens`, `cache_write_5m_tokens` and `cache_write_1h_tokens`. |
 | HTTP Gateway | Run-scoped tokens: the harness engine requests a run token from the HTTP Gateway, which mints it and keeps the registry; the engine revokes it when the run ends. Tokens are opaque and sit on top of the existing per-caller attribution. The engine authenticates to mint and revoke with an HTTP Gateway API key from its environment. A token holds run identity, tags, model pin or band, spend cap and expiry. The token overrides the request body's engine and model. |
 | HTTP Gateway | `route` accepted in the conversation request body. On a pinned token, a body `route` switches that call from pin to band with the pinned model's tier as ceiling; agent turns without `route` stay pinned. |
 | HTTP Gateway | A per-run spend counter in Redis, the running total on every conversation response, and a budget rejection error. |
@@ -1099,7 +1102,7 @@ nothing from terminal output.
 | `GET /events` | Server-sent events, resumable with `Last-Event-ID` | mapped from `message_update`, tool and compaction events, `agent_end`, `agent_settled` |
 | `GET /status` | `CREATING`, `RUNNING`, `FINISHED`, `ERROR`, `CANCELED`, `EXPIRED`, plus the last heartbeat | `get_state` |
 | `POST /cancel` | Stop pi and flush session state | `abort`, `clear_queue` |
-| `GET /usage` | Input, output, cached input and cache-write token totals, call counts, and the HTTP Gateway's running total, as the model client recorded them, for reconciliation against the run's `model_call` events | `get_session_stats` |
+| `GET /usage` | Token totals (input, output, `cached_input_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens`), call counts, and the HTTP Gateway's running total, as the model client recorded them, for reconciliation against the run's `model_call` events | `get_session_stats` |
 | `GET /metrics` | OpenTelemetry metrics: turns, tool calls, files changed, test runs, elapsed time | server-side counters |
 
 The server never sends `set_model`, `cycle_model`, `set_thinking_level` or
@@ -1285,7 +1288,10 @@ metering's interface, never the tables.
 **Cache hit rate.** Metering reports the cache hit rate, cached input tokens
 divided by input tokens, per run, harness profile and model, from each
 `model_call` event's `cached_input_tokens` and `input_tokens`. The engine's
-`harness_run.cache_hit_rate` and `result.usage` totals are the cross-check. A
+`harness_run.cache_hit_rate` and `result.usage` totals are the cross-check.
+Metering keeps `cache_write_5m_tokens` and `cache_write_1h_tokens` separate,
+because the two bill at different rates, so it can price cache writes and
+check them against each turn's cost. A
 low rate means something in the prompt prefix changes between turns, which
 multiplies the cost of every turn after it, so it raises an alert (section
 13).
@@ -1380,8 +1386,8 @@ Postgres schema under its own role. No other role has a grant on it.
 | Pool manager | lease | run_id, call_id, sandbox_id, harness_session_id, session_state (new, kept, restored), granted_at, expires_at, released_at, release_reason |
 | Event service | event | event_id (UUID, unique), position (assigned on insert, monotonic), event_type, schema_version, time_utc, source (task, scheduler, dispatcher, watch, workflow, pool, analyzer), actor, run_id, task_id, session_id, request_id, seq, trace_id, config_id, config_version, tags (jsonb), payload (jsonb) |
 | Event service | event_type | name, schema_version, json_schema, retention_class |
-| Metering | model_call | run_id, seq, turn, purpose (turn, compaction, auxiliary), tier, method, engine, model, thinking, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, usd, latency_ms |
-| Metering | attempt_usage | run_id, usd_total, calls, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cache_hit_rate, active_hours |
+| Metering | model_call | run_id, seq, turn, purpose (turn, compaction, auxiliary), tier, method, engine, model, thinking, input_tokens, cached_input_tokens, cache_write_5m_tokens, cache_write_1h_tokens, output_tokens, usd, latency_ms |
+| Metering | attempt_usage | run_id, usd_total, calls, input_tokens, cached_input_tokens, cache_write_5m_tokens, cache_write_1h_tokens, output_tokens, cache_hit_rate, active_hours |
 | Metering | check_result | task_id, check_name, kind (ci, acceptance, merge), passed, observed_at |
 | Metering | task_outcome | task_id, ci_share, merged, total_usd, wasted_usd, active_hours, dollar_hours, closed_at |
 | Metering | spend | caller, period, cap_usd, spent_usd |
