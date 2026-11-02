@@ -642,10 +642,10 @@ sandbox's event stream (section 7).
 |---|---|
 | Identify | Reads `harness_call_id` and `harness_session_id` from the call's provider options, which the router and the fallback chain pass through untouched. Reads the candidate index that the chain places in the request context. `run_id` is the call id plus the candidate index. |
 | Lease | Asks the pool manager for an existing lease on `run_id` first, so a retried call re-attaches to a run already in progress; otherwise requests `lease(run_id, image, harness_session_id, resources)` for the profile's image. The response holds the sandbox address, the lease TTL and the `session_state`: `new`, `kept` or `restored`. The workflow and the console learn which sandbox serves which try from the pool manager's lease record, keyed on `run_id`. |
-| Token | Mints the run-scoped HTTP Gateway token. The token holds the run id, tags, the candidate's inner model as a pin (or a band when the profile says so), the spend cap, and an expiry at `max_minutes` plus grace. |
+| Token | The harness engine requests a run token from the HTTP Gateway, which mints it and keeps the registry; the engine revokes it when the run ends. The token is opaque and holds the run id, tags, the candidate's inner model as a pin (or a band when the profile says so), the spend cap, and an expiry at `max_minutes` plus grace. |
 | Start | When `session_state` is `new`, `POST /run` on the sandbox's harness server with the prompt, acceptance checks, profile, limits and token. When it is `kept` or `restored`, `POST /followup` with the new input and token. |
 | Wait | Follows the harness server's event stream until `run_finished`. The call's `request_timeout_seconds`, set to the lease TTL, is the hard upper bound: on expiry the engine cancels the run and raises `timeout`. A cancel from the control plane reaches the sandbox directly (section 7) and ends the call through the run's terminal state. |
-| Collect | Reads `/usage`, releases the lease, and returns the result. The result has its `harness_run` summary (run id, sandbox id, profile, end reason, turns, PR URL, elapsed time) and a cost line. The cost line's `call_id` is the run id, and its dollars are the run's HTTP Gateway total, recorded as a reported-dollar cost. |
+| Collect | Reads `/usage`, revokes the run token with the HTTP Gateway, releases the lease, and returns the result. The engine revokes the token before it releases the lease on every end, including failure, timeout and cancel. The result has its `harness_run` summary (run id, sandbox id, profile, end reason, turns, PR URL, elapsed time) and a cost line. The cost line's `call_id` is the run id, and its dollars are the run's HTTP Gateway total, recorded as a reported-dollar cost. |
 | Fail | Maps failures to the library's fallback reasons. No sandbox within `ready_timeout` is `unavailable`. An inner model's rate limit or quota error, as the harness reports it, is `rate_limited` or `quota_exhausted`. The lease TTL is `timeout`. A run ending in `ERROR` or on a limit is `run_failed`, which starts no cooldown. |
 
 Each candidate the engine tries is one run and one sandbox, visible to the
@@ -697,10 +697,10 @@ refuses an older library version.
 | Library, PR A | The request cost report attached to the raised exception as `exception.cost` when every candidate fails. |
 | Library, PR A | `route_confidence` on `AITurnResult` and `AIPromptResult`. |
 | Library, PR A | The candidate index in the request context, so the harness engine can name each try. |
-| Library, PR B: engine (3.30.0) | The `harness` completions engine (section 6.3) and the pool and Run API client. The engine has a registry entry and model-string parsing. Its startup probe delegates to the inner model's probe and checks the pool URL, and its capability table delegates to the inner model's. |
+| Library, PR B: engine (3.30.0) | The `harness` completions engine (section 6.3), the pool and Run API client, and an HTTP Gateway client that mints and revokes run tokens. The engine has a registry entry and model-string parsing. Its startup probe delegates to the inner model's probe and checks the pool URL, and its capability table delegates to the inner model's. |
 | Library, PR B | `providers.harness` in `models.json`, carrying the pool and HTTP Gateway URLs. Credentials stay in the environment. |
 | Library, PR B | A `harness_run` summary on the result: `run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`. |
-| HTTP Gateway | Run-scoped tokens, minted by the harness engine, on top of the existing per-caller attribution. A token holds run identity, tags, model pin or band, spend cap and expiry. The token overrides the request body's engine and model. |
+| HTTP Gateway | Run-scoped tokens: the harness engine requests a run token from the HTTP Gateway, which mints it and keeps the registry; the engine revokes it when the run ends. Tokens are opaque and sit on top of the existing per-caller attribution. The engine authenticates to mint and revoke with an HTTP Gateway API key from its environment. A token holds run identity, tags, model pin or band, spend cap and expiry. The token overrides the request body's engine and model. |
 | HTTP Gateway | `route` accepted in the conversation request body. On a pinned token, a body `route` switches that call from pin to band with the pinned model's tier as ceiling; agent turns without `route` stay pinned. |
 | HTTP Gateway | A per-run spend counter in Redis, the running total on every conversation response, and a budget rejection error. |
 | Library, optional | A streaming form of `send_conversation` that yields typed events (text delta, tool-call start, arguments and end, usage, done). It routes through router and chain and commits to a candidate at its first delta. The console's per-turn view does not need it; it streams model text token by token. PII redaction does not apply to streams. |
@@ -849,7 +849,9 @@ sequenceDiagram
     end
     SB->>SB: commit, push, open PR
     SB-->>R: run_finished (SSE)
-    Note over R: engine reads /usage, releases lease, records reported cost
+    Note over R: engine reads /usage
+    R->>GW: revoke run token (run_id)
+    Note over R: engine releases lease, records reported cost
     R-->>W: result: tier, model, PR URL, end reason, cost report
     W->>W: routing_decision, run rows (owned)
     W->>EV: append task_routed, attempt_finished
@@ -948,7 +950,7 @@ sequenceDiagram
     X-->>SB: error
     SB->>SB: stop on limit
     SB-->>R: run_finished (end_reason: budget)
-    Note over R: engine releases lease, records the attempt's cost, raises run_failed (no cooldown)
+    Note over R: engine revokes the run token, releases lease, records the attempt's cost, raises run_failed (no cooldown)
     alt next candidate in tier
         R->>PM: lease(run_id with next candidate index)
         R->>SB: POST /run on new sandbox
@@ -1030,7 +1032,7 @@ sequenceDiagram
     EX->>SB: POST /cancel
     SB->>SB: abort, clear_queue, flush session
     SB-->>R: status CANCELED (SSE)
-    Note over R: engine returns the terminal state, the cancel never travels through the router
+    Note over R: engine revokes the run token and returns the terminal state, the cancel never travels through the router
     R-->>W: result: canceled, partial cost
     W->>PM: release lease
     PM->>SB: drain: collect artifacts and /usage, then destroy
@@ -1052,8 +1054,9 @@ namespace (section 15).
   it.
 - **Repo** cloned with the run's code-host token on a fresh branch. Branch
   protection blocks pushes to default branches.
-- **Model endpoint**: the HTTP Gateway URL and the run-scoped token, injected at
-  lease time. No provider key exists in the sandbox.
+- **Model endpoint**: the HTTP Gateway URL, set in the image, and the
+  run-scoped token, which arrives in the `POST /run` or `POST /followup` body.
+  No provider key exists in the sandbox.
 - **Egress** limited to the code host, package registries and the HTTP Gateway.
 - **Resources** from the profile; 2 vCPU and 4 GB by default.
 - **Lifecycle**: owned by the pool manager (section 8.4). A sandbox serves
@@ -1135,12 +1138,13 @@ stateDiagram-v2
 - `provisioning`: pod created, image pulling, harness server starting.
 - `warm`: `/health` green, no repo, no credentials, no run. Idle, ready to
   lease.
-- `leased`: bound to one run. The pool manager injects the run's code-host token
-  and HTTP Gateway token at lease time, and the sandbox clones the repo then.
+- `leased`: bound to one run. The pool manager injects the run's code-host
+  token at lease time, and the sandbox clones the repo then. The run token
+  arrives later, in the `POST /run` or `POST /followup` body.
 - `kept`: the run has ended and the sandbox waits for the same session's
   next follow-up, for up to `sticky_window`. The manager has saved the
-  session directory and revoked the run token. The repo and session directory
-  stay in place.
+  session directory, and the harness engine revoked the run token when the
+  run ended. The repo and session directory stay in place.
 - `draining`: the run has ended; the manager is collecting artifacts (session
   directory, logs, `/usage`).
 - `destroyed`: pod deleted, record kept for audit.
@@ -1168,8 +1172,8 @@ stateDiagram-v2
   keeps or drains the sandbox. A kept sandbox that fails loses nothing.
 - **Warm sticky.** When a run finishes, the manager may keep its sandbox
   alive for a short window (`sticky_window`, default 10 minutes) keyed by
-  `harness_session_id`, with the repo and session directory intact and the
-  run token revoked. A
+  `harness_session_id`, with the repo and session directory intact. The
+  harness engine has already revoked the run token. A
   follow-up for the same session inside the window gets that sandbox back and
   skips the restore; otherwise the manager drains the sandbox and the follow-up
   restores from the session directory in a fresh one. The window never
@@ -1623,7 +1627,7 @@ flowchart TB
 | Memorystore for Redis | Standard tier with a replica. One key prefix per owner: HTTP Gateway (run tokens, spend counters), scheduler (repo-area locks), run service (code-host token buckets), event service (commit notification fallback, unused while `NOTIFY` suffices). | Failover keeps the data. If spend counters or run tokens are lost, the HTTP Gateway fails closed and rejects turns for any run it cannot verify or meter. Those runs end, and the run service retries them as new attempts. If locks are lost, the scheduler stops admitting until it rebuilds them from the run service's active runs. |
 | Cloud Storage | One bucket per owner: pool manager (session directories under `harness_session_id`, sandbox logs), run service (run artifacts), event service (exports). | Drain retries collection, and a sandbox stays in `draining` until its artifacts are saved or a limit passes. Follow-ups that need a saved session wait. |
 | Artifact Registry | Every image: the harness image and one per control-plane component. | Pods cannot pull uncached images. Running services and warm sandboxes are unaffected, and image rollover pauses. |
-| Secret Manager | Each secret is mounted only into its owner's pods. Provider API keys go to the HTTP Gateway, except the classifier-only key, which goes to the run service. | Secrets are read at pod start, so an outage blocks new pods only. |
+| Secret Manager | Each secret is mounted only into its owner's pods. Provider API keys go to the HTTP Gateway, except the classifier-only key, which goes to the run service with the HTTP Gateway API key the harness engine uses to mint and revoke run tokens. | Secrets are read at pod start, so an outage blocks new pods only. |
 | Cloud NAT and Secure Web Proxy | All egress. The proxy enforces the sandbox allowlist. | Fails closed: sandbox egress stops, runs fail on clone or push, and the run service retries them. No bypass route exists. |
 
 ### Network and identity
@@ -1649,8 +1653,11 @@ flowchart TB
 - **Redis prefixes.** Memorystore has no per-prefix IAM, so each owner's
   client wrapper enforces its prefix. This is the one store where code enforces
   the rule rather than IAM grants.
-- **Run tokens** are application-level: minted by the harness engine and
-  verified by the HTTP Gateway. They are not Google Cloud credentials.
+- **Run tokens** are application-level and opaque: the harness engine
+  requests a run token from the HTTP Gateway, which mints it and keeps the
+  registry; the engine revokes it when the run ends. The engine authenticates
+  with an HTTP Gateway API key, mounted only into the run service. Run tokens
+  are not Google Cloud credentials.
 
 ### Observability
 
