@@ -90,34 +90,56 @@ sequenceDiagram
 
 ## Run it
 
-You need Node 22.19 or later (pi 1.5.0 requires it), a checkout of
-`ai-api-unified-http` with provider keys in its `.env`, and this repo.
-
-Start the gateway in one terminal:
-
-```bash
-cd ai-api-unified-http
-make serve
-```
-
-Run the sample in another:
+You need nvm with Node 22.19 or later installed (pi 1.5.0 requires it), a
+checkout of `ai-api-unified-http` with provider keys in its `.env`, and this
+repo.
 
 ```bash
 cd meta-harness/samples/pi-model-client
-nvm use
-npm install
-GATEWAY_API_KEY=local-dev-key npm start
+make run
 ```
 
-`SAMPLE_ENGINE` and `SAMPLE_MODEL` choose the engine and model the request
-names (default `claude` and `claude-haiku-4-5`). `GATEWAY_URL` defaults to
-`http://localhost:8080`. The task asks for one small text file, then reads it
-back, so a run costs under a cent.
+`make run` takes these steps:
+
+1. Switches to the Node version in `.nvmrc`.
+2. Runs `npm ci` when `node_modules` is missing or older than the lockfile.
+3. Starts the gateway, then waits for `/healthz` to answer. If a gateway
+   already answers at `GATEWAY_URL`, it uses that one and starts nothing.
+4. Prints the gateway and library versions from `/healthz`, then runs the
+   sample.
+5. Stops the gateway it started, including on Ctrl-C.
+
+The gateway's output goes to `gateway.log` in this directory.
+
+| Variable | Default |
+|---|---|
+| `SAMPLE_ENGINE`, `SAMPLE_MODEL` | `claude`, `claude-haiku-4-5`: the engine and model the request names |
+| `GATEWAY_DIR` | `../../../aiapi/ai-api-unified-http`, the gateway checkout |
+| `GATEWAY_PORT`, `GATEWAY_URL` | `8080`, `http://localhost:8080` |
+| `GATEWAY_API_KEY` | `local-dev-key`, the gateway's local development key |
+| `GATEWAY_WAIT_SECONDS` | `60` |
+
+Set any of them on the command line:
+
+```bash
+make run SAMPLE_ENGINE=openai SAMPLE_MODEL=gpt-4o-mini
+```
+
+The task asks for one small text file, then reads it back, so a run costs
+under a cent.
 
 ## What a run looks like
 
-This run used ai-api-unified-http 1.17.0 with library 3.28.0, on
-2026-11-02:
+`make run` starts with these lines. The paths differ on your machine.
+
+```text
+[make] node v22.23.3
+[make] starting the gateway from .../aiapi/ai-api-unified-http, log: .../samples/pi-model-client/gateway.log
+[make] gateway: {"status":"ok","service_version":"1.17.0","api_version":"v1","library_version":"3.28.0"}
+```
+
+It ends with `[make] gateway stopped`. The sample's own output came from
+ai-api-unified-http 1.17.0 with library 3.28.0, on 2026-11-02:
 
 ```text
 [pi] models pi can reach: ai-api-unified/run-model
@@ -167,9 +189,13 @@ outside this sample.
    the library's response cache fails to store the result:
    `UnicodeDecodeError` in `_serialize_result`
    (`middleware/response_cache.py`, `result.model_dump(mode="json")`). The
-   likely cause is binary thought-signature bytes in the turn's
-   `raw_content`. Nobody has confirmed that cause yet, or checked the gateway's
-   conversation token encoding (`json.dumps`) against the same bytes.
+   cause is the turn's `thought_signature`, which the library kept as raw
+   bytes in `raw_content`. ai-api-unified 3.29.1
+   ([#111](https://github.com/davecthomas/ai-api-unified/pull/111)) stores it
+   as base64 text, and its cache no longer raises on a result it cannot
+   store. Gemini works in this sample once the gateway's library pin moves
+   to 3.29.1. Until then, `/healthz`, printed at the start of `make run`,
+   shows `library_version` 3.28.0.
 3. **Once a tool call is in the history, a turn can fail over only within
    that provider.** The gateway's README says so: a provider's tool-call
    content is readable only by that provider's models. Each run therefore
@@ -182,3 +208,10 @@ outside this sample.
 5. **Claude turns showed no cached input tokens.** The OpenAI run cached
    from turn 2. The cause is unknown. Each Claude prompt was about
    2,000 tokens.
+6. **pi runs a turn's tool calls at the same time.** On 2026-11-03 Claude
+   asked for `write` and `read` in one turn. pi started both together, and
+   `read` failed with `ENOENT` before the file existed. The model retried
+   the read on turn 2 and finished in 3 turns. Concurrent execution is pi's
+   default (`toolExecution: "parallel"` in pi-agent-core).
+   `toolExecution: "sequential"`, or `executionMode: "sequential"` on a tool,
+   runs a turn's calls in order. The harness needs to pick one.
