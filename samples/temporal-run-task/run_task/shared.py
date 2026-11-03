@@ -38,16 +38,20 @@ class HarnessRequest:
 
 @dataclass
 class HarnessResult:
-    """What one pi run reported, parsed from its final lines."""
+    """What the harness server reported for the run: its run_finished event and GET /usage."""
 
     attempt: int
-    exit_code: int
+    run_id: str
+    status: str
+    end_reason: str
+    reattached: bool
     turns: int
-    failed_turns: int
+    failed_calls: int
     tokens_in: int
     tokens_out: int
     usd: float
-    file_content: str | None
+    files_changed: list[str]
+    answer: str | None
 
 
 @dataclass

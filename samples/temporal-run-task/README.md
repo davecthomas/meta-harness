@@ -1,28 +1,36 @@
 # Temporal run task sample
 
-This sample runs the [pi model client sample](../pi-model-client/) as a
-Temporal workflow. A Python worker stands in for the design's run service
-(section 7 of the technical design). The workflow `RunTask` has two
-activities:
+This sample runs a coding task as a Temporal workflow, with pi running on the
+[harness server](../../images/harness-pi/). A Python worker stands in for the
+design's run service (section 7 of the technical design). The workflow
+`RunTask` has two activities:
 
 - `prepare` reads a versioned prompt template and returns the prompt.
-- `run_harness` starts the pi sample as a subprocess and waits for it to end.
-  The subprocess stands in for the sandbox lease and the Run API. The
-  activity heartbeats every second while pi runs, streams pi's output to the
-  worker log, and returns a typed result: turns, failed turns, tokens, cost,
-  the content of `hello.txt`, the exit code and the attempt number.
+- `run_harness` starts the run on the harness server with `POST /run`,
+  follows `GET /events` until `run_finished`, and reads `GET /usage`. It
+  heartbeats on every event and returns a typed result: status, turns,
+  tokens, cost, the files pi changed, pi's last answer, the attempt number,
+  and whether the attempt re-attached to a run already in progress.
+
+pi runs in the harness server's process, apart from the worker, so a run
+keeps going when the worker dies. The run id is the workflow id plus
+`:run_harness`, the same on every attempt. A retried attempt sends the same
+`POST /run`, gets the run in progress, and reads its events from the last
+event id it heartbeated. It never starts pi a second time.
 
 The sample also shows two failure paths:
 
 - **Cancel.** Temporal workflow cancellation reaches the running activity
-  through its heartbeat, and the activity stops pi.
+  through its heartbeat, and the activity sends `POST /cancel`, which stops pi
+  with `abort()`.
 - **Worker restart.** The worker is killed with SIGKILL in the middle of a
-  run. A new worker picks up the workflow from its history, and Temporal
-  retries the activity after the heartbeat timeout.
+  run. A new worker picks up the workflow from its history, Temporal retries
+  the activity after the heartbeat timeout, and the retry re-attaches to the
+  run.
 
-It pins `temporalio` 1.34.0. The SDK behavior it relies on was checked
-against that version's source: heartbeats and heartbeat details, cancel
-delivery in the heartbeat reply, `ActivityCancellationType`,
+It pins `temporalio` 1.34.0 and `httpx` 0.28.1. The SDK behavior it relies on
+was checked against that version's source: heartbeats and heartbeat details,
+cancel delivery in the heartbeat reply, `ActivityCancellationType`,
 `workflow.unsafe.imports_passed_through()`, and dataclass payloads in the
 default data converter.
 
@@ -32,11 +40,11 @@ default data converter.
 |---|---|
 | 1. Admit | The starter calls `start_workflow`. There is no scheduler and no slot. |
 | 2. Prepare | `prepare` reads `prompts/hello-v1.txt`. There are no guardrails, no code-host token and no `AGENTS.md`. |
-| 3. Route and run | `run_harness` runs pi as a subprocess. There is no router, harness engine or sandbox lease. The starter names the engine and model. A retried attempt starts a new pi run. The design re-attaches to the run in progress by call id. |
-| 4. Watch | Left out. pi's output goes to the worker log. There is no event stream, event service, pool manager or stall detection beyond the heartbeat timeout. |
-| 5. Follow up | Left out. No pull request, no code-host webhooks, no signals. |
+| 3. Route and run | `run_harness` calls the harness server directly. There is no router, harness engine or sandbox lease. The starter names the engine and model. A retried attempt re-attaches by run id, as the design's harness engine does by call id. |
+| 4. Watch | `run_harness` reads the harness server's event stream and prints it to the worker log. There is no event service, pool manager or stall detection beyond the heartbeat timeout. |
+| 5. Follow up | Left out. The harness server has `POST /followup`, but no pull request, code-host webhooks or signals drive it here. |
 | 6. Close | The workflow returns the result to the starter. There is no task service. |
-| 7. Cancel | Temporal workflow cancellation. The activity stops pi. There is no audit event and no lease to release. |
+| 7. Cancel | Temporal workflow cancellation. The activity sends `POST /cancel`. There is no audit event and no lease to release. |
 
 ## The call path
 
@@ -45,7 +53,7 @@ sequenceDiagram
     participant S as starter
     participant T as Temporal dev server
     participant W as worker
-    participant P as pi sample (npm start)
+    participant H as harness server
     participant G as HTTP Gateway
     S->>T: start_workflow(RunTask, template, engine, model)
     T->>W: workflow task
@@ -54,46 +62,49 @@ sequenceDiagram
     W-->>T: prompt
     W->>T: schedule run_harness
     T->>W: activity task: run_harness
-    W->>P: start with SAMPLE_TASK, SAMPLE_ENGINE, SAMPLE_MODEL
-    Note over W,T: heartbeat every second while pi runs
+    W->>H: POST /run with run id, session id, prompt, profile, token
+    H-->>W: 202 and the run's state
+    W->>H: GET /events
     loop each model turn
-        P->>G: POST /v1/conversations/turn
-        G-->>P: text, tool calls, usage, usd_cost
+        H->>G: POST /v1/conversations/turn
+        G-->>H: text, tool calls, usage, usd_cost
+        H-->>W: turn_started, model_call, tool_call, tool_result, turn_finished
     end
-    P-->>W: [run] line, exit code 0
+    Note over W,T: heartbeat with the last event id, on every event
+    H-->>W: run_finished
+    W->>H: GET /usage
     W-->>T: HarnessResult
     T-->>S: RunTaskResult
 ```
 
 The engine, model and prompt travel in the workflow input, so they appear in
-the workflow history. `GATEWAY_API_KEY` stays in the worker's environment
-and never enters the history.
+the workflow history. `GATEWAY_API_KEY` and `HARNESS_SERVER_TOKEN` stay in
+the worker's environment and never enter the history.
 
 ## Files
 
 | File | Role |
 |---|---|
 | `run_task/workflows.py` | `RunTask`: timeouts, retry policy and cancellation type for each activity |
-| `run_task/activities.py` | `prepare` and `run_harness`: the subprocess, heartbeats, stopping pi, parsing the result |
+| `run_task/activities.py` | `prepare` and `run_harness`: start or re-attach, the event stream, heartbeats, cancel |
 | `run_task/shared.py` | Task queue name and the dataclass payloads |
 | `run_task/worker.py` | Runs the workflow and activities. Stops on SIGINT or SIGTERM. |
 | `run_task/starter.py` | Starts one workflow, prints its id and web UI link, waits, then prints the event history and the result |
-| `prompts/hello-v1.txt` | The prompt template: the pi sample's hello.txt task |
+| `prompts/hello-v1.txt` | The prompt template: create hello.txt and read it back |
 | `Makefile` | `make run`, `make cancel-demo`, `make restart-demo` |
-
-The pi sample reads its prompt from `SAMPLE_TASK`, with the hello.txt task as
-the default, so the workflow supplies the prompt.
 
 ## Settings
 
 | Setting | Value | Why |
 |---|---|---|
-| `run_harness` start-to-close timeout | 10 minutes | The whole pi run |
+| Run id | `<workflow id>:run_harness` | The same on every attempt, so a retry re-attaches |
+| Harness session id | The workflow id | pi's session id and the gateway's prompt cache key |
+| Profile | tools `read`, `write`, `edit`, `ls`, 20 turns, 10 minutes | The harness server enforces both limits |
+| `run_harness` start-to-close timeout | 10 minutes | The whole run |
 | `run_harness` heartbeat timeout | 10 seconds | A worker that stops heartbeating for this long is treated as gone, and the attempt is retried |
-| Heartbeat interval | 1 second, and `max_heartbeat_throttle_interval` 1 second on the worker | A cancel reaches the activity only in a heartbeat reply. By default the SDK holds heartbeats back to 0.8 times the heartbeat timeout. |
-| Retry policy | 3 attempts, 2 seconds first interval, `HarnessConfigError` not retried | Covers a lost worker and a failed pi run. A missing gateway key fails at once. |
-| Cancellation type | `WAIT_CANCELLATION_COMPLETED` | The workflow ends only after the activity has stopped pi |
-| Stopping pi | SIGTERM to pi's process group, then SIGKILL after 2 seconds | pi runs in its own session, so npm, tsx and node stop together |
+| Heartbeats | One per event, and the harness server sends a `heartbeat` event every 2 seconds. `max_heartbeat_throttle_interval` is 1 second on the worker. | A cancel reaches the activity only in a heartbeat reply. By default the SDK holds heartbeats back to 0.8 times the heartbeat timeout. |
+| Retry policy | 3 attempts, 2 seconds first interval | Covers a lost worker and a lost connection to the harness server. A run that ended `ERROR`, `CANCELED` or `EXPIRED` fails the attempt for good, because a retry would re-attach to the same ended run. A refused request does too. |
+| Cancellation type | `WAIT_CANCELLATION_COMPLETED` | The workflow ends only after the harness server has stopped pi |
 
 ## Run it
 
@@ -101,7 +112,7 @@ You need:
 
 - the Temporal CLI: `brew install temporal`
 - [uv](https://docs.astral.sh/uv/)
-- nvm with the Node version in `../pi-model-client/.nvmrc`
+- nvm with the Node version in `../../images/harness-pi/.nvmrc`
 - a checkout of `ai-api-unified-http` with provider keys in its `.env`
 
 No Temporal account or API key is needed. The dev server runs locally.
@@ -113,32 +124,38 @@ make run
 
 `make run` takes these steps:
 
-1. Runs `uv sync`, and `npm ci` in the pi sample when its `node_modules` is
-   missing or older than its lockfile.
+1. Runs `uv sync`, and `npm ci` in `images/harness-pi` when its
+   `node_modules` is missing or older than its lockfile.
 2. Starts `temporal server start-dev` unless a Temporal server answers at
    `TEMPORAL_ADDRESS`.
 3. Starts the gateway unless one answers at `GATEWAY_URL`.
-4. Starts the worker, shows its log, and runs the starter.
-5. Stops everything it started, on exit or Ctrl-C. On Ctrl-C the starter
+4. Starts a new harness server. A harness server holds one session, so
+   `make run` stops if something already answers at `HARNESS_URL`.
+5. Starts the worker, shows its log, and runs the starter.
+6. Stops everything it started, on exit or Ctrl-C. On Ctrl-C the starter
    cancels the workflow and waits for it to end before the worker stops.
 
-Logs go to `temporal.log`, `gateway.log` and `worker.log` in this directory.
-The dev server keeps workflow history in memory, so history is gone once
-`make run` stops it. To keep history and browse it later, set `TEMPORAL_DB`
-to a file path, or start your own dev server first with
-`temporal server start-dev`. `make run` then uses that one and leaves it
-running. The web UI is at http://localhost:8233 while the server runs.
+Logs go to `temporal.log`, `gateway.log`, `harness-server.log` and
+`worker.log` in this directory. The dev server keeps workflow history in
+memory, so history is gone once `make run` stops it. To keep history and
+browse it later, set `TEMPORAL_DB` to a file path, or start your own dev
+server first with `temporal server start-dev`. `make run` then uses that one
+and leaves it running. The web UI is at http://localhost:8233 while the
+server runs.
 
 | Variable | Default |
 |---|---|
 | `SAMPLE_ENGINE`, `SAMPLE_MODEL` | `claude`, `claude-haiku-4-5` |
+| `HARNESS_DIR` | `../../images/harness-pi` |
+| `HARNESS_PORT`, `HARNESS_URL` | `8090`, `http://127.0.0.1:8090` |
+| `HARNESS_SERVER_TOKEN` | `local-harness-token` |
 | `GATEWAY_DIR` | `../../../aiapi/ai-api-unified-http`, the gateway checkout |
 | `GATEWAY_PORT`, `GATEWAY_URL` | `8080`, `http://localhost:8080` |
 | `GATEWAY_API_KEY` | `local-dev-key`, the gateway's local development key |
 | `TEMPORAL_PORT`, `TEMPORAL_ADDRESS` | `7233`, `localhost:7233` |
 | `TEMPORAL_DB` | empty: history in memory |
 | `WAIT_SECONDS` | `60`, how long to wait for each service to start |
-| `CANCEL_AT`, `RESTART_AT` | `[pi] turn 1 starts`, `[pi] turn 2 starts`: the worker log line each demo waits for |
+| `CANCEL_AT`, `RESTART_AT` | `turn 1 starts`, `turn 2 starts`: the worker log line each demo waits for |
 
 ```bash
 make run SAMPLE_ENGINE=openai SAMPLE_MODEL=gpt-4o-mini
@@ -156,7 +173,7 @@ Each line starts with a tag that names where it came from.
 | `[worker]` | The worker process starting and stopping |
 | `[workflow]` | `RunTask`, through `workflow.logger`: each step it schedules and what came back |
 | `[activity]` | `prepare` and `run_harness`, through `activity.logger`: each attempt and its heartbeats |
-| `[run_harness attempt N]` | pi's own output, which the activity streams line by line |
+| `[run_harness attempt N]` | The activity: what `POST /run` did, then one line per harness server event, numbered with the event's id. Heartbeat events are not printed. |
 | `[history]` | The starter, after the workflow ends: every event the Temporal server recorded for the run |
 | `[temporalio.…]` | The SDK's own messages, such as a failed activity attempt |
 | `[starter]`, `[result]` | The starter |
@@ -181,36 +198,39 @@ library 3.29.1. Paths are shortened, and `...` marks lines left out.
 [make] starting the Temporal dev server on port 7233, log: .../samples/temporal-run-task/temporal.log
 [make] starting the gateway from .../aiapi/ai-api-unified-http, log: .../samples/temporal-run-task/gateway.log
 [make] gateway: {"status":"ok","service_version":"1.17.1","api_version":"v1","library_version":"3.29.1"}
+[make] starting the harness server from .../meta-harness/images/harness-pi, log: .../samples/temporal-run-task/harness-server.log
+[make] harness server: {"ok":true,"checks":{"model_client_registered":true,"workspace_exists":true,"gateway_reachable":true},"session_id":null}
 [worker] polling task queue run-task on localhost:7233
-[starter] started workflow run-task-0fd309bc  engine=claude  model=claude-haiku-4-5
-[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-0fd309bc
-[workflow] run-task-0fd309bc: started, run id 01a1a259-fa17-79a0-a929-f854423bae7a, template hello-v1, engine claude, model claude-haiku-4-5
-[workflow] run-task-0fd309bc: scheduling activity prepare (timeout 30s, up to 3 attempts)
+[starter] started workflow run-task-22430bc9  engine=claude  model=claude-haiku-4-5
+[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-22430bc9
+[workflow] run-task-22430bc9: started, run id 01a1a2ae-37d8-7036-97cc-69d46dfd1c92, template hello-v1, engine claude, model claude-haiku-4-5
+[workflow] run-task-22430bc9: scheduling activity prepare (timeout 30s, up to 3 attempts)
 [activity] prepare attempt 1: read the prompt from prompts/hello-v1.txt
-[workflow] run-task-0fd309bc: prepare returned a 135-character prompt
-[workflow] run-task-0fd309bc: scheduling activity run_harness (timeout 10m, heartbeat timeout 10s, up to 3 attempts)
-[activity] run_harness attempt 1 started for run-task-0fd309bc, heartbeat timeout 10s
-[run_harness attempt 1] started pi, process group 344
-[activity] run_harness attempt 1: first heartbeat sent, then one every 1s while pi runs
-[run_harness attempt 1] [pi] models pi can reach: ai-api-unified/run-model
-[run_harness attempt 1] [pi] active tools: read, write, edit, ls
-[run_harness attempt 1] [pi] task: Create a file named hello.txt containing exactly one line: a short friendly greeting. Then read the file back and tell me what it says.
-[run_harness attempt 1] [pi] turn 1 starts
-[run_harness attempt 1] [model client] POST /v1/conversations/turn  requested=claude:claude-haiku-4-5  messages=1  tools=read,write,edit,ls
-[run_harness attempt 1] [ai-api-unified] served by claude:claude-haiku-4-5  fallback=false  finish=tool_use  tool_calls=write  tokens in=2061 out=160 cached=0  usd=0.002861  cache_hit=false
-[run_harness attempt 1] [pi] runs tool write {"path":"hello.txt","content":"Hello! Hope you're having a great day!"}
-[run_harness attempt 1] [pi] tool write done: Successfully wrote to hello.txt
-[run_harness attempt 1] [pi] turn 2 starts
-...
-[run_harness attempt 1] [pi] turn 3 starts
-...
-[run_harness attempt 1] [workspace] files: hello.txt
-[run_harness attempt 1] [workspace] hello.txt: Hello! Hope you're having a great day!
-[run_harness attempt 1] [run] model turns=3  failed=0  tokens in=6633 out=247  usd=0.007868
-[activity] run_harness attempt 1: pi exited 0 after 6 heartbeats, returning the result to Temporal
-[workflow] run-task-0fd309bc: run_harness returned on attempt 1: 3 turns, usd 0.007868
-[workflow] run-task-0fd309bc: completed
-[history] events the Temporal server recorded for run-task-0fd309bc:
+[workflow] run-task-22430bc9: prepare returned a 135-character prompt
+[workflow] run-task-22430bc9: scheduling activity run_harness (timeout 10m, heartbeat timeout 10s, up to 3 attempts)
+[activity] run_harness attempt 1 started for run-task-22430bc9, heartbeat timeout 10s
+[run_harness attempt 1] POST /run started run run-task-22430bc9:run_harness
+[run_harness attempt 1] #1 turn 1 starts
+[run_harness attempt 1] #3 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write,read  tokens in=1923 out=183 cached=0  usd=0.002838
+[run_harness attempt 1] #4 runs tool write {"path": "hello.txt", "content": "Hello! It's great to see you today!"}
+[run_harness attempt 1] #5 runs tool read {"path": "hello.txt"}
+[run_harness attempt 1] #6 tool read failed: ENOENT: no such file or directory, access '.../harness-workspace-pfw6s1/hello.txt'
+[run_harness attempt 1] #7 tool write done
+[run_harness attempt 1] #8 file changed: hello.txt
+[run_harness attempt 1] #9 turn 1 finished
+[run_harness attempt 1] #10 turn 2 starts
+[run_harness attempt 1] #11 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=read  tokens in=2238 out=61 cached=0  usd=0.002543
+[run_harness attempt 1] #12 runs tool read {"path": "hello.txt"}
+[run_harness attempt 1] #13 tool read done
+[run_harness attempt 1] #14 turn 2 finished: Let me try reading it again:
+[run_harness attempt 1] #15 turn 3 starts
+[run_harness attempt 1] #17 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2324 out=64 cached=0  usd=0.002644
+[run_harness attempt 1] #18 turn 3 finished: Perfect! I've successfully created the file `hello.txt` and read it back. The file contains: **"Hello! It's great to see you today!"** The file was created with exactly one line containing a short fri
+[run_harness attempt 1] #19 run finished: FINISHED (completed)
+[activity] run_harness attempt 1: run finished, 20 heartbeats sent, returning the result to Temporal
+[workflow] run-task-22430bc9: run_harness returned on attempt 1: 3 turns, usd 0.008025
+[workflow] run-task-22430bc9: completed
+[history] events the Temporal server recorded for run-task-22430bc9:
 [history]   1  WorkflowExecutionStarted          task queue run-task
 [history]   2  WorkflowTaskScheduled
 [history]   3  WorkflowTaskStarted
@@ -228,25 +248,30 @@ library 3.29.1. Paths are shortened, and `...` marks lines left out.
 [history]  15  WorkflowTaskStarted
 [history]  16  WorkflowTaskCompleted
 [history]  17  WorkflowExecutionCompleted
-[starter] workflow run-task-0fd309bc completed
-[result] template=hello-v1  attempt=1  exit_code=0
-[result] turns=3  failed=0  tokens in=6633 out=247  usd=0.007868
-[result] hello.txt: Hello! Hope you're having a great day!
+[starter] workflow run-task-22430bc9 completed
+[result] template=hello-v1  run=run-task-22430bc9:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
+[result] turns=3  failed calls=0  tokens in=6485 out=308  usd=0.008025
+[result] files changed: hello.txt
+[result] answer: Perfect! I've successfully created the file `hello.txt` and read it back. The file contains: **"Hello! It's great to see you today!"** The file was created with exactly one line containing a short friendly greeting, and I've confirmed it by reading it back.
 [worker] shutting down
 [temporalio.worker._worker] Beginning worker shutdown, will wait 0:00:00 before cancelling activities
 [worker] stopped
 [make] worker stopped
+[make] harness server stopped
 [make] gateway stopped
 [make] Temporal dev server stopped
 ```
+
+Event ids missing from the list, such as 2 and 16, are `heartbeat` events,
+which the activity does not print.
 
 Each `WorkflowTask` trio in the history is the worker running workflow code
 until it next waits: once at the start, then once after each activity
 returns. Each pass ends by sending the server its next commands: schedule
 `prepare`, schedule `run_harness`, complete the workflow.
 
-Some runs show `[pi] tool read failed: ENOENT` on turn 1. That is pi running
-a turn's tool calls at the same time (finding 6 of the pi sample).
+The failed `read` on turn 1 is pi running a turn's tool calls at the same
+time (finding 6 of the pi sample).
 
 ## Cancel
 
@@ -254,17 +279,26 @@ a turn's tool calls at the same time (finding 6 of the pi sample).
 make cancel-demo
 ```
 
-This runs the same task. When the worker log shows `[pi] turn 1 starts`, it
-runs `temporal workflow cancel --workflow-id <id>`, the way an operator
-would. Output from 2026-11-03, after the same startup lines:
+This runs the same task. When the worker log shows `turn 1 starts`, it runs
+`temporal workflow cancel --workflow-id <id>`, the way an operator would.
+Output from 2026-11-03, after the same startup lines:
 
 ```text
-[run_harness attempt 1] [pi] turn 1 starts
-[make] temporal workflow cancel --workflow-id run-task-2796a3b6
-[run_harness attempt 1] cancellation received (cancel_requested), stopping pi
-[run_harness attempt 1] pi stopped by SIGKILL, 2s after SIGTERM, exit code -9
-[workflow] run-task-2796a3b6: canceled, and run_harness has stopped pi
-[starter] workflow run-task-2796a3b6 canceled
+[run_harness attempt 1] #1 turn 1 starts
+[make] temporal workflow cancel --workflow-id run-task-3db53910
+[run_harness attempt 1] cancellation received (cancel_requested), sending POST /cancel
+[run_harness attempt 1] harness server stopped pi: run CANCELED
+[workflow] run-task-3db53910: canceled, and run_harness has stopped pi
+[starter] workflow run-task-3db53910 canceled
+```
+
+`harness-server.log` shows pi's side. `abort()` canceled the model call in
+flight, and the run ended:
+
+```text
+[harness-server] #2 run-task-3db53910:run_harness model_call error: This operation was aborted
+[harness-server] #3 run-task-3db53910:run_harness turn_finished {"turn":1,"stop_reason":"aborted","text":"","tool_calls":0}
+[harness-server] #4 run-task-3db53910:run_harness run_finished CANCELED canceled
 ```
 
 The `[history]` lines show the order, from event 11:
@@ -288,110 +322,110 @@ The cancel request reaches the workflow first (12). The workflow then asks
 for the activity to be canceled (16). `ActivityTaskStarted` comes after the
 cancel request because Temporal writes it when the attempt ends.
 
-The workflow ended about 3 seconds after the cancel request: up to 1 second
-for the heartbeat reply, then the 2 second SIGTERM grace period.
-
 ## Worker restart
 
 ```bash
 make restart-demo
 ```
 
-When the worker log shows `[pi] turn 2 starts`, the Makefile kills the
-worker's process group with SIGKILL, then starts a new worker. To do it by
-hand, run `make run` with a Temporal dev server you started yourself, and in
-another terminal run `pkill -KILL -f run_task.worker`, then
-`uv run python -m run_task.worker` in this directory with `GATEWAY_URL` and
+When the worker log shows `turn 2 starts`, the Makefile kills the worker's
+process group with SIGKILL, then starts a new worker. The harness server is a
+separate process and keeps running pi. To do it by hand, run `make run` with
+a Temporal dev server you started yourself, and in another terminal run
+`pkill -KILL -f run_task.worker`, then `uv run python -m run_task.worker` in
+this directory with `HARNESS_URL`, `HARNESS_SERVER_TOKEN` and
 `GATEWAY_API_KEY` set.
 
 Output from 2026-11-03:
 
 ```text
-[run_harness attempt 1] [pi] turn 2 starts
-[make] killing the worker with SIGKILL (process group 4738)
+[run_harness attempt 1] #10 turn 2 starts
+[make] killing the worker with SIGKILL (process group 17341). The harness server keeps running pi.
 [make] Temporal retries run_harness once 10s pass with no heartbeat, plus the 2s retry interval
 [make] starting a new worker
 [worker] polling task queue run-task on localhost:7233
-[activity] run_harness attempt 2 started for run-task-a78a0ca7, heartbeat timeout 10s
-[run_harness attempt 2] previous attempt's pi (process group 4757) is gone
-[run_harness attempt 2] started pi, process group 5190
-[activity] run_harness attempt 2: first heartbeat sent, then one every 1s while pi runs
+[activity] run_harness attempt 2 started for run-task-9ef411d2, heartbeat timeout 10s
+[run_harness attempt 2] POST /run: run run-task-9ef411d2:run_harness already exists (FINISHED). Re-attaching after event 5, without starting pi again
+[run_harness attempt 2] #6 tool read failed: ENOENT: no such file or directory, access '.../harness-workspace-duHHuD/hello.txt'
+[run_harness attempt 2] #7 tool write done
+[run_harness attempt 2] #8 file changed: hello.txt
+[run_harness attempt 2] #9 turn 1 finished
+[run_harness attempt 2] #10 turn 2 starts
+[run_harness attempt 2] #12 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=read  tokens in=2235 out=61 cached=0  usd=0.00254
 ...
-[run_harness attempt 2] [run] model turns=3  failed=0  tokens in=6970 out=433  usd=0.009135
-[activity] run_harness attempt 2: pi exited 0 after 6 heartbeats, returning the result to Temporal
-[workflow] run-task-a78a0ca7: this worker has no state for the workflow, so it replays the history to rebuild it. Steps already in the history do not run again.
-[workflow] run-task-a78a0ca7: run_harness returned on attempt 2: 3 turns, usd 0.009135
-[workflow] run-task-a78a0ca7: completed
-[history] events the Temporal server recorded for run-task-a78a0ca7:
-...
-[history]   5  ActivityTaskScheduled             prepare
-[history]   6  ActivityTaskStarted               prepare, attempt 1
-[history]   7  ActivityTaskCompleted             prepare
+[run_harness attempt 2] #19 run finished: FINISHED (completed)
+[activity] run_harness attempt 2: run finished, 15 heartbeats sent, returning the result to Temporal
+[workflow] run-task-9ef411d2: this worker has no state for the workflow, so it replays the history to rebuild it. Steps already in the history do not run again.
+[workflow] run-task-9ef411d2: run_harness returned on attempt 2: 3 turns, usd 0.007924
+[workflow] run-task-9ef411d2: completed
 ...
 [history]  11  ActivityTaskScheduled             run_harness
 [history]  12  ActivityTaskStarted               run_harness, attempt 2, previous attempt: activity Heartbeat timeout
 [history]  13  ActivityTaskCompleted             run_harness
 ...
-[history]  17  WorkflowExecutionCompleted
-[starter] workflow run-task-a78a0ca7 completed
-[result] template=hello-v1  attempt=2  exit_code=0
-[result] turns=3  failed=0  tokens in=6970 out=433  usd=0.009135
-[result] hello.txt: Hello! Hope you're having a wonderful day! 🌟
+[starter] workflow run-task-9ef411d2 completed
+[result] template=hello-v1  run=run-task-9ef411d2:run_harness  status=FINISHED (completed)  attempt=2  reattached=True
+[result] turns=3  failed calls=0  tokens in=6484 out=288  usd=0.007924
+[result] files changed: hello.txt
 ```
 
-The new worker ran attempt 2 of `run_harness` with no workflow state. When
-the activity returned, the worker needed the workflow to decide its next
-step, so it replayed the history. The replay matched `prepare` and the
-`run_harness` schedule to events 5 to 11 and ran neither again. That is why
-no `[workflow]` line repeats, and why `prepare` ran once. The history shows
-one `run_harness` start, for attempt 2. That event carries attempt 1's
-heartbeat timeout. Attempt 2 started about 16 seconds after attempt 1:
-roughly 4 seconds of attempt 1, the 10 second heartbeat timeout, and the
-2 second retry interval.
+pi ran once. It finished all three turns while Temporal waited out the
+heartbeat timeout, so attempt 2 found the run `FINISHED`. Had pi still been
+working, attempt 2 would have followed the rest of the run live. The result
+is one run's cost, $0.0079. Before the harness server, attempt 2 started pi
+again and paid for the turns attempt 1 had finished.
 
-Each heartbeat carries pi's process group id. A retried attempt reads it from
-the last heartbeat. If that pi is still running, the new attempt stops it
-before it starts a new one. In the run above, attempt 1's pi had already
-exited. A second test pointed the worker at a local port that accepts
-connections and never answers, so pi was still waiting on its first model
-call when the worker died. Attempt 2 printed
-`previous attempt's pi is still running (process group 90426), stopping it`.
+Attempt 2 printed events 6 to 10 again. Its first heartbeat detail came from
+attempt 1, whose last heartbeat Temporal recorded at event 5. Heartbeats are
+throttled, so the recorded event id can trail the last event printed. The
+activity reads events at least once, never fewer, and its file list ignores
+repeats.
+
+The new worker also replayed the workflow's history to rebuild it. The replay
+matched `prepare` and the `run_harness` schedule to events 5 to 11 and ran
+neither again, so `prepare` ran once.
 
 ## Findings
 
-1. **Under tsx, pi ignores SIGTERM.** Importing pi's SDK adds a SIGTERM
-   listener from `signal-exit` 3.0.7, which comes in through pi's dependency
-   `proper-lockfile`. tsx adds its own hidden SIGTERM listener in the child
-   process. With both in place, a test script that imports pi and runs under
-   `npm start` and tsx kept running after SIGTERM. Under plain `node`, the
-   same import exits on SIGTERM with code 143. The exact interaction between
-   the two listeners was not traced. In the first cancel test the activity
-   waited 5 seconds after SIGTERM, and pi finished all its turns in that
-   time. The activity now sends SIGKILL after 2 seconds. The harness server
-   should run under plain `node`, or handle SIGTERM itself by calling
-   `abort()` and exiting.
-2. **A cancel does not stop a model call in flight.** In the cancel demo pi
-   was killed during turn 1. The gateway still finished that turn and billed
-   it ($0.0031). The gateway does not stop a provider call when its client
-   goes away.
-3. **A retried attempt starts the run again.** The design's harness engine
-   re-attaches to the run in progress by call id. A subprocess cannot be
-   re-attached once its parent dies, so attempt 2 started from the
-   beginning. In the restart demo the two turns attempt 1 had finished were
-   paid for and lost.
-4. **A worker shutdown during a run fails the activity.** The worker's
-   default `graceful_shutdown_timeout` is zero, so a running activity fails
-   with "Worker is shutting down and this activity did not complete in
-   time". Temporal retries it, unless a cancel was already requested. In
-   that case the workflow ends Failed instead of Canceled, and it stays
-   Running until some worker comes back to record that. The first version of
-   the starter hit this on Ctrl-C, because `make` stopped the worker while
-   the cancel was still in progress. The starter now waits for the workflow
-   to end before it exits. The run service needs a drain step for deploys.
-5. **The pi sample exits 0 when every model turn fails.** With the gateway
-   unreachable it printed `[run] model turns=1  failed=1` and exited 0. The
-   activity treats "every turn failed" as an error, so Temporal retries it.
+1. **Resolved: under tsx, pi ignored SIGTERM.** The first version of this
+   sample ran pi under `npm start` and tsx. Importing pi's SDK adds a SIGTERM
+   listener from `signal-exit` 3.0.7, through pi's dependency
+   `proper-lockfile`, and tsx adds a hidden one in its child process. With
+   both, pi kept running after SIGTERM, and the activity had to send SIGKILL.
+   The harness server runs under plain `node` and handles SIGTERM itself: it
+   aborts the run, ends it `ERROR` with `server_shutdown`, and exits. Its
+   tests check that it exits within 5 seconds during a model call. Cancel
+   uses `POST /cancel` and `abort()`, with no signal at all.
+2. **A cancel does not stop a model call the gateway is already serving.**
+   `abort()` cancels the model client's request, as `harness-server.log`
+   shows in the cancel demo. The gateway does not stop a provider call when
+   its client goes away. In an earlier cancel test the gateway finished the
+   turn and billed it ($0.0031).
+3. **Resolved: a retried attempt started the run again.** A subprocess could
+   not be re-attached once its parent died, so attempt 2 started pi from the
+   beginning and the finished turns were paid for and lost. Now the run lives
+   on the harness server, `POST /run` is idempotent on run id, and attempt 2
+   re-attaches.
+4. **A worker shutdown during a run fails the activity attempt.** The
+   worker's default `graceful_shutdown_timeout` is zero, so a running
+   activity fails with "Worker is shutting down and this activity did not
+   complete in time". The activity tells this apart from a workflow cancel:
+   it leaves the run going on the harness server, and the next attempt
+   re-attaches. If a cancel was already requested, the workflow ends Failed
+   instead of Canceled, and it stays Running until some worker comes back to
+   record that. The starter waits for the workflow to end before it exits, so
+   Ctrl-C does not hit this. The run service needs a drain step for deploys.
+5. **Resolved: the pi sample exited 0 when every model turn failed.** The
+   harness server ends that run `ERROR` with `model_error`, and its tests
+   cover it.
 6. **Workflow history holds the prompt and the result in plain text.** Both
    show in the web UI. Real prompts carry repo content. The run service
    should decide what goes into workflow input and results, and whether to
    add a payload codec that encrypts them.
+7. **A run that ended in error cannot be retried on the same harness
+   server.** A retry with the same run id re-attaches to the ended run, and
+   one server holds one session, so a new run id is refused. The activity
+   therefore fails the attempt for good when the run ends `ERROR`, `CANCELED`
+   or `EXPIRED`. In the design, a failed run is the router's fallback to the
+   next candidate in a new sandbox. That needs the harness engine and the
+   pool manager.

@@ -79,12 +79,18 @@ async def main(workflow_id: str) -> int:
     await _print_history(handle)
     h = result.harness
     print(f"[starter] workflow {workflow_id} completed", flush=True)
-    print(f"[result] template={result.template}  attempt={h.attempt}  exit_code={h.exit_code}", flush=True)
     print(
-        f"[result] turns={h.turns}  failed={h.failed_turns}  tokens in={h.tokens_in} out={h.tokens_out}  usd={h.usd:.6f}",
+        f"[result] template={result.template}  run={h.run_id}  status={h.status} ({h.end_reason})  "
+        f"attempt={h.attempt}  reattached={h.reattached}",
         flush=True,
     )
-    print(f"[result] hello.txt: {h.file_content}", flush=True)
+    print(
+        f"[result] turns={h.turns}  failed calls={h.failed_calls}  tokens in={h.tokens_in} out={h.tokens_out}  "
+        f"usd={h.usd:.6f}",
+        flush=True,
+    )
+    print(f"[result] files changed: {', '.join(h.files_changed) or 'none'}", flush=True)
+    print(f"[result] answer: {h.answer}", flush=True)
     return 0
 
 

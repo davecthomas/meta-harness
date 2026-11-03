@@ -1,16 +1,18 @@
 # Runs the sample end to end with one command: `make run` (or just `make`).
 #
-# 1. Installs the Python packages with uv, and the pi sample's Node packages
-#    with npm under the Node version in its .nvmrc.
+# 1. Installs the Python packages with uv, and the harness server's Node
+#    packages with npm under the Node version in its .nvmrc.
 # 2. Uses the Temporal server already answering at TEMPORAL_ADDRESS. If none
 #    answers, starts `temporal server start-dev` and stops it at the end.
 # 3. Uses the HTTP Gateway already answering at GATEWAY_URL. If none answers,
 #    starts one from the ai-api-unified-http checkout at GATEWAY_DIR and stops
 #    it at the end.
-# 4. Starts the worker, shows its log, and runs the starter.
-# 5. On exit or Ctrl-C, stops everything it started.
+# 4. Starts a new harness server from images/harness-pi. A harness server holds
+#    one session, so every run gets its own.
+# 5. Starts the worker, shows its log, and runs the starter.
+# 6. On exit or Ctrl-C, stops everything it started.
 #
-# Logs: temporal.log, gateway.log and worker.log in this directory.
+# Logs: temporal.log, gateway.log, harness-server.log and worker.log in this directory.
 #
 # Demos of the same run:
 #   make cancel-demo    cancels the workflow with `temporal workflow cancel`
@@ -22,7 +24,10 @@
 
 SHELL := /bin/bash
 
-PI_SAMPLE_DIR ?= $(abspath $(CURDIR)/../pi-model-client)
+HARNESS_DIR ?= $(abspath $(CURDIR)/../../images/harness-pi)
+HARNESS_PORT ?= 8090
+HARNESS_URL ?= http://127.0.0.1:$(HARNESS_PORT)
+HARNESS_SERVER_TOKEN ?= local-harness-token
 GATEWAY_DIR ?= $(abspath $(CURDIR)/../../../aiapi/ai-api-unified-http)
 GATEWAY_PORT ?= 8080
 GATEWAY_URL ?= http://localhost:$(GATEWAY_PORT)
@@ -37,26 +42,27 @@ SAMPLE_MODEL ?= claude-haiku-4-5
 NVM_DIR ?= $(HOME)/.nvm
 UV ?= $(or $(shell command -v uv),$(HOME)/.local/bin/uv)
 DEMO ?=
-CANCEL_AT ?= [pi] turn 1 starts
-RESTART_AT ?= [pi] turn 2 starts
+CANCEL_AT ?= turn 1 starts
+RESTART_AT ?= turn 2 starts
 
-export PI_SAMPLE_DIR GATEWAY_URL GATEWAY_API_KEY TEMPORAL_ADDRESS TEMPORAL_UI_URL SAMPLE_ENGINE SAMPLE_MODEL NVM_DIR
+export HARNESS_URL HARNESS_SERVER_TOKEN GATEWAY_URL GATEWAY_API_KEY TEMPORAL_ADDRESS TEMPORAL_UI_URL SAMPLE_ENGINE SAMPLE_MODEL
 
 .PHONY: run cancel-demo restart-demo
 
 run:
 	@if [ -s "$(NVM_DIR)/nvm.sh" ]; then \
 	  source "$(NVM_DIR)/nvm.sh"; \
-	  (cd "$(PI_SAMPLE_DIR)" && nvm use >/dev/null) || { echo "[make] Node $$(cat "$(PI_SAMPLE_DIR)/.nvmrc") is not installed. Run: nvm install $$(cat "$(PI_SAMPLE_DIR)/.nvmrc")"; exit 1; }; \
+	  (cd "$(HARNESS_DIR)" && nvm use >/dev/null) || { echo "[make] Node $$(cat "$(HARNESS_DIR)/.nvmrc") is not installed. Run: nvm install $$(cat "$(HARNESS_DIR)/.nvmrc")"; exit 1; }; \
 	else \
-	  echo "[make] nvm is not installed at $(NVM_DIR). The worker starts pi through nvm."; exit 1; \
+	  echo "[make] nvm is not installed at $(NVM_DIR). The harness server runs under the Node version in its .nvmrc."; exit 1; \
 	fi; \
 	set -eo pipefail; \
-	temporal_pid=; gateway_pid=; worker_pid=; tail_pid=; \
+	temporal_pid=; gateway_pid=; harness_pid=; worker_pid=; tail_pid=; \
 	stop_group() { kill -TERM -- "-$$1" 2>/dev/null || true; wait "$$1" 2>/dev/null || true; echo "[make] $$2 stopped"; }; \
 	stop_all() { \
 	  [ -z "$$worker_pid" ] || stop_group "$$worker_pid" worker; \
 	  [ -z "$$tail_pid" ] || { sleep 1; kill "$$tail_pid" 2>/dev/null || true; wait "$$tail_pid" 2>/dev/null || true; }; \
+	  [ -z "$$harness_pid" ] || stop_group "$$harness_pid" "harness server"; \
 	  [ -z "$$gateway_pid" ] || stop_group "$$gateway_pid" gateway; \
 	  [ -z "$$temporal_pid" ] || stop_group "$$temporal_pid" "Temporal dev server"; \
 	}; \
@@ -78,8 +84,8 @@ run:
 	  echo "[make] the worker did not start. See worker.log"; return 1; \
 	}; \
 	"$(UV)" sync --quiet; \
-	if [ ! -f "$(PI_SAMPLE_DIR)/node_modules/.package-lock.json" ] || [ "$(PI_SAMPLE_DIR)/package-lock.json" -nt "$(PI_SAMPLE_DIR)/node_modules/.package-lock.json" ]; then \
-	  (cd "$(PI_SAMPLE_DIR)" && nvm use >/dev/null && npm ci); \
+	if [ ! -f "$(HARNESS_DIR)/node_modules/.package-lock.json" ] || [ "$(HARNESS_DIR)/package-lock.json" -nt "$(HARNESS_DIR)/node_modules/.package-lock.json" ]; then \
+	  (cd "$(HARNESS_DIR)" && nvm use >/dev/null && npm ci); \
 	fi; \
 	temporal_up() { temporal operator cluster health --address "$(TEMPORAL_ADDRESS)" >/dev/null 2>&1; }; \
 	if temporal_up; then \
@@ -100,6 +106,14 @@ run:
 	  wait_for "the gateway" gateway_up "$$gateway_pid" gateway.log; \
 	fi; \
 	echo "[make] gateway: $$(curl -fsS "$(GATEWAY_URL)/healthz")"; \
+	harness_up() { curl -fsS -H "Authorization: Bearer $(HARNESS_SERVER_TOKEN)" "$(HARNESS_URL)/health" >/dev/null 2>&1; }; \
+	if curl -s -o /dev/null "$(HARNESS_URL)/health" 2>/dev/null; then \
+	  echo "[make] something already answers at $(HARNESS_URL). Stop it, or set HARNESS_PORT to a free port."; exit 1; \
+	fi; \
+	echo "[make] starting the harness server from $(HARNESS_DIR), log: $(CURDIR)/harness-server.log"; \
+	set -m; (cd "$(HARNESS_DIR)" && nvm use >/dev/null && PORT=$(HARNESS_PORT) HEARTBEAT_SECONDS=2 exec node server/main.ts) >harness-server.log 2>&1 & harness_pid=$$!; set +m; \
+	wait_for "the harness server" harness_up "$$harness_pid" harness-server.log; \
+	echo "[make] harness server: $$(curl -fsS -H "Authorization: Bearer $(HARNESS_SERVER_TOKEN)" "$(HARNESS_URL)/health")"; \
 	: >worker.log; \
 	tail -n +1 -F worker.log 2>/dev/null & tail_pid=$$!; \
 	start_worker; \
@@ -119,7 +133,7 @@ run:
 	  restart) \
 	    .venv/bin/python -m run_task.starter --workflow-id "$$workflow_id" & starter_pid=$$!; \
 	    wait_for_log '$(RESTART_AT)'; \
-	    echo "[make] killing the worker with SIGKILL (process group $$worker_pid)"; \
+	    echo "[make] killing the worker with SIGKILL (process group $$worker_pid). The harness server keeps running pi."; \
 	    kill -KILL -- "-$$worker_pid"; wait "$$worker_pid" 2>/dev/null || true; \
 	    echo "[make] Temporal retries run_harness once 10s pass with no heartbeat, plus the 2s retry interval"; \
 	    echo "[make] starting a new worker"; \
