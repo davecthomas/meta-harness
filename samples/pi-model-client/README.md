@@ -1,11 +1,15 @@
 # pi model client sample
 
 This sample runs pi in its own Node process through pi's TypeScript SDK, the
-way the harness server will (section 8.2 of the technical design). pi plans
+way the harness server does (section 8.2 of the technical design). pi plans
 the work and runs the tools. Every model call pi makes goes through the
 **model client**, the one provider pi can see. The model client sends each
 turn to the HTTP Gateway (`ai-api-unified-http`), and ai-api-unified picks
 and calls the real model.
+
+The [harness server](../../images/harness-pi/) grew out of this sample, and
+its `extension/` directory holds the maintained model client. This sample
+keeps its own copy so it runs on its own.
 
 It pins `@earendil-works/pi-coding-agent` and `@earendil-works/pi-ai` at
 1.5.0. The pi APIs it uses come from the

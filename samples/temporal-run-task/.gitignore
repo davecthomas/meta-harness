@@ -3,3 +3,6 @@ __pycache__/
 temporal.log
 gateway.log
 worker.log
+harness-server.log
+runs/
+stack/

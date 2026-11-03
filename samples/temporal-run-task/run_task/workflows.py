@@ -46,10 +46,10 @@ class RunTask:
                 flush=True,
             )
         log.info(
-            "%s: started, run id %s, template %s, engine %s, model %s",
+            "%s: started, run id %s, %s, engine %s, model %s",
             info.workflow_id,
             info.run_id,
-            request.template,
+            "task text from the caller" if request.task else f"template {request.template}",
             request.engine,
             request.model,
         )
@@ -75,7 +75,12 @@ class RunTask:
         try:
             harness = await workflow.execute_activity(
                 run_harness,
-                HarnessRequest(prompt=prepared.prompt, engine=request.engine, model=request.model),
+                HarnessRequest(
+                    prompt=prepared.prompt,
+                    engine=request.engine,
+                    model=request.model,
+                    harness_url=request.harness_url,
+                ),
                 start_to_close_timeout=HARNESS_TIMEOUT,
                 heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
                 retry_policy=HARNESS_RETRY,

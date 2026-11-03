@@ -40,6 +40,8 @@ def _configure_logging() -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_TagFormatter("%(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[handler])
+    # httpx logs every request at INFO. The activity prints what each call did.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     workflow.logger.workflow_info_on_message = False
     activity.logger.activity_info_on_message = False
 

@@ -10,15 +10,27 @@ from dataclasses import dataclass
 TASK_QUEUE = "run-task"
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
+DEFAULT_TEMPLATE = "hello-v1"
+# The template name a run reports when the caller gave the task text itself.
+INLINE_TEMPLATE = "inline"
+
+
+def workflow_id_for(ref: str) -> str:
+    """The caller's task reference becomes the workflow id, so a REF names one task."""
+    return f"run-task-{ref}"
 
 
 @dataclass
 class RunTaskInput:
     """What the starter asks for. Secrets stay out: workflow history is visible in the web UI."""
 
-    template: str
     engine: str
     model: str
+    # The harness server that runs this task. Each task has its own until the pool manager exists.
+    harness_url: str
+    # The task text. When empty, prepare reads prompts/<template>.txt instead.
+    task: str = ""
+    template: str = DEFAULT_TEMPLATE
 
 
 @dataclass
@@ -34,20 +46,25 @@ class HarnessRequest:
     prompt: str
     engine: str
     model: str
+    harness_url: str
 
 
 @dataclass
 class HarnessResult:
-    """What one pi run reported, parsed from its final lines."""
+    """What the harness server reported for the run: its run_finished event and GET /usage."""
 
     attempt: int
-    exit_code: int
+    run_id: str
+    status: str
+    end_reason: str
+    reattached: bool
     turns: int
-    failed_turns: int
+    failed_calls: int
     tokens_in: int
     tokens_out: int
     usd: float
-    file_content: str | None
+    files_changed: list[str]
+    answer: str | None
 
 
 @dataclass
