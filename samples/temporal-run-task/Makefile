@@ -121,6 +121,7 @@ run:
 	    wait_for_log '$(RESTART_AT)'; \
 	    echo "[make] killing the worker with SIGKILL (process group $$worker_pid)"; \
 	    kill -KILL -- "-$$worker_pid"; wait "$$worker_pid" 2>/dev/null || true; \
+	    echo "[make] Temporal retries run_harness once 10s pass with no heartbeat, plus the 2s retry interval"; \
 	    echo "[make] starting a new worker"; \
 	    start_worker; \
 	    wait "$$starter_pid" ;; \

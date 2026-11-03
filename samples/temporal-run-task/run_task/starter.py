@@ -16,7 +16,9 @@ import sys
 import uuid
 from datetime import timedelta
 
-from temporalio.client import Client, WorkflowFailureError
+from temporalio.api.enums.v1 import EventType
+from temporalio.api.history.v1 import HistoryEvent
+from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
 from temporalio.exceptions import CancelledError
 
 from run_task.shared import (
@@ -52,6 +54,7 @@ async def main(workflow_id: str) -> int:
     try:
         result: RunTaskResult = await handle.result()
     except WorkflowFailureError as err:
+        await _print_history(handle)
         if isinstance(err.cause, CancelledError):
             print(f"[starter] workflow {workflow_id} canceled", flush=True)
             return EXIT_CANCELED
@@ -73,6 +76,7 @@ async def main(workflow_id: str) -> int:
             print(f"[starter] workflow {workflow_id} did not end within 30s", flush=True)
         raise KeyboardInterrupt from None
 
+    await _print_history(handle)
     h = result.harness
     print(f"[starter] workflow {workflow_id} completed", flush=True)
     print(f"[result] template={result.template}  attempt={h.attempt}  exit_code={h.exit_code}", flush=True)
@@ -82,6 +86,44 @@ async def main(workflow_id: str) -> int:
     )
     print(f"[result] hello.txt: {h.file_content}", flush=True)
     return 0
+
+
+async def _print_history(handle: WorkflowHandle) -> None:
+    """Prints the events the Temporal server recorded for the run, one line each.
+
+    This is the record a worker replays to rebuild the workflow. Heartbeats are
+    not events, so they do not appear. A retried activity shows one start
+    event, for its last attempt.
+    """
+    activity_names: dict[int, str] = {}
+    print(f"[history] events the Temporal server recorded for {handle.id}:", flush=True)
+    async for event in handle.fetch_history_events():
+        kind = "".join(part.capitalize() for part in EventType.Name(event.event_type).split("_")[2:])
+        detail = _event_detail(event, activity_names)
+        print(f"[history] {event.event_id:>3}  {kind:<34}{detail}".rstrip(), flush=True)
+
+
+def _event_detail(event: HistoryEvent, activity_names: dict[int, str]) -> str:
+    """The parts of an event worth a glance: the activity name, the attempt, a failure message."""
+    field = event.WhichOneof("attributes")
+    attrs = getattr(event, field) if field else None
+    if attrs is None:
+        return ""
+    if field == "workflow_execution_started_event_attributes":
+        return f"task queue {attrs.task_queue.name}"
+    if field == "activity_task_scheduled_event_attributes":
+        activity_names[event.event_id] = attrs.activity_type.name
+        return attrs.activity_type.name
+    if not hasattr(attrs, "scheduled_event_id") or not field.startswith("activity_task_"):
+        return ""
+    parts = [activity_names.get(attrs.scheduled_event_id, "")]
+    if field == "activity_task_started_event_attributes":
+        parts.append(f"attempt {attrs.attempt}")
+        if attrs.HasField("last_failure"):
+            parts.append(f"previous attempt: {attrs.last_failure.message}")
+    if field in ("activity_task_failed_event_attributes", "activity_task_timed_out_event_attributes"):
+        parts.append(attrs.failure.message)
+    return ", ".join(part for part in parts if part)
 
 
 if __name__ == "__main__":

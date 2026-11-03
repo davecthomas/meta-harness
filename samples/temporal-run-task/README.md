@@ -77,7 +77,7 @@ and never enters the history.
 | `run_task/activities.py` | `prepare` and `run_harness`: the subprocess, heartbeats, stopping pi, parsing the result |
 | `run_task/shared.py` | Task queue name and the dataclass payloads |
 | `run_task/worker.py` | Runs the workflow and activities. Stops on SIGINT or SIGTERM. |
-| `run_task/starter.py` | Starts one workflow, prints its id and web UI link, waits, prints the result |
+| `run_task/starter.py` | Starts one workflow, prints its id and web UI link, waits, then prints the event history and the result |
 | `prompts/hello-v1.txt` | The prompt template: the pi sample's hello.txt task |
 | `Makefile` | `make run`, `make cancel-demo`, `make restart-demo` |
 
@@ -146,6 +146,32 @@ make run SAMPLE_ENGINE=openai SAMPLE_MODEL=gpt-4o-mini
 
 A run costs under a cent on `claude-haiku-4-5`.
 
+## Reading the output
+
+Each line starts with a tag that names where it came from.
+
+| Tag | Source |
+|---|---|
+| `[make]` | The Makefile |
+| `[worker]` | The worker process starting and stopping |
+| `[workflow]` | `RunTask`, through `workflow.logger`: each step it schedules and what came back |
+| `[activity]` | `prepare` and `run_harness`, through `activity.logger`: each attempt and its heartbeats |
+| `[run_harness attempt N]` | pi's own output, which the activity streams line by line |
+| `[history]` | The starter, after the workflow ends: every event the Temporal server recorded for the run |
+| `[temporalio.…]` | The SDK's own messages, such as a failed activity attempt |
+| `[starter]`, `[result]` | The starter |
+
+The `[history]` lines are Temporal's own record. A new worker replays them to
+rebuild the workflow. Three things about them:
+
+- `workflow.logger` is silent while a worker replays, so a `[workflow]` line
+  prints once, when its step first runs. A worker that picks the workflow up
+  from history prints one line saying so.
+- Heartbeats are not events. The `[activity]` lines count them.
+- An activity that was retried has one `ActivityTaskStarted` event, for its
+  last attempt, and that event carries the previous attempt's failure.
+  Temporal writes it when the attempt ends.
+
 ## What a run looks like
 
 From `make run` on 2026-11-03, with ai-api-unified-http 1.17.1 and
@@ -156,39 +182,71 @@ library 3.29.1. Paths are shortened, and `...` marks lines left out.
 [make] starting the gateway from .../aiapi/ai-api-unified-http, log: .../samples/temporal-run-task/gateway.log
 [make] gateway: {"status":"ok","service_version":"1.17.1","api_version":"v1","library_version":"3.29.1"}
 [worker] polling task queue run-task on localhost:7233
-[starter] started workflow run-task-c010e40d  engine=claude  model=claude-haiku-4-5
-[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-c010e40d
-[run_harness attempt 1] started pi, process group 93498
+[starter] started workflow run-task-0fd309bc  engine=claude  model=claude-haiku-4-5
+[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-0fd309bc
+[workflow] run-task-0fd309bc: started, run id 01a1a259-fa17-79a0-a929-f854423bae7a, template hello-v1, engine claude, model claude-haiku-4-5
+[workflow] run-task-0fd309bc: scheduling activity prepare (timeout 30s, up to 3 attempts)
+[activity] prepare attempt 1: read the prompt from prompts/hello-v1.txt
+[workflow] run-task-0fd309bc: prepare returned a 135-character prompt
+[workflow] run-task-0fd309bc: scheduling activity run_harness (timeout 10m, heartbeat timeout 10s, up to 3 attempts)
+[activity] run_harness attempt 1 started for run-task-0fd309bc, heartbeat timeout 10s
+[run_harness attempt 1] started pi, process group 344
+[activity] run_harness attempt 1: first heartbeat sent, then one every 1s while pi runs
 [run_harness attempt 1] [pi] models pi can reach: ai-api-unified/run-model
 [run_harness attempt 1] [pi] active tools: read, write, edit, ls
 [run_harness attempt 1] [pi] task: Create a file named hello.txt containing exactly one line: a short friendly greeting. Then read the file back and tell me what it says.
 [run_harness attempt 1] [pi] turn 1 starts
 [run_harness attempt 1] [model client] POST /v1/conversations/turn  requested=claude:claude-haiku-4-5  messages=1  tools=read,write,edit,ls
-[run_harness attempt 1] [ai-api-unified] served by claude:claude-haiku-4-5  fallback=false  finish=tool_use  tool_calls=write,read  tokens in=2059 out=182 cached=0  usd=0.002969  cache_hit=false
-[run_harness attempt 1] [pi] runs tool write {"path":"hello.txt","content":"Hello! Welcome, it's great to see you here today!"}
-[run_harness attempt 1] [pi] runs tool read {"path":"hello.txt"}
-[run_harness attempt 1] [pi] tool read failed: ENOENT: no such file or directory, access '.../pi-workspace-ETg32b/hello.txt'
+[run_harness attempt 1] [ai-api-unified] served by claude:claude-haiku-4-5  fallback=false  finish=tool_use  tool_calls=write  tokens in=2061 out=160 cached=0  usd=0.002861  cache_hit=false
+[run_harness attempt 1] [pi] runs tool write {"path":"hello.txt","content":"Hello! Hope you're having a great day!"}
 [run_harness attempt 1] [pi] tool write done: Successfully wrote to hello.txt
 [run_harness attempt 1] [pi] turn 2 starts
 ...
 [run_harness attempt 1] [pi] turn 3 starts
 ...
 [run_harness attempt 1] [workspace] files: hello.txt
-[run_harness attempt 1] [workspace] hello.txt: Hello! Welcome, it's great to see you here today!
-[run_harness attempt 1] [run] model turns=3  failed=0  tokens in=6891 out=306  usd=0.008421
-[starter] workflow run-task-c010e40d completed
+[run_harness attempt 1] [workspace] hello.txt: Hello! Hope you're having a great day!
+[run_harness attempt 1] [run] model turns=3  failed=0  tokens in=6633 out=247  usd=0.007868
+[activity] run_harness attempt 1: pi exited 0 after 6 heartbeats, returning the result to Temporal
+[workflow] run-task-0fd309bc: run_harness returned on attempt 1: 3 turns, usd 0.007868
+[workflow] run-task-0fd309bc: completed
+[history] events the Temporal server recorded for run-task-0fd309bc:
+[history]   1  WorkflowExecutionStarted          task queue run-task
+[history]   2  WorkflowTaskScheduled
+[history]   3  WorkflowTaskStarted
+[history]   4  WorkflowTaskCompleted
+[history]   5  ActivityTaskScheduled             prepare
+[history]   6  ActivityTaskStarted               prepare, attempt 1
+[history]   7  ActivityTaskCompleted             prepare
+[history]   8  WorkflowTaskScheduled
+[history]   9  WorkflowTaskStarted
+[history]  10  WorkflowTaskCompleted
+[history]  11  ActivityTaskScheduled             run_harness
+[history]  12  ActivityTaskStarted               run_harness, attempt 1
+[history]  13  ActivityTaskCompleted             run_harness
+[history]  14  WorkflowTaskScheduled
+[history]  15  WorkflowTaskStarted
+[history]  16  WorkflowTaskCompleted
+[history]  17  WorkflowExecutionCompleted
+[starter] workflow run-task-0fd309bc completed
 [result] template=hello-v1  attempt=1  exit_code=0
-[result] turns=3  failed=0  tokens in=6891 out=306  usd=0.008421
-[result] hello.txt: Hello! Welcome, it's great to see you here today!
+[result] turns=3  failed=0  tokens in=6633 out=247  usd=0.007868
+[result] hello.txt: Hello! Hope you're having a great day!
 [worker] shutting down
+[temporalio.worker._worker] Beginning worker shutdown, will wait 0:00:00 before cancelling activities
 [worker] stopped
 [make] worker stopped
 [make] gateway stopped
 [make] Temporal dev server stopped
 ```
 
-The failed `read` on turn 1 is pi running a turn's tool calls at the same
-time (finding 6 of the pi sample).
+Each `WorkflowTask` trio in the history is the worker running workflow code
+until it next waits: once at the start, then once after each activity
+returns. Each pass ends by sending the server its next commands: schedule
+`prepare`, schedule `run_harness`, complete the workflow.
+
+Some runs show `[pi] tool read failed: ENOENT` on turn 1. That is pi running
+a turn's tool calls at the same time (finding 6 of the pi sample).
 
 ## Cancel
 
@@ -202,20 +260,33 @@ would. Output from 2026-11-03, after the same startup lines:
 
 ```text
 [run_harness attempt 1] [pi] turn 1 starts
-[make] temporal workflow cancel --workflow-id run-task-16afda88
+[make] temporal workflow cancel --workflow-id run-task-2796a3b6
 [run_harness attempt 1] cancellation received (cancel_requested), stopping pi
 [run_harness attempt 1] pi stopped by SIGKILL, 2s after SIGTERM, exit code -9
-[starter] workflow run-task-16afda88 canceled
+[workflow] run-task-2796a3b6: canceled, and run_harness has stopped pi
+[starter] workflow run-task-2796a3b6 canceled
 ```
 
-The workflow history shows the order:
+The `[history]` lines show the order, from event 11:
 
 ```text
-12  WorkflowExecutionCancelRequested
-16  ActivityTaskCancelRequested
-18  ActivityTaskCanceled
-22  WorkflowExecutionCanceled
+[history]  11  ActivityTaskScheduled             run_harness
+[history]  12  WorkflowExecutionCancelRequested
+[history]  13  WorkflowTaskScheduled
+[history]  14  WorkflowTaskStarted
+[history]  15  WorkflowTaskCompleted
+[history]  16  ActivityTaskCancelRequested       run_harness
+[history]  17  ActivityTaskStarted               run_harness, attempt 1
+[history]  18  ActivityTaskCanceled              run_harness
+[history]  19  WorkflowTaskScheduled
+[history]  20  WorkflowTaskStarted
+[history]  21  WorkflowTaskCompleted
+[history]  22  WorkflowExecutionCanceled
 ```
+
+The cancel request reaches the workflow first (12). The workflow then asks
+for the activity to be canceled (16). `ActivityTaskStarted` comes after the
+cancel request because Temporal writes it when the attempt ends.
 
 The workflow ended about 3 seconds after the cancel request: up to 1 second
 for the heartbeat reply, then the 2 second SIGTERM grace period.
@@ -237,33 +308,46 @@ Output from 2026-11-03:
 
 ```text
 [run_harness attempt 1] [pi] turn 2 starts
-[make] killing the worker with SIGKILL (process group 88917)
+[make] killing the worker with SIGKILL (process group 4738)
+[make] Temporal retries run_harness once 10s pass with no heartbeat, plus the 2s retry interval
 [make] starting a new worker
 [worker] polling task queue run-task on localhost:7233
-[run_harness attempt 2] previous attempt's pi (process group 88946) is gone
-[run_harness attempt 2] started pi, process group 89321
+[activity] run_harness attempt 2 started for run-task-a78a0ca7, heartbeat timeout 10s
+[run_harness attempt 2] previous attempt's pi (process group 4757) is gone
+[run_harness attempt 2] started pi, process group 5190
+[activity] run_harness attempt 2: first heartbeat sent, then one every 1s while pi runs
 ...
-[run_harness attempt 2] [run] model turns=3  failed=0  tokens in=6957 out=314  usd=0.008527
-[starter] workflow run-task-2b56c5ea completed
+[run_harness attempt 2] [run] model turns=3  failed=0  tokens in=6970 out=433  usd=0.009135
+[activity] run_harness attempt 2: pi exited 0 after 6 heartbeats, returning the result to Temporal
+[workflow] run-task-a78a0ca7: this worker has no state for the workflow, so it replays the history to rebuild it. Steps already in the history do not run again.
+[workflow] run-task-a78a0ca7: run_harness returned on attempt 2: 3 turns, usd 0.009135
+[workflow] run-task-a78a0ca7: completed
+[history] events the Temporal server recorded for run-task-a78a0ca7:
+...
+[history]   5  ActivityTaskScheduled             prepare
+[history]   6  ActivityTaskStarted               prepare, attempt 1
+[history]   7  ActivityTaskCompleted             prepare
+...
+[history]  11  ActivityTaskScheduled             run_harness
+[history]  12  ActivityTaskStarted               run_harness, attempt 2, previous attempt: activity Heartbeat timeout
+[history]  13  ActivityTaskCompleted             run_harness
+...
+[history]  17  WorkflowExecutionCompleted
+[starter] workflow run-task-a78a0ca7 completed
 [result] template=hello-v1  attempt=2  exit_code=0
-[result] turns=3  failed=0  tokens in=6957 out=314  usd=0.008527
-[result] hello.txt: Hello! Wishing you a wonderful day! 🎉
+[result] turns=3  failed=0  tokens in=6970 out=433  usd=0.009135
+[result] hello.txt: Hello! Hope you're having a wonderful day! 🌟
 ```
 
-The workflow history shows one `prepare` and one `run_harness` that
-completed on attempt 2. The new worker replayed the history and did not run
-`prepare` again. Attempt 2 started 16 seconds after attempt 1: about
-4 seconds of attempt 1, the 10 second heartbeat timeout, and the 2 second
-retry interval. Temporal records only the last attempt's start event.
-
-```text
- 6  ActivityTaskStarted   attempt=1                                     (prepare)
- 7  ActivityTaskCompleted
-11  ActivityTaskScheduled                                               (run_harness)
-12  ActivityTaskStarted   attempt=2  lastFailure=activity Heartbeat timeout
-13  ActivityTaskCompleted
-17  WorkflowExecutionCompleted
-```
+The new worker ran attempt 2 of `run_harness` with no workflow state. When
+the activity returned, the worker needed the workflow to decide its next
+step, so it replayed the history. The replay matched `prepare` and the
+`run_harness` schedule to events 5 to 11 and ran neither again. That is why
+no `[workflow]` line repeats, and why `prepare` ran once. The history shows
+one `run_harness` start, for attempt 2. That event carries attempt 1's
+heartbeat timeout. Attempt 2 started about 16 seconds after attempt 1:
+roughly 4 seconds of attempt 1, the 10 second heartbeat timeout, and the
+2 second retry interval.
 
 Each heartbeat carries pi's process group id. A retried attempt reads it from
 the last heartbeat. If that pi is still running, the new attempt stops it

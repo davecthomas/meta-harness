@@ -43,7 +43,8 @@ async def prepare(request: RunTaskInput) -> PreparedRun:
     if not path.is_file():
         raise ApplicationError(f"no prompt template {path.name}", type="UnknownTemplate", non_retryable=True)
     prompt = path.read_text(encoding="utf-8").strip()
-    activity.logger.info("prepared prompt from %s", path.name)
+    info = activity.info()
+    activity.logger.info("prepare attempt %d: read the prompt from prompts/%s", info.attempt, path.name)
     return PreparedRun(template=request.template, prompt=prompt)
 
 
@@ -52,6 +53,12 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
     """Runs pi as a subprocess, heartbeats while it runs, and parses its final lines."""
     info = activity.info()
     tag = f"[run_harness attempt {info.attempt}]"
+    activity.logger.info(
+        "run_harness attempt %d started for %s, heartbeat timeout %ss",
+        info.attempt,
+        info.workflow_id,
+        int(info.heartbeat_timeout.total_seconds()) if info.heartbeat_timeout else 0,
+    )
     if not os.environ.get("GATEWAY_API_KEY"):
         raise ApplicationError(
             "set GATEWAY_API_KEY in the worker's environment", type="HarnessConfigError", non_retryable=True
@@ -74,7 +81,8 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         start_new_session=True,
     )
     print(f"{tag} started pi, process group {proc.pid}", flush=True)
-    heartbeats = asyncio.create_task(_heartbeat_until_done(proc.pid))
+    sent = [0]
+    heartbeats = asyncio.create_task(_heartbeat_until_done(proc.pid, sent))
     lines: list[str] = []
     try:
         assert proc.stdout is not None
@@ -100,13 +108,30 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         )
     if exit_code != 0:
         raise ApplicationError(f"pi exited with code {exit_code}", type="HarnessFailed")
-    return _parse(lines, info.attempt, exit_code)
+    result = _parse(lines, info.attempt, exit_code)
+    activity.logger.info(
+        "run_harness attempt %d: pi exited 0 after %d heartbeats, returning the result to Temporal",
+        info.attempt,
+        sent[0],
+    )
+    return result
 
 
-async def _heartbeat_until_done(pgid: int) -> None:
-    """Heartbeats while pi runs. The details carry pi's process group, so a retry can find it."""
+async def _heartbeat_until_done(pgid: int, sent: list[int]) -> None:
+    """Heartbeats while pi runs. The details carry pi's process group, so a retry can find it.
+
+    sent[0] counts the heartbeats. Heartbeats are not history events, so the
+    log is the only place they show.
+    """
     while True:
         activity.heartbeat({"pgid": pgid})
+        sent[0] += 1
+        if sent[0] == 1:
+            activity.logger.info(
+                "run_harness attempt %d: first heartbeat sent, then one every %gs while pi runs",
+                activity.info().attempt,
+                HEARTBEAT_EVERY_SECONDS,
+            )
         await asyncio.sleep(HEARTBEAT_EVERY_SECONDS)
 
 
