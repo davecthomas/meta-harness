@@ -7,6 +7,7 @@
  *   GATEWAY_API_KEY  key the gateway accepts (the run token, in the full design)
  *   SAMPLE_ENGINE    engine the request names (default claude)
  *   SAMPLE_MODEL     model the request names (default claude-haiku-4-5)
+ *   SAMPLE_TASK      the prompt pi runs (default: write hello.txt and read it back)
  */
 
 import { randomUUID } from "node:crypto";
@@ -175,8 +176,9 @@ session.subscribe((event) => {
 });
 
 const task =
+	process.env.SAMPLE_TASK ||
 	"Create a file named hello.txt containing exactly one line: a short friendly greeting. " +
-	"Then read the file back and tell me what it says.";
+		"Then read the file back and tell me what it says.";
 log("pi", `task: ${task}`);
 
 try {
