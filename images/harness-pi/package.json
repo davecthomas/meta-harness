@@ -1,0 +1,22 @@
+{
+  "name": "harness-pi",
+  "private": true,
+  "type": "module",
+  "description": "The harness server and model client for the pi harness image: the Run API over pi's SDK, with every model call sent to the HTTP Gateway",
+  "scripts": {
+    "start": "node server/main.ts",
+    "test": "node --test test/server.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.9.0",
+    "typescript": "5.6.3"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

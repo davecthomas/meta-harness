@@ -1,208 +1,201 @@
-"""The two activities: prepare builds the prompt, run_harness runs pi.
+"""The two activities: prepare builds the prompt, run_harness runs it on the harness server.
 
-run_harness stands in for the design's harness engine call: lease a sandbox,
-POST /run, wait for the run to end. Here the "sandbox" is a local subprocess
-running the pi model client sample (`npm start` in samples/pi-model-client).
+run_harness stands in for the design's harness engine call. It starts the run
+with POST /run, follows GET /events until run_finished, and reads GET /usage.
+The harness server (images/harness-pi) runs pi in its own process, so the run
+keeps going when this worker dies. Each task has its own harness server, and
+its URL comes in the request.
+
+The run id is the workflow id plus the activity name, the same on every
+attempt. A retried attempt sends the same POST /run, gets the run already in
+progress, and reads its events from the last event id it heartbeated. It never
+starts pi a second time.
 """
 
 import asyncio
 import os
-import re
-import signal
-import subprocess
 from pathlib import Path
+from typing import Any
 
+import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from run_task.shared import HarnessRequest, HarnessResult, PreparedRun, RunTaskInput
+from run_task import harness_client
+from run_task.shared import INLINE_TEMPLATE, HarnessRequest, HarnessResult, PreparedRun, RunTaskInput
 
 SAMPLE_DIR = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = SAMPLE_DIR / "prompts"
-PI_SAMPLE_DIR = Path(os.environ.get("PI_SAMPLE_DIR", SAMPLE_DIR.parent / "pi-model-client")).resolve()
-NVM_DIR = os.environ.get("NVM_DIR", str(Path.home() / ".nvm"))
 
-HEARTBEAT_EVERY_SECONDS = 1.0
-STOP_GRACE_SECONDS = 2.0
-
-# Switch to the Node version in .nvmrc, then replace bash with npm so the
-# process group leader is npm itself.
-PI_COMMAND = 'source "$NVM_DIR/nvm.sh" && nvm use >/dev/null && exec npm start'
-
-RUN_LINE = re.compile(
-    r"^\[run\] model turns=(?P<turns>\d+)\s+failed=(?P<failed>\d+)\s+"
-    r"tokens in=(?P<tokens_in>\d+) out=(?P<tokens_out>\d+)\s+usd=(?P<usd>[\d.]+)"
-)
-FILE_LINE = re.compile(r"^\[workspace\] hello\.txt: (?P<content>.*)$")
+# The profile the harness server runs pi with. In the full design it comes from harness_profiles.json.
+PROFILE = {"name": "pi-sample", "tools": ["read", "write", "edit", "ls"], "max_turns": 20, "max_minutes": 10}
 
 
 @activity.defn
 async def prepare(request: RunTaskInput) -> PreparedRun:
-    """Builds the prompt from a versioned template file."""
+    """Uses the task text the caller gave, or builds the prompt from a versioned template file."""
+    info = activity.info()
+    if request.task:
+        activity.logger.info("prepare attempt %d: using the task text from the caller", info.attempt)
+        return PreparedRun(template=INLINE_TEMPLATE, prompt=request.task.strip())
     path = PROMPTS_DIR / f"{request.template}.txt"
     if not path.is_file():
         raise ApplicationError(f"no prompt template {path.name}", type="UnknownTemplate", non_retryable=True)
     prompt = path.read_text(encoding="utf-8").strip()
-    info = activity.info()
     activity.logger.info("prepare attempt %d: read the prompt from prompts/%s", info.attempt, path.name)
     return PreparedRun(template=request.template, prompt=prompt)
 
 
 @activity.defn
 async def run_harness(request: HarnessRequest) -> HarnessResult:
-    """Runs pi as a subprocess, heartbeats while it runs, and parses its final lines."""
+    """Starts or re-attaches to the run on the harness server and follows it to the end."""
     info = activity.info()
-    tag = f"[run_harness attempt {info.attempt}]"
+    tag = f"[{info.workflow_id} run_harness attempt {info.attempt}]"
+    run_id = f"{info.workflow_id}:run_harness"
+    progress = _progress_from(info.heartbeat_details)
     activity.logger.info(
         "run_harness attempt %d started for %s, heartbeat timeout %ss",
         info.attempt,
         info.workflow_id,
         int(info.heartbeat_timeout.total_seconds()) if info.heartbeat_timeout else 0,
     )
-    if not os.environ.get("GATEWAY_API_KEY"):
+    gateway_key = os.environ.get("GATEWAY_API_KEY")
+    server_token = harness_client.server_token()
+    if not gateway_key or not server_token:
         raise ApplicationError(
-            "set GATEWAY_API_KEY in the worker's environment", type="HarnessConfigError", non_retryable=True
+            "set GATEWAY_API_KEY and HARNESS_SERVER_TOKEN in the worker's environment",
+            type="HarnessConfigError",
+            non_retryable=True,
         )
 
-    _stop_previous_attempt(info.heartbeat_details, tag)
-
-    env = dict(os.environ)
-    env.update(NVM_DIR=NVM_DIR, SAMPLE_TASK=request.prompt, SAMPLE_ENGINE=request.engine, SAMPLE_MODEL=request.model)
-    # A new session puts npm, tsx and node in one process group the activity can stop as a unit.
-    proc = await asyncio.create_subprocess_exec(
-        "bash",
-        "-c",
-        PI_COMMAND,
-        cwd=PI_SAMPLE_DIR,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    print(f"{tag} started pi, process group {proc.pid}", flush=True)
-    sent = [0]
-    heartbeats = asyncio.create_task(_heartbeat_until_done(proc.pid, sent))
-    lines: list[str] = []
-    try:
-        assert proc.stdout is not None
-        async for raw in proc.stdout:
-            line = raw.decode("utf-8", errors="replace").rstrip()
-            lines.append(line)
-            print(f"{tag} {line}", flush=True)
-        exit_code = await proc.wait()
-    except asyncio.CancelledError:
-        details = activity.cancellation_details()
-        reason = _reasons(details) if details else "worker shutdown" if activity.is_worker_shutdown() else "unknown"
-        print(f"{tag} cancellation received ({reason}), stopping pi", flush=True)
-        raise
-    finally:
-        heartbeats.cancel()
-        if proc.returncode is None:
-            how = await _stop_group(proc)
-            print(f"{tag} pi stopped {how}, exit code {proc.returncode}", flush=True)
-
-    if exit_code == 2:
-        raise ApplicationError(
-            "pi sample rejected its configuration (exit 2)", type="HarnessConfigError", non_retryable=True
-        )
-    if exit_code != 0:
-        raise ApplicationError(f"pi exited with code {exit_code}", type="HarnessFailed")
-    result = _parse(lines, info.attempt, exit_code)
-    activity.logger.info(
-        "run_harness attempt %d: pi exited 0 after %d heartbeats, returning the result to Temporal",
-        info.attempt,
-        sent[0],
-    )
-    return result
-
-
-async def _heartbeat_until_done(pgid: int, sent: list[int]) -> None:
-    """Heartbeats while pi runs. The details carry pi's process group, so a retry can find it.
-
-    sent[0] counts the heartbeats. Heartbeats are not history events, so the
-    log is the only place they show.
-    """
-    while True:
-        activity.heartbeat({"pgid": pgid})
-        sent[0] += 1
-        if sent[0] == 1:
-            activity.logger.info(
-                "run_harness attempt %d: first heartbeat sent, then one every %gs while pi runs",
-                activity.info().attempt,
-                HEARTBEAT_EVERY_SECONDS,
-            )
-        await asyncio.sleep(HEARTBEAT_EVERY_SECONDS)
-
-
-async def _stop_group(proc: asyncio.subprocess.Process) -> str:
-    """Sends SIGTERM to pi's process group, then SIGKILL if it is still running after a grace period.
-
-    Under tsx, pi does not exit on SIGTERM (see the README's findings), so the
-    SIGKILL step is the one that usually stops it. Returns how pi stopped.
-    """
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    try:
-        await asyncio.wait_for(proc.wait(), STOP_GRACE_SECONDS)
-        return "after SIGTERM"
-    except TimeoutError:
+    async with harness_client.client(request.harness_url, server_token) as client:
+        reattached = await _start_or_reattach(client, tag, run_id, request, info.workflow_id, gateway_key, progress)
+        activity.heartbeat(progress)
+        finished: dict[str, Any] | None = None
+        heartbeats = 1
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        await proc.wait()
-        return f"by SIGKILL, {STOP_GRACE_SECONDS:g}s after SIGTERM"
+            async for event in harness_client.events_after(client, progress["last_event_id"]):
+                progress["last_event_id"] = event["id"]
+                if event["run_id"] == run_id:
+                    _record(progress, event)
+                    line = harness_client.describe(event)
+                    if line:
+                        print(f"{tag} #{event['id']} {line}", flush=True)
+                activity.heartbeat(progress)
+                heartbeats += 1
+                if event["run_id"] == run_id and event["type"] == "run_finished":
+                    finished = event
+                    break
+        except asyncio.CancelledError:
+            await _on_cancel(client, tag)
+            raise
+        except httpx.HTTPError as err:
+            raise ApplicationError(f"lost the harness server's event stream: {err}", type="HarnessUnavailable") from err
+        if finished is None:
+            raise ApplicationError("the event stream ended before run_finished", type="HarnessUnavailable")
+        usage = (await client.get("/usage", params={"run_id": run_id})).json()
 
-
-def _stop_previous_attempt(heartbeat_details: object, tag: str) -> None:
-    """Stops a pi run left by an earlier attempt whose worker died.
-
-    The sample cannot re-attach to that run's output, so it stops it and starts
-    again. It checks that the process group leader is still npm before
-    signaling, in case the operating system reused the id.
-    """
-    if not heartbeat_details:
-        return
-    last = heartbeat_details[-1] if isinstance(heartbeat_details, (list, tuple)) else None
-    pgid = last.get("pgid") if isinstance(last, dict) else None
-    if not isinstance(pgid, int):
-        return
-    leader = subprocess.run(
-        ["ps", "-o", "command=", "-p", str(pgid)], check=False, capture_output=True, text=True
-    ).stdout.strip()
-    if not leader.startswith("npm"):
-        print(f"{tag} previous attempt's pi (process group {pgid}) is gone", flush=True)
-        return
-    print(f"{tag} previous attempt's pi is still running (process group {pgid}), stopping it", flush=True)
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-
-def _reasons(details: activity.ActivityCancellationDetails) -> str:
-    flags = ("cancel_requested", "not_found", "paused", "reset", "timed_out", "worker_shutdown")
-    return ",".join(name for name in flags if getattr(details, name, False))
-
-
-def _parse(lines: list[str], attempt: int, exit_code: int) -> HarnessResult:
-    run = next((m for m in map(RUN_LINE.match, lines) if m), None)
-    if run is None:
-        raise ApplicationError("pi finished without a [run] line", type="HarnessFailed")
-    if int(run["turns"]) == int(run["failed"]):
-        # The pi sample exits 0 even when no model turn got an answer.
-        raise ApplicationError(f"every model turn failed ({run['failed']} of {run['turns']})", type="HarnessFailed")
-    file = next((m for m in map(FILE_LINE.match, lines) if m), None)
-    return HarnessResult(
-        attempt=attempt,
-        exit_code=exit_code,
-        turns=int(run["turns"]),
-        failed_turns=int(run["failed"]),
-        tokens_in=int(run["tokens_in"]),
-        tokens_out=int(run["tokens_out"]),
-        usd=float(run["usd"]),
-        file_content=file["content"] if file else None,
+    data = finished["data"]
+    if data["status"] != "FINISHED":
+        # The run itself ended. Retrying would re-attach to the same ended run, so the attempt fails for good.
+        raise ApplicationError(
+            f"run {run_id} ended {data['status']} ({data['end_reason']}): {data.get('error')}",
+            type="HarnessRunFailed",
+            non_retryable=True,
+        )
+    activity.logger.info(
+        "run_harness attempt %d: run finished, %d heartbeats sent, returning the result to Temporal",
+        info.attempt,
+        heartbeats,
     )
+    return HarnessResult(
+        attempt=info.attempt,
+        run_id=run_id,
+        status=data["status"],
+        end_reason=data["end_reason"],
+        reattached=reattached,
+        turns=data["turns"],
+        failed_calls=usage["failed_calls"],
+        tokens_in=usage["input_tokens"],
+        tokens_out=usage["output_tokens"],
+        usd=usage["usd"],
+        files_changed=progress["files_changed"],
+        answer=progress["answer"],
+    )
+
+
+async def _start_or_reattach(
+    client: httpx.AsyncClient,
+    tag: str,
+    run_id: str,
+    request: HarnessRequest,
+    session_id: str,
+    gateway_key: str,
+    progress: dict[str, Any],
+) -> bool:
+    """POST /run. Returns True when the run already existed, so this attempt re-attached to it."""
+    body = {
+        "run_id": run_id,
+        "harness_session_id": session_id,
+        "prompt": request.prompt,
+        "profile": PROFILE,
+        # Until the gateway mints run tokens, the run's token is the gateway key, and the request names the model.
+        "token": gateway_key,
+        "engine": request.engine,
+        "model": request.model,
+    }
+    try:
+        response = await client.post("/run", json=body)
+    except httpx.HTTPError as err:
+        raise ApplicationError(f"no harness server at {request.harness_url}: {err}", type="HarnessUnavailable") from err
+    if response.status_code == 202:
+        print(f"{tag} POST /run started run {run_id}", flush=True)
+        return False
+    if response.status_code == 200:
+        status = response.json()["status"]
+        print(
+            f"{tag} POST /run: run {run_id} already exists ({status}). "
+            f"Re-attaching after event {progress['last_event_id']}, without starting pi again",
+            flush=True,
+        )
+        return True
+    error = response.json().get("error", response.text)
+    if response.status_code in (400, 401, 409):
+        raise ApplicationError(
+            f"harness server refused the run ({response.status_code}): {error}",
+            type="HarnessConfigError",
+            non_retryable=True,
+        )
+    raise ApplicationError(f"harness server answered {response.status_code}: {error}", type="HarnessUnavailable")
+
+
+async def _on_cancel(client: httpx.AsyncClient, tag: str) -> None:
+    """Stops pi when the workflow was canceled. Leaves the run going when only this worker is stopping."""
+    details = activity.cancellation_details()
+    if details and details.cancel_requested:
+        print(f"{tag} cancellation received (cancel_requested), sending POST /cancel", flush=True)
+        response = await client.post("/cancel")
+        print(f"{tag} harness server stopped pi: run {response.json().get('status')}", flush=True)
+        return
+    reason = "worker shutdown" if activity.is_worker_shutdown() else "unknown"
+    print(
+        f"{tag} cancellation received ({reason}). The run keeps going on the harness server, "
+        "and the next attempt re-attaches",
+        flush=True,
+    )
+
+
+def _progress_from(heartbeat_details: object) -> dict[str, Any]:
+    """What an earlier attempt saw, from its last heartbeat: the last event id, the files and the answer."""
+    progress: dict[str, Any] = {"last_event_id": 0, "files_changed": [], "answer": None}
+    if isinstance(heartbeat_details, (list, tuple)) and heartbeat_details and isinstance(heartbeat_details[-1], dict):
+        progress.update(heartbeat_details[-1])
+    return progress
+
+
+def _record(progress: dict[str, Any], event: dict[str, Any]) -> None:
+    data = event["data"]
+    if event["type"] == "file_changed" and data["path"] not in progress["files_changed"]:
+        progress["files_changed"].append(data["path"])
+    if event["type"] == "turn_finished" and isinstance(data.get("text"), str) and data["text"]:
+        progress["answer"] = " ".join(data["text"].split())

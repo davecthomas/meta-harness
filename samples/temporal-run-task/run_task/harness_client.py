@@ -1,0 +1,86 @@
+"""Reading the harness server's event stream, shared by the activity and the command-line tools."""
+
+import json
+import os
+from collections.abc import AsyncIterator
+from typing import Any
+
+import httpx
+
+# The harness server sends a heartbeat event every few seconds, so a stream that is quiet this long is dead.
+EVENT_READ_TIMEOUT_SECONDS = 30.0
+
+
+def server_token() -> str | None:
+    return os.environ.get("HARNESS_SERVER_TOKEN")
+
+
+def client(harness_url: str, token: str) -> httpx.AsyncClient:
+    return httpx.AsyncClient(base_url=harness_url, headers={"authorization": f"Bearer {token}"}, timeout=10.0)
+
+
+async def events_after(client: httpx.AsyncClient, last_event_id: int) -> AsyncIterator[dict[str, Any]]:
+    """GET /events from Last-Event-ID, yielding each event as a dict."""
+    timeout = httpx.Timeout(10.0, read=EVENT_READ_TIMEOUT_SECONDS)
+    async with client.stream(
+        "GET", "/events", headers={"Last-Event-ID": str(last_event_id)}, timeout=timeout
+    ) as stream:
+        stream.raise_for_status()
+        data: list[str] = []
+        async for line in stream.aiter_lines():
+            if line.startswith("data: "):
+                data.append(line[6:])
+            elif line == "" and data:
+                yield json.loads("\n".join(data))
+                data = []
+
+
+async def follow(harness_url: str, token: str, run_id: str, prefix: str) -> dict[str, Any] | None:
+    """Prints one line per event of the run until run_finished, and returns that event.
+
+    Returns None when the harness server is gone, which happens once the task
+    that started it has ended.
+    """
+    async with client(harness_url, token) as http:
+        try:
+            async for event in events_after(http, 0):
+                if event["run_id"] != run_id:
+                    continue
+                line = describe(event)
+                if line:
+                    print(f"{prefix} #{event['id']} {line}", flush=True)
+                if event["type"] == "run_finished":
+                    return event
+        except httpx.HTTPError:
+            return None
+    return None
+
+
+def describe(event: dict[str, Any]) -> str | None:
+    """One readable line per event. Heartbeats are not printed."""
+    d = event["data"]
+    match event["type"]:
+        case "turn_started":
+            return f"turn {d['turn']} starts"
+        case "model_call":
+            if d.get("error"):
+                return f"model call failed: {d['error']}"
+            calls = ",".join(d["tool_calls"]) or "none"
+            return (
+                f"model call: {d['engine']}:{d['model']}  finish={d['finish_reason']}  tool_calls={calls}  "
+                f"tokens in={d['input_tokens']} out={d['output_tokens']} cached={d['cached_input_tokens']}  usd={d['usd']}"
+            )
+        case "tool_call":
+            return f"runs tool {d['tool']} {json.dumps(d['args'], ensure_ascii=False)[:160]}"
+        case "tool_result":
+            return f"tool {d['tool']} failed: {str(d['output'])[:160]}" if d["is_error"] else f"tool {d['tool']} done"
+        case "file_changed":
+            return f"file changed: {d['path']}"
+        case "turn_finished":
+            text = " ".join(str(d.get("text") or "").split())
+            return f"turn {d['turn']} finished: {text[:200]}" if text else f"turn {d['turn']} finished"
+        case "compacted":
+            return f"pi compacted the conversation ({d['reason']})"
+        case "run_finished":
+            return f"run finished: {d['status']} ({d['end_reason']})" + (f": {d['error']}" if d.get("error") else "")
+    return None
