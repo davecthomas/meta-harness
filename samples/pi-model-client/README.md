@@ -114,6 +114,7 @@ The gateway's output goes to `gateway.log` in this directory.
 | Variable | Default |
 |---|---|
 | `SAMPLE_ENGINE`, `SAMPLE_MODEL` | `claude`, `claude-haiku-4-5`: the engine and model the request names |
+| `SAMPLE_TASK` | The hello.txt task below: the prompt pi runs |
 | `GATEWAY_DIR` | `../../../aiapi/ai-api-unified-http`, the gateway checkout |
 | `GATEWAY_PORT`, `GATEWAY_URL` | `8080`, `http://localhost:8080` |
 | `GATEWAY_API_KEY` | `local-dev-key`, the gateway's local development key |
