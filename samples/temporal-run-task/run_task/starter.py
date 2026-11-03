@@ -1,16 +1,22 @@
 """Starts one RunTask workflow, waits for it, and prints the result.
 
-    python -m run_task.starter [--workflow-id ID]
+    python -m run_task.starter --harness-url URL [--ref REF] [--task TEXT]
+                               [--engine E] [--model M] [--workspace DIR] [--follow]
+
+--ref is the caller's name for the task. The workflow id is run-task-<ref>,
+and Temporal refuses a second task with the same ref. --follow prints the
+run's events from the harness server while the task runs.
 
 Exit codes: 0 completed, 1 failed, 3 canceled, 130 interrupted.
 Ctrl-C cancels the workflow before the starter exits.
 
-Environment: SAMPLE_ENGINE, SAMPLE_MODEL (defaults claude, claude-haiku-4-5),
-TEMPORAL_ADDRESS (default localhost:7233), TEMPORAL_UI_URL (default http://localhost:8233).
+Environment: HARNESS_SERVER_TOKEN (for --follow), TEMPORAL_ADDRESS (default
+localhost:7233), TEMPORAL_UI_URL (default http://localhost:8233).
 """
 
 import argparse
 import asyncio
+import contextlib
 import os
 import sys
 import uuid
@@ -19,14 +25,17 @@ from datetime import timedelta
 from temporalio.api.enums.v1 import EventType
 from temporalio.api.history.v1 import HistoryEvent
 from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
-from temporalio.exceptions import CancelledError
+from temporalio.common import WorkflowIDReusePolicy
+from temporalio.exceptions import CancelledError, WorkflowAlreadyStartedError
 
+from run_task import harness_client
 from run_task.shared import (
     TASK_QUEUE,
     TEMPORAL_ADDRESS,
     TEMPORAL_NAMESPACE,
     RunTaskInput,
     RunTaskResult,
+    workflow_id_for,
 )
 from run_task.workflows import RunTask
 
@@ -34,26 +43,38 @@ UI_URL = os.environ.get("TEMPORAL_UI_URL", "http://localhost:8233")
 EXIT_CANCELED = 3
 
 
-async def main(workflow_id: str) -> int:
+async def main(args: argparse.Namespace) -> int:
     client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
-    request = RunTaskInput(
-        template="hello-v1",
-        engine=os.environ.get("SAMPLE_ENGINE") or "claude",
-        model=os.environ.get("SAMPLE_MODEL") or "claude-haiku-4-5",
-    )
-    handle = await client.start_workflow(
-        RunTask.run,
-        request,
-        id=workflow_id,
-        task_queue=TASK_QUEUE,
-        execution_timeout=timedelta(minutes=30),
-    )
+    workflow_id = workflow_id_for(args.ref)
+    request = RunTaskInput(engine=args.engine, model=args.model, harness_url=args.harness_url, task=args.task)
+    try:
+        handle = await client.start_workflow(
+            RunTask.run,
+            request,
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(minutes=30),
+            # One ref names one task, as external_ref does in the design.
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            memo={"ref": args.ref, "harness_url": args.harness_url, "workspace": args.workspace},
+        )
+    except WorkflowAlreadyStartedError:
+        print(f"[starter] a task with REF {args.ref} already exists on this Temporal server. Use another REF.")
+        return 1
     print(f"[starter] started workflow {workflow_id}  engine={request.engine}  model={request.model}", flush=True)
+    print(f"[starter] task: {request.task or f'prompts/{request.template}.txt'}", flush=True)
     print(f"[starter] web UI: {UI_URL}/namespaces/{TEMPORAL_NAMESPACE}/workflows/{workflow_id}", flush=True)
+
+    follow: asyncio.Task | None = None
+    if args.follow:
+        token = harness_client.server_token() or ""
+        run_id = f"{workflow_id}:run_harness"
+        follow = asyncio.create_task(harness_client.follow(args.harness_url, token, run_id, f"[{args.ref}]"))
 
     try:
         result: RunTaskResult = await handle.result()
     except WorkflowFailureError as err:
+        await _stop_following(follow)
         await _print_history(handle)
         if isinstance(err.cause, CancelledError):
             print(f"[starter] workflow {workflow_id} canceled", flush=True)
@@ -76,6 +97,7 @@ async def main(workflow_id: str) -> int:
             print(f"[starter] workflow {workflow_id} did not end within 30s", flush=True)
         raise KeyboardInterrupt from None
 
+    await _stop_following(follow)
     await _print_history(handle)
     h = result.harness
     print(f"[starter] workflow {workflow_id} completed", flush=True)
@@ -90,8 +112,18 @@ async def main(workflow_id: str) -> int:
         flush=True,
     )
     print(f"[result] files changed: {', '.join(h.files_changed) or 'none'}", flush=True)
+    if args.workspace:
+        print(f"[result] workspace: {args.workspace}", flush=True)
     print(f"[result] answer: {h.answer}", flush=True)
     return 0
+
+
+async def _stop_following(follow: asyncio.Task | None) -> None:
+    """Gives the event printer a moment to print run_finished, then stops it."""
+    if follow is None:
+        return
+    with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+        await asyncio.wait_for(follow, timeout=3)
 
 
 async def _print_history(handle: WorkflowHandle) -> None:
@@ -134,11 +166,14 @@ def _event_detail(event: HistoryEvent, activity_names: dict[int, str]) -> str:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--workflow-id", default=f"run-task-{uuid.uuid4().hex[:8]}", help="workflow id (default: run-task-<random>)"
-    )
-    args = parser.parse_args()
+    parser.add_argument("--harness-url", required=True, help="the harness server that runs this task")
+    parser.add_argument("--ref", default=uuid.uuid4().hex[:8], help="your name for the task (default: random)")
+    parser.add_argument("--task", default="", help="the task text (default: prompts/hello-v1.txt)")
+    parser.add_argument("--engine", default="claude")
+    parser.add_argument("--model", default="claude-haiku-4-5")
+    parser.add_argument("--workspace", default="", help="the harness server's workspace, printed with the result")
+    parser.add_argument("--follow", action="store_true", help="print the run's events while it runs")
     try:
-        sys.exit(asyncio.run(main(args.workflow_id)))
+        sys.exit(asyncio.run(main(parser.parse_args())))
     except KeyboardInterrupt:
         sys.exit(130)

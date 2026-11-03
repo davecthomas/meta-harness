@@ -1,11 +1,30 @@
 # Temporal run task sample
 
-This sample runs a coding task as a Temporal workflow, with pi running on the
+This sample is the command-line way to run the meta-harness end to end, as far
+as it is built. `make run` always runs the whole current path, and it grows as
+each piece lands.
+
+```bash
+cd meta-harness/samples/temporal-run-task
+make run                                                   # the built-in task: create hello.txt and read it back
+make run TASK="Write a haiku about autumn to haiku.txt."   # your own task
+```
+
+To leave the services running and send them tasks, see
+[Run your own tasks](#run-your-own-tasks).
+
+The path today: Temporal workflow, then the harness server running pi, then
+the HTTP Gateway, then ai-api-unified, then the model provider. Each later
+step slots into the same commands: gateway run tokens, then the library's
+`harness` engine, then the pool manager with a sandbox per task.
+
+It runs a coding task as a Temporal workflow, with pi running on the
 [harness server](../../images/harness-pi/). A Python worker stands in for the
 design's run service (section 7 of the technical design). The workflow
 `RunTask` has two activities:
 
-- `prepare` reads a versioned prompt template and returns the prompt.
+- `prepare` uses the task text you gave, or reads a versioned prompt template,
+  and returns the prompt.
 - `run_harness` starts the run on the harness server with `POST /run`,
   follows `GET /events` until `run_finished`, and reads `GET /usage`. It
   heartbeats on every event and returns a typed result: status, turns,
@@ -38,9 +57,9 @@ default data converter.
 
 | Design step (section 7) | In this sample |
 |---|---|
-| 1. Admit | The starter calls `start_workflow`. There is no scheduler and no slot. |
-| 2. Prepare | `prepare` reads `prompts/hello-v1.txt`. There are no guardrails, no code-host token and no `AGENTS.md`. |
-| 3. Route and run | `run_harness` calls the harness server directly. There is no router, harness engine or sandbox lease. The starter names the engine and model. A retried attempt re-attaches by run id, as the design's harness engine does by call id. |
+| 1. Admit | The starter calls `start_workflow` with workflow id `run-task-<REF>`. `REF` plays the design's `external_ref`, and Temporal refuses a second task with the same one. There is no scheduler and no slot. |
+| 2. Prepare | `prepare` uses `TASK`, or reads `prompts/hello-v1.txt`. There are no guardrails, no code-host token and no `AGENTS.md`. |
+| 3. Route and run | `run_harness` calls the task's harness server directly. `stack.sh` starts one harness server per task, standing in for the pool manager's sandbox lease. There is no router or harness engine. The caller names the engine and model. A retried attempt re-attaches by run id, as the design's harness engine does by call id. |
 | 4. Watch | `run_harness` reads the harness server's event stream and prints it to the worker log. There is no event service, pool manager or stall detection beyond the heartbeat timeout. |
 | 5. Follow up | Left out. The harness server has `POST /followup`, but no pull request, code-host webhooks or signals drive it here. |
 | 6. Close | The workflow returns the result to the starter. There is no task service. |
@@ -55,7 +74,7 @@ sequenceDiagram
     participant W as worker
     participant H as harness server
     participant G as HTTP Gateway
-    S->>T: start_workflow(RunTask, template, engine, model)
+    S->>T: start_workflow(RunTask, task, engine, model, harness server URL)
     T->>W: workflow task
     W->>T: schedule prepare
     T->>W: activity task: prepare
@@ -77,26 +96,31 @@ sequenceDiagram
     T-->>S: RunTaskResult
 ```
 
-The engine, model and prompt travel in the workflow input, so they appear in
-the workflow history. `GATEWAY_API_KEY` and `HARNESS_SERVER_TOKEN` stay in
-the worker's environment and never enter the history.
+The engine, model, task text and harness server URL travel in the workflow
+input, so they appear in the workflow history. `GATEWAY_API_KEY` and
+`HARNESS_SERVER_TOKEN` stay in the worker's environment and never enter the
+history.
 
 ## Files
 
 | File | Role |
 |---|---|
 | `run_task/workflows.py` | `RunTask`: timeouts, retry policy and cancellation type for each activity |
-| `run_task/activities.py` | `prepare` and `run_harness`: start or re-attach, the event stream, heartbeats, cancel |
-| `run_task/shared.py` | Task queue name and the dataclass payloads |
+| `run_task/activities.py` | `prepare` and `run_harness`: start or re-attach, heartbeats, cancel |
+| `run_task/harness_client.py` | Reads the harness server's event stream and prints one line per event |
+| `run_task/shared.py` | Task queue name, the workflow id for a `REF`, and the dataclass payloads |
 | `run_task/worker.py` | Runs the workflow and activities. Stops on SIGINT or SIGTERM. |
-| `run_task/starter.py` | Starts one workflow, prints its id and web UI link, waits, then prints the event history and the result |
+| `run_task/starter.py` | Starts one task, prints its id and web UI link, waits, then prints the event history and the result. `--follow` also prints the run's events. |
+| `run_task/tasks.py` | `list`, `status`, `watch` and `cancel` for tasks already started |
 | `prompts/hello-v1.txt` | The prompt template: create hello.txt and read it back |
-| `Makefile` | `make run`, `make cancel-demo`, `make restart-demo` |
+| `stack.sh` | Starts and stops the services, and one harness server per task |
+| `Makefile` | The commands below. Each one calls `stack.sh` or `run_task.tasks`. |
 
 ## Settings
 
 | Setting | Value | Why |
 |---|---|---|
+| Workflow id | `run-task-<REF>`, ID reuse policy Reject Duplicate | One `REF` names one task, as `external_ref` does in the design |
 | Run id | `<workflow id>:run_harness` | The same on every attempt, so a retry re-attaches |
 | Harness session id | The workflow id | pi's session id and the gateway's prompt cache key |
 | Profile | tools `read`, `write`, `edit`, `ls`, 20 turns, 10 minutes | The harness server enforces both limits |
@@ -117,9 +141,15 @@ You need:
 
 No Temporal account or API key is needed. The dev server runs locally.
 
+**pi's tools act on your machine.** Until tasks run in a sandbox, nothing
+confines `read`, `write` and `edit` to the task's workspace. `bash` is off.
+Run only tasks you trust.
+
 ```bash
 cd meta-harness/samples/temporal-run-task
 make run
+make run TASK="Write a haiku about autumn to haiku.txt." REF=haiku-1
+make run ENGINE=openai MODEL=gpt-4o-mini
 ```
 
 `make run` takes these steps:
@@ -129,25 +159,30 @@ make run
 2. Starts `temporal server start-dev` unless a Temporal server answers at
    `TEMPORAL_ADDRESS`.
 3. Starts the gateway unless one answers at `GATEWAY_URL`.
-4. Starts a new harness server. A harness server holds one session, so
-   `make run` stops if something already answers at `HARNESS_URL`.
+4. Starts a harness server for the task on a free port, with pi's workspace
+   at `runs/<REF>/workspace`.
 5. Starts the worker, shows its log, and runs the starter.
 6. Stops everything it started, on exit or Ctrl-C. On Ctrl-C the starter
    cancels the workflow and waits for it to end before the worker stops.
 
-Logs go to `temporal.log`, `gateway.log`, `harness-server.log` and
-`worker.log` in this directory. The dev server keeps workflow history in
-memory, so history is gone once `make run` stops it. To keep history and
-browse it later, set `TEMPORAL_DB` to a file path, or start your own dev
-server first with `temporal server start-dev`. `make run` then uses that one
-and leaves it running. The web UI is at http://localhost:8233 while the
-server runs.
+`make run` refuses to start while `make up` is running, because the two
+workers would split the work.
+
+Logs go to `temporal.log`, `gateway.log` and `worker.log` in this directory,
+and the harness server's to `runs/<REF>/harness-server.log`. `runs/` keeps
+every task's workspace and log until you delete it. The dev server keeps
+workflow history in memory, so history is gone once `make run` stops it. To
+keep history and browse it later, set `TEMPORAL_DB` to a file path, or start
+your own dev server first with `temporal server start-dev`. `make run` then
+uses that one and leaves it running. The web UI is at http://localhost:8233
+while the server runs.
 
 | Variable | Default |
 |---|---|
-| `SAMPLE_ENGINE`, `SAMPLE_MODEL` | `claude`, `claude-haiku-4-5` |
+| `TASK` | empty: the task in `prompts/hello-v1.txt` |
+| `REF` | 8 random hex characters. Letters, digits, `.`, `_` and `-`, starting with a letter or digit. A `REF` used before is refused. |
+| `ENGINE`, `MODEL` | `claude`, `claude-haiku-4-5` |
 | `HARNESS_DIR` | `../../images/harness-pi` |
-| `HARNESS_PORT`, `HARNESS_URL` | `8090`, `http://127.0.0.1:8090` |
 | `HARNESS_SERVER_TOKEN` | `local-harness-token` |
 | `GATEWAY_DIR` | `../../../aiapi/ai-api-unified-http`, the gateway checkout |
 | `GATEWAY_PORT`, `GATEWAY_URL` | `8080`, `http://localhost:8080` |
@@ -157,11 +192,105 @@ server runs.
 | `WAIT_SECONDS` | `60`, how long to wait for each service to start |
 | `CANCEL_AT`, `RESTART_AT` | `turn 1 starts`, `turn 2 starts`: the worker log line each demo waits for |
 
+The built-in task costs under a cent on `claude-haiku-4-5`.
+
+## Run your own tasks
+
+Start the services once, then send them tasks from any terminal:
+
 ```bash
-make run SAMPLE_ENGINE=openai SAMPLE_MODEL=gpt-4o-mini
+make up
+make task REF=poem-1 TASK="Write a four-line poem about tide pools to poem.md, then list the files in the folder."
+make task REF=notes-1 ENGINE=openai MODEL=gpt-4o-mini TASK="Create notes.txt with three bullet points about why tests matter, then read it back."
+make tasks
+make status REF=poem-1
+make watch REF=notes-1
+make cancel REF=poem-1
+make down
 ```
 
-A run costs under a cent on `claude-haiku-4-5`.
+| Command | What it does |
+|---|---|
+| `make up` | Starts Temporal and the gateway unless they already answer, plus a worker, and leaves them running. Logs and process ids go in `stack/`. |
+| `make task TASK=... REF=...` | Starts a harness server for the task, starts the workflow, prints the run's events until it ends, prints the result, and stops the harness server. Ctrl-C cancels the task. Tasks in separate terminals run at the same time. |
+| `make tasks` | Lists every task on the Temporal server: `REF`, status, start time, workspace |
+| `make status REF=...` | One task: its workflow status and workspace. While it runs, the harness server's turns, calls, tokens and cost so far. Once it ends, the result. |
+| `make watch REF=...` | Prints a running task's events from the start, then its result |
+| `make cancel REF=...` | Cancels the workflow, which stops pi, and waits for it to end |
+| `make down` | Stops what `make up` started |
+
+The task's harness server stops when the task ends, so `watch` and the live
+part of `status` work only while the task runs. The workflow memo holds the
+task's harness server URL and workspace, so these commands need only the
+`REF`.
+
+Two tasks on 2026-11-03, started at the same time from two terminals. Output
+of the first `make task`, paths shortened:
+
+```text
+[make] starting a harness server for task poem-1, log: .../temporal-run-task/runs/poem-1/harness-server.log
+[make] harness server at http://127.0.0.1:61298: {"ok":true,"checks":{"model_client_registered":true,"workspace_exists":true,"gateway_reachable":true},"session_id":null}
+[make] pi's workspace: .../temporal-run-task/runs/poem-1/workspace
+[starter] started workflow run-task-poem-1  engine=claude  model=claude-haiku-4-5
+[starter] task: Write a four-line poem about tide pools to poem.md, then list the files in the folder.
+[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-poem-1
+[poem-1] #1 turn 1 starts
+[poem-1] #4 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write,ls  tokens in=1907 out=243 cached=0  usd=0.003122
+[poem-1] #5 runs tool write {"path": "poem.md", "content": "Shallow basins of stone and sand,\nWhere anemones bloom and starfish stand,\nWaves retreat and life is on display,\nSecrets of t
+[poem-1] #6 runs tool ls {"path": "."}
+[poem-1] #7 tool ls done
+[poem-1] #8 tool write done
+[poem-1] #9 file changed: poem.md
+[poem-1] #10 turn 1 finished
+[poem-1] #11 turn 2 starts
+[poem-1] #13 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=read  tokens in=2226 out=108 cached=0  usd=0.002766
+[poem-1] #14 runs tool read {"path": "poem.md"}
+[poem-1] #15 tool read done
+[poem-1] #16 turn 2 finished: Done! I've written a four-line poem about tide pools to `poem.md`. However, the directory listing shows "(empty directory)" - it appears the file may not be appearing in the listing yet, but it has be
+[poem-1] #17 turn 3 starts
+[poem-1] #18 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2397 out=39 cached=0  usd=0.002592
+[poem-1] #19 turn 3 finished: Perfect! The poem has been successfully written to `poem.md`. The file contains a four-line poem about tide pools describing their natural beauty and the marine life they contain.
+[poem-1] #20 run finished: FINISHED (completed)
+[history] ...
+[starter] workflow run-task-poem-1 completed
+[result] template=inline  run=run-task-poem-1:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
+[result] turns=3  failed calls=0  tokens in=6530 out=390  usd=0.008480
+[result] files changed: poem.md
+[result] workspace: .../temporal-run-task/runs/poem-1/workspace
+[result] answer: Perfect! The poem has been successfully written to `poem.md`. The file contains a four-line poem about tide pools describing their natural beauty and the marine life they contain.
+[make] harness server for task poem-1 stopped
+```
+
+`ls` ran next to `write` in turn 1 and found an empty folder. That is pi
+running a turn's tool calls at the same time (finding 6 of the pi sample).
+
+From a third terminal, while both ran:
+
+```text
+$ make tasks
+REF                     STATUS      STARTED               WORKSPACE
+poem-1                  RUNNING     2026-11-03 19:58:25   .../temporal-run-task/runs/poem-1/workspace
+notes-1                 RUNNING     2026-11-03 19:58:25   .../temporal-run-task/runs/notes-1/workspace
+$ make status REF=poem-1
+[status] poem-1: workflow run-task-poem-1 RUNNING, started 2026-11-03 19:58:25
+[status] workspace: .../temporal-run-task/runs/poem-1/workspace
+[status] run run-task-poem-1:run_harness: RUNNING  turns=1  calls=0 failed=0  tokens in=0 out=0  usd=0.000000
+$ make watch REF=notes-1
+[notes-1] #1 turn 1 starts
+[notes-1] #4 model call: openai:gpt-4o-mini  finish=tool_use  tool_calls=write  tokens in=1029 out=61 cached=0  usd=0.00019095
+...
+[notes-1] #19 run finished: FINISHED (completed)
+[status] notes-1: FINISHED (completed)  turns=3  failed calls=0  tokens in=3310 out=129  usd=0.000421
+[status] files changed: notes.txt
+[status] answer: The contents of **notes.txt** are as follows: ...
+```
+
+And a cancel, with `make cancel REF=cancel-1` sent during turn 1:
+
+```text
+[cancel] canceling workflow run-task-cancel-1
+[status] cancel-1: canceled
+```
 
 ## Reading the output
 
@@ -169,11 +298,13 @@ Each line starts with a tag that names where it came from.
 
 | Tag | Source |
 |---|---|
-| `[make]` | The Makefile |
+| `[make]` | `stack.sh`, which the Makefile runs |
 | `[worker]` | The worker process starting and stopping |
 | `[workflow]` | `RunTask`, through `workflow.logger`: each step it schedules and what came back |
 | `[activity]` | `prepare` and `run_harness`, through `activity.logger`: each attempt and its heartbeats |
-| `[run_harness attempt N]` | The activity: what `POST /run` did, then one line per harness server event, numbered with the event's id. Heartbeat events are not printed. |
+| `[<workflow id> run_harness attempt N]` | The activity: what `POST /run` did, then one line per harness server event, numbered with the event's id. Heartbeat events are not printed. |
+| `[<REF>]` | `make task` and `make watch`: the same events, read from the harness server by the starter |
+| `[status]`, `[cancel]`, `[watch]` | `make status`, `make cancel`, `make watch` |
 | `[history]` | The starter, after the workflow ends: every event the Temporal server recorded for the run |
 | `[temporalio.…]` | The SDK's own messages, such as a failed activity attempt |
 | `[starter]`, `[result]` | The starter |
@@ -191,46 +322,42 @@ rebuild the workflow. Three things about them:
 
 ## What a run looks like
 
-From `make run` on 2026-11-03, with ai-api-unified-http 1.17.1 and
-library 3.29.1. Paths are shortened, and `...` marks lines left out.
+From `make run REF=haiku-1 TASK="Write a haiku about autumn to haiku.txt."`
+on 2026-11-03, with ai-api-unified-http 1.17.1 and library 3.29.1. Paths are
+shortened.
 
 ```text
-[make] starting the Temporal dev server on port 7233, log: .../samples/temporal-run-task/temporal.log
-[make] starting the gateway from .../aiapi/ai-api-unified-http, log: .../samples/temporal-run-task/gateway.log
+[make] starting the Temporal dev server on port 7233, log: .../temporal-run-task/temporal.log
+[make] starting the gateway from .../aiapi/ai-api-unified-http, log: .../temporal-run-task/gateway.log
 [make] gateway: {"status":"ok","service_version":"1.17.1","api_version":"v1","library_version":"3.29.1"}
-[make] starting the harness server from .../meta-harness/images/harness-pi, log: .../samples/temporal-run-task/harness-server.log
-[make] harness server: {"ok":true,"checks":{"model_client_registered":true,"workspace_exists":true,"gateway_reachable":true},"session_id":null}
+[make] starting a harness server for task haiku-1, log: .../temporal-run-task/runs/haiku-1/harness-server.log
+[make] harness server at http://127.0.0.1:61555: {"ok":true,"checks":{"model_client_registered":true,"workspace_exists":true,"gateway_reachable":true},"session_id":null}
+[make] pi's workspace: .../temporal-run-task/runs/haiku-1/workspace
 [worker] polling task queue run-task on localhost:7233
-[starter] started workflow run-task-22430bc9  engine=claude  model=claude-haiku-4-5
-[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-22430bc9
-[workflow] run-task-22430bc9: started, run id 01a1a2ae-37d8-7036-97cc-69d46dfd1c92, template hello-v1, engine claude, model claude-haiku-4-5
-[workflow] run-task-22430bc9: scheduling activity prepare (timeout 30s, up to 3 attempts)
-[activity] prepare attempt 1: read the prompt from prompts/hello-v1.txt
-[workflow] run-task-22430bc9: prepare returned a 135-character prompt
-[workflow] run-task-22430bc9: scheduling activity run_harness (timeout 10m, heartbeat timeout 10s, up to 3 attempts)
-[activity] run_harness attempt 1 started for run-task-22430bc9, heartbeat timeout 10s
-[run_harness attempt 1] POST /run started run run-task-22430bc9:run_harness
-[run_harness attempt 1] #1 turn 1 starts
-[run_harness attempt 1] #3 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write,read  tokens in=1923 out=183 cached=0  usd=0.002838
-[run_harness attempt 1] #4 runs tool write {"path": "hello.txt", "content": "Hello! It's great to see you today!"}
-[run_harness attempt 1] #5 runs tool read {"path": "hello.txt"}
-[run_harness attempt 1] #6 tool read failed: ENOENT: no such file or directory, access '.../harness-workspace-pfw6s1/hello.txt'
-[run_harness attempt 1] #7 tool write done
-[run_harness attempt 1] #8 file changed: hello.txt
-[run_harness attempt 1] #9 turn 1 finished
-[run_harness attempt 1] #10 turn 2 starts
-[run_harness attempt 1] #11 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=read  tokens in=2238 out=61 cached=0  usd=0.002543
-[run_harness attempt 1] #12 runs tool read {"path": "hello.txt"}
-[run_harness attempt 1] #13 tool read done
-[run_harness attempt 1] #14 turn 2 finished: Let me try reading it again:
-[run_harness attempt 1] #15 turn 3 starts
-[run_harness attempt 1] #17 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2324 out=64 cached=0  usd=0.002644
-[run_harness attempt 1] #18 turn 3 finished: Perfect! I've successfully created the file `hello.txt` and read it back. The file contains: **"Hello! It's great to see you today!"** The file was created with exactly one line containing a short fri
-[run_harness attempt 1] #19 run finished: FINISHED (completed)
-[activity] run_harness attempt 1: run finished, 20 heartbeats sent, returning the result to Temporal
-[workflow] run-task-22430bc9: run_harness returned on attempt 1: 3 turns, usd 0.008025
-[workflow] run-task-22430bc9: completed
-[history] events the Temporal server recorded for run-task-22430bc9:
+[starter] started workflow run-task-haiku-1  engine=claude  model=claude-haiku-4-5
+[starter] task: Write a haiku about autumn to haiku.txt.
+[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-haiku-1
+[workflow] run-task-haiku-1: started, run id 01a1a2ff-6379-73a5-97a0-d93043ebb14b, task text from the caller, engine claude, model claude-haiku-4-5
+[workflow] run-task-haiku-1: scheduling activity prepare (timeout 30s, up to 3 attempts)
+[activity] prepare attempt 1: using the task text from the caller
+[workflow] run-task-haiku-1: prepare returned a 40-character prompt
+[workflow] run-task-haiku-1: scheduling activity run_harness (timeout 10m, heartbeat timeout 10s, up to 3 attempts)
+[activity] run_harness attempt 1 started for run-task-haiku-1, heartbeat timeout 10s
+[run-task-haiku-1 run_harness attempt 1] POST /run started run run-task-haiku-1:run_harness
+[run-task-haiku-1 run_harness attempt 1] #1 turn 1 starts
+[run-task-haiku-1 run_harness attempt 1] #4 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write  tokens in=1898 out=357 cached=0  usd=0.003683
+[run-task-haiku-1 run_harness attempt 1] #5 runs tool write {"path": "haiku.txt", "content": "Crimson leaves descend\nCool winds whisper through the trees\nSummer warmth departs\n"}
+[run-task-haiku-1 run_harness attempt 1] #6 tool write done
+[run-task-haiku-1 run_harness attempt 1] #7 file changed: haiku.txt
+[run-task-haiku-1 run_harness attempt 1] #8 turn 1 finished
+[run-task-haiku-1 run_harness attempt 1] #9 turn 2 starts
+[run-task-haiku-1 run_harness attempt 1] #10 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2278 out=45 cached=0  usd=0.002503
+[run-task-haiku-1 run_harness attempt 1] #11 turn 2 finished: Done! I've written an autumn haiku to **haiku.txt**: ``` Crimson leaves descend Cool winds whisper through the trees Summer warmth departs ```
+[run-task-haiku-1 run_harness attempt 1] #12 run finished: FINISHED (completed)
+[activity] run_harness attempt 1: run finished, 13 heartbeats sent, returning the result to Temporal
+[workflow] run-task-haiku-1: run_harness returned on attempt 1: 2 turns, usd 0.006186
+[workflow] run-task-haiku-1: completed
+[history] events the Temporal server recorded for run-task-haiku-1:
 [history]   1  WorkflowExecutionStarted          task queue run-task
 [history]   2  WorkflowTaskScheduled
 [history]   3  WorkflowTaskStarted
@@ -248,11 +375,12 @@ library 3.29.1. Paths are shortened, and `...` marks lines left out.
 [history]  15  WorkflowTaskStarted
 [history]  16  WorkflowTaskCompleted
 [history]  17  WorkflowExecutionCompleted
-[starter] workflow run-task-22430bc9 completed
-[result] template=hello-v1  run=run-task-22430bc9:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
-[result] turns=3  failed calls=0  tokens in=6485 out=308  usd=0.008025
-[result] files changed: hello.txt
-[result] answer: Perfect! I've successfully created the file `hello.txt` and read it back. The file contains: **"Hello! It's great to see you today!"** The file was created with exactly one line containing a short friendly greeting, and I've confirmed it by reading it back.
+[starter] workflow run-task-haiku-1 completed
+[result] template=inline  run=run-task-haiku-1:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
+[result] turns=2  failed calls=0  tokens in=4176 out=402  usd=0.006186
+[result] files changed: haiku.txt
+[result] workspace: .../temporal-run-task/runs/haiku-1/workspace
+[result] answer: Done! I've written an autumn haiku to **haiku.txt**: ``` Crimson leaves descend Cool winds whisper through the trees Summer warmth departs ```
 [worker] shutting down
 [temporalio.worker._worker] Beginning worker shutdown, will wait 0:00:00 before cancelling activities
 [worker] stopped
@@ -262,7 +390,7 @@ library 3.29.1. Paths are shortened, and `...` marks lines left out.
 [make] Temporal dev server stopped
 ```
 
-Event ids missing from the list, such as 2 and 16, are `heartbeat` events,
+Event ids missing from the list, such as 2 and 3, are `heartbeat` events,
 which the activity does not print.
 
 Each `WorkflowTask` trio in the history is the worker running workflow code
@@ -270,35 +398,33 @@ until it next waits: once at the start, then once after each activity
 returns. Each pass ends by sending the server its next commands: schedule
 `prepare`, schedule `run_harness`, complete the workflow.
 
-The failed `read` on turn 1 is pi running a turn's tool calls at the same
-time (finding 6 of the pi sample).
-
 ## Cancel
 
 ```bash
 make cancel-demo
 ```
 
-This runs the same task. When the worker log shows `turn 1 starts`, it runs
-`temporal workflow cancel --workflow-id <id>`, the way an operator would.
-Output from 2026-11-03, after the same startup lines:
+This runs the built-in task. When the worker log shows `turn 1 starts`, it
+runs `temporal workflow cancel --workflow-id <id>`, the way an operator
+would. `make cancel REF=...` does the same for a task started with
+`make task`. Output from 2026-11-03, after the same startup lines:
 
 ```text
-[run_harness attempt 1] #1 turn 1 starts
-[make] temporal workflow cancel --workflow-id run-task-3db53910
-[run_harness attempt 1] cancellation received (cancel_requested), sending POST /cancel
-[run_harness attempt 1] harness server stopped pi: run CANCELED
-[workflow] run-task-3db53910: canceled, and run_harness has stopped pi
-[starter] workflow run-task-3db53910 canceled
+[run-task-8dfd317f run_harness attempt 1] #1 turn 1 starts
+[make] temporal workflow cancel --workflow-id run-task-8dfd317f
+[run-task-8dfd317f run_harness attempt 1] cancellation received (cancel_requested), sending POST /cancel
+[run-task-8dfd317f run_harness attempt 1] harness server stopped pi: run CANCELED
+[workflow] run-task-8dfd317f: canceled, and run_harness has stopped pi
+[starter] workflow run-task-8dfd317f canceled
 ```
 
-`harness-server.log` shows pi's side. `abort()` canceled the model call in
-flight, and the run ended:
+`runs/<REF>/harness-server.log` shows pi's side. `abort()` canceled the
+model call in flight, and the run ended:
 
 ```text
-[harness-server] #2 run-task-3db53910:run_harness model_call error: This operation was aborted
-[harness-server] #3 run-task-3db53910:run_harness turn_finished {"turn":1,"stop_reason":"aborted","text":"","tool_calls":0}
-[harness-server] #4 run-task-3db53910:run_harness run_finished CANCELED canceled
+[harness-server] #2 run-task-8dfd317f:run_harness model_call error: This operation was aborted
+[harness-server] #3 run-task-8dfd317f:run_harness turn_finished {"turn":1,"stop_reason":"aborted","text":"","tool_calls":0}
+[harness-server] #4 run-task-8dfd317f:run_harness run_finished CANCELED canceled
 ```
 
 The `[history]` lines show the order, from event 11:
@@ -328,32 +454,42 @@ cancel request because Temporal writes it when the attempt ends.
 make restart-demo
 ```
 
-When the worker log shows `turn 2 starts`, the Makefile kills the worker's
+When the worker log shows `turn 2 starts`, `stack.sh` kills the worker's
 process group with SIGKILL, then starts a new worker. The harness server is a
-separate process and keeps running pi. To do it by hand, run `make run` with
-a Temporal dev server you started yourself, and in another terminal run
-`pkill -KILL -f run_task.worker`, then `uv run python -m run_task.worker` in
-this directory with `HARNESS_URL`, `HARNESS_SERVER_TOKEN` and
-`GATEWAY_API_KEY` set.
+separate process and keeps running pi.
 
-Output from 2026-11-03:
+To do it by hand, start a task on the running stack, kill the worker from
+another terminal while the task runs, then start a new worker:
+
+```bash
+make up
+make task REF=restart-1 TASK="Create count.txt with the numbers 1 to 5, one per line, then read it back and add them up."
+# in another terminal, during the run:
+pkill -KILL -f run_task.worker
+make up
+```
+
+The second `make up` sees the worker is gone and starts only a new one. The
+task ends with `attempt=2  reattached=True`.
+
+Output of `make restart-demo` from 2026-11-03:
 
 ```text
-[run_harness attempt 1] #10 turn 2 starts
+[run-task-9ef411d2 run_harness attempt 1] #10 turn 2 starts
 [make] killing the worker with SIGKILL (process group 17341). The harness server keeps running pi.
 [make] Temporal retries run_harness once 10s pass with no heartbeat, plus the 2s retry interval
 [make] starting a new worker
 [worker] polling task queue run-task on localhost:7233
 [activity] run_harness attempt 2 started for run-task-9ef411d2, heartbeat timeout 10s
-[run_harness attempt 2] POST /run: run run-task-9ef411d2:run_harness already exists (FINISHED). Re-attaching after event 5, without starting pi again
-[run_harness attempt 2] #6 tool read failed: ENOENT: no such file or directory, access '.../harness-workspace-duHHuD/hello.txt'
-[run_harness attempt 2] #7 tool write done
-[run_harness attempt 2] #8 file changed: hello.txt
-[run_harness attempt 2] #9 turn 1 finished
-[run_harness attempt 2] #10 turn 2 starts
-[run_harness attempt 2] #12 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=read  tokens in=2235 out=61 cached=0  usd=0.00254
+[run-task-9ef411d2 run_harness attempt 2] POST /run: run run-task-9ef411d2:run_harness already exists (FINISHED). Re-attaching after event 5, without starting pi again
+[run-task-9ef411d2 run_harness attempt 2] #6 tool read failed: ENOENT: no such file or directory, access '.../hello.txt'
+[run-task-9ef411d2 run_harness attempt 2] #7 tool write done
+[run-task-9ef411d2 run_harness attempt 2] #8 file changed: hello.txt
+[run-task-9ef411d2 run_harness attempt 2] #9 turn 1 finished
+[run-task-9ef411d2 run_harness attempt 2] #10 turn 2 starts
+[run-task-9ef411d2 run_harness attempt 2] #12 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=read  tokens in=2235 out=61 cached=0  usd=0.00254
 ...
-[run_harness attempt 2] #19 run finished: FINISHED (completed)
+[run-task-9ef411d2 run_harness attempt 2] #19 run finished: FINISHED (completed)
 [activity] run_harness attempt 2: run finished, 15 heartbeats sent, returning the result to Temporal
 [workflow] run-task-9ef411d2: this worker has no state for the workflow, so it replays the history to rebuild it. Steps already in the history do not run again.
 [workflow] run-task-9ef411d2: run_harness returned on attempt 2: 3 turns, usd 0.007924
