@@ -826,6 +826,16 @@ stateDiagram-v2
     Exhausted --> [*]
 ```
 
+Each task has one Temporal workflow, and its workflow id is the task id.
+Every run of the task happens inside that workflow: the first attempt,
+fallbacks, follow-ups and retries one tier up. Temporal allows only one open
+execution per workflow id. `start` keeps the default conflict policy, Fail,
+so a second `start` for a running task fails with `Workflow execution
+already started` and never creates a duplicate run. `start` also sets the
+reuse policy to Reject Duplicate, so a closed task's id never starts again.
+The Temporal web UI and `temporal workflow show --workflow-id <task id>`
+find any task's workflow from the id `POST /v1/tasks` returned.
+
 The run workflow lives in the run service, in Temporal terms:
 
 1. **Admit.** The scheduler grants a slot (section 10) and calls the run
@@ -1417,6 +1427,7 @@ sandbox to the HTTP Gateway.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/v1/tasks` | Submit a task. Returns the task id. Idempotent on `external_ref`. |
+| GET | `/v1/tasks?external_ref={ref}` | The caller's task with that `external_ref`, so a caller can find a task by its own id |
 | GET | `/v1/tasks/{id}` | Task state, current run, routing decision, PR URL, outcome |
 | GET | `/v1/tasks/{id}/events` | Server-sent events for the task's runs |
 | POST | `/v1/tasks/{id}/cancel` | Cancel the active run and close the task |
@@ -1443,6 +1454,11 @@ Task fields:
 
 Callers authenticate with a per-caller key. The key sets the caller's
 concurrency quota and daily cap.
+
+`external_ref` is unique per caller. The task table has a unique index on
+`(caller, external_ref)`, and both the deduplication and the lookup use it.
+One task per request: to fix three bugs, a caller submits three tasks and
+gets three task ids.
 
 The task service exposes the Task API over HTTP. It serves task routes from its
 own table and answers run, profile and event routes by calling the run
@@ -1569,6 +1585,12 @@ event service keeps run, routing, attempt and audit events long.
 A read-only web console served by the control plane. It owns no store and
 holds no database connection. Every view drills down to the next; every list
 filters by time, caller, harness profile, model, tier, task type and state.
+The Tasks view also finds a task by its `external_ref`.
+
+**Telling runs apart.** Tasks running at the same time differ by task id.
+A task's own runs never overlap: fallbacks, retries and follow-ups run one
+after another. The Tasks view lists them by run id in order, and the Run view
+opens one.
 
 **Where each view reads.** Event timelines come from the event service's
 `read` and `tail`. Task and queue state come from the task service, run state

@@ -14,7 +14,8 @@ and ends at a pull request plus a recorded outcome.
 
 **Task intake**
 
-- FR-1. Accept tasks via `POST /v1/tasks`, idempotent on `external_ref`.
+- FR-1. Accept tasks via `POST /v1/tasks`, idempotent on `external_ref`, and
+  let a caller find its task by `external_ref`.
 - FR-2. Validate the task schema: repo, task type, priority, title,
   description, acceptance checks, and optional paths, complexity, max tier
   and max USD.
