@@ -6,6 +6,9 @@
 #   make restart-demo            make run, then SIGKILL the worker once the worker log shows RESTART_AT
 #   make spend-limit-demo        make run with a $0.001 spend limit, which the run passes on turn 1
 #   make egress-check            check the per-run sandbox network rules, with no model call
+#   make e2e                     the zero-cost end-to-end check: make run, the demos and egress-check
+#                                against a fake HTTP Gateway that makes no model calls (CI runs it)
+#   make run GATEWAY=fake        any command against the fake gateway, at no cost
 #
 # Or leave the services running and send them tasks:
 #
@@ -31,6 +34,13 @@ HARNESS_IMAGE ?= harness-pi:dev
 EGRESS_IMAGE ?= mh-egress-proxy:dev
 RUNS_DIR ?= $(CURDIR)/runs
 GATEWAY_DIR ?= $(abspath $(CURDIR)/../../../aiapi/ai-api-unified-http)
+# real: ai-api-unified-http from GATEWAY_DIR. fake: run_task/fake_gateway.py, which makes no model calls.
+GATEWAY ?= real
+# The fake binds here. CI on Linux sets 0.0.0.0, so the egress proxy container can reach it.
+FAKE_GATEWAY_HOST ?= 127.0.0.1
+FAKE_TURN_SECONDS ?= 2
+# make e2e runs the fake on its own port, so it never meets a real gateway on 8080.
+E2E_GATEWAY_PORT ?= 8099
 GATEWAY_PORT ?= 8080
 GATEWAY_URL ?= http://localhost:$(GATEWAY_PORT)
 GATEWAY_API_KEY ?= local-dev-key
@@ -57,11 +67,11 @@ DEMO ?=
 CANCEL_AT ?= turn 1 starts
 RESTART_AT ?= turn 2 starts
 
-export HARNESS_DIR HARNESS_IMAGE EGRESS_IMAGE EGRESS_ALLOW RUNS_DIR GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
+export GATEWAY FAKE_GATEWAY_HOST FAKE_TURN_SECONDS HARNESS_DIR HARNESS_IMAGE EGRESS_IMAGE EGRESS_ALLOW RUNS_DIR GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
   SANDBOX_GATEWAY_URL REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB \
   WAIT_SECONDS ENGINE MODEL SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT
 
-.PHONY: run cancel-demo restart-demo spend-limit-demo egress-check up down task tasks status watch cancel
+.PHONY: run cancel-demo restart-demo spend-limit-demo egress-check e2e up down task tasks status watch cancel
 
 run:
 	@./stack.sh run
@@ -78,6 +88,12 @@ spend-limit-demo:
 
 egress-check:
 	@./stack.sh egress-check
+
+# Target-specific values, so GATEWAY_URL, SANDBOX_GATEWAY_URL and EGRESS_ALLOW follow the fake's port.
+e2e: GATEWAY = fake
+e2e: GATEWAY_PORT = $(E2E_GATEWAY_PORT)
+e2e:
+	@./e2e.sh
 
 up:
 	@./stack.sh up

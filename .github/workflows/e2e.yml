@@ -1,0 +1,70 @@
+# The zero-cost end-to-end check and the harness server's tests, on every pull request.
+#
+# make e2e runs the whole current path (the RunTask workflow, the per-run sandbox
+# behind the egress proxy, the harness server running pi) against a fake HTTP
+# Gateway that makes no model calls, so it needs no provider keys and costs nothing.
+
+name: zero-cost end-to-end check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: zero-cost end-to-end check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.5"
+
+      - name: Install the Temporal CLI
+        run: |
+          curl -sSf https://temporal.download/cli.sh | sh -s -- --version v1.10.0
+          echo "$HOME/.temporalio/bin" >> "$GITHUB_PATH"
+
+      - name: make e2e
+        working-directory: samples/temporal-run-task
+        env:
+          # On Linux the egress proxy container reaches the fake through the Docker bridge, not 127.0.0.1.
+          FAKE_GATEWAY_HOST: 0.0.0.0
+        run: make e2e
+
+      - name: Keep the logs of a failed check
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            samples/temporal-run-task/e2e-logs/
+            samples/temporal-run-task/*.log
+            samples/temporal-run-task/runs/*/harness-server.log
+          if-no-files-found: ignore
+
+  harness-server:
+    name: harness server tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: images/harness-pi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: images/harness-pi/.nvmrc
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
