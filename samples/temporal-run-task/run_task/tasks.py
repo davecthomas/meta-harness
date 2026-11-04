@@ -120,7 +120,7 @@ async def _harness_get(path: str, ref: str) -> dict[str, Any] | None:
     if box is None:
         return None
     try:
-        async with harness_client.client(box.url, box.token) as http:
+        async with harness_client.client(box) as http:
             response = await http.get(path, params={"run_id": run_id})
     except httpx.HTTPError:
         return None
