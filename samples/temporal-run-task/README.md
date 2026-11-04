@@ -230,12 +230,12 @@ Start the services once, then send them tasks from any terminal:
 
 ```bash
 make up
-make task REF=poem-1 TASK="Write a four-line poem about tide pools to poem.md, then list the files in the folder."
-make task REF=notes-1 ENGINE=openai MODEL=gpt-4o-mini TASK="Create notes.txt with three bullet points about why tests matter, then read it back."
+make task REF=poem-3 TASK="Write a four-line poem about tide pools to poem.md, then list the files in the folder."
+make task REF=notes-3 ENGINE=openai MODEL=gpt-4o-mini TASK="Create notes.txt with three bullet points about why tests matter, then read it back."
 make tasks
-make status REF=poem-1
-make watch REF=notes-1
-make cancel REF=poem-1
+make status REF=poem-3
+make watch REF=notes-3
+make cancel REF=poem-3
 make down
 ```
 
@@ -254,75 +254,92 @@ part of `status` work only while the task runs. The workflow memo holds the
 task's harness server URL and workspace, so these commands need only the
 `REF`.
 
-Two tasks on 2026-11-03, started at the same time from two terminals, before
-run grants. With them, the activity also prints the grant it got and its
-revocation, `[starter]` prints the spend limit, and `make status` adds a
-`[status] run grant:` line with the spend so far. Output of the first
-`make task`, paths shortened:
+Two tasks on 2026-11-04, started at the same time: poem-3 on Claude and
+notes-3 on OpenAI. Output of the first `make task`, paths shortened:
 
 ```text
-[make] starting a harness server for task poem-1, log: .../temporal-run-task/runs/poem-1/harness-server.log
-[make] harness server at http://127.0.0.1:61298: {"ok":true,"checks":{"model_client_registered":true,"workspace_exists":true,"gateway_reachable":true},"session_id":null}
-[make] pi's workspace: .../temporal-run-task/runs/poem-1/workspace
-[starter] started workflow run-task-poem-1  engine=claude  model=claude-haiku-4-5
+[make] starting a harness server for task poem-3, log: .../temporal-run-task/runs/poem-3/harness-server.log
+[make] harness server at http://127.0.0.1:52407: {"ok":true,"checks":{"model_client_registered":true,"workspace_exists":true,"gateway_reachable":true},"session_id":null}
+[make] pi's workspace: .../temporal-run-task/runs/poem-3/workspace
+[starter] started workflow run-task-poem-3  engine=claude  model=claude-haiku-4-5  spend limit=$0.50
 [starter] task: Write a four-line poem about tide pools to poem.md, then list the files in the folder.
-[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-poem-1
-[poem-1] #1 turn 1 starts
-[poem-1] #4 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write,ls  tokens in=1907 out=243 cached=0  usd=0.003122
-[poem-1] #5 runs tool write {"path": "poem.md", "content": "Shallow basins of stone and sand,\nWhere anemones bloom and starfish stand,\nWaves retreat and life is on display,\nSecrets of t
-[poem-1] #6 runs tool ls {"path": "."}
-[poem-1] #7 tool ls done
-[poem-1] #8 tool write done
-[poem-1] #9 file changed: poem.md
-[poem-1] #10 turn 1 finished
-[poem-1] #11 turn 2 starts
-[poem-1] #13 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=read  tokens in=2226 out=108 cached=0  usd=0.002766
-[poem-1] #14 runs tool read {"path": "poem.md"}
-[poem-1] #15 tool read done
-[poem-1] #16 turn 2 finished: Done! I've written a four-line poem about tide pools to `poem.md`. However, the directory listing shows "(empty directory)" - it appears the file may not be appearing in the listing yet, but it has be
-[poem-1] #17 turn 3 starts
-[poem-1] #18 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2397 out=39 cached=0  usd=0.002592
-[poem-1] #19 turn 3 finished: Perfect! The poem has been successfully written to `poem.md`. The file contains a four-line poem about tide pools describing their natural beauty and the marine life they contain.
-[poem-1] #20 run finished: FINISHED (completed)
+[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-poem-3
+[poem-3] #1 turn 1 starts
+[poem-3] #3 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write,ls  tokens in=1907 out=249 cached=0  usd=0.003152
+[poem-3] #4 runs tool write {"path": "poem.md", "content": "# Tide Pool\n\nCrystal waters hold the secret shore,\nWhere starfish cling and anemones pour,\nTiny worlds in rock and sand,\nNa
+[poem-3] #5 runs tool ls {"path": "."}
+[poem-3] #6 tool ls done
+[poem-3] #7 tool write done
+[poem-3] #8 file changed: poem.md
+[poem-3] #9 turn 1 finished
+[poem-3] #10 turn 2 starts
+[poem-3] #12 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=read  tokens in=2232 out=103 cached=0  usd=0.002747
+[poem-3] #13 runs tool read {"path": "poem.md"}
+[poem-3] #14 tool read done
+[poem-3] #15 turn 2 finished: I've written a four-line poem about tide pools to `poem.md`. The folder appears to be empty in the listing, but that's because `poem.md` was just created. Let me verify the poem was written correctly:
+[poem-3] #16 turn 3 starts
+[poem-3] #17 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2404 out=80 cached=0  usd=0.002804
+[poem-3] #18 turn 3 finished: Perfect! I've created `poem.md` with a four-line poem about tide pools. The file is now in your workspace folder and contains: ``` # Tide Pool Crystal waters hold the secret shore, Where starfish clin
+[poem-3] #19 run finished: FINISHED (completed)
 [history] ...
-[starter] workflow run-task-poem-1 completed
-[result] template=inline  run=run-task-poem-1:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
-[result] turns=3  failed calls=0  tokens in=6530 out=390  usd=0.008480
+[starter] workflow run-task-poem-3 completed
+[result] template=inline  run=run-task-poem-3:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
+[result] turns=3  failed calls=0  tokens in=6543 out=432  usd=0.008703
+[result] run grant: the HTTP Gateway counted $0.008703 of the $0.50 limit
 [result] files changed: poem.md
-[result] workspace: .../temporal-run-task/runs/poem-1/workspace
-[result] answer: Perfect! The poem has been successfully written to `poem.md`. The file contains a four-line poem about tide pools describing their natural beauty and the marine life they contain.
-[make] harness server for task poem-1 stopped
+[result] workspace: .../temporal-run-task/runs/poem-3/workspace
+[result] answer: Perfect! I've created `poem.md` with a four-line poem about tide pools. The file is now in your workspace folder and contains: ``` # Tide Pool Crystal waters hold the secret shore, Where starfish cling and anemones pour, Tiny worlds in rock and sand, Nature's marvel close at hand. ```
+[make] harness server for task poem-3 stopped
 ```
 
 `ls` ran next to `write` in turn 1 and found an empty folder. That is pi
 running a turn's tool calls at the same time (finding 6 of the pi sample).
+
+The grant lines are in the worker log, `stack/worker.log`:
+
+```text
+[run-task-poem-3 run_harness attempt 1] run grant issued for run-task-poem-3:run_harness: claude:claude-haiku-4-5, spend limit $0.50, expires 2026-11-04T14:43:29+00:00
+[run-task-notes-3 run_harness attempt 1] run grant issued for run-task-notes-3:run_harness: openai:gpt-4o-mini, spend limit $0.50, expires 2026-11-04T14:43:29+00:00
+[run-task-notes-3 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0.00041715 against it
+[run-task-poem-3 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0.008703 against it
+```
 
 From a third terminal, while both ran:
 
 ```text
 $ make tasks
 REF                     STATUS      STARTED               WORKSPACE
-poem-1                  RUNNING     2026-11-03 19:58:25   .../temporal-run-task/runs/poem-1/workspace
-notes-1                 RUNNING     2026-11-03 19:58:25   .../temporal-run-task/runs/notes-1/workspace
-$ make status REF=poem-1
-[status] poem-1: workflow run-task-poem-1 RUNNING, started 2026-11-03 19:58:25
-[status] workspace: .../temporal-run-task/runs/poem-1/workspace
-[status] run run-task-poem-1:run_harness: RUNNING  turns=1  calls=0 failed=0  tokens in=0 out=0  usd=0.000000
-$ make watch REF=notes-1
-[notes-1] #1 turn 1 starts
-[notes-1] #4 model call: openai:gpt-4o-mini  finish=tool_use  tool_calls=write  tokens in=1029 out=61 cached=0  usd=0.00019095
+poem-3                  RUNNING     2026-11-04 14:28:27   .../temporal-run-task/runs/poem-3/workspace
+notes-3                 RUNNING     2026-11-04 14:28:27   .../temporal-run-task/runs/notes-3/workspace
+$ make status REF=poem-3
+[status] poem-3: workflow run-task-poem-3 RUNNING, started 2026-11-04 14:28:27
+[status] workspace: .../temporal-run-task/runs/poem-3/workspace
+[status] run run-task-poem-3:run_harness: RUNNING  turns=2  calls=1 failed=0  tokens in=1907 out=249  usd=0.003152
+[status] run grant: claude:claude-haiku-4-5  spent $0.003152 of $0.50  expires 2026-11-04T14:43:29+00:00
+$ make watch REF=notes-3
+[notes-3] #1 turn 1 starts
+[notes-3] #3 model call: openai:gpt-4o-mini  finish=tool_use  tool_calls=write  tokens in=1029 out=58 cached=0  usd=0.00018915
 ...
-[notes-1] #19 run finished: FINISHED (completed)
-[status] notes-1: FINISHED (completed)  turns=3  failed calls=0  tokens in=3310 out=129  usd=0.000421
+[notes-3] #17 run finished: FINISHED (completed)
+[status] notes-3: FINISHED (completed)  turns=3  failed calls=0  tokens in=3301 out=126  usd=0.000417
+[status] run grant: the HTTP Gateway counted $0.00041715 of the $0.50 limit
 [status] files changed: notes.txt
-[status] answer: The contents of **notes.txt** are as follows: ...
+[status] answer: The file `notes.txt` has been created with the following content: ...
 ```
 
-And a cancel, with `make cancel REF=cancel-1` sent during turn 1:
+And a cancel, with `make cancel REF=cancel-4` sent during turn 1:
 
 ```text
-[cancel] canceling workflow run-task-cancel-1
-[status] cancel-1: canceled
+[cancel] canceling workflow run-task-cancel-4
+[status] cancel-4: canceled
+```
+
+The worker log shows the cancel stopping pi and revoking the grant:
+
+```text
+[run-task-cancel-4 run_harness attempt 1] cancellation received (cancel_requested), sending POST /cancel
+[run-task-cancel-4 run_harness attempt 1] harness server stopped pi: run CANCELED
+[run-task-cancel-4 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0 against it
 ```
 
 ## Reading the output
