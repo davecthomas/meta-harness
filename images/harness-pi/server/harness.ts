@@ -28,6 +28,7 @@ import {
 	MODEL_CLIENT_PROVIDER,
 	type ModelCallRecord,
 	type RunContext,
+	SPEND_LIMIT_ERROR,
 } from "../extension/model-client.ts";
 import { EventLog, type RunEventType } from "./event-log.ts";
 
@@ -50,17 +51,15 @@ export interface RunRequest {
 	prompt: string;
 	acceptance_checks: string[];
 	profile: Profile;
-	token: string;
-	engine: string;
-	model?: string;
+	/** The run grant's key from the HTTP Gateway. The grant decides the engine, the model and the spend limit. */
+	grant_key: string;
 }
 
 export interface FollowupRequest {
 	run_id: string;
 	prompt: string;
-	token: string;
-	engine: string;
-	model?: string;
+	/** A follow-up is a new run with its own grant. */
+	grant_key: string;
 }
 
 export interface Usage {
@@ -82,7 +81,7 @@ export interface RunState {
 	profile: string;
 	acceptance_checks: string[];
 	status: RunStatus;
-	/** Why the run ended: completed, model_error, harness_error, canceled, max_turns, max_minutes, server_shutdown. */
+	/** Why the run ended: completed, model_error, harness_error, canceled, max_turns, max_minutes, spend_limit, server_shutdown. */
 	end_reason: string | null;
 	error: string | null;
 	turns: number;
@@ -110,7 +109,7 @@ export class HttpError extends Error {
 	}
 }
 
-type StopReason = "canceled" | "max_turns" | "max_minutes" | "server_shutdown";
+type StopReason = "canceled" | "max_turns" | "max_minutes" | "spend_limit" | "server_shutdown";
 
 const ACTIVE: readonly RunStatus[] = ["CREATING", "RUNNING"];
 const PREVIEW_CHARS = 2000;
@@ -166,10 +165,10 @@ export class Harness {
 		modelRuntime.registerProvider(MODEL_CLIENT_PROVIDER, {
 			name: "ai-api-unified through the HTTP Gateway",
 			baseUrl: config.gatewayUrl,
-			// A fixed placeholder so pi treats the provider as configured. The real token comes
-			// from the run on every turn. A token here would also be at risk: pi runs a value
+			// A fixed placeholder so pi treats the provider as configured. The real grant key
+			// comes from the run on every turn. A key here would also be at risk: pi runs a value
 			// that starts with "!" as a shell command.
-			apiKey: "run-token",
+			apiKey: "run-grant-key",
 			api: MODEL_CLIENT_API,
 			models: [
 				{
@@ -246,7 +245,7 @@ export class Harness {
 		}
 		const run = this.newRun(request.run_id, "run", request.harness_session_id, request.profile, request.acceptance_checks);
 		this.sessionProfile = request.profile;
-		this.context = { token: request.token, engine: request.engine, model: request.model, cacheKey: request.harness_session_id };
+		this.context = { grantKey: request.grant_key, cacheKey: request.harness_session_id };
 		this.track(run, async () => {
 			this.session = await this.createSession(request.harness_session_id, request.profile);
 			await this.execute(run, request.prompt);
@@ -265,7 +264,7 @@ export class Harness {
 			throw new HttpError(409, `Run ${this.current.run_id} is still ${this.current.status}.`);
 		}
 		const run = this.newRun(request.run_id, "followup", this.current.harness_session_id, this.sessionProfile, []);
-		this.context = { token: request.token, engine: request.engine, model: request.model, cacheKey: run.harness_session_id };
+		this.context = { grantKey: request.grant_key, cacheKey: run.harness_session_id };
 		this.track(run, () => this.execute(run, request.prompt));
 		return { created: true, run };
 	}
@@ -390,6 +389,8 @@ export class Harness {
 				return this.end(run, "EXPIRED", "max_minutes", `The run passed its ${profile.max_minutes} minute limit.`);
 			case "max_turns":
 				return this.end(run, "ERROR", "max_turns", `The run passed its ${profile.max_turns} turn limit.`);
+			case "spend_limit":
+				return this.end(run, "ERROR", "spend_limit", this.lastAssistantError ?? "The run reached its grant's spend limit.");
 			case "server_shutdown":
 				return this.end(run, "ERROR", "server_shutdown", "The harness server stopped during the run.");
 		}
@@ -438,11 +439,13 @@ export class Harness {
 			usage.failed_calls += 1;
 			this.emit("model_call", run, {
 				turn: run.turns,
-				requested: `${call.requestedEngine}:${call.requestedModel ?? ""}`,
 				latency_ms: call.latencyMs,
 				error: call.error,
+				error_code: call.errorCode ?? null,
 				aborted: call.aborted ?? false,
 			});
+			// The grant refuses every further turn, so the run ends now, with its own reason.
+			if (call.errorCode === SPEND_LIMIT_ERROR) void this.stop("spend_limit");
 			return;
 		}
 		const u = response.usage;
@@ -455,7 +458,6 @@ export class Harness {
 		usage.usd = Number((usage.usd + usd).toFixed(6));
 		this.emit("model_call", run, {
 			turn: run.turns,
-			requested: `${call.requestedEngine}:${call.requestedModel ?? ""}`,
 			engine: response.engine,
 			model: response.model,
 			served_by_fallback: response.served_by_fallback,
@@ -467,6 +469,8 @@ export class Harness {
 			cache_write_5m_tokens: u.cache_write_5m_tokens ?? 0,
 			cache_write_1h_tokens: u.cache_write_1h_tokens ?? 0,
 			usd,
+			run_spent_usd: response.run_grant?.spent_usd ?? null,
+			run_spend_limit_usd: response.run_grant?.spend_limit_usd ?? null,
 			cache_hit: response.cache_hit,
 			latency_ms: call.latencyMs,
 		});

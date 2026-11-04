@@ -220,9 +220,7 @@ function runBody(overrides: Record<string, unknown> = {}): Record<string, unknow
 		prompt: "Create hello.txt containing a greeting.",
 		acceptance_checks: ["test -f hello.txt"],
 		profile: { name: "pi-lean", tools: ["read", "write", "edit", "ls"], max_turns: 10, max_minutes: 5 },
-		token: "run-token-1",
-		engine: "claude",
-		model: "claude-haiku-4-5",
+		grant_key: "rg_grant-key-1",
 		...overrides,
 	};
 }
@@ -248,7 +246,7 @@ test("runs a task, streams typed events, re-attaches by run_id, and continues th
 	const run = await api(server, "POST", "/run", runBody());
 	assert.equal(run.status, 202);
 	assert.equal(run.json.run_id, "task-1:0");
-	assert.equal(run.json.token, undefined, "the token never appears in run state");
+	assert.equal(run.json.grant_key, undefined, "the grant key never appears in run state");
 
 	const events = await eventsUntilFinished(server, "task-1:0");
 	const types = events.map((e) => e.type);
@@ -267,9 +265,12 @@ test("runs a task, streams typed events, re-attaches by run_id, and continues th
 	assert.equal(readFileSync(join(server.workspace, "hello.txt"), "utf8"), "hi there\n");
 	assert.deepEqual(readdirSync(server.workspace), ["hello.txt"], "pi's session file stays out of the workspace");
 
-	// The model client sent the run's token, the session id as the cache key, and a Claude tool result.
+	// The model client sent the run's grant key, no engine or model, the session id as the cache key,
+	// and a Claude tool result.
 	assert.equal(gateway.requests.length, 2);
-	assert.equal(gateway.requests[0]!.authorization, "Bearer run-token-1");
+	assert.equal(gateway.requests[0]!.authorization, "Bearer rg_grant-key-1");
+	assert.equal(gateway.requests[0]!.body.engine, undefined, "the grant decides the engine");
+	assert.equal(gateway.requests[0]!.body.model, undefined, "the grant decides the model");
 	assert.deepEqual(gateway.requests[0]!.body.prompt_cache, { retention: "extended", key: "task-1" });
 	const secondMessages = gateway.requests[1]!.body.messages as Record<string, unknown>[];
 	assert.deepEqual(secondMessages[1], { role: "assistant", content: "tok-1" });
@@ -309,9 +310,7 @@ test("runs a task, streams typed events, re-attaches by run_id, and continues th
 	const followup = await api(server, "POST", "/followup", {
 		run_id: "task-1:followup-1",
 		prompt: "Now say goodbye.",
-		token: "run-token-2",
-		engine: "claude",
-		model: "claude-haiku-4-5",
+		grant_key: "rg_grant-key-2",
 	});
 	assert.equal(followup.status, 202);
 	assert.equal(followup.json.kind, "followup");
@@ -320,7 +319,7 @@ test("runs a task, streams typed events, re-attaches by run_id, and continues th
 	assert.equal(followupEvents[0]!.id, lastId + 1);
 	assert.equal(followupEvents.at(-1)!.data.status, "FINISHED");
 	assert.equal(gateway.requests.length, 3);
-	assert.equal(gateway.requests[2]!.authorization, "Bearer run-token-2");
+	assert.equal(gateway.requests[2]!.authorization, "Bearer rg_grant-key-2");
 	const followupMessages = gateway.requests[2]!.body.messages as Record<string, unknown>[];
 	assert.ok(followupMessages.length >= 5, "the follow-up sends the session's earlier turns");
 	assert.deepEqual(followupMessages.at(-1), { role: "user", content: "Now say goodbye." });
@@ -376,6 +375,25 @@ test("a failed gateway call ends the run with ERROR model_error", async () => {
 	await gateway.close();
 });
 
+test("a grant at its spend limit ends the run with ERROR spend_limit", async () => {
+	const limit = {
+		error: "run_grant_spend_limit",
+		detail: "Run 'task-1:0' has spent $0.002 of its $0.001 limit, so no further turns are allowed on this grant.",
+	};
+	const gateway = await startGateway((n) => (n === 1 ? { body: LS_TURN } : { status: 402, body: limit }));
+	const server = await startServer(gateway.url);
+	await api(server, "POST", "/run", runBody({ profile: { name: "pi-lean", tools: ["ls"], max_turns: 10, max_minutes: 5 } }));
+	const events = await eventsUntilFinished(server, "task-1:0");
+	const finished = events.at(-1)!;
+	assert.equal(finished.data.status, "ERROR");
+	assert.equal(finished.data.end_reason, "spend_limit");
+	const refused = events.filter((e) => e.type === "model_call").at(-1)!;
+	assert.equal(refused.data.error_code, "run_grant_spend_limit");
+	assert.equal(gateway.requests.length, 2);
+	await server.stop();
+	await gateway.close();
+});
+
 test("rejects bad run requests", async () => {
 	const gateway = await startGateway(() => ({ body: DONE_TURN }));
 	const server = await startServer(gateway.url);
@@ -383,6 +401,7 @@ test("rejects bad run requests", async () => {
 	assert.equal((await api(server, "POST", "/run", runBody({ profile: bash }))).status, 400);
 	assert.equal((await api(server, "POST", "/run", runBody({ prompt: "" }))).status, 400);
 	assert.equal((await api(server, "POST", "/run", runBody({ harness_session_id: "../escape" }))).status, 400);
+	assert.equal((await api(server, "POST", "/run", runBody({ grant_key: undefined }))).status, 400);
 	assert.equal((await api(server, "GET", "/status")).status, 404);
 	assert.equal(gateway.requests.length, 0);
 	await server.stop();

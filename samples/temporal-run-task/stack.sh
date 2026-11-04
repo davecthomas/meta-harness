@@ -2,7 +2,7 @@
 # Starts the services the sample needs and runs tasks on them. The Makefile calls it.
 #
 #   stack.sh run    start everything, run one task, stop everything (make run and the demos)
-#   stack.sh up     start Temporal, the gateway and a worker, and leave them running
+#   stack.sh up     start Temporal, Redis, the gateway and a worker, and leave them running
 #   stack.sh task   run one task on the services `up` started, and wait for it
 #   stack.sh down   stop what `up` started
 #
@@ -16,7 +16,7 @@ cd "$(dirname "$0")"
 STACK_DIR=stack
 RUNS_DIR=runs
 
-temporal_pid=; gateway_pid=; harness_pid=; worker_pid=; tail_pid=
+temporal_pid=; redis_pid=; gateway_pid=; harness_pid=; worker_pid=; tail_pid=
 harness_url=; workspace=
 
 log() { echo "[make] $*"; }
@@ -61,6 +61,7 @@ install() {
 }
 
 temporal_up() { temporal operator cluster health --address "$TEMPORAL_ADDRESS" >/dev/null 2>&1; }
+redis_up() { [ "$(redis-cli -u "$REDIS_URL" ping 2>/dev/null)" = "PONG" ]; }
 gateway_up() { curl -fsS "$GATEWAY_URL/healthz" >/dev/null 2>&1; }
 harness_up() { curl -fsS -H "Authorization: Bearer $HARNESS_SERVER_TOKEN" "$harness_url/health" >/dev/null 2>&1; }
 
@@ -81,20 +82,50 @@ start_temporal() {
   wait_for "the Temporal dev server" temporal_up "$temporal_pid" "$1"
 }
 
-# start_gateway LOG: uses a gateway already answering, or starts one from GATEWAY_DIR.
+# start_redis LOG: uses a Redis already answering at REDIS_URL, or starts one on REDIS_PORT.
+# The gateway keeps run grants in it. Nothing is saved to disk.
+start_redis() {
+  if redis_up; then
+    log "using the Redis already running at $REDIS_URL"
+    return 0
+  fi
+  command -v redis-server >/dev/null || { log "Redis is not installed. Run: brew install redis"; exit 1; }
+  log "starting Redis on port $REDIS_PORT for the gateway's run grants, log: $PWD/$1"
+  set -m
+  nohup redis-server --port "$REDIS_PORT" --bind 127.0.0.1 --save '' --appendonly no >"$1" 2>&1 </dev/null &
+  redis_pid=$!
+  set +m
+  wait_for "Redis" redis_up "$redis_pid" "$1"
+}
+
+# A grant request for a run id nobody holds: 404 means grants are on, 503 means the gateway has no Redis.
+grants_on() {
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GATEWAY_API_KEY" \
+    "$GATEWAY_URL/v1/run-grants/stack-sh-check")
+  [ "$code" = 404 ]
+}
+
+# start_gateway LOG: uses a gateway already answering, or starts one from GATEWAY_DIR with run grants on.
 start_gateway() {
   if gateway_up; then
     log "using the gateway already running at $GATEWAY_URL"
   else
     [ -d "$GATEWAY_DIR" ] || { log "no gateway checkout at $GATEWAY_DIR. Set GATEWAY_DIR=<path to ai-api-unified-http>"; exit 1; }
-    log "starting the gateway from $GATEWAY_DIR, log: $PWD/$1"
+    log "starting the gateway from $GATEWAY_DIR with run grants in $REDIS_URL, log: $PWD/$1"
     set -m
-    nohup make --no-print-directory -C "$GATEWAY_DIR" serve PORT="$GATEWAY_PORT" DEV_API_KEY="$GATEWAY_API_KEY" >"$1" 2>&1 </dev/null &
+    HTTP_REDIS_URL="$REDIS_URL" nohup make --no-print-directory -C "$GATEWAY_DIR" serve \
+      PORT="$GATEWAY_PORT" DEV_API_KEY="$GATEWAY_API_KEY" >"$1" 2>&1 </dev/null &
     gateway_pid=$!
     set +m
     wait_for "the gateway" gateway_up "$gateway_pid" "$1"
   fi
   log "gateway: $(curl -fsS "$GATEWAY_URL/healthz")"
+  grants_on || {
+    log "the gateway at $GATEWAY_URL does not issue run grants. It needs ai-api-unified-http 1.18.0 or later,"
+    log "started with HTTP_REDIS_URL set. Stop it and let this script start one."
+    exit 1
+  }
 }
 
 # start_harness: a new harness server for task $REF on a free port. Sets harness_url and workspace.
@@ -153,7 +184,7 @@ check_ref() {
 
 starter() {
   .venv/bin/python -m run_task.starter --ref "$REF" --harness-url "$harness_url" --workspace "$workspace" \
-    --engine "$ENGINE" --model "$MODEL" --task "$TASK" "$@"
+    --engine "$ENGINE" --model "$MODEL" --spend-limit "$SPEND_LIMIT" --task "$TASK" "$@"
 }
 
 wait_for_log() {
@@ -178,11 +209,13 @@ cmd_run() {
     [ -z "$tail_pid" ] || { sleep 1; kill "$tail_pid" 2>/dev/null || true; wait "$tail_pid" 2>/dev/null || true; }
     [ -z "$harness_pid" ] || stop_group "$harness_pid" "harness server"
     [ -z "$gateway_pid" ] || stop_group "$gateway_pid" gateway
+    [ -z "$redis_pid" ] || stop_group "$redis_pid" Redis
     [ -z "$temporal_pid" ] || stop_group "$temporal_pid" "Temporal dev server"
   }
   trap stop_all EXIT
   trap 'exit 130' INT TERM
   start_temporal temporal.log
+  start_redis redis.log
   start_gateway gateway.log
   start_harness
   : >worker.log
@@ -213,6 +246,13 @@ cmd_run() {
       start_worker worker.log
       wait "$starter_pid"
       ;;
+    spend-limit)
+      status=0
+      starter || status=$?
+      [ "$status" -eq 1 ] || { log "expected the task to fail at its spend limit, starter exit $status"; exit 1; }
+      grep -qF "spend_limit" worker.log || { log "the task failed, but not at its spend limit. See worker.log"; exit 1; }
+      log "the run stopped at its \$$SPEND_LIMIT spend limit, as expected"
+      ;;
     *) starter ;;
   esac
 }
@@ -242,6 +282,8 @@ cmd_up() {
   trap '[ $? -eq 0 ] || up_failed' EXIT
   start_temporal "$STACK_DIR/temporal.log"
   [ -z "$temporal_pid" ] || echo "temporal $temporal_pid" >>"$STACK_DIR/pids"
+  start_redis "$STACK_DIR/redis.log"
+  [ -z "$redis_pid" ] || echo "redis $redis_pid" >>"$STACK_DIR/pids"
   start_gateway "$STACK_DIR/gateway.log"
   [ -z "$gateway_pid" ] || echo "gateway $gateway_pid" >>"$STACK_DIR/pids"
   start_worker "$STACK_DIR/worker.log"
@@ -257,8 +299,8 @@ cmd_down() {
     log "the stack is not up"
     return 0
   fi
-  # Stop in reverse start order: worker, gateway, Temporal.
-  for name in worker gateway temporal; do
+  # Stop in reverse start order: worker, gateway, Redis, Temporal.
+  for name in worker gateway redis temporal; do
     pid=$(stack_pid "$name")
     [ -n "$pid" ] || continue
     kill -TERM -- "-$pid" 2>/dev/null || true
