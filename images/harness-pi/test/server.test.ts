@@ -266,7 +266,7 @@ test("runs a task, streams typed events, re-attaches by run_id, and continues th
 	assert.deepEqual(readdirSync(server.workspace), ["hello.txt"], "pi's session file stays out of the workspace");
 
 	// The model client sent the run's grant key, no engine or model, the session id as the cache key,
-	// and a Claude tool result.
+	// and the tool result in the HTTP Gateway's one shape for every engine.
 	assert.equal(gateway.requests.length, 2);
 	assert.equal(gateway.requests[0]!.authorization, "Bearer rg_grant-key-1");
 	assert.equal(gateway.requests[0]!.body.engine, undefined, "the grant decides the engine");
@@ -274,7 +274,11 @@ test("runs a task, streams typed events, re-attaches by run_id, and continues th
 	assert.deepEqual(gateway.requests[0]!.body.prompt_cache, { retention: "extended", key: "task-1" });
 	const secondMessages = gateway.requests[1]!.body.messages as Record<string, unknown>[];
 	assert.deepEqual(secondMessages[1], { role: "assistant", content: "tok-1" });
-	assert.equal((secondMessages[2]!.content as Record<string, unknown>[])[0]!.type, "tool_result");
+	assert.equal(secondMessages[2]!.type, "tool_result");
+	assert.equal(secondMessages[2]!.tool_call_id, "toolu_1");
+	assert.equal(secondMessages[2]!.is_error, false);
+	assert.equal(typeof (secondMessages[2]!.result as Record<string, unknown>).output, "string");
+	assert.equal(secondMessages[2]!.role, undefined, "a neutral tool result has no role");
 
 	const status = await api(server, "GET", "/status");
 	assert.equal(status.json.status, "FINISHED");
@@ -341,6 +345,32 @@ test("cancel stops pi during a model call and ends the run CANCELED", async () =
 	assert.ok(Date.now() - startedAt < 5_000, "cancel returns within seconds, not when the model call ends");
 	const events = await eventsUntilFinished(server, "task-1:0");
 	assert.equal(events.find((e) => e.type === "model_call")!.data.aborted, true);
+	await server.stop();
+	await gateway.close();
+});
+
+test("parallel tool calls sharing one id, as Gemini's do, each report their file and their result", async () => {
+	const twoWrites = turn({
+		finish_reason: "tool_use",
+		tool_calls: [
+			{ id: "write", name: "write", input: { path: "a.txt", content: "alpha" } },
+			{ id: "write", name: "write", input: { path: "b.txt", content: "beta" } },
+		],
+		token: "tok-1",
+	});
+	const gateway = await startGateway((n) => ({ body: n === 1 ? twoWrites : DONE_TURN }));
+	const server = await startServer(gateway.url);
+	await api(server, "POST", "/run", runBody());
+	const events = await eventsUntilFinished(server, "task-1:0");
+
+	const changed = events.filter((e) => e.type === "file_changed").map((e) => e.data.path);
+	assert.deepEqual([...changed].sort(), ["a.txt", "b.txt"]);
+	const results = (gateway.requests[1]!.body.messages as Record<string, unknown>[]).filter((m) => m.type === "tool_result");
+	assert.deepEqual(
+		results.map((m) => m.tool_call_id),
+		["write", "write"],
+		"both results go back, each in the neutral shape",
+	);
 	await server.stop();
 	await gateway.close();
 });
