@@ -50,8 +50,15 @@ and ends at a pull request plus a recorded outcome.
   (health, run, followup, events, status, cancel, usage, metrics).
 - FR-13. Emit a common event schema from every adapter, with run id, sequence
   number and timestamp.
-- FR-14. Turn PR review comments and failed CI into follow-up runs on the same
-  branch, restoring session state, up to the profile's follow-up limit.
+- FR-14. Review every PR with a meta-harness review task on a different model
+  than the one that wrote it. Ticket failed required checks and review
+  findings as meta-harness fix tasks on the same branch, continuing the PR's
+  session, until a review comes back clean, then merge the PR at the reviewed
+  commit. Stop at the task policy's fix-task limit or the task's budget and
+  leave the PR open. No person has to review a PR. When a review starts, the
+  operator console offers watching operators a review. An operator who claims
+  it blocks that review round until the operator submits a verdict or releases
+  the claim; with no claim, the agent's verdict decides.
 - FR-15. Enforce per-profile timeouts, with a 4-hour hard ceiling.
 - FR-16. Provide a kill switch per run, per caller and globally.
 
@@ -121,8 +128,8 @@ Python 3.12, FastAPI, Temporal, Postgres, Redis, Kubernetes Jobs on gVisor
 ## Out of scope
 
 Difficulty classification, model selection, fallback and pricing (owned by
-ai-api-unified); writing a coding agent; producing tasks, reviewing code or
-deploying it.
+ai-api-unified); writing a coding agent; producing tasks; deploying merged
+code.
 
 ## Open questions
 
