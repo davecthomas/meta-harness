@@ -6,3 +6,4 @@ worker.log
 harness-server.log
 runs/
 stack/
+redis.log

@@ -65,7 +65,7 @@ component owns its data (principle 8).
 | Harness server | Exposes the Run API and runs pi in-process through pi's SDK. | `server/` |
 | pi | The coding agent: agent loop, tools, context, session. Third-party (pi.dev), used unmodified through its SDK. | `@earendil-works/pi-coding-agent` |
 | Model client | A pi extension that sends every model call pi makes to the HTTP Gateway. | `extension/` |
-| **HTTP Gateway** | The only model endpoint a sandbox can reach. Holds the provider keys for agent model calls and the run tokens, pins each run's model, applies guardrails, and enforces each run's spend cap. | the `ai-api-unified-http` repo |
+| **HTTP Gateway** | The only model endpoint a sandbox can reach. Holds the provider keys for agent model calls and the run grants, pins each run's model, applies guardrails, and enforces each run's spend cap. | the `ai-api-unified-http` repo |
 | **Outside the system** | Used by the meta-harness and built elsewhere. | |
 | Code host | Repositories, pull requests, checks, reviews and webhooks. | |
 | Model providers | Cloud model APIs, or local models served by vLLM. | |
@@ -165,7 +165,7 @@ flowchart TB
     subgraph AIU["ai-api-unified: owns no store"]
         RT[Router + harness engine<br/>library, in the run service]
         GW[HTTP Gateway<br/>ai-api-unified-http]
-        GWDB[(run tokens,<br/>per-run spend counters)]
+        GWDB[(run grants,<br/>per-run spend counters)]
     end
 
     subgraph POOL["Sandbox: one per run"]
@@ -194,12 +194,12 @@ flowchart TB
     RS -->|send task, in-process| RT
     RT -->|classifier| PROV
     RT -->|lease, release, lookup| PM
-    RT -->|mint run token| GW
+    RT -->|issue run grant| GW
     RT -->|run, follow up, cancel| HS
     RS -->|events, cancel| HS
     RS -->|list leases for call id| PM
     PM -->|provision, probe, drain, destroy| HS
-    HX -->|conversation turns, run token| GW
+    HX -->|conversation turns, grant key| GW
     GW --> PROV
     HX -->|push, open PR| CH
     TS & SCHED & RS & PM & HA -->|append| EV
@@ -225,8 +225,8 @@ flowchart TB
 | Metering | Turn events into cost, time and success per attempt and task (section 9). | Projection tables: `model_call`, `attempt_usage`, `check_result`, `task_outcome`, `spend` | Queries by caller, profile, model, tier and task type; caller and global spend | Event service (tail) | Stateless workers, one cursor per projection | Projections lag. Runs continue, and the HTTP Gateway still enforces each run's cap. The scheduler treats spend older than its staleness limit as at cap and holds new tasks for capped callers. |
 | Harness analyzer | Propose tier and profile changes from evidence. | `proposal` | List, get evidence, approve, reject | Metering (queries), event service (read, append), code host (config PRs) | Batch jobs plus a small API | No new proposals. No effect on runs. |
 | Console | Let operators see everything and act on a few things (section 13). | Nothing | Web UI | Event service (read, tail), task service, run service, metering, analyzer, pool manager, traces and metrics backends | Stateless replicas | No visibility. Runs continue. |
-| HTTP Gateway | `ai-api-unified-http`, the harness's only model endpoint (section 6.4). | Run-token registry, per-run spend counters (Redis keyspace) | Conversation turn, mint and revoke run token | Router (in-process), model providers, guardrails library | Autoscaling replicas | Turns fail, and pi does not retry them, so the run fails and the library's chain moves to the next candidate. The workflow pauses rather than fails (section 17). |
-| Router and harness engine | `ai-api-unified`, in-process in the run service. Classifies, picks a tier, tries candidates, escalates (sections 6.1 and 6.3). | Nothing | `AiRouterCompletions` | Pool manager, HTTP Gateway (mint token), harness server Run API, model providers (classifier) | With the run service | Fails with the run service. |
+| HTTP Gateway | `ai-api-unified-http`, the harness's only model endpoint (section 6.4). | Run grants, per-run spend counters (Redis keyspace) | Conversation turn, issue and revoke run grant | Router (in-process), model providers, guardrails library | Autoscaling replicas | Turns fail, and pi does not retry them, so the run fails and the library's chain moves to the next candidate. The workflow pauses rather than fails (section 17). |
+| Router and harness engine | `ai-api-unified`, in-process in the run service. Classifies, picks a tier, tries candidates, escalates (sections 6.1 and 6.3). | Nothing | `AiRouterCompletions` | Pool manager, HTTP Gateway (issue run grant), harness server Run API, model providers (classifier) | With the run service | Fails with the run service. |
 | Harness server | One per sandbox. Exposes the Run API and drives pi (sections 4 and 8.2). | The run's session directory, until drain | Run API | HTTP Gateway, code host | One per sandbox, under the pool manager's targets | The run ends in `ERROR`. The harness engine maps it to a fallback reason. |
 
 **Guardrails** is a library, not a component. The run service, the pool
@@ -337,7 +337,7 @@ decides everything pi loads:
   session's credentials.
 - **Models.** A `ModelRuntime` with no built-in credentials, so the model
   client's model is the only one pi can call. The harness server never calls
-  `setModel`, so pi never switches models and the run token decides the real
+  `setModel`, so pi never switches models and the run grant decides the real
   model.
 - **Tools.** The SDK's `tools` option comes from the profile.
 - **Context files.** pi loads `AGENTS.md` and `CLAUDE.md` from the working
@@ -354,7 +354,7 @@ decides everything pi loads:
 | `cacheWarming` | `off` | See Prompt caching |
 
 pi also has virtual models (`registerVirtualModel`), which route each request.
-The design does not use them, because the run token decides the model.
+The design does not use them, because the run grant decides the model.
 
 ### Tools
 
@@ -486,7 +486,7 @@ candidate.
 | Platform | Google Cloud: one GKE Autopilot cluster (section 15) | Sandboxes need Kubernetes with gVisor, and one platform for everything is simpler. No Cloud Run. |
 | Sandboxes | Pods with the gVisor runtime class in a `sandbox` namespace, one per run | Isolation, autoscaling, egress control. Managed sandbox services implement the same executor interface. |
 | System of record | Cloud SQL for PostgreSQL, one schema and role per owning component | Each service's own tables (section 12); the event service's append-only `event` table with LISTEN/NOTIFY as its internal commit notification |
-| Locks, counters and rate limits | Memorystore for Redis, one key prefix per owner | The scheduler's repo-area locks, the HTTP Gateway's run tokens and spend counters, the run service's code-host token buckets |
+| Locks, counters and rate limits | Memorystore for Redis, one key prefix per owner | The scheduler's repo-area locks, the HTTP Gateway's run grants and spend counters, the run service's code-host token buckets |
 | Telemetry | OpenTelemetry to Cloud Trace, Cloud Logging and Cloud Monitoring; domain events in the event service | Every run is one trace, from task to pull request; every event carries its trace id |
 | Objects, images, secrets | Cloud Storage (bucket per owner), Artifact Registry, Secret Manager (mounted only into the owner's pods) | Same one-owner rule as the databases |
 
@@ -551,7 +551,7 @@ sequenceDiagram
     RT-->>RS: result: route_tier complex, route_method classifier, harness_run, cost of all three runs
 ```
 
-**Level 2: per model call, in the HTTP Gateway.** The run token pins the
+**Level 2: per model call, in the HTTP Gateway.** The run grant pins the
 candidate's model. Agent turns stay on that model. The model client's
 compaction call sets `route: trivial`, which the HTTP Gateway turns into a
 band so the summary runs on a cheap tier.
@@ -571,9 +571,9 @@ sequenceDiagram
     participant PV as Model provider
     end
 
-    Note over PI,GW: run token pins claude:claude-opus-5-5
+    Note over PI,GW: run grant pins claude:claude-opus-5-5
     PI->>EX: agent turn (history, tools)
-    EX->>GW: POST /v1/conversations/turn (run token, no route hint)
+    EX->>GW: POST /v1/conversations/turn (grant key, no route hint)
     GW->>GR: send_conversation inside model_pin_scope(claude:claude-opus-5-5)
     Note over GR: pinned: no classifier and no tier pick
     GR->>PV: turn on claude-opus-5-5 (its own fallback chain if it fails)
@@ -583,7 +583,7 @@ sequenceDiagram
     EX-->>PI: text and tool calls
     Note over PI: context passes the window minus the profile's reserve tokens
     PI->>EX: session_before_compact event
-    EX->>GW: POST /v1/conversations/turn (run token, route trivial, no prompt_cache)
+    EX->>GW: POST /v1/conversations/turn (grant key, route trivial, no prompt_cache)
     Note over GW: a route hint turns the pin into a band with the pinned tier as ceiling
     GW->>GR: send_conversation(route trivial, route_ceiling complex)
     GR->>PV: summary on the trivial tier's model
@@ -733,10 +733,10 @@ sandbox's event stream (section 7).
 |---|---|
 | Identify | Reads `harness_call_id` and `harness_session_id` from the call's provider options, which the router and the fallback chain pass through untouched. Reads the candidate index that the chain places in the request context. `run_id` is the call id plus the candidate index. |
 | Lease | Asks the pool manager for an existing lease on `run_id` first, so a retried call re-attaches to a run already in progress; otherwise requests `lease(run_id, image, harness_session_id, resources)` for the profile's image. The response holds the sandbox address, the lease TTL and the `session_state`: `new`, `kept` or `restored`. The workflow and the console learn which sandbox serves which try from the pool manager's lease record, keyed on `run_id`. |
-| Token | The harness engine requests a run token from the HTTP Gateway, which mints it and keeps the registry; the engine revokes it when the run ends. The token is opaque and holds the run id, tags, the candidate's inner model as a pin (or a band when the profile says so), the spend cap, and an expiry at `max_minutes` plus grace. |
+| Grant | The harness engine asks the HTTP Gateway for a run grant, which the HTTP Gateway issues and stores; the engine revokes it when the run ends. The grant holds the run id, tags, the candidate's inner model as a pin (or a band when the profile says so), the spend limit, and an expiry at `max_minutes` plus grace. The engine passes only the grant's key to the sandbox. The key is opaque: it carries no data and identifies the grant. |
 | Start | When `session_state` is `new`, `POST /run` on the sandbox's harness server with the prompt, acceptance checks, profile, limits and token. When it is `kept` or `restored`, `POST /followup` with the new input and token. |
 | Wait | Follows the harness server's event stream until `run_finished`. The call's `request_timeout_seconds`, set to the lease TTL, is the hard upper bound: on expiry the engine cancels the run and raises `timeout`. A cancel from the control plane reaches the sandbox directly (section 7) and ends the call through the run's terminal state. |
-| Collect | Reads `/usage`, revokes the run token with the HTTP Gateway, releases the lease, and returns the result. The engine revokes the token before it releases the lease on every end, including failure, timeout and cancel. The result has its `harness_run` summary (run id, sandbox id, profile, end reason, turns, PR URL, elapsed time, cache hit rate), the run's token totals in `result.usage`, and a cost line. The cost line's `call_id` is the run id, and its dollars are the run's HTTP Gateway total, recorded as a reported-dollar cost. |
+| Collect | Reads `/usage`, revokes the run grant with the HTTP Gateway, releases the lease, and returns the result. The engine revokes the grant before it releases the lease on every end, including failure, timeout and cancel. The result has its `harness_run` summary (run id, sandbox id, profile, end reason, turns, PR URL, elapsed time, cache hit rate), the run's token totals in `result.usage`, and a cost line. The cost line's `call_id` is the run id, and its dollars are the run's HTTP Gateway total, recorded as a reported-dollar cost. |
 | Fail | Maps failures to the library's fallback reasons. No sandbox within `ready_timeout` is `unavailable`. An inner model's rate limit or quota error, as the harness reports it, is `rate_limited` or `quota_exhausted`. The lease TTL is `timeout`. A run ending in `ERROR` or on a limit is `run_failed`, which starts no cooldown. |
 
 Each candidate the engine tries is one run and one sandbox, visible to the
@@ -788,10 +788,10 @@ refuses an older library version.
 | Library, PR A | The request cost report attached to the raised exception as `exception.cost` when every candidate fails. |
 | Library, PR A | `route_confidence` on `AITurnResult` and `AIPromptResult`. |
 | Library, PR A | The candidate index in the request context, so the harness engine can name each try. |
-| Library, PR B: engine (3.30.0) | The `harness` completions engine (section 6.3), the pool and Run API client, and an HTTP Gateway client that mints and revokes run tokens. The engine has a registry entry and model-string parsing. Its startup probe delegates to the inner model's probe and checks the pool URL, and its capability table delegates to the inner model's. |
+| Library, PR B: engine (3.30.0) | The `harness` completions engine (section 6.3), the pool and Run API client, and an HTTP Gateway client that requests and revokes run grants. The engine has a registry entry and model-string parsing. Its startup probe delegates to the inner model's probe and checks the pool URL, and its capability table delegates to the inner model's. |
 | Library, PR B | `providers.harness` in `models.json`, carrying the pool and HTTP Gateway URLs. Credentials stay in the environment. |
 | Library, PR B | A `harness_run` summary on the result: `run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`, `cache_hit_rate`. The run's token totals in `result.usage`, including `cached_input_tokens`, `cache_write_5m_tokens` and `cache_write_1h_tokens`. |
-| HTTP Gateway | Run-scoped tokens: the harness engine requests a run token from the HTTP Gateway, which mints it and keeps the registry; the engine revokes it when the run ends. Tokens are opaque and sit on top of the existing per-caller attribution. The engine authenticates to mint and revoke with an HTTP Gateway API key from its environment. A token holds run identity, tags, model pin or band, spend cap and expiry. The token overrides the request body's engine and model. |
+| HTTP Gateway | Run grants (built in ai-api-unified-http 1.18.0, `POST`, `GET` and `DELETE /v1/run-grants`): the harness engine asks the HTTP Gateway for a run grant, which it issues and stores in Redis; the engine revokes it when the run ends. The grant's key is opaque, and the grant sits on top of the existing per-caller attribution. The engine authenticates to request and revoke with an HTTP Gateway API key from its environment. A grant holds run identity, tags, model pin or band, spend limit and expiry. The grant overrides the request body's engine and model. The pin is built; the band waits for the `route` row below. |
 | HTTP Gateway | `route` accepted in the conversation request body. On a pinned token, a body `route` switches that call from pin to band with the pinned model's tier as ceiling; agent turns without `route` stay pinned. |
 | HTTP Gateway | A per-run spend counter in Redis, the running total on every conversation response, and a budget rejection error. |
 | Library, optional | A streaming form of `send_conversation` that yields typed events (text delta, tool-call start, arguments and end, usage, done). It routes through router and chain and commits to a candidate at its first delta. The console's per-turn view does not need it; it streams model text token by token. PII redaction does not apply to streams. |
@@ -935,11 +935,11 @@ sequenceDiagram
     Note over R,PM: harness engine: run_id = call id + candidate index, existing lease looked up first
     R->>PM: lease(run_id, image, harness_session_id, resources)
     PM-->>R: warm sandbox, lease token, session_state new
-    R->>GW: mint run token (run_id, pin, cap)
-    R->>SB: POST /run (prompt, checks, profile, limits, run token)
+    R->>GW: request run grant (run_id, pin, spend limit)
+    R->>SB: POST /run (prompt, checks, profile, limits, grant key)
     loop each turn
         SB->>X: pi turn: transcript, tools
-        X->>GW: /v1/conversations/turn, run token
+        X->>GW: /v1/conversations/turn, grant key
         GW->>GW: pin model, guardrails
         GW->>P: model call
         P-->>GW: turn result
@@ -951,7 +951,7 @@ sequenceDiagram
     SB->>SB: commit, push, open PR
     SB-->>R: run_finished (SSE)
     Note over R: engine reads /usage
-    R->>GW: revoke run token (run_id)
+    R->>GW: revoke run grant (run_id)
     Note over R: engine releases lease, records reported cost
     R-->>W: result: tier, model, PR URL, end reason, cost report
     W->>W: routing_decision, run rows (owned)
@@ -1012,7 +1012,7 @@ sequenceDiagram
     end
 
     SB->>X: session_before_compact event
-    X->>GW: /v1/conversations/turn, run token, route: trivial, no prompt_cache
+    X->>GW: /v1/conversations/turn, grant key, route: trivial, no prompt_cache
     GW->>GW: body carries route: pin becomes band,<br/>ceiling = pinned model's tier
     GW->>R: send with route: trivial
     R->>P: trivial-tier model
@@ -1047,13 +1047,13 @@ sequenceDiagram
     participant GW as HTTP Gateway
     end
 
-    X->>GW: /v1/conversations/turn, run token
+    X->>GW: /v1/conversations/turn, grant key
     GW->>GW: run spend counter (owned) >= cap
     GW-->>X: budget rejected
     X-->>SB: error
     SB->>SB: stop on limit
     SB-->>R: run_finished (end_reason: budget)
-    Note over R: engine revokes the run token, releases lease, records the attempt's cost, raises run_failed (no cooldown)
+    Note over R: engine revokes the run grant, releases lease, records the attempt's cost, raises run_failed (no cooldown)
     alt next candidate in tier
         R->>PM: lease(run_id with next candidate index)
         R->>SB: POST /run on new sandbox
@@ -1098,7 +1098,7 @@ sequenceDiagram
     R->>PM: lease(run_id, image, harness_session_id)
     Note over PM: the sandbox kept for this session, else a fresh one with the session directory copied in from the bucket
     PM-->>R: sandbox, session_state kept or restored
-    R->>SB: POST /followup (feedback, run token)
+    R->>SB: POST /followup (feedback, grant key)
     SB->>SB: switch_session, follow_up
     loop turns
         SB->>GW: turns on the pinned model
@@ -1135,7 +1135,7 @@ sequenceDiagram
     EX->>SB: POST /cancel
     SB->>SB: abort, clear_queue, flush session
     SB-->>R: status CANCELED (SSE)
-    Note over R: engine revokes the run token and returns the terminal state, the cancel never travels through the router
+    Note over R: engine revokes the run grant and returns the terminal state, the cancel never travels through the router
     R-->>W: result: canceled, partial cost
     W->>PM: release lease
     PM->>SB: drain: collect artifacts and /usage, then destroy
@@ -1247,11 +1247,11 @@ stateDiagram-v2
   lease.
 - `leased`: bound to one run. The pool manager injects the run's code-host
   token at lease time, and the sandbox clones the repo then, always at
-  `/workspace`. The run token
+  `/workspace`. The grant key
   arrives later, in the `POST /run` or `POST /followup` body.
 - `kept`: the run has ended and the sandbox waits for the same session's
   next follow-up, for up to `sticky_window`. The manager has saved the
-  session directory, and the harness engine revoked the run token when the
+  session directory, and the harness engine revoked the run grant when the
   run ended. The repo and session directory stay in place.
 - `draining`: the run has ended; the manager is collecting artifacts (session
   directory, logs, `/usage`).
@@ -1283,7 +1283,7 @@ stateDiagram-v2
 - **Warm sticky.** When a run finishes, the manager may keep its sandbox
   alive for a short window (`sticky_window`, default 10 minutes) keyed by
   `harness_session_id`, with the repo and session directory intact. The
-  harness engine has already revoked the run token. A
+  harness engine has already revoked the run grant. A
   follow-up for the same session inside the window gets that sandbox back and
   skips the restore; otherwise the manager drains the sandbox and the follow-up
   restores from the session directory in a fresh one. The window never
@@ -1498,7 +1498,7 @@ rebuilt by replaying it.
 Stores outside Postgres follow the same rule: the scheduler owns its
 repo-area locks, the run service owns its Temporal namespace and code-host
 rate-limit buckets, the pool manager owns the artifact store, and the HTTP Gateway
-owns the run-token registry and per-run spend counters. Each Redis keyspace
+owns the run grants and per-run spend counters. Each Redis keyspace
 has one owner.
 
 ## 13. Observability
@@ -1715,7 +1715,7 @@ flowchart TB
     XLB --> CON
     PM -->|Kubernetes API: create, delete| POD
     RS -->|Run API, mTLS, pod address from lease| POD
-    POD -->|turns, run token| ILB --> GW
+    POD -->|turns, grant key| ILB --> GW
     GW -->|optional local models| GPU
     GW --> NAT --> PROV
     POD -->|clone, push, packages| SWP --> NAT
@@ -1758,10 +1758,10 @@ flowchart TB
 |---|---|---|
 | Cloud SQL for PostgreSQL | One regional high-availability instance on a private IP. One schema and database role per owning component (section 12), with IAM database authentication per component. The `event` table is partitioned by time and retention class, and the instance is sized for the event service, the heaviest writer. | Failover to the standby takes about a minute. Services retry, and event clients buffer. Sandboxes never touch it, so runs in progress keep working. New admissions and leases wait. |
 | Temporal Cloud | The run service, reached over Private Service Connect. Workflow history, timers and signals. | Workflows stop advancing, but sandboxes keep running and finish their work. When Temporal returns, activities retry and re-attach by call id and `Last-Event-ID`. A run whose lease TTL expires during the outage is lost and retried as a new attempt. |
-| Memorystore for Redis | Standard tier with a replica. One key prefix per owner: HTTP Gateway (run tokens, spend counters), scheduler (repo-area locks), run service (code-host token buckets), event service (commit notification fallback, unused while `NOTIFY` suffices). | Failover keeps the data. If spend counters or run tokens are lost, the HTTP Gateway fails closed and rejects turns for any run it cannot verify or meter. Those runs end, and the run service retries them as new attempts. If locks are lost, the scheduler stops admitting until it rebuilds them from the run service's active runs. |
+| Memorystore for Redis | Standard tier with a replica. One key prefix per owner: HTTP Gateway (run grants, spend counters), scheduler (repo-area locks), run service (code-host token buckets), event service (commit notification fallback, unused while `NOTIFY` suffices). | Failover keeps the data. If spend counters or run grants are lost, the HTTP Gateway fails closed and rejects turns for any run it cannot verify or meter. Those runs end, and the run service retries them as new attempts. If locks are lost, the scheduler stops admitting until it rebuilds them from the run service's active runs. |
 | Cloud Storage | One bucket per owner: pool manager (session directories under `harness_session_id`, sandbox logs), run service (run artifacts), event service (exports). | Drain retries collection, and a sandbox stays in `draining` until its artifacts are saved or a limit passes. Follow-ups that need a saved session wait. |
 | Artifact Registry | Every image: the harness image and one per control-plane component. | Pods cannot pull uncached images. Running services and warm sandboxes are unaffected, and image rollover pauses. |
-| Secret Manager | Each secret is mounted only into its owner's pods. Provider API keys go to the HTTP Gateway, except the classifier-only key, which goes to the run service with the HTTP Gateway API key the harness engine uses to mint and revoke run tokens. | Secrets are read at pod start, so an outage blocks new pods only. |
+| Secret Manager | Each secret is mounted only into its owner's pods. Provider API keys go to the HTTP Gateway, except the classifier-only key, which goes to the run service with the HTTP Gateway API key the harness engine uses to request and revoke run grants. | Secrets are read at pod start, so an outage blocks new pods only. |
 | Cloud NAT and Secure Web Proxy | All egress. The proxy enforces the sandbox allowlist. | Fails closed: sandbox egress stops, runs fail on clone or push, and the run service retries them. No bypass route exists. |
 
 ### Network and identity
@@ -1787,11 +1787,11 @@ flowchart TB
 - **Redis prefixes.** Memorystore has no per-prefix IAM, so each owner's
   client wrapper enforces its prefix. This is the one store where code enforces
   the rule rather than IAM grants.
-- **Run tokens** are application-level and opaque: the harness engine
-  requests a run token from the HTTP Gateway, which mints it and keeps the
-  registry; the engine revokes it when the run ends. The engine authenticates
-  with an HTTP Gateway API key, mounted only into the run service. Run tokens
-  are not Google Cloud credentials.
+- **Run grants** are application-level: the harness engine asks the HTTP
+  Gateway for a run grant, which it issues and stores; the engine revokes it
+  when the run ends. The sandbox holds only the grant's opaque key. The engine
+  authenticates with an HTTP Gateway API key, mounted only into the run
+  service. Grant keys are not Google Cloud credentials.
 
 ### Observability
 

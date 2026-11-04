@@ -46,12 +46,13 @@ class RunTask:
                 flush=True,
             )
         log.info(
-            "%s: started, run id %s, %s, engine %s, model %s",
+            "%s: started, run id %s, %s, engine %s, model %s, spend limit $%s",
             info.workflow_id,
             info.run_id,
             "task text from the caller" if request.task else f"template {request.template}",
             request.engine,
             request.model,
+            request.spend_limit_usd,
         )
 
         log.info(
@@ -80,6 +81,7 @@ class RunTask:
                     engine=request.engine,
                     model=request.model,
                     harness_url=request.harness_url,
+                    spend_limit_usd=request.spend_limit_usd,
                 ),
                 start_to_close_timeout=HARNESS_TIMEOUT,
                 heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
