@@ -599,15 +599,15 @@ sequenceDiagram
     RT->>CL: classifier model call: classify(task spec)
     CL-->>RT: tier standard, confidence 0.82
     RT-->>WF: tier standard, tier candidates pi-lean with claude-sonnet-5, then pi-careful with gpt-5.6-luna
-    WF->>SB: run service activities: pool manager lease, HTTP Gateway run grant, harness server start run (pi-lean, claude-sonnet-5)
+    WF->>SB: run service run activity: pool manager lease, HTTP Gateway run grant, harness server start run (pi-lean, claude-sonnet-5)
     SB-->>WF: harness server run ended ERROR model_error (provider outage)
     Note over WF: an infrastructure failure, so the RunTask workflow tries the next tier candidate
-    WF->>SB: run service activities: pool manager lease, HTTP Gateway run grant, harness server start run (pi-careful, gpt-5.6-luna)
-    SB-->>WF: no per-run sandbox within ready_timeout
+    WF->>SB: run service run activity: pool manager lease, HTTP Gateway run grant, harness server start run (pi-careful, gpt-5.6-luna)
+    Note over WF,SB: the pool manager lease fails, no per-run sandbox within ready_timeout
     Note over WF: the standard tier is exhausted and the task policy allows escalation, so the RunTask workflow moves up one tier
     WF->>RT: run service route activity: tier candidates for tier complex
     RT-->>WF: tier candidate pi-careful with claude-opus-5-5
-    WF->>SB: run service activities: pool manager lease, HTTP Gateway run grant, harness server start run (pi-careful, claude-opus-5-5)
+    WF->>SB: run service run activity: pool manager lease, HTTP Gateway run grant, harness server start run (pi-careful, claude-opus-5-5)
     SB-->>WF: harness server run FINISHED, pull request opened
     Note over WF: the RunTask workflow records three runs, their costs, route_tier complex, route_method classifier
 ```
@@ -1030,10 +1030,10 @@ sets the hard ceiling.
 
 ### Sequences
 
-Six diagrams below each show one end-to-end scenario across the whole system.
-In each one, the meta-harness run service RunTask workflow and its activities
-lease the pool manager sandbox, request the HTTP Gateway run grant, start and
-follow the harness server run, collect, and decide. The ai-api-unified router
+In each diagram below, the meta-harness run service RunTask workflow runs the
+run service run activity, whose steps lease the pool manager sandbox, request
+the HTTP Gateway run grant, start and follow the harness server run, and
+collect. The RunTask workflow then decides. The ai-api-unified router
 in the run service process only classifies the task in the classify-only
 `route` activity and returns the tier's candidates.
 
@@ -1081,16 +1081,17 @@ sequenceDiagram
     A-->>W: tier, candidates
     W->>W: routing_decision row (owned by the run service)
     W->>EV: append task_routed
-    Note over W,PM: first candidate, one run_id per candidate attempt, the Lease activity looks up an existing pool manager sandbox lease first
-    W->>A: Lease activity
+    Note over W,PM: first candidate, one run_id per candidate attempt, the run activity's Lease step looks up an existing pool manager sandbox lease first
+    W->>A: start the run activity for the first candidate
+    Note over A: Lease step
     A->>PM: lease(run_id, harness profile image, harness_session_id, resources)
     PM-->>A: warm sandbox address, per-lease harness server bearer token, session_state new
-    W->>A: Grant activity
+    Note over A: Grant step
     A->>GW: request HTTP Gateway run grant (run_id, pinned model, spend limit, expiry)
     GW-->>A: run grant key
-    W->>A: Start activity
+    Note over A: Start step
     A->>SB: POST /run (harness prompt, checks, harness profile, limits, run grant key)
-    W->>A: Wait activity
+    Note over A: Wait step
     A->>SB: GET /events (harness server Run API event stream)
     loop each pi turn
         SB->>X: pi turn: transcript, tools
@@ -1105,11 +1106,10 @@ sequenceDiagram
         SB-->>A: harness server Run API events (SSE)
         A->>EV: append event batch
     end
-    Note over A: the Wait activity heartbeats to Temporal while it follows the harness server Run API event stream
+    Note over A: the run activity heartbeats to Temporal while it follows the harness server Run API event stream
     SB->>SB: commit, push, open PR
     SB-->>A: run_finished (SSE)
-    A-->>W: Wait activity done
-    W->>A: Collect activity
+    Note over A: Collect step
     A->>SB: GET /usage
     SB-->>A: usage and reported cost
     A->>GW: revoke HTTP Gateway run grant (run_id)
@@ -1216,8 +1216,7 @@ sequenceDiagram
     X-->>SB: error
     SB->>SB: harness server stops the run on the limit
     SB-->>A: run_finished: ERROR, end_reason: spend_limit (SSE)
-    A-->>W: Wait activity done
-    W->>A: Collect activity
+    Note over A: the run activity's Collect step
     A->>SB: GET /usage
     SB-->>A: usage and reported cost
     A->>GW: revoke HTTP Gateway run grant (run_id)
@@ -1262,25 +1261,25 @@ sequenceDiagram
     TS->>W: signal RunTask workflow
     W->>W: new run row, kind: followup (owned)
     Note over W: the follow-up run stays on the original candidate: same harness profile and model, no route activity, no escalation
-    W->>A: Lease activity
+    W->>A: start the run activity for the follow-up run
+    Note over A: Lease step
     A->>PM: lease(run_id, harness profile image, harness_session_id)
     Note over PM: the sandbox kept for this pi session, else a fresh one with the pi session directory copied in from the bucket
     PM-->>A: sandbox address, per-lease harness server bearer token, session_state kept or restored
-    W->>A: Grant activity
+    Note over A: Grant step
     A->>GW: request new HTTP Gateway run grant (run_id, pinned model, spend limit, expiry)
     GW-->>A: run grant key
-    W->>A: Start activity
+    Note over A: Start step
     A->>SB: POST /followup (review feedback only, run grant key)
     SB->>SB: switch_session, follow_up
-    W->>A: Wait activity
+    Note over A: Wait step
     loop pi turns
         SB->>GW: turns on the pinned model, run grant key
         GW-->>SB: turn, usage, running total
     end
     SB->>SB: new commits on the same branch, push
     SB-->>A: run_finished (SSE)
-    A-->>W: Wait activity done
-    W->>A: Collect activity
+    Note over A: Collect step
     A->>SB: GET /usage
     A->>GW: revoke HTTP Gateway run grant (run_id)
     A->>PM: release pool manager sandbox lease
@@ -1298,7 +1297,6 @@ sequenceDiagram
     participant CON as Operator console
     participant W as Meta-harness run service: RunTask workflow
     participant A as Meta-harness run service: run activity
-    participant EX as Pool manager executor backend
     participant PM as Pool manager
     participant EV as Event service
     end
@@ -1312,8 +1310,7 @@ sequenceDiagram
     CON->>W: cancel (per run, caller, or global kill switch)
     W->>EV: append operator_action (actor, scope)
     W->>A: cancel the run activity
-    A->>EX: cancel via pool manager sandbox lease
-    EX->>SB: POST /cancel
+    A->>SB: POST /cancel (direct, per-lease harness server bearer token)
     SB->>SB: abort, clear_queue, flush pi session
     SB-->>A: status CANCELED (SSE)
     A->>GW: revoke HTTP Gateway run grant (run_id)
@@ -2107,16 +2104,16 @@ meta-harness/
     # one package per component; each owns its tables, migrations and interface
     task_service/              # task table, Task API (FastAPI), code-host webhooks
     scheduler/                 # admission, repo-area locks
-    run_service/               # Temporal workflows; dispatcher and watch activities; run, routing_decision, config_version
-      executors/               # GKE pods, Docker (development), fake (recorded events)
+    run_service/               # RunTask workflow; dispatcher, route and run activities; run, routing_decision, config_version
     pool/                      # pool manager: sandbox and lease tables, warm pool, health, reconciliation, artifact store
+      executors/               # pool manager executor backends: GKE pods, Docker (development), fake (recorded events)
     events/
       service/                 # event service: event table, schema registry, partitions, retention, commit notification
       client/                  # producer client: local buffer and outbox, retries, append / read / tail
       schemas/                 # one schema per event type
     metering/                  # projections from tail, query API
     analyzer/                  # proposal table, evidence, approve / reject, config PRs
-    console/                   # read-only web console; no store, calls the services above
+    console/                   # operator console: no store; reads and sends cancel, kill switch, approvals to the owning services
     guardrails/                # library: repo policy, credential scoping, text checks, spend caps
   deploy/
     terraform/                 # project, VPC, GKE Autopilot, Cloud SQL, Memorystore, buckets, IAM, proxy
