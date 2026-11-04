@@ -70,6 +70,7 @@ step and no tsx.
 | `SESSION_DIR` | a new temporary directory | Where pi writes the session file. It stays outside the workspace, so it never lands in the repo |
 | `HARNESS_ALLOW_BASH` | off | `1` lets a profile name the `bash` tool |
 | `HEARTBEAT_SECONDS` | `5` | How often a `heartbeat` event goes out while a run is active |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | unset | When set, the server's own calls to the HTTP Gateway go through the proxy (`server/proxy.ts`). In a per-run sandbox this is the egress proxy. Loading pi's SDK replaces Node's proxy-aware dispatcher, so the server installs one itself |
 
 **Outside a sandbox, pi's tools act on your machine.** `read`, `write` and
 `edit` take paths, and nothing yet confines them to the workspace. The

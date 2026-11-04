@@ -78,7 +78,7 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
     box = await _lease(tag, run_id, ref)
     try:
         grant_key = await _issue_grant(tag, run_id, request, info.workflow_id)
-        async with harness_client.client(box.url, box.token) as client:
+        async with harness_client.client(box) as client:
             reattached = await _start_or_reattach(
                 client, tag, run_id, request, grant_key, info.workflow_id, progress, box.url
             )
@@ -158,8 +158,9 @@ async def _lease(tag: str, run_id: str, ref: str) -> sandbox.Sandbox:
         raise ApplicationError(str(err), type="SandboxUnavailable", non_retryable=True) from err
     if box.created:
         print(
-            f"{tag} per-run sandbox {box.name} started from {sandbox.IMAGE}: harness server at {box.url}, "
-            f"workspace {sandbox.workspace_for(ref)} mounted at /workspace",
+            f"{tag} per-run sandbox {box.name} started from {sandbox.IMAGE} on its own network "
+            f"{sandbox.network_name(run_id)}, out only through the egress proxy. "
+            f"Workspace {sandbox.workspace_for(ref)} mounted at /workspace",
             flush=True,
         )
     else:
@@ -171,7 +172,7 @@ async def _release(tag: str, run_id: str, ref: str) -> None:
     """Saves the harness server's log and removes the run's per-run sandbox."""
     await sandbox.destroy(run_id, ref)
     print(
-        f"{tag} per-run sandbox {sandbox.container_name(run_id)} removed, "
+        f"{tag} per-run sandbox {sandbox.container_name(run_id)} and its network removed, "
         f"harness server log: {sandbox.log_path_for(ref)}",
         flush=True,
     )
