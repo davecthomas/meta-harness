@@ -5,6 +5,7 @@
 #   make cancel-demo             make run, then `temporal workflow cancel` once the worker log shows CANCEL_AT
 #   make restart-demo            make run, then SIGKILL the worker once the worker log shows RESTART_AT
 #   make spend-limit-demo        make run with a $0.001 spend limit, which the run passes on turn 1
+#   make egress-check            check the per-run sandbox network rules, with no model call
 #
 # Or leave the services running and send them tasks:
 #
@@ -16,8 +17,9 @@
 #   make cancel REF=x            cancel a running task
 #   make down                    stop what `make up` started
 #
-# Each run gets its own per-run sandbox: a Docker container of the harness-pi image,
-# started and removed by the run activity. Docker must be running.
+# Each run gets its own per-run sandbox: a Docker container of the harness-pi image on its
+# own internal network, started and removed by the run activity. Its only way out is the
+# egress proxy, which allows EGRESS_ALLOW. Docker must be running.
 # The harness server's log and pi's workspace are in runs/<REF>/.
 # Another model: make run ENGINE=openai MODEL=gpt-4o-mini
 # Another spend limit, in USD: make run SPEND_LIMIT=0.05
@@ -26,13 +28,17 @@ SHELL := /bin/bash
 
 HARNESS_DIR ?= $(abspath $(CURDIR)/../../images/harness-pi)
 HARNESS_IMAGE ?= harness-pi:dev
+EGRESS_IMAGE ?= mh-egress-proxy:dev
 RUNS_DIR ?= $(CURDIR)/runs
 GATEWAY_DIR ?= $(abspath $(CURDIR)/../../../aiapi/ai-api-unified-http)
 GATEWAY_PORT ?= 8080
 GATEWAY_URL ?= http://localhost:$(GATEWAY_PORT)
 GATEWAY_API_KEY ?= local-dev-key
-# The gateway as a per-run sandbox container reaches it: host.docker.internal is this machine.
+# The gateway as the egress proxy reaches it: host.docker.internal is this machine.
 SANDBOX_GATEWAY_URL ?= http://host.docker.internal:$(GATEWAY_PORT)
+# host:port patterns a per-run sandbox may reach through the egress proxy: the HTTP Gateway,
+# the code host and package registries. `*` is a wildcard.
+EGRESS_ALLOW ?= host.docker.internal:$(GATEWAY_PORT),github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443
 # The gateway keeps run grants here. Not 6379, so a Redis you run yourself is left alone.
 REDIS_PORT ?= 6390
 REDIS_URL ?= redis://127.0.0.1:$(REDIS_PORT)/0
@@ -51,11 +57,11 @@ DEMO ?=
 CANCEL_AT ?= turn 1 starts
 RESTART_AT ?= turn 2 starts
 
-export HARNESS_DIR HARNESS_IMAGE RUNS_DIR GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
+export HARNESS_DIR HARNESS_IMAGE EGRESS_IMAGE EGRESS_ALLOW RUNS_DIR GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
   SANDBOX_GATEWAY_URL REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB \
   WAIT_SECONDS ENGINE MODEL SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT
 
-.PHONY: run cancel-demo restart-demo spend-limit-demo up down task tasks status watch cancel
+.PHONY: run cancel-demo restart-demo spend-limit-demo egress-check up down task tasks status watch cancel
 
 run:
 	@./stack.sh run
@@ -69,6 +75,9 @@ restart-demo:
 # Turn 1 starts below the limit and passes it, so the gateway refuses turn 2.
 spend-limit-demo:
 	@DEMO=spend-limit SPEND_LIMIT=0.001 ./stack.sh run
+
+egress-check:
+	@./stack.sh egress-check
 
 up:
 	@./stack.sh up

@@ -12,6 +12,9 @@
  *   SESSION_DIR           where pi writes the session file (default: a new temporary directory)
  *   HARNESS_ALLOW_BASH    1 lets a profile name the bash tool. Leave it off outside a sandbox.
  *   HEARTBEAT_SECONDS     heartbeat event interval while a run is active (default 5)
+ *   HTTPS_PROXY, HTTP_PROXY, NO_PROXY
+ *                         when set, the server's own calls (the HTTP Gateway) go through the proxy.
+ *                         In a per-run sandbox this is the egress proxy.
  *
  * Runs under plain `node`, which strips the TypeScript types. Node 22.19 or later.
  */
@@ -23,6 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunEvent } from "./event-log.ts";
 import { Harness, HttpError, type FollowupRequest, type Profile, type RunRequest } from "./harness.ts";
+import { useEnvProxy } from "./proxy.ts";
 
 const log = (text: string) => console.log(`[harness-server] ${text}`);
 
@@ -37,6 +41,9 @@ if (!SERVER_TOKEN) {
 for (const name of Object.keys(process.env)) {
 	if (/(_API_KEY|_AUTH_TOKEN|_OAUTH_TOKEN|^AWS_|^GOOGLE_APPLICATION_CREDENTIALS$)/.test(name)) delete process.env[name];
 }
+
+// harness.ts has loaded pi's SDK by now, so this replaces the dispatcher it installed.
+useEnvProxy(log);
 
 const harness = await Harness.create({
 	gatewayUrl: process.env.GATEWAY_URL ?? "http://localhost:8080",

@@ -7,3 +7,4 @@ harness-server.log
 runs/
 stack/
 redis.log
+egress-proxy.log

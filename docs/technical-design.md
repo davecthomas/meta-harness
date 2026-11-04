@@ -13,8 +13,8 @@ teaches something.
 | Each run as a meta-harness run service Temporal workflow (the RunTask workflow), with re-attach to the harness server on retry and cancel (section 7) | built | `samples/temporal-run-task` |
 | HTTP Gateway run grants: model pin and spend limit per run (section 6.4) | built | ai-api-unified-http 1.18.0, `samples/temporal-run-task` |
 | Per-run sandbox: the harness server in a Docker container per run, which the run service run activity starts and removes with the Docker executor backend (sections 6.3, 8.1 and 8.3) | built for local development | `images/harness-pi/Dockerfile`, `samples/temporal-run-task` |
-| Per-run sandbox egress allowlist: a local egress proxy that lets a per-run sandbox reach only the HTTP Gateway, the code host and package registries (section 15, Local development) | **next** | |
-| A free end-to-end check: the RunTask workflow against a fake HTTP Gateway, on every pull request | next | |
+| Per-run sandbox egress allowlist: each per-run sandbox on its own internal Docker network, with a local egress proxy that lets it reach only the HTTP Gateway, the code host and package registries (section 15, Local development) | built for local development | `samples/temporal-run-task/egress-proxy`, `make egress-check` |
+| A free end-to-end check: the RunTask workflow against a fake HTTP Gateway, on every pull request | **next** | |
 | Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | after that | |
 | The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity (section 6.3) | after that | |
 | Pool manager, kept and restored pi sessions (section 8.4) | later | |
@@ -22,10 +22,8 @@ teaches something.
 | Meta-harness review loop and operator review (section 7) | sketch | |
 | Task service Task API, meta-harness data model, event service, operator console, metering service, meta-harness scheduler (sections 9 to 13) | sketch | |
 
-The per-run sandbox confines pi's tools to the run's workspace, but a per-run
-sandbox container can still reach any network address, so the egress
-allowlist comes next. The free end-to-end check follows so each later build
-step is proven end to end before that build step spends money on model calls.
+The free end-to-end check comes next so each later build step is proven end
+to end before that build step spends money on model calls.
 
 ## 1. Scope
 
@@ -2229,7 +2227,11 @@ OpenTelemetry traces by trace id.
 Docker Compose runs Postgres, Redis, the Temporal dev server and every
 meta-harness service. Per-run sandboxes use the Docker executor backend behind
 the same pool manager executor interface, from the same images, and a local
-egress proxy enforces the same per-run sandbox egress allowlist.
+egress proxy enforces the same per-run sandbox egress allowlist. Each local
+per-run sandbox is on its own internal Docker network, which has no route
+out, and the local egress proxy is attached to each one. Docker publishes no
+port from an internal network, so the run service reaches each harness server
+through the local egress proxy's control listener.
 
 ## 16. Repository layout
 

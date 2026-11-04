@@ -14,10 +14,10 @@ To leave the services running and send them tasks, see
 [Run your own tasks](#run-your-own-tasks).
 
 The path today: Temporal workflow, then a per-run sandbox (a Docker container
-of the harness-pi image) with the harness server running pi, then the HTTP
-Gateway (ai-api-unified-http) on a run grant, then ai-api-unified, then the
-model provider. Each later step slots into the same commands: the per-run
-sandbox's egress allowlist, then the RunTask workflow's run loop over the
+of the harness-pi image, on its own network) with the harness server running
+pi, then the egress proxy, then the HTTP Gateway (ai-api-unified-http) on a
+run grant, then ai-api-unified, then the model provider. Each later step slots
+into the same commands: the RunTask workflow's run loop over the
 ai-api-unified router's candidates, then the pool manager.
 
 A **run grant** is the HTTP Gateway's record of what one run may do: one
@@ -91,6 +91,7 @@ sequenceDiagram
     participant T as Temporal dev server
     participant W as worker
     participant D as Docker
+    participant E as egress proxy
     participant H as harness server in the per-run sandbox
     participant G as HTTP Gateway
     S->>T: start_workflow(RunTask, task, engine, model, spend limit)
@@ -100,16 +101,19 @@ sequenceDiagram
     W-->>T: prompt
     W->>T: schedule run_harness
     T->>W: activity task: run_harness
-    W->>D: docker run harness-pi, named after the run id, workspace at /workspace, new bearer token
-    D-->>W: harness server port
-    W->>H: GET /health until green
+    W->>D: create the run's internal network, attach the egress proxy
+    W->>D: docker run harness-pi on that network, workspace at /workspace, new bearer token
+    W->>E: GET /health through the control listener, until green
+    E->>H: GET /health
     W->>G: POST /v1/run-grants with run id, engine, model, spend limit, expiry
     G-->>W: grant key
-    W->>H: POST /run with run id, session id, prompt, profile, grant key
+    W->>H: POST /run with run id, session id, prompt, profile, grant key, through the control listener
     H-->>W: 202 and the run's state
     W->>H: GET /events
     loop each model turn
-        H->>G: POST /v1/conversations/turn with the grant key
+        H->>E: CONNECT host.docker.internal:8080 on the egress listener
+        E->>G: allowed: the HTTP Gateway is on EGRESS_ALLOW
+        H->>G: POST /v1/conversations/turn with the grant key, through the tunnel
         Note over G: the grant picks the model and checks the spend
         G-->>H: text, tool calls, usage, usd_cost, the run's spend so far
         H-->>W: turn_started, model_call, tool_call, tool_result, turn_finished
@@ -119,7 +123,7 @@ sequenceDiagram
     W->>H: GET /usage
     W->>G: DELETE /v1/run-grants/run id
     G-->>W: what the run spent
-    W->>D: save the container's log to runs/REF, then remove the container
+    W->>D: save the container's log to runs/REF, then remove the container and its network
     W-->>T: HarnessResult
     T-->>S: RunTaskResult
 ```
@@ -137,7 +141,9 @@ history.
 |---|---|
 | `run_task/workflows.py` | `RunTask`: timeouts, retry policy and cancellation type for each activity |
 | `run_task/activities.py` | `prepare` and `run_harness`: lease the per-run sandbox, start or re-attach, heartbeats, cancel, release |
-| `run_task/sandbox.py` | The Docker executor backend: starts, finds and removes a run's per-run sandbox container |
+| `run_task/sandbox.py` | The Docker executor backend: starts, finds and removes a run's per-run sandbox container and its network |
+| `run_task/egress_check.py` | `make egress-check`: the network rules, checked from inside a throwaway per-run sandbox |
+| `egress-proxy/` | The local egress proxy: `proxy.py` (Python standard library only) and its `Dockerfile` |
 | `run_task/harness_client.py` | Reads the harness server's event stream and prints one line per event |
 | `run_task/run_grants.py` | Issues, reads and revokes run grants on the HTTP Gateway |
 | `run_task/shared.py` | Task queue name, the workflow id for a `REF`, and the dataclass payloads |
@@ -145,7 +151,7 @@ history.
 | `run_task/starter.py` | Starts one task, prints its id and web UI link, waits, then prints the event history and the result. `--follow` also prints the run's events. |
 | `run_task/tasks.py` | `list`, `status`, `watch` and `cancel` for tasks already started |
 | `prompts/hello-v1.txt` | The prompt template: create hello.txt and read it back |
-| `stack.sh` | Builds the per-run sandbox image, starts and stops the services, and removes leftover per-run sandbox containers |
+| `stack.sh` | Builds the per-run sandbox and egress proxy images, starts and stops the services and the egress proxy, and removes leftover per-run sandbox containers and networks |
 | `Makefile` | The commands below. Each one calls `stack.sh` or `run_task.tasks`. |
 
 ## Settings
@@ -155,7 +161,9 @@ history.
 | Workflow id | `run-task-<REF>`, ID reuse policy Reject Duplicate | One `REF` names one task, as `external_ref` does in the design |
 | Run id | `<workflow id>:run_harness` | The same on every attempt, so a retry re-attaches |
 | Harness session id | The workflow id | pi's session id and the gateway's prompt cache key |
-| Per-run sandbox | Container `mh-sandbox-<run id>` from `harness-pi:dev`: 2 CPUs, 4 GB, 512 processes, all capabilities dropped, no new privileges, run as your user id. The harness server port is published on 127.0.0.1 only. `runs/<REF>/workspace` is mounted at `/workspace`. | pi's tools reach your machine only through the workspace. The container holds no provider key. |
+| Per-run sandbox | Container `mh-sandbox-<run id>-<hash>` from `harness-pi:dev`: 2 CPUs, 4 GB, 512 processes, all capabilities dropped, no new privileges, run as your user id. `runs/<REF>/workspace` is mounted at `/workspace`. | pi's tools reach your machine only through the workspace. The container holds no provider key. |
+| Per-run sandbox network | Its own internal Docker network, `mh-run-<run id>-<hash>`, with no route out and no other run on it. The egress proxy is attached to it. | The container's only way out is the egress proxy. One run cannot reach another. |
+| Egress allowlist | `EGRESS_ALLOW`: the HTTP Gateway, GitHub, npm and PyPI | The design's per-run sandbox egress allowlist (sections 14 and 15) |
 | Profile | tools `read`, `write`, `edit`, `ls`, 20 turns, 10 minutes | The harness server enforces both limits |
 | Run grant | the task's engine and model, `SPEND_LIMIT`, expiry 15 minutes | The HTTP Gateway enforces the model and the spend limit. The expiry is the profile's 10 minutes plus 5 minutes' grace, so the grant outlives a run still ending. |
 | `run_harness` start-to-close timeout | 10 minutes | The whole run |
@@ -178,8 +186,9 @@ You need:
 No Temporal account or API key is needed. The dev server runs locally.
 
 **pi's tools act inside the per-run sandbox.** They reach your machine only
-through `runs/<REF>/workspace`. The container can still reach the network:
-the egress allowlist is the next build step. Run only tasks you trust.
+through `runs/<REF>/workspace`, and the network only through the egress
+proxy, which allows the HTTP Gateway, GitHub, npm and PyPI. See
+[Egress allowlist](#egress-allowlist).
 
 ```bash
 cd meta-harness/samples/temporal-run-task
@@ -192,7 +201,8 @@ make run SPEND_LIMIT=0.05
 `make run` takes these steps:
 
 1. Checks that Docker is running, runs `uv sync`, and builds the per-run
-   sandbox image `harness-pi:dev` from `images/harness-pi`. Docker's layer
+   sandbox image `harness-pi:dev` from `images/harness-pi` and the egress
+   proxy image `mh-egress-proxy:dev` from `egress-proxy/`. Docker's layer
    cache makes a rebuild with no changes take a second or two.
 2. Starts `temporal server start-dev` unless a Temporal server answers at
    `TEMPORAL_ADDRESS`.
@@ -201,19 +211,22 @@ make run SPEND_LIMIT=0.05
 4. Starts the gateway with `HTTP_REDIS_URL` set, unless one answers at
    `GATEWAY_URL`, and checks that the gateway issues run grants. A gateway
    you started yourself without Redis is refused with a message.
-5. Starts the worker, shows its log, and runs the starter. The worker's
-   `run_harness` starts the run's per-run sandbox, with pi's workspace at
-   `runs/<REF>/workspace`, and removes it when the run ends.
-6. Stops everything it started, on exit or Ctrl-C, and removes any per-run
-   sandbox container the task left. On Ctrl-C the starter cancels the
+5. Starts the egress proxy unless it is already running.
+6. Starts the worker, shows its log, and runs the starter. The worker's
+   `run_harness` starts the run's per-run sandbox on its own network, with
+   pi's workspace at `runs/<REF>/workspace`, and removes both when the run
+   ends.
+7. Stops everything it started, on exit or Ctrl-C, and removes any per-run
+   sandbox container or network the task left. On Ctrl-C the starter cancels the
    workflow and waits for it to end before the worker stops.
 
 `make run` refuses to start while `make up` is running, because the two
 workers would split the work.
 
 Logs go to `temporal.log`, `redis.log`, `gateway.log` and `worker.log` in this directory,
-and the harness server's to `runs/<REF>/harness-server.log`, saved from the
-container before it is removed. `runs/` keeps
+the egress proxy's to `egress-proxy.log` when it stops, and the harness
+server's to `runs/<REF>/harness-server.log`, saved from the container before
+it is removed. `runs/` keeps
 every task's workspace and log until you delete it. The dev server keeps
 workflow history in memory, so history is gone once `make run` stops it. To
 keep history and browse it later, set `TEMPORAL_DB` to a file path, or start
@@ -230,7 +243,9 @@ while the server runs.
 | `HARNESS_DIR` | `../../images/harness-pi`, built into the per-run sandbox image |
 | `HARNESS_IMAGE` | `harness-pi:dev` |
 | `RUNS_DIR` | `runs` in this directory: each task's workspace and harness server log |
-| `SANDBOX_GATEWAY_URL` | `http://host.docker.internal:8080`, the gateway as a container reaches it |
+| `SANDBOX_GATEWAY_URL` | `http://host.docker.internal:8080`, the gateway as the egress proxy reaches it |
+| `EGRESS_ALLOW` | `host.docker.internal:8080,github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443`: the `host:port` patterns a per-run sandbox may reach, `*` as a wildcard |
+| `EGRESS_IMAGE` | `mh-egress-proxy:dev` |
 | `GATEWAY_DIR` | `../../../aiapi/ai-api-unified-http`, the gateway checkout |
 | `GATEWAY_PORT`, `GATEWAY_URL` | `8080`, `http://localhost:8080` |
 | `GATEWAY_API_KEY` | `local-dev-key`, the gateway's local development key. The worker uses it to request and revoke run grants. |
@@ -259,17 +274,18 @@ make down
 
 | Command | What it does |
 |---|---|
-| `make up` | Starts Temporal, Redis and the gateway unless they already answer, plus a worker, and leaves them running. Logs and process ids go in `stack/`. |
+| `make up` | Starts Temporal, Redis and the gateway unless they already answer, the egress proxy, and a worker, and leaves them running. Logs and process ids go in `stack/`. |
 | `make task TASK=... REF=...` | Starts the workflow, prints the run's events from its per-run sandbox until it ends, and prints the result. Ctrl-C cancels the task. Tasks in separate terminals run at the same time, each in its own container. |
 | `make tasks` | Lists every task on the Temporal server: `REF`, status, start time, workspace |
 | `make status REF=...` | One task: its workflow status and workspace. While it runs, the per-run sandbox's turns, calls, tokens and cost so far, and the run grant's spend against its limit. Once it ends, the result, with what the grant counted. |
 | `make watch REF=...` | Prints a running task's events from the start, then its result |
 | `make cancel REF=...` | Cancels the workflow, which stops pi, and waits for it to end |
-| `make down` | Stops what `make up` started, and removes any per-run sandbox container left behind |
+| `make down` | Stops what `make up` started, removes the egress proxy, and removes any per-run sandbox container or network left behind |
 
 The task's per-run sandbox is removed when the task ends, so `watch` and the
 live part of `status` work only while the task runs. These commands find the
-container by the task's run id, so they need only the `REF`.
+container by the task's run id and reach it through the egress proxy's
+control listener, so they need only the `REF`.
 
 Two tasks on 2026-11-04, started at the same time: poem-3 on Claude and
 notes-3 on OpenAI. They ran before the per-run sandbox, on harness servers
@@ -388,7 +404,7 @@ rebuild the workflow. Three things about them:
 
 ## What a run looks like
 
-From `make run REF=haiku-3 TASK="Write a haiku about autumn to haiku.txt."`
+From `make run REF=haiku-4 TASK="Write a haiku about autumn to haiku.txt."`
 on 2026-11-04, with ai-api-unified-http 1.18.0 and library 3.29.1. Paths are
 shortened.
 
@@ -398,35 +414,37 @@ shortened.
 [make] starting Redis on port 6390 for the gateway's run grants, log: .../temporal-run-task/redis.log
 [make] starting the gateway from .../aiapi/ai-api-unified-http with run grants in redis://127.0.0.1:6390/0, log: .../temporal-run-task/gateway.log
 [make] gateway: {"status":"ok","service_version":"1.18.0","api_version":"v1","library_version":"3.29.1"}
+[make] starting the egress proxy. Per-run sandboxes may reach only: host.docker.internal:8080,github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443
+[make] egress proxy control listener on 127.0.0.1:56948
 [worker] polling task queue run-task on localhost:7233
-[starter] started workflow run-task-haiku-3  engine=claude  model=claude-haiku-4-5  spend limit=$0.50
+[starter] started workflow run-task-haiku-4  engine=claude  model=claude-haiku-4-5  spend limit=$0.50
 [starter] task: Write a haiku about autumn to haiku.txt.
-[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-haiku-3
-[workflow] run-task-haiku-3: started, run id 01a1a76e-3772-730d-b8bd-192280f20542, task text from the caller, engine claude, model claude-haiku-4-5, spend limit $0.50
-[workflow] run-task-haiku-3: scheduling activity prepare (timeout 30s, up to 3 attempts)
+[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-haiku-4
+[workflow] run-task-haiku-4: started, run id 01a1a7b5-20df-704a-bc69-fb57c352073f, task text from the caller, engine claude, model claude-haiku-4-5, spend limit $0.50
+[workflow] run-task-haiku-4: scheduling activity prepare (timeout 30s, up to 3 attempts)
 [activity] prepare attempt 1: using the task text from the caller
-[workflow] run-task-haiku-3: prepare returned a 40-character prompt
-[workflow] run-task-haiku-3: scheduling activity run_harness (timeout 10m, heartbeat timeout 10s, up to 3 attempts)
-[activity] run_harness attempt 1 started for run-task-haiku-3, heartbeat timeout 10s
-[run-task-haiku-3 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-haiku-3-run_harness started from harness-pi:dev: harness server at http://127.0.0.1:55613, workspace .../temporal-run-task/runs/haiku-3/workspace mounted at /workspace
-[run-task-haiku-3 run_harness attempt 1] run grant issued for run-task-haiku-3:run_harness: claude:claude-haiku-4-5, spend limit $0.50, expires 2026-11-04T16:54:42+00:00
-[run-task-haiku-3 run_harness attempt 1] POST /run started run run-task-haiku-3:run_harness
-[run-task-haiku-3 run_harness attempt 1] #1 turn 1 starts
-[run-task-haiku-3 run_harness attempt 1] #3 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write  tokens in=1796 out=223 cached=0  usd=0.002911
-[run-task-haiku-3 run_harness attempt 1] #4 runs tool write {"path": "haiku.txt", "content": "Leaves fall gently down\nColors blend to gold and red\nWinter soon will come\n"}
-[run-task-haiku-3 run_harness attempt 1] #5 tool write done
-[run-task-haiku-3 run_harness attempt 1] #6 file changed: haiku.txt
-[run-task-haiku-3 run_harness attempt 1] #7 turn 1 finished
-[run-task-haiku-3 run_harness attempt 1] #8 turn 2 starts
-[run-task-haiku-3 run_harness attempt 1] #9 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2042 out=44 cached=0  usd=0.002262
-[run-task-haiku-3 run_harness attempt 1] #10 turn 2 finished: Done! I've written a haiku about autumn to **haiku.txt**: ``` Leaves fall gently down Colors blend to gold and red Winter soon will come ```
-[run-task-haiku-3 run_harness attempt 1] #11 run finished: FINISHED (completed)
-[run-task-haiku-3 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0.005173 against it
-[run-task-haiku-3 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-haiku-3-run_harness removed, harness server log: .../temporal-run-task/runs/haiku-3/harness-server.log
-[activity] run_harness attempt 1: run finished, 12 heartbeats sent, returning the result to Temporal
-[workflow] run-task-haiku-3: run_harness returned on attempt 1: 2 turns, usd 0.005173
-[workflow] run-task-haiku-3: completed
-[history] events the Temporal server recorded for run-task-haiku-3:
+[workflow] run-task-haiku-4: prepare returned a 40-character prompt
+[workflow] run-task-haiku-4: scheduling activity run_harness (timeout 10m, heartbeat timeout 10s, up to 3 attempts)
+[activity] run_harness attempt 1 started for run-task-haiku-4, heartbeat timeout 10s
+[run-task-haiku-4 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-haiku-4-run-harness-d9a758fd started from harness-pi:dev on its own network mh-run-run-task-haiku-4-run-harness-d9a758fd, out only through the egress proxy. Workspace .../temporal-run-task/runs/haiku-4/workspace mounted at /workspace
+[run-task-haiku-4 run_harness attempt 1] run grant issued for run-task-haiku-4:run_harness: claude:claude-haiku-4-5, spend limit $0.50, expires 2026-11-04T18:12:10+00:00
+[run-task-haiku-4 run_harness attempt 1] POST /run started run run-task-haiku-4:run_harness
+[run-task-haiku-4 run_harness attempt 1] #1 turn 1 starts
+[run-task-haiku-4 run_harness attempt 1] #4 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write  tokens in=1796 out=386 cached=0  usd=0.003726
+[run-task-haiku-4 run_harness attempt 1] #5 runs tool write {"path": "haiku.txt", "content": "Crimson leaves now fall\nCool winds whisper through the trees\nSummer warmth has fled"}
+[run-task-haiku-4 run_harness attempt 1] #6 tool write done
+[run-task-haiku-4 run_harness attempt 1] #7 file changed: haiku.txt
+[run-task-haiku-4 run_harness attempt 1] #8 turn 1 finished
+[run-task-haiku-4 run_harness attempt 1] #9 turn 2 starts
+[run-task-haiku-4 run_harness attempt 1] #10 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2205 out=45 cached=0  usd=0.00243
+[run-task-haiku-4 run_harness attempt 1] #11 turn 2 finished: Done! I've written an autumn haiku to **haiku.txt**: ``` Crimson leaves now fall Cool winds whisper through the trees Summer warmth has fled ```
+[run-task-haiku-4 run_harness attempt 1] #12 run finished: FINISHED (completed)
+[run-task-haiku-4 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0.006156 against it
+[run-task-haiku-4 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-haiku-4-run-harness-d9a758fd and its network removed, harness server log: .../temporal-run-task/runs/haiku-4/harness-server.log
+[activity] run_harness attempt 1: run finished, 13 heartbeats sent, returning the result to Temporal
+[workflow] run-task-haiku-4: run_harness returned on attempt 1: 2 turns, usd 0.006156
+[workflow] run-task-haiku-4: completed
+[history] events the Temporal server recorded for run-task-haiku-4:
 [history]   1  WorkflowExecutionStarted          task queue run-task
 [history]   2  WorkflowTaskScheduled
 [history]   3  WorkflowTaskStarted
@@ -444,28 +462,42 @@ shortened.
 [history]  15  WorkflowTaskStarted
 [history]  16  WorkflowTaskCompleted
 [history]  17  WorkflowExecutionCompleted
-[starter] workflow run-task-haiku-3 completed
-[result] template=inline  run=run-task-haiku-3:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
-[result] turns=2  failed calls=0  tokens in=3838 out=267  usd=0.005173
-[result] run grant: the HTTP Gateway counted $0.005173 of the $0.50 limit
+[starter] workflow run-task-haiku-4 completed
+[result] template=inline  run=run-task-haiku-4:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
+[result] turns=2  failed calls=0  tokens in=4001 out=431  usd=0.006156
+[result] run grant: the HTTP Gateway counted $0.006156 of the $0.50 limit
 [result] files changed: haiku.txt
-[result] workspace: .../temporal-run-task/runs/haiku-3/workspace
-[result] harness server log: .../temporal-run-task/runs/haiku-3/harness-server.log
-[result] answer: Done! I've written a haiku about autumn to **haiku.txt**: ``` Leaves fall gently down Colors blend to gold and red Winter soon will come ```
+[result] workspace: .../temporal-run-task/runs/haiku-4/workspace
+[result] harness server log: .../temporal-run-task/runs/haiku-4/harness-server.log
+[result] answer: Done! I've written an autumn haiku to **haiku.txt**: ``` Crimson leaves now fall Cool winds whisper through the trees Summer warmth has fled ```
 [worker] shutting down
 [temporalio.worker._worker] Beginning worker shutdown, will wait 0:00:00 before cancelling activities
 [worker] stopped
 [make] worker stopped
+[make] egress proxy stopped, log: .../temporal-run-task/egress-proxy.log
 [make] gateway stopped
 [make] Redis stopped
 [make] Temporal dev server stopped
 ```
 
-Event ids missing from the list, such as 2, are `heartbeat` events, which
-the activity does not print.
+The egress proxy's log for the same run, `egress-proxy.log`:
 
-The HTTP Gateway's count for the grant ($0.005173) matches the harness
-server's own sum of each turn's `usd_cost` ($0.005173). The two are counted
+```text
+[egress-proxy] egress listener on 0.0.0.0:3128, allowing host.docker.internal:8080, github.com:443, *.github.com:443, *.githubusercontent.com:443, registry.npmjs.org:443, pypi.org:443, files.pythonhosted.org:443
+[egress-proxy] control listener on 172.18.0.2:8091, allowing mh-sandbox-*:8090
+[egress-proxy] control fail  GET http://mh-sandbox-run-task-haiku-4-run-harness-d9a758fd:8090 from 172.18.0.1: [Errno 111] Connect call failed ('172.20.0.3', 8090)
+[egress-proxy] egress allow CONNECT host.docker.internal:8080 from 172.20.0.3
+```
+
+The `control fail` line is the worker's first `/health` poll, sent before the
+harness server was listening. pi's model calls all went through the one
+tunnel to the HTTP Gateway.
+
+Event ids missing from the list, such as 2 and 3, are `heartbeat` events,
+which the activity does not print.
+
+The HTTP Gateway's count for the grant ($0.006156) matches the harness
+server's own sum of each turn's `usd_cost` ($0.006156). The two are counted
 separately: the gateway in Redis, the harness server from its responses.
 
 Each `WorkflowTask` trio in the history is the worker running workflow code
@@ -485,15 +517,15 @@ would. `make cancel REF=...` does the same for a task started with
 `make task`. Output from 2026-11-04, after the same startup lines:
 
 ```text
-[run-task-sandbox-cancel-1 run_harness attempt 1] POST /run started run run-task-sandbox-cancel-1:run_harness
-[run-task-sandbox-cancel-1 run_harness attempt 1] #1 turn 1 starts
-[make] temporal workflow cancel --workflow-id run-task-sandbox-cancel-1
-[run-task-sandbox-cancel-1 run_harness attempt 1] cancellation received (cancel_requested), sending POST /cancel
-[run-task-sandbox-cancel-1 run_harness attempt 1] harness server stopped pi: run CANCELED
-[run-task-sandbox-cancel-1 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0 against it
-[run-task-sandbox-cancel-1 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-sandbox-cancel-1-run_harness removed, harness server log: .../temporal-run-task/runs/sandbox-cancel-1/harness-server.log
-[workflow] run-task-sandbox-cancel-1: canceled, and run_harness has stopped pi
-[starter] workflow run-task-sandbox-cancel-1 canceled
+[run-task-cancel-5 run_harness attempt 1] POST /run started run run-task-cancel-5:run_harness
+[run-task-cancel-5 run_harness attempt 1] #1 turn 1 starts
+[make] temporal workflow cancel --workflow-id run-task-cancel-5
+[run-task-cancel-5 run_harness attempt 1] cancellation received (cancel_requested), sending POST /cancel
+[run-task-cancel-5 run_harness attempt 1] harness server stopped pi: run CANCELED
+[run-task-cancel-5 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0 against it
+[run-task-cancel-5 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-cancel-5-run-harness-6a4d4d26 and its network removed, harness server log: .../temporal-run-task/runs/cancel-5/harness-server.log
+[workflow] run-task-cancel-5: canceled, and run_harness has stopped pi
+[starter] workflow run-task-cancel-5 canceled
 ```
 
 The grant counted $0, but turn 1 was billed: the gateway finished it after
@@ -553,21 +585,24 @@ make up
 The second `make up` sees the worker is gone and starts only a new one. The
 task ends with `attempt=2  reattached=True`.
 
-Output of `make restart-demo` from 2026-11-04, with the per-run sandbox:
+Output of `make restart-demo` from 2026-11-04, with the per-run sandbox and
+the egress proxy:
 
 ```text
-[run-task-sandbox-restart-1 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-sandbox-restart-1-run_harness started from harness-pi:dev: harness server at http://127.0.0.1:55052, workspace .../temporal-run-task/runs/sandbox-restart-1/workspace mounted at /workspace
+[run-task-restart-5 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-restart-5-run-harness-18f50677 started from harness-pi:dev on its own network mh-run-run-task-restart-5-run-harness-18f50677, out only through the egress proxy. Workspace .../temporal-run-task/runs/restart-5/workspace mounted at /workspace
 ...
-[run-task-sandbox-restart-1 run_harness attempt 1] #10 turn 2 starts
-[make] killing the worker with SIGKILL (process group 23031). pi keeps running in the per-run sandbox.
-[activity] run_harness attempt 2 started for run-task-sandbox-restart-1, heartbeat timeout 10s
-[run-task-sandbox-restart-1 run_harness attempt 2] per-run sandbox mh-sandbox-run-task-sandbox-restart-1-run_harness is still running from an earlier attempt
-[run-task-sandbox-restart-1 run_harness attempt 2] run grant for run-task-sandbox-restart-1:run_harness is still live (spent $0.0075 of $0.50). The HTTP Gateway added a key to it
-[run-task-sandbox-restart-1 run_harness attempt 2] POST /run: run run-task-sandbox-restart-1:run_harness already exists (FINISHED). Re-attaching after event 10, without starting pi again
+[make] killing the worker with SIGKILL (process group 38847). pi keeps running in the per-run sandbox.
+[make] Temporal retries run_harness once 10s pass with no heartbeat, plus the 2s retry interval
+[make] starting a new worker
+[activity] run_harness attempt 2 started for run-task-restart-5, heartbeat timeout 10s
+[run-task-restart-5 run_harness attempt 2] per-run sandbox mh-sandbox-run-task-restart-5-run-harness-18f50677 is still running from an earlier attempt
+[run-task-restart-5 run_harness attempt 2] run grant for run-task-restart-5:run_harness is still live (spent $0.007105 of $0.50). The HTTP Gateway added a key to it
+[run-task-restart-5 run_harness attempt 2] POST /run: run run-task-restart-5:run_harness already exists (FINISHED). Re-attaching after event 2, without starting pi again
 ...
-[run-task-sandbox-restart-1 run_harness attempt 2] #19 run finished: FINISHED (completed)
-[run-task-sandbox-restart-1 run_harness attempt 2] per-run sandbox mh-sandbox-run-task-sandbox-restart-1-run_harness removed, harness server log: .../temporal-run-task/runs/sandbox-restart-1/harness-server.log
-[workflow] run-task-sandbox-restart-1: completed
+[run-task-restart-5 run_harness attempt 2] #16 run finished: FINISHED (completed)
+[run-task-restart-5 run_harness attempt 2] run grant revoked: the HTTP Gateway counted $0.007105 against it
+[run-task-restart-5 run_harness attempt 2] per-run sandbox mh-sandbox-run-task-restart-5-run-harness-18f50677 and its network removed, harness server log: .../temporal-run-task/runs/restart-5/harness-server.log
+[result] template=hello-v1  run=run-task-restart-5:run_harness  status=FINISHED (completed)  attempt=2  reattached=True
 ```
 
 Attempt 2 found the container attempt 1 started, by its run id, and
@@ -671,6 +706,59 @@ it, so a run can pass its limit by the cost of the turn that crossed it. Here
 turn 1 cost $0.003029 against a $0.001 limit. The attempt fails for good, as
 `max_turns` does: a retry would re-attach to the same ended run.
 
+## Egress allowlist
+
+```bash
+make egress-check
+```
+
+This checks the per-run sandbox's network rules with no model call. It
+starts Redis, the HTTP Gateway and the egress proxy, then a throwaway per-run
+sandbox the way `run_harness` does, and checks from inside it. Output from
+2026-11-04:
+
+```text
+[make] starting the egress proxy. Per-run sandboxes may reach only: host.docker.internal:8080,github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443
+[make] egress proxy control listener on 127.0.0.1:57151
+[egress-check] starting a throwaway per-run sandbox for egress-check-7273c7:check
+[egress-check] PASS the worker reached the harness server's /health through the control listener http://127.0.0.1:57151
+[egress-check] PASS the HTTP Gateway through the egress proxy: http://host.docker.internal:8080/healthz answered 200
+[egress-check] PASS https://example.com through the egress proxy: the proxy answered 403 (curl exit 56)
+[egress-check] PASS https://example.com bypassing the proxy: curl exit 6, no route out
+[egress-check] PASS the control listener http://172.18.0.2:8091 from inside: curl exit 7, out of reach
+[egress-check] removed mh-sandbox-egress-check-7273c7-check-be81372d and its network
+[egress-check] all checks passed
+```
+
+And the proxy's log, which records every decision on the egress listener:
+
+```text
+[egress-proxy] egress allow CONNECT host.docker.internal:8080 from 172.20.0.3
+[egress-proxy] egress allow GET http://host.docker.internal:8080/healthz from 172.20.0.3
+[egress-proxy] egress deny  CONNECT example.com:443 from 172.20.0.3: not on the allowlist
+```
+
+How it fits together:
+
+- Each per-run sandbox is on its own internal Docker network, which has no
+  route out. A per-run sandbox cannot reach another.
+- The egress proxy (`egress-proxy/proxy.py`) is attached to each run's
+  network and to its own ordinary network, `mh-egress-net`. Its **egress
+  listener**, on port 3128, lets a per-run sandbox reach only `EGRESS_ALLOW`
+  and answers anything else with 403.
+- Docker publishes no port from an internal network, so the worker reaches
+  each harness server through the proxy's **control listener**. It is
+  published on your 127.0.0.1 and allows only `mh-sandbox-*:8090`. It listens
+  on `mh-egress-net` only, so a per-run sandbox cannot reach it.
+- The container sets `HTTP_PROXY` and `HTTPS_PROXY` to the egress listener,
+  so `curl`, `git`, `npm` and the harness server's own calls go through it.
+  Anything that ignores them has no route out.
+
+To let a per-run sandbox reach another host, add it to `EGRESS_ALLOW`, e.g.
+`make run EGRESS_ALLOW="host.docker.internal:8080,example.org:443"`. The
+proxy reads the allowlist when it starts, so restart a running `make up`
+first.
+
 ## Findings
 
 1. **Resolved: under tsx, pi ignored SIGTERM.** The first version of this
@@ -719,15 +807,32 @@ turn 1 cost $0.003029 against a $0.001 limit. The attempt fails for good, as
    or `EXPIRED`, and removes the per-run sandbox. In the design, a failed run
    moves the RunTask workflow's run loop to the next tier candidate, in a new
    per-run sandbox (section 6.3).
-8. **A container reaches the gateway at `host.docker.internal`.** On Docker
-   Desktop for Mac that name reaches services bound to the Mac's 127.0.0.1,
-   so the gateway needs no change. On Linux, `--add-host
+8. **The egress proxy reaches the gateway at `host.docker.internal`.** On
+   Docker Desktop for Mac that name reaches services bound to the Mac's
+   127.0.0.1, so the gateway needs no change. On Linux, `--add-host
    host.docker.internal:host-gateway` reaches the host's bridge address, so
    the gateway must listen there too, or `SANDBOX_GATEWAY_URL` must name an
-   address the container can reach.
+   address the proxy can reach.
 9. **An attempt that fails on a retryable error can leave its container
    running.** The next attempt re-attaches to it. When the last attempt
    fails that way, nothing re-attaches, so `make run`, `make task` and
    `make down` remove the task's leftover containers by their
    `meta-harness.ref` and `meta-harness.sample` labels. In the design, the
    pool manager lease TTL does this (section 8.4).
+10. **Loading pi's SDK turns off Node's proxy support.** Node 22 sends `fetch`
+    through `HTTP_PROXY` when `NODE_USE_ENV_PROXY=1`. Loading pi's SDK
+    replaces that dispatcher with undici's plain one, and `fetch` then
+    resolves hosts directly. In a per-run sandbox, that failed with
+    `EAI_AGAIN`: there is no DNS route out. pi's own command-line entry point
+    installs a proxy-aware dispatcher; the SDK does not. The harness server
+    now does the same at startup (`images/harness-pi/server/proxy.ts`). The
+    internal network is what made this visible: on an ordinary network the
+    model calls would have gone around the proxy unnoticed.
+11. **Docker publishes no port from an internal network.** The worker reaches
+    each harness server through the proxy's control listener instead. In the
+    design, the run service reaches the pod address directly over mutual TLS
+    (section 15).
+12. **Local per-run sandboxes are capped by Docker's network address pools.**
+    Each run has its own network, and Docker Desktop's default pools hold
+    about 30. That limits how many runs can be in progress at once on one
+    machine, which is more than local development needs.

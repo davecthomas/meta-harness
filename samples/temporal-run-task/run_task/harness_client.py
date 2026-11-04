@@ -13,8 +13,11 @@ from run_task import sandbox
 EVENT_READ_TIMEOUT_SECONDS = 30.0
 
 
-def client(harness_url: str, token: str) -> httpx.AsyncClient:
-    return httpx.AsyncClient(base_url=harness_url, headers={"authorization": f"Bearer {token}"}, timeout=10.0)
+def client(box: sandbox.Sandbox) -> httpx.AsyncClient:
+    """An HTTP client for the harness server in a per-run sandbox, through the egress proxy's control listener."""
+    return httpx.AsyncClient(
+        base_url=box.url, headers={"authorization": f"Bearer {box.token}"}, proxy=box.proxy, timeout=10.0
+    )
 
 
 async def events_after(client: httpx.AsyncClient, last_event_id: int) -> AsyncIterator[dict[str, Any]]:
@@ -33,13 +36,13 @@ async def events_after(client: httpx.AsyncClient, last_event_id: int) -> AsyncIt
                 data = []
 
 
-async def follow(harness_url: str, token: str, run_id: str, prefix: str) -> dict[str, Any] | None:
+async def follow(box: sandbox.Sandbox, run_id: str, prefix: str) -> dict[str, Any] | None:
     """Prints one line per event of the run until run_finished, and returns that event.
 
     Returns None when the harness server is gone, which happens once the task
     that started it has ended.
     """
-    async with client(harness_url, token) as http:
+    async with client(box) as http:
         try:
             async for event in events_after(http, 0):
                 if event["run_id"] != run_id:
@@ -66,7 +69,7 @@ async def follow_run(run_id: str, prefix: str, wait_seconds: float) -> dict[str,
         except sandbox.SandboxError:
             return None
         if box:
-            return await follow(box.url, box.token, run_id, prefix)
+            return await follow(box, run_id, prefix)
         if asyncio.get_running_loop().time() >= deadline:
             return None
         await asyncio.sleep(0.5)
