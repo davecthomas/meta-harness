@@ -14,7 +14,7 @@ teaches something.
 | HTTP Gateway run grants: model pin and spend limit per run (section 6.4) | built | ai-api-unified-http 1.18.0, `samples/temporal-run-task` |
 | Per-run sandbox: the harness server in a Docker container per run, which the run service run activity starts and removes with the Docker executor backend (sections 6.3, 8.1 and 8.3) | built for local development | `images/harness-pi/Dockerfile`, `samples/temporal-run-task` |
 | Per-run sandbox egress allowlist: each per-run sandbox on its own internal Docker network, with a local egress proxy that lets it reach only the HTTP Gateway, the code host and package registries (section 15, Local development) | built for local development | `samples/temporal-run-task/egress-proxy`, `make egress-check` |
-| A free end-to-end check: the RunTask workflow against a fake HTTP Gateway, on every pull request | **next** | |
+| A zero-cost end-to-end check: the RunTask workflow against a fake HTTP Gateway that makes no model calls, on every pull request | **next** | |
 | Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | after that | |
 | The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity (section 6.3) | after that | |
 | Pool manager, kept and restored pi sessions (section 8.4) | later | |
@@ -22,7 +22,7 @@ teaches something.
 | Meta-harness review loop and operator review (section 7) | sketch | |
 | Task service Task API, meta-harness data model, event service, operator console, metering service, meta-harness scheduler (sections 9 to 13) | sketch | |
 
-The free end-to-end check comes next so each later build step is proven end
+The zero-cost end-to-end check comes next so each later build step is proven end
 to end before that build step spends money on model calls.
 
 ## 1. Scope
