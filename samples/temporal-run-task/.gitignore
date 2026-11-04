@@ -8,3 +8,4 @@ runs/
 stack/
 redis.log
 egress-proxy.log
+e2e-logs/

@@ -8,6 +8,7 @@ each piece lands.
 cd meta-harness/samples/temporal-run-task
 make run                                                   # the built-in task: create hello.txt and read it back
 make run TASK="Write a haiku about autumn to haiku.txt."   # your own task
+make e2e                                                   # the zero-cost end-to-end check: no model calls
 ```
 
 To leave the services running and send them tasks, see
@@ -142,6 +143,8 @@ history.
 | `run_task/workflows.py` | `RunTask`: timeouts, retry policy and cancellation type for each activity |
 | `run_task/activities.py` | `prepare` and `run_harness`: lease the per-run sandbox, start or re-attach, heartbeats, cancel, release |
 | `run_task/sandbox.py` | The Docker executor backend: starts, finds and removes a run's per-run sandbox container and its network |
+| `run_task/fake_gateway.py` | The fake HTTP Gateway: run grants and scripted model turns, with no model calls |
+| `e2e.sh` | `make e2e`: the zero-cost end-to-end check, which CI runs on every pull request |
 | `run_task/egress_check.py` | `make egress-check`: the network rules, checked from inside a throwaway per-run sandbox |
 | `egress-proxy/` | The local egress proxy: `proxy.py` (Python standard library only) and its `Dockerfile` |
 | `run_task/harness_client.py` | Reads the harness server's event stream and prints one line per event |
@@ -246,6 +249,9 @@ while the server runs.
 | `SANDBOX_GATEWAY_URL` | `http://host.docker.internal:8080`, the gateway as the egress proxy reaches it |
 | `EGRESS_ALLOW` | `host.docker.internal:8080,github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443`: the `host:port` patterns a per-run sandbox may reach, `*` as a wildcard |
 | `EGRESS_IMAGE` | `mh-egress-proxy:dev` |
+| `GATEWAY` | `real`: ai-api-unified-http from `GATEWAY_DIR`. `fake`: `run_task/fake_gateway.py`, which makes no model calls and needs no Redis |
+| `FAKE_GATEWAY_HOST`, `FAKE_TURN_SECONDS` | `127.0.0.1`, `2`: where the fake listens, and how long each scripted turn takes |
+| `E2E_GATEWAY_PORT` | `8099`: the fake's port under `make e2e`, apart from a real gateway on 8080 |
 | `GATEWAY_DIR` | `../../../aiapi/ai-api-unified-http`, the gateway checkout |
 | `GATEWAY_PORT`, `GATEWAY_URL` | `8080`, `http://localhost:8080` |
 | `GATEWAY_API_KEY` | `local-dev-key`, the gateway's local development key. The worker uses it to request and revoke run grants. |
@@ -758,6 +764,45 @@ To let a per-run sandbox reach another host, add it to `EGRESS_ALLOW`, e.g.
 `make run EGRESS_ALLOW="host.docker.internal:8080,example.org:443"`. The
 proxy reads the allowlist when it starts, so restart a running `make up`
 first.
+
+## Zero-cost end-to-end check
+
+```bash
+make e2e
+```
+
+This runs the whole current path against a fake HTTP Gateway
+(`run_task/fake_gateway.py`), which makes no model calls, so it needs no
+provider keys and costs nothing. CI runs it on every pull request
+(`.github/workflows/e2e.yml`), along with the harness server's tests.
+
+The fake answers the same paths with the same JSON fields as
+ai-api-unified-http 1.18.0: `/healthz`, the run grant endpoints, and
+`/v1/conversations/turn`. Its scripted run asks pi to write `hello.txt`, then
+answers that it is done. Each turn takes 2 seconds and costs $0.002, so the
+cancel and restart demos have time to act and the spend-limit demo trips on
+turn 2. The fake refuses to start when a real gateway answers on its port.
+
+`e2e.sh` runs each step with its output in `e2e-logs/<step>.log`. Output from
+2026-11-04, in about a minute:
+
+```text
+[e2e] run ...
+[e2e] PASS run: the task finished and hello.txt holds "Hello from the fake HTTP Gateway."
+[e2e] cancel ...
+[e2e] PASS cancel: POST /cancel stopped pi and the workflow ended canceled
+[e2e] restart ...
+[e2e] PASS restart: attempt 2 found the same per-run sandbox and re-attached
+[e2e] spend-limit ...
+[e2e] PASS spend-limit: the run stopped at its $0.001 spend limit
+[e2e] egress ...
+[e2e] PASS egress: every per-run sandbox network rule held
+[e2e] PASS cleanup: no per-run sandbox container or network left
+[e2e] all steps passed, with no model calls. Logs: .../temporal-run-task/e2e-logs
+```
+
+Every other command takes `GATEWAY=fake` too, e.g.
+`make run GATEWAY=fake GATEWAY_PORT=8099`, to try the sample with no keys.
 
 ## Findings
 

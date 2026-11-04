@@ -7,6 +7,9 @@
 #   stack.sh down   stop what `up` started
 #   stack.sh egress-check   check the per-run sandbox network rules, with no model call
 #
+# GATEWAY=fake starts run_task/fake_gateway.py, which makes no model calls,
+# in place of ai-api-unified-http, and skips Redis. e2e.sh uses it.
+#
 # Every run gets its own per-run sandbox: a Docker container of the harness-pi
 # image on its own internal network, which the run activity starts and removes
 # (run_task/sandbox.py). Its only way out is the egress proxy (egress-proxy/),
@@ -178,8 +181,39 @@ grants_on() {
   [ "$code" = 404 ]
 }
 
+# start_redis_if_needed LOG: the real gateway keeps run grants in Redis. The fake keeps them in memory.
+start_redis_if_needed() {
+  [ "$GATEWAY" = fake ] || start_redis "$1"
+}
+
+# start_fake_gateway LOG: the fake HTTP Gateway, which makes no model calls. A real gateway on the
+# same port is refused, so a zero-cost run never spends money by accident.
+start_fake_gateway() {
+  if gateway_up; then
+    curl -fsS "$GATEWAY_URL/healthz" | grep -q '"service_version": *"fake"' || {
+      log "a real gateway answers at $GATEWAY_URL. The fake needs a free port: set GATEWAY_PORT."
+      exit 1
+    }
+    log "using the fake gateway already running at $GATEWAY_URL"
+    return 0
+  fi
+  log "starting the fake HTTP Gateway on $FAKE_GATEWAY_HOST:$GATEWAY_PORT, no model calls, log: $PWD/$1"
+  set -m
+  nohup .venv/bin/python -m run_task.fake_gateway --host "$FAKE_GATEWAY_HOST" --port "$GATEWAY_PORT" \
+    >"$1" 2>&1 </dev/null &
+  gateway_pid=$!
+  set +m
+  wait_for "the fake gateway" gateway_up "$gateway_pid" "$1"
+}
+
 # start_gateway LOG: uses a gateway already answering, or starts one from GATEWAY_DIR with run grants on.
+# With GATEWAY=fake, starts the fake instead.
 start_gateway() {
+  if [ "$GATEWAY" = fake ]; then
+    start_fake_gateway "$1"
+    log "gateway: $(curl -fsS "$GATEWAY_URL/healthz")"
+    return 0
+  fi
   if gateway_up; then
     log "using the gateway already running at $GATEWAY_URL"
   else
@@ -264,7 +298,7 @@ cmd_run() {
   trap stop_all EXIT
   trap 'exit 130' INT TERM
   start_temporal temporal.log
-  start_redis redis.log
+  start_redis_if_needed redis.log
   start_gateway gateway.log
   start_egress
   : >worker.log
@@ -331,7 +365,7 @@ cmd_up() {
   trap '[ $? -eq 0 ] || up_failed' EXIT
   start_temporal "$STACK_DIR/temporal.log"
   [ -z "$temporal_pid" ] || echo "temporal $temporal_pid" >>"$STACK_DIR/pids"
-  start_redis "$STACK_DIR/redis.log"
+  start_redis_if_needed "$STACK_DIR/redis.log"
   [ -z "$redis_pid" ] || echo "redis $redis_pid" >>"$STACK_DIR/pids"
   start_gateway "$STACK_DIR/gateway.log"
   [ -z "$gateway_pid" ] || echo "gateway $gateway_pid" >>"$STACK_DIR/pids"
@@ -392,7 +426,7 @@ cmd_egress_check() {
   }
   trap stop_checked EXIT
   trap 'exit 130' INT TERM
-  start_redis redis.log
+  start_redis_if_needed redis.log
   start_gateway gateway.log
   start_egress
   .venv/bin/python -m run_task.egress_check
