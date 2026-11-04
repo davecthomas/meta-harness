@@ -62,11 +62,13 @@ For each task the meta-harness opens one pull request, labeled
 with its harness profile, model, thinking level, time and cost, and whether the pull
 request merged.
 
-No person reviews a meta-harness pull request. The meta-harness review loop
-(section 7) reviews each pull request with a meta-harness review task and
+No person has to review a meta-harness pull request. The meta-harness review
+loop (section 7) reviews each pull request with a meta-harness review task and
 tickets failed code-host checks and review findings as meta-harness fix tasks
 on the same branch. The loop repeats until a review comes back clean, and the
-meta-harness run service then merges the pull request.
+meta-harness run service then merges the pull request. An operator watching
+the operator console can join any review round, and that round then waits for
+the operator's verdict (section 7, Operator review).
 
 ### Components
 
@@ -83,7 +85,7 @@ component owns its data (principle 8).
 | Event service | Keeps the ordered record of every meta-harness domain event. Every other meta-harness component appends and reads meta-harness domain events through the event service. | `events/` |
 | Metering service | Computes cost, time and success for each attempt and task, including dollar-hours per completed task by harness profile, model, thinking level and task type. | `metering/` |
 | Harness analyzer | Turns metering service evidence into proposed changes to ai-api-unified router tiers, harness profiles and task policy. | `analyzer/` |
-| Operator console | Shows operators tasks, runs, meta-harness domain events, spend and per-run sandbox state. Its only actions are cancel, the kill switch and harness analyzer proposal approval, each sent to the owning meta-harness service. | `console/` |
+| Operator console | Shows operators tasks, runs, meta-harness domain events, spend and per-run sandbox state. Its only actions are cancel, the kill switch, joining a review round, and harness analyzer proposal approval, each sent to the owning meta-harness service. | `console/` |
 | **ai-api-unified library**, in the meta-harness run service process | | the `ai-api-unified` repo |
 | ai-api-unified router | Classifies a task with a direct call to the ai-api-unified router's classifier model, picks a tier, and returns the tier's ordered harness-profile-and-model candidates. The meta-harness run service's RunTask workflow tries them (section 6.3). | `AiRouterCompletions` |
 | **Per-run sandbox**, one container per run | | `images/harness-pi/` in this repo |
@@ -251,7 +253,7 @@ flowchart TB
 | Event service | One validated, ordered record of every meta-harness domain event (section 13). The event service calls no other component. | `event`, the per-type event schema registry, event partitions, event retention, the event service commit notification | append(events), idempotent on `event_id` and validated per type; read(run_id, from_position); tail(filter, from_position) | Nothing | Stateless event service replicas over one Postgres schema | Event producers' event service client libraries buffer and retry, so runs continue. Event consumers lag, then catch up from their event cursor. |
 | Metering service | Turn meta-harness domain events into cost, time and success per attempt and task (section 9). | Projection tables: `model_call`, `attempt_usage`, `check_result`, `task_outcome`, `spend` | Queries by caller, harness profile, model, tier and task type; caller and global spend | Event service (tail) | Stateless metering service workers, one event cursor per projection | Metering projections lag. Runs continue, and the HTTP Gateway still enforces each run's HTTP Gateway run grant spend limit. The meta-harness scheduler treats spend older than its staleness limit as at cap and holds new tasks for capped callers. |
 | Harness analyzer | Propose ai-api-unified router tier and harness profile changes from metering service evidence. | `proposal` | List proposals, get proposal evidence, approve, reject | Metering service (queries), event service (read, append), code host (config PRs) | Harness analyzer batch jobs plus a small harness analyzer API | No new proposals. No effect on runs. |
-| Operator console | Let operators see every task, run, meta-harness domain event and per-run sandbox. Send cancel, kill switch and harness analyzer proposal approval to the owning service (section 13). | Nothing | Operator console web UI | Event service (read, tail), task service, meta-harness run service, metering service, harness analyzer, pool manager, traces and metrics backends | Stateless operator console replicas | No operator visibility. Runs continue. |
+| Operator console | Let operators see every task, run, meta-harness domain event and per-run sandbox. Send cancel, kill switch, operator review claims and verdicts, and harness analyzer proposal approval to the owning service (section 13). | Nothing | Operator console web UI | Event service (read, tail), task service, meta-harness run service, metering service, harness analyzer, pool manager, traces and metrics backends | Stateless operator console replicas | No operator visibility. Runs continue. |
 | HTTP Gateway | `ai-api-unified-http`, the per-run sandbox's only model endpoint (section 6.4). | HTTP Gateway run grants, HTTP Gateway per-run spend counters (Redis keyspace) | Conversation turn, issue and revoke HTTP Gateway run grant | ai-api-unified library and its guardrail checks (in-process), model providers | Autoscaling HTTP Gateway replicas | HTTP Gateway conversation turns fail, and pi does not retry them. The run fails, and the RunTask workflow's run loop moves to the next candidate. When every tier candidate fails this way, the RunTask workflow pauses the task instead of failing it (section 17). |
 | ai-api-unified router | `ai-api-unified`, in-process in the run service `route` activity. Classifies the task with the ai-api-unified router's classifier model, picks a tier, and returns the tier's candidates (sections 6.1 and 6.3). The RunTask workflow tries the candidates. | Nothing | `AiRouterCompletions` | Model providers (classifier model) | With the meta-harness run service | Fails with the meta-harness run service. |
 | Harness server | One harness server per per-run sandbox. Exposes the harness server Run API and drives pi (sections 4 and 8.2). | The run's pi session directory, until pool manager drain | Harness server Run API | HTTP Gateway (through the pi model client extension), code host | One harness server per per-run sandbox, under the pool manager's sandbox capacity targets | The run ends in `ERROR`. The RunTask workflow's Decide step tries the next tier candidate or ends the task (section 6.3). |
@@ -800,7 +802,7 @@ rather than its difficulty.
                   "challengers": ["harness:pi-careful/openai-compatible:qwen3-coder-next"]},
   "review": {"reviewers": ["harness:pi-review/claude:claude-opus-5-5",
                            "harness:pi-review/openai:gpt-5.6-luna"],
-             "max_rounds": 3, "merge": true},
+             "max_rounds": 3, "merge": true, "operator_alert_minutes": 240},
   "max_run_minutes": 240
 }
 ```
@@ -819,7 +821,9 @@ rather than its difficulty.
   harness-profile-and-model pairs in order. The RunTask workflow skips any
   reviewer pair whose model wrote the pull request, so a different model
   always reviews. `max_rounds` caps the meta-harness fix tasks per pull
-  request (section 7, Review loop). `merge: false` leaves a clean pull request open
+  request (section 7, Review loop). `operator_alert_minutes` sets when a
+  review round blocked on an operator raises an alert (section 7, Operator
+  review). `merge: false` leaves a clean pull request open
   instead of merging it; the repo policy can set it per repo.
 
 ### 6.3 The run loop
@@ -1062,8 +1066,8 @@ sets the hard ceiling.
 
 ### Review loop
 
-No person reviews a meta-harness PR. The RunTask workflow of the task that
-opened the PR owns the PR until it merges or closes, and runs this loop:
+No person has to review a meta-harness PR. The RunTask workflow of the task
+that opened the PR owns the PR until it merges or closes, and runs this loop:
 
 1. **Checks.** The RunTask workflow waits for the code-host checks webhook on
    the PR's head commit. A failed required check goes to step 3 with the
@@ -1103,6 +1107,38 @@ or when the review and fix tasks have spent the parent task's `max_usd`. The
 RunTask workflow then leaves the PR open, ends the task `review_unresolved`,
 and a meta-harness alert rule fires (section 13). A PR closed on the code host
 ends the loop and the task.
+
+### Operator review
+
+When a meta-harness review run starts, the meta-harness run service appends a
+`review_started` meta-harness domain event. The operator console shows it as a
+notification to every operator watching, with the PR link and an offer to
+review the PR too. The offer needs no answer:
+
+- **No answer.** The offer closes when the agent review run ends, and the
+  review round decides on the agent's verdict alone.
+- **Claim.** An operator who takes the offer sends a review claim from the
+  operator console to the meta-harness run service. The run service records
+  the claim in its `operator_review` table and appends
+  `operator_review_claimed` with the operator as actor. The first claim wins,
+  and the operator console tells later operators who holds it. The agent
+  review run still finishes, and the operator console shows its findings to
+  the operator.
+- **Block.** A claimed review round waits for the operator. The review task's
+  RunTask workflow waits on a Temporal signal, so the wait survives restarts.
+  The agent review run's per-run sandbox is released when that run ends, and
+  Hi counts run time only, so the wait adds no dollar-hours (section 9). The
+  parent task keeps its repo-area lock while it waits.
+- **Verdict.** The operator reads the PR on the code host and submits a
+  verdict, `clean` or `changes`, with findings, from the operator console. The
+  meta-harness run service posts the operator's findings as a code-host PR
+  review that names the operator, and appends `operator_review_submitted`.
+  The round's verdict is `changes` when the agent or the operator says
+  `changes`, and the fix task gets both sets of findings.
+- **Release.** The operator can release the claim from the operator console,
+  and the round then decides on the agent's verdict. A meta-harness alert
+  fires when a claimed round has waited longer than the task policy's
+  `review.operator_alert_minutes`. Nothing releases a claim on its own.
 
 ### Sequences
 
@@ -1328,6 +1364,7 @@ sequenceDiagram
     participant FX as Meta-harness run service: RunTask workflow and run activity of a fix task
     participant PM as Pool manager
     participant EV as Event service
+    participant CON as Operator console
     end
     box rgba(251,188,5,0.16) Per-run sandboxes (harness profile image, one per run)
     participant SR as Review run sandbox: harness server + pi, pi-review harness profile
@@ -1342,10 +1379,23 @@ sequenceDiagram
     RV->>PM: Lease step: lease(run_id, pi-review image, new harness_session_id)
     Note over RV: Grant step: HTTP Gateway run grant for the reviewer model
     RV->>SR: Start step: POST /run (PR diff, parent task spec, acceptance checks, run grant key)
+    RV->>EV: append review_started (PR URL, head SHA)
+    EV-->>CON: tail: review_started
+    Note over CON: notification to watching operators, with an offer to review the PR too
+    opt an operator claims the review before the agent review run ends
+        CON->>RV: claim review (operator)
+        RV->>EV: append operator_review_claimed (actor)
+    end
     SR->>SR: read the diff, run the tests
     SR->>CH: submit_review: code-host PR review with findings
     SR-->>RV: run_finished, verdict changes, findings
-    RV->>EV: append review_submitted (verdict, findings, head SHA)
+    opt the review is claimed
+        Note over RV: the review round blocks on a Temporal signal until the operator submits or releases
+        CON->>RV: operator verdict and findings
+        RV->>CH: post the operator's findings as a code-host PR review naming the operator
+        RV->>EV: append operator_review_submitted (actor)
+    end
+    RV->>EV: append review_submitted (verdict changes if the agent or the operator says changes, both findings, head SHA)
     RV->>TS: set status: done, verdict changes
     TS->>W: signal RunTask workflow: review task done
     W->>TS: create fix task (parent_task_id, findings as untrusted data, pin: the PR's pair)
@@ -1793,6 +1843,7 @@ its own Postgres role. No other Postgres role has a Postgres grant on it.
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `ready` and `review_unresolved`) |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's ordered tier candidates), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, est_usd_max (from `preview_route()`'s `usd_max`), created_at |
+| Meta-harness run service | operator_review | review_task_id, operator, claimed_at, verdict, findings, submitted_at, released_at |
 | Meta-harness run service | config_version | kind (tiers, profiles, task_policy), version, document, effective_at |
 | Pool manager | sandbox | id, image, executor, executor_ref, state (provisioning, warm, leased, kept, draining, unhealthy, destroyed), created_at, destroyed_at, destroy_reason |
 | Pool manager | lease | run_id, sandbox_id, harness_session_id, session_state (new, kept, restored), granted_at, expires_at, released_at, release_reason |
@@ -1858,7 +1909,7 @@ client library.
 | Meta-harness scheduler | Admission decisions, with the reason the meta-harness scheduler holds a meta-harness task |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the run service `route` activity result. One `attempt_finished` per run from the run service run activity Collect result (sections 6.1 and 6.3), joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `compacted`, `turn_finished`, `run_finished`. The run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
-| Meta-harness run service: RunTask Temporal workflow | Run state transitions, `check_completed` from the PR signals the RunTask workflow receives, `review_submitted` from each meta-harness review task's run (verdict, findings, reviewed head SHA), `review_ticketed` and `fix_ticketed`, `pr_merged`, and `task_closed`. Operator actions the RunTask workflow receives (cancel, kill switch), as audit events with the actor |
+| Meta-harness run service: RunTask Temporal workflow | Run state transitions, `check_completed` from the PR signals the RunTask workflow receives, `review_submitted` from each meta-harness review task's run (verdict, findings, reviewed head SHA), `review_started`, `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor, `review_ticketed` and `fix_ticketed`, `pr_merged`, and `task_closed`. Operator actions the RunTask workflow receives (cancel, kill switch), as audit events with the actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
 
@@ -1956,9 +2007,9 @@ model receives.
 
 | View | Shows |
 |---|---|
-| Overview | Meta-harness tasks in each state, meta-harness runs active, per-run sandboxes by state, spend today against caps, HTTP Gateway health, kill-switch state |
+| Overview | Meta-harness tasks in each state, meta-harness runs active, review rounds waiting on an operator, per-run sandboxes by state, spend today against caps, HTTP Gateway health, kill-switch state. Review-start notifications with the offer to review |
 | Queue | Admitted and waiting meta-harness tasks with the reason the meta-harness scheduler holds each waiting task: concurrency, Task API caller cap, repo lock, no per-run sandbox |
-| Tasks | One meta-harness task: spec, every ai-api-unified router routing decision, every meta-harness run including fallbacks, every check result, each review round with its verdict and findings and the fix task it ticketed, outcome, PR link |
+| Tasks | One meta-harness task: spec, every ai-api-unified router routing decision, every meta-harness run including fallbacks, every check result, outcome, PR link. Each review round: the agent's and any operator's verdict and findings, and the fix task it ticketed |
 | Run | Live timeline of the meta-harness run's meta-harness domain events. Each turn with its model call: model, thinking, input, cached input, cache-write and output model tokens, cost, latency. Each turn's tool calls, file changes, test runs, compactions and guardrail blocks. The OpenTelemetry trace. The per-run sandbox the meta-harness run ran in |
 | Routing | Routing tier picked versus the tier candidate whose run finished. ai-api-unified router classifier confidence. Floors, ceilings, the RunTask workflow's moves between tier candidates, and escalations between routing tiers |
 | Pool | Per-run sandboxes by image and state. Warm targets versus actual. Sandbox provisioning and pool manager lease latency. Health failures and orphaned sandboxes destroyed. Sandbox image rollover progress |
@@ -1967,8 +2018,9 @@ model receives.
 | Configuration | The active routing tier candidates, harness profiles and task policy, their version history, and the harness analyzer's pending proposals with their evidence |
 | Audit | Every operator action and configuration change |
 
-The operator console limits operator actions to cancel and kill switch, which
-the operator console sends to the meta-harness run service as commands, and
+The operator console limits operator actions to cancel, kill switch, and
+review claims, verdicts and releases (section 7, Operator review), which the
+operator console sends to the meta-harness run service as commands, and
 approving or rejecting a harness analyzer proposal, which the operator console
 sends to the harness analyzer. The receiving meta-harness service records each
 as an audit event in the event service with the operator as actor. The operator
@@ -1981,7 +2033,9 @@ They fire on: a meta-harness run stalled past its harness server heartbeat
 window, pool manager lease TTL expiries, warm sandbox pool below target for
 longer than the sandbox provisioning time, HTTP Gateway error rate or latency
 past its SLO, a meta-harness task failing with every routing tier exhausted,
-a meta-harness task ending `review_unresolved`, spend past 80% of any cap, usage reconciliation gaps over 5%, and a harness
+a meta-harness task ending `review_unresolved`, a claimed review round
+waiting on an operator past `review.operator_alert_minutes`, spend past 80%
+of any cap, usage reconciliation gaps over 5%, and a harness
 profile and model whose cache hit rate falls below its configured floor.
 
 ## 14. Security
@@ -2011,8 +2065,8 @@ profile and model whose cache hit rate falls below its configured floor.
   cluster credentials and no Google Cloud permissions. The harness server is
   the only process in the per-run sandbox that talks to the meta-harness
   control plane, over mutual TLS.
-- **Audit.** Every meta-harness task launch, review and fix ticket, merge,
-  cancel and configuration change is a meta-harness domain event in the event service,
+- **Audit.** Every meta-harness task launch, review and fix ticket, operator
+  review claim and verdict, merge, cancel and configuration change is a meta-harness domain event in the event service,
   recorded by the meta-harness service that received it, with its actor.
 
 ## 15. Deployment
@@ -2226,7 +2280,7 @@ meta-harness/
 | Meta-harness event service outage or event write backlog | Operator console, metering service and alerts lag | The event service producer client library buffers and retries, keyed on `event_id`, and never blocks a run; event consumers resume `tail` from their event service cursor |
 | A meta-harness component reads or writes another owning component's table directly | Hidden coupling between components, schema changes break other meta-harness services | One Cloud SQL schema and database role per owning component with no cross-grants; the operator console holds no database credentials |
 | A meta-harness review loop that never comes back clean | Model spend spikes, a PR left open | The task policy's `max_rounds` fix tasks per PR, the parent task's `max_usd` across the review loop, the HTTP Gateway run grant spend limit per run, Task API caller caps, the `review_unresolved` alert, meta-harness kill switch |
-| The authoring model and the reviewing model share blind spots | Defects merge with no person reviewing | A different model always reviews (section 6.2). The review run reruns the acceptance checks itself. The merge needs passing required checks on the reviewed head SHA. The harness analyzer tracks defects found after merge per reviewer pair |
+| The authoring model and the reviewing model share blind spots | Defects merge when no operator joins the review | A different model always reviews (section 6.2). An operator can join any review round from the operator console. The review run reruns the acceptance checks itself. The merge needs passing required checks on the reviewed head SHA. The harness analyzer tracks defects found after merge per reviewer pair |
 | pi coding agents weakening tests to pass acceptance checks | False Ci, and a weakened test merges | Acceptance checks defined outside the pi coding agent's PR; protected test paths in the target repo; the meta-harness review task flags changed tests |
 | Parallel pi coding agents in one repo | Merge conflicts | Meta-harness scheduler repo-area locks; a meta-harness fix task rebases a PR whose merge conflicts |
 | The ai-api-unified router classifier routes hard tasks to a low model tier | Failed run attempts | The ai-api-unified router classifier rounds up when unsure; the meta-harness run service retries one model tier up; the harness analyzer tunes model tier descriptions |

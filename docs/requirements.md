@@ -55,7 +55,10 @@ and ends at a pull request plus a recorded outcome.
   findings as meta-harness fix tasks on the same branch, continuing the PR's
   session, until a review comes back clean, then merge the PR at the reviewed
   commit. Stop at the task policy's fix-task limit or the task's budget and
-  leave the PR open. No person reviews a PR.
+  leave the PR open. No person has to review a PR. When a review starts, the
+  operator console offers watching operators a review. An operator who claims
+  it blocks that review round until the operator submits a verdict or releases
+  the claim; with no claim, the agent's verdict decides.
 - FR-15. Enforce per-profile timeouts, with a 4-hour hard ceiling.
 - FR-16. Provide a kill switch per run, per caller and globally.
 
