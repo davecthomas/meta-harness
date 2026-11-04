@@ -9,20 +9,23 @@ teaches something.
 | Step | State | Where |
 |---|---|---|
 | pi model client extension: pi's model calls through the HTTP Gateway | built | `images/harness-pi/extension` |
-| Harness server and the harness server Run API (section 8.2) | built, runs as a local process | `images/harness-pi/server` |
+| Harness server and the harness server Run API (section 8.2) | built | `images/harness-pi/server` |
 | Each run as a meta-harness run service Temporal workflow (the RunTask workflow), with re-attach to the harness server on retry and cancel (section 7) | built | `samples/temporal-run-task` |
 | HTTP Gateway run grants: model pin and spend limit per run (section 6.4) | built | ai-api-unified-http 1.18.0, `samples/temporal-run-task` |
-| Per-run sandbox: the harness server in a container per run (section 8.1) | **next** | |
+| Per-run sandbox: the harness server in a Docker container per run, which the run service run activity starts and removes with the Docker executor backend (sections 6.3, 8.1 and 8.3) | built for local development | `images/harness-pi/Dockerfile`, `samples/temporal-run-task` |
+| Per-run sandbox egress allowlist: a local egress proxy that lets a per-run sandbox reach only the HTTP Gateway, the code host and package registries (section 15, Local development) | **next** | |
 | A free end-to-end check: the RunTask workflow against a fake HTTP Gateway, on every pull request | next | |
 | Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | after that | |
 | The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity (section 6.3) | after that | |
 | Pool manager, kept and restored pi sessions (section 8.4) | later | |
 | Meta-harness owned pi tools, pi compaction handler, `guardrail_blocked` harness server Run API events (section 4) | later | |
+| Meta-harness review loop and operator review (section 7) | sketch | |
 | Task service Task API, meta-harness data model, event service, operator console, metering service, meta-harness scheduler (sections 9 to 13) | sketch | |
 
-The build order puts the per-run sandbox first because, until the per-run sandbox exists, pi's tools act on
-the machine that runs `make run`. The free end-to-end check comes second so each later
-build step is proven end to end before that build step spends money on model calls.
+The per-run sandbox confines pi's tools to the run's workspace, but a per-run
+sandbox container can still reach any network address, so the egress
+allowlist comes next. The free end-to-end check follows so each later build
+step is proven end to end before that build step spends money on model calls.
 
 ## 1. Scope
 

@@ -6,9 +6,11 @@ runs pi's coding agent in its own process through pi's SDK
 and cancel a run over HTTP. Every model call pi makes goes through the model
 client to the HTTP Gateway.
 
-In the full design this server runs inside each sandbox, with the repo
-cloned at `/workspace`. This first version runs as a local Node process. The
-container image comes with the pool manager.
+It runs inside each per-run sandbox, a container of this directory's
+`Dockerfile`, with the task's workspace mounted at `/workspace`. The
+[Temporal sample](../../samples/temporal-run-task/) starts one container per
+run. It also runs as a plain local Node process, for development and its
+tests.
 
 | Path | Role |
 |---|---|
@@ -17,6 +19,7 @@ container image comes with the pool manager.
 | `server/event-log.ts` | The ordered event log behind `GET /events` |
 | `extension/model-client.ts` | The model client: pi's only provider. Sends each turn to `POST /v1/conversations/turn` |
 | `extension/gateway-messages.ts` | Converts pi's transcript into the gateway's message list |
+| `Dockerfile` | The per-run sandbox image: Node 22.23.3, git, the server and the model client |
 | `test/server.test.ts` | End-to-end tests against a fake gateway |
 
 The model client and message conversion started as the
@@ -25,7 +28,26 @@ run's grant key from the run in progress on every turn, so a follow-up run
 uses its own key. It sends no engine or model: the run grant behind the key
 decides both on the HTTP Gateway (ai-api-unified-http 1.18.0 or later).
 
-## Run it
+## Run it in a container
+
+```bash
+cd meta-harness/images/harness-pi
+docker build -t harness-pi:dev .
+docker run --rm -p 127.0.0.1:8090:8090 \
+  -e HARNESS_SERVER_TOKEN=local-harness-token \
+  -e GATEWAY_URL=http://host.docker.internal:8080 \
+  --add-host=host.docker.internal:host-gateway \
+  -v "$(mktemp -d):/workspace" \
+  harness-pi:dev
+```
+
+The image sets `HOST=0.0.0.0`, `PORT=8090`, `WORKSPACE_DIR=/workspace`,
+`SESSION_DIR=/sessions` and `HARNESS_ALLOW_BASH=1`, and runs as the `node`
+user. pi's tools reach the host only through the mounted workspace. The
+container holds no model provider key. `host.docker.internal` is the Mac
+running Docker Desktop, where the HTTP Gateway listens.
+
+## Run it as a local process
 
 You need nvm with the Node version in `.nvmrc` (22.19 or later), and an HTTP
 Gateway to call.
@@ -37,8 +59,7 @@ HARNESS_SERVER_TOKEN=local-harness-token GATEWAY_URL=http://localhost:8080 node 
 ```
 
 It runs under plain `node`, which strips the TypeScript types, with no build
-step and no tsx. The [Temporal sample](../../samples/temporal-run-task/)
-starts it for you.
+step and no tsx.
 
 | Variable | Default | Meaning |
 |---|---|---|

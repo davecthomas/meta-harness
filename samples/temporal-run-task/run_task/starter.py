@@ -1,18 +1,18 @@
 """Starts one RunTask workflow, waits for it, and prints the result.
 
-    python -m run_task.starter --harness-url URL [--ref REF] [--task TEXT]
-                               [--engine E] [--model M] [--spend-limit USD]
-                               [--workspace DIR] [--follow]
+    python -m run_task.starter [--ref REF] [--task TEXT] [--engine E] [--model M]
+                               [--spend-limit USD] [--follow]
 
 --ref is the caller's name for the task. The workflow id is run-task-<ref>,
 and Temporal refuses a second task with the same ref. --follow prints the
-run's events from the harness server while the task runs.
+run's events from the harness server in its per-run sandbox while the task
+runs. pi's workspace is runs/<ref>/workspace.
 
 Exit codes: 0 completed, 1 failed, 3 canceled, 130 interrupted.
 Ctrl-C cancels the workflow before the starter exits.
 
-Environment: HARNESS_SERVER_TOKEN (for --follow), TEMPORAL_ADDRESS (default
-localhost:7233), TEMPORAL_UI_URL (default http://localhost:8233).
+Environment: TEMPORAL_ADDRESS (default localhost:7233), TEMPORAL_UI_URL
+(default http://localhost:8233), RUNS_DIR (default runs/ in this sample).
 """
 
 import argparse
@@ -29,7 +29,7 @@ from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import CancelledError, WorkflowAlreadyStartedError
 
-from run_task import harness_client
+from run_task import harness_client, sandbox
 from run_task.shared import (
     DEFAULT_SPEND_LIMIT_USD,
     TASK_QUEUE,
@@ -51,7 +51,6 @@ async def main(args: argparse.Namespace) -> int:
     request = RunTaskInput(
         engine=args.engine,
         model=args.model,
-        harness_url=args.harness_url,
         task=args.task,
         spend_limit_usd=args.spend_limit,
     )
@@ -64,7 +63,7 @@ async def main(args: argparse.Namespace) -> int:
             execution_timeout=timedelta(minutes=30),
             # One ref names one task, as external_ref does in the design.
             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-            memo={"ref": args.ref, "harness_url": args.harness_url, "workspace": args.workspace},
+            memo={"ref": args.ref, "workspace": str(sandbox.workspace_for(args.ref))},
         )
     except WorkflowAlreadyStartedError:
         print(f"[starter] a task with REF {args.ref} already exists on this Temporal server. Use another REF.")
@@ -79,9 +78,8 @@ async def main(args: argparse.Namespace) -> int:
 
     follow: asyncio.Task | None = None
     if args.follow:
-        token = harness_client.server_token() or ""
         run_id = f"{workflow_id}:run_harness"
-        follow = asyncio.create_task(harness_client.follow(args.harness_url, token, run_id, f"[{args.ref}]"))
+        follow = asyncio.create_task(harness_client.follow_run(run_id, f"[{args.ref}]", wait_seconds=120))
 
     try:
         result: RunTaskResult = await handle.result()
@@ -128,8 +126,8 @@ async def main(args: argparse.Namespace) -> int:
         flush=True,
     )
     print(f"[result] files changed: {', '.join(h.files_changed) or 'none'}", flush=True)
-    if args.workspace:
-        print(f"[result] workspace: {args.workspace}", flush=True)
+    print(f"[result] workspace: {sandbox.workspace_for(args.ref)}", flush=True)
+    print(f"[result] harness server log: {sandbox.log_path_for(args.ref)}", flush=True)
     print(f"[result] answer: {h.answer}", flush=True)
     return 0
 
@@ -182,7 +180,6 @@ def _event_detail(event: HistoryEvent, activity_names: dict[int, str]) -> str:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--harness-url", required=True, help="the harness server that runs this task")
     parser.add_argument("--ref", default=uuid.uuid4().hex[:8], help="your name for the task (default: random)")
     parser.add_argument("--task", default="", help="the task text (default: prompts/hello-v1.txt)")
     parser.add_argument("--engine", default="claude")
@@ -192,7 +189,6 @@ if __name__ == "__main__":
         default=DEFAULT_SPEND_LIMIT_USD,
         help=f"most the run may spend on model calls, in USD (default {DEFAULT_SPEND_LIMIT_USD})",
     )
-    parser.add_argument("--workspace", default="", help="the harness server's workspace, printed with the result")
     parser.add_argument("--follow", action="store_true", help="print the run's events while it runs")
     try:
         sys.exit(asyncio.run(main(parser.parse_args())))

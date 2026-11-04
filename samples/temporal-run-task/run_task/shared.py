@@ -17,9 +17,17 @@ INLINE_TEMPLATE = "inline"
 DEFAULT_SPEND_LIMIT_USD = "0.50"
 
 
+WORKFLOW_ID_PREFIX = "run-task-"
+
+
 def workflow_id_for(ref: str) -> str:
     """The caller's task reference becomes the workflow id, so a REF names one task."""
-    return f"run-task-{ref}"
+    return f"{WORKFLOW_ID_PREFIX}{ref}"
+
+
+def ref_for(workflow_id: str) -> str:
+    """The REF back from a workflow id. It names the task's directory under runs/."""
+    return workflow_id.removeprefix(WORKFLOW_ID_PREFIX)
 
 
 @dataclass
@@ -28,8 +36,6 @@ class RunTaskInput:
 
     engine: str
     model: str
-    # The harness server that runs this task. Each task has its own until the pool manager exists.
-    harness_url: str
     # The task text. When empty, prepare reads prompts/<template>.txt instead.
     task: str = ""
     template: str = DEFAULT_TEMPLATE
@@ -50,7 +56,6 @@ class HarnessRequest:
     # The run grant pins these. The harness server never sees them.
     engine: str
     model: str
-    harness_url: str
     spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
 
 

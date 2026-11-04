@@ -16,18 +16,23 @@
 #   make cancel REF=x            cancel a running task
 #   make down                    stop what `make up` started
 #
-# Each task gets its own harness server. Its log and pi's workspace are in runs/<REF>/.
+# Each run gets its own per-run sandbox: a Docker container of the harness-pi image,
+# started and removed by the run activity. Docker must be running.
+# The harness server's log and pi's workspace are in runs/<REF>/.
 # Another model: make run ENGINE=openai MODEL=gpt-4o-mini
 # Another spend limit, in USD: make run SPEND_LIMIT=0.05
 
 SHELL := /bin/bash
 
 HARNESS_DIR ?= $(abspath $(CURDIR)/../../images/harness-pi)
-HARNESS_SERVER_TOKEN ?= local-harness-token
+HARNESS_IMAGE ?= harness-pi:dev
+RUNS_DIR ?= $(CURDIR)/runs
 GATEWAY_DIR ?= $(abspath $(CURDIR)/../../../aiapi/ai-api-unified-http)
 GATEWAY_PORT ?= 8080
 GATEWAY_URL ?= http://localhost:$(GATEWAY_PORT)
 GATEWAY_API_KEY ?= local-dev-key
+# The gateway as a per-run sandbox container reaches it: host.docker.internal is this machine.
+SANDBOX_GATEWAY_URL ?= http://host.docker.internal:$(GATEWAY_PORT)
 # The gateway keeps run grants here. Not 6379, so a Redis you run yourself is left alone.
 REDIS_PORT ?= 6390
 REDIS_URL ?= redis://127.0.0.1:$(REDIS_PORT)/0
@@ -41,15 +46,14 @@ MODEL ?= claude-haiku-4-5
 SPEND_LIMIT ?= 0.50
 TASK ?=
 REF ?=
-NVM_DIR ?= $(HOME)/.nvm
 UV ?= $(or $(shell command -v uv),$(HOME)/.local/bin/uv)
 DEMO ?=
 CANCEL_AT ?= turn 1 starts
 RESTART_AT ?= turn 2 starts
 
-export HARNESS_DIR HARNESS_SERVER_TOKEN GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
-  REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB WAIT_SECONDS \
-  ENGINE MODEL SPEND_LIMIT TASK REF NVM_DIR UV DEMO CANCEL_AT RESTART_AT
+export HARNESS_DIR HARNESS_IMAGE RUNS_DIR GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
+  SANDBOX_GATEWAY_URL REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB \
+  WAIT_SECONDS ENGINE MODEL SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT
 
 .PHONY: run cancel-demo restart-demo spend-limit-demo up down task tasks status watch cancel
 

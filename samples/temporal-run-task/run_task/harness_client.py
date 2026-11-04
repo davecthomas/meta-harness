@@ -1,18 +1,16 @@
 """Reading the harness server's event stream, shared by the activity and the command-line tools."""
 
+import asyncio
 import json
-import os
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 
+from run_task import sandbox
+
 # The harness server sends a heartbeat event every few seconds, so a stream that is quiet this long is dead.
 EVENT_READ_TIMEOUT_SECONDS = 30.0
-
-
-def server_token() -> str | None:
-    return os.environ.get("HARNESS_SERVER_TOKEN")
 
 
 def client(harness_url: str, token: str) -> httpx.AsyncClient:
@@ -54,6 +52,24 @@ async def follow(harness_url: str, token: str, run_id: str, prefix: str) -> dict
         except httpx.HTTPError:
             return None
     return None
+
+
+async def follow_run(run_id: str, prefix: str, wait_seconds: float) -> dict[str, Any] | None:
+    """follow() on the run's per-run sandbox, waiting up to wait_seconds for its container to start.
+
+    Returns None when no per-run sandbox turns up, or once it is gone.
+    """
+    deadline = asyncio.get_running_loop().time() + wait_seconds
+    while True:
+        try:
+            box = await sandbox.find(run_id)
+        except sandbox.SandboxError:
+            return None
+        if box:
+            return await follow(box.url, box.token, run_id, prefix)
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(0.5)
 
 
 def describe(event: dict[str, Any]) -> str | None:

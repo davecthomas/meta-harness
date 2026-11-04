@@ -6,18 +6,18 @@
 #   stack.sh task   run one task on the services `up` started, and wait for it
 #   stack.sh down   stop what `up` started
 #
-# Every task gets its own harness server on a free port, because a harness
-# server holds one session. Its log and pi's workspace go in runs/<REF>/.
-# Settings come from the environment, which the Makefile sets.
+# Every run gets its own per-run sandbox: a Docker container of the harness-pi
+# image, which the run activity starts and removes (run_task/sandbox.py). This
+# script builds the image. The harness server's log and pi's workspace go in
+# runs/<REF>/. Settings come from the environment, which the Makefile sets.
 
 set -eo pipefail
 cd "$(dirname "$0")"
 
 STACK_DIR=stack
-RUNS_DIR=runs
+RUNS_DIR=${RUNS_DIR:-$PWD/runs}
 
-temporal_pid=; redis_pid=; gateway_pid=; harness_pid=; worker_pid=; tail_pid=
-harness_url=; workspace=
+temporal_pid=; redis_pid=; gateway_pid=; worker_pid=; tail_pid=
 
 log() { echo "[make] $*"; }
 
@@ -38,32 +38,41 @@ wait_for() {
   return 1
 }
 
-load_node() {
-  if [ ! -s "$NVM_DIR/nvm.sh" ]; then
-    log "nvm is not installed at $NVM_DIR. The harness server runs under the Node version in its .nvmrc."
-    exit 1
-  fi
-  # shellcheck disable=SC1091
-  source "$NVM_DIR/nvm.sh"
-  (cd "$HARNESS_DIR" && nvm use >/dev/null) || {
-    log "Node $(cat "$HARNESS_DIR/.nvmrc") is not installed. Run: nvm install $(cat "$HARNESS_DIR/.nvmrc")"
+check_docker() {
+  command -v docker >/dev/null || { log "Docker is not installed. Install Docker Desktop."; exit 1; }
+  docker info >/dev/null 2>&1 || { log "Docker is not running. Start Docker Desktop and try again."; exit 1; }
+}
+
+# The per-run sandbox image. Docker's layer cache makes a rebuild with no changes take a second or two.
+build_image() {
+  log "building the per-run sandbox image $HARNESS_IMAGE from $HARNESS_DIR"
+  docker build --quiet --tag "$HARNESS_IMAGE" "$HARNESS_DIR" >/dev/null || {
+    log "docker build failed. To see why, run: docker build -t $HARNESS_IMAGE $HARNESS_DIR"
     exit 1
   }
 }
 
+# remove_sandboxes [REF]: removes per-run sandbox containers this sample started, for one task or for all.
+# The run activity removes each one when its run ends. This catches any a stopped run left behind.
+remove_sandboxes() {
+  local filter="label=meta-harness.sample=1" ids
+  [ -z "${1:-}" ] || filter="label=meta-harness.ref=$1"
+  ids=$(docker ps --all --quiet --filter "$filter" 2>/dev/null) || return 0
+  [ -z "$ids" ] && return 0
+  # shellcheck disable=SC2086
+  docker rm --force $ids >/dev/null 2>&1 || true
+  log "removed leftover per-run sandbox containers: $(echo $ids)"
+}
+
 install() {
-  load_node
+  check_docker
   "$UV" sync --quiet
-  if [ ! -f "$HARNESS_DIR/node_modules/.package-lock.json" ] \
-    || [ "$HARNESS_DIR/package-lock.json" -nt "$HARNESS_DIR/node_modules/.package-lock.json" ]; then
-    (cd "$HARNESS_DIR" && nvm use >/dev/null && npm ci)
-  fi
+  build_image
 }
 
 temporal_up() { temporal operator cluster health --address "$TEMPORAL_ADDRESS" >/dev/null 2>&1; }
 redis_up() { [ "$(redis-cli -u "$REDIS_URL" ping 2>/dev/null)" = "PONG" ]; }
 gateway_up() { curl -fsS "$GATEWAY_URL/healthz" >/dev/null 2>&1; }
-harness_up() { curl -fsS -H "Authorization: Bearer $HARNESS_SERVER_TOKEN" "$harness_url/health" >/dev/null 2>&1; }
 
 # start_temporal LOG: uses a Temporal server already answering, or starts the dev server.
 start_temporal() {
@@ -128,30 +137,6 @@ start_gateway() {
   }
 }
 
-# start_harness: a new harness server for task $REF on a free port. Sets harness_url and workspace.
-start_harness() {
-  local dir="$RUNS_DIR/$REF" logfile second
-  workspace="$PWD/$dir/workspace"
-  logfile="$dir/harness-server.log"
-  mkdir -p "$workspace"
-  log "starting a harness server for task $REF, log: $PWD/$logfile"
-  set -m
-  (cd "$HARNESS_DIR" && nvm use >/dev/null && PORT=0 WORKSPACE_DIR="$workspace" HEARTBEAT_SECONDS=2 exec node server/main.ts) \
-    >"$logfile" 2>&1 </dev/null &
-  harness_pid=$!
-  set +m
-  for second in $(seq 1 "$WAIT_SECONDS"); do
-    harness_url=$(sed -n 's/.*listening on \(http:[^,]*\),.*/\1/p' "$logfile" | head -n 1)
-    [ -n "$harness_url" ] && break
-    kill -0 "$harness_pid" 2>/dev/null || { log "the harness server exited during startup. See $logfile"; exit 1; }
-    sleep 1
-  done
-  [ -n "$harness_url" ] || { log "the harness server did not start within ${WAIT_SECONDS}s. See $logfile"; exit 1; }
-  wait_for "the harness server" harness_up "$harness_pid" "$logfile"
-  log "harness server at $harness_url: $(curl -fsS -H "Authorization: Bearer $HARNESS_SERVER_TOKEN" "$harness_url/health")"
-  log "pi's workspace: $workspace"
-}
-
 # start_worker LOG: starts a worker and waits until it polls the task queue.
 start_worker() {
   local ready_count second
@@ -183,7 +168,7 @@ check_ref() {
 }
 
 starter() {
-  .venv/bin/python -m run_task.starter --ref "$REF" --harness-url "$harness_url" --workspace "$workspace" \
+  .venv/bin/python -m run_task.starter --ref "$REF" \
     --engine "$ENGINE" --model "$MODEL" --spend-limit "$SPEND_LIMIT" --task "$TASK" "$@"
 }
 
@@ -207,7 +192,7 @@ cmd_run() {
   stop_all() {
     [ -z "$worker_pid" ] || stop_group "$worker_pid" worker
     [ -z "$tail_pid" ] || { sleep 1; kill "$tail_pid" 2>/dev/null || true; wait "$tail_pid" 2>/dev/null || true; }
-    [ -z "$harness_pid" ] || stop_group "$harness_pid" "harness server"
+    remove_sandboxes "$REF"
     [ -z "$gateway_pid" ] || stop_group "$gateway_pid" gateway
     [ -z "$redis_pid" ] || stop_group "$redis_pid" Redis
     [ -z "$temporal_pid" ] || stop_group "$temporal_pid" "Temporal dev server"
@@ -217,7 +202,6 @@ cmd_run() {
   start_temporal temporal.log
   start_redis redis.log
   start_gateway gateway.log
-  start_harness
   : >worker.log
   tail -n +1 -F worker.log 2>/dev/null &
   tail_pid=$!
@@ -238,7 +222,7 @@ cmd_run() {
       starter &
       starter_pid=$!
       wait_for_log "$RESTART_AT"
-      log "killing the worker with SIGKILL (process group $worker_pid). The harness server keeps running pi."
+      log "killing the worker with SIGKILL (process group $worker_pid). pi keeps running in the per-run sandbox."
       kill -KILL -- "-$worker_pid"
       wait "$worker_pid" 2>/dev/null || true
       log "Temporal retries run_harness once 10s pass with no heartbeat, plus the 2s retry interval"
@@ -300,6 +284,7 @@ cmd_down() {
     return 0
   fi
   # Stop in reverse start order: worker, gateway, Redis, Temporal.
+  remove_sandboxes
   for name in worker gateway redis temporal; do
     pid=$(stack_pid "$name")
     [ -n "$pid" ] || continue
@@ -316,11 +301,10 @@ cmd_task() {
     exit 1
   fi
   check_ref
-  load_node
-  stop_harness() { [ -z "$harness_pid" ] || stop_group "$harness_pid" "harness server for task $REF"; }
-  trap stop_harness EXIT
+  check_docker
+  build_image
+  trap 'remove_sandboxes "$REF"' EXIT
   trap 'exit 130' INT TERM
-  start_harness
   local status=0
   starter --follow || status=$?
   # The starter exits 3 for a canceled task. A cancel is an outcome, not an error here.

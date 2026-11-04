@@ -5,13 +5,13 @@
     python -m run_task.tasks watch REF
     python -m run_task.tasks cancel REF
 
-REF is the name given to `make task` or `make run`. The workflow memo holds
-the task's harness server URL and workspace, so these commands need nothing
-else. The harness server stops when its task ends, so `watch` and the live
-part of `status` work only while the task runs.
+REF is the name given to `make task` or `make run`. These commands find the
+task's per-run sandbox container by its run id. The container is removed when
+the run ends, so `watch` and the live part of `status` work only while the
+task runs.
 
-Environment: HARNESS_SERVER_TOKEN, GATEWAY_URL and GATEWAY_API_KEY (for the
-run grant's spend), TEMPORAL_ADDRESS (default localhost:7233).
+Environment: GATEWAY_URL and GATEWAY_API_KEY (for the run grant's spend),
+TEMPORAL_ADDRESS (default localhost:7233).
 """
 
 import argparse
@@ -24,7 +24,7 @@ from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureEr
 from temporalio.exceptions import CancelledError
 from temporalio.service import RPCError
 
-from run_task import harness_client, run_grants
+from run_task import harness_client, run_grants, sandbox
 from run_task.shared import TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, RunTaskResult, workflow_id_for
 from run_task.workflows import RunTask
 
@@ -48,8 +48,8 @@ async def status(client: Client, ref: str) -> int:
     if memo.get("workspace"):
         print(f"[status] workspace: {memo['workspace']}")
     if state == WorkflowExecutionStatus.RUNNING:
-        run = await _harness_get(memo, "/status", ref)
-        usage = await _harness_get(memo, "/usage", ref)
+        run = await _harness_get("/status", ref)
+        usage = await _harness_get("/usage", ref)
         if run and usage:
             print(
                 f"[status] run {run['run_id']}: {run['status']}  turns={run['turns']}  "
@@ -72,11 +72,9 @@ async def status(client: Client, ref: str) -> int:
 
 async def watch(client: Client, ref: str) -> int:
     handle = _handle(client, ref)
-    memo = await (await handle.describe()).memo()
-    token = harness_client.server_token() or ""
-    finished = await harness_client.follow(memo["harness_url"], token, f"{handle.id}:run_harness", f"[{ref}]")
+    finished = await harness_client.follow_run(f"{handle.id}:run_harness", f"[{ref}]", wait_seconds=10)
     if finished is None:
-        print(f"[watch] the harness server for {ref} is gone, so the task has ended")
+        print(f"[watch] no per-run sandbox is running for {ref}, so the task has ended or not started")
     return await _print_outcome(handle, ref)
 
 
@@ -113,11 +111,17 @@ async def _print_outcome(handle: WorkflowHandle[Any, RunTaskResult], ref: str) -
     return 0
 
 
-async def _harness_get(memo: dict[str, Any], path: str, ref: str) -> dict[str, Any] | None:
-    token = harness_client.server_token() or ""
+async def _harness_get(path: str, ref: str) -> dict[str, Any] | None:
+    run_id = f"{workflow_id_for(ref)}:run_harness"
     try:
-        async with harness_client.client(memo["harness_url"], token) as http:
-            response = await http.get(path, params={"run_id": f"{workflow_id_for(ref)}:run_harness"})
+        box = await sandbox.find(run_id)
+    except sandbox.SandboxError:
+        return None
+    if box is None:
+        return None
+    try:
+        async with harness_client.client(box.url, box.token) as http:
+            response = await http.get(path, params={"run_id": run_id})
     except httpx.HTTPError:
         return None
     return response.json() if response.status_code == 200 else None
