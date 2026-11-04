@@ -1,7 +1,8 @@
 """Starts one RunTask workflow, waits for it, and prints the result.
 
     python -m run_task.starter --harness-url URL [--ref REF] [--task TEXT]
-                               [--engine E] [--model M] [--workspace DIR] [--follow]
+                               [--engine E] [--model M] [--spend-limit USD]
+                               [--workspace DIR] [--follow]
 
 --ref is the caller's name for the task. The workflow id is run-task-<ref>,
 and Temporal refuses a second task with the same ref. --follow prints the
@@ -30,6 +31,7 @@ from temporalio.exceptions import CancelledError, WorkflowAlreadyStartedError
 
 from run_task import harness_client
 from run_task.shared import (
+    DEFAULT_SPEND_LIMIT_USD,
     TASK_QUEUE,
     TEMPORAL_ADDRESS,
     TEMPORAL_NAMESPACE,
@@ -46,7 +48,13 @@ EXIT_CANCELED = 3
 async def main(args: argparse.Namespace) -> int:
     client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
     workflow_id = workflow_id_for(args.ref)
-    request = RunTaskInput(engine=args.engine, model=args.model, harness_url=args.harness_url, task=args.task)
+    request = RunTaskInput(
+        engine=args.engine,
+        model=args.model,
+        harness_url=args.harness_url,
+        task=args.task,
+        spend_limit_usd=args.spend_limit,
+    )
     try:
         handle = await client.start_workflow(
             RunTask.run,
@@ -61,7 +69,11 @@ async def main(args: argparse.Namespace) -> int:
     except WorkflowAlreadyStartedError:
         print(f"[starter] a task with REF {args.ref} already exists on this Temporal server. Use another REF.")
         return 1
-    print(f"[starter] started workflow {workflow_id}  engine={request.engine}  model={request.model}", flush=True)
+    print(
+        f"[starter] started workflow {workflow_id}  engine={request.engine}  model={request.model}  "
+        f"spend limit=${request.spend_limit_usd}",
+        flush=True,
+    )
     print(f"[starter] task: {request.task or f'prompts/{request.template}.txt'}", flush=True)
     print(f"[starter] web UI: {UI_URL}/namespaces/{TEMPORAL_NAMESPACE}/workflows/{workflow_id}", flush=True)
 
@@ -109,6 +121,10 @@ async def main(args: argparse.Namespace) -> int:
     print(
         f"[result] turns={h.turns}  failed calls={h.failed_calls}  tokens in={h.tokens_in} out={h.tokens_out}  "
         f"usd={h.usd:.6f}",
+        flush=True,
+    )
+    print(
+        f"[result] run grant: the HTTP Gateway counted ${h.grant_spent_usd or '?'} of the ${h.spend_limit_usd} limit",
         flush=True,
     )
     print(f"[result] files changed: {', '.join(h.files_changed) or 'none'}", flush=True)
@@ -171,6 +187,11 @@ if __name__ == "__main__":
     parser.add_argument("--task", default="", help="the task text (default: prompts/hello-v1.txt)")
     parser.add_argument("--engine", default="claude")
     parser.add_argument("--model", default="claude-haiku-4-5")
+    parser.add_argument(
+        "--spend-limit",
+        default=DEFAULT_SPEND_LIMIT_USD,
+        help=f"most the run may spend on model calls, in USD (default {DEFAULT_SPEND_LIMIT_USD})",
+    )
     parser.add_argument("--workspace", default="", help="the harness server's workspace, printed with the result")
     parser.add_argument("--follow", action="store_true", help="print the run's events while it runs")
     try:

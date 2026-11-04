@@ -206,10 +206,13 @@ outside this sample.
    content is readable only by that provider's models. Each run therefore
    stays on one provider after its first tool call. The router can still
    change the model inside that provider.
-4. **The gateway exposes neither the router nor run tokens yet.** The sample
-   names an engine and model on each request (`SAMPLE_ENGINE`,
-   `SAMPLE_MODEL`). In the full design the run token decides the model, and
-   the model client sends no engine or model.
+4. **Partly resolved: the gateway exposes run grants, not yet the router.**
+   This sample still names an engine and model on each request
+   (`SAMPLE_ENGINE`, `SAMPLE_MODEL`) and uses the gateway's API key. Since
+   ai-api-unified-http 1.18.0, the
+   [harness server](../../images/harness-pi/) model client sends a run
+   grant's key instead, and the grant decides the model, so it sends no
+   engine or model. The router is still not exposed.
 5. **Claude turns showed no cached input tokens.** The OpenAI run cached
    from turn 2. The cause is unknown. Each Claude prompt was about
    2,000 tokens.

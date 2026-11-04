@@ -10,7 +10,8 @@ the task's harness server URL and workspace, so these commands need nothing
 else. The harness server stops when its task ends, so `watch` and the live
 part of `status` work only while the task runs.
 
-Environment: HARNESS_SERVER_TOKEN, TEMPORAL_ADDRESS (default localhost:7233).
+Environment: HARNESS_SERVER_TOKEN, GATEWAY_URL and GATEWAY_API_KEY (for the
+run grant's spend), TEMPORAL_ADDRESS (default localhost:7233).
 """
 
 import argparse
@@ -23,7 +24,7 @@ from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureEr
 from temporalio.exceptions import CancelledError
 from temporalio.service import RPCError
 
-from run_task import harness_client
+from run_task import harness_client, run_grants
 from run_task.shared import TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, RunTaskResult, workflow_id_for
 from run_task.workflows import RunTask
 
@@ -57,6 +58,14 @@ async def status(client: Client, ref: str) -> int:
             )
         else:
             print("[status] the harness server has not started the run yet")
+        grant = await run_grants.get(f"{workflow_id_for(ref)}:run_harness")
+        if grant:
+            print(
+                f"[status] run grant: {grant['engine']}:{grant['model']}  spent ${grant['spent_usd']} "
+                f"of ${grant['spend_limit_usd']}  expires {grant['expires_at']}"
+            )
+        else:
+            print("[status] run grant: none live on the HTTP Gateway")
         return 0
     return await _print_outcome(handle, ref)
 
@@ -98,6 +107,7 @@ async def _print_outcome(handle: WorkflowHandle[Any, RunTaskResult], ref: str) -
         f"[status] {ref}: {h.status} ({h.end_reason})  turns={h.turns}  failed calls={h.failed_calls}  "
         f"tokens in={h.tokens_in} out={h.tokens_out}  usd={h.usd:.6f}"
     )
+    print(f"[status] run grant: the HTTP Gateway counted ${h.grant_spent_usd or '?'} of the ${h.spend_limit_usd} limit")
     print(f"[status] files changed: {', '.join(h.files_changed) or 'none'}")
     print(f"[status] answer: {h.answer}")
     return 0

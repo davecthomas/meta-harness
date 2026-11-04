@@ -4,10 +4,11 @@
 #   make run TASK="..."          the same, with your own task text
 #   make cancel-demo             make run, then `temporal workflow cancel` once the worker log shows CANCEL_AT
 #   make restart-demo            make run, then SIGKILL the worker once the worker log shows RESTART_AT
+#   make spend-limit-demo        make run with a $0.001 spend limit, which the run passes on turn 1
 #
 # Or leave the services running and send them tasks:
 #
-#   make up                      start Temporal, the gateway and a worker
+#   make up                      start Temporal, Redis, the gateway and a worker
 #   make task TASK="..." REF=x   run one task and print its events; Ctrl-C cancels it
 #   make tasks                   list tasks
 #   make status REF=x            one task's state, cost and result
@@ -17,6 +18,7 @@
 #
 # Each task gets its own harness server. Its log and pi's workspace are in runs/<REF>/.
 # Another model: make run ENGINE=openai MODEL=gpt-4o-mini
+# Another spend limit, in USD: make run SPEND_LIMIT=0.05
 
 SHELL := /bin/bash
 
@@ -26,6 +28,9 @@ GATEWAY_DIR ?= $(abspath $(CURDIR)/../../../aiapi/ai-api-unified-http)
 GATEWAY_PORT ?= 8080
 GATEWAY_URL ?= http://localhost:$(GATEWAY_PORT)
 GATEWAY_API_KEY ?= local-dev-key
+# The gateway keeps run grants here. Not 6379, so a Redis you run yourself is left alone.
+REDIS_PORT ?= 6390
+REDIS_URL ?= redis://127.0.0.1:$(REDIS_PORT)/0
 TEMPORAL_PORT ?= 7233
 TEMPORAL_ADDRESS ?= localhost:$(TEMPORAL_PORT)
 TEMPORAL_UI_URL ?= http://localhost:$(shell echo $$(($(TEMPORAL_PORT) + 1000)))
@@ -33,6 +38,7 @@ TEMPORAL_DB ?=
 WAIT_SECONDS ?= 60
 ENGINE ?= claude
 MODEL ?= claude-haiku-4-5
+SPEND_LIMIT ?= 0.50
 TASK ?=
 REF ?=
 NVM_DIR ?= $(HOME)/.nvm
@@ -42,10 +48,10 @@ CANCEL_AT ?= turn 1 starts
 RESTART_AT ?= turn 2 starts
 
 export HARNESS_DIR HARNESS_SERVER_TOKEN GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
-  TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB WAIT_SECONDS ENGINE MODEL TASK REF \
-  NVM_DIR UV DEMO CANCEL_AT RESTART_AT
+  REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB WAIT_SECONDS \
+  ENGINE MODEL SPEND_LIMIT TASK REF NVM_DIR UV DEMO CANCEL_AT RESTART_AT
 
-.PHONY: run cancel-demo restart-demo up down task tasks status watch cancel
+.PHONY: run cancel-demo restart-demo spend-limit-demo up down task tasks status watch cancel
 
 run:
 	@./stack.sh run
@@ -55,6 +61,10 @@ cancel-demo:
 
 restart-demo:
 	@DEMO=restart ./stack.sh run
+
+# Turn 1 starts below the limit and passes it, so the gateway refuses turn 2.
+spend-limit-demo:
+	@DEMO=spend-limit SPEND_LIMIT=0.001 ./stack.sh run
 
 up:
 	@./stack.sh up

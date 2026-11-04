@@ -10,9 +10,10 @@
  * `error`, accurate usage and cost, the onPayload / onResponse /
  * onProviderStreamEvent hooks, and an aborted result on cancel.
  *
- * The run's token, engine and model come from `currentRun()` on every turn,
- * never from pi's provider config, so a follow-up run in the same session
- * uses its own token.
+ * The run's grant key comes from `currentRun()` on every turn, never from pi's
+ * provider config, so a follow-up run in the same session uses its own key.
+ * The request names no engine or model: the run grant behind the key decides
+ * both, and caps the run's spend.
  */
 
 import {
@@ -35,7 +36,10 @@ export const MODEL_CLIENT_PROVIDER = "ai-api-unified";
 export const MODEL_CLIENT_MODEL = "run-model";
 export const MODEL_CLIENT_API = "ai-api-unified-conversation-turn";
 
-/** What the HTTP Gateway returns from `/v1/conversations/turn` (ai-api-unified-http 1.17.1). */
+/** The HTTP Gateway's error code when a run has spent its grant's limit (HTTP 402). */
+export const SPEND_LIMIT_ERROR = "run_grant_spend_limit";
+
+/** What the HTTP Gateway returns from `/v1/conversations/turn` (ai-api-unified-http 1.18.0). */
 export interface GatewayTurnResponse {
 	text: string | null;
 	tool_calls: { id: string; name: string; input: Record<string, unknown> }[];
@@ -54,27 +58,26 @@ export interface GatewayTurnResponse {
 	engine: string;
 	model: string | null;
 	served_by_fallback: boolean;
+	/** The run's spend against its grant, this turn included. */
+	run_grant: { run_id: string; spent_usd: string; spend_limit_usd: string; expires_at: string } | null;
 }
 
 /** What the model client needs from the run in progress. */
 export interface RunContext {
-	/** Bearer token for the HTTP Gateway. In the full design, a run token the gateway minted. */
-	token: string;
-	/** Engine and model the request names. Once the gateway issues run tokens, the token decides these. */
-	engine: string;
-	model?: string;
+	/** The run grant's key, the bearer for every HTTP Gateway call. */
+	grantKey: string;
 	/** `prompt_cache.key`: the harness session id, so every turn of a session shares one cache. */
 	cacheKey: string;
 }
 
 /** One model call, as the model client saw it. */
 export interface ModelCallRecord {
-	requestedEngine: string;
-	requestedModel: string | undefined;
 	messageCount: number;
 	latencyMs: number;
 	response?: GatewayTurnResponse;
 	error?: string;
+	/** The HTTP Gateway's error code on a failed call, e.g. `run_grant_spend_limit`. */
+	errorCode?: string;
 	aborted?: boolean;
 }
 
@@ -144,8 +147,6 @@ export function createModelClientStream(clientOptions: ModelClientOptions) {
 		};
 
 		const call: ModelCallRecord = {
-			requestedEngine: run.engine,
-			requestedModel: run.model,
 			messageCount: 0,
 			latencyMs: 0,
 		};
@@ -155,8 +156,6 @@ export function createModelClientStream(clientOptions: ModelClientOptions) {
 				const messages: GatewayMessage[] = toGatewayMessages(transcript.messages);
 				call.messageCount = messages.length;
 				let body: unknown = {
-					engine: run.engine,
-					model: run.model,
 					system_prompt: systemPrompt,
 					messages,
 					tools: tools.map((tool) => ({
@@ -175,7 +174,7 @@ export function createModelClientStream(clientOptions: ModelClientOptions) {
 
 				const response = await fetch(`${clientOptions.gatewayUrl}/v1/conversations/turn`, {
 					method: "POST",
-					headers: { "content-type": "application/json", authorization: `Bearer ${run.token}` },
+					headers: { "content-type": "application/json", authorization: `Bearer ${run.grantKey}` },
 					body: JSON.stringify(body),
 					signal: options?.signal,
 				});
@@ -186,7 +185,9 @@ export function createModelClientStream(clientOptions: ModelClientOptions) {
 				const json = (await response.json()) as unknown;
 				call.latencyMs = Date.now() - startedAt;
 				if (!response.ok) {
-					const detail = (json as { detail?: unknown; error?: unknown }).detail ?? (json as { error?: unknown }).error;
+					const failure = json as { detail?: unknown; error?: unknown };
+					if (typeof failure.error === "string") call.errorCode = failure.error;
+					const detail = failure.detail ?? failure.error;
 					throw new Error(`HTTP Gateway answered ${response.status}: ${JSON.stringify(detail ?? json)}`);
 				}
 				// The gateway answers each turn with one JSON body, so this is the turn's only provider event.

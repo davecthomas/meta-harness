@@ -21,8 +21,9 @@ container image comes with the pool manager.
 
 The model client and message conversion started as the
 [pi model client sample](../../samples/pi-model-client/). This copy reads the
-token, engine and model from the run in progress on every turn, so a
-follow-up run uses its own token.
+run's grant key from the run in progress on every turn, so a follow-up run
+uses its own key. It sends no engine or model: the run grant behind the key
+decides both on the HTTP Gateway (ai-api-unified-http 1.18.0 or later).
 
 ## Run it
 
@@ -75,14 +76,17 @@ A `POST /run` body:
   "prompt": "Create a file named hello.txt ...",
   "acceptance_checks": ["test -f hello.txt"],
   "profile": {"name": "pi-sample", "tools": ["read", "write", "edit", "ls"], "max_turns": 20, "max_minutes": 10},
-  "token": "<the run's gateway token>",
-  "engine": "claude",
-  "model": "claude-haiku-4-5"
+  "grant_key": "rg_..."
 }
 ```
 
+`grant_key` is the key of the run grant the caller got from the HTTP
+Gateway's `POST /v1/run-grants`. The grant fixes the run's engine and model,
+caps its spend, and expires; the caller revokes it when the run ends. A
+`POST /followup` body carries `run_id`, `prompt` and its own `grant_key`.
+
 `harness_session_id` becomes pi's session id and the gateway's prompt cache
-key. The token never appears in run state, events or logs.
+key. The grant key never appears in run state, events or logs.
 
 ### Status and end reason
 
@@ -93,6 +97,7 @@ key. The token never appears in run state, events or logs.
 | `FINISHED` | `completed` | pi ended its turn with no error |
 | `ERROR` | `model_error` | A gateway call failed. pi's retry is off, so the run ends and the library's fallback chain is the only retry |
 | `ERROR` | `max_turns` | A turn started past the profile's `max_turns` |
+| `ERROR` | `spend_limit` | The gateway refused a turn because the run had spent its grant's limit (`402 run_grant_spend_limit`) |
 | `ERROR` | `harness_error` | pi or the server threw |
 | `ERROR` | `server_shutdown` | The server got SIGTERM or SIGINT during the run |
 | `CANCELED` | `canceled` | `POST /cancel` |
@@ -105,7 +110,7 @@ Each event has `id`, `type`, `run_id`, `time` and `data`.
 | `type` | `data` |
 |---|---|
 | `turn_started` | `turn` |
-| `model_call` | The served `engine` and `model`, `served_by_fallback`, `finish_reason`, `tool_calls`, input, output, cached and cache-write tokens, `usd`, `cache_hit`, `latency_ms`. A failed call has `error` and `aborted` |
+| `model_call` | The served `engine` and `model`, `served_by_fallback`, `finish_reason`, `tool_calls`, input, output, cached and cache-write tokens, `usd`, the run's `run_spent_usd` and `run_spend_limit_usd` from its grant, `cache_hit`, `latency_ms`. A failed call has `error`, the gateway's `error_code` and `aborted` |
 | `tool_call` | `tool_call_id`, `tool`, `args` |
 | `tool_result` | `tool_call_id`, `tool`, `is_error`, `output`, `duration_ms` |
 | `file_changed` | `path`, `tool`, after a `write` or `edit` that succeeded |
@@ -140,13 +145,15 @@ The tests start the server against a fake gateway, so they call no model and
 cost nothing. They cover:
 
 - the bearer token
-- a full run, with its typed events, the file it wrote and its usage totals
+- a full run, with its typed events, the file it wrote and its usage totals,
+  sending the grant key and no engine or model
 - re-attaching with the same `run_id`, which starts no new model call
 - a second session refused with `409`
-- a follow-up in the same session, with its own token and the earlier turns
+- a follow-up in the same session, with its own grant key and the earlier turns
 - `Last-Event-ID` resume
 - cancel during a model call
 - the turn limit
+- the grant's spend limit, which ends the run `ERROR spend_limit`
 - a failed gateway call
 - request checks
 - SIGTERM during a run, which exits within seconds
@@ -155,8 +162,8 @@ cost nothing. They cover:
 
 Each of these is in the design and missing here:
 
-- **Run tokens.** The gateway does not mint them yet, so `token` is a
-  gateway API key and the body names `engine` and `model`.
+- **The router's band.** A run grant only pins one model. The compaction
+  call's `route: trivial` hint waits for the gateway to expose the router.
 - **Restoring a saved session** into a fresh sandbox with `switchSession()`.
   `/followup` works only on the session this server still holds.
 - **The owned tools** `run_tests`, `open_pr` and `ask_for_followup`, the

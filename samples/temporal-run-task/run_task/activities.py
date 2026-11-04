@@ -10,10 +10,16 @@ The run id is the workflow id plus the activity name, the same on every
 attempt. A retried attempt sends the same POST /run, gets the run already in
 progress, and reads its events from the last event id it heartbeated. It never
 starts pi a second time.
+
+Before POST /run, the activity asks the HTTP Gateway for a run grant: the
+run's engine and model, its spend limit, and an expiry. The harness server
+gets only the grant key. The activity revokes the grant once the run has
+ended, however it ended. A worker that stops mid-run leaves the grant live,
+because the run keeps going and the next attempt re-attaches to it. That
+attempt asks for the grant again and gets a new key for the same grant.
 """
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +27,7 @@ import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from run_task import harness_client
+from run_task import harness_client, run_grants
 from run_task.shared import INLINE_TEMPLATE, HarnessRequest, HarnessResult, PreparedRun, RunTaskInput
 
 SAMPLE_DIR = Path(__file__).resolve().parent.parent
@@ -29,6 +35,8 @@ PROMPTS_DIR = SAMPLE_DIR / "prompts"
 
 # The profile the harness server runs pi with. In the full design it comes from harness_profiles.json.
 PROFILE = {"name": "pi-sample", "tools": ["read", "write", "edit", "ls"], "max_turns": 20, "max_minutes": 10}
+# The grant outlives the run's own time limit by this much, so it never expires under a run still ending.
+GRANT_GRACE_SECONDS = 300
 
 
 @activity.defn
@@ -59,17 +67,17 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         info.workflow_id,
         int(info.heartbeat_timeout.total_seconds()) if info.heartbeat_timeout else 0,
     )
-    gateway_key = os.environ.get("GATEWAY_API_KEY")
     server_token = harness_client.server_token()
-    if not gateway_key or not server_token:
+    if not run_grants.gateway_key() or not server_token:
         raise ApplicationError(
             "set GATEWAY_API_KEY and HARNESS_SERVER_TOKEN in the worker's environment",
             type="HarnessConfigError",
             non_retryable=True,
         )
 
+    grant_key = await _issue_grant(tag, run_id, request, info.workflow_id)
     async with harness_client.client(request.harness_url, server_token) as client:
-        reattached = await _start_or_reattach(client, tag, run_id, request, info.workflow_id, gateway_key, progress)
+        reattached = await _start_or_reattach(client, tag, run_id, request, grant_key, info.workflow_id, progress)
         activity.heartbeat(progress)
         finished: dict[str, Any] | None = None
         heartbeats = 1
@@ -87,7 +95,8 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
                     finished = event
                     break
         except asyncio.CancelledError:
-            await _on_cancel(client, tag)
+            if await _on_cancel(client, tag):
+                await _revoke_grant(tag, run_id)
             raise
         except httpx.HTTPError as err:
             raise ApplicationError(f"lost the harness server's event stream: {err}", type="HarnessUnavailable") from err
@@ -95,6 +104,8 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
             raise ApplicationError("the event stream ended before run_finished", type="HarnessUnavailable")
         usage = (await client.get("/usage", params={"run_id": run_id})).json()
 
+    # The run has ended, so its grant key has nothing left to do.
+    grant_spent = await _revoke_grant(tag, run_id)
     data = finished["data"]
     if data["status"] != "FINISHED":
         # The run itself ended. Retrying would re-attach to the same ended run, so the attempt fails for good.
@@ -121,7 +132,55 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         usd=usage["usd"],
         files_changed=progress["files_changed"],
         answer=progress["answer"],
+        spend_limit_usd=request.spend_limit_usd,
+        grant_spent_usd=grant_spent,
     )
+
+
+async def _issue_grant(tag: str, run_id: str, request: HarnessRequest, workflow_id: str) -> str:
+    """Asks the HTTP Gateway for the run's grant and returns its key."""
+    try:
+        grant = await run_grants.issue(
+            run_id=run_id,
+            engine=request.engine,
+            model=request.model,
+            spend_limit_usd=request.spend_limit_usd,
+            ttl_seconds=int(PROFILE["max_minutes"]) * 60 + GRANT_GRACE_SECONDS,
+            workflow_id=workflow_id,
+            tags={"profile": str(PROFILE["name"])},
+        )
+    except run_grants.RunGrantError as err:
+        # A refusal is the request's fault and retrying repeats it. No answer, or a 503, may pass.
+        if err.status in (400, 401, 409, 422):
+            raise ApplicationError(str(err), type="HarnessConfigError", non_retryable=True) from err
+        raise ApplicationError(str(err), type="GatewayUnavailable") from err
+    if grant["created"]:
+        print(
+            f"{tag} run grant issued for {run_id}: {grant['engine']}:{grant['model']}, "
+            f"spend limit ${grant['spend_limit_usd']}, expires {grant['expires_at']}",
+            flush=True,
+        )
+    else:
+        print(
+            f"{tag} run grant for {run_id} is still live (spent ${grant['spent_usd']} of ${grant['spend_limit_usd']}). "
+            "The HTTP Gateway added a key to it",
+            flush=True,
+        )
+    return str(grant["grant_key"])
+
+
+async def _revoke_grant(tag: str, run_id: str) -> str | None:
+    """Revokes the run's grant and returns what the HTTP Gateway counted against it.
+
+    A failure here does not fail the run: the grant expires on its own.
+    """
+    try:
+        revoked = await run_grants.revoke(run_id)
+    except run_grants.RunGrantError as err:
+        print(f"{tag} could not revoke the run grant, so it stays live until it expires: {err}", flush=True)
+        return None
+    print(f"{tag} run grant revoked: the HTTP Gateway counted ${revoked['spent_usd']} against it", flush=True)
+    return str(revoked["spent_usd"])
 
 
 async def _start_or_reattach(
@@ -129,8 +188,8 @@ async def _start_or_reattach(
     tag: str,
     run_id: str,
     request: HarnessRequest,
+    grant_key: str,
     session_id: str,
-    gateway_key: str,
     progress: dict[str, Any],
 ) -> bool:
     """POST /run. Returns True when the run already existed, so this attempt re-attached to it."""
@@ -139,10 +198,8 @@ async def _start_or_reattach(
         "harness_session_id": session_id,
         "prompt": request.prompt,
         "profile": PROFILE,
-        # Until the gateway mints run tokens, the run's token is the gateway key, and the request names the model.
-        "token": gateway_key,
-        "engine": request.engine,
-        "model": request.model,
+        # The grant decides the engine, the model and the spend limit. The harness server sees only the key.
+        "grant_key": grant_key,
     }
     try:
         response = await client.post("/run", json=body)
@@ -169,20 +226,24 @@ async def _start_or_reattach(
     raise ApplicationError(f"harness server answered {response.status_code}: {error}", type="HarnessUnavailable")
 
 
-async def _on_cancel(client: httpx.AsyncClient, tag: str) -> None:
-    """Stops pi when the workflow was canceled. Leaves the run going when only this worker is stopping."""
+async def _on_cancel(client: httpx.AsyncClient, tag: str) -> bool:
+    """Stops pi when the workflow was canceled. Leaves the run going when only this worker is stopping.
+
+    Returns True when the run was stopped, so its grant can be revoked.
+    """
     details = activity.cancellation_details()
     if details and details.cancel_requested:
         print(f"{tag} cancellation received (cancel_requested), sending POST /cancel", flush=True)
         response = await client.post("/cancel")
         print(f"{tag} harness server stopped pi: run {response.json().get('status')}", flush=True)
-        return
+        return True
     reason = "worker shutdown" if activity.is_worker_shutdown() else "unknown"
     print(
         f"{tag} cancellation received ({reason}). The run keeps going on the harness server, "
-        "and the next attempt re-attaches",
+        "its grant stays live, and the next attempt re-attaches",
         flush=True,
     )
+    return False
 
 
 def _progress_from(heartbeat_details: object) -> dict[str, Any]:

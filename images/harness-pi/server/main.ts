@@ -110,13 +110,6 @@ function text(body: Record<string, unknown>, field: string, pattern?: RegExp): s
 	return value;
 }
 
-function optionalText(body: Record<string, unknown>, field: string): string | undefined {
-	const value = body[field];
-	if (value === undefined || value === null) return undefined;
-	if (typeof value !== "string") throw new HttpError(400, `"${field}" must be a string.`);
-	return value;
-}
-
 function stringList(value: unknown, field: string): string[] {
 	if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
 		throw new HttpError(400, `"${field}" must be a list of strings.`);
@@ -149,9 +142,7 @@ function parseRun(body: Record<string, unknown>): RunRequest {
 		prompt: text(body, "prompt"),
 		acceptance_checks: body.acceptance_checks === undefined ? [] : stringList(body.acceptance_checks, "acceptance_checks"),
 		profile: parseProfile(body.profile),
-		token: text(body, "token"),
-		engine: text(body, "engine"),
-		model: optionalText(body, "model"),
+		grant_key: text(body, "grant_key"),
 	};
 }
 
@@ -159,9 +150,7 @@ function parseFollowup(body: Record<string, unknown>): FollowupRequest {
 	return {
 		run_id: text(body, "run_id", ID_PATTERN),
 		prompt: text(body, "prompt"),
-		token: text(body, "token"),
-		engine: text(body, "engine"),
-		model: optionalText(body, "model"),
+		grant_key: text(body, "grant_key"),
 	};
 }
 

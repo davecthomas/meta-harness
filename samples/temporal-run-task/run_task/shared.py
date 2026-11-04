@@ -13,6 +13,8 @@ TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 DEFAULT_TEMPLATE = "hello-v1"
 # The template name a run reports when the caller gave the task text itself.
 INLINE_TEMPLATE = "inline"
+# Most a run may spend on model calls, in USD. The run grant enforces it.
+DEFAULT_SPEND_LIMIT_USD = "0.50"
 
 
 def workflow_id_for(ref: str) -> str:
@@ -31,6 +33,7 @@ class RunTaskInput:
     # The task text. When empty, prepare reads prompts/<template>.txt instead.
     task: str = ""
     template: str = DEFAULT_TEMPLATE
+    spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
 
 
 @dataclass
@@ -44,9 +47,11 @@ class PreparedRun:
 @dataclass
 class HarnessRequest:
     prompt: str
+    # The run grant pins these. The harness server never sees them.
     engine: str
     model: str
     harness_url: str
+    spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
 
 
 @dataclass
@@ -65,6 +70,9 @@ class HarnessResult:
     usd: float
     files_changed: list[str]
     answer: str | None
+    # The run grant's limit, and what the HTTP Gateway counted against it when the grant was revoked.
+    spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
+    grant_spent_usd: str | None = None
 
 
 @dataclass
