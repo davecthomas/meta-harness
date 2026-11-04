@@ -1,5 +1,29 @@
 # Meta-Harness Technical Design
 
+## State of the build
+
+The design below describes the whole system. This table says how much of it
+exists. Each PR that lands a step updates its row. Everything past the
+current step is a sketch, open to change when building it teaches something.
+
+| Step | State | Where |
+|---|---|---|
+| Model client: pi's model calls through the HTTP Gateway | built | `images/harness-pi/extension` |
+| Harness server and the Run API (section 8.2) | built, runs as a local process | `images/harness-pi/server`, PR #8 |
+| Run as a Temporal workflow, with re-attach on retry and cancel (section 7) | built | `samples/temporal-run-task`, PRs #6 and #8 |
+| Run grants: model pin and spend limit per run (section 6.4) | built | ai-api-unified-http 1.18.0, PR #9 |
+| Sandbox: the harness server in a container per run (section 8.1) | **next** | |
+| A free end-to-end check: the workflow against a fake gateway, on every PR | next | |
+| Engine-neutral tool results in the HTTP Gateway | after that | |
+| The run loop over candidates, with a `route` activity (section 6.3) | after that | |
+| Pool manager, kept and restored sessions (section 8.4) | later | |
+| Owned tools, compaction handler, guardrail events (section 4) | later | |
+| Task API, data model, event service, console, metering, scheduling (sections 9 to 13) | sketch | |
+
+The order puts the sandbox first because, until it exists, pi's tools act on
+the machine that runs `make run`. The free check comes second so each later
+step is proven end to end before it spends on a model.
+
 ## 1. Scope
 
 The meta-harness runs AI coding tasks in parallel, each on its own harness and
@@ -59,8 +83,7 @@ component owns its data (principle 8).
 | Harness analyzer | Turns metering evidence into proposed changes to tiers, profiles and task policy. | `analyzer/` |
 | Console | Shows operators tasks, runs, events, spend and sandbox state. Its only actions are cancel, the kill switch and proposal approval, each sent to the owning service. | `console/` |
 | **ai-api-unified library**, in the run service process | | the `ai-api-unified` repo |
-| Router | Classifies a task with a direct classifier-model call, picks a tier, tries the tier's harness-and-model candidates in order, and escalates when the tier runs out. | `AiRouterCompletions` |
-| harness engine | Runs one candidate as one blocking call: lease a sandbox, start the run, wait, return the result and its cost. | `AiHarnessCompletions` |
+| Router | Classifies a task with a direct classifier-model call, picks a tier, and returns the tier's ordered harness-and-model candidates. The run service's workflow tries them (section 6.3). | `AiRouterCompletions` |
 | **Sandbox**, one per run | | `images/harness-pi/` in this repo |
 | Harness server | Exposes the Run API and runs pi in-process through pi's SDK. | `server/` |
 | pi | The coding agent: agent loop, tools, context, session. Third-party (pi.dev), used unmodified through its SDK. | `@earendil-works/pi-coding-agent` |
@@ -226,7 +249,7 @@ flowchart TB
 | Harness analyzer | Propose tier and profile changes from evidence. | `proposal` | List, get evidence, approve, reject | Metering (queries), event service (read, append), code host (config PRs) | Batch jobs plus a small API | No new proposals. No effect on runs. |
 | Console | Let operators see everything and act on a few things (section 13). | Nothing | Web UI | Event service (read, tail), task service, run service, metering, analyzer, pool manager, traces and metrics backends | Stateless replicas | No visibility. Runs continue. |
 | HTTP Gateway | `ai-api-unified-http`, the harness's only model endpoint (section 6.4). | Run grants, per-run spend counters (Redis keyspace) | Conversation turn, issue and revoke run grant | Router (in-process), model providers, guardrails library | Autoscaling replicas | Turns fail, and pi does not retry them, so the run fails and the library's chain moves to the next candidate. The workflow pauses rather than fails (section 17). |
-| Router and harness engine | `ai-api-unified`, in-process in the run service. Classifies, picks a tier, tries candidates, escalates (sections 6.1 and 6.3). | Nothing | `AiRouterCompletions` | Pool manager, HTTP Gateway (issue run grant), harness server Run API, model providers (classifier) | With the run service | Fails with the run service. |
+| Router | `ai-api-unified`, in-process in the run service's `route` activity. Classifies and picks a tier, and returns the candidates (sections 6.1 and 6.3). The workflow tries them. | Nothing | `AiRouterCompletions` | Model providers (classifier) | With the run service | Fails with the run service. |
 | Harness server | One per sandbox. Exposes the Run API and drives pi (sections 4 and 8.2). | The run's session directory, until drain | Run API | HTTP Gateway, code host | One per sandbox, under the pool manager's targets | The run ends in `ERROR`. The harness engine maps it to a fallback reason. |
 
 **Guardrails** is a library, not a component. The run service, the pool
@@ -625,13 +648,13 @@ harness profile and the model the harness will use.
 }
 ```
 
-A candidate name is the catalog's `engine:model` form, split at the first
-colon: the engine is `harness`, and its model string is the harness profile, a
-slash, and the inner model reference. Only the harness engine parses the
-model string. The inner reference must itself be a
-configured `ai-api-unified` model: the harness engine's startup probe
-resolves it and delegates to the inner engine's probe, and its capability
-table delegates to the inner model's.
+A candidate name is the harness profile, a slash, and the inner model
+reference, written here behind a `harness:` prefix. This example was written
+for the withdrawn `harness` engine, which parsed that string and gave the
+router a registered engine to validate it against. Without the engine the
+router has nothing to validate `harness:` candidates with, so where the
+tier-to-candidate map lives is open question 4. The inner reference must
+still be a configured `ai-api-unified` model, and startup still checks it.
 
 The classifier reads the latest user message, so the dispatcher sends the
 task spec as that message and keeps instructions in the system prompt.
@@ -720,30 +743,66 @@ its difficulty.
 - **Budget.** A run's spend cap is `preview_route()`'s `usd_max` for the tier
   times the profile's `budget_multiplier`, capped by the task's `max_usd`.
 
-### 6.3 The harness engine
+### 6.3 The run loop
 
-The `harness` engine is an `ai-api-unified` completions engine whose single
-call is a whole run. The call blocks until the run ends and returns the
-terminal result with a cost report, so the router treats a run as it treats
-any completion: candidates in order, fallback reasons, escalation. Progress does
-not pass through the router. The workflow reads it out of band from the
-sandbox's event stream (section 7).
+**Decision, 2026-11-04: the run loop lives in the workflow, not in an
+ai-api-unified engine.** The earlier design made a whole run one blocking
+`asend_conversation` call on a `harness` completions engine, inside the
+library's fallback chain, so the router could treat a run as a completion.
+That was reversed before it was built, for three reasons:
 
-| Step | The engine |
+1. Temporal already owns durability, retries, cancel and per-attempt
+   visibility. The engine rebuilt each of those inside a library call
+   (re-attach by call id, the lease TTL as `request_timeout_seconds`, cancel
+   through the run's terminal state). Two owners of one lifecycle is where
+   the hard bugs would have lived.
+2. The fallback chain was built for calls that cost cents and take seconds.
+   Applied to runs, a fallback is a new sandbox and a new multi-dollar
+   attempt, decided inside a library that cannot see the task's budget or
+   history.
+3. It put the pool manager and the Run API client into ai-api-unified, so
+   the library would depend on meta-harness infrastructure and every Run API
+   change would be a library release.
+
+The `samples/temporal-run-task` worker showed the alternative working: its
+`run_harness` activity is the engine's step table, in the workflow's hands.
+
+**What ai-api-unified does for a task.** One short `route` activity sends the
+task prompt through `AiRouterCompletions` with a classify-only call and
+returns the route: the tier, `route_method`, `route_confidence`, and the
+tier's ordered candidate list from `models.json`, each candidate a harness
+profile and an inner model. The library still owns principle 1: no
+meta-harness code names a model or a profile.
+
+**What the workflow does.** It loops over the candidates. For each one it
+runs the steps below as activities, then decides from the terminal state
+whether to try the next candidate, escalate a tier under the task policy
+(section 6.2), or end. The budget check between candidates is the workflow's:
+the task's remaining spend, the attempts so far, and the limits in the task
+policy are all in its hands.
+
+| Step | The workflow, through activities |
 |---|---|
-| Identify | Reads `harness_call_id` and `harness_session_id` from the call's provider options, which the router and the fallback chain pass through untouched. Reads the candidate index that the chain places in the request context. `run_id` is the call id plus the candidate index. |
-| Lease | Asks the pool manager for an existing lease on `run_id` first, so a retried call re-attaches to a run already in progress; otherwise requests `lease(run_id, image, harness_session_id, resources)` for the profile's image. The response holds the sandbox address, the lease TTL and the `session_state`: `new`, `kept` or `restored`. The workflow and the console learn which sandbox serves which try from the pool manager's lease record, keyed on `run_id`. |
-| Grant | The harness engine asks the HTTP Gateway for a run grant, which the HTTP Gateway issues and stores; the engine revokes it when the run ends. The grant holds the run id, tags, the candidate's inner model as a pin (or a band when the profile says so), the spend limit, and an expiry at `max_minutes` plus grace. The engine passes only the grant's key to the sandbox. The key is opaque: it carries no data and identifies the grant. |
-| Start | When `session_state` is `new`, `POST /run` on the sandbox's harness server with the prompt, acceptance checks, profile, limits and token. When it is `kept` or `restored`, `POST /followup` with the new input and token. |
-| Wait | Follows the harness server's event stream until `run_finished`. The call's `request_timeout_seconds`, set to the lease TTL, is the hard upper bound: on expiry the engine cancels the run and raises `timeout`. A cancel from the control plane reaches the sandbox directly (section 7) and ends the call through the run's terminal state. |
-| Collect | Reads `/usage`, revokes the run grant with the HTTP Gateway, releases the lease, and returns the result. The engine revokes the grant before it releases the lease on every end, including failure, timeout and cancel. The result has its `harness_run` summary (run id, sandbox id, profile, end reason, turns, PR URL, elapsed time, cache hit rate), the run's token totals in `result.usage`, and a cost line. The cost line's `call_id` is the run id, and its dollars are the run's HTTP Gateway total, recorded as a reported-dollar cost. |
-| Fail | Maps failures to the library's fallback reasons. No sandbox within `ready_timeout` is `unavailable`. An inner model's rate limit or quota error, as the harness reports it, is `rate_limited` or `quota_exhausted`. The lease TTL is `timeout`. A run ending in `ERROR` or on a limit is `run_failed`, which starts no cooldown. |
+| Identify | `run_id` is the workflow id, the candidate index and the attempt kind (`run` or `followup-N`), the same on every retry of the activity. The sample uses `<workflow id>:run_harness`. |
+| Lease | Asks the pool manager for an existing lease on `run_id` first, so a retried activity re-attaches to a run already in progress; otherwise requests `lease(run_id, image, harness_session_id, resources)` for the profile's image. The response holds the sandbox address, the lease TTL and the `session_state`: `new`, `kept` or `restored`. Until the pool manager exists, the executor starts one sandbox per run (section 8.3). |
+| Grant | Asks the HTTP Gateway for a run grant (ai-api-unified-http 1.18.0), which it issues and stores. The grant holds the run id, tags, the candidate's inner model as a pin, the spend limit, and an expiry at `max_minutes` plus grace. Only the grant's key goes to the sandbox. A retried activity asks again with the same terms and gets a new key for the live grant. |
+| Start | When `session_state` is `new`, `POST /run` on the sandbox's harness server with the prompt, acceptance checks, profile, limits and grant key. When it is `kept` or `restored`, `POST /followup` with the new input and its own grant key. |
+| Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last event id on every event. The activity's heartbeat timeout catches a dead worker, and its start-to-close timeout, the lease TTL, is the hard upper bound. A workflow cancel reaches the activity through its heartbeat, and the activity sends `POST /cancel`. |
+| Collect | Reads `/usage`, revokes the run grant, releases the lease, and returns the terminal state: status, end reason, turns, the files changed, the PR URL, elapsed time, token totals, and the dollars the HTTP Gateway counted against the grant. The workflow records one cost line per run from that figure. |
+| Decide | In the workflow. A run that ended `FINISHED` ends the loop. A run that ended `ERROR` for an infrastructure reason (no sandbox, a lost harness server, `model_error` from a provider outage) tries the next candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final: trying a dearer candidate after a cheaper one spent its budget doubles the spend, so only the task policy's explicit retry-up rule or a human repeats it. This answers open question 3. |
 
-Each candidate the engine tries is one run and one sandbox, visible to the
-workflow through the lease it took.
+Each candidate is one run and one sandbox. Every attempt, candidate and
+decision is an event in the workflow's history, so the console and the
+analyzer read the loop from Temporal, not from a library's logs.
 
-The engine never calls a model itself. The classifier call happens in the
-router before the engine is chosen.
+The workflow never calls a model itself. The classifier call happens in the
+`route` activity, through the library.
+
+The library's PR A additions (`run_failed`, reported-dollar cost lines,
+`exception.cost`, `route_confidence`, the candidate index) are shipped in
+ai-api-unified 3.29.0. The run loop uses `route_confidence` and the candidate
+list. The rest stay in the library for an engine that may come later, and
+cost the meta-harness nothing.
 
 ### 6.4 Model calls inside a run
 
@@ -777,9 +836,9 @@ pinned. Under a banded policy the router honors the hint as it is, within the ba
 
 ### 6.5 Required additions to ai-api-unified
 
-The library work ships in two releases, specified in ai-api-unified's
-`docs/harness_engine_design.md`. The meta-harness needs both, and startup
-refuses an older library version.
+ai-api-unified's `docs/harness_engine_design.md` specified two releases. PR A
+shipped in 3.29.0. PR B, the `harness` engine, is withdrawn: the run loop
+lives in the workflow (section 6.3).
 
 | Where | Addition |
 |---|---|
@@ -788,9 +847,8 @@ refuses an older library version.
 | Library, PR A | The request cost report attached to the raised exception as `exception.cost` when every candidate fails. |
 | Library, PR A | `route_confidence` on `AITurnResult` and `AIPromptResult`. |
 | Library, PR A | The candidate index in the request context, so the harness engine can name each try. |
-| Library, PR B: engine (3.30.0) | The `harness` completions engine (section 6.3), the pool and Run API client, and an HTTP Gateway client that requests and revokes run grants. The engine has a registry entry and model-string parsing. Its startup probe delegates to the inner model's probe and checks the pool URL, and its capability table delegates to the inner model's. |
-| Library, PR B | `providers.harness` in `models.json`, carrying the pool and HTTP Gateway URLs. Credentials stay in the environment. |
-| Library, PR B | A `harness_run` summary on the result: `run_id`, `sandbox_id`, `profile`, `end_reason`, `turns`, `pr_url`, `elapsed_ms`, `cache_hit_rate`. The run's token totals in `result.usage`, including `cached_input_tokens`, `cache_write_5m_tokens` and `cache_write_1h_tokens`. |
+| Library, PR B (withdrawn 2026-11-04) | The `harness` completions engine, the pool and Run API client, the HTTP Gateway grant client, `providers.harness` in `models.json` and the `harness_run` result summary. Not built: the run loop lives in the workflow (section 6.3), and these clients live in the meta-harness run service. |
+| Library | A classify-only entry point on `AiRouterCompletions` that returns the route and the tier's ordered candidates without running a completion. The `route` activity needs it. If the router cannot expose this cheaply, the activity can call the classifier and read the tier map itself, since both are in the library already. |
 | HTTP Gateway | Run grants (built in ai-api-unified-http 1.18.0, `POST`, `GET` and `DELETE /v1/run-grants`): the harness engine asks the HTTP Gateway for a run grant, which it issues and stores in Redis; the engine revokes it when the run ends. The grant's key is opaque, and the grant sits on top of the existing per-caller attribution. The engine authenticates to request and revoke with an HTTP Gateway API key from its environment. A grant holds run identity, tags, model pin or band, spend limit and expiry. The grant overrides the request body's engine and model. The pin is built; the band waits for the `route` row below. |
 | HTTP Gateway | `route` accepted in the conversation request body. On a pinned token, a body `route` switches that call from pin to band with the pinned model's tier as ceiling; agent turns without `route` stay pinned. |
 | HTTP Gateway | A per-run spend counter in Redis, the running total on every conversation response, and a budget rejection error. |
@@ -890,9 +948,13 @@ hard ceiling.
 ### Sequences
 
 Six diagrams below each show one end-to-end scenario across the whole
-system. The harness engine's internals (lease lookup by run id, candidate
-index, reported-cost ledger entry, cooldowns) appear as one note per
-diagram; the harness engine design in `ai-api-unified` specifies them.
+system. They were drawn for the withdrawn `harness` engine, so they show the
+router calling into a sandbox. Under section 6.3 the router only returns the
+candidates, and the workflow's activities do the lease, grant, run and
+collect steps those diagrams give the router. The messages between the
+sandbox, the HTTP Gateway and the pool manager are unchanged. Each diagram is
+redrawn when the step it shows is built. Sections 8.3 and 8.4 also say
+"harness engine" in the same sense: read it as the run service's activities.
 
 **1. Happy path**
 
@@ -1852,7 +1914,7 @@ meta-harness/
 | Risk | Effect | Mitigation |
 |---|---|---|
 | The HTTP Gateway is the single path for every agent token | An outage stops all runs | Autoscaled, multi-zone, canaried. pi's own retry is off (section 4), so a failed turn fails the run and the library's chain moves to the next candidate. When every candidate fails this way, the workflow pauses rather than fails |
-| A run is one long blocking router call | A control-plane restart mid-run loses the caller | Leases are idempotent on run id and TTL-bound. The retried activity re-enters the router call with the same call id. The engine re-attaches to the existing lease and its event stream with `Last-Event-ID` |
+| A run outlives the worker that started it | A worker restart mid-run loses the caller | The run is an activity. Leases, grants and `POST /run` are idempotent on run id, and the retried activity re-attaches to the run and its event stream from the last heartbeated event id. Shown live by the sample's restart demo |
 | Weak prompts or loop policy in a profile | Wasted spend | Profiles are configuration; the analyzer measures each profile and model; exploration keeps the data current |
 | pi's extension points prove insufficient | A model call bypasses the HTTP Gateway, or policy cannot be enforced | A contract test drives one turn end to end: HTTP Gateway turn, pi events, tool call, tool result, cost per turn, model switching disabled. With the SDK setup in section 4, a leak of pi's own catalog or pricing and a compaction that bypasses the model client are both preventable, so the test only confirms them. Fork pi only when the test shows one of these failures. The provider interface cannot represent a library tool-call or finish-reason shape. pi's own catalog or pricing leaks into a session. A compaction or auxiliary call bypasses the model client. The extension cannot constrain the tool set and loop policy. A fork replaces pi's model layer with the extension and codes the Run API into pi directly; nothing above the image changes |
 | pi releases change the SDK API or provider interface | The image breaks | Pinned pi version per image; the contract test runs on every image build |
@@ -1872,6 +1934,15 @@ meta-harness/
 2. Pinned versus banded model policy: whether answering a run's easy turns from
    a cheaper tier changes its results. An A/B between the two policies on the
    same profile answers this.
-3. Whether the harness engine should count a run that ends on a limit
-   (`max_turns`, `max_minutes`) as `run_failed` for fallback purposes, or as a
-   completed attempt that only a retry on a higher tier may repeat.
+3. Answered 2026-11-04 (section 6.3): a run that ends on a limit
+   (`max_turns`, `max_minutes`, `spend_limit`) is final. It does not move to
+   the next candidate. Only the task policy's explicit retry-up rule or a
+   human repeats it.
+4. Where the tier-to-candidate map lives, now that no `harness` engine
+   exists for the router to validate candidates against. Recommended: the
+   router keeps the classifier and the tier names and descriptions in
+   `models.json`, and returns the chosen tier. `harness_profiles.json` maps
+   each tier to its ordered profile-and-model candidates, and the run
+   service validates them at startup against the images and the library's
+   configured models. Both are configuration, so principle 1 holds. Decide
+   when the `route` activity is built.
