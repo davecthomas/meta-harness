@@ -1,7 +1,7 @@
 """Runs the RunTask workflow and its activities on the run-task task queue.
 
-Stops on SIGINT or SIGTERM. Shutdown cancels a running run_harness, which
-stops its pi subprocess before the worker exits.
+Stops on SIGINT or SIGTERM. Shutdown cancels a running run_harness attempt,
+which leaves pi running in its per-run sandbox for the next attempt to find.
 
 Log lines from workflow code start with [workflow], from activity code with
 [activity]. The SDK's own warnings, such as an activity attempt that failed,

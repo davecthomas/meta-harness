@@ -13,10 +13,12 @@ make run TASK="Write a haiku about autumn to haiku.txt."   # your own task
 To leave the services running and send them tasks, see
 [Run your own tasks](#run-your-own-tasks).
 
-The path today: Temporal workflow, then the harness server running pi, then
-the HTTP Gateway (ai-api-unified-http) on a run grant, then ai-api-unified,
-then the model provider. Each later step slots into the same commands: the
-library's `harness` engine, then the pool manager with a sandbox per task.
+The path today: Temporal workflow, then a per-run sandbox (a Docker container
+of the harness-pi image) with the harness server running pi, then the HTTP
+Gateway (ai-api-unified-http) on a run grant, then ai-api-unified, then the
+model provider. Each later step slots into the same commands: the per-run
+sandbox's egress allowlist, then the RunTask workflow's run loop over the
+ai-api-unified router's candidates, then the pool manager.
 
 A **run grant** is the HTTP Gateway's record of what one run may do: one
 engine and model, a spend limit, and an expiry. The worker asks for one
@@ -27,24 +29,27 @@ cannot change models, and stops when the run reaches its spend limit
 ends.
 
 It runs a coding task as a Temporal workflow, with pi running on the
-[harness server](../../images/harness-pi/). A Python worker stands in for the
-design's run service (section 7 of the technical design). The workflow
-`RunTask` has two activities:
+[harness server](../../images/harness-pi/) inside a per-run sandbox. A Python
+worker stands in for the design's run service (section 7 of the technical
+design). The workflow `RunTask` has two activities:
 
 - `prepare` uses the task text you gave, or reads a versioned prompt template,
   and returns the prompt.
-- `run_harness` asks the HTTP Gateway for the run's grant, starts the run on
-  the harness server with `POST /run`, follows `GET /events` until
-  `run_finished`, reads `GET /usage`, and revokes the grant. It
+- `run_harness` is the design's run service run activity. It starts the
+  run's per-run sandbox container, asks the HTTP Gateway for the run's grant,
+  starts the run on the harness server in the container with `POST /run`,
+  follows `GET /events` until `run_finished`, reads `GET /usage`, revokes the
+  grant and removes the container. It
   heartbeats on every event and returns a typed result: status, turns,
   tokens, cost, the files pi changed, pi's last answer, the attempt number,
   and whether the attempt re-attached to a run already in progress.
 
-pi runs in the harness server's process, apart from the worker, so a run
+pi runs in the per-run sandbox container, apart from the worker, so a run
 keeps going when the worker dies. The run id is the workflow id plus
-`:run_harness`, the same on every attempt. A retried attempt sends the same
-`POST /run`, gets the run in progress, and reads its events from the last
-event id it heartbeated. It never starts pi a second time. The retry asks for
+`:run_harness`, the same on every attempt, and the container is named after
+it. A retried attempt finds the same container, sends the same `POST /run`,
+gets the run in progress, and reads its events from the last event id it
+heartbeated. It never starts pi a second time. The retry asks for
 the grant again with the same terms, and the HTTP Gateway adds a key to the
 grant that is still live. The run keeps the key it started with.
 
@@ -72,11 +77,11 @@ default data converter.
 |---|---|
 | 1. Admit | The starter calls `start_workflow` with workflow id `run-task-<REF>`. `REF` plays the design's `external_ref`, and Temporal refuses a second task with the same one. There is no scheduler and no slot. |
 | 2. Prepare | `prepare` uses `TASK`, or reads `prompts/hello-v1.txt`. There are no guardrails, no code-host token and no `AGENTS.md`. |
-| 3. Route and run | `run_harness` calls the task's harness server directly. `stack.sh` starts one harness server per task, standing in for the pool manager's sandbox lease. There is no router or harness engine. The caller names the engine and model, and `run_harness` puts them in the run grant, as the design's harness engine does with the candidate's inner model. A retried attempt re-attaches by run id, as the design's harness engine does by call id. |
+| 3. Route and run | `run_harness` runs the design's run activity steps (section 6.3). Lease: with no pool manager, it starts the run's per-run sandbox itself with the Docker executor backend (`run_task/sandbox.py`). Grant, Start, Wait and Collect follow. There is no ai-api-unified router and no candidate loop: the caller names the engine and model, and `run_harness` puts them in the run grant. A retried attempt re-attaches by run id to the same container and the same run. |
 | 4. Watch | `run_harness` reads the harness server's event stream and prints it to the worker log. There is no event service, pool manager or stall detection beyond the heartbeat timeout. |
 | 5. Follow up | Left out. The harness server has `POST /followup`, but no pull request, code-host webhooks or signals drive it here. |
 | 6. Close | The workflow returns the result to the starter. There is no task service. |
-| 7. Cancel | Temporal workflow cancellation. The activity sends `POST /cancel` and revokes the run grant. There is no audit event and no lease to release. |
+| 7. Cancel | Temporal workflow cancellation. The activity sends `POST /cancel`, revokes the run grant and removes the per-run sandbox. There is no audit event. |
 
 ## The call path
 
@@ -85,15 +90,19 @@ sequenceDiagram
     participant S as starter
     participant T as Temporal dev server
     participant W as worker
-    participant H as harness server
+    participant D as Docker
+    participant H as harness server in the per-run sandbox
     participant G as HTTP Gateway
-    S->>T: start_workflow(RunTask, task, engine, model, spend limit, harness server URL)
+    S->>T: start_workflow(RunTask, task, engine, model, spend limit)
     T->>W: workflow task
     W->>T: schedule prepare
     T->>W: activity task: prepare
     W-->>T: prompt
     W->>T: schedule run_harness
     T->>W: activity task: run_harness
+    W->>D: docker run harness-pi, named after the run id, workspace at /workspace, new bearer token
+    D-->>W: harness server port
+    W->>H: GET /health until green
     W->>G: POST /v1/run-grants with run id, engine, model, spend limit, expiry
     G-->>W: grant key
     W->>H: POST /run with run id, session id, prompt, profile, grant key
@@ -110,22 +119,25 @@ sequenceDiagram
     W->>H: GET /usage
     W->>G: DELETE /v1/run-grants/run id
     G-->>W: what the run spent
+    W->>D: save the container's log to runs/REF, then remove the container
     W-->>T: HarnessResult
     T-->>S: RunTaskResult
 ```
 
-The engine, model, spend limit, task text and harness server URL travel in
-the workflow input, so they appear in the workflow history.
-`GATEWAY_API_KEY` and `HARNESS_SERVER_TOKEN` stay in the worker's
-environment, and the grant key goes straight from the worker to the harness
-server. None of them enters the history.
+The engine, model, spend limit and task text travel in the workflow input,
+so they appear in the workflow history. `GATEWAY_API_KEY` stays in the
+worker's environment. Each per-run sandbox gets its own harness server bearer
+token, which lives only in that container's environment, and the grant key
+goes straight from the worker to the harness server. None of them enters the
+history.
 
 ## Files
 
 | File | Role |
 |---|---|
 | `run_task/workflows.py` | `RunTask`: timeouts, retry policy and cancellation type for each activity |
-| `run_task/activities.py` | `prepare` and `run_harness`: start or re-attach, heartbeats, cancel |
+| `run_task/activities.py` | `prepare` and `run_harness`: lease the per-run sandbox, start or re-attach, heartbeats, cancel, release |
+| `run_task/sandbox.py` | The Docker executor backend: starts, finds and removes a run's per-run sandbox container |
 | `run_task/harness_client.py` | Reads the harness server's event stream and prints one line per event |
 | `run_task/run_grants.py` | Issues, reads and revokes run grants on the HTTP Gateway |
 | `run_task/shared.py` | Task queue name, the workflow id for a `REF`, and the dataclass payloads |
@@ -133,7 +145,7 @@ server. None of them enters the history.
 | `run_task/starter.py` | Starts one task, prints its id and web UI link, waits, then prints the event history and the result. `--follow` also prints the run's events. |
 | `run_task/tasks.py` | `list`, `status`, `watch` and `cancel` for tasks already started |
 | `prompts/hello-v1.txt` | The prompt template: create hello.txt and read it back |
-| `stack.sh` | Starts and stops the services, and one harness server per task |
+| `stack.sh` | Builds the per-run sandbox image, starts and stops the services, and removes leftover per-run sandbox containers |
 | `Makefile` | The commands below. Each one calls `stack.sh` or `run_task.tasks`. |
 
 ## Settings
@@ -143,6 +155,7 @@ server. None of them enters the history.
 | Workflow id | `run-task-<REF>`, ID reuse policy Reject Duplicate | One `REF` names one task, as `external_ref` does in the design |
 | Run id | `<workflow id>:run_harness` | The same on every attempt, so a retry re-attaches |
 | Harness session id | The workflow id | pi's session id and the gateway's prompt cache key |
+| Per-run sandbox | Container `mh-sandbox-<run id>` from `harness-pi:dev`: 2 CPUs, 4 GB, 512 processes, all capabilities dropped, no new privileges, run as your user id. The harness server port is published on 127.0.0.1 only. `runs/<REF>/workspace` is mounted at `/workspace`. | pi's tools reach your machine only through the workspace. The container holds no provider key. |
 | Profile | tools `read`, `write`, `edit`, `ls`, 20 turns, 10 minutes | The harness server enforces both limits |
 | Run grant | the task's engine and model, `SPEND_LIMIT`, expiry 15 minutes | The HTTP Gateway enforces the model and the spend limit. The expiry is the profile's 10 minutes plus 5 minutes' grace, so the grant outlives a run still ending. |
 | `run_harness` start-to-close timeout | 10 minutes | The whole run |
@@ -158,15 +171,15 @@ You need:
 - the Temporal CLI: `brew install temporal`
 - Redis: `brew install redis`. The HTTP Gateway keeps run grants in it.
 - [uv](https://docs.astral.sh/uv/)
-- nvm with the Node version in `../../images/harness-pi/.nvmrc`
+- Docker Desktop, running. Each run's per-run sandbox is a container.
 - a checkout of `ai-api-unified-http` 1.18.0 or later, with provider keys in
   its `.env`
 
 No Temporal account or API key is needed. The dev server runs locally.
 
-**pi's tools act on your machine.** Until tasks run in a sandbox, nothing
-confines `read`, `write` and `edit` to the task's workspace. `bash` is off.
-Run only tasks you trust.
+**pi's tools act inside the per-run sandbox.** They reach your machine only
+through `runs/<REF>/workspace`. The container can still reach the network:
+the egress allowlist is the next build step. Run only tasks you trust.
 
 ```bash
 cd meta-harness/samples/temporal-run-task
@@ -178,8 +191,9 @@ make run SPEND_LIMIT=0.05
 
 `make run` takes these steps:
 
-1. Runs `uv sync`, and `npm ci` in `images/harness-pi` when its
-   `node_modules` is missing or older than its lockfile.
+1. Checks that Docker is running, runs `uv sync`, and builds the per-run
+   sandbox image `harness-pi:dev` from `images/harness-pi`. Docker's layer
+   cache makes a rebuild with no changes take a second or two.
 2. Starts `temporal server start-dev` unless a Temporal server answers at
    `TEMPORAL_ADDRESS`.
 3. Starts Redis on port 6390 unless one answers at `REDIS_URL`. It keeps
@@ -187,17 +201,19 @@ make run SPEND_LIMIT=0.05
 4. Starts the gateway with `HTTP_REDIS_URL` set, unless one answers at
    `GATEWAY_URL`, and checks that the gateway issues run grants. A gateway
    you started yourself without Redis is refused with a message.
-5. Starts a harness server for the task on a free port, with pi's workspace
-   at `runs/<REF>/workspace`.
-6. Starts the worker, shows its log, and runs the starter.
-7. Stops everything it started, on exit or Ctrl-C. On Ctrl-C the starter
-   cancels the workflow and waits for it to end before the worker stops.
+5. Starts the worker, shows its log, and runs the starter. The worker's
+   `run_harness` starts the run's per-run sandbox, with pi's workspace at
+   `runs/<REF>/workspace`, and removes it when the run ends.
+6. Stops everything it started, on exit or Ctrl-C, and removes any per-run
+   sandbox container the task left. On Ctrl-C the starter cancels the
+   workflow and waits for it to end before the worker stops.
 
 `make run` refuses to start while `make up` is running, because the two
 workers would split the work.
 
 Logs go to `temporal.log`, `redis.log`, `gateway.log` and `worker.log` in this directory,
-and the harness server's to `runs/<REF>/harness-server.log`. `runs/` keeps
+and the harness server's to `runs/<REF>/harness-server.log`, saved from the
+container before it is removed. `runs/` keeps
 every task's workspace and log until you delete it. The dev server keeps
 workflow history in memory, so history is gone once `make run` stops it. To
 keep history and browse it later, set `TEMPORAL_DB` to a file path, or start
@@ -211,8 +227,10 @@ while the server runs.
 | `REF` | 8 random hex characters. Letters, digits, `.`, `_` and `-`, starting with a letter or digit. A `REF` used before is refused. |
 | `ENGINE`, `MODEL` | `claude`, `claude-haiku-4-5` |
 | `SPEND_LIMIT` | `0.50`, in USD: the most the run may spend on model calls |
-| `HARNESS_DIR` | `../../images/harness-pi` |
-| `HARNESS_SERVER_TOKEN` | `local-harness-token` |
+| `HARNESS_DIR` | `../../images/harness-pi`, built into the per-run sandbox image |
+| `HARNESS_IMAGE` | `harness-pi:dev` |
+| `RUNS_DIR` | `runs` in this directory: each task's workspace and harness server log |
+| `SANDBOX_GATEWAY_URL` | `http://host.docker.internal:8080`, the gateway as a container reaches it |
 | `GATEWAY_DIR` | `../../../aiapi/ai-api-unified-http`, the gateway checkout |
 | `GATEWAY_PORT`, `GATEWAY_URL` | `8080`, `http://localhost:8080` |
 | `GATEWAY_API_KEY` | `local-dev-key`, the gateway's local development key. The worker uses it to request and revoke run grants. |
@@ -242,25 +260,23 @@ make down
 | Command | What it does |
 |---|---|
 | `make up` | Starts Temporal, Redis and the gateway unless they already answer, plus a worker, and leaves them running. Logs and process ids go in `stack/`. |
-| `make task TASK=... REF=...` | Starts a harness server for the task, starts the workflow, prints the run's events until it ends, prints the result, and stops the harness server. Ctrl-C cancels the task. Tasks in separate terminals run at the same time. |
+| `make task TASK=... REF=...` | Starts the workflow, prints the run's events from its per-run sandbox until it ends, and prints the result. Ctrl-C cancels the task. Tasks in separate terminals run at the same time, each in its own container. |
 | `make tasks` | Lists every task on the Temporal server: `REF`, status, start time, workspace |
-| `make status REF=...` | One task: its workflow status and workspace. While it runs, the harness server's turns, calls, tokens and cost so far, and the run grant's spend against its limit. Once it ends, the result, with what the grant counted. |
+| `make status REF=...` | One task: its workflow status and workspace. While it runs, the per-run sandbox's turns, calls, tokens and cost so far, and the run grant's spend against its limit. Once it ends, the result, with what the grant counted. |
 | `make watch REF=...` | Prints a running task's events from the start, then its result |
 | `make cancel REF=...` | Cancels the workflow, which stops pi, and waits for it to end |
-| `make down` | Stops what `make up` started |
+| `make down` | Stops what `make up` started, and removes any per-run sandbox container left behind |
 
-The task's harness server stops when the task ends, so `watch` and the live
-part of `status` work only while the task runs. The workflow memo holds the
-task's harness server URL and workspace, so these commands need only the
-`REF`.
+The task's per-run sandbox is removed when the task ends, so `watch` and the
+live part of `status` work only while the task runs. These commands find the
+container by the task's run id, so they need only the `REF`.
 
 Two tasks on 2026-11-04, started at the same time: poem-3 on Claude and
-notes-3 on OpenAI. Output of the first `make task`, paths shortened:
+notes-3 on OpenAI. They ran before the per-run sandbox, on harness servers
+`stack.sh` started on the host, so the lines that started and stopped those
+servers are left out. Output of the first `make task`, paths shortened:
 
 ```text
-[make] starting a harness server for task poem-3, log: .../temporal-run-task/runs/poem-3/harness-server.log
-[make] harness server at http://127.0.0.1:52407: {"ok":true,"checks":{"model_client_registered":true,"workspace_exists":true,"gateway_reachable":true},"session_id":null}
-[make] pi's workspace: .../temporal-run-task/runs/poem-3/workspace
 [starter] started workflow run-task-poem-3  engine=claude  model=claude-haiku-4-5  spend limit=$0.50
 [starter] task: Write a four-line poem about tide pools to poem.md, then list the files in the folder.
 [starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-poem-3
@@ -289,7 +305,6 @@ notes-3 on OpenAI. Output of the first `make task`, paths shortened:
 [result] files changed: poem.md
 [result] workspace: .../temporal-run-task/runs/poem-3/workspace
 [result] answer: Perfect! I've created `poem.md` with a four-line poem about tide pools. The file is now in your workspace folder and contains: ``` # Tide Pool Crystal waters hold the secret shore, Where starfish cling and anemones pour, Tiny worlds in rock and sand, Nature's marvel close at hand. ```
-[make] harness server for task poem-3 stopped
 ```
 
 `ls` ran next to `write` in turn 1 and found an empty folder. That is pi
@@ -334,7 +349,8 @@ And a cancel, with `make cancel REF=cancel-4` sent during turn 1:
 [status] cancel-4: canceled
 ```
 
-The worker log shows the cancel stopping pi and revoking the grant:
+The worker log shows the cancel stopping pi and revoking the grant (before the
+per-run sandbox, so there is no container line; see [Cancel](#cancel)):
 
 ```text
 [run-task-cancel-4 run_harness attempt 1] cancellation received (cancel_requested), sending POST /cancel
@@ -372,45 +388,45 @@ rebuild the workflow. Three things about them:
 
 ## What a run looks like
 
-From `make run REF=haiku-2 TASK="Write a haiku about autumn to haiku.txt."`
-on 2026-11-03, with ai-api-unified-http 1.18.0 and library 3.29.1. Paths are
+From `make run REF=haiku-3 TASK="Write a haiku about autumn to haiku.txt."`
+on 2026-11-04, with ai-api-unified-http 1.18.0 and library 3.29.1. Paths are
 shortened.
 
 ```text
+[make] building the per-run sandbox image harness-pi:dev from .../meta-harness/images/harness-pi
 [make] starting the Temporal dev server on port 7233, log: .../temporal-run-task/temporal.log
 [make] starting Redis on port 6390 for the gateway's run grants, log: .../temporal-run-task/redis.log
 [make] starting the gateway from .../aiapi/ai-api-unified-http with run grants in redis://127.0.0.1:6390/0, log: .../temporal-run-task/gateway.log
 [make] gateway: {"status":"ok","service_version":"1.18.0","api_version":"v1","library_version":"3.29.1"}
-[make] starting a harness server for task haiku-2, log: .../temporal-run-task/runs/haiku-2/harness-server.log
-[make] harness server at http://127.0.0.1:50083: {"ok":true,"checks":{"model_client_registered":true,"workspace_exists":true,"gateway_reachable":true},"session_id":null}
-[make] pi's workspace: .../temporal-run-task/runs/haiku-2/workspace
 [worker] polling task queue run-task on localhost:7233
-[starter] started workflow run-task-haiku-2  engine=claude  model=claude-haiku-4-5  spend limit=$0.50
+[starter] started workflow run-task-haiku-3  engine=claude  model=claude-haiku-4-5  spend limit=$0.50
 [starter] task: Write a haiku about autumn to haiku.txt.
-[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-haiku-2
-[workflow] run-task-haiku-2: started, run id 01a1a4cd-d20b-71c1-8986-72ff9ffcded2, task text from the caller, engine claude, model claude-haiku-4-5, spend limit $0.50
-[workflow] run-task-haiku-2: scheduling activity prepare (timeout 30s, up to 3 attempts)
+[starter] web UI: http://localhost:8233/namespaces/default/workflows/run-task-haiku-3
+[workflow] run-task-haiku-3: started, run id 01a1a76e-3772-730d-b8bd-192280f20542, task text from the caller, engine claude, model claude-haiku-4-5, spend limit $0.50
+[workflow] run-task-haiku-3: scheduling activity prepare (timeout 30s, up to 3 attempts)
 [activity] prepare attempt 1: using the task text from the caller
-[workflow] run-task-haiku-2: prepare returned a 40-character prompt
-[workflow] run-task-haiku-2: scheduling activity run_harness (timeout 10m, heartbeat timeout 10s, up to 3 attempts)
-[activity] run_harness attempt 1 started for run-task-haiku-2, heartbeat timeout 10s
-[run-task-haiku-2 run_harness attempt 1] run grant issued for run-task-haiku-2:run_harness: claude:claude-haiku-4-5, spend limit $0.50, expires 2026-11-04T04:40:16+00:00
-[run-task-haiku-2 run_harness attempt 1] POST /run started run run-task-haiku-2:run_harness
-[run-task-haiku-2 run_harness attempt 1] #1 turn 1 starts
-[run-task-haiku-2 run_harness attempt 1] #4 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write  tokens in=1898 out=456 cached=0  usd=0.004178
-[run-task-haiku-2 run_harness attempt 1] #5 runs tool write {"path": "haiku.txt", "content": "Leaves turn gold and red\nCrisp air whispers coming cold\nHarvest time arrives\n"}
-[run-task-haiku-2 run_harness attempt 1] #6 tool write done
-[run-task-haiku-2 run_harness attempt 1] #7 file changed: haiku.txt
-[run-task-haiku-2 run_harness attempt 1] #8 turn 1 finished
-[run-task-haiku-2 run_harness attempt 1] #9 turn 2 starts
-[run-task-haiku-2 run_harness attempt 1] #11 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2377 out=83 cached=0  usd=0.002792
-[run-task-haiku-2 run_harness attempt 1] #12 turn 2 finished: Done! I've written an autumn haiku to **haiku.txt**: ``` Leaves turn gold and red Crisp air whispers coming cold Harvest time arrives ``` This follows the traditional 5-7-5 syllable haiku structure an
-[run-task-haiku-2 run_harness attempt 1] #13 run finished: FINISHED (completed)
-[run-task-haiku-2 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0.00697 against it
-[activity] run_harness attempt 1: run finished, 14 heartbeats sent, returning the result to Temporal
-[workflow] run-task-haiku-2: run_harness returned on attempt 1: 2 turns, usd 0.006970
-[workflow] run-task-haiku-2: completed
-[history] events the Temporal server recorded for run-task-haiku-2:
+[workflow] run-task-haiku-3: prepare returned a 40-character prompt
+[workflow] run-task-haiku-3: scheduling activity run_harness (timeout 10m, heartbeat timeout 10s, up to 3 attempts)
+[activity] run_harness attempt 1 started for run-task-haiku-3, heartbeat timeout 10s
+[run-task-haiku-3 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-haiku-3-run_harness started from harness-pi:dev: harness server at http://127.0.0.1:55613, workspace .../temporal-run-task/runs/haiku-3/workspace mounted at /workspace
+[run-task-haiku-3 run_harness attempt 1] run grant issued for run-task-haiku-3:run_harness: claude:claude-haiku-4-5, spend limit $0.50, expires 2026-11-04T16:54:42+00:00
+[run-task-haiku-3 run_harness attempt 1] POST /run started run run-task-haiku-3:run_harness
+[run-task-haiku-3 run_harness attempt 1] #1 turn 1 starts
+[run-task-haiku-3 run_harness attempt 1] #3 model call: claude:claude-haiku-4-5  finish=tool_use  tool_calls=write  tokens in=1796 out=223 cached=0  usd=0.002911
+[run-task-haiku-3 run_harness attempt 1] #4 runs tool write {"path": "haiku.txt", "content": "Leaves fall gently down\nColors blend to gold and red\nWinter soon will come\n"}
+[run-task-haiku-3 run_harness attempt 1] #5 tool write done
+[run-task-haiku-3 run_harness attempt 1] #6 file changed: haiku.txt
+[run-task-haiku-3 run_harness attempt 1] #7 turn 1 finished
+[run-task-haiku-3 run_harness attempt 1] #8 turn 2 starts
+[run-task-haiku-3 run_harness attempt 1] #9 model call: claude:claude-haiku-4-5  finish=complete  tool_calls=none  tokens in=2042 out=44 cached=0  usd=0.002262
+[run-task-haiku-3 run_harness attempt 1] #10 turn 2 finished: Done! I've written a haiku about autumn to **haiku.txt**: ``` Leaves fall gently down Colors blend to gold and red Winter soon will come ```
+[run-task-haiku-3 run_harness attempt 1] #11 run finished: FINISHED (completed)
+[run-task-haiku-3 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0.005173 against it
+[run-task-haiku-3 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-haiku-3-run_harness removed, harness server log: .../temporal-run-task/runs/haiku-3/harness-server.log
+[activity] run_harness attempt 1: run finished, 12 heartbeats sent, returning the result to Temporal
+[workflow] run-task-haiku-3: run_harness returned on attempt 1: 2 turns, usd 0.005173
+[workflow] run-task-haiku-3: completed
+[history] events the Temporal server recorded for run-task-haiku-3:
 [history]   1  WorkflowExecutionStarted          task queue run-task
 [history]   2  WorkflowTaskScheduled
 [history]   3  WorkflowTaskStarted
@@ -428,28 +444,28 @@ shortened.
 [history]  15  WorkflowTaskStarted
 [history]  16  WorkflowTaskCompleted
 [history]  17  WorkflowExecutionCompleted
-[starter] workflow run-task-haiku-2 completed
-[result] template=inline  run=run-task-haiku-2:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
-[result] turns=2  failed calls=0  tokens in=4275 out=539  usd=0.006970
-[result] run grant: the HTTP Gateway counted $0.00697 of the $0.50 limit
+[starter] workflow run-task-haiku-3 completed
+[result] template=inline  run=run-task-haiku-3:run_harness  status=FINISHED (completed)  attempt=1  reattached=False
+[result] turns=2  failed calls=0  tokens in=3838 out=267  usd=0.005173
+[result] run grant: the HTTP Gateway counted $0.005173 of the $0.50 limit
 [result] files changed: haiku.txt
-[result] workspace: .../temporal-run-task/runs/haiku-2/workspace
-[result] answer: Done! I've written an autumn haiku to **haiku.txt**: ``` Leaves turn gold and red Crisp air whispers coming cold Harvest time arrives ``` This follows the traditional 5-7-5 syllable haiku structure and captures the essence of autumn with imagery of changing leaves, the seasonal chill, and harvest season.
+[result] workspace: .../temporal-run-task/runs/haiku-3/workspace
+[result] harness server log: .../temporal-run-task/runs/haiku-3/harness-server.log
+[result] answer: Done! I've written a haiku about autumn to **haiku.txt**: ``` Leaves fall gently down Colors blend to gold and red Winter soon will come ```
 [worker] shutting down
 [temporalio.worker._worker] Beginning worker shutdown, will wait 0:00:00 before cancelling activities
 [worker] stopped
 [make] worker stopped
-[make] harness server stopped
 [make] gateway stopped
 [make] Redis stopped
 [make] Temporal dev server stopped
 ```
 
-Event ids missing from the list, such as 2, 3 and 10, are `heartbeat`
-events, which the activity does not print.
+Event ids missing from the list, such as 2, are `heartbeat` events, which
+the activity does not print.
 
-The HTTP Gateway's count for the grant ($0.00697) matches the harness
-server's own sum of each turn's `usd_cost` ($0.006970). The two are counted
+The HTTP Gateway's count for the grant ($0.005173) matches the harness
+server's own sum of each turn's `usd_cost` ($0.005173). The two are counted
 separately: the gateway in Redis, the harness server from its responses.
 
 Each `WorkflowTask` trio in the history is the worker running workflow code
@@ -466,24 +482,25 @@ make cancel-demo
 This runs the built-in task. When the worker log shows `turn 1 starts`, it
 runs `temporal workflow cancel --workflow-id <id>`, the way an operator
 would. `make cancel REF=...` does the same for a task started with
-`make task`. Output from 2026-11-03, after the same startup lines:
+`make task`. Output from 2026-11-04, after the same startup lines:
 
 ```text
-[run-task-cancel-3 run_harness attempt 1] run grant issued for run-task-cancel-3:run_harness: claude:claude-haiku-4-5, spend limit $0.50, expires 2026-11-04T05:33:55+00:00
-[run-task-cancel-3 run_harness attempt 1] #1 turn 1 starts
-[make] temporal workflow cancel --workflow-id run-task-cancel-3
-[run-task-cancel-3 run_harness attempt 1] cancellation received (cancel_requested), sending POST /cancel
-[run-task-cancel-3 run_harness attempt 1] harness server stopped pi: run CANCELED
-[run-task-cancel-3 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0 against it
-[workflow] run-task-cancel-3: canceled, and run_harness has stopped pi
-[starter] workflow run-task-cancel-3 canceled
+[run-task-sandbox-cancel-1 run_harness attempt 1] POST /run started run run-task-sandbox-cancel-1:run_harness
+[run-task-sandbox-cancel-1 run_harness attempt 1] #1 turn 1 starts
+[make] temporal workflow cancel --workflow-id run-task-sandbox-cancel-1
+[run-task-sandbox-cancel-1 run_harness attempt 1] cancellation received (cancel_requested), sending POST /cancel
+[run-task-sandbox-cancel-1 run_harness attempt 1] harness server stopped pi: run CANCELED
+[run-task-sandbox-cancel-1 run_harness attempt 1] run grant revoked: the HTTP Gateway counted $0 against it
+[run-task-sandbox-cancel-1 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-sandbox-cancel-1-run_harness removed, harness server log: .../temporal-run-task/runs/sandbox-cancel-1/harness-server.log
+[workflow] run-task-sandbox-cancel-1: canceled, and run_harness has stopped pi
+[starter] workflow run-task-sandbox-cancel-1 canceled
 ```
 
 The grant counted $0, but turn 1 was billed: the gateway finished it after
 the revoke (finding 2).
 
-`runs/<REF>/harness-server.log` shows pi's side. `abort()` canceled the
-model call in flight, and the run ended:
+`runs/<REF>/harness-server.log` shows pi's side. In this run from
+2026-11-03, `abort()` canceled the model call in flight, and the run ended:
 
 ```text
 [harness-server] #2 run-task-cancel-3:run_harness model_call error: This operation was aborted
@@ -519,8 +536,8 @@ make restart-demo
 ```
 
 When the worker log shows `turn 2 starts`, `stack.sh` kills the worker's
-process group with SIGKILL, then starts a new worker. The harness server is a
-separate process and keeps running pi.
+process group with SIGKILL, then starts a new worker. pi keeps running in the
+per-run sandbox container, which the worker does not own.
 
 To do it by hand, start a task on the running stack, kill the worker from
 another terminal while the task runs, then start a new worker:
@@ -536,7 +553,26 @@ make up
 The second `make up` sees the worker is gone and starts only a new one. The
 task ends with `attempt=2  reattached=True`.
 
-Output of `make restart-demo` from 2026-11-03:
+Output of `make restart-demo` from 2026-11-04, with the per-run sandbox:
+
+```text
+[run-task-sandbox-restart-1 run_harness attempt 1] per-run sandbox mh-sandbox-run-task-sandbox-restart-1-run_harness started from harness-pi:dev: harness server at http://127.0.0.1:55052, workspace .../temporal-run-task/runs/sandbox-restart-1/workspace mounted at /workspace
+...
+[run-task-sandbox-restart-1 run_harness attempt 1] #10 turn 2 starts
+[make] killing the worker with SIGKILL (process group 23031). pi keeps running in the per-run sandbox.
+[activity] run_harness attempt 2 started for run-task-sandbox-restart-1, heartbeat timeout 10s
+[run-task-sandbox-restart-1 run_harness attempt 2] per-run sandbox mh-sandbox-run-task-sandbox-restart-1-run_harness is still running from an earlier attempt
+[run-task-sandbox-restart-1 run_harness attempt 2] run grant for run-task-sandbox-restart-1:run_harness is still live (spent $0.0075 of $0.50). The HTTP Gateway added a key to it
+[run-task-sandbox-restart-1 run_harness attempt 2] POST /run: run run-task-sandbox-restart-1:run_harness already exists (FINISHED). Re-attaching after event 10, without starting pi again
+...
+[run-task-sandbox-restart-1 run_harness attempt 2] #19 run finished: FINISHED (completed)
+[run-task-sandbox-restart-1 run_harness attempt 2] per-run sandbox mh-sandbox-run-task-sandbox-restart-1-run_harness removed, harness server log: .../temporal-run-task/runs/sandbox-restart-1/harness-server.log
+[workflow] run-task-sandbox-restart-1: completed
+```
+
+Attempt 2 found the container attempt 1 started, by its run id, and
+re-attached to the run in it. The same demo from 2026-11-03, before the
+per-run sandbox, with more of the output:
 
 ```text
 [run-task-restart-3 run_harness attempt 1] run grant issued for run-task-restart-3:run_harness: claude:claude-haiku-4-5, spend limit $0.50, expires 2026-11-04T05:33:32+00:00
@@ -680,6 +716,18 @@ turn 1 cost $0.003029 against a $0.001 limit. The attempt fails for good, as
    server.** A retry with the same run id re-attaches to the ended run, and
    one server holds one session, so a new run id is refused. The activity
    therefore fails the attempt for good when the run ends `ERROR`, `CANCELED`
-   or `EXPIRED`. In the design, a failed run is the router's fallback to the
-   next candidate in a new sandbox. That needs the harness engine and the
-   pool manager.
+   or `EXPIRED`, and removes the per-run sandbox. In the design, a failed run
+   moves the RunTask workflow's run loop to the next tier candidate, in a new
+   per-run sandbox (section 6.3).
+8. **A container reaches the gateway at `host.docker.internal`.** On Docker
+   Desktop for Mac that name reaches services bound to the Mac's 127.0.0.1,
+   so the gateway needs no change. On Linux, `--add-host
+   host.docker.internal:host-gateway` reaches the host's bridge address, so
+   the gateway must listen there too, or `SANDBOX_GATEWAY_URL` must name an
+   address the container can reach.
+9. **An attempt that fails on a retryable error can leave its container
+   running.** The next attempt re-attaches to it. When the last attempt
+   fails that way, nothing re-attaches, so `make run`, `make task` and
+   `make down` remove the task's leftover containers by their
+   `meta-harness.ref` and `meta-harness.sample` labels. In the design, the
+   pool manager lease TTL does this (section 8.4).

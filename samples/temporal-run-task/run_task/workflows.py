@@ -80,7 +80,6 @@ class RunTask:
                     prompt=prepared.prompt,
                     engine=request.engine,
                     model=request.model,
-                    harness_url=request.harness_url,
                     spend_limit_usd=request.spend_limit_usd,
                 ),
                 start_to_close_timeout=HARNESS_TIMEOUT,
