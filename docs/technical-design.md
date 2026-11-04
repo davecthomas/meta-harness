@@ -1006,8 +1006,8 @@ The RunTask workflow lives in the meta-harness run service, in Temporal terms:
    caller, global) to the meta-harness run service, which appends the audit
    meta-harness domain event with the operator as actor. The RunTask workflow
    cancels the run service run activity, which calls the harness server Run
-   API `POST /cancel` on the sandbox through the pool manager executor
-   backend, revokes the HTTP Gateway run grant, and releases the sandbox lease
+   API `POST /cancel` on the per-run sandbox directly, revokes the HTTP
+   Gateway run grant, and releases the sandbox lease
    with the pool manager, which destroys the per-run sandbox.
 
 Every terminal state releases the pool manager sandbox lease. The pool
@@ -1073,7 +1073,7 @@ sequenceDiagram
     Note over W,PM: first candidate, one run_id per candidate attempt, the Lease activity looks up an existing pool manager sandbox lease first
     W->>A: Lease activity
     A->>PM: lease(run_id, harness profile image, harness_session_id, resources)
-    PM-->>A: warm sandbox, pool manager lease token, session_state new
+    PM-->>A: warm sandbox address, per-lease harness server bearer token, session_state new
     W->>A: Grant activity
     A->>GW: request HTTP Gateway run grant (run_id, pinned model, spend limit, expiry)
     GW-->>A: run grant key
@@ -1254,7 +1254,7 @@ sequenceDiagram
     W->>A: Lease activity
     A->>PM: lease(run_id, harness profile image, harness_session_id)
     Note over PM: the sandbox kept for this pi session, else a fresh one with the pi session directory copied in from the bucket
-    PM-->>A: sandbox, pool manager lease token, session_state kept or restored
+    PM-->>A: sandbox address, per-lease harness server bearer token, session_state kept or restored
     W->>A: Grant activity
     A->>GW: request new HTTP Gateway run grant (run_id, pinned model, spend limit, expiry)
     GW-->>A: run grant key
@@ -1353,7 +1353,7 @@ terminal output.
 
 | Endpoint | Purpose | pi SDK calls |
 |---|---|---|
-| `GET /health` | Harness server readiness: pi session created, pi model client extension registered, task repo cloned at `/workspace`, HTTP Gateway reachable | pi session state |
+| `GET /health` | Harness server readiness: pi model client extension registered, the workspace directory exists, HTTP Gateway reachable. A `warm` per-run sandbox passes it before any task repo is cloned (section 8.4) | pi model runtime state |
 | `POST /run` | Start a new pi session for the task service task. The body holds the prompt, acceptance checks, harness profile, limits and the HTTP Gateway run grant key | `newSession()`, `prompt()` |
 | `POST /followup` | Continue the pi session the per-run sandbox holds, kept or restored by the pool manager before the pool manager sandbox lease returned. The body holds the new input and the HTTP Gateway run grant key, and no pi session reference. | `switchSession()` for a restored pi session, then `prompt()` |
 | `GET /events` | Harness server Run API events as server-sent events, resumable with `Last-Event-ID` | `session.subscribe()`: `message_update`, `tool_execution_*`, pi compaction events, `agent_end`, `agent_settled` |
@@ -1372,8 +1372,12 @@ limits.
 ### 8.3 Executor interface in the control plane
 
 The pool manager executor interface is the pool manager's interface to
-wherever per-run sandboxes run. Every pool manager executor backend provides
-these operations:
+wherever per-run sandboxes run. The meta-harness run service run activity
+does not go through it: the run activity calls the harness server Run API
+(`POST /run`, `POST /followup`, `GET /events`, `GET /usage`, `POST /cancel`)
+directly, over mutual TLS, at the pod address in its pool manager sandbox
+lease, with that lease's per-lease harness server bearer token. Every pool
+manager executor backend provides these operations:
 
 | Operation | Called by | Purpose |
 |---|---|---|
@@ -1381,9 +1385,8 @@ these operations:
 | provision | Pool manager | Create a per-run sandbox from a harness profile image; return when the harness server `/health` is green |
 | destroy | Pool manager | Delete the per-run sandbox and release its resources |
 | inventory | Pool manager | List the per-run sandboxes that exist, for pool manager reconciliation |
-| run, follow up, cancel | meta-harness run service run activity, through the pool manager sandbox lease | The harness server Run API calls, proxied with the pool manager lease token |
-| events | meta-harness run service run activity | The per-run sandbox's harness server Run API event stream |
-| status, usage | meta-harness run service run activity and pool manager | The harness server status and usage endpoints |
+| address | Pool manager, when it grants a pool manager sandbox lease | The per-run sandbox's pod address and its per-lease harness server bearer token, returned in the pool manager sandbox lease |
+| status, usage | Pool manager, on drain | The harness server status and usage endpoints |
 | save session | Pool manager, when a meta-harness run ends | Copy the pi session directory to the pool manager's Cloud Storage artifact bucket under `harness_session_id` |
 | restore session | Pool manager, before a `restored` pool manager sandbox lease returns | Copy a pi session directory from the pool manager's Cloud Storage artifact bucket into a fresh per-run sandbox, which has the task repo cloned at `/workspace` |
 | artifacts | Pool manager, on drain | Harness server logs and the final pi session directory, copied to the pool manager's Cloud Storage artifact bucket |
@@ -1503,8 +1506,9 @@ stateDiagram-v2
 - During a meta-harness run: the meta-harness run service run activity
   forwards missed harness server heartbeat events to the pool manager. Two
   missed harness server heartbeat windows mark the per-run sandbox
-  `unhealthy`. The pool manager destroys it, and the ai-api-unified router's
-  fallback decides whether another candidate runs. The pool manager never
+  `unhealthy`. The pool manager destroys it, and the RunTask workflow's Decide
+  step decides whether another tier candidate runs (section 6.3). The pool
+  manager never
   repairs a per-run sandbox in place.
 - The pool manager probes idle warm per-run sandboxes on an interval and
   destroys any that fail.
@@ -1600,9 +1604,11 @@ coding agent turn after it, so the metering service raises an alert (section
 
 - **Per turn:** the HTTP Gateway rejects a pi coding agent turn once the
   HTTP Gateway run grant spend limit for the meta-harness run is spent.
-- **Per run:** the harness server stops the meta-harness run at the harness
-  server per-run spend cap or `max_minutes`; the pool manager lease TTL
-  destroys the per-run sandbox if the harness server does not.
+- **Per run:** the harness server ends the meta-harness run `ERROR` with
+  `spend_limit` when the HTTP Gateway refuses a turn with
+  `402 run_grant_spend_limit`, and ends it `EXPIRED` at `max_minutes`. The
+  pool manager lease TTL destroys the per-run sandbox if the harness server
+  does not end the meta-harness run.
 - **Per caller:** a configurable caller daily spend cap; the meta-harness
   scheduler reads the Task API caller's spend from the metering service, stops
   admitting that Task API caller's new meta-harness tasks at the caller daily
@@ -1763,7 +1769,7 @@ client library.
 |---|---|
 | Task service (Task API) | `task_created`, meta-harness task status changes, received code-host PR webhooks |
 | Meta-harness scheduler | Admission decisions, with the reason the meta-harness scheduler holds a meta-harness task |
-| Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the run service `route` activity result. One `attempt_finished` per run from the run service run activity Collect result (section 6.1), joined to its pool manager sandbox lease by `run_id` |
+| Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the run service `route` activity result. One `attempt_finished` per run from the run service run activity Collect result (sections 6.1 and 6.3), joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `compacted`, `turn_finished`, `run_finished`. The run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
 | Meta-harness run service: RunTask Temporal workflow | Run state transitions, `check_completed` from the PR signals the RunTask workflow receives, and `task_closed`. Operator actions the RunTask workflow receives (cancel, kill switch), as audit events with the actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record, not any ai-api-unified library event, names the per-run sandbox for each try. |
@@ -2022,7 +2028,7 @@ flowchart TB
 | Service | Owner and use | Fails how |
 |---|---|---|
 | Cloud SQL for PostgreSQL | One regional high-availability Cloud SQL instance on a private IP. One schema and database role per owning meta-harness component (section 12), with IAM database authentication per component. The event service partitions its `event` table by time and retention class. The Cloud SQL instance has the capacity for the meta-harness event service, the heaviest writer. | Failover to the Cloud SQL standby takes about a minute. Meta-harness services retry, and event service producer clients buffer. Per-run sandboxes never touch Cloud SQL, so runs in progress keep working. New task admissions by the meta-harness scheduler and new sandbox leases from the pool manager wait. |
-| Temporal Cloud | The meta-harness run service's Temporal namespace, reached over Private Service Connect. RunTask workflow history, timers and signals. | RunTask workflows stop advancing, but per-run sandboxes keep running and finish their work. When Temporal Cloud returns, run service activities retry and re-attach to the harness server by call id and `Last-Event-ID`. A run whose pool manager sandbox lease TTL expires during the outage is lost, and the meta-harness run service retries it as a new attempt. |
+| Temporal Cloud | The meta-harness run service's Temporal namespace, reached over Private Service Connect. RunTask workflow history, timers and signals. | RunTask workflows stop advancing, but per-run sandboxes keep running and finish their work. When Temporal Cloud returns, run service activities retry and re-attach to the harness server by `run_id` and `Last-Event-ID`. A run whose pool manager sandbox lease TTL expires during the outage is lost, and the meta-harness run service retries it as a new attempt. |
 | Memorystore for Redis | Standard tier with a replica. One key prefix per owning component. The HTTP Gateway keeps HTTP Gateway run grants and HTTP Gateway per-run spend counters. The meta-harness scheduler keeps repo-area locks. The meta-harness run service keeps code-host API rate-limit token buckets. The event service keeps a commit notification fallback, unused while Postgres `NOTIFY` suffices. | Memorystore failover keeps the data. If Memorystore loses the HTTP Gateway's spend counters or run grants, the HTTP Gateway fails closed. The HTTP Gateway then rejects model turns for any run it cannot verify or meter. Those runs end, and the meta-harness run service retries them as new attempts. If Memorystore loses the meta-harness scheduler's repo-area locks, the meta-harness scheduler stops admitting tasks until it rebuilds the locks from the run service's active runs. |
 | Cloud Storage | One bucket per owning component. The pool manager's Cloud Storage artifact bucket holds pi session directories under `harness_session_id` and per-run sandbox logs. The meta-harness run service's bucket holds run artifacts, and the event service's bucket holds event exports. | The pool manager's sandbox drain step retries artifact collection. A per-run sandbox stays in `draining` until the pool manager saves the per-run sandbox's artifacts to the pool manager's bucket or a limit passes. Follow-up tasks that need a saved pi session wait. |
 | Artifact Registry | Every container image: the per-run sandbox harness image and one image per meta-harness control-plane component. | Pods cannot pull uncached images. Running meta-harness services and warm per-run sandboxes keep running, and image rollover pauses. |
