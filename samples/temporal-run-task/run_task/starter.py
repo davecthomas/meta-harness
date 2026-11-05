@@ -1,12 +1,16 @@
 """Starts one RunTask workflow, waits for it, and prints the result.
 
-    python -m run_task.starter [--ref REF] [--task TEXT] [--engine E] [--model M]
-                               [--spend-limit USD] [--follow]
+    python -m run_task.starter [--ref REF] [--task TEXT] [--pin PAIR]
+                               [--floor TIER] [--ceiling TIER] [--spend-limit USD] [--follow]
 
 --ref is the caller's name for the task. The workflow id is run-task-<ref>,
-and Temporal refuses a second task with the same ref. --follow prints the
-run's events from the harness server in its per-run sandbox while the task
-runs. pi's workspace is runs/<ref>/workspace.
+and Temporal refuses a second task with the same ref. The ai-api-unified
+router picks the task's tier and candidates from config/models.json, and
+--floor and --ceiling bound the tier. --pin runs one harness-profile-and-model
+pair, harness:<profile>/<engine>:<model>, with no routing. --spend-limit
+covers all the task's runs. --follow prints each run's events from the
+harness server in its per-run sandbox while the task runs. pi's workspace is
+runs/<ref>/workspace, shared by the task's runs.
 
 Exit codes: 0 completed, 1 failed, 3 canceled, 130 interrupted.
 Ctrl-C cancels the workflow before the starter exits.
@@ -49,10 +53,11 @@ async def main(args: argparse.Namespace) -> int:
     client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
     workflow_id = workflow_id_for(args.ref)
     request = RunTaskInput(
-        engine=args.engine,
-        model=args.model,
         task=args.task,
         spend_limit_usd=args.spend_limit,
+        pin=args.pin,
+        floor=args.floor,
+        ceiling=args.ceiling,
     )
     try:
         handle = await client.start_workflow(
@@ -68,9 +73,9 @@ async def main(args: argparse.Namespace) -> int:
     except WorkflowAlreadyStartedError:
         print(f"[starter] a task with REF {args.ref} already exists on this Temporal server. Use another REF.")
         return 1
+    routing = f"pin={request.pin}" if request.pin else f"floor={request.floor or '-'}  ceiling={request.ceiling or '-'}"
     print(
-        f"[starter] started workflow {workflow_id}  engine={request.engine}  model={request.model}  "
-        f"spend limit=${request.spend_limit_usd}",
+        f"[starter] started workflow {workflow_id}  {routing}  spend limit=${request.spend_limit_usd}",
         flush=True,
     )
     print(f"[starter] task: {request.task or f'prompts/{request.template}.txt'}", flush=True)
@@ -78,8 +83,7 @@ async def main(args: argparse.Namespace) -> int:
 
     follow: asyncio.Task | None = None
     if args.follow:
-        run_id = f"{workflow_id}:run_harness"
-        follow = asyncio.create_task(harness_client.follow_run(run_id, f"[{args.ref}]", wait_seconds=120))
+        follow = asyncio.create_task(harness_client.follow_task(handle, f"[{args.ref}]"))
 
     try:
         result: RunTaskResult = await handle.result()
@@ -90,6 +94,9 @@ async def main(args: argparse.Namespace) -> int:
             print(f"[starter] workflow {workflow_id} canceled", flush=True)
             return EXIT_CANCELED
         print(f"[starter] workflow {workflow_id} failed: {err.cause}", flush=True)
+        details = getattr(err.cause, "details", None) or ()
+        for attempt in details[0] if details and isinstance(details[0], list) else []:
+            _print_attempt(attempt)
         return 1
     except asyncio.CancelledError:
         # Ctrl-C: cancel the workflow and wait for it to end while the worker is still up,
@@ -111,6 +118,16 @@ async def main(args: argparse.Namespace) -> int:
     await _print_history(handle)
     h = result.harness
     print(f"[starter] workflow {workflow_id} completed", flush=True)
+    if result.route:
+        r = result.route
+        confidence = f"  confidence={r.confidence:.2f}" if r.confidence is not None else ""
+        print(
+            f"[result] route: tier={r.tier}  method={r.method}{confidence}  classifier usd={r.classifier_usd}",
+            flush=True,
+        )
+    for attempt in result.attempts:
+        _print_attempt(vars(attempt))
+    print(f"[result] task spent ${result.spent_usd} of its ${request.spend_limit_usd} limit", flush=True)
     print(
         f"[result] template={result.template}  run={h.run_id}  status={h.status} ({h.end_reason})  "
         f"attempt={h.attempt}  reattached={h.reattached}",
@@ -127,9 +144,17 @@ async def main(args: argparse.Namespace) -> int:
     )
     print(f"[result] files changed: {', '.join(h.files_changed) or 'none'}", flush=True)
     print(f"[result] workspace: {sandbox.workspace_for(args.ref)}", flush=True)
-    print(f"[result] harness server log: {sandbox.log_path_for(args.ref)}", flush=True)
+    print(f"[result] harness server log: {sandbox.log_path_for(args.ref, h.run_id)}", flush=True)
     print(f"[result] answer: {h.answer}", flush=True)
     return 0
+
+
+def _print_attempt(attempt: dict) -> None:
+    print(
+        f"[result] run {attempt['attempt']}: {attempt['candidate']} (tier {attempt['tier'] or 'pinned'})  "
+        f"{attempt['decision']}  spent ${attempt['spent_usd']}  {attempt['detail']}",
+        flush=True,
+    )
 
 
 async def _stop_following(follow: asyncio.Task | None) -> None:
@@ -182,12 +207,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--ref", default=uuid.uuid4().hex[:8], help="your name for the task (default: random)")
     parser.add_argument("--task", default="", help="the task text (default: prompts/hello-v1.txt)")
-    parser.add_argument("--engine", default="claude")
-    parser.add_argument("--model", default="claude-haiku-4-5")
+    parser.add_argument("--pin", default="", help="run one pair, harness:<profile>/<engine>:<model>, with no routing")
+    parser.add_argument("--floor", default="", help="the lowest router tier the task may take")
+    parser.add_argument("--ceiling", default="", help="the highest router tier the task may take")
     parser.add_argument(
         "--spend-limit",
         default=DEFAULT_SPEND_LIMIT_USD,
-        help=f"most the run may spend on model calls, in USD (default {DEFAULT_SPEND_LIMIT_USD})",
+        help=f"most the task may spend on model calls across its runs, in USD (default {DEFAULT_SPEND_LIMIT_USD})",
     )
     parser.add_argument("--follow", action="store_true", help="print the run's events while it runs")
     try:

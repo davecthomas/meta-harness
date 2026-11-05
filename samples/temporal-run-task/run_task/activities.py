@@ -1,24 +1,36 @@
-"""The two activities: prepare builds the prompt, run_harness runs it in a per-run sandbox.
+"""The activities: prepare builds the prompt, route picks the tier, run_harness runs one tier candidate.
 
-run_harness is the design's run service run activity (section 6.3). Its Lease
-step starts the run's per-run sandbox: a Docker container of the harness-pi
-image, named after the run id (run_task/sandbox.py). Its Start step sends
-POST /run to the harness server in it, the Wait step follows GET /events until
-run_finished, and the Collect step reads GET /usage, revokes the run grant and
-removes the container. pi runs in the container, so the run keeps going when
-this worker dies, and the next attempt finds the same container.
+route is the design's run service route activity (section 6.3). It sends the
+task prompt to the ai-api-unified router in classify-only mode
+(AiRouteClassifier, ai-api-unified 3.30.0), which picks a tier and returns
+the tier's candidates. Each candidate is a harness profile and a model.
 
-The run id is the workflow id plus the activity name, the same on every
-attempt. A retried attempt sends the same POST /run, gets the run already in
-progress, and reads its events from the last event id it heartbeated. It never
-starts pi a second time.
+run_harness is the design's run service run activity, for one candidate. Its
+Lease step starts the run's per-run sandbox: a Docker container of the
+candidate's harness profile image, named after the run id
+(run_task/sandbox.py). Its Start step sends POST /run to the harness server in
+it, the Wait step follows GET /events until run_finished, and the Collect step
+reads GET /usage, revokes the run grant and removes the container. pi runs in
+the container, so the run keeps going when this worker dies, and the next
+attempt finds the same container.
+
+The workflow names the run id: the workflow id and the number of the
+candidate it is trying. Every Temporal retry of run_harness for that
+candidate sends the same POST /run, gets the run already in progress, and
+reads its events from the last event id it heartbeated. It never starts pi a
+second time.
 
 Before POST /run, the activity asks the HTTP Gateway for a run grant: the
-run's engine and model, its spend limit, and an expiry. The harness server
-gets only the grant key. The activity revokes the grant once the run has
-ended, however it ended. A worker that stops mid-run leaves the grant live,
-because the run keeps going and the next attempt re-attaches to it. That
-attempt asks for the grant again and gets a new key for the same grant.
+candidate's engine and model, the spend limit the workflow gave this run, and
+an expiry. The harness server gets only the grant key. A worker that stops
+mid-run leaves the grant live, because the run keeps going and the next
+attempt re-attaches to it. That attempt asks for the grant again and gets a
+new key for the same grant.
+
+run_harness returns a result for every run that ended, finished or not, and
+the workflow's Decide step reads its end reason. It raises only when it could
+not follow the run to its end. When Temporal stops retrying it, the workflow
+calls cleanup_run, which revokes the grant and removes the per-run sandbox.
 """
 
 import asyncio
@@ -29,44 +41,100 @@ import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from run_task import harness_client, run_grants, sandbox
-from run_task.shared import INLINE_TEMPLATE, HarnessRequest, HarnessResult, PreparedRun, RunTaskInput, ref_for
+from run_task import harness_client, routing, run_grants, sandbox
+from run_task.shared import (
+    INLINE_TEMPLATE,
+    CleanupResult,
+    HarnessRequest,
+    HarnessResult,
+    PreparedRun,
+    RouteRequest,
+    RouteResult,
+    RunTaskInput,
+    ref_for,
+)
 
 SAMPLE_DIR = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = SAMPLE_DIR / "prompts"
 
-# The profile the harness server runs pi with. In the full design it comes from harness_profiles.json.
-PROFILE = {"name": "pi-sample", "tools": ["read", "write", "edit", "ls"], "max_turns": 20, "max_minutes": 10}
 # The grant outlives the run's own time limit by this much, so it never expires under a run still ending.
 GRANT_GRACE_SECONDS = 300
 
 
 @activity.defn
 async def prepare(request: RunTaskInput) -> PreparedRun:
-    """Uses the task text the caller gave, or builds the prompt from a versioned template file."""
+    """Uses the task text the caller gave, or builds the prompt from a versioned template file.
+
+    A pinned task's pair is checked here, so a bad pin fails before any per-run sandbox starts.
+    """
     info = activity.info()
+    pinned = None
+    if request.pin:
+        try:
+            pinned = routing.pinned(request.pin)
+        except routing.CandidateError as err:
+            raise ApplicationError(str(err), type="HarnessConfigError", non_retryable=True) from err
     if request.task:
         activity.logger.info("prepare attempt %d: using the task text from the caller", info.attempt)
-        return PreparedRun(template=INLINE_TEMPLATE, prompt=request.task.strip())
+        return PreparedRun(template=INLINE_TEMPLATE, prompt=request.task.strip(), pinned=pinned)
     path = PROMPTS_DIR / f"{request.template}.txt"
     if not path.is_file():
         raise ApplicationError(f"no prompt template {path.name}", type="UnknownTemplate", non_retryable=True)
     prompt = path.read_text(encoding="utf-8").strip()
     activity.logger.info("prepare attempt %d: read the prompt from prompts/%s", info.attempt, path.name)
-    return PreparedRun(template=request.template, prompt=prompt)
+    return PreparedRun(template=request.template, prompt=prompt, pinned=pinned)
+
+
+@activity.defn
+async def route(request: RouteRequest) -> RouteResult:
+    """Asks the ai-api-unified router for the task's tier and the tier's candidates.
+
+    The classifier call, when a classifier is configured, is the only model call
+    this activity makes. No candidate is built or called.
+    """
+    options = {
+        key: value for key, value in (("route_floor", request.floor), ("route_ceiling", request.ceiling)) if value
+    }
+    router = routing.router()
+    try:
+        decision = await router.aclassify_route(request.prompt, provider_options=options or None)
+        candidates = [routing.candidate(c.engine, c.model) for c in decision.candidates]
+    except ValueError as err:
+        # An unknown tier in a hint, or a candidate the worker's startup check would have refused.
+        raise ApplicationError(str(err), type="HarnessConfigError", non_retryable=True) from err
+    config = router.config
+    activity.logger.info(
+        "route: tier %s (%s%s), %d candidates, classifier $%s",
+        decision.tier,
+        decision.method,
+        f", confidence {decision.confidence:.2f}" if decision.confidence is not None else "",
+        len(candidates),
+        decision.classifier_usd,
+    )
+    return RouteResult(
+        tier=str(decision.tier),
+        method=decision.method,
+        confidence=decision.confidence,
+        candidates=candidates,
+        tiers=[tier.name for tier in config.tiers],
+        on_exhausted=config.on_exhausted,
+        classifier_usd=str(decision.classifier_usd),
+        config_id=decision.config_id,
+    )
 
 
 @activity.defn
 async def run_harness(request: HarnessRequest) -> HarnessResult:
     """Starts or re-attaches to the run on the harness server and follows it to the end."""
     info = activity.info()
-    tag = f"[{info.workflow_id} run_harness attempt {info.attempt}]"
-    run_id = f"{info.workflow_id}:run_harness"
+    run_id = request.run_id
+    tag = f"[{run_id} attempt {info.attempt}]"
     progress = _progress_from(info.heartbeat_details)
     activity.logger.info(
-        "run_harness attempt %d started for %s, heartbeat timeout %ss",
+        "run_harness attempt %d started for %s on %s, heartbeat timeout %ss",
         info.attempt,
-        info.workflow_id,
+        run_id,
+        request.candidate.label,
         int(info.heartbeat_timeout.total_seconds()) if info.heartbeat_timeout else 0,
     )
     if not run_grants.gateway_key():
@@ -75,13 +143,12 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         )
 
     ref = ref_for(info.workflow_id)
-    box = await _lease(tag, run_id, ref)
+    image = str(request.candidate.profile["image"])
+    box = await _lease(tag, run_id, ref, image)
     try:
-        grant_key = await _issue_grant(tag, run_id, request, info.workflow_id)
+        grant_key = await _issue_grant(tag, request, info.workflow_id)
         async with harness_client.client(box) as client:
-            reattached = await _start_or_reattach(
-                client, tag, run_id, request, grant_key, info.workflow_id, progress, box.url
-            )
+            reattached = await _start_or_reattach(client, tag, request, grant_key, progress, box.url)
             activity.heartbeat(progress)
             finished: dict[str, Any] | None = None
             heartbeats = 1
@@ -111,8 +178,9 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
                 raise ApplicationError("the event stream ended before run_finished", type="HarnessUnavailable")
             usage = (await client.get("/usage", params={"run_id": run_id})).json()
     except ApplicationError as err:
-        # No later attempt will re-attach, so nothing needs the per-run sandbox.
+        # No later attempt will re-attach, so nothing needs the per-run sandbox or the grant.
         if err.non_retryable:
+            await _revoke_grant(tag, run_id)
             await _release(tag, run_id, ref)
         raise
 
@@ -120,16 +188,12 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
     grant_spent = await _revoke_grant(tag, run_id)
     await _release(tag, run_id, ref)
     data = finished["data"]
-    if data["status"] != "FINISHED":
-        # The run itself ended. Retrying would re-attach to the same ended run, so the attempt fails for good.
-        raise ApplicationError(
-            f"run {run_id} ended {data['status']} ({data['end_reason']}): {data.get('error')}",
-            type="HarnessRunFailed",
-            non_retryable=True,
-        )
     activity.logger.info(
-        "run_harness attempt %d: run finished, %d heartbeats sent, returning the result to Temporal",
+        "run_harness attempt %d: run %s ended %s (%s), %d heartbeats sent, returning the result to Temporal",
         info.attempt,
+        run_id,
+        data["status"],
+        data["end_reason"],
         heartbeats,
     )
     return HarnessResult(
@@ -147,18 +211,33 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         answer=progress["answer"],
         spend_limit_usd=request.spend_limit_usd,
         grant_spent_usd=grant_spent,
+        error=data.get("error"),
     )
 
 
-async def _lease(tag: str, run_id: str, ref: str) -> sandbox.Sandbox:
+@activity.defn
+async def cleanup_run(run_id: str) -> CleanupResult:
+    """Closes a run run_harness gave up on: revokes its grant and removes its per-run sandbox.
+
+    Returns what the HTTP Gateway counted against the grant, so the workflow
+    counts a failed run's spend too.
+    """
+    ref = ref_for(activity.info().workflow_id)
+    tag = f"[{run_id} cleanup]"
+    spent = await _revoke_grant(tag, run_id)
+    await _release(tag, run_id, ref)
+    return CleanupResult(grant_spent_usd=spent)
+
+
+async def _lease(tag: str, run_id: str, ref: str, image: str) -> sandbox.Sandbox:
     """The Lease step: the run's per-run sandbox, started now or found from an earlier attempt."""
     try:
-        box = await sandbox.ensure(run_id, ref)
+        box = await sandbox.ensure(run_id, ref, image)
     except sandbox.SandboxError as err:
         raise ApplicationError(str(err), type="SandboxUnavailable", non_retryable=True) from err
     if box.created:
         print(
-            f"{tag} per-run sandbox {box.name} started from {sandbox.IMAGE} on its own network "
+            f"{tag} per-run sandbox {box.name} started from {image} on its own network "
             f"{sandbox.network_name(run_id)}, out only through the egress proxy. "
             f"Workspace {sandbox.workspace_for(ref)} mounted at /workspace",
             flush=True,
@@ -170,25 +249,27 @@ async def _lease(tag: str, run_id: str, ref: str) -> sandbox.Sandbox:
 
 async def _release(tag: str, run_id: str, ref: str) -> None:
     """Saves the harness server's log and removes the run's per-run sandbox."""
-    await sandbox.destroy(run_id, ref)
+    if not await sandbox.destroy(run_id, ref):
+        return
     print(
         f"{tag} per-run sandbox {sandbox.container_name(run_id)} and its network removed, "
-        f"harness server log: {sandbox.log_path_for(ref)}",
+        f"harness server log: {sandbox.log_path_for(ref, run_id)}",
         flush=True,
     )
 
 
-async def _issue_grant(tag: str, run_id: str, request: HarnessRequest, workflow_id: str) -> str:
+async def _issue_grant(tag: str, request: HarnessRequest, workflow_id: str) -> str:
     """Asks the HTTP Gateway for the run's grant and returns its key."""
+    profile = request.candidate.profile
     try:
         grant = await run_grants.issue(
-            run_id=run_id,
-            engine=request.engine,
-            model=request.model,
+            run_id=request.run_id,
+            engine=request.candidate.engine,
+            model=request.candidate.model,
             spend_limit_usd=request.spend_limit_usd,
-            ttl_seconds=int(PROFILE["max_minutes"]) * 60 + GRANT_GRACE_SECONDS,
+            ttl_seconds=int(profile["max_minutes"]) * 60 + GRANT_GRACE_SECONDS,
             workflow_id=workflow_id,
-            tags={"profile": str(PROFILE["name"])},
+            tags={"profile": request.candidate.profile_name},
         )
     except run_grants.RunGrantError as err:
         # A refusal is the request's fault and retrying repeats it. No answer, or a 503, may pass.
@@ -197,14 +278,14 @@ async def _issue_grant(tag: str, run_id: str, request: HarnessRequest, workflow_
         raise ApplicationError(str(err), type="GatewayUnavailable") from err
     if grant["created"]:
         print(
-            f"{tag} run grant issued for {run_id}: {grant['engine']}:{grant['model']}, "
+            f"{tag} run grant issued for {request.run_id}: {grant['engine']}:{grant['model']}, "
             f"spend limit ${grant['spend_limit_usd']}, expires {grant['expires_at']}",
             flush=True,
         )
     else:
         print(
-            f"{tag} run grant for {run_id} is still live (spent ${grant['spent_usd']} of ${grant['spend_limit_usd']}). "
-            "The HTTP Gateway added a key to it",
+            f"{tag} run grant for {request.run_id} is still live (spent ${grant['spent_usd']} of "
+            f"${grant['spend_limit_usd']}). The HTTP Gateway added a key to it",
             flush=True,
         )
     return str(grant["grant_key"])
@@ -220,26 +301,28 @@ async def _revoke_grant(tag: str, run_id: str) -> str | None:
     except run_grants.RunGrantError as err:
         print(f"{tag} could not revoke the run grant, so it stays live until it expires: {err}", flush=True)
         return None
-    print(f"{tag} run grant revoked: the HTTP Gateway counted ${revoked['spent_usd']} against it", flush=True)
+    if revoked.get("revoked"):
+        print(f"{tag} run grant revoked: the HTTP Gateway counted ${revoked['spent_usd']} against it", flush=True)
     return str(revoked["spent_usd"])
 
 
 async def _start_or_reattach(
     client: httpx.AsyncClient,
     tag: str,
-    run_id: str,
     request: HarnessRequest,
     grant_key: str,
-    session_id: str,
     progress: dict[str, Any],
     harness_url: str,
 ) -> bool:
     """POST /run. Returns True when the run already existed, so this attempt re-attached to it."""
+    profile = request.candidate.profile
     body = {
-        "run_id": run_id,
-        "harness_session_id": session_id,
+        "run_id": request.run_id,
+        # Each candidate is a new pi session: another model starts from the task, not from a transcript.
+        # A session id names a directory, so it has no ":".
+        "harness_session_id": request.run_id.replace(":", "."),
         "prompt": request.prompt,
-        "profile": PROFILE,
+        "profile": {key: profile[key] for key in ("name", "tools", "max_turns", "max_minutes")},
         # The grant decides the engine, the model and the spend limit. The harness server sees only the key.
         "grant_key": grant_key,
     }
@@ -248,12 +331,12 @@ async def _start_or_reattach(
     except httpx.HTTPError as err:
         raise ApplicationError(f"no harness server at {harness_url}: {err}", type="HarnessUnavailable") from err
     if response.status_code == 202:
-        print(f"{tag} POST /run started run {run_id}", flush=True)
+        print(f"{tag} POST /run started run {request.run_id} on {request.candidate.label}", flush=True)
         return False
     if response.status_code == 200:
         status = response.json()["status"]
         print(
-            f"{tag} POST /run: run {run_id} already exists ({status}). "
+            f"{tag} POST /run: run {request.run_id} already exists ({status}). "
             f"Re-attaching after event {progress['last_event_id']}, without starting pi again",
             flush=True,
         )

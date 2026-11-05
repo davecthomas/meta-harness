@@ -9,6 +9,8 @@
 #   cancel        a workflow cancel stops pi and the workflow ends canceled
 #   restart       a worker killed mid-run: the next attempt re-attaches to the same per-run sandbox
 #   spend-limit   the fake refuses turn 2 with 402 and the run ends on its spend limit
+#   fallback      the run loop: tier standard's two candidates get no per-run sandbox, so the
+#                 workflow tries each, escalates to tier complex, and its candidate finishes the task
 #   egress        the per-run sandbox network rules (stack.sh egress-check)
 #   cleanup       no per-run sandbox container or network is left
 #
@@ -70,6 +72,15 @@ if step spend-limit env REF="e2e-$STAMP-spend" DEMO=spend-limit SPEND_LIMIT=0.00
   pass "spend-limit: the run stopped at its \$0.001 spend limit"
 else
   fail "spend-limit" spend-limit
+fi
+
+if step fallback env REF="e2e-$STAMP-fallback" DEMO=fallback MODELS_ENV=fallback-demo ./stack.sh run \
+  && grep -q 'run 1: harness:pi-missing-image/claude:claude-haiku-4-5 (tier standard)  next_candidate' "$LOGS/fallback.log" \
+  && grep -q 'run 2: harness:pi-missing-image/openai:gpt-4o-mini (tier standard)  next_candidate' "$LOGS/fallback.log" \
+  && grep -q 'run 3: harness:pi-lean/claude:claude-haiku-4-5 (tier complex)  finished' "$LOGS/fallback.log"; then
+  pass "fallback: both standard candidates failed to start, and the escalated complex candidate finished"
+else
+  fail "fallback: expected runs 1 and 2 to move on and run 3, on tier complex, to finish" fallback
 fi
 
 if step egress ./stack.sh egress-check; then

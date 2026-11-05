@@ -1,0 +1,41 @@
+{
+  "router": {
+    "tiers": [
+      {
+        "name": "standard",
+        "description": "A feature or fix inside one module, with clear acceptance checks, or anything smaller: config, copy, a one-file edit.",
+        "models": ["harness:pi-lean/claude:claude-haiku-4-5", "harness:pi-lean/openai:gpt-4o-mini"]
+      },
+      {
+        "name": "complex",
+        "description": "Cross-module changes, migrations, concurrency, security-sensitive code, or vague requirements.",
+        "models": ["harness:pi-careful/claude:claude-haiku-4-5", "harness:pi-careful/google-gemini:gemini-2.5-flash"]
+      }
+    ],
+    "classifier": {"engine": "openai-decisions", "min_confidence": 0.7},
+    "default_tier": "standard",
+    "on_exhausted": "escalate"
+  },
+  "environments": {
+    "zero-cost": {
+      "router": {"classifier": {"engine": "none"}}
+    },
+    "fallback-demo": {
+      "router": {
+        "tiers": [
+          {
+            "name": "standard",
+            "description": "A feature or fix inside one module, with clear acceptance checks, or anything smaller: config, copy, a one-file edit.",
+            "models": ["harness:pi-missing-image/claude:claude-haiku-4-5", "harness:pi-missing-image/openai:gpt-4o-mini"]
+          },
+          {
+            "name": "complex",
+            "description": "Cross-module changes, migrations, concurrency, security-sensitive code, or vague requirements.",
+            "models": ["harness:pi-lean/claude:claude-haiku-4-5"]
+          }
+        ],
+        "classifier": {"engine": "none"}
+      }
+    }
+  }
+}

@@ -239,7 +239,12 @@ start_worker() {
   local ready_count second
   ready_count=$(grep -c '^\[worker\] polling' "$1" 2>/dev/null || true)
   set -m
-  nohup .venv/bin/python -m run_task.worker >>"$1" 2>&1 </dev/null &
+  # The route activity reads the router's tiers from ROUTER_CONFIG, with MODELS_ENV's entry applied.
+  # The fake gateway's runs use the zero-cost entry, which turns the router's classifier off.
+  local models_env=${MODELS_ENV:-}
+  [ -n "$models_env" ] || [ "$GATEWAY" != fake ] || models_env=zero-cost
+  AI_MODELS_CONFIG="$ROUTER_CONFIG" AI_MODELS_ENV="$models_env" \
+    nohup .venv/bin/python -m run_task.worker >>"$1" 2>&1 </dev/null &
   worker_pid=$!
   set +m
   for second in $(seq 1 "$WAIT_SECONDS"); do
@@ -265,8 +270,8 @@ check_ref() {
 }
 
 starter() {
-  .venv/bin/python -m run_task.starter --ref "$REF" \
-    --engine "$ENGINE" --model "$MODEL" --spend-limit "$SPEND_LIMIT" --task "$TASK" "$@"
+  .venv/bin/python -m run_task.starter --ref "$REF" --pin "$PIN" --floor "$FLOOR" --ceiling "$CEILING" \
+    --spend-limit "$SPEND_LIMIT" --task "$TASK" "$@"
 }
 
 wait_for_log() {
@@ -335,6 +340,11 @@ cmd_run() {
       [ "$status" -eq 1 ] || { log "expected the task to fail at its spend limit, starter exit $status"; exit 1; }
       grep -qF "spend_limit" worker.log || { log "the task failed, but not at its spend limit. See worker.log"; exit 1; }
       log "the run stopped at its \$$SPEND_LIMIT spend limit, as expected"
+      ;;
+    fallback)
+      starter
+      grep -qF "escalates to" worker.log || { log "the task finished, but did not escalate a tier. See worker.log"; exit 1; }
+      log "the first tier's candidates failed without a per-run sandbox, and the next tier finished the task"
       ;;
     *) starter ;;
   esac

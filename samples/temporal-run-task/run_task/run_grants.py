@@ -5,8 +5,8 @@ and model, a spend limit, and an expiry. Issuing one returns a grant key. The
 worker hands only the grant key to the harness server, so pi never sees the
 gateway's API key, cannot pick its own model, and stops at the spend limit.
 
-The worker authenticates with GATEWAY_API_KEY. In the full design the harness
-engine in ai-api-unified does this; here run_harness stands in for it.
+The worker authenticates with GATEWAY_API_KEY. run_harness, the design's run
+service run activity, asks for each run's grant and revokes it.
 
 Environment: GATEWAY_URL (default http://localhost:8080), GATEWAY_API_KEY.
 """

@@ -6,6 +6,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+from temporalio.client import WorkflowQueryFailedError
+from temporalio.service import RPCError
 
 from run_task import sandbox
 
@@ -73,6 +75,32 @@ async def follow_run(run_id: str, prefix: str, wait_seconds: float) -> dict[str,
         if asyncio.get_running_loop().time() >= deadline:
             return None
         await asyncio.sleep(0.5)
+
+
+async def follow_task(handle: Any, prefix: str) -> None:
+    """Prints the events of each run a task makes, in turn, until the task ends.
+
+    Asks the RunTask workflow which run it is on (its current_run_id query),
+    follows that run's per-run sandbox, then asks again for the next one.
+    """
+    followed: set[str] = set()
+    while True:
+        try:
+            run_id = await handle.query("current_run_id")
+        except (RPCError, WorkflowQueryFailedError):
+            run_id = None
+        if run_id and run_id not in followed:
+            followed.add(run_id)
+            print(f"{prefix} following run {run_id}", flush=True)
+            await follow_run(run_id, prefix, wait_seconds=60)
+            continue
+        try:
+            described = await handle.describe()
+        except RPCError:
+            return
+        if described.status is not None and described.status.name != "RUNNING":
+            return
+        await asyncio.sleep(1)
 
 
 def describe(event: dict[str, Any]) -> str | None:
