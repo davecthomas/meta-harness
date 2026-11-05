@@ -39,7 +39,7 @@ export const MODEL_CLIENT_API = "ai-api-unified-conversation-turn";
 /** The HTTP Gateway's error code when a run has spent its grant's limit (HTTP 402). */
 export const SPEND_LIMIT_ERROR = "run_grant_spend_limit";
 
-/** What the HTTP Gateway returns from `/v1/conversations/turn` (ai-api-unified-http 1.18.0). */
+/** What the HTTP Gateway returns from `/v1/conversations/turn` (ai-api-unified-http 1.19.0). */
 export interface GatewayTurnResponse {
 	text: string | null;
 	tool_calls: { id: string; name: string; input: Record<string, unknown> }[];
@@ -90,8 +90,9 @@ export interface ModelClientOptions {
 /**
  * Stores which engine answered a turn next to its replay token. pi keeps
  * `responseId` on the assistant message, in memory and in the session file,
- * and hands it back on the next turn. The gateway needs both: the token to
- * replay the turn, and the engine to shape the tool results that follow it.
+ * and hands it back on the next turn, where the token replays the turn. The
+ * engine is no longer needed, since the HTTP Gateway shapes tool results
+ * itself, but stays in the format so session files written before still read.
  */
 export function encodeResponseId(engine: string, token: string): string {
 	return `${engine}:${token}`;

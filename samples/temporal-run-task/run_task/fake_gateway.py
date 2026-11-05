@@ -2,7 +2,7 @@
 
     python -m run_task.fake_gateway [--host 127.0.0.1] [--port 8099]
 
-It answers the calls the sample makes to ai-api-unified-http 1.18.0, with
+It answers the calls the sample makes to ai-api-unified-http 1.19.0, with
 the same paths, status codes and JSON fields:
 
   GET    /healthz                    service_version "fake"
@@ -13,6 +13,9 @@ the same paths, status codes and JSON fields:
 
 The scripted run: the first turn asks pi to write hello.txt with
 EXPECTED_TEXT, and any turn after a tool result answers that it is done.
+Tool results count only in the HTTP Gateway's neutral shape
+({"type": "tool_result", "tool_call_id", "result", "is_error"}), and a
+malformed one gets 400, so the check fails if pi sends an engine's own shape.
 Each turn takes FAKE_TURN_SECONDS (default 2) and costs TURN_USD, so the
 cancel and restart demos have time to act and the spend-limit demo trips
 on turn 2. Grants live in memory. Run grants work as on the real gateway:
@@ -109,17 +112,26 @@ class Grants:
 GRANTS = Grants()
 
 
-def has_tool_result(messages: list[Any]) -> bool:
-    """True once pi has sent back a tool result, in any engine's message shape."""
-    for message in messages:
-        if not isinstance(message, dict):
+def tool_result_problem(messages: list[Any]) -> str | None:
+    """What is wrong with the first malformed neutral tool result, as the real gateway checks it."""
+    for index, message in enumerate(messages):
+        if not (isinstance(message, dict) and message.get("type") == "tool_result" and "role" not in message):
             continue
-        if message.get("role") == "tool" or message.get("type") == "function_call_output":
-            return True
-        content = message.get("content")
-        if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
-            return True
-    return False
+        unknown = set(message) - {"type", "tool_call_id", "result", "is_error"}
+        if unknown:
+            return f"messages[{index}] (a tool_result) has unknown fields {sorted(unknown)}"
+        if not isinstance(message.get("tool_call_id"), str) or not message["tool_call_id"]:
+            return f"messages[{index}] (a tool_result) needs tool_call_id"
+        if not isinstance(message.get("result"), dict):
+            return f"messages[{index}] (a tool_result) needs result as a JSON object"
+        if not isinstance(message.get("is_error", False), bool):
+            return f"messages[{index}] (a tool_result) needs is_error as true or false"
+    return None
+
+
+def has_tool_result(messages: list[Any]) -> bool:
+    """True once pi has sent back a tool result in the HTTP Gateway's neutral shape."""
+    return any(isinstance(m, dict) and m.get("type") == "tool_result" and "role" not in m for m in messages)
 
 
 def scripted_turn(grant: dict[str, Any], messages: list[Any]) -> dict[str, Any]:
@@ -223,8 +235,13 @@ class Handler(BaseHTTPRequestHandler):
                     f"${grant['spend_limit_usd']} limit, so no further turns are allowed on this grant.",
                 },
             )
+        messages = body.get("messages") or []
+        problem = tool_result_problem(messages)
+        if problem:
+            log(f"turn refused for {grant['run_id']}: {problem}")
+            return self._send(400, {"detail": problem})
         time.sleep(TURN_SECONDS)
-        result = scripted_turn(grant, body.get("messages") or [])
+        result = scripted_turn(grant, messages)
         GRANTS.charge(grant)
         result["run_grant"] = {**{k: grant[k] for k in ("run_id", "spent_usd", "spend_limit_usd", "expires_at")}}
         calls = ",".join(c["name"] for c in result["tool_calls"]) or "none"

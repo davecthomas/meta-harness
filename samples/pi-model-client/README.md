@@ -95,8 +95,8 @@ sequenceDiagram
 ## Run it
 
 You need nvm with Node 22.19 or later installed (pi 1.5.0 requires it), a
-checkout of `ai-api-unified-http` with provider keys in its `.env`, and this
-repo.
+checkout of `ai-api-unified-http` 1.19.0 or later with provider keys in its
+`.env`, and this repo.
 
 ```bash
 cd meta-harness/samples/pi-model-client
@@ -179,16 +179,14 @@ and 3.
 These came out of building and running the sample. Each one needs a change
 outside this sample.
 
-1. **The gateway takes tool results only in the answering engine's shape.**
-   A tool result for Claude is a `tool_result` block in a user message. For
-   OpenAI Chat Completions it is a `tool` role message, and for Gemini a
-   `function_response` part. The library builds these with
-   `build_tool_result_message`, but the gateway does not expose that, so
-   `gateway-messages.ts` copies the library's shapes for each engine. Those
-   copies must change by hand whenever the library changes a shape. The fix belongs in the gateway:
-   accept one engine-neutral tool result (call id, tool name, result, error
-   flag) and shape it with the answering client's
-   `build_tool_result_message`.
+1. **Resolved: the gateway took tool results only in the answering engine's
+   shape.** A tool result for Claude is a `tool_result` block in a user
+   message. For OpenAI Chat Completions it is a `tool` role message, and for
+   Gemini a `function_response` part. `gateway-messages.ts` used to copy the
+   library's shape for each engine. Since ai-api-unified-http 1.19.0 the
+   gateway takes one shape, `{type: "tool_result", tool_call_id, result,
+   is_error}`, and builds the answering engine's message with the library's
+   `build_tool_result_message`. `gateway-messages.ts` now sends that shape.
 2. **Gemini tool-use turns fail with a 500.** With `SAMPLE_ENGINE=google-gemini`
    and `gemini-2.5-flash`, the provider call succeeds and the provider bills it. Then
    the library's response cache fails to store the result:
