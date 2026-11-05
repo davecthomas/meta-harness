@@ -1,5 +1,8 @@
 """Runs the RunTask workflow and its activities on the run-task task queue.
 
+Checks every tier candidate in config/models.json against
+config/harness_profiles.json before it polls, and stops on the first bad one.
+
 Stops on SIGINT or SIGTERM. Shutdown cancels a running run_harness attempt,
 which leaves pi running in its per-run sandbox for the next attempt to find.
 
@@ -18,7 +21,8 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from run_task.activities import prepare, run_harness
+from run_task import routing
+from run_task.activities import cleanup_run, prepare, route, run_harness
 from run_task.shared import TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE
 from run_task.workflows import RunTask
 
@@ -39,7 +43,8 @@ def _configure_logging() -> None:
     """
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_TagFormatter("%(message)s"))
-    logging.basicConfig(level=logging.INFO, handlers=[handler])
+    # force: importing ai-api-unified has already given the root logger a handler.
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
     # httpx logs every request at INFO. The activity prints what each call did.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     workflow.logger.workflow_info_on_message = False
@@ -48,12 +53,18 @@ def _configure_logging() -> None:
 
 async def main() -> None:
     _configure_logging()
+    try:
+        for line in routing.validate():
+            print(f"[worker] {line}", flush=True)
+    except ValueError as err:
+        print(f"[worker] the routing configuration is not usable: {err}", flush=True)
+        sys.exit(1)
     client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[RunTask],
-        activities=[prepare, run_harness],
+        activities=[prepare, route, run_harness, cleanup_run],
         # A cancel reaches an activity only in the reply to a heartbeat. The SDK holds
         # heartbeats back to 0.8 x the heartbeat timeout by default (8 s here); this
         # sends them every second, so a cancel stops pi within about a second.

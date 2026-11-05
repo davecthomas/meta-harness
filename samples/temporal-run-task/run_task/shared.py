@@ -5,7 +5,8 @@ and back, using the type hints on the workflow and activity signatures.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 TASK_QUEUE = "run-task"
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
@@ -13,7 +14,7 @@ TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 DEFAULT_TEMPLATE = "hello-v1"
 # The template name a run reports when the caller gave the task text itself.
 INLINE_TEMPLATE = "inline"
-# Most a run may spend on model calls, in USD. The run grant enforces it.
+# Most a task may spend on model calls across all its runs, in USD. Each run's grant gets what is left.
 DEFAULT_SPEND_LIMIT_USD = "0.50"
 
 
@@ -30,32 +31,78 @@ def ref_for(workflow_id: str) -> str:
     return workflow_id.removeprefix(WORKFLOW_ID_PREFIX)
 
 
+def run_id_for(workflow_id: str, attempt: int) -> str:
+    """One run per tier candidate tried: the workflow id and the attempt number.
+
+    The workflow passes it to run_harness, so every Temporal retry of one
+    attempt uses the same run id and re-attaches to the same run.
+    """
+    return f"{workflow_id}:run-{attempt}"
+
+
 @dataclass
 class RunTaskInput:
     """What the starter asks for. Secrets stay out: workflow history is visible in the web UI."""
 
-    engine: str
-    model: str
     # The task text. When empty, prepare reads prompts/<template>.txt instead.
     task: str = ""
     template: str = DEFAULT_TEMPLATE
     spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
+    # A harness-profile-and-model pair, harness:<profile>/<engine>:<model>, run with no routing.
+    pin: str = ""
+    # Router tiers the task may not route below or above.
+    floor: str = ""
+    ceiling: str = ""
+
+
+@dataclass
+class Candidate:
+    """One harness-profile-and-model pair, with its harness profile read from harness_profiles.json."""
+
+    label: str
+    profile_name: str
+    engine: str
+    model: str
+    profile: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class PreparedRun:
-    """The prepare activity's output: the prompt pi will run."""
+    """The prepare activity's output: the prompt pi will run, and the pinned pair if any."""
 
     template: str
     prompt: str
+    pinned: Candidate | None = None
+
+
+@dataclass
+class RouteRequest:
+    prompt: str
+    floor: str = ""
+    ceiling: str = ""
+
+
+@dataclass
+class RouteResult:
+    """The route activity's output, from the ai-api-unified router."""
+
+    tier: str
+    method: str
+    confidence: float | None
+    candidates: list[Candidate]
+    # Every tier, lowest first, and what to do when a tier's candidates are used up.
+    tiers: list[str]
+    on_exhausted: str
+    classifier_usd: str
+    config_id: str | None
 
 
 @dataclass
 class HarnessRequest:
+    run_id: str
     prompt: str
-    # The run grant pins these. The harness server never sees them.
-    engine: str
-    model: str
+    # The run grant pins the candidate's engine and model. The harness server never sees them.
+    candidate: Candidate
     spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
 
 
@@ -78,10 +125,35 @@ class HarnessResult:
     # The run grant's limit, and what the HTTP Gateway counted against it when the grant was revoked.
     spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
     grant_spent_usd: str | None = None
+    error: str | None = None
+
+
+@dataclass
+class CleanupResult:
+    """What the cleanup activity found when it closed a run that run_harness could not finish."""
+
+    grant_spent_usd: str | None
+
+
+@dataclass
+class Attempt:
+    """One tier candidate the workflow tried, and how the Decide step read the outcome."""
+
+    attempt: int
+    tier: str | None
+    candidate: str
+    run_id: str
+    # finished, next_candidate (an infrastructure failure), or final (a limit, or a refused config)
+    decision: str
+    detail: str
+    spent_usd: str
 
 
 @dataclass
 class RunTaskResult:
     template: str
     prompt: str
+    route: RouteResult | None
+    attempts: list[Attempt]
     harness: HarnessResult
+    spent_usd: str

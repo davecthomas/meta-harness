@@ -5,6 +5,8 @@
 #   make cancel-demo             make run, then `temporal workflow cancel` once the worker log shows CANCEL_AT
 #   make restart-demo            make run, then SIGKILL the worker once the worker log shows RESTART_AT
 #   make spend-limit-demo        make run with a $0.001 spend limit, which the run passes on turn 1
+#   make fallback-demo           make run on tiers whose first candidates cannot start, so the run
+#                                loop tries the next candidate, then escalates to the next tier
 #   make egress-check            check the per-run sandbox network rules, with no model call
 #   make e2e                     the zero-cost end-to-end check: make run, the demos and egress-check
 #                                against a fake HTTP Gateway that makes no model calls (CI runs it)
@@ -24,8 +26,12 @@
 # own internal network, started and removed by the run activity. Its only way out is the
 # egress proxy, which allows EGRESS_ALLOW. Docker must be running.
 # The harness server's log and pi's workspace are in runs/<REF>/.
-# Another model: make run ENGINE=openai MODEL=gpt-4o-mini
-# Another spend limit, in USD: make run SPEND_LIMIT=0.05
+# The ai-api-unified router picks each task's tier from config/models.json, and the run loop
+# tries the tier's candidates (harness profile and model) in order. A classifier needs
+# OPENAI_API_KEY in this shell; without it every task takes the default tier.
+# Bound the tier: make run FLOOR=complex, or CEILING=standard
+# One pair, no routing: make run PIN=harness:pi-lean/openai:gpt-4o-mini
+# Another spend limit for the task's runs together, in USD: make run SPEND_LIMIT=0.05
 
 SHELL := /bin/bash
 
@@ -57,8 +63,12 @@ TEMPORAL_ADDRESS ?= localhost:$(TEMPORAL_PORT)
 TEMPORAL_UI_URL ?= http://localhost:$(shell echo $$(($(TEMPORAL_PORT) + 1000)))
 TEMPORAL_DB ?=
 WAIT_SECONDS ?= 60
-ENGINE ?= claude
-MODEL ?= claude-haiku-4-5
+ROUTER_CONFIG ?= $(CURDIR)/config/models.json
+# An entry under `environments` in ROUTER_CONFIG. Empty uses the file as it is, or zero-cost with GATEWAY=fake.
+MODELS_ENV ?=
+PIN ?=
+FLOOR ?=
+CEILING ?=
 SPEND_LIMIT ?= 0.50
 TASK ?=
 REF ?=
@@ -69,9 +79,9 @@ RESTART_AT ?= turn 2 starts
 
 export GATEWAY FAKE_GATEWAY_HOST FAKE_TURN_SECONDS HARNESS_DIR HARNESS_IMAGE EGRESS_IMAGE EGRESS_ALLOW RUNS_DIR GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
   SANDBOX_GATEWAY_URL REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB \
-  WAIT_SECONDS ENGINE MODEL SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT
+  WAIT_SECONDS ROUTER_CONFIG MODELS_ENV PIN FLOOR CEILING SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT
 
-.PHONY: run cancel-demo restart-demo spend-limit-demo egress-check e2e up down task tasks status watch cancel
+.PHONY: run cancel-demo restart-demo spend-limit-demo fallback-demo egress-check e2e up down task tasks status watch cancel
 
 run:
 	@./stack.sh run
@@ -85,6 +95,11 @@ restart-demo:
 # Turn 1 starts below the limit and passes it, so the gateway refuses turn 2.
 spend-limit-demo:
 	@DEMO=spend-limit SPEND_LIMIT=0.001 ./stack.sh run
+
+# The fallback-demo entry in config/models.json: standard's candidates name a harness profile
+# whose image does not exist, and complex has one that works.
+fallback-demo:
+	@DEMO=fallback MODELS_ENV=fallback-demo ./stack.sh run
 
 egress-check:
 	@./stack.sh egress-check

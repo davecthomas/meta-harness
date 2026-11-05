@@ -5,8 +5,9 @@ backend for local development (section 8.3). With no pool manager, the run
 activity starts the per-run sandbox itself in its Lease step, and removes it
 once the run has ended (section 6.3).
 
-A per-run sandbox is a container of the harness profile image, named after the
-run id. A retried activity finds the container its earlier attempt started and
+A per-run sandbox is a container of the run's harness profile image, named
+after the run id. Images are built locally and never pulled, so a harness
+profile naming a missing image fails at once. A retried activity finds the container its earlier attempt started and
 re-attaches to the run inside it. Each container gets its own harness server
 bearer token, the way a pool manager lease hands one out per lease. The token
 lives only in the container's environment, so it stays out of Temporal's
@@ -85,8 +86,9 @@ def workspace_for(ref: str) -> Path:
     return RUNS_DIR / ref / "workspace"
 
 
-def log_path_for(ref: str) -> Path:
-    return RUNS_DIR / ref / "harness-server.log"
+def log_path_for(ref: str, run_id: str) -> Path:
+    """One harness server log per run, named by the run's attempt number: runs/<ref>/harness-server-run-1.log."""
+    return RUNS_DIR / ref / f"harness-server-{run_id.rsplit(':', 1)[-1]}.log"
 
 
 async def control_proxy() -> str:
@@ -122,7 +124,7 @@ async def find(run_id: str) -> Sandbox | None:
     )
 
 
-async def ensure(run_id: str, ref: str) -> Sandbox:
+async def ensure(run_id: str, ref: str, image: str = IMAGE) -> Sandbox:
     """Returns the run's running per-run sandbox, starting one when there is none.
 
     Waits until the harness server's /health is green, which includes reaching
@@ -140,7 +142,7 @@ async def ensure(run_id: str, ref: str) -> Sandbox:
     token = secrets.token_urlsafe(32)
     egress = f"http://{EGRESS_PROXY}:{EGRESS_PORT}"
     args = [
-        "run", "--detach", "--name", name, "--hostname", name,
+        "run", "--detach", "--pull", "never", "--name", name, "--hostname", name,
         "--network", network,
         "--label", f"{SAMPLE_LABEL}=1",
         "--label", f"meta-harness.run_id={run_id}",
@@ -160,7 +162,7 @@ async def ensure(run_id: str, ref: str) -> Sandbox:
         "--env", "NO_PROXY=localhost,127.0.0.1", "--env", "no_proxy=localhost,127.0.0.1",
         "--env", "NODE_USE_ENV_PROXY=1",
         "--env", "NODE_OPTIONS=--disable-warning=UNDICI-EHPA",
-        IMAGE,
+        image,
     ]  # fmt: skip
     code, _, err = await _docker(*args, env={"HARNESS_SERVER_TOKEN": token})
     if code != 0:
@@ -175,20 +177,25 @@ async def ensure(run_id: str, ref: str) -> Sandbox:
     return sandbox
 
 
-async def destroy(run_id: str, ref: str) -> None:
-    """Saves the harness server's log to runs/<ref>/, removes the container, and removes its network."""
+async def destroy(run_id: str, ref: str) -> bool:
+    """Saves the harness server's log to runs/<ref>/, removes the container, and removes its network.
+
+    Returns False when there was no container to remove.
+    """
     name = container_name(run_id)
-    await save_log(name, ref)
+    existed = await save_log(name, ref, run_id)
     await _docker("rm", "--force", name)
     await _remove_network(network_name(run_id))
+    return existed
 
 
-async def save_log(name: str, ref: str) -> None:
+async def save_log(name: str, ref: str, run_id: str) -> bool:
     code, out, err = await _docker("logs", name)
     if code == 0:
-        path = log_path_for(ref)
+        path = log_path_for(ref, run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(out + err, encoding="utf-8")
+    return code == 0
 
 
 async def _ensure_network(network: str, run_id: str, ref: str) -> None:
