@@ -15,6 +15,7 @@ export type RunEventType =
 	| "file_changed"
 	| "compacted"
 	| "turn_finished"
+	| "review_submitted"
 	| "heartbeat"
 	| "run_finished";
 
