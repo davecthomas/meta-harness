@@ -17,13 +17,25 @@ teaches something.
 | A zero-cost end-to-end check: the RunTask workflow against a fake HTTP Gateway that makes no model calls, on every pull request | built | `samples/temporal-run-task/e2e.sh`, `make e2e`, `.github/workflows/e2e.yml` |
 | Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | built | ai-api-unified-http 1.19.0, `images/harness-pi/extension` |
 | The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity, escalation, pins and a task-wide spend limit (section 6.3) | built | ai-api-unified 3.30.0 (`AiRouteClassifier`), `samples/temporal-run-task`, `make fallback-demo` |
+| Repo work in a run: the per-run sandbox clones the task's repo at its default branch, pi's `bash` tool runs the acceptance checks under the harness profile's allowlist, and the run service run activity pushes a branch and opens the pull request with `Closes <ticket>` (sections 4, 7 and 14) | **next** | |
+| Meta-harness review loop and merge: a review task on another model, fix tasks, and the merge at the reviewed head SHA (section 7, Review loop) | planned | |
+| Execution groups: one group label's tickets across every registered repo, run as tasks in dependency order, each ticket closed by its merge (section 11, Execution groups). In `samples/temporal-run-task`, `make group LABEL=...` and a RunGroup workflow stand in for the task service and the meta-harness scheduler | planned | |
+| Planning task: the meta-harness writes the next execution group's tickets, each in the repo it changes (section 11, Execution groups) | planned | |
+| Self-hosting: the meta-harness runs an execution group of its own build steps across ai-api-unified, ai-api-unified-http and meta-harness | milestone | |
 | Pool manager, kept and restored pi sessions (section 8.4) | later | |
 | Meta-harness owned pi tools, pi compaction handler, `guardrail_blocked` harness server Run API events (section 4) | later | |
-| Meta-harness review loop and operator review (section 7) | sketch | |
+| Operator review (section 7) | sketch | |
 | Task service Task API, meta-harness data model, event service, operator console, metering service, meta-harness scheduler (sections 9 to 13) | sketch | |
 
 The zero-cost end-to-end check runs on every pull request, so each later build
 step is proven end to end before it spends money on model calls.
+
+The steps from **next** to the self-hosting milestone come first, so the
+meta-harness builds the rest of itself. Once a run can open a pull request,
+the review loop can merge it. Once pull requests merge without a person, an
+execution group's tickets can run in order across repos. A planning task then
+writes each next group. Self-hosting tiers need stronger models than the
+sample's Haiku 4.5 and gpt-4o-mini, so each group has its own spend cap.
 
 ## 1. Scope
 
@@ -45,6 +57,9 @@ HTTP Gateway replicas raises that limit with no change in design.
 - **Teams and their tools** submit tasks through the task service Task API: a person, a CI
   job, or an issue-tracker integration. Each Task API caller has a Task API caller key that sets the caller's
   concurrency quota, the caller's daily spend cap and the repos the caller may change.
+  A caller can also start an execution group: one label on tickets across
+  several repos, each ticket run as a task, in dependency order (section 11,
+  Execution groups).
 - **Operators** watch tasks, runs and model calls, with their cost, in the
   operator console, and can cancel a run or stop all runs with the operator console kill switch.
 - **Configuration owners** approve or reject the harness analyzer's proposals.
@@ -79,8 +94,8 @@ component owns its data (principle 8).
 | Component | What it does | Code |
 |---|---|---|
 | **Meta-harness control plane** | | `src/meta_harness/` in this repo |
-| Task service | Accepts, de-duplicates and tracks tasks. Serves the task service Task API and receives code-host webhooks. | `task_service/` |
-| Meta-harness scheduler | Decides which task runs next: priority, caller quotas, spend caps, repo-area locks. | `scheduler/` |
+| Task service | Accepts, de-duplicates and tracks tasks and execution groups. Serves the task service Task API, turns an execution group's tickets into tasks, and receives code-host and ticket-tracker webhooks. | `task_service/` |
+| Meta-harness scheduler | Decides which task runs next: priority, caller quotas, spend caps, repo-area locks, and the dependencies within an execution group. | `scheduler/` |
 | Meta-harness run service | Runs each task from admission to outcome as a durable Temporal workflow, the RunTask workflow. The meta-harness run service is the only caller of the `ai-api-unified` router. It watches the per-run sandbox and closes the task. It runs the meta-harness review loop on the task's pull request and merges the pull request when a review is clean. | `run_service/` |
 | Pool manager | Supplies per-run sandboxes: leases them by run id, keeps a warm pool of sandboxes, checks sandbox health, recycles sandboxes. | `pool/` |
 | Event service | Keeps the ordered record of every meta-harness domain event. Every other meta-harness component appends and reads meta-harness domain events through the event service. | `events/` |
@@ -126,9 +141,12 @@ model token the pi coding agent spends.
   model call a run makes, and no per-run sandbox holds one. The meta-harness run service holds
   a single provider API key that serves only the ai-api-unified router's classifier model (section 14).
 - **Producing tasks.** Task API callers decide what work to submit. The
-  meta-harness tickets only meta-harness review tasks and meta-harness fix tasks
-  for its own pull requests.
-- **Deploying.** The team's own deploy pipeline deploys a merged pull request.
+  meta-harness tickets meta-harness review tasks and meta-harness fix tasks
+  for its own pull requests, and a planning task writes an execution group's
+  tickets when a caller submits one (section 11, Execution groups).
+- **Deploying and releasing.** The team's own deploy pipeline deploys a merged
+  pull request. Publishing a package or tagging a release is an operator
+  action, which an execution group records as an operator ticket.
 
 ### Where it runs
 
@@ -1776,6 +1794,9 @@ every task-related meta-harness domain event:
 3. **Repo-area locks.** The meta-harness scheduler repo-area lock key is the
    repo plus the top-level directories the meta-harness task names. Unscoped
    meta-harness tasks lock the whole repo.
+4. **Dependencies.** A task in an execution group is admitted only when every
+   ticket it depends on is closed, and only while the group's `max_usd` has
+   money left (section 11, Execution groups).
 
 ### Throughput
 
@@ -1814,7 +1835,7 @@ Task fields:
 |---|---|---|
 | `external_ref` | yes | The Task API caller's own id; the task service deduplication key |
 | `repo` | yes | Code-host repository URL |
-| `task_type` | yes | `bug`, `feature`, `refactor`, `dependency`, `test`, `security`, `docs`. The meta-harness itself tickets `review` and `fix` tasks (section 7, Review loop); Task API callers cannot submit them |
+| `task_type` | yes | `bug`, `feature`, `refactor`, `dependency`, `test`, `security`, `docs`, or `plan` for a planning task (Execution groups below). The meta-harness itself tickets `review` and `fix` tasks (section 7, Review loop); Task API callers cannot submit them |
 | `parent_task_id` | no | Set only on meta-harness review and fix tasks: the task whose PR they review or fix |
 | `priority` | yes | Integer; higher-priority meta-harness tasks run first |
 | `title`, `description` | yes | The meta-harness task text; treated as untrusted |
@@ -1824,6 +1845,8 @@ Task fields:
 | `max_tier` | no | A routing tier name; becomes `route_ceiling` |
 | `max_usd` | no | A per-task spend cap; it caps each run's HTTP Gateway run grant spend limit (section 6.2) |
 | `pin` | no | A meta-harness candidate such as `harness:pi-careful/claude:claude-opus-5-5`; the meta-harness task runs on exactly that harness profile and model with no ai-api-unified router classification or meta-harness escalation |
+| `group_id` | no | The execution group the task belongs to. The task service sets it on the tasks it makes from a group's tickets |
+| `depends_on` | no | `external_ref`s of tasks this one waits for; the meta-harness scheduler admits it once they are all closed |
 
 Task API callers authenticate to the task service with a per-caller Task API
 caller key. The Task API caller key sets the caller concurrency quota and the
@@ -1834,6 +1857,118 @@ a unique index on `(caller, external_ref)`, and both the task service
 deduplication and the `external_ref` lookup use it. One meta-harness task per
 Task API request: to fix three bugs, a Task API caller submits three
 meta-harness tasks and gets three meta-harness task ids.
+
+### Execution groups
+
+An execution group is a set of related tasks tied together by one label on
+their tickets. Its tasks can span repos. Each task is one ticket in the repo it
+changes, and it opens one pull request in that repo, as any task does. The
+group decides which tickets belong, the order they run in, and one spend cap
+for them all.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/v1/groups` | Start an execution group on a label, with `max_usd` and optionally `repos` to narrow the search. Idempotent on the label while the group is open |
+| GET | `/v1/groups/{id}` | The group's tickets, the task for each, their states and dependencies, and the group's spend |
+| POST | `/v1/groups/{id}/cancel` | Cancel the group's running tasks and close the group |
+
+**Which tickets.** A caller starts a group with a label, such as
+`POST /v1/groups {"label": "phase-3", "max_usd": 40}`. The task service
+searches every repo in the repo registry, `config/repos.json`, for open
+tickets with that label, and makes one task from each. Searching every
+registered repo is the default because a group's work usually lands in
+several: a library change, the service that pins the library, and the
+meta-harness code that calls the service. The registry lists the repos the
+meta-harness may change, with each repo's ticket tracker, default branch,
+default acceptance checks and merge policy:
+
+```json
+{
+  "repos": {
+    "davecthomas/ai-api-unified": {"tracker": "github", "default_branch": "main",
+      "acceptance_checks": ["poetry run pytest -q -m 'not nonmock'"], "merge": true},
+    "davecthomas/ai-api-unified-http": {"tracker": "github", "default_branch": "main",
+      "acceptance_checks": ["make test"], "merge": true},
+    "davecthomas/meta-harness": {"tracker": "github", "default_branch": "main",
+      "acceptance_checks": ["make -C samples/temporal-run-task e2e"], "merge": true}
+  }
+}
+```
+
+A GitHub repo's tickets are its issues with the label. For a repo whose
+tracker is Jira, the registry names the Jira project, and the task service
+queries `labels = "<label>"` in it. Each Jira issue names its repo with a
+`repo:<owner>/<name>` label. The task service refuses a ticket whose repo is
+not registered and says why in a comment on the ticket.
+
+**From ticket to task.**
+
+| Task field | From the ticket |
+|---|---|
+| `external_ref` | `github:<owner>/<repo>#<number>`, or `jira:<issue key>` |
+| `repo` | The issue's repo on GitHub, or the Jira issue's `repo:` label |
+| `title`, `description` | The ticket's title and body, treated as untrusted |
+| `acceptance_checks` | The body's `## Acceptance checks` list, else the registry's checks for the repo |
+| `task_type`, `complexity`, `max_tier` | The labels `type:<task type>`, `complexity:<low, medium or high>` and `max-tier:<tier>`. `task_type` defaults to `feature` |
+| `depends_on` | `Depends on: <ticket>` lines in the body, plus the tracker's own blocked-by links |
+| `group_id` | The group |
+
+**Order.** A group's task waits in `blocked` until every ticket it depends on
+is closed. Tasks with no open dependency run in parallel, under the usual
+repo-area locks (section 10), so two tasks in one repo still take turns. The
+task service refuses a dependency cycle when the group starts, and the group
+reports the tickets in it. A task that waited on another repo's change uses
+that repo's merged commit, as `samples/temporal-run-task` installs
+ai-api-unified at a commit before its release.
+
+**Operator tickets.** Publishing a release and deploying stay with operators
+(section 1, Non-responsibilities). A ticket labeled `meta-harness:operator`
+belongs to the group, and the meta-harness never runs it. An operator closes it
+after doing the work, which unblocks the tickets that depend on it. A group
+can therefore hold "publish ai-api-unified 3.31.0" between the library change
+and the ai-api-unified-http change that pins the new version:
+
+```mermaid
+flowchart LR
+    A["ai-api-unified#120<br/>library change"] --> R["ai-api-unified#121<br/>publish 3.31.0<br/>meta-harness:operator"]
+    R --> H["ai-api-unified-http#50<br/>pin 3.31.0"]
+    H --> M["meta-harness#30<br/>call the new endpoint"]
+    D["meta-harness#31<br/>docs for the new option"]
+```
+
+In this example the meta-harness runs ai-api-unified#120 and meta-harness#31
+at once, because they depend on nothing open. ai-api-unified-http#50 waits
+for an operator to close the release ticket, and meta-harness#30 waits for
+ai-api-unified-http#50 to merge.
+
+**Closing.** Each task's pull request says `Closes <ticket>`, so the merge
+closes a GitHub issue. For a Jira ticket, the task service moves the issue to
+done when the pull request merges. A task that ends without a merge
+(`exhausted` or `review_unresolved`) leaves its ticket open, with a comment
+holding the outcome and the label `meta-harness:failed`. The tickets that
+depend on it stay blocked.
+
+**Joining later.** While the group is open, the task service watches the
+trackers for the label, through code-host issue webhooks and Jira webhooks. A
+ticket labeled after the group started joins it, such as one a planning task
+wrote.
+
+**Group outcome.** The group is `done` when every ticket is closed. It is
+`stalled` when every open ticket is blocked by a failed ticket or waits on an
+operator ticket, and a meta-harness alert rule fires. Its `max_usd` covers all
+its tasks, their review and fix tasks included. Once it is spent, the
+meta-harness scheduler admits no more of the group's tasks, and the group ends
+`budget_exhausted`.
+
+**Planning task.** A planning task writes a group's tickets. A caller submits
+`task_type: plan` with a goal, such as "the next build steps in
+docs/technical-design.md", and the label for the group. The planning run
+reads the registered repos and opens tickets with its `create_ticket` pi
+extension tool. It puts each ticket in the repo that ticket changes, labeled
+with the group label, with acceptance checks and `Depends on:` lines. Its
+code-host access token can create issues in the registered repos and cannot
+push. Starting the group on that label is a separate `POST /v1/groups`, so
+whoever starts it decides when the backlog runs.
 
 The task service exposes the Task API over HTTP. The task service serves Task
 API task routes from its own task table and answers Task API run, profile and
@@ -1848,7 +1983,8 @@ its own Postgres role. No other Postgres role has a Postgres grant on it.
 
 | Owner | Entity | Fields |
 |---|---|---|
-| Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `ready` and `review_unresolved`) |
+| Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, group_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `ready` and `review_unresolved`) |
+| Task service | execution_group | id, caller, label, repos, max_usd, status (open, done, stalled, budget_exhausted, canceled), created_at, closed_at |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's ordered tier candidates), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, est_usd_max (from `preview_route()`'s `usd_max`), created_at |
 | Meta-harness run service | operator_review | review_task_id, operator, claimed_at, verdict, findings, submitted_at, released_at |
@@ -1860,7 +1996,7 @@ its own Postgres role. No other Postgres role has a Postgres grant on it.
 | Metering service | model_call | run_id, seq, turn, purpose (turn, compaction, auxiliary), tier, method, engine, model, thinking, input_tokens, cached_input_tokens, cache_write_5m_tokens, cache_write_1h_tokens, output_tokens, usd, latency_ms |
 | Metering service | attempt_usage | run_id, usd_total, calls, input_tokens, cached_input_tokens, cache_write_5m_tokens, cache_write_1h_tokens, output_tokens, cache_hit_rate, active_hours |
 | Metering service | check_result | task_id, check_name, kind (ci, acceptance, merge), passed, observed_at |
-| Metering service | task_outcome | task_id, ci_share, merged, review_rounds, review_loop_usd, total_usd, wasted_usd, active_hours, dollar_hours, closed_at |
+| Metering service | task_outcome | task_id, group_id, ci_share, merged, review_rounds, review_loop_usd, total_usd, wasted_usd, active_hours, dollar_hours, closed_at |
 | Metering service | spend | caller, period, cap_usd, spent_usd |
 | Harness analyzer | proposal | id, kind (tier, profile, task_policy), evidence, proposed_change, status (open, approved, rejected), decided_by, decided_at, config_pr_url |
 
@@ -1913,7 +2049,7 @@ client library.
 
 | Producer | Events |
 |---|---|
-| Task service (Task API) | `task_created`, meta-harness task status changes, received code-host PR webhooks |
+| Task service (Task API) | `task_created`, meta-harness task status changes, received code-host PR webhooks, and for execution groups `group_started`, `ticket_joined`, `task_blocked`, `task_unblocked` and `group_closed` |
 | Meta-harness scheduler | Admission decisions, with the reason the meta-harness scheduler holds a meta-harness task |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the run service `route` activity result. One `attempt_finished` per run from the run service run activity Collect result (sections 6.1 and 6.3), joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `compacted`, `turn_finished`, `run_finished`. The run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
@@ -2048,8 +2184,10 @@ profile and model whose cache hit rate falls below its configured floor.
 
 ## 14. Security
 
-- **Identity.** A code-host app installed per repo, with repo-scoped code-host
-  access tokens minted per meta-harness run and expiring within an hour. A
+- **Identity.** A code-host app installed on each repo in the repo registry,
+  with repo-scoped code-host access tokens minted per meta-harness run and
+  expiring within an hour. A planning run's token can create issues and cannot
+  push. A
   meta-harness review run's code-host access token can read the repo and post
   a PR review but not push. Only the meta-harness run service merges, with
   its own code-host app token, never from a per-run sandbox.
@@ -2250,6 +2388,7 @@ meta-harness/
     harness_profiles.json      # image, prompts, tools, loop policy, limits per profile
     task_policy.json           # floors by task type, exploration, hard ceilings
     callers.json               # keys, quotas, caps, repo allowlists
+    repos.json                 # the repo registry: tracker, default branch, acceptance checks, merge policy
     prompts/                   # versioned prompt sets
   images/
     harness-pi/                # Node, pi, the model client extension, the harness server
