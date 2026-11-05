@@ -53,6 +53,12 @@ class RunTaskInput:
     # Router tiers the task may not route below or above.
     floor: str = ""
     ceiling: str = ""
+    # The repo pi works in: owner/name on GitHub, or the path of a local bare git repo. Empty: an empty workspace.
+    repo: str = ""
+    # A GitHub issue, owner/name#number: the task text and checks come from it, and the pull request closes it.
+    ticket: str = ""
+    # Acceptance checks, when the ticket names none or there is no ticket.
+    checks: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -73,6 +79,10 @@ class PreparedRun:
     template: str
     prompt: str
     pinned: Candidate | None = None
+    # Set for a repo task: where pi works, the ticket it closes, and the pull request's title.
+    repo: str = ""
+    ticket: str = ""
+    title: str = ""
 
 
 @dataclass
@@ -104,6 +114,31 @@ class HarnessRequest:
     # The run grant pins the candidate's engine and model. The harness server never sees them.
     candidate: Candidate
     spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
+    # The repo the Lease step clones into the run's workspace before pi starts. Empty: an empty workspace.
+    repo: str = ""
+
+
+@dataclass
+class PublishRequest:
+    run_id: str
+    repo: str
+    ticket: str
+    title: str
+    candidate: str
+    summary: str | None
+    spent_usd: str
+
+
+@dataclass
+class PublishResult:
+    """The branch and pull request the publish activity made. pr_url is empty when pi changed nothing."""
+
+    branch: str
+    base: str
+    commit: str
+    files: list[str]
+    pr_url: str
+    created: bool
 
 
 @dataclass
@@ -157,3 +192,4 @@ class RunTaskResult:
     attempts: list[Attempt]
     harness: HarnessResult
     spent_usd: str
+    published: PublishResult | None = None

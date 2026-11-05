@@ -22,7 +22,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from run_task import routing
-from run_task.activities import cleanup_run, prepare, route, run_harness
+from run_task.activities import cleanup_run, prepare, publish, route, run_harness
 from run_task.shared import TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE
 from run_task.workflows import RunTask
 
@@ -64,7 +64,7 @@ async def main() -> None:
         client,
         task_queue=TASK_QUEUE,
         workflows=[RunTask],
-        activities=[prepare, route, run_harness, cleanup_run],
+        activities=[prepare, route, run_harness, cleanup_run, publish],
         # A cancel reaches an activity only in the reply to a heartbeat. The SDK holds
         # heartbeats back to 0.8 x the heartbeat timeout by default (8 s here); this
         # sends them every second, so a cancel stops pi within about a second.

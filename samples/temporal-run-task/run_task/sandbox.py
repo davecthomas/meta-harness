@@ -82,13 +82,19 @@ def network_name(run_id: str) -> str:
     return f"mh-run-{_suffix(run_id)}"
 
 
-def workspace_for(ref: str) -> Path:
-    return RUNS_DIR / ref / "workspace"
+def task_dir_for(ref: str) -> Path:
+    """runs/<ref>: everything a task leaves behind."""
+    return RUNS_DIR / ref
+
+
+def workspace_for(ref: str, run_id: str) -> Path:
+    """Each run gets its own workspace, so a candidate never starts from another candidate's edits."""
+    return RUNS_DIR / ref / run_id.rsplit(":", 1)[-1] / "workspace"
 
 
 def log_path_for(ref: str, run_id: str) -> Path:
-    """One harness server log per run, named by the run's attempt number: runs/<ref>/harness-server-run-1.log."""
-    return RUNS_DIR / ref / f"harness-server-{run_id.rsplit(':', 1)[-1]}.log"
+    """One harness server log per run, beside its workspace: runs/<ref>/run-1/harness-server.log."""
+    return RUNS_DIR / ref / run_id.rsplit(":", 1)[-1] / "harness-server.log"
 
 
 async def control_proxy() -> str:
@@ -137,7 +143,7 @@ async def ensure(run_id: str, ref: str, image: str = IMAGE) -> Sandbox:
     name = container_name(run_id)
     network = network_name(run_id)
     await _ensure_network(network, run_id, ref)
-    workspace = workspace_for(ref)
+    workspace = workspace_for(ref, run_id)
     workspace.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(32)
     egress = f"http://{EGRESS_PROXY}:{EGRESS_PORT}"
