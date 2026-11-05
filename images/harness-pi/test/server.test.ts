@@ -424,6 +424,41 @@ test("a grant at its spend limit ends the run with ERROR spend_limit", async () 
 	await gateway.close();
 });
 
+test("submit_review records the verdict and ends the review run", async () => {
+	const review = {
+		verdict: "changes",
+		summary: "The greeting file is missing its trailing newline.",
+		findings: [{ path: "hello.txt", line: 1, body: "End the file with a newline." }],
+	};
+	const empty = { verdict: "changes", summary: "Needs work.", findings: [] };
+	const gateway = await startGateway((n) => ({
+		body: turn({
+			finish_reason: "tool_use",
+			// The first call breaks the rule that changes needs a finding, so the tool refuses it and pi tries again.
+			tool_calls: [{ id: `toolu_review_${n}`, name: "submit_review", input: n === 1 ? empty : review }],
+			token: `tok-review-${n}`,
+		}),
+	}));
+	const server = await startServer(gateway.url);
+	const profile = { name: "pi-review", tools: ["read", "ls", "submit_review"], max_turns: 10, max_minutes: 5 };
+	await api(server, "POST", "/run", runBody({ profile }));
+	const events = await eventsUntilFinished(server, "task-1:0");
+	const finished = events.at(-1)!;
+	assert.equal(finished.data.status, "FINISHED");
+	assert.deepEqual(finished.data.review, review);
+	const submitted = events.filter((e) => e.type === "review_submitted");
+	assert.equal(submitted.length, 1);
+	assert.equal(submitted[0]!.data.verdict, "changes");
+	const refused = events.find((e) => e.type === "tool_result" && e.data.tool === "submit_review");
+	assert.equal(refused?.data.is_error, true);
+	// The accepted call ends the run: pi asks the gateway for no turn after it.
+	assert.equal(gateway.requests.length, 2);
+	const status = await api(server, "GET", "/status");
+	assert.deepEqual(status.json.review, review);
+	await server.stop();
+	await gateway.close();
+});
+
 test("rejects bad run requests", async () => {
 	const gateway = await startGateway(() => ({ body: DONE_TURN }));
 	const server = await startServer(gateway.url);

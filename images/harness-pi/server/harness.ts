@@ -30,12 +30,13 @@ import {
 	type RunContext,
 	SPEND_LIMIT_ERROR,
 } from "../extension/model-client.ts";
+import { OWNED_TOOLS, type Review, submitReviewTool } from "../extension/owned-tools.ts";
 import { EventLog, type RunEventType } from "./event-log.ts";
 
 /** The Run API's status values, the contract with the harness engine. */
 export type RunStatus = "CREATING" | "RUNNING" | "FINISHED" | "ERROR" | "CANCELED" | "EXPIRED";
 
-/** pi's built-in tools a profile may name. Owned tools (run_tests, open_pr, ask_for_followup) come later. */
+/** pi's built-in tools a profile may name. The meta-harness's own tools are in OWNED_TOOLS. */
 export const BUILT_IN_TOOLS = ["read", "write", "edit", "ls", "find", "grep", "bash"] as const;
 
 export interface Profile {
@@ -85,6 +86,8 @@ export interface RunState {
 	end_reason: string | null;
 	error: string | null;
 	turns: number;
+	/** A review run's verdict and findings, from submit_review. Null until it is called. */
+	review: Review | null;
 	started_at: string;
 	ended_at: string | null;
 	last_heartbeat_at: string | null;
@@ -240,7 +243,8 @@ export class Harness {
 			throw new HttpError(409, `This sandbox already holds session ${this.current?.harness_session_id}. Use POST /followup.`);
 		}
 		for (const tool of request.profile.tools) {
-			if (!(BUILT_IN_TOOLS as readonly string[]).includes(tool)) throw new HttpError(400, `Unknown tool "${tool}".`);
+			const known = [...BUILT_IN_TOOLS, ...OWNED_TOOLS] as readonly string[];
+			if (!known.includes(tool)) throw new HttpError(400, `Unknown tool "${tool}".`);
 			if (tool === "bash" && !this.config.allowBash) {
 				throw new HttpError(400, "The bash tool is off. Set HARNESS_ALLOW_BASH=1 only inside a sandbox.");
 			}
@@ -307,6 +311,7 @@ export class Harness {
 			end_reason: null,
 			error: null,
 			turns: 0,
+			review: null,
 			started_at: new Date().toISOString(),
 			ended_at: null,
 			last_heartbeat_at: null,
@@ -355,6 +360,7 @@ export class Harness {
 			// The session file goes outside the workspace, so it never lands in the repo or the PR.
 			sessionManager: SessionManager.create(this.config.workspaceDir, this.config.sessionDir, { id: sessionId }),
 			tools: profile.tools,
+			customTools: profile.tools.includes("submit_review") ? [submitReviewTool((review) => this.onReview(review))] : [],
 		});
 		session.subscribe((event) => this.onPiEvent(event));
 		this.config.log(`session ${session.sessionId} created, tools ${session.getActiveToolNames().join(", ")}`);
@@ -414,6 +420,7 @@ export class Harness {
 			turns: run.turns,
 			elapsed_ms: elapsedMs,
 			usage: run.usage,
+			review: run.review,
 		});
 		this.config.log(`run ${run.run_id} ${status} (${endReason})${error ? `: ${error}` : ""}`);
 	}
@@ -424,6 +431,15 @@ export class Harness {
 		this.stopReason = reason;
 		this.config.log(`run ${run.run_id}: stopping pi (${reason})`);
 		await this.session?.abort();
+	}
+
+	/** submit_review's verdict, for the run in progress. */
+	private onReview(review: Review): void {
+		const run = this.current;
+		if (!run) return;
+		run.review = review;
+		this.emit("review_submitted", run, { ...review });
+		this.config.log(`run ${run.run_id}: review submitted, verdict ${review.verdict}, ${review.findings.length} findings`);
 	}
 
 	private emit(type: RunEventType, run: RunState, data: Record<string, unknown>): void {
