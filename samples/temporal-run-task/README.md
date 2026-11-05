@@ -9,6 +9,8 @@ cd meta-harness/samples/temporal-run-task
 make run                                                   # the built-in task: create hello.txt and read it back
 make run TASK="Write a haiku about autumn to haiku.txt."   # your own task
 make fallback-demo                                         # the run loop: two candidates fail, the next tier finishes
+make repo-demo                                             # a repo task: fresh clone, pi's change, a branch and a pull request
+make run TICKET=owner/name#12                              # work a GitHub issue: its repo, text and checks, and a PR that closes it
 make e2e                                                   # the zero-cost end-to-end check: no model calls
 ```
 
@@ -34,7 +36,7 @@ revokes the grant when the run ends.
 It runs a coding task as a Temporal workflow, with pi running on the
 [harness server](../../images/harness-pi/) inside a per-run sandbox. A Python
 worker stands in for the design's run service (section 7 of the technical
-design). The workflow `RunTask` has four activities:
+design). The workflow `RunTask` has five activities:
 
 - `prepare` uses the task text you gave, or reads a versioned prompt template,
   and returns the prompt. It also checks a pinned pair (`PIN`).
@@ -57,6 +59,31 @@ design). The workflow `RunTask` has four activities:
   returns a result for every run that ended, finished or not.
 - `cleanup_run` revokes the run grant and removes the per-run sandbox of a
   run that `run_harness` gave up on, and reports what the grant counted.
+- `publish` is the design's Publish step, for a repo task. It commits pi's
+  changes to the branch `mh/<REF>`, pushes it and opens the pull request,
+  labeled `ai:meta-harness`, with `Closes <ticket>` and pi's final summary.
+
+**Repo tasks.** With `REPO` (`owner/name` on GitHub, or the path of a local
+bare git repo) or `TICKET` (a GitHub issue, `owner/name#number`), the task
+runs in a repo:
+
+1. `prepare` reads the ticket, read-only, through `gh`: its title and body
+   become the task, and a `## Acceptance checks` list in the body becomes
+   the checks (or `CHECKS`). It fills `prompts/repo-task-v1.txt`, which puts
+   the task text between markers as data, tells pi to run each check with
+   `bash`, and tells it not to commit or push.
+2. `run_harness`'s Lease step clones the repo's default branch into the run's
+   own workspace, `runs/<REF>/run-<n>/workspace`, on this machine, with your
+   `gh` login. Each candidate starts from a fresh clone.
+3. pi works in the clone inside the per-run sandbox and runs the checks.
+4. `publish` commits, pushes and opens the pull request from this machine.
+   For a local bare repo it pushes the branch there and writes the pull
+   request to `runs/<REF>/pull-request.md`.
+
+The per-run sandbox never holds a code-host credential (design principle 9).
+The clone's remote is an SSH URL, and the container has no SSH key, no `gh`
+login and no route to port 22, so nothing pi runs can push. A finished run
+that changed nothing fails the task.
 
 The workflow's run loop (design section 6.3) runs one `run_harness` per
 candidate, in order, and its Decide step reads how each run ended:
@@ -185,6 +212,8 @@ history.
 |---|---|
 | `run_task/workflows.py` | `RunTask`: the run loop and its Decide step, timeouts, retry policy and cancellation type for each activity, and the `current_run_id` query |
 | `run_task/activities.py` | `prepare`, `route`, `run_harness` (lease the per-run sandbox, start or re-attach, heartbeats, cancel, release) and `cleanup_run` |
+| `run_task/code_host.py` | Reads a ticket, clones the repo into a run's workspace, and publishes: commit, push, pull request, through `git` and `gh` on this machine, or a local bare repo |
+| `prompts/repo-task-v1.txt` | The repo-task prompt template |
 | `run_task/routing.py` | Reads harness profiles, splits a `harness:` candidate, checks every tier candidate when the worker starts, and holds the worker's `AiRouteClassifier` |
 | `config/models.json` | The router's tiers, classifier and default tier, and the `zero-cost` and `fallback-demo` environments |
 | `config/harness_profiles.json` | Harness profiles: image, tools, turn and minute limits |
@@ -210,10 +239,10 @@ history.
 | Workflow id | `run-task-<REF>`, ID reuse policy Reject Duplicate | One `REF` names one task, as `external_ref` does in the design |
 | Run id | `<workflow id>:run-<n>`, n counting the candidates tried | The same on every attempt of one candidate, so a retry re-attaches |
 | Harness session id | The run id, with `.` for `:` | Each candidate starts a new pi session. It is also the gateway's prompt cache key. |
-| Per-run sandbox | Container `mh-sandbox-<run id>-<hash>` from `harness-pi:dev`: 2 CPUs, 4 GB, 512 processes, all capabilities dropped, no new privileges, run as your user id. `runs/<REF>/workspace` is mounted at `/workspace`. | pi's tools reach your machine only through the workspace. The container holds no provider key. |
+| Per-run sandbox | Container `mh-sandbox-<run id>-<hash>` from `harness-pi:dev`: 2 CPUs, 4 GB, 512 processes, all capabilities dropped, no new privileges, run as your user id. The run's workspace, `runs/<REF>/run-<n>/workspace`, is mounted at `/workspace`. | pi's tools reach your machine only through the workspace. The container holds no provider key. |
 | Per-run sandbox network | Its own internal Docker network, `mh-run-<run id>-<hash>`, with no route out and no other run on it. The egress proxy is attached to it. | The container's only way out is the egress proxy. One run cannot reach another. |
 | Egress allowlist | `EGRESS_ALLOW`: the HTTP Gateway, GitHub, npm and PyPI | The design's per-run sandbox egress allowlist (sections 14 and 15) |
-| Harness profile | From `config/harness_profiles.json`: `pi-lean` has tools `read`, `write`, `edit`, `ls`, 20 turns, 10 minutes; `pi-careful` 40 turns. An image of `null` means `HARNESS_IMAGE`. | The harness server enforces both limits |
+| Harness profile | From `config/harness_profiles.json`: `pi-lean` has tools `read`, `write`, `edit`, `ls`, `find`, `grep`, `bash`, 20 turns, 10 minutes; `pi-careful` 40 turns. An image of `null` means `HARNESS_IMAGE`. | The harness server enforces both limits |
 | Run grant | the candidate's engine and model, what is left of `SPEND_LIMIT`, expiry the harness profile's minutes plus 5 | The HTTP Gateway enforces the model and the spend limit. The grace keeps the grant alive under a run still ending. |
 | `run_harness` start-to-close timeout | 10 minutes | The whole run |
 | `run_harness` heartbeat timeout | 10 seconds | A worker that stops heartbeating for this long is treated as gone, and the attempt is retried |
@@ -236,7 +265,7 @@ You need:
 No Temporal account or API key is needed. The dev server runs locally.
 
 **pi's tools act inside the per-run sandbox.** They reach your machine only
-through `runs/<REF>/workspace`, and the network only through the egress
+through the run's workspace, `runs/<REF>/run-<n>/workspace`, and the network only through the egress
 proxy, which allows the HTTP Gateway, GitHub, npm and PyPI. See
 [Egress allowlist](#egress-allowlist).
 
@@ -265,7 +294,7 @@ make run SPEND_LIMIT=0.05
 5. Starts the egress proxy unless it is already running.
 6. Starts the worker, shows its log, and runs the starter. The worker's
    `run_harness` starts the run's per-run sandbox on its own network, with
-   pi's workspace at `runs/<REF>/workspace`, and removes both when the run
+   pi's workspace at `runs/<REF>/run-<n>/workspace`, and removes both when the run
    ends.
 7. Stops everything it started, on exit or Ctrl-C, and removes any per-run
    sandbox container or network the task left. On Ctrl-C the starter cancels the
@@ -276,7 +305,7 @@ workers would split the work.
 
 Logs go to `temporal.log`, `redis.log`, `gateway.log` and `worker.log` in this directory,
 the egress proxy's to `egress-proxy.log` when it stops, and the harness
-server's to `runs/<REF>/harness-server-run-<n>.log`, one per run, saved from
+server's to `runs/<REF>/run-<n>/harness-server.log`, one per run, saved from
 the container before it is removed. `runs/` keeps
 every task's workspace and log until you delete it. The dev server keeps
 workflow history in memory, so history is gone once `make run` stops it. To
@@ -293,10 +322,13 @@ while the server runs.
 | `MODELS_ENV` | empty: `ROUTER_CONFIG` as it is, or its `zero-cost` entry (no classifier call) with `GATEWAY=fake` |
 | `FLOOR`, `CEILING` | empty: the lowest and highest tier the router may pick |
 | `PIN` | empty. `harness:<profile>/<engine>:<model>` runs that pair, with no routing. |
+| `REPO` | empty: an empty workspace. `owner/name` on GitHub, or a local bare repo's path, makes it a repo task. |
+| `TICKET` | empty. `owner/name#number`: the GitHub issue's text and checks, its repo, and a pull request that closes it |
+| `CHECKS` | empty: one acceptance check command, when the ticket names none |
 | `SPEND_LIMIT` | `0.50`, in USD: the most the task's runs may spend on model calls, together |
 | `HARNESS_DIR` | `../../images/harness-pi`, built into the per-run sandbox image |
 | `HARNESS_IMAGE` | `harness-pi:dev` |
-| `RUNS_DIR` | `runs` in this directory: each task's workspace, shared by its runs, and one harness server log per run |
+| `RUNS_DIR` | `runs` in this directory: under `runs/<REF>/run-<n>/`, each run's workspace and harness server log |
 | `SANDBOX_GATEWAY_URL` | `http://host.docker.internal:8080`, the gateway as the egress proxy reaches it |
 | `EGRESS_ALLOW` | `host.docker.internal:8080,github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443`: the `host:port` patterns a per-run sandbox may reach, `*` as a wildcard |
 | `EGRESS_IMAGE` | `mh-egress-proxy:dev` |
@@ -808,6 +840,40 @@ confidence 1.00 for $0.0000213, and the first candidate finished it in 3
 turns for $0.007456. `make run PIN=harness:pi-lean/openai:gpt-4o-mini` skipped
 the router and finished for $0.00048705.
 
+## Repo task
+
+```bash
+make repo-demo
+```
+
+This makes a local bare repo with one commit, `runs/<REF>/origin.git`, and
+runs a repo task in it: "Create hello.txt containing one short friendly
+greeting.", with the acceptance check `test -s hello.txt`. The demo checks
+that the branch `mh/<REF>` in the bare repo holds `hello.txt` and that
+`runs/<REF>/pull-request.md` holds the pull request. `make e2e` runs the same
+demo against the fake gateway.
+
+Output from 2026-11-05 against ai-api-unified-http 1.19.0, lines shortened:
+
+```text
+[workflow] run-task-repo-live-143444: routed to tier standard (classifier, confidence 1.00), candidates harness:pi-lean/claude:claude-haiku-4-5, harness:pi-lean/openai:gpt-4o-mini
+[run-task-repo-live-143444:run-1 attempt 1] cloned .../runs/repo-live-143444/origin.git (main) into .../runs/repo-live-143444/run-1/workspace
+...
+[run-task-repo-live-143444:run-1 attempt 1] #11 runs tool bash {"command": "test -s hello.txt && echo \"✓ Acceptance check passed: hello.txt exists and is non-empty\""}
+[run-task-repo-live-143444:run-1 attempt 1] #12 tool bash done
+...
+[run-task-repo-live-143444:run-1 publish] hello.txt on branch mh/repo-live-143444 at 7a9797c10ee3, pull request opened: file://.../runs/repo-live-143444/pull-request.md
+[result] run 1: harness:pi-lean/claude:claude-haiku-4-5 (tier standard)  finished  spent $0.013788  ended FINISHED (completed)
+[result] branch mh/repo-live-143444 at 7a9797c10ee3 onto main: hello.txt
+[make] branch mh/repo-live-143444 in .../origin.git holds hello.txt, and runs/repo-live-143444/pull-request.md holds the pull request
+```
+
+On GitHub, `make run REPO=owner/name TASK="..."` or `make run TICKET=owner/name#12`
+does the same with `gh`. The pull request comes from `mh/<REF>`, labeled
+`ai:meta-harness`, and a ticket's pull request says `Closes owner/name#12`.
+The harness-pi image has Node and git, so checks that need Python need a
+harness profile image with it.
+
 ## Egress allowlist
 
 ```bash
@@ -895,6 +961,8 @@ from 2026-11-05, in under two minutes:
 [e2e] PASS restart: attempt 2 found the same per-run sandbox and re-attached
 [e2e] spend-limit ...
 [e2e] PASS spend-limit: the run stopped at its $0.001 spend limit
+[e2e] repo ...
+[e2e] PASS repo: the run's change is on branch mh/e2e-20261105143512-repo in the bare repo, with its pull request record
 [e2e] fallback ...
 [e2e] PASS fallback: both standard candidates failed to start, and the escalated complex candidate finished
 [e2e] egress ...

@@ -32,6 +32,10 @@
 # Bound the tier: make run FLOOR=complex, or CEILING=standard
 # One pair, no routing: make run PIN=harness:pi-lean/openai:gpt-4o-mini
 # Another spend limit for the task's runs together, in USD: make run SPEND_LIMIT=0.05
+# A repo task: pi works in a fresh clone, and a finished run becomes a pull request from mh/<REF>:
+#   make run REPO=owner/name TASK="..." CHECKS="make test"
+#   make run TICKET=owner/name#12           the issue's text and checks; the pull request closes it
+#   make repo-demo                          a repo task against a local bare repo: no code host, no PR opened
 
 SHELL := /bin/bash
 
@@ -69,6 +73,9 @@ MODELS_ENV ?=
 PIN ?=
 FLOOR ?=
 CEILING ?=
+REPO ?=
+TICKET ?=
+CHECKS ?=
 SPEND_LIMIT ?= 0.50
 TASK ?=
 REF ?=
@@ -79,9 +86,9 @@ RESTART_AT ?= turn 2 starts
 
 export GATEWAY FAKE_GATEWAY_HOST FAKE_TURN_SECONDS HARNESS_DIR HARNESS_IMAGE EGRESS_IMAGE EGRESS_ALLOW RUNS_DIR GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
   SANDBOX_GATEWAY_URL REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB \
-  WAIT_SECONDS ROUTER_CONFIG MODELS_ENV PIN FLOOR CEILING SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT
+  WAIT_SECONDS ROUTER_CONFIG MODELS_ENV PIN FLOOR CEILING REPO TICKET CHECKS SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT
 
-.PHONY: run cancel-demo restart-demo spend-limit-demo fallback-demo egress-check e2e up down task tasks status watch cancel
+.PHONY: run cancel-demo restart-demo spend-limit-demo fallback-demo repo-demo egress-check e2e up down task tasks status watch cancel
 
 run:
 	@./stack.sh run
@@ -100,6 +107,10 @@ spend-limit-demo:
 # whose image does not exist, and complex has one that works.
 fallback-demo:
 	@DEMO=fallback MODELS_ENV=fallback-demo ./stack.sh run
+
+# A local bare repo with one commit stands in for the code host.
+repo-demo:
+	@DEMO=repo ./stack.sh run
 
 egress-check:
 	@./stack.sh egress-check

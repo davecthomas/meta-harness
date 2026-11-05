@@ -115,7 +115,7 @@ async def _print_outcome(handle: WorkflowHandle[Any, RunTaskResult], ref: str) -
     )
     print(f"[status] run grant: the HTTP Gateway counted ${h.grant_spent_usd or '?'} of the ${h.spend_limit_usd} limit")
     print(f"[status] files changed: {', '.join(h.files_changed) or 'none'}")
-    print(f"[status] answer: {h.answer}")
+    print(f"[status] answer: {' '.join((h.answer or '').split()) or None}")
     return 0
 
 

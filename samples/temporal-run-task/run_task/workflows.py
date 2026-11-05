@@ -17,6 +17,11 @@ When a tier's candidates are used up and the router's on_exhausted is
 escalate, the workflow routes again one tier up, under the task's ceiling.
 A pinned task runs its one pair, with no routing and no escalation.
 
+A repo task's runs each start from a fresh clone of the repo. When a run
+finishes, the publish activity commits pi's changes to the branch mh/<REF>,
+pushes it and opens the pull request, and the task completes with its URL. A
+finished run that changed nothing fails the task.
+
 The task's spend limit covers all its runs: each run's grant gets what the
 earlier runs left. A run run_harness gave up on still counts, from what
 cleanup_run reads off its grant.
@@ -38,12 +43,15 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError, TimeoutError
 
 with workflow.unsafe.imports_passed_through():
-    from run_task.activities import cleanup_run, prepare, route, run_harness
+    from run_task.activities import cleanup_run, prepare, publish, route, run_harness
     from run_task.shared import (
         Attempt,
         Candidate,
         HarnessRequest,
         HarnessResult,
+        PreparedRun,
+        PublishRequest,
+        PublishResult,
         RouteRequest,
         RouteResult,
         RunTaskInput,
@@ -56,6 +64,8 @@ PREPARE_RETRY = RetryPolicy(maximum_attempts=3)
 ROUTE_TIMEOUT = timedelta(seconds=60)
 ROUTE_RETRY = RetryPolicy(maximum_attempts=3, non_retryable_error_types=["HarnessConfigError"])
 CLEANUP_TIMEOUT = timedelta(seconds=60)
+PUBLISH_TIMEOUT = timedelta(minutes=2)
+PUBLISH_RETRY = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=3)
 # The whole pi run, from start to the [run] line.
 HARNESS_TIMEOUT = timedelta(minutes=10)
 # A worker that stops heartbeating for this long is treated as gone, and the attempt is retried.
@@ -67,7 +77,7 @@ HARNESS_RETRY = RetryPolicy(
 )
 # run_finished end reasons the next candidate may get past: the infrastructure failed, not the task.
 NEXT_CANDIDATE_END_REASONS = frozenset({"model_error", "harness_error", "server_shutdown"})
-# run_harness failures the next candidate may get past.
+# run_harness failures the next candidate may get past. A failed clone (CodeHostError) is the repo's, not the candidate's.
 NEXT_CANDIDATE_ERROR_TYPES = frozenset({"SandboxUnavailable", "HarnessUnavailable", "GatewayUnavailable"})
 
 
@@ -124,7 +134,9 @@ class RunTask:
                 attempt = len(attempts) + 1
                 run_id = run_id_for(info.workflow_id, attempt)
                 self._current_run_id = run_id
-                harness, decision, detail, run_spent = await self._try(prepared.prompt, run_id, candidate, left)
+                harness, decision, detail, run_spent = await self._try(
+                    prepared.prompt, run_id, candidate, left, prepared.repo
+                )
                 spent += run_spent
                 attempts.append(
                     Attempt(
@@ -148,6 +160,9 @@ class RunTask:
                     limit,
                 )
                 if decision == "finished" and harness is not None:
+                    published = await self._publish(prepared, harness, candidate, spent) if prepared.repo else None
+                    if published is not None and not published.pr_url:
+                        raise _failed(f"run {attempt} finished, but pi changed nothing in {prepared.repo}", attempts)
                     log.info("%s: completed", info.workflow_id)
                     return RunTaskResult(
                         template=prepared.template,
@@ -156,6 +171,7 @@ class RunTask:
                         attempts=attempts,
                         harness=harness,
                         spent_usd=str(spent),
+                        published=published,
                     )
                 if decision == "final":
                     raise _failed(f"run {attempt} on {candidate.label} ended for good: {detail}", attempts)
@@ -186,14 +202,37 @@ class RunTask:
         )
         return result
 
+    async def _publish(
+        self, prepared: PreparedRun, harness: HarnessResult, candidate: Candidate, spent: Decimal
+    ) -> PublishResult:
+        info = workflow.info()
+        workflow.logger.info("%s: publishing run %s to %s", info.workflow_id, harness.run_id, prepared.repo)
+        published = await workflow.execute_activity(
+            publish,
+            PublishRequest(
+                run_id=harness.run_id,
+                repo=prepared.repo,
+                ticket=prepared.ticket,
+                title=prepared.title,
+                candidate=candidate.label,
+                summary=harness.answer,
+                spent_usd=str(spent),
+            ),
+            start_to_close_timeout=PUBLISH_TIMEOUT,
+            retry_policy=PUBLISH_RETRY,
+        )
+        if published.pr_url:
+            workflow.logger.info("%s: pull request %s", info.workflow_id, published.pr_url)
+        return published
+
     async def _try(
-        self, prompt: str, run_id: str, candidate: Candidate, left: Decimal
+        self, prompt: str, run_id: str, candidate: Candidate, left: Decimal, repo: str
     ) -> tuple[HarnessResult | None, str, str, Decimal]:
         """One run on one candidate. Returns the result, the decision, why, and what the run spent."""
         try:
             harness = await workflow.execute_activity(
                 run_harness,
-                HarnessRequest(run_id=run_id, prompt=prompt, candidate=candidate, spend_limit_usd=str(left)),
+                HarnessRequest(run_id=run_id, prompt=prompt, candidate=candidate, spend_limit_usd=str(left), repo=repo),
                 start_to_close_timeout=HARNESS_TIMEOUT,
                 heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
                 retry_policy=HARNESS_RETRY,

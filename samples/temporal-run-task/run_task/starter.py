@@ -1,7 +1,8 @@
 """Starts one RunTask workflow, waits for it, and prints the result.
 
     python -m run_task.starter [--ref REF] [--task TEXT] [--pin PAIR]
-                               [--floor TIER] [--ceiling TIER] [--spend-limit USD] [--follow]
+                               [--floor TIER] [--ceiling TIER] [--spend-limit USD]
+                               [--repo REPO] [--ticket OWNER/NAME#N] [--check CMD ...] [--follow]
 
 --ref is the caller's name for the task. The workflow id is run-task-<ref>,
 and Temporal refuses a second task with the same ref. The ai-api-unified
@@ -9,8 +10,14 @@ router picks the task's tier and candidates from config/models.json, and
 --floor and --ceiling bound the tier. --pin runs one harness-profile-and-model
 pair, harness:<profile>/<engine>:<model>, with no routing. --spend-limit
 covers all the task's runs. --follow prints each run's events from the
-harness server in its per-run sandbox while the task runs. pi's workspace is
-runs/<ref>/workspace, shared by the task's runs.
+harness server in its per-run sandbox while the task runs. Each run's
+workspace is runs/<ref>/run-<n>/workspace.
+
+--repo makes it a repo task: each run starts from a fresh clone of the repo
+(owner/name on GitHub, or a local bare repo's path), and a finished run's
+changes become a pull request from the branch mh/<ref>. --ticket takes the task
+text and acceptance checks from a GitHub issue, implies its repo, and the pull
+request closes it. --check adds an acceptance check.
 
 Exit codes: 0 completed, 1 failed, 3 canceled, 130 interrupted.
 Ctrl-C cancels the workflow before the starter exits.
@@ -58,6 +65,9 @@ async def main(args: argparse.Namespace) -> int:
         pin=args.pin,
         floor=args.floor,
         ceiling=args.ceiling,
+        repo=args.repo,
+        ticket=args.ticket,
+        checks=args.check,
     )
     try:
         handle = await client.start_workflow(
@@ -68,7 +78,7 @@ async def main(args: argparse.Namespace) -> int:
             execution_timeout=timedelta(minutes=30),
             # One ref names one task, as external_ref does in the design.
             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-            memo={"ref": args.ref, "workspace": str(sandbox.workspace_for(args.ref))},
+            memo={"ref": args.ref, "workspace": str(sandbox.task_dir_for(args.ref))},
         )
     except WorkflowAlreadyStartedError:
         print(f"[starter] a task with REF {args.ref} already exists on this Temporal server. Use another REF.")
@@ -78,7 +88,9 @@ async def main(args: argparse.Namespace) -> int:
         f"[starter] started workflow {workflow_id}  {routing}  spend limit=${request.spend_limit_usd}",
         flush=True,
     )
-    print(f"[starter] task: {request.task or f'prompts/{request.template}.txt'}", flush=True)
+    print(f"[starter] task: {request.ticket or request.task or f'prompts/{request.template}.txt'}", flush=True)
+    if request.repo or request.ticket:
+        print(f"[starter] repo task in {request.repo or 'the ticket repo'}", flush=True)
     print(f"[starter] web UI: {UI_URL}/namespaces/{TEMPORAL_NAMESPACE}/workflows/{workflow_id}", flush=True)
 
     follow: asyncio.Task | None = None
@@ -143,9 +155,13 @@ async def main(args: argparse.Namespace) -> int:
         flush=True,
     )
     print(f"[result] files changed: {', '.join(h.files_changed) or 'none'}", flush=True)
-    print(f"[result] workspace: {sandbox.workspace_for(args.ref)}", flush=True)
+    print(f"[result] workspace: {sandbox.workspace_for(args.ref, h.run_id)}", flush=True)
+    if result.published:
+        p = result.published
+        print(f"[result] branch {p.branch} at {p.commit[:12]} onto {p.base}: {', '.join(p.files)}", flush=True)
+        print(f"[result] pull request: {p.pr_url}", flush=True)
     print(f"[result] harness server log: {sandbox.log_path_for(args.ref, h.run_id)}", flush=True)
-    print(f"[result] answer: {h.answer}", flush=True)
+    print(f"[result] answer: {' '.join((h.answer or '').split()) or None}", flush=True)
     return 0
 
 
@@ -215,6 +231,9 @@ if __name__ == "__main__":
         default=DEFAULT_SPEND_LIMIT_USD,
         help=f"most the task may spend on model calls across its runs, in USD (default {DEFAULT_SPEND_LIMIT_USD})",
     )
+    parser.add_argument("--repo", default="", help="owner/name on GitHub, or a local bare git repo's path")
+    parser.add_argument("--ticket", default="", help="a GitHub issue, owner/name#number, to work and close")
+    parser.add_argument("--check", action="append", default=[], help="an acceptance check command (repeatable)")
     parser.add_argument("--follow", action="store_true", help="print the run's events while it runs")
     try:
         sys.exit(asyncio.run(main(parser.parse_args())))

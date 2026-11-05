@@ -9,6 +9,8 @@
 #   cancel        a workflow cancel stops pi and the workflow ends canceled
 #   restart       a worker killed mid-run: the next attempt re-attaches to the same per-run sandbox
 #   spend-limit   the fake refuses turn 2 with 402 and the run ends on its spend limit
+#   repo          a repo task against a local bare repo: a fresh clone, pi's change, the branch
+#                 mh/<REF> pushed back, and the pull request written to runs/<REF>/pull-request.md
 #   fallback      the run loop: tier standard's two candidates get no per-run sandbox, so the
 #                 workflow tries each, escalates to tier complex, and its candidate finishes the task
 #   egress        the per-run sandbox network rules (stack.sh egress-check)
@@ -48,7 +50,7 @@ expected=$(.venv/bin/python -c 'from run_task.fake_gateway import EXPECTED_TEXT;
 ref="e2e-$STAMP-run"
 if step run env REF="$ref" DEMO= ./stack.sh run \
   && grep -q 'status=FINISHED' "$LOGS/run.log" \
-  && [ "$(cat "$RUNS_DIR/$ref/workspace/hello.txt" 2>/dev/null)" = "$expected" ]; then
+  && [ "$(cat "$RUNS_DIR/$ref/run-1/workspace/hello.txt" 2>/dev/null)" = "$expected" ]; then
   pass "run: the task finished and hello.txt holds \"$expected\""
 else
   fail "run: expected status=FINISHED and hello.txt holding \"$expected\"" run
@@ -72,6 +74,15 @@ if step spend-limit env REF="e2e-$STAMP-spend" DEMO=spend-limit SPEND_LIMIT=0.00
   pass "spend-limit: the run stopped at its \$0.001 spend limit"
 else
   fail "spend-limit" spend-limit
+fi
+
+ref="e2e-$STAMP-repo"
+if step repo env REF="$ref" DEMO=repo ./stack.sh run \
+  && [ "$(git --git-dir "$RUNS_DIR/$ref/origin.git" show "mh/$ref:hello.txt" 2>/dev/null)" = "$expected" ] \
+  && grep -q "^head: mh/$ref at " "$RUNS_DIR/$ref/pull-request.md"; then
+  pass "repo: the run's change is on branch mh/$ref in the bare repo, with its pull request record"
+else
+  fail "repo: expected hello.txt on branch mh/$ref and runs/$ref/pull-request.md" repo
 fi
 
 if step fallback env REF="e2e-$STAMP-fallback" DEMO=fallback MODELS_ENV=fallback-demo ./stack.sh run \

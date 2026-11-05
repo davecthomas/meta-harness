@@ -1,21 +1,42 @@
 {
-  "version": "2026-11-05.1",
+  "version": "2026-11-05.2",
   "profiles": {
     "pi-lean": {
       "image": null,
-      "tools": ["read", "write", "edit", "ls"],
+      "tools": [
+        "read",
+        "write",
+        "edit",
+        "ls",
+        "find",
+        "grep",
+        "bash"
+      ],
       "max_turns": 20,
       "max_minutes": 10
     },
     "pi-careful": {
       "image": null,
-      "tools": ["read", "write", "edit", "ls"],
+      "tools": [
+        "read",
+        "write",
+        "edit",
+        "ls",
+        "find",
+        "grep",
+        "bash"
+      ],
       "max_turns": 40,
       "max_minutes": 10
     },
     "pi-missing-image": {
       "image": "harness-pi:no-such-image",
-      "tools": ["read", "write", "edit", "ls"],
+      "tools": [
+        "read",
+        "write",
+        "edit",
+        "ls"
+      ],
       "max_turns": 20,
       "max_minutes": 10
     }
