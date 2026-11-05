@@ -8,53 +8,82 @@ each piece lands.
 cd meta-harness/samples/temporal-run-task
 make run                                                   # the built-in task: create hello.txt and read it back
 make run TASK="Write a haiku about autumn to haiku.txt."   # your own task
+make fallback-demo                                         # the run loop: two candidates fail, the next tier finishes
 make e2e                                                   # the zero-cost end-to-end check: no model calls
 ```
 
 To leave the services running and send them tasks, see
 [Run your own tasks](#run-your-own-tasks).
 
-The path today: Temporal workflow, then a per-run sandbox (a Docker container
-of the harness-pi image, on its own network) with the harness server running
-pi, then the egress proxy, then the HTTP Gateway (ai-api-unified-http) on a
-run grant, then ai-api-unified, then the model provider. Each later step slots
-into the same commands: the RunTask workflow's run loop over the
-ai-api-unified router's candidates, then the pool manager.
+The path today: Temporal workflow, then the ai-api-unified router picking the
+task's tier, then the RunTask workflow's run loop over that tier's candidates.
+Each candidate run gets a per-run sandbox (a Docker container of its harness
+profile image, on its own network) with the harness server running pi, then
+the egress proxy, then the HTTP Gateway (ai-api-unified-http) on a run grant,
+then ai-api-unified, then the model provider. The pool manager is the next
+step that slots into the same commands.
 
 A **run grant** is the HTTP Gateway's record of what one run may do: one
 engine and model, a spend limit, and an expiry. The worker asks for one
 before pi starts and passes only its **grant key** to the harness server.
 pi's model calls carry the key, so pi never holds the gateway's API key,
 cannot change models, and stops when the run reaches its spend limit
-(`SPEND_LIMIT`, default $0.50). The worker revokes the grant when the run
-ends.
+(`SPEND_LIMIT`, default $0.50, for all the task's runs together). The worker
+revokes the grant when the run ends.
 
 It runs a coding task as a Temporal workflow, with pi running on the
 [harness server](../../images/harness-pi/) inside a per-run sandbox. A Python
 worker stands in for the design's run service (section 7 of the technical
-design). The workflow `RunTask` has two activities:
+design). The workflow `RunTask` has four activities:
 
 - `prepare` uses the task text you gave, or reads a versioned prompt template,
-  and returns the prompt.
-- `run_harness` is the design's run service run activity. It starts the
+  and returns the prompt. It also checks a pinned pair (`PIN`).
+- `route` is the design's run service `route` activity. It sends the prompt to
+  the ai-api-unified router in classify-only mode (`AiRouteClassifier`,
+  ai-api-unified 3.30.0), which picks a tier from `config/models.json` and
+  returns the tier's candidates. Each candidate is a harness-profile-and-model
+  pair, `harness:<harness profile>/<engine>:<model>`, and the harness profile
+  comes from `config/harness_profiles.json`. The router's classifier call is
+  the only model call `route` makes.
+- `run_harness` is the design's run service run activity, for one
+  candidate. It starts the
   run's per-run sandbox container, asks the HTTP Gateway for the run's grant,
   starts the run on the harness server in the container with `POST /run`,
   follows `GET /events` until `run_finished`, reads `GET /usage`, revokes the
   grant and removes the container. It
   heartbeats on every event and returns a typed result: status, turns,
   tokens, cost, the files pi changed, pi's last answer, the attempt number,
-  and whether the attempt re-attached to a run already in progress.
+  and whether the attempt re-attached to a run already in progress. It
+  returns a result for every run that ended, finished or not.
+- `cleanup_run` revokes the run grant and removes the per-run sandbox of a
+  run that `run_harness` gave up on, and reports what the grant counted.
+
+The workflow's run loop (design section 6.3) runs one `run_harness` per
+candidate, in order, and its Decide step reads how each run ended:
+
+| The run | Decide |
+|---|---|
+| Ended `FINISHED` | The task completes. |
+| Got no per-run sandbox, lost its harness server, or could not get a run grant (the HTTP Gateway unreachable); or ended `model_error`, `harness_error` or `server_shutdown` | The next candidate. When the tier has none left, the workflow routes again one tier up (`on_exhausted: escalate`), under `CEILING`. |
+| Ended on a limit: `max_turns`, `max_minutes` or `spend_limit` | The task fails. Another candidate would spend the budget again. |
+| Was refused: an unknown model, a bad pin, a bad request | The task fails. |
+
+`PIN` runs one pair with no routing and no escalation. `SPEND_LIMIT` covers
+all of a task's runs: each run's grant gets what the earlier runs left, a
+failed run included. The router's classifier needs `OPENAI_API_KEY` in your
+shell; without it, every task takes the default tier, `standard`.
 
 pi runs in the per-run sandbox container, apart from the worker, so a run
 keeps going when the worker dies. The run id is the workflow id plus
-`:run_harness`, the same on every attempt, and the container is named after
-it. A retried attempt finds the same container, sends the same `POST /run`,
+`:run-<n>`, where n counts the candidates the task has tried. The workflow
+passes it to `run_harness`, so it is the same on every Temporal attempt of one
+candidate, and the container is named after it. A retried attempt finds the same container, sends the same `POST /run`,
 gets the run in progress, and reads its events from the last event id it
 heartbeated. It never starts pi a second time. The retry asks for
 the grant again with the same terms, and the HTTP Gateway adds a key to the
 grant that is still live. The run keeps the key it started with.
 
-The sample also shows three failure paths:
+The sample also shows four failure paths:
 
 - **Cancel.** Temporal workflow cancellation reaches the running activity
   through its heartbeat, and the activity sends `POST /cancel`, which stops pi
@@ -65,6 +94,11 @@ The sample also shows three failure paths:
   run.
 - **Spend limit.** The run passes its grant's spend limit, the HTTP Gateway
   refuses the next turn with `402`, and the run ends `ERROR spend_limit`.
+- **Fallback.** `make fallback-demo` uses the `fallback-demo` entry in
+  `config/models.json`. Tier `standard`'s two candidates name the harness
+  profile `pi-missing-image`, whose image does not exist, so neither gets a
+  per-run sandbox. The workflow tries both, escalates to tier `complex`, and
+  its candidate finishes the task.
 
 It pins `temporalio` 1.34.0 and `httpx` 0.28.1. The SDK behavior it relies on
 was checked against that version's source: heartbeats and heartbeat details,
@@ -78,7 +112,7 @@ default data converter.
 |---|---|
 | 1. Admit | The starter calls `start_workflow` with workflow id `run-task-<REF>`. `REF` plays the design's `external_ref`, and Temporal refuses a second task with the same one. There is no scheduler and no slot. |
 | 2. Prepare | `prepare` uses `TASK`, or reads `prompts/hello-v1.txt`. There are no guardrails, no code-host token and no `AGENTS.md`. |
-| 3. Route and run | `run_harness` runs the design's run activity steps (section 6.3). Lease: with no pool manager, it starts the run's per-run sandbox itself with the Docker executor backend (`run_task/sandbox.py`). Grant, Start, Wait and Collect follow. There is no ai-api-unified router and no candidate loop: the caller names the engine and model, and `run_harness` puts them in the run grant. A retried attempt re-attaches by run id to the same container and the same run. |
+| 3. Route and run | `route` asks the ai-api-unified router for the tier and its candidates, and the workflow's run loop tries them (section 6.3). For each, `run_harness` runs the design's run activity steps. Lease: with no pool manager, it starts the run's per-run sandbox itself with the Docker executor backend (`run_task/sandbox.py`). Grant, Start, Wait and Collect follow. A retried attempt re-attaches by run id to the same container and the same run. There is no exploration share and no task policy file. |
 | 4. Watch | `run_harness` reads the harness server's event stream and prints it to the worker log. There is no event service, pool manager or stall detection beyond the heartbeat timeout. |
 | 5. Follow up | Left out. The harness server has `POST /followup`, but no pull request, code-host webhooks or signals drive it here. |
 | 6. Close | The workflow returns the result to the starter. There is no task service. |
@@ -95,12 +129,19 @@ sequenceDiagram
     participant E as egress proxy
     participant H as harness server in the per-run sandbox
     participant G as HTTP Gateway
-    S->>T: start_workflow(RunTask, task, engine, model, spend limit)
+    participant R as ai-api-unified router, in the worker
+    S->>T: start_workflow(RunTask, task, floor, ceiling or pin, spend limit)
     T->>W: workflow task
     W->>T: schedule prepare
     T->>W: activity task: prepare
     W-->>T: prompt
-    W->>T: schedule run_harness
+    W->>T: schedule route
+    T->>W: activity task: route
+    W->>R: aclassify_route(prompt, route_floor, route_ceiling)
+    R-->>W: tier and its candidates, each a harness profile and a model
+    W-->>T: RouteResult
+    Note over W,T: the run loop, one run_harness per candidate until one finishes
+    W->>T: schedule run_harness for the first candidate
     T->>W: activity task: run_harness
     W->>D: create the run's internal network, attach the egress proxy
     W->>D: docker run harness-pi on that network, workspace at /workspace, new bearer token
@@ -126,11 +167,13 @@ sequenceDiagram
     G-->>W: what the run spent
     W->>D: save the container's log to runs/REF, then remove the container and its network
     W-->>T: HarnessResult
+    Note over W,T: the Decide step: finished, the next candidate, or the next tier up
     T-->>S: RunTaskResult
 ```
 
-The engine, model, spend limit and task text travel in the workflow input,
-so they appear in the workflow history. `GATEWAY_API_KEY` stays in the
+The pin or tier bounds, the spend limit and the task text travel in the
+workflow input, and the route and each candidate in activity inputs, so they
+appear in the workflow history. `GATEWAY_API_KEY` stays in the
 worker's environment. Each per-run sandbox gets its own harness server bearer
 token, which lives only in that container's environment, and the grant key
 goes straight from the worker to the harness server. None of them enters the
@@ -140,8 +183,11 @@ history.
 
 | File | Role |
 |---|---|
-| `run_task/workflows.py` | `RunTask`: timeouts, retry policy and cancellation type for each activity |
-| `run_task/activities.py` | `prepare` and `run_harness`: lease the per-run sandbox, start or re-attach, heartbeats, cancel, release |
+| `run_task/workflows.py` | `RunTask`: the run loop and its Decide step, timeouts, retry policy and cancellation type for each activity, and the `current_run_id` query |
+| `run_task/activities.py` | `prepare`, `route`, `run_harness` (lease the per-run sandbox, start or re-attach, heartbeats, cancel, release) and `cleanup_run` |
+| `run_task/routing.py` | Reads harness profiles, splits a `harness:` candidate, checks every tier candidate when the worker starts, and holds the worker's `AiRouteClassifier` |
+| `config/models.json` | The router's tiers, classifier and default tier, and the `zero-cost` and `fallback-demo` environments |
+| `config/harness_profiles.json` | Harness profiles: image, tools, turn and minute limits |
 | `run_task/sandbox.py` | The Docker executor backend: starts, finds and removes a run's per-run sandbox container and its network |
 | `run_task/fake_gateway.py` | The fake HTTP Gateway: run grants and scripted model turns, with no model calls |
 | `e2e.sh` | `make e2e`: the zero-cost end-to-end check, which CI runs on every pull request |
@@ -162,17 +208,17 @@ history.
 | Setting | Value | Why |
 |---|---|---|
 | Workflow id | `run-task-<REF>`, ID reuse policy Reject Duplicate | One `REF` names one task, as `external_ref` does in the design |
-| Run id | `<workflow id>:run_harness` | The same on every attempt, so a retry re-attaches |
-| Harness session id | The workflow id | pi's session id and the gateway's prompt cache key |
+| Run id | `<workflow id>:run-<n>`, n counting the candidates tried | The same on every attempt of one candidate, so a retry re-attaches |
+| Harness session id | The run id, with `.` for `:` | Each candidate starts a new pi session. It is also the gateway's prompt cache key. |
 | Per-run sandbox | Container `mh-sandbox-<run id>-<hash>` from `harness-pi:dev`: 2 CPUs, 4 GB, 512 processes, all capabilities dropped, no new privileges, run as your user id. `runs/<REF>/workspace` is mounted at `/workspace`. | pi's tools reach your machine only through the workspace. The container holds no provider key. |
 | Per-run sandbox network | Its own internal Docker network, `mh-run-<run id>-<hash>`, with no route out and no other run on it. The egress proxy is attached to it. | The container's only way out is the egress proxy. One run cannot reach another. |
 | Egress allowlist | `EGRESS_ALLOW`: the HTTP Gateway, GitHub, npm and PyPI | The design's per-run sandbox egress allowlist (sections 14 and 15) |
-| Profile | tools `read`, `write`, `edit`, `ls`, 20 turns, 10 minutes | The harness server enforces both limits |
-| Run grant | the task's engine and model, `SPEND_LIMIT`, expiry 15 minutes | The HTTP Gateway enforces the model and the spend limit. The expiry is the profile's 10 minutes plus 5 minutes' grace, so the grant outlives a run still ending. |
+| Harness profile | From `config/harness_profiles.json`: `pi-lean` has tools `read`, `write`, `edit`, `ls`, 20 turns, 10 minutes; `pi-careful` 40 turns. An image of `null` means `HARNESS_IMAGE`. | The harness server enforces both limits |
+| Run grant | the candidate's engine and model, what is left of `SPEND_LIMIT`, expiry the harness profile's minutes plus 5 | The HTTP Gateway enforces the model and the spend limit. The grace keeps the grant alive under a run still ending. |
 | `run_harness` start-to-close timeout | 10 minutes | The whole run |
 | `run_harness` heartbeat timeout | 10 seconds | A worker that stops heartbeating for this long is treated as gone, and the attempt is retried |
 | Heartbeats | One per event, and the harness server sends a `heartbeat` event every 2 seconds. `max_heartbeat_throttle_interval` is 1 second on the worker. | A cancel reaches the activity only in a heartbeat reply. By default the SDK holds heartbeats back to 0.8 times the heartbeat timeout. |
-| Retry policy | 3 attempts, 2 seconds first interval | Covers a lost worker and a lost connection to the harness server. A run that ended `ERROR`, `CANCELED` or `EXPIRED` fails the attempt for good, because a retry would re-attach to the same ended run. A refused request does too. |
+| Retry policy | 3 attempts, 2 seconds first interval | Covers a lost worker and a lost connection to the harness server. A run that ended returns its result, and the Decide step reads it. A refused request fails the attempt for good. |
 | Cancellation type | `WAIT_CANCELLATION_COMPLETED` | The workflow ends only after the harness server has stopped pi |
 
 ## Run it
@@ -183,8 +229,9 @@ You need:
 - Redis: `brew install redis`. The HTTP Gateway keeps run grants in it.
 - [uv](https://docs.astral.sh/uv/)
 - Docker Desktop, running. Each run's per-run sandbox is a container.
-- a checkout of `ai-api-unified-http` 1.18.0 or later, with provider keys in
+- a checkout of `ai-api-unified-http` 1.19.0 or later, with provider keys in
   its `.env`
+- `OPENAI_API_KEY` in your shell, for the router's classifier (optional)
 
 No Temporal account or API key is needed. The dev server runs locally.
 
@@ -197,7 +244,8 @@ proxy, which allows the HTTP Gateway, GitHub, npm and PyPI. See
 cd meta-harness/samples/temporal-run-task
 make run
 make run TASK="Write a haiku about autumn to haiku.txt." REF=haiku-1
-make run ENGINE=openai MODEL=gpt-4o-mini
+make run FLOOR=complex
+make run PIN=harness:pi-lean/openai:gpt-4o-mini
 make run SPEND_LIMIT=0.05
 ```
 
@@ -228,8 +276,8 @@ workers would split the work.
 
 Logs go to `temporal.log`, `redis.log`, `gateway.log` and `worker.log` in this directory,
 the egress proxy's to `egress-proxy.log` when it stops, and the harness
-server's to `runs/<REF>/harness-server.log`, saved from the container before
-it is removed. `runs/` keeps
+server's to `runs/<REF>/harness-server-run-<n>.log`, one per run, saved from
+the container before it is removed. `runs/` keeps
 every task's workspace and log until you delete it. The dev server keeps
 workflow history in memory, so history is gone once `make run` stops it. To
 keep history and browse it later, set `TEMPORAL_DB` to a file path, or start
@@ -241,11 +289,14 @@ while the server runs.
 |---|---|
 | `TASK` | empty: the task in `prompts/hello-v1.txt` |
 | `REF` | 8 random hex characters. Letters, digits, `.`, `_` and `-`, starting with a letter or digit. A `REF` used before is refused. |
-| `ENGINE`, `MODEL` | `claude`, `claude-haiku-4-5` |
-| `SPEND_LIMIT` | `0.50`, in USD: the most the run may spend on model calls |
+| `ROUTER_CONFIG` | `config/models.json`: the router's tiers and classifier |
+| `MODELS_ENV` | empty: `ROUTER_CONFIG` as it is, or its `zero-cost` entry (no classifier call) with `GATEWAY=fake` |
+| `FLOOR`, `CEILING` | empty: the lowest and highest tier the router may pick |
+| `PIN` | empty. `harness:<profile>/<engine>:<model>` runs that pair, with no routing. |
+| `SPEND_LIMIT` | `0.50`, in USD: the most the task's runs may spend on model calls, together |
 | `HARNESS_DIR` | `../../images/harness-pi`, built into the per-run sandbox image |
 | `HARNESS_IMAGE` | `harness-pi:dev` |
-| `RUNS_DIR` | `runs` in this directory: each task's workspace and harness server log |
+| `RUNS_DIR` | `runs` in this directory: each task's workspace, shared by its runs, and one harness server log per run |
 | `SANDBOX_GATEWAY_URL` | `http://host.docker.internal:8080`, the gateway as the egress proxy reaches it |
 | `EGRESS_ALLOW` | `host.docker.internal:8080,github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443`: the `host:port` patterns a per-run sandbox may reach, `*` as a wildcard |
 | `EGRESS_IMAGE` | `mh-egress-proxy:dev` |
@@ -270,7 +321,7 @@ Start the services once, then send them tasks from any terminal:
 ```bash
 make up
 make task REF=poem-3 TASK="Write a four-line poem about tide pools to poem.md, then list the files in the folder."
-make task REF=notes-3 ENGINE=openai MODEL=gpt-4o-mini TASK="Create notes.txt with three bullet points about why tests matter, then read it back."
+make task REF=notes-3 PIN=harness:pi-lean/openai:gpt-4o-mini TASK="Create notes.txt with three bullet points about why tests matter, then read it back."
 make tasks
 make status REF=poem-3
 make watch REF=notes-3
@@ -281,20 +332,23 @@ make down
 | Command | What it does |
 |---|---|
 | `make up` | Starts Temporal, Redis and the gateway unless they already answer, the egress proxy, and a worker, and leaves them running. Logs and process ids go in `stack/`. |
-| `make task TASK=... REF=...` | Starts the workflow, prints the run's events from its per-run sandbox until it ends, and prints the result. Ctrl-C cancels the task. Tasks in separate terminals run at the same time, each in its own container. |
+| `make task TASK=... REF=...` | Starts the workflow, prints each run's events from its per-run sandbox until the task ends, and prints the result. Ctrl-C cancels the task. Tasks in separate terminals run at the same time, each in its own container. |
 | `make tasks` | Lists every task on the Temporal server: `REF`, status, start time, workspace |
 | `make status REF=...` | One task: its workflow status and workspace. While it runs, the per-run sandbox's turns, calls, tokens and cost so far, and the run grant's spend against its limit. Once it ends, the result, with what the grant counted. |
 | `make watch REF=...` | Prints a running task's events from the start, then its result |
 | `make cancel REF=...` | Cancels the workflow, which stops pi, and waits for it to end |
 | `make down` | Stops what `make up` started, removes the egress proxy, and removes any per-run sandbox container or network left behind |
 
-The task's per-run sandbox is removed when the task ends, so `watch` and the
-live part of `status` work only while the task runs. These commands find the
-container by the task's run id and reach it through the egress proxy's
+Each run's per-run sandbox is removed when the run ends, so `watch` and the
+live part of `status` work only while the task runs. These commands ask the
+RunTask workflow which run it is on (its `current_run_id` query), find that
+run's container by its run id, and reach it through the egress proxy's
 control listener, so they need only the `REF`.
 
 Two tasks on 2026-11-04, started at the same time: poem-3 on Claude and
-notes-3 on OpenAI. They ran before the per-run sandbox, on harness servers
+notes-3 on OpenAI. They ran before the run loop and the per-run sandbox, so
+the starter took `--engine` and `--model` and the run id ended `:run_harness`.
+They ran on harness servers
 `stack.sh` started on the host, so the lines that started and stopped those
 servers are left out. Output of the first `make task`, paths shortened:
 
@@ -681,7 +735,9 @@ harness server ends the run `ERROR spend_limit`. The demo checks that the
 task failed for that reason. To set your own limit on any task, pass
 `SPEND_LIMIT`, e.g. `make run SPEND_LIMIT=0.05`.
 
-Output from 2026-11-03, after the same startup lines:
+Output from 2026-11-03, after the same startup lines. It ran before the run
+loop, when `run_harness` failed the activity for a run that ended unfinished;
+now it returns the run's result and the workflow's Decide step fails the task:
 
 ```text
 [starter] started workflow run-task-limit-2  engine=claude  model=claude-haiku-4-5  spend limit=$0.001
@@ -709,8 +765,48 @@ Output from 2026-11-03, after the same startup lines:
 
 The limit is checked before each turn, and a turn's cost is known only after
 it, so a run can pass its limit by the cost of the turn that crossed it. Here
-turn 1 cost $0.003029 against a $0.001 limit. The attempt fails for good, as
-`max_turns` does: a retry would re-attach to the same ended run.
+turn 1 cost $0.003029 against a $0.001 limit. The Decide step treats a run
+that ended on a limit as final, as it does `max_turns`, so the task fails
+without trying another candidate: that candidate would spend the budget again.
+
+## Fallback
+
+```bash
+make fallback-demo
+```
+
+This runs the built-in task on the `fallback-demo` entry of
+`config/models.json`, which has no classifier, so the task takes the default
+tier, `standard`. Both of `standard`'s candidates use the harness profile
+`pi-missing-image`, whose image `harness-pi:no-such-image` does not exist.
+Docker refuses each container at once (images are never pulled), so neither
+run gets a per-run sandbox and neither spends anything. The workflow tries
+both, escalates to `complex`, and `complex`'s one candidate finishes. The demo
+checks that the workflow escalated.
+
+Output from 2026-11-05 against ai-api-unified-http 1.19.0, lines shortened:
+
+```text
+[workflow] run-task-live-fallback-135345: routed to tier standard (default), candidates harness:pi-missing-image/claude:claude-haiku-4-5, harness:pi-missing-image/openai:gpt-4o-mini
+[workflow] run-task-live-fallback-135345: run 1 on harness:pi-missing-image/claude:claude-haiku-4-5: run_harness failed (SandboxUnavailable): ... No such image: harness-pi:no-such-image, so the Decide step says next_candidate. Spent $0 of $0.50
+[workflow] run-task-live-fallback-135345: run 2 on harness:pi-missing-image/openai:gpt-4o-mini: ... so the Decide step says next_candidate. Spent $0 of $0.50
+[workflow] run-task-live-fallback-135345: tier standard has no candidates left, so the task escalates to complex
+[workflow] run-task-live-fallback-135345: routed to tier complex (floor), candidates harness:pi-lean/claude:claude-haiku-4-5
+[workflow] run-task-live-fallback-135345: run 3 on harness:pi-lean/claude:claude-haiku-4-5: ended FINISHED (completed), so the Decide step says finished. Spent $0.007687 of $0.50
+[starter] workflow run-task-live-fallback-135345 completed
+[result] route: tier=complex  method=floor  classifier usd=0
+[result] run 1: harness:pi-missing-image/claude:claude-haiku-4-5 (tier standard)  next_candidate  spent $0  run_harness failed (SandboxUnavailable): ...
+[result] run 2: harness:pi-missing-image/openai:gpt-4o-mini (tier standard)  next_candidate  spent $0  run_harness failed (SandboxUnavailable): ...
+[result] run 3: harness:pi-lean/claude:claude-haiku-4-5 (tier complex)  finished  spent $0.007687  ended FINISHED (completed)
+[result] task spent $0.007687 of its $0.50 limit
+[make] the first tier's candidates failed without a per-run sandbox, and the next tier finished the task
+```
+
+The same day, `make run` with `OPENAI_API_KEY` set: the classifier
+(`openai-decisions`, `gpt-6-luna`) put the built-in task in `standard` with
+confidence 1.00 for $0.0000213, and the first candidate finished it in 3
+turns for $0.007456. `make run PIN=harness:pi-lean/openai:gpt-4o-mini` skipped
+the router and finished for $0.00048705.
 
 ## Egress allowlist
 
@@ -785,8 +881,10 @@ fails if pi sends an engine's own shape. Each turn takes 2 seconds and costs $0.
 cancel and restart demos have time to act and the spend-limit demo trips on
 turn 2. The fake refuses to start when a real gateway answers on its port.
 
-`e2e.sh` runs each step with its output in `e2e-logs/<step>.log`. Output from
-2026-11-04, in about a minute:
+`e2e.sh` runs each step with its output in `e2e-logs/<step>.log`. The fake
+gateway's runs use the `zero-cost` entry of `config/models.json`, which turns
+the router's classifier off, so routing makes no model call either. Output
+from 2026-11-05, in under two minutes:
 
 ```text
 [e2e] run ...
@@ -797,6 +895,8 @@ turn 2. The fake refuses to start when a real gateway answers on its port.
 [e2e] PASS restart: attempt 2 found the same per-run sandbox and re-attached
 [e2e] spend-limit ...
 [e2e] PASS spend-limit: the run stopped at its $0.001 spend limit
+[e2e] fallback ...
+[e2e] PASS fallback: both standard candidates failed to start, and the escalated complex candidate finished
 [e2e] egress ...
 [e2e] PASS egress: every per-run sandbox network rule held
 [e2e] PASS cleanup: no per-run sandbox container or network left

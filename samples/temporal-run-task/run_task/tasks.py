@@ -5,10 +5,11 @@
     python -m run_task.tasks watch REF
     python -m run_task.tasks cancel REF
 
-REF is the name given to `make task` or `make run`. These commands find the
-task's per-run sandbox container by its run id. The container is removed when
-the run ends, so `watch` and the live part of `status` work only while the
-task runs.
+REF is the name given to `make task` or `make run`. A task makes one run per
+tier candidate it tries. These commands ask the RunTask workflow which run it
+is on, and find that run's per-run sandbox container by its run id. The
+container is removed when the run ends, so `watch` and the live part of
+`status` work only while the task runs.
 
 Environment: GATEWAY_URL and GATEWAY_API_KEY (for the run grant's spend),
 TEMPORAL_ADDRESS (default localhost:7233).
@@ -20,7 +21,13 @@ import sys
 from typing import Any
 
 import httpx
-from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError, WorkflowHandle
+from temporalio.client import (
+    Client,
+    WorkflowExecutionStatus,
+    WorkflowFailureError,
+    WorkflowHandle,
+    WorkflowQueryFailedError,
+)
 from temporalio.exceptions import CancelledError
 from temporalio.service import RPCError
 
@@ -48,8 +55,9 @@ async def status(client: Client, ref: str) -> int:
     if memo.get("workspace"):
         print(f"[status] workspace: {memo['workspace']}")
     if state == WorkflowExecutionStatus.RUNNING:
-        run = await _harness_get("/status", ref)
-        usage = await _harness_get("/usage", ref)
+        run_id = await _current_run_id(handle)
+        run = await _harness_get("/status", run_id)
+        usage = await _harness_get("/usage", run_id)
         if run and usage:
             print(
                 f"[status] run {run['run_id']}: {run['status']}  turns={run['turns']}  "
@@ -58,7 +66,7 @@ async def status(client: Client, ref: str) -> int:
             )
         else:
             print("[status] the harness server has not started the run yet")
-        grant = await run_grants.get(f"{workflow_id_for(ref)}:run_harness")
+        grant = await run_grants.get(run_id) if run_id else None
         if grant:
             print(
                 f"[status] run grant: {grant['engine']}:{grant['model']}  spent ${grant['spent_usd']} "
@@ -72,9 +80,7 @@ async def status(client: Client, ref: str) -> int:
 
 async def watch(client: Client, ref: str) -> int:
     handle = _handle(client, ref)
-    finished = await harness_client.follow_run(f"{handle.id}:run_harness", f"[{ref}]", wait_seconds=10)
-    if finished is None:
-        print(f"[watch] no per-run sandbox is running for {ref}, so the task has ended or not started")
+    await harness_client.follow_task(handle, f"[{ref}]")
     return await _print_outcome(handle, ref)
 
 
@@ -100,6 +106,8 @@ async def _print_outcome(handle: WorkflowHandle[Any, RunTaskResult], ref: str) -
             return 0
         print(f"[status] {ref}: failed: {err.cause}")
         return 1
+    for attempt in result.attempts:
+        print(f"[status] run {attempt.attempt}: {attempt.candidate}  {attempt.decision}  {attempt.detail}")
     h = result.harness
     print(
         f"[status] {ref}: {h.status} ({h.end_reason})  turns={h.turns}  failed calls={h.failed_calls}  "
@@ -111,8 +119,16 @@ async def _print_outcome(handle: WorkflowHandle[Any, RunTaskResult], ref: str) -
     return 0
 
 
-async def _harness_get(path: str, ref: str) -> dict[str, Any] | None:
-    run_id = f"{workflow_id_for(ref)}:run_harness"
+async def _current_run_id(handle: WorkflowHandle[Any, RunTaskResult]) -> str | None:
+    try:
+        return await handle.query(RunTask.current_run_id)
+    except (RPCError, WorkflowQueryFailedError):
+        return None
+
+
+async def _harness_get(path: str, run_id: str | None) -> dict[str, Any] | None:
+    if not run_id:
+        return None
     try:
         box = await sandbox.find(run_id)
     except sandbox.SandboxError:
