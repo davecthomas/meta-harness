@@ -27,6 +27,12 @@ mid-run leaves the grant live, because the run keeps going and the next
 attempt re-attaches to it. That attempt asks for the grant again and gets a
 new key for the same grant.
 
+For a repo task, the Lease step first clones the task's repo into the run's
+own workspace on this machine (run_task/code_host.py), and once a run
+finishes, the publish activity commits pi's changes to a branch, pushes it
+and opens the pull request. Code-host access stays on this machine: the
+per-run sandbox holds no code-host token and no SSH key.
+
 run_harness returns a result for every run that ended, finished or not, and
 the workflow's Decide step reads its end reason. It raises only when it could
 not follow the run to its end. When Temporal stops retrying it, the workflow
@@ -35,19 +41,22 @@ calls cleanup_run, which revokes the grant and removes the per-run sandbox.
 
 import asyncio
 from pathlib import Path
+from string import Template
 from typing import Any
 
 import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from run_task import harness_client, routing, run_grants, sandbox
+from run_task import code_host, harness_client, routing, run_grants, sandbox
 from run_task.shared import (
     INLINE_TEMPLATE,
     CleanupResult,
     HarnessRequest,
     HarnessResult,
     PreparedRun,
+    PublishRequest,
+    PublishResult,
     RouteRequest,
     RouteResult,
     RunTaskInput,
@@ -56,6 +65,7 @@ from run_task.shared import (
 
 SAMPLE_DIR = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = SAMPLE_DIR / "prompts"
+REPO_TEMPLATE = "repo-task-v1"
 
 # The grant outlives the run's own time limit by this much, so it never expires under a run still ending.
 GRANT_GRACE_SECONDS = 300
@@ -74,6 +84,8 @@ async def prepare(request: RunTaskInput) -> PreparedRun:
             pinned = routing.pinned(request.pin)
         except routing.CandidateError as err:
             raise ApplicationError(str(err), type="HarnessConfigError", non_retryable=True) from err
+    if request.repo or request.ticket:
+        return await _prepare_repo_task(request, pinned)
     if request.task:
         activity.logger.info("prepare attempt %d: using the task text from the caller", info.attempt)
         return PreparedRun(template=INLINE_TEMPLATE, prompt=request.task.strip(), pinned=pinned)
@@ -83,6 +95,44 @@ async def prepare(request: RunTaskInput) -> PreparedRun:
     prompt = path.read_text(encoding="utf-8").strip()
     activity.logger.info("prepare attempt %d: read the prompt from prompts/%s", info.attempt, path.name)
     return PreparedRun(template=request.template, prompt=prompt, pinned=pinned)
+
+
+async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
+    """The repo-task prompt: the ticket's or the caller's task, the repo, and the acceptance checks."""
+    try:
+        ticket = await code_host.read_ticket(request.ticket) if request.ticket else None
+        repo = request.repo or (ticket.repo if ticket else "")
+        code_host.check_repo(repo)
+    except code_host.CodeHostError as err:
+        raise ApplicationError(str(err), type="HarnessConfigError", non_retryable=not err.retryable) from err
+    if ticket:
+        title, description = ticket.title, ticket.body.strip() or "(the ticket has no description)"
+        checks = ticket.checks or request.checks
+    else:
+        text = request.task.strip()
+        if not text:
+            raise ApplicationError("a repo task needs TASK or TICKET", type="HarnessConfigError", non_retryable=True)
+        title, _, rest = text.partition("\n")
+        description, checks = rest.strip() or title, request.checks
+    listed = (
+        "\n".join(f"- {check}" for check in checks) or "- None were given. Run the repository's tests, if it has them."
+    )
+    template = (PROMPTS_DIR / f"{REPO_TEMPLATE}.txt").read_text(encoding="utf-8")
+    prompt = Template(template).safe_substitute(repo=repo, title=title, description=description, checks=listed)
+    activity.logger.info(
+        "prepare: a repo task in %s%s, %d acceptance checks",
+        repo,
+        f" from ticket {ticket.ref}" if ticket else "",
+        len(checks),
+    )
+    return PreparedRun(
+        template=REPO_TEMPLATE,
+        prompt=prompt.strip(),
+        pinned=pinned,
+        repo=repo,
+        ticket=ticket.ref if ticket else "",
+        title=title[:200],
+    )
 
 
 @activity.defn
@@ -144,6 +194,8 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
 
     ref = ref_for(info.workflow_id)
     image = str(request.candidate.profile["image"])
+    if request.repo:
+        await _clone(tag, request.repo, sandbox.workspace_for(ref, run_id))
     box = await _lease(tag, run_id, ref, image)
     try:
         grant_key = await _issue_grant(tag, request, info.workflow_id)
@@ -216,6 +268,68 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
 
 
 @activity.defn
+async def publish(request: PublishRequest) -> PublishResult:
+    """Commits pi's changes to the branch mh/<REF>, pushes it, and opens the pull request.
+
+    Returns an empty pr_url when pi changed nothing.
+    """
+    ref = ref_for(activity.info().workflow_id)
+    workspace = sandbox.workspace_for(ref, request.run_id)
+    body = _pr_body(request)
+    message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
+        f"\n\nCloses {request.ticket}" if request.ticket else ""
+    )
+    try:
+        published = await code_host.publish(
+            repo=request.repo,
+            workspace=workspace,
+            branch=f"mh/{ref}",
+            title=request.title,
+            body=body,
+            commit_message=message,
+            pr_record=sandbox.task_dir_for(ref) / "pull-request.md",
+        )
+    except code_host.CodeHostError as err:
+        raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    if published is None:
+        print(f"[{request.run_id} publish] pi changed nothing in {workspace}, so there is no pull request", flush=True)
+        return PublishResult(branch="", base="", commit="", files=[], pr_url="", created=False)
+    print(
+        f"[{request.run_id} publish] {', '.join(published.files)} on branch {published.branch} at "
+        f"{published.commit[:12]}, pull request {'opened' if published.created else 'already open'}: {published.pr_url}",
+        flush=True,
+    )
+    return PublishResult(
+        branch=published.branch,
+        base=published.base,
+        commit=published.commit,
+        files=published.files,
+        pr_url=published.pr_url,
+        created=published.created,
+    )
+
+
+def _pr_body(request: PublishRequest) -> str:
+    lines = []
+    if request.ticket:
+        lines += [f"Closes {request.ticket}", ""]
+    lines += ["## Summary from the run", "", request.summary or "(the run left no summary)", ""]
+    lines += [
+        "## Run",
+        "",
+        f"- Run: `{request.run_id}`",
+        f"- Harness profile and model: `{request.candidate}`",
+        f"- Model spend for the task so far: ${request.spent_usd}",
+        "",
+        (
+            "Opened by the meta-harness. pi worked in a clone of this repo inside a per-run sandbox that holds "
+            "no code-host credentials, and the meta-harness committed and pushed its changes."
+        ),
+    ]
+    return "\n".join(lines)
+
+
+@activity.defn
 async def cleanup_run(run_id: str) -> CleanupResult:
     """Closes a run run_harness gave up on: revokes its grant and removes its per-run sandbox.
 
@@ -229,6 +343,17 @@ async def cleanup_run(run_id: str) -> CleanupResult:
     return CleanupResult(grant_spent_usd=spent)
 
 
+async def _clone(tag: str, repo: str, workspace: Path) -> None:
+    """The repo task's clone, made on this machine before the per-run sandbox starts."""
+    existed = (workspace / ".git").is_dir()
+    try:
+        branch = await code_host.clone(repo, workspace)
+    except code_host.CodeHostError as err:
+        raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    if not existed:
+        print(f"{tag} cloned {repo} ({branch}) into {workspace}", flush=True)
+
+
 async def _lease(tag: str, run_id: str, ref: str, image: str) -> sandbox.Sandbox:
     """The Lease step: the run's per-run sandbox, started now or found from an earlier attempt."""
     try:
@@ -239,7 +364,7 @@ async def _lease(tag: str, run_id: str, ref: str, image: str) -> sandbox.Sandbox
         print(
             f"{tag} per-run sandbox {box.name} started from {image} on its own network "
             f"{sandbox.network_name(run_id)}, out only through the egress proxy. "
-            f"Workspace {sandbox.workspace_for(ref)} mounted at /workspace",
+            f"Workspace {sandbox.workspace_for(ref, run_id)} mounted at /workspace",
             flush=True,
         )
     else:
@@ -384,4 +509,4 @@ def _record(progress: dict[str, Any], event: dict[str, Any]) -> None:
     if event["type"] == "file_changed" and data["path"] not in progress["files_changed"]:
         progress["files_changed"].append(data["path"])
     if event["type"] == "turn_finished" and isinstance(data.get("text"), str) and data["text"]:
-        progress["answer"] = " ".join(data["text"].split())
+        progress["answer"] = data["text"].strip()

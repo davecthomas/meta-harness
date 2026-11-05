@@ -270,8 +270,10 @@ check_ref() {
 }
 
 starter() {
+  local check_args=()
+  [ -z "$CHECKS" ] || check_args=(--check "$CHECKS")
   .venv/bin/python -m run_task.starter --ref "$REF" --pin "$PIN" --floor "$FLOOR" --ceiling "$CEILING" \
-    --spend-limit "$SPEND_LIMIT" --task "$TASK" "$@"
+    --spend-limit "$SPEND_LIMIT" --task "$TASK" --repo "$REPO" --ticket "$TICKET" "${check_args[@]}" "$@"
 }
 
 wait_for_log() {
@@ -340,6 +342,24 @@ cmd_run() {
       [ "$status" -eq 1 ] || { log "expected the task to fail at its spend limit, starter exit $status"; exit 1; }
       grep -qF "spend_limit" worker.log || { log "the task failed, but not at its spend limit. See worker.log"; exit 1; }
       log "the run stopped at its \$$SPEND_LIMIT spend limit, as expected"
+      ;;
+    repo)
+      # A bare repo with one commit on main stands in for the code host.
+      local origin="$RUNS_DIR/$REF/origin.git" seed="$RUNS_DIR/$REF/seed"
+      git init --quiet --bare --initial-branch=main "$origin"
+      git init --quiet --initial-branch=main "$seed"
+      printf '# demo repo\n\nA repo the repo demo clones.\n' >"$seed/README.md"
+      git -C "$seed" add README.md
+      git -C "$seed" -c user.name=demo -c user.email=demo@localhost commit --quiet -m "first commit"
+      git -C "$seed" push --quiet "$origin" main
+      REPO="$origin"
+      TASK=${TASK:-"Create hello.txt containing one short friendly greeting."}
+      CHECKS=${CHECKS:-"test -s hello.txt"}
+      starter
+      git --git-dir "$origin" cat-file -e "mh/$REF:hello.txt" \
+        || { log "expected branch mh/$REF with hello.txt in $origin"; exit 1; }
+      [ -s "$RUNS_DIR/$REF/pull-request.md" ] || { log "expected the pull request record runs/$REF/pull-request.md"; exit 1; }
+      log "branch mh/$REF in $origin holds hello.txt, and runs/$REF/pull-request.md holds the pull request"
       ;;
     fallback)
       starter
