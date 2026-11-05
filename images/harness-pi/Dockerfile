@@ -8,9 +8,11 @@
 
 FROM node:22.23.3-bookworm-slim
 
-# git: the per-run sandbox clones the task repo and pi's tools run git in it.
+# git: pi's tools run git in the task repo's clone. ripgrep and fd-find: pi's
+# grep and find tools use rg and fd (or fdfind), and the per-run sandbox's
+# egress allowlist does not let pi download them.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates curl \
+ && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep fd-find \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
