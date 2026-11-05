@@ -871,6 +871,14 @@ Output from 2026-11-05 against ai-api-unified-http 1.19.0, lines shortened:
 On GitHub, `make run REPO=owner/name TASK="..."` or `make run TICKET=owner/name#12`
 does the same with `gh`. The pull request comes from `mh/<REF>`, labeled
 `ai:meta-harness`, and a ticket's pull request says `Closes owner/name#12`.
+
+On 2026-11-05 a one-sentence docs task ran against `davecthomas/meta-harness`,
+pinned to `harness:pi-lean/claude:claude-haiku-4-5`. pi added exactly the
+sentence and ran its `grep -q` check with `bash`. The publish activity pushed
+`mh/gh-live-150215` and opened meta-harness#21, labeled `ai:meta-harness`,
+with pi's summary, checks and assumptions in the body. It was closed unmerged,
+as a test. It cost $0.0887691: pi read the 1,000-line README several times,
+208k input tokens over 10 turns.
 The harness-pi image has Node and git, so checks that need Python need a
 harness profile image with it.
 
@@ -1058,3 +1066,15 @@ Every other command takes `GATEWAY=fake` too, e.g.
     two `file_changed` events. It now queues the calls under each id, and
     reports every changed file. The model calls were unaffected: Gemini
     matches function responses to calls by name and order.
+14. **pi's `grep` and `find` tools need ripgrep and fd.** pi looks for `rg`
+    and `fd` (or `fdfind`) and downloads them when they are missing. The
+    per-run sandbox's egress allowlist blocks the download, so the first
+    GitHub repo task's `grep` call failed with "ripgrep (rg) is not available
+    and could not be downloaded", and pi fell back to `grep` through `bash`.
+    The harness-pi image now installs `ripgrep` and `fd-find`.
+15. **A long repo task is expensive on a small model.** The same live task
+    read a large README whole on several turns, so its input tokens grew to
+    208k and its cost to $0.089, about six times the hello task. pi's `read`
+    tool takes an offset and a limit, and the repo-task prompt could ask pi
+    to read only what it needs. Harness profiles and prompts are where that
+    belongs (section 4 of the technical design).

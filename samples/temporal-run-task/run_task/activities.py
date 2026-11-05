@@ -40,6 +40,7 @@ calls cleanup_run, which revokes the grant and removes the per-run sandbox.
 """
 
 import asyncio
+import re
 from pathlib import Path
 from string import Template
 from typing import Any
@@ -112,8 +113,8 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         text = request.task.strip()
         if not text:
             raise ApplicationError("a repo task needs TASK or TICKET", type="HarnessConfigError", non_retryable=True)
-        title, _, rest = text.partition("\n")
-        description, checks = rest.strip() or title, request.checks
+        description, checks = text, request.checks
+        title = _title_from(text)
     listed = (
         "\n".join(f"- {check}" for check in checks) or "- None were given. Run the repository's tests, if it has them."
     )
@@ -133,6 +134,14 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         ticket=ticket.ref if ticket else "",
         title=title[:200],
     )
+
+
+def _title_from(text: str, limit: int = 72) -> str:
+    """A pull request title from task text: its first sentence, cut at a word under the limit."""
+    first = re.split(r"(?<=[.!?])\s|\n", text.strip(), maxsplit=1)[0].strip().rstrip(".")
+    if len(first) <= limit:
+        return first
+    return first[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "..."
 
 
 @activity.defn
