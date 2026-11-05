@@ -146,7 +146,9 @@ export class Harness {
 	private context?: RunContext;
 	private stopReason?: StopReason;
 	private lastAssistantError?: string;
-	private readonly toolArgs = new Map<string, unknown>();
+	// Args of tool calls still running, by tool call id. A list, because Gemini's tool calls carry no id
+	// and the library sets each id to the tool's name, so two parallel writes share one.
+	private readonly toolArgs = new Map<string, unknown[]>();
 
 	private constructor(config: HarnessConfig, modelRuntime: ModelRuntime, model: Model<Api>) {
 		this.config = config;
@@ -512,13 +514,14 @@ export class Harness {
 				return;
 			}
 			case "tool_execution_start": {
-				this.toolArgs.set(event.toolCallId, event.args);
+				this.toolArgs.set(event.toolCallId, [...(this.toolArgs.get(event.toolCallId) ?? []), event.args]);
 				this.emit("tool_call", run, { tool_call_id: event.toolCallId, tool: event.toolName, args: preview(event.args) });
 				return;
 			}
 			case "tool_execution_end": {
-				const args = this.toolArgs.get(event.toolCallId) as { path?: unknown } | undefined;
-				this.toolArgs.delete(event.toolCallId);
+				const pending = this.toolArgs.get(event.toolCallId) ?? [];
+				const args = pending.shift() as { path?: unknown } | undefined;
+				if (pending.length === 0) this.toolArgs.delete(event.toolCallId);
 				const output = event.result?.content?.[0]?.text ?? event.result;
 				this.emit("tool_result", run, {
 					tool_call_id: event.toolCallId,

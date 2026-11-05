@@ -15,8 +15,8 @@ teaches something.
 | Per-run sandbox: the harness server in a Docker container per run, which the run service run activity starts and removes with the Docker executor backend (sections 6.3, 8.1 and 8.3) | built for local development | `images/harness-pi/Dockerfile`, `samples/temporal-run-task` |
 | Per-run sandbox egress allowlist: each per-run sandbox on its own internal Docker network, with a local egress proxy that lets it reach only the HTTP Gateway, the code host and package registries (section 15, Local development) | built for local development | `samples/temporal-run-task/egress-proxy`, `make egress-check` |
 | A zero-cost end-to-end check: the RunTask workflow against a fake HTTP Gateway that makes no model calls, on every pull request | built | `samples/temporal-run-task/e2e.sh`, `make e2e`, `.github/workflows/e2e.yml` |
-| Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | **next** | |
-| The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity (section 6.3) | after that | |
+| Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | built | ai-api-unified-http 1.19.0, `images/harness-pi/extension` |
+| The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity (section 6.3) | **next** | |
 | Pool manager, kept and restored pi sessions (section 8.4) | later | |
 | Meta-harness owned pi tools, pi compaction handler, `guardrail_blocked` harness server Run API events (section 4) | later | |
 | Meta-harness review loop and operator review (section 7) | sketch | |
@@ -312,7 +312,13 @@ On every pi turn the pi model client extension:
    tools from pi's transcript helpers, and builds the HTTP Gateway's
    conversation request: system prompt, messages, pi tools, the thinking level
    the run started with, and the `prompt_cache` field set to
-   `{"retention": "extended", "key": <harness_session_id>}`.
+   `{"retention": "extended", "key": <harness_session_id>}`. Each earlier
+   assistant turn goes back as its HTTP Gateway conversation token. Each pi
+   tool result goes as `{"type": "tool_result", "tool_call_id", "result",
+   "is_error"}`, the same for every model provider. The HTTP Gateway builds
+   the answering model provider's own tool-result message from it
+   (ai-api-unified-http 1.19.0), so the pi model client extension holds no
+   per-provider message code.
 2. Attaches per-call routing hints. pi agent turns carry no route hint, so the
    HTTP Gateway run grant's model pin or model band decides. Calls the pi
    model client extension makes itself, for pi session compaction and for
@@ -950,6 +956,7 @@ it is, within the band.
 | ai-api-unified | A classify-only entry point on the ai-api-unified router (`AiRouterCompletions`) that returns the route and the tier's ordered tier candidates. The classify-only entry point runs no completion and probes none of the tier candidates' provider clients (ai-api-unified completions engines). The meta-harness run service validates harness tier candidates itself (section 6.1). |
 | ai-api-unified-http 1.18.0 | HTTP Gateway run grants, at `POST`, `GET` and `DELETE /v1/run-grants`. The run service run activity asks for an HTTP Gateway run grant, which the HTTP Gateway stores in Redis. The run service run activity revokes the HTTP Gateway run grant when the run ends. The run service run activity authenticates with an HTTP Gateway API key from its environment. A run grant holds the run id, tags, the pinned model, the spend limit and the expiry. Its run grant key is opaque. The run grant's model overrides any provider or model the request body names. The run grant's attribution replaces the caller's headers on HTTP Gateway cost events. |
 | ai-api-unified-http 1.18.0 | An HTTP Gateway per-run spend counter in Redis, the run's total on every HTTP Gateway conversation response, and `402 run_grant_spend_limit` once the run has spent its limit. |
+| ai-api-unified-http 1.19.0 | One tool-result shape for every model provider on the HTTP Gateway conversation endpoint: `{"type": "tool_result", "tool_call_id", "result", "is_error"}`. The HTTP Gateway builds the answering model provider's message with ai-api-unified's `build_tool_result_message`, and puts a turn's results in one message where the model provider needs that. |
 | ai-api-unified-http | `route` accepted in the HTTP Gateway conversation request body. On a run grant that pins a model, a body `route` switches that one call from pin to tier band. The pinned model's tier is the tier band's ceiling. pi agent turns without `route` stay pinned. |
 | ai-api-unified library, optional | A streaming form of `send_conversation` that yields typed events (text delta, tool-call start, arguments and end, usage, done). It routes through the ai-api-unified router and the ai-api-unified fallback chain and commits to one model at its first delta. The operator console's per-turn view works without it. With it, the operator console could show model text as each model token arrives. ai-api-unified PII redaction does not apply to these streams. |
 | HTTP Gateway, optional | A server-sent-events form of the HTTP Gateway conversation endpoint, for the streaming form above. |

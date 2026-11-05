@@ -777,9 +777,11 @@ provider keys and costs nothing. CI runs it on every pull request
 (`.github/workflows/e2e.yml`), along with the harness server's tests.
 
 The fake answers the same paths with the same JSON fields as
-ai-api-unified-http 1.18.0: `/healthz`, the run grant endpoints, and
+ai-api-unified-http 1.19.0: `/healthz`, the run grant endpoints, and
 `/v1/conversations/turn`. Its scripted run asks pi to write `hello.txt`, then
-answers that it is done. Each turn takes 2 seconds and costs $0.002, so the
+answers that it is done. It counts a tool result only in the HTTP Gateway's
+one shape for every engine, and answers 400 to a malformed one, so the check
+fails if pi sends an engine's own shape. Each turn takes 2 seconds and costs $0.002, so the
 cancel and restart demos have time to act and the spend-limit demo trips on
 turn 2. The fake refuses to start when a real gateway answers on its port.
 
@@ -881,3 +883,10 @@ Every other command takes `GATEWAY=fake` too, e.g.
     Each run has its own network, and Docker Desktop's default pools hold
     about 30. That limits how many runs can be in progress at once on one
     machine, which is more than local development needs.
+13. **Gemini's parallel tool calls share one id.** Gemini function calls
+    carry no id, so ai-api-unified sets each call's id to the tool's name.
+    Two `write` calls in one turn both have the id `write`. The harness
+    server matched a call's start to its end by id, so it lost one of the
+    two `file_changed` events. It now queues the calls under each id, and
+    reports every changed file. The model calls were unaffected: Gemini
+    matches function responses to calls by name and order.

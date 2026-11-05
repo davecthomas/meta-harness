@@ -4,10 +4,10 @@
  * - User text goes as `{role: "user", content}`, which every engine accepts.
  * - An assistant turn goes back as its `conversation_token`, which the HTTP
  *   Gateway expands into the answering engine's own shape.
- * - A tool result has to be in the shape of the engine that asked for the
- *   tool. The gateway takes no engine-neutral tool result yet, so the shapes
- *   below copy ai-api-unified's `build_tool_result_message` for each engine
- *   (library 3.29.1). They go away when the gateway accepts one neutral shape.
+ * - A tool result goes as `{type: "tool_result", tool_call_id, result,
+ *   is_error}`, the same on every engine. The HTTP Gateway (ai-api-unified-http
+ *   1.19.0) builds the answering engine's own message from it, and puts the
+ *   results of one turn together where the engine needs that.
  */
 
 import type { Message, ToolResultMessage } from "@earendil-works/pi-ai";
@@ -22,51 +22,17 @@ function textOf(content: string | readonly { type: string; text?: string }[]): s
 		.join("\n");
 }
 
-/** Mirrors each engine's `_build_tool_result_message_provider` in ai-api-unified. */
-function toolResultMessage(engine: string, result: ToolResultMessage): GatewayMessage {
-	const payload: Record<string, unknown> = { output: textOf(result.content) };
-	switch (engine) {
-		case "claude":
-		case "anthropic":
-			return {
-				role: "user",
-				content: [
-					{
-						type: "tool_result",
-						tool_use_id: result.toolCallId,
-						content: JSON.stringify(payload),
-						is_error: result.isError,
-					},
-				],
-			};
-		case "openai":
-			return {
-				role: "tool",
-				tool_call_id: result.toolCallId,
-				content: JSON.stringify(result.isError ? { error: payload } : payload),
-			};
-		case "openai-responses":
-			return {
-				type: "function_call_output",
-				call_id: result.toolCallId,
-				output: JSON.stringify(result.isError ? { error: payload } : payload),
-			};
-		case "google-gemini":
-			// Gemini calls carry no id; the library sets the call id to the function name.
-			return {
-				role: "user",
-				parts: [{ function_response: { name: result.toolCallId, response: result.isError ? { error: payload } : payload } }],
-			};
-		default:
-			throw new Error(`The model client has no tool-result shape for engine "${engine}".`);
-	}
+function toolResultMessage(result: ToolResultMessage): GatewayMessage {
+	return {
+		type: "tool_result",
+		tool_call_id: result.toolCallId,
+		result: { output: textOf(result.content) },
+		is_error: result.isError,
+	};
 }
 
 export function toGatewayMessages(messages: readonly Message[]): GatewayMessage[] {
 	const out: GatewayMessage[] = [];
-	// Engine that answered the most recent assistant turn; its tool results follow it.
-	let lastEngine: string | undefined;
-
 	for (const message of messages) {
 		if (message.role === "system") continue; // sent as system_prompt
 		if (message.role === "user") {
@@ -76,7 +42,6 @@ export function toGatewayMessages(messages: readonly Message[]): GatewayMessage[
 		if (message.role === "assistant") {
 			const stored = decodeResponseId(message.responseId);
 			if (stored) {
-				lastEngine = stored.engine;
 				out.push({ role: "assistant", content: stored.token });
 			} else {
 				// A turn with no token (an error, or an aborted turn) replays as plain text.
@@ -85,22 +50,7 @@ export function toGatewayMessages(messages: readonly Message[]): GatewayMessage[
 			}
 			continue;
 		}
-		if (message.role === "toolResult") {
-			if (!lastEngine) throw new Error("A tool result arrived before any assistant turn from the HTTP Gateway.");
-			const shaped = toolResultMessage(lastEngine, message);
-			const previous = out[out.length - 1];
-			// Claude takes every result of one assistant turn in a single user message.
-			if (
-				(lastEngine === "claude" || lastEngine === "anthropic") &&
-				previous?.role === "user" &&
-				Array.isArray(previous.content) &&
-				(previous.content as { type?: string }[]).every((block) => block.type === "tool_result")
-			) {
-				(previous.content as unknown[]).push(...(shaped.content as unknown[]));
-			} else {
-				out.push(shaped);
-			}
-		}
+		if (message.role === "toolResult") out.push(toolResultMessage(message));
 	}
 	return out;
 }

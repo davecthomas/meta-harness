@@ -26,7 +26,10 @@ The model client and message conversion started as the
 [pi model client sample](../../samples/pi-model-client/). This copy reads the
 run's grant key from the run in progress on every turn, so a follow-up run
 uses its own key. It sends no engine or model: the run grant behind the key
-decides both on the HTTP Gateway (ai-api-unified-http 1.18.0 or later).
+decides both on the HTTP Gateway. Tool results go in the HTTP Gateway's one
+shape for every engine, `{type: "tool_result", tool_call_id, result,
+is_error}`, and the HTTP Gateway builds the answering engine's own message.
+Both need ai-api-unified-http 1.19.0 or later.
 
 ## Run it in a container
 
