@@ -874,6 +874,8 @@ does the same with `gh`. The pull request comes from `mh/<REF>`, labeled
 The harness-pi image has Node and git, so checks that need Python need a
 harness profile image with it.
 
+The zero-cost end-to-end check runs this demo on every pull request.
+
 ## Egress allowlist
 
 ```bash
