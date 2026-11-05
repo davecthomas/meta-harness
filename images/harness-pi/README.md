@@ -141,8 +141,9 @@ Each event has `id`, `type`, `run_id`, `time` and `data`.
 | `file_changed` | `path`, `tool`, after a `write` or `edit` that succeeded |
 | `compacted` | `reason` |
 | `turn_finished` | `turn`, `stop_reason`, the assistant `text`, the number of `tool_calls` |
+| `review_submitted` | A review run's `verdict` (`clean` or `changes`), `summary` and `findings`, each a `path`, `line` and `body`, from `submit_review` |
 | `heartbeat` | `turns`, `elapsed_ms` |
-| `run_finished` | `status`, `end_reason`, `error`, `turns`, `elapsed_ms`, `usage` |
+| `run_finished` | `status`, `end_reason`, `error`, `turns`, `elapsed_ms`, `usage`, and `review`: the verdict from `submit_review`, or null |
 
 Text, arguments and tool output over 2,000 characters arrive as
 `{truncated, chars, preview}`.
@@ -157,7 +158,11 @@ Text, arguments and tool output over 2,000 characters arrive as
   pi keeps its own coding-agent system prompt.
 - **Settings in memory.** pi's retry is off and cache warming is off.
 - **The profile's tools,** from pi's built-ins: `read`, `write`, `edit`,
-  `ls`, `find`, `grep`, and `bash` when allowed.
+  `ls`, `find`, `grep`, and `bash` when allowed. A profile may also name the
+  meta-harness's own `submit_review` (`extension/owned-tools.ts`). It ends a
+  review run with a verdict, `clean` or `changes`, a summary and findings. It
+  refuses `changes` with no finding, and it writes nothing on the code host:
+  the meta-harness run service posts the review after the run.
 - **The task text as given.** `prompt()` runs with `expandPromptTemplates: false`.
 
 ## Tests
@@ -180,6 +185,9 @@ cost nothing. They cover:
 - the turn limit
 - the grant's spend limit, which ends the run `ERROR spend_limit`
 - a failed gateway call
+- `submit_review`: a `changes` verdict with no finding refused, then the
+  verdict recorded, the run ended with no further model call, and the review in
+  `run_finished` and `GET /status`
 - request checks
 - SIGTERM during a run, which exits within seconds
 
@@ -191,9 +199,10 @@ Each of these is in the design and missing here:
   call's `route: trivial` hint waits for the gateway to expose the router.
 - **Restoring a saved session** into a fresh sandbox with `switchSession()`.
   `/followup` works only on the session this server still holds.
-- **The owned tools** `run_tests`, `open_pr` and `ask_for_followup`, the
-  `tests_run` event, and the tool-call hook for protected paths, plan-first
-  and test-before-PR.
+- **The owned tools** `run_tests`, `create_ticket` and `ask_for_followup`,
+  the `tests_run` event, and the tool-call hook for protected paths, the
+  `bash` allowlist, plan-first and test-before-PR. Pull requests are not a pi
+  tool: the meta-harness run service opens them after the run.
 - **The compaction handler** (`session_before_compact`) and the profile's
   compaction settings. pi compacts on its own defaults.
 - **`guardrail_blocked`,** which needs the gateway to report blocked tool
