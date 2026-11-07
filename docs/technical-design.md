@@ -1348,108 +1348,76 @@ orphans destroyed by reconciliation, and artifact collection failures.
 
 ## Metering
 
+The metering service measures each completed task in dollar-hours:
+
 ```
 dollar-hours per successfully completed task = Σi (Di × Hi) / Σi Ci
 ```
 
 | Term | Source |
 |---|---|
-| Di, dollars for attempt i | The harness server Run API `model_call` events, which the metering service tails from the meta-harness event service. They hold the HTTP Gateway per-turn model token usage and cost (cached input model tokens included). They also hold the HTTP Gateway per-run spend counter's running total for the meta-harness run. Add `classifier_usd` from the run service `route` activity result and the meta-harness control plane services' own model calls for the meta-harness run |
-| Hi, hours for attempt i | Active meta-harness run execution time from `RUNNING` to a terminal state, from the harness server Run API run status |
-| Ci, success for the task | Unweighted share of the meta-harness task's checks that passed. The checks are code-host CI checks on the code-host PR, acceptance checks named in the Task API task, and code-host PR merge. Read from the meta-harness run service's `check_completed` and `task_closed` meta-harness domain events |
+| Di, dollars for attempt i | The run's `model_call` events, each with the HTTP Gateway's token usage, cost and the run's running total, plus the `route` activity's `classifier_usd` |
+| Hi, hours for attempt i | The run's time from `RUNNING` to a terminal state |
+| Ci, success for the task | The share of the task's checks that passed: CI checks on its pull request, its acceptance checks, and the merge |
 
-Because each harness server Run API `model_call` event holds the HTTP
-Gateway's numbers, metering service cost attribution needs no log parsing and
-no HTTP Gateway event output.
+A task's attempts include its review and fix tasks, which the metering service
+rolls up to the parent by `parent_task_id`, and it reports the review loop's
+share apart. Each run's `attempt_finished` event, with the dollars the HTTP
+Gateway counted against its run grant, and the harness server's `GET /usage`
+cross-check Di, and the metering service flags a gap over 5%. Spend on failed
+runs, including every run of a task whose candidates all failed, counts as
+the task's wasted spend.
 
-Each run's `attempt_finished` meta-harness domain event, which holds the
-dollars the HTTP Gateway counted against the run's HTTP Gateway run grant,
-and the harness server Run API `/usage` endpoint are cross-checks for Di.
-Each `attempt_finished` holds the meta-harness run id, so the metering
-service joins it to that meta-harness run's other meta-harness domain events
-and pool manager lease record, counts nothing twice, and flags any gap over
-5%. The metering service records the cost of every run, including each run of
-a meta-harness task whose every tier candidate failed, because the RunTask
-workflow writes one `attempt_finished` per run. The metering service keeps
-the spend on failed runs per meta-harness task as that task's wasted spend.
+The metering service tails the event service into its own tables:
+`model_call`, `attempt_usage`, `check_result`, `task_outcome`, and `spend`
+per caller and period.
 
-A task's attempts include the runs of its meta-harness review and fix tasks.
-The metering service rolls each review and fix task's dollars and hours up to
-its parent task by `parent_task_id`, so dollar-hours per completed task counts
-the whole review loop, and reports the review loop's share separately.
-
-The metering service tails the meta-harness event service and owns its metering
-projection tables: one `model_call` row per harness server Run API `model_call`
-event, one `attempt_usage` row per meta-harness run, a `check_result` row per
-task check, a `task_outcome` row when the meta-harness task closes, and `spend`
-per Task API caller and period. Other meta-harness services query these through
-the metering service interface, never the metering projection tables.
-
-The metering service reports the model provider
-prompt cache hit rate, cached input model tokens divided by input model tokens,
-per meta-harness run, harness profile and model, from each harness server Run
-API `model_call` event's `cached_input_tokens` and `input_tokens`. The prompt
-cache hit rate and model token totals in the run service run activity's
-Collect result are the cross-check. The metering service keeps
-`cache_write_5m_tokens` and `cache_write_1h_tokens` separate, because the two
-model provider prompt cache write kinds bill at different rates. Keeping them
-separate lets the metering service price prompt cache writes and check them
-against each pi coding agent turn's HTTP Gateway cost. A low prompt cache hit
-rate means something in the pi coding agent prompt prefix changes between pi
-coding agent turns, which multiplies the cost of every later turn. The
-metering service raises an alert for it.
+It also reports the prompt cache hit rate, cached input tokens over input
+tokens, per run, harness profile and model. It keeps 5-minute and 1-hour
+cache writes apart because they bill at different rates. A low hit rate means
+the prompt prefix changes between turns, which multiplies the cost of every
+later turn, and it raises an alert.
 
 ### Spend controls
 
-- **Per turn:** the HTTP Gateway rejects a pi coding agent turn once the
-  HTTP Gateway run grant spend limit for the meta-harness run is spent.
-- **Per run:** the harness server ends the meta-harness run `ERROR` with
-  `spend_limit` when the HTTP Gateway refuses a turn with
-  `402 run_grant_spend_limit`, and ends it `EXPIRED` at `max_minutes`. The
-  pool manager lease TTL destroys the per-run sandbox if the harness server
-  does not end the meta-harness run.
-- **Per caller:** a configurable caller daily spend cap; the meta-harness
-  scheduler reads the Task API caller's spend from the metering service, stops
-  admitting that Task API caller's new meta-harness tasks at the caller daily
-  spend cap and warns at 80%.
-- **Global:** a hard daily global spend cap and a meta-harness kill switch.
+- The HTTP Gateway refuses a turn once the run has spent its run grant's
+  limit, and the harness server then ends the run `ERROR` with `spend_limit`.
+- The harness server ends a run `EXPIRED` at `max_minutes`, and the lease TTL
+  destroys the sandbox if the harness server does not.
+- The scheduler stops admitting a caller's tasks at the caller's daily spend
+  cap, and warns at 80%.
+- A hard daily global spend cap and a kill switch stop everything.
 
-## Scheduling and scale
+## Scheduling
 
 ### Admission
 
-The meta-harness scheduler runs its admission pass every few seconds and on
-every task-related meta-harness domain event:
+The meta-harness scheduler runs an admission pass every few seconds and on
+every task event:
 
-1. Order meta-harness tasks by task priority, then task age.
-2. Admit a meta-harness task only if all hold: global meta-harness run
-   concurrency below the global concurrency limit, the Task API caller below
-   its caller concurrency quota and caller daily spend cap, pool manager
-   per-run sandbox capacity available, and the target repo area not locked by
-   another meta-harness run.
-3. The meta-harness scheduler repo-area lock key is the
-   repo plus the top-level directories the meta-harness task names. Unscoped
-   meta-harness tasks lock the whole repo.
-4. A goal's task is admitted only when every issue it depends on
-   is closed, while the goal is active and its `max_usd` has money left, and
-   within its modality's parallelism.
+1. It orders tasks by priority, then age.
+2. It admits a task when global run concurrency is under its limit, the caller
+   is under its concurrency quota and daily spend cap, the pool manager has
+   sandbox capacity, and no other run holds the task's repo area.
+3. A repo-area lock covers the repo plus the top-level directories the task
+   names, or the whole repo for a task that names none.
+4. It admits a goal's task once every issue the task depends on is closed,
+   while the goal is active, has budget left, and is within its modality's
+   parallelism.
 
 ### Throughput
 
-Each of these resources scales independently:
-
-| Resource | Unit of scale | Limit |
+| Resource | Scales by | Notes |
 |---|---|---|
-| Per-run sandboxes | Warm-pool targets and maximums per harness profile image, set by the pool manager | Node autoscaler follows the pool manager's demand; a second sandbox pool on a managed sandbox service |
-| HTTP Gateway | HTTP Gateway replicas | Stateless and autoscaling; the single path for all pi coding agent model token traffic, so the HTTP Gateway has its own SLO and canary deploy |
-| Model providers | ai-api-unified fallback chains per model, inside the HTTP Gateway | ai-api-unified fallback and provider cooldowns across model providers |
-| Meta-harness control plane | Stateless meta-harness service replicas and Temporal workers | Each meta-harness service holds its own state behind its service interface; one meta-harness run service run activity per active meta-harness run |
-| Code host API | Meta-harness code-host app installation with code-host webhooks | No code-host polling; conditional code-host API requests |
+| Per-run sandboxes | Warm targets and maximums per image | The GKE node autoscaler follows the pool manager's demand; a managed sandbox service can add a second pool |
+| HTTP Gateway | Replicas | All model traffic goes through it, so it has its own SLO and canary deploy |
+| Model providers | ai-api-unified fallback chains per model | Fallback and cooldowns spread load across providers |
+| Control plane | Stateless replicas and Temporal workers | One run activity per active run |
+| Code host API | The GitHub App's installation and webhooks | Conditional requests, no polling |
 
-Per meta-harness run, the meta-harness control plane's own load is one
-ai-api-unified router classification, about two short ai-api-unified
-completions, and the harness server Run API event stream. The harness server's
-pi coding agent turns go directly from the per-run sandbox to the HTTP Gateway.
+Per run, the control plane's own load is one router classification, about two
+short completions, and the run's event stream. pi's model turns go straight
+from the sandbox to the HTTP Gateway.
 
 ## Task API
 
