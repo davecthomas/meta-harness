@@ -1900,6 +1900,7 @@ run capacity by priority. A goal has:
 | `label` | The GitHub issue label that queues an issue for this goal, in any of its repos |
 | `statement` | What the goal is, in prose. The planning task reads it |
 | `success_criteria` | Checks the task service evaluates to decide whether the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a code-host check name |
+| `latitude` | 0 to 1: how far the planner may go beyond what the goal names (Latitude, below). Defaults per modality |
 | `max_usd`, `priority` | One budget and one priority for every task the goal queues, review and fix tasks included |
 | `status` | `active`, `paused`, `met`, `stalled`, `budget_exhausted`, `canceled` |
 
@@ -1946,14 +1947,14 @@ a configuration change.
 {
   "version": "2026-11-07.1",
   "modalities": {
-    "fix":        {"intake": "queue", "plan": false, "approve": [],
+    "fix":        {"intake": "queue", "plan": false, "approve": [], "latitude": 0,
                    "route_ceiling": "standard", "parallel": 8,
                    "merge_bar": ["regression_test", "small_diff", "no_api_change"]},
-    "feature":    {"intake": "plan", "plan": true, "approve": ["plan"],
+    "feature":    {"intake": "plan", "plan": true, "approve": ["plan"], "latitude": 0.25,
                    "route_floor": "standard", "parallel": "graph",
                    "merge_bar": ["acceptance_checks", "docs", "version_bump"],
                    "goal_check": "acceptance"},
-    "new-system": {"intake": "phases", "plan": true, "approve": ["phase"],
+    "new-system": {"intake": "phases", "plan": true, "approve": ["phase"], "latitude": 0.5,
                    "route_floor": {"design": "complex", "skeleton": "complex", "default": "standard"},
                    "parallel": {"skeleton": 1, "default": "graph"},
                    "merge_bar": ["design_conformance", "e2e_green", "phase_runnable"]}
@@ -2021,6 +2022,27 @@ operator issue, and a meta-harness alert rule fires. Its `max_usd` covers
 every task it queued, review and fix tasks included; once spent, the
 meta-harness scheduler admits no more of the goal's tasks and the goal ends
 `budget_exhausted`.
+
+**Latitude.** A goal's `latitude` is a number from 0 to 1 that sets how much
+scope the planner may add on its own, the way a sampling temperature sets how
+far a model may stray from the likeliest token. It applies wherever the
+planner decides what to do next: the planning task's prompt, the drafts the
+planner accepts, and the Decide step.
+
+| Latitude | The planner may | Example |
+|---|---|---|
+| 0 | Only the issues the goal names or people labeled. It drafts none, and it refuses a draft outside them. A `fix` goal at 0 is a pure queue | "Fix these twelve issues" |
+| 0.25 | Draft the issues the statement needs and nothing beyond them. A draft must trace to a sentence in the statement | "Add the `route_ceiling` option" |
+| 0.5 | Draft what the statement needs, plus the work it finds necessary on the way: tests the change needs, a doc the change makes wrong, a refactor the change needs to land | "Build the review loop" |
+| 0.75 | Also draft improvements it finds in the goal's repos that serve the statement, as separate issues the operator sees in Inputs before they run | "Make the sample's end-to-end check faster and more thorough" |
+| 1 | Keep going on its own: when the criteria are met it proposes the next goal from what it learned, and continues under the same budget until the budget or the operator stops it | "Improve the meta-harness" |
+
+Above 0.5 every draft carries a `latitude_reason`, one line on why it serves
+the statement, which the console shows beside the issue. Latitude never
+loosens the modality's merge bar, the budget, the repo list or principle 9;
+it widens only what the planner may propose. The modality sets the default:
+`fix` 0, `feature` 0.25, `new-system` 0.5. The console shows the dial on the
+Goal view, and an operator changes it while the goal runs.
 
 **Planner.** The planner is the component that turns a goal into tasks and
 decides when a goal needs more of them. It owns the goal loop above, the
@@ -2094,7 +2116,7 @@ its own Postgres role. No other Postgres role has a Postgres grant on it.
 | Owner | Entity | Fields |
 |---|---|---|
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `ready` and `review_unresolved`) |
-| Planner | goal | id, caller, modality, repos, label, statement, success_criteria, max_usd, priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, closed_at |
+| Planner | goal | id, caller, modality, repos, label, statement, success_criteria, latitude, max_usd, priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, closed_at |
 | Planner | plan | goal_id, phase, drafted_issues, refused_drafts, approved_by, approved_at, created_refs |
 | Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, last_webhook_at |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
@@ -2162,7 +2184,7 @@ client library.
 | Producer | Events |
 |---|---|
 | Task service (Task API) | `task_created`, meta-harness task status changes, received code-host PR webhooks |
-| Planner | `goal_created`, `plan_drafted`, `plan_approved`, `issues_created`, `issue_joined`, `task_blocked`, `task_unblocked`, `criteria_evaluated`, `replan_ticketed` and `goal_closed`, and the tracker webhooks it received |
+| Planner | `goal_created`, `latitude_changed`, `plan_drafted`, `plan_approved`, `issues_created`, `issue_joined`, `task_blocked`, `task_unblocked`, `criteria_evaluated`, `replan_ticketed` and `goal_closed`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions, with the reason the meta-harness scheduler holds a meta-harness task |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the run service `route` activity result. One `attempt_finished` per run from the run service run activity Collect result (sections 6.1 and 6.3), joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `compacted`, `turn_finished`, `run_finished`. The run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
@@ -2242,7 +2264,7 @@ repo, time, harness profile, model, routing tier, task type and state.
 |---|---|---|
 | Overview | Every active goal with its modality, progress against its success criteria, spend against budget and tasks in flight. A "needs you" list: plans and phases to approve, operator issues (releases, deploys) only an operator can close, unresolved reviews, alerts. Run capacity, HTTP Gateway health and the kill switch | Create goal, kill switch |
 | Inputs | The queued GitHub issues across every registered repo, by repo and by goal: each one's state (queued, blocked and on what, running, PR open, in review, merged, failed), issues no goal has picked up, and which repos each goal is working in now | Add an issue to a goal, drop one |
-| Goal | The goal's statement and modality, its issue dependency graph across repos, the plan or the phase timeline with each phase's criteria, every success criterion's live state, spend over time, and its tasks | Approve plan or phase, pause, resume, cancel |
+| Goal | The goal's statement, modality and latitude dial, its issue dependency graph across repos, the plan or the phase timeline with each phase's criteria, every success criterion's live state, spend over time, and its tasks. Each planner-drafted issue shows its `latitude_reason` | Approve plan or phase, set latitude, pause, resume, cancel |
 | Tasks | One task: its issue, every ai-api-unified router routing decision, every run including fallbacks, every check result, the diff, the pull request, each review round's verdict and findings and the fix task it ticketed, the merge, and cost per run | Cancel |
 | Run | Live timeline of the run's events: each turn's model call (model, thinking, tokens, cost, latency), tool calls, file changes, test runs, compactions and guardrail blocks, the OpenTelemetry trace, and the per-run sandbox | Cancel |
 | Live runs | Every run in flight across every goal: task, repo, model, turn, spend as it accrues, time since its last event | Cancel |
