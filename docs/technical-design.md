@@ -1316,17 +1316,16 @@ sandbox back and skips the restore. A kept sandbox stays on its lease TTL and
 its one pi session.
 
 The pool manager keeps a warm target per image (`warm: 4`), adjusted from the
-scheduler's queue depth per image. A warm sandbox holds no repo and no secret.
-The pool manager replaces a warm sandbox older than `warm_ttl` (default 2
+scheduler's queue depth per image. The pool manager replaces a warm sandbox older than `warm_ttl` (default 2
 hours), and per-image and global maximums cap the total. The GKE node
 autoscaler follows the pool manager's demand.
 
-A sandbox whose harness server is not healthy within `ready_timeout` is
-replaced, and the lease goes to the next warm sandbox. During a run, two missed
-harness server heartbeat windows mark the sandbox `unhealthy`; the pool manager
-destroys it, and the RunTask workflow's Decide step decides whether another
-candidate runs. The pool manager replaces an unhealthy sandbox and probes idle
-warm sandboxes on an interval. Every 30 seconds it reconciles: it destroys
+The pool manager replaces a sandbox whose harness server is not healthy within
+`ready_timeout`, and the lease goes to the next warm sandbox. During a run, two
+missed harness server heartbeat windows mark the sandbox `unhealthy`; the pool
+manager destroys it, and the RunTask workflow's Decide step decides whether
+another candidate runs. The pool manager also probes idle warm sandboxes on an
+interval. Every 30 seconds it reconciles: it destroys
 sandboxes with no record or an expired lease, marks records whose pod has
 vanished, and provisions back to each image's warm target.
 
@@ -1687,10 +1686,9 @@ the same approval.
 | Harness analyzer | proposal | id, kind (tier, profile, task_policy), evidence, proposed_change, status (open, approved, rejected), decided_by, decided_at, config_pr_url |
 
 The `run` row records the candidate a run started on, and `model_call` records
-which model answered each turn, which the harness analyzer reads. The `event`
-table is indexed on `(run_id, position)`, `(run_id, time_utc)` and
-`(event_type, time_utc)` and partitioned by time and retention class. The
-metering tables are projections of it and can be rebuilt by replaying it.
+which model answered each turn, which the harness analyzer reads. The event service
+indexes the `event` table on `(run_id, position)`, `(run_id, time_utc)` and
+`(event_type, time_utc)`. The metering tables are projections of it and can be rebuilt by replaying it.
 
 Stores outside Postgres have one owner each: the scheduler's repo-area locks,
 the run service's Temporal namespace and code-host rate-limit buckets, the
@@ -1784,7 +1782,6 @@ service, the event service, the metering service and the pool manager through
 their interfaces, and sends each command to the owning service, which records
 it as an audit event with the operator as actor.
 
-The console serves many parallel tasks pursuing several goals at once.
 Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 
@@ -1949,7 +1946,7 @@ interfaces.
 
 - One private, regional GKE Autopilot cluster.
 - One Deployment per meta-harness component: the
-  meta-harness task service, the meta-harness scheduler, the meta-harness run
+  meta-harness task service, the planner, the meta-harness scheduler, the meta-harness run
   service Temporal workers, the pool manager, the event service, the metering
   service, the harness analyzer, the operator console and the
   ai-api-unified-http HTTP Gateway, each with a horizontal pod autoscaler. The
