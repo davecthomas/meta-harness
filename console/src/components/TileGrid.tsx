@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { Anchor, Badge, Group, Paper, Text } from "@mantine/core";
 import { api, type MhEvent, type Task } from "../api";
+import { statusColor } from "../theme";
 import { useEventStream, useSettled } from "../hooks";
 import { describe, fold, taskOf, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "./Terminal";
@@ -97,20 +99,19 @@ export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?:
         const f = facts[t.id] ?? EMPTY;
         const status = f.status ?? t.status;
         return (
-          <section className="tile" key={t.id} data-task-id={t.id} ref={watch}>
+          <Paper component="section" className="tile" p={0} key={t.id} data-task-id={t.id} ref={watch}>
             <header>
-              <div className="title"><Link to={`/tasks/${t.id}`}>{t.title}</Link></div>
-              <div className="facts">
-                <span className={`status-${status}`}>{status}</span>
-                <span className="mono">{t.id}</span>
-                {props.size !== 32 && <span className="mono">{t.repo.split("/").pop()}</span>}
-                <span>turn {f.turn}</span>
-                <span>${f.usd.toFixed(4)}</span>
-                {props.size === 4 && f.model && <span className="mono">{f.model}</span>}
-              </div>
+              <Anchor component={Link} to={`/tasks/${t.id}`} className="title" fw={600} size="sm" truncate="end">{t.title}</Anchor>
+              <Group className="facts" gap={8} wrap="wrap">
+                <Badge size="xs" variant="light" color={statusColor(status)} tt="none">{status.replace(/_/g, " ")}</Badge>
+                {props.size !== 32 && <Text size="xs" c="dimmed" ff="monospace">{t.repo.split("/").pop()}</Text>}
+                <Text size="xs" c="dimmed">turn {f.turn}</Text>
+                <Text size="xs" c="dimmed">${f.usd.toFixed(4)}</Text>
+                {props.size === 4 && f.model && <Text size="xs" c="dimmed" ff="monospace">{f.model}</Text>}
+              </Group>
             </header>
             <Terminal lines={lines[t.id] ?? []} />
-          </section>
+          </Paper>
         );
       })}
     </div>

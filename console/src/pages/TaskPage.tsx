@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { api, issueUrl, type MhEvent, type Task } from "../api";
+import { Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, Stack, Text } from "@mantine/core";
+import { IconX } from "@tabler/icons-react";
+import { api, type MhEvent, type Task } from "../api";
 import { useEventStream } from "../hooks";
 import { describe, fold, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "../components/Terminal";
+import { ErrorAlert, Facts, IssueLink, PageHeader, SectionTitle, StatusBadge } from "../components/ui";
 
 const FIRST = 400;
 const OLDER = 200;
 const EMPTY: TileFacts = { turn: 0, usd: 0, model: "", status: null };
+const STREAM_COLORS: Record<string, string> = { live: "teal", connecting: "yellow", reconnecting: "orange", idle: "gray" };
 
 // One task: its facts, cancel, and its run as a live terminal. The terminal opens at the newest
 // events and loads older ones as you scroll up.
@@ -77,9 +82,9 @@ export function TaskPage() {
     }
   }, [taskId]);
 
-  if (!task) return error ? <div className="error">{error}</div> : <p className="empty">Loading…</p>;
-  const url = issueUrl(task.external_ref);
+  if (!task) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const status = facts.status ?? task.status;
+  const cancellable = ["queued", "blocked", "running", "ready", "review_unresolved"].includes(status);
 
   async function cancel() {
     try {
@@ -91,33 +96,34 @@ export function TaskPage() {
 
   return (
     <>
-      <h1>{task.title}</h1>
-      {error && <div className="error">{error}</div>}
-      <div className="panel">
-        <dl className="facts">
-          <dt>Task</dt><dd className="mono">{task.id}</dd>
-          <dt>Status</dt>
-          <dd>
-            <span className={`status-${status}`}>{status}</span>
-            {task.status_reason && `: ${task.status_reason}`}
-            {task.cancel_requested && status === "running" && " (cancel requested)"}
-          </dd>
-          <dt>Repo</dt><dd className="mono">{task.repo}</dd>
-          <dt>Issue</dt><dd>{url ? <a href={url}>{task.external_ref}</a> : <span className="mono">{task.external_ref}</span>}</dd>
-          {task.goal_id && (<><dt>Goal</dt><dd><Link className="mono" to={`/goals/${task.goal_id}`}>{task.goal_id}</Link></dd></>)}
-          <dt>Pull request</dt><dd>{task.pr_url ? <a href={task.pr_url}>{task.pr_url}</a> : "none yet"}</dd>
-          <dt>Checks</dt><dd>{task.acceptance_checks.map((c) => <div className="mono" key={c}>{c}</div>)}</dd>
-          <dt>Turn and spend</dt><dd>turn {facts.turn}, ${facts.usd.toFixed(4)} {facts.model && <span className="mono">{facts.model}</span>}</dd>
-        </dl>
-      </div>
-      {["queued", "blocked", "running", "ready", "review_unresolved"].includes(status) && (
-        <>
-          <h2>Actions</h2>
-          <div className="actions"><button className="danger" onClick={cancel}>Cancel task</button></div>
-        </>
-      )}
-      <h2>Run <span className="chip">{state}</span></h2>
-      <Terminal lines={lines} className="tall" onScrollTop={loadOlder} />
+      <PageHeader
+        title={task.title}
+        description={<Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{task.id}</Text></Group>}
+        actions={cancellable && (
+          <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={cancel}>Cancel task</Button>
+        )}
+      />
+      <ErrorAlert error={error} />
+      <Facts
+        items={[
+          ["Status", (
+            <Text size="sm">
+              {status}{task.status_reason && `: ${task.status_reason}`}
+              {task.cancel_requested && status === "running" && " (cancel requested)"}
+            </Text>
+          )],
+          ["Repo", <Code>{task.repo}</Code>],
+          ["Issue", <IssueLink issueRef={task.external_ref} />],
+          ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} ff="monospace" size="sm">{task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
+          ["Pull request", task.pr_url ? <Anchor href={task.pr_url} target="_blank" size="sm">{task.pr_url}</Anchor> : <Text size="sm" c="dimmed">None yet</Text>],
+          ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
+          ["Turn and spend", <Text size="sm">Turn {facts.turn}, ${facts.usd.toFixed(4)} {facts.model && <Code>{facts.model}</Code>}</Text>],
+        ]}
+      />
+      <SectionTitle right={<Badge variant="dot" color={STREAM_COLORS[state] ?? "gray"} tt="none">{state}</Badge>}>Run</SectionTitle>
+      <Paper p={0} style={{ overflow: "hidden" }}>
+        <Terminal lines={lines} className="tall" onScrollTop={loadOlder} />
+      </Paper>
     </>
   );
 }
