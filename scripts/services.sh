@@ -15,6 +15,7 @@ mkdir -p "$STACK_DIR"
 SERVICES=(
   "events 8301 uv run mh events serve --port 8301"
   "tasks 8302 uv run mh tasks serve --port 8302"
+  "planner 8303 uv run mh planner serve --port 8303"
 )
 
 running() { [ -f "$STACK_DIR/$1.pid" ] && kill -0 "$(cat "$STACK_DIR/$1.pid")" 2>/dev/null; }
