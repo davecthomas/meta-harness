@@ -201,7 +201,8 @@ On every pi turn the pi model client extension:
    (ai-api-unified-http 1.19.0), so the pi model client extension holds no
    per-provider message code.
 2. Attaches per-call routing hints. pi agent turns carry no route hint, so the
-   HTTP Gateway run grant's model pin or model band decides. Calls the pi
+   HTTP Gateway run grant's model policy decides: one pinned model, or a tier
+   range, the router tiers from a `route_floor` to a `route_ceiling`. Calls the pi
    model client extension makes itself, for pi session compaction and for
    auxiliary text (commit message, pull request description), carry `route: trivial`.
 3. Calls the HTTP Gateway's native conversation endpoint with the run grant
@@ -501,7 +502,7 @@ sequenceDiagram
     Note over PI: pi context passes the model context window minus the harness profile's reserve model tokens
     PI->>EX: pi session_before_compact event
     EX->>GW: POST /v1/conversations/turn (run grant key, route trivial, no prompt_cache)
-    Note over GW: a route hint turns the run grant pin into a tier band with the pinned tier as ceiling
+    Note over GW: a route hint turns the run grant pin into a tier range with the pinned tier as ceiling
     GW->>GR: send_conversation(route trivial, route_ceiling complex)
     GR->>PV: compaction summary on the trivial tier's model
     PV-->>GR: compaction summary
@@ -669,7 +670,7 @@ its bearer credential. The HTTP Gateway:
    wraps the call in the ai-api-unified library's model-pin scope for the
    tier candidate's inner model. The turn skips the classifier model call and
    runs on that model with the ai-api-unified fallback chain, cooldowns,
-   guardrails and caching intact. With a banded run grant model policy
+   guardrails and caching intact. With a tier-range run grant model policy
    the turn sets `route_floor` and `route_ceiling` instead, and the
    ai-api-unified router inside the HTTP Gateway may answer easy turns from a
    cheaper tier. Under either model policy the HTTP Gateway run grant decides
@@ -686,8 +687,8 @@ its bearer credential. The HTTP Gateway:
 A request body with `route`, such as the `route: trivial` on compaction and
 auxiliary calls, runs that one call on the named tier, capped at the pinned
 model's tier. An unknown route falls back to the pinned model, and pi agent
-turns, which carry no `route`, stay pinned. Under a banded policy the router
-honors the hint within the band.
+turns, which carry no `route`, stay pinned. Under a tier-range model policy
+the router honors the hint within the tier range.
 
 ## Run lifecycle
 
@@ -1002,7 +1003,7 @@ sequenceDiagram
 
     SB->>X: pi session_before_compact event
     X->>GW: /v1/conversations/turn, run grant key, route: trivial, no prompt_cache
-    GW->>GW: body carries route: pin becomes band,<br/>ceiling = HTTP Gateway run grant pinned model's tier
+    GW->>GW: body carries route: pin becomes tier range,<br/>ceiling = HTTP Gateway run grant pinned model's tier
     GW->>R: send with route: trivial
     R->>P: trivial-tier model
     P-->>R: summary
@@ -2038,7 +2039,7 @@ through the local egress proxy's control listener.
 | Pool manager, kept and restored pi sessions | later | |
 | Meta-harness owned pi tools, the `bash` command allowlist, pi compaction handler, `guardrail_blocked` harness server Run API events | later | |
 | Operator review | sketch | |
-| HTTP Gateway: `route` in the conversation request body, so on a run grant that pins a model one call can run on a tier band capped at the pinned model's tier. pi agent turns without `route` stay pinned | later | ai-api-unified-http |
+| HTTP Gateway: `route` in the conversation request body, so on a run grant that pins a model one call can run on a tier range capped at the pinned model's tier. pi agent turns without `route` stay pinned | later | ai-api-unified-http |
 | Streaming: a `send_conversation` form in ai-api-unified that yields typed events and commits to one model at its first delta, and a server-sent-events form of the HTTP Gateway conversation endpoint, so the operator console shows model text token by token | optional | ai-api-unified, ai-api-unified-http |
 | Pool manager on GKE, metering service, harness analyzer, meta-harness scheduler as its own service | sketch | |
 
