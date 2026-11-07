@@ -2071,33 +2071,52 @@ through the local egress proxy's control listener.
 
 ### Bootstrap pull requests
 
-These pull requests build the smallest meta-harness that works a `fix` goal in
-the cloud, from goal creation in the operator console to merged pull requests.
-They merge in this order, all in
-meta-harness unless the row names another repo. Each one extends the zero-cost
-end-to-end check, so its check runs on every later pull request without model
-calls.
+The bootstrap gets the meta-harness to work a `fix` goal in the cloud on its
+own. Its meta-harness pull requests merge one at a time, in this order. Each
+check joins the zero-cost end-to-end check, so it runs on
+every later pull request without model calls.
 
-| Branch | Builds | Done when |
+1. `feat/control-plane-skeleton`, `feat/event-service`, `feat/task-service`,
+   `feat/run-service`. Then `make e2e` submits a task through the Task API,
+   and the task ends with a pull request on a test repo and every event in the
+   event service.
+2. `feat/github-app`, `feat/sandbox-python`. Then a run clones a real repo
+   that the GitHub App alone can reach, and runs its Python tests.
+3. `feat/code-host-webhooks`, `feat/review-loop`, `feat/merge`,
+   `feat/takeover`. Then `make e2e-review` ends with the pull request merged
+   after a review, a fix and a second review, and an operator can take over
+   any run.
+4. `feat/planner-goals`, `feat/admission`, `feat/planner-sync`. Then a labeled
+   issue in a test repo becomes a task, runs, merges and closes, with its
+   state labels on the issue.
+5. `feat/console-shell`, `feat/console-runs`, `feat/console-inputs`. Then an
+   operator creates that goal in the browser and watches its runs live.
+6. `feat/deploy-cloud`. Then a task submitted to the cloud Task API ends
+   merged with no local process running.
+
+An `AGENTS.md` pull request in ai-api-unified-http and one in meta-harness
+merge any time before `feat/deploy-cloud`.
+
+| Pull request | Builds | Check |
 |---|---|---|
-| `feat/control-plane-skeleton` | The `src/meta_harness/` package and the `mh` command line, Docker Compose with Postgres and the Temporal dev server, one schema and migration set per owning component, and CI for unit tests | `make up && make migrate` on a clean checkout, and CI passes |
-| `feat/event-service` | The event service: the `event` table, the schema registry, `append`, `read` and `tail` with Postgres `NOTIFY`, and the event service client library with its outbox | `mh events tail` prints a test producer's events in position order, and keeps going across an event service restart |
-| `feat/task-service` | The task service: the `task` table and the Task API to create, read, look up by `external_ref` and cancel a task, with `task_created` and status events | Two `POST /v1/tasks` calls with one `external_ref` return one task, and `mh events tail` shows `task_created` |
-| `feat/run-service` | The meta-harness run service: the RunTask workflow and activities move from `samples/temporal-run-task` into `src/meta_harness/run_service`. They start from a task id, write `run` and `routing_decision` rows, append `task_routed`, `attempt_finished` and the harness server Run API events, and set the task's status | `make e2e` submits a task through the Task API, and it ends with a pull request on a test repo, the task closed, and every event in the event service |
-| `feat/admission` | Admission in the task service: global concurrency, repo-area locks as rows with an expiry in the task service schema (Redis comes with the meta-harness scheduler), closed dependencies and the goal's budget | `make e2e-admission`: two tasks on one repo area run one after the other, and a task with an open dependency waits |
-| `feat/github-app` | GitHub App authentication: a read-only installation token per run for the clone, and the app token for pushes, pull requests, reviews and merges, in place of personal tokens | `make repo-demo` against a real repo the GitHub App alone can reach |
-| `feat/sandbox-python` | Python 3.12 and Poetry in the per-run sandbox image, for the ai-api-unified and ai-api-unified-http test suites | A run in a per-run sandbox runs `poetry run pytest -q -m "not nonmock"` in a clone of ai-api-unified |
-| `feat/code-host-webhooks` | The task service's code-host webhook endpoint: it checks the signature, and check, merge and close deliveries signal the RunTask workflow | `make webhook-replay` sends recorded GitHub deliveries, and a waiting RunTask workflow moves on |
-| `feat/review-loop` | The review loop: a review task on another model ending with `submit_review`, the review posted on the pull request, a fix task on its branch, `max_rounds` and the parent task's `max_usd`. The Docker executor backend keeps each pi session directory on the VM's disk under `harness_session_id`, so a fix task continues the pi session without the pool manager | `make e2e-review`: the fake HTTP Gateway scripts a `changes` verdict, then `clean`, and the pull request gets two reviews and a fix commit |
-| `feat/merge` | The merge at the reviewed head SHA, the goal's `auto_merge`, the `ready` and `review_unresolved` ends, and a merge conflict as a fix task | `make e2e-review` ends with the pull request merged and its issue closed |
-| `feat/takeover` | Cancel, kill switch, take over, hand back and close in the meta-harness run service and the Task API, each an audit event with the operator as actor | `mh task take-over` stops a run and opens a draft pull request with its work, and `mh task hand-back` continues it |
-| `feat/planner-goals` | The planner: the `goal` table, the Goals API, the `fix` modality set by the operator, the GitHub adapter's `list_open`, `read` and `sweep`, and issue-to-task conversion with `depends_on` | `mh goal create` with a label and three repos, and a labeled issue in a test repo becomes a task within one sweep |
-| `feat/planner-sync` | Issue webhooks, state labels and comments written back to issues, blocked and unblocked tasks, refused issues, and the goal's status and budget | Labeling, editing and closing a test issue each show in `mh events tail`, and the issue gets the label `meta-harness:running`, then `meta-harness:pr-open` |
-| `feat/console-shell` | The operator console in Python with server-rendered pages: GitHub sign-in against an allowlist, the Overview with its "needs you" list and the kill switch, and the Goal view with goal creation and auto-merge | A signed-in operator creates a goal in the browser, and an account outside the allowlist gets 403 |
-| `feat/console-runs` | The Tasks, Run and Live runs views, with live events from `tail` over server-sent events, and take over and cancel | The Run view of a `make e2e` run shows each event as it arrives, and take over works from the page |
-| `feat/console-inputs` | The Inputs view: queued issues by repo and by goal, with each one's state | A labeled test issue shows in Inputs as queued, then running, then merged |
-| `feat/deploy-cloud` | Terraform for Cloud Run (operator console, task service, planner, event service), Cloud SQL, the Compute Engine VM with the meta-harness run service worker, the egress proxy and Docker, Secret Manager and the Temporal Cloud namespace, and a deploy on each release tag. It seeds the configuration documents with router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `make deploy ENV=prod`, then a task submitted to the cloud Task API ends merged with no local process running |
-| ai-api-unified-http `docs/agents-md`, meta-harness `docs/agents-md` | An `AGENTS.md` in each repo with its test, lint and versioning rules, which the harness prompt reads | None |
+| `feat/control-plane-skeleton` | `src/meta_harness/`, the `mh` command line, Docker Compose with Postgres and the Temporal dev server, migrations per owning component | `make up && make migrate` on a clean checkout |
+| `feat/event-service` | The `event` table, the schema registry, `append`, `read` and `tail`, and the client library with its outbox | `mh events tail` keeps printing in position order across an event service restart |
+| `feat/task-service` | The `task` table and the Task API: create, read, look up by `external_ref`, cancel | Two `POST /v1/tasks` with one `external_ref` return one task |
+| `feat/run-service` | The RunTask workflow, moved from `samples/temporal-run-task`, started from a task id and writing its rows and events | `make e2e` through the Task API |
+| `feat/github-app` | A read-only installation token per run for the clone, and the app token for every code-host write | `make repo-demo` on a repo the GitHub App alone can reach |
+| `feat/sandbox-python` | Python 3.12 and Poetry in the per-run sandbox image | `poetry run pytest -q -m "not nonmock"` on ai-api-unified inside a per-run sandbox |
+| `feat/code-host-webhooks` | The webhook endpoint: signature check, and check, merge and close deliveries as RunTask workflow signals | `make webhook-replay` |
+| `feat/review-loop` | The review task with `submit_review`, the posted review, the fix task, and the round and budget limits. The VM's disk keeps pi session directories under `harness_session_id` until the pool manager exists | `make e2e-review`: `changes`, a fix, then `clean` |
+| `feat/merge` | The merge at the reviewed head SHA, `auto_merge`, the `ready` and `review_unresolved` ends, and merge conflicts as fix tasks | `make e2e-review` ends merged |
+| `feat/takeover` | Cancel, kill switch, take over, hand back and close, as audit events | `mh task take-over`, then `mh task hand-back` |
+| `feat/planner-goals` | The `goal` table, the Goals API, the `fix` modality, the GitHub adapter's `list_open`, `read` and `sweep`, and issues to tasks with `depends_on` | A labeled test issue becomes a task within one sweep |
+| `feat/admission` | Global concurrency, repo-area locks as expiring rows until the meta-harness scheduler moves them to Redis, closed dependencies, the goal's budget | `make e2e-admission`: two tasks on one repo area run in turn |
+| `feat/planner-sync` | Issue webhooks, state labels and comments, blocked tasks, refused issues, the goal's status | A test issue gets `meta-harness:running`, then `meta-harness:pr-open` |
+| `feat/console-shell` | Python with server-rendered pages: GitHub sign-in against an allowlist, the Overview with "needs you" and the kill switch, the Goal view | An account outside the allowlist gets 403 |
+| `feat/console-runs` | The Tasks, Run and Live runs views, live over server-sent events, with take over and cancel | The Run view of a `make e2e` run updates as events arrive |
+| `feat/console-inputs` | The Inputs view: queued issues by repo and by goal, with their states | A test issue moves from queued to merged in Inputs |
+| `feat/deploy-cloud` | Terraform for Cloud Run, Cloud SQL, the VM, Secret Manager and the Temporal Cloud namespace, a deploy on each release tag, and router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `make deploy ENV=prod`, then a cloud task ends merged |
+| `docs/agents-md` in ai-api-unified-http and meta-harness | `AGENTS.md` with the repo's test, lint and versioning rules | None |
 
 An operator sets up what the meta-harness cannot:
 
