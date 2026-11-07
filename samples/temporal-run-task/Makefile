@@ -40,7 +40,7 @@
 
 SHELL := /bin/bash
 -include ../../.env
-export MH_GITHUB_APPS
+export MH_GITHUB_APPS ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_APPLICATION_CREDENTIALS
 
 HARNESS_DIR ?= $(abspath $(CURDIR)/../../images/harness-pi)
 HARNESS_IMAGE ?= harness-pi:dev
