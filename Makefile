@@ -2,6 +2,8 @@
 #
 #   make up        start Postgres (Docker Compose) and the Temporal dev server
 #   make migrate   apply every component's schema migrations
+#   make serve     start the control-plane services (event service, task service) in the background
+#   make stop      stop them
 #   make test      unit tests, plus the database tests when Postgres is up
 #   make lint      ruff
 #   make down      stop what `make up` started; Postgres keeps its data
@@ -15,8 +17,12 @@ MH_POSTGRES_PORT ?= 5444
 MH_TEMPORAL_PORT ?= 7233
 export MH_DATABASE_URL ?= postgresql://mh:mh@127.0.0.1:$(MH_POSTGRES_PORT)/mh
 export MH_POSTGRES_PORT
+# Local development keys only. In the cloud these come from Secret Manager.
+export MH_TASK_API_KEYS ?= local:local-task-key
+export MH_SERVICE_KEYS ?= local-service:local-service-key
+export MH_TASK_API_KEY ?= local-task-key
 
-.PHONY: up down clean-db migrate test lint
+.PHONY: up down clean-db migrate serve stop test lint
 
 up:
 	@mkdir -p $(STACK_DIR)
@@ -39,6 +45,12 @@ clean-db:
 
 migrate:
 	uv run mh migrate
+
+serve: migrate
+	scripts/services.sh start
+
+stop:
+	scripts/services.sh stop
 
 test:
 	uv run pytest -q

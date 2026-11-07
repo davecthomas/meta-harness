@@ -31,6 +31,31 @@ def _object(properties: dict[str, Any], required: list[str] | None = None) -> di
 REGISTRY: list[EventType] = [
     # A test producer's event, for `mh events emit` and the event service checks.
     EventType("debug_ping", 1, _object({"n": {"type": "integer"}, "note": {"type": "string"}}, ["n"]), "short"),
+    # Task service
+    EventType(
+        "task_created",
+        1,
+        _object(
+            {
+                "external_ref": {"type": "string"},
+                "repo": {"type": "string"},
+                "task_type": {"type": "string"},
+                "status": {"type": "string"},
+                "goal_id": {"type": ["string", "null"]},
+                "parent_task_id": {"type": ["string", "null"]},
+            },
+            ["external_ref", "repo", "task_type", "status"],
+        ),
+    ),
+    EventType(
+        "task_status_changed",
+        1,
+        _object(
+            {"from": {"type": "string"}, "to": {"type": "string"}, "reason": {"type": ["string", "null"]}},
+            ["from", "to"],
+        ),
+    ),
+    EventType("task_cancel_requested", 1, _object({"reason": {"type": "string"}}, ["reason"])),
 ]
 
 
