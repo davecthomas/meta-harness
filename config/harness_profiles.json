@@ -1,42 +1,35 @@
 {
-  "version": "2026-11-05.2",
+  "version": "2026-11-07.1",
   "profiles": {
     "pi-lean": {
       "image": null,
-      "tools": [
-        "read",
-        "write",
-        "edit",
-        "ls",
-        "find",
-        "grep",
-        "bash"
-      ],
-      "max_turns": 20,
-      "max_minutes": 10
+      "tools": ["read", "write", "edit", "ls", "find", "grep", "bash"],
+      "max_turns": 80,
+      "max_minutes": 45,
+      "resources": {"cpu": 2, "memory_gb": 6},
+      "bash_allow": [
+        "cd", "pwd", "ls", "cat", "head", "tail", "wc", "grep", "rg", "fd", "fdfind", "find", "sed", "awk",
+        "sort", "uniq", "cut", "tr", "diff", "echo", "printf", "test", "[", "true", "false", "mkdir", "touch",
+        "cp", "mv", "rm", "chmod", "git", "python", "python3", "python3.12", "pip", "uv", "uvx", "poetry",
+        "pytest", "ruff", "black", "mypy", "node", "npm", "npx", "tsc", "make", "jq", "tee"
+      ]
     },
     "pi-careful": {
       "image": null,
-      "tools": [
-        "read",
-        "write",
-        "edit",
-        "ls",
-        "find",
-        "grep",
-        "bash"
-      ],
-      "max_turns": 40,
-      "max_minutes": 10
+      "tools": ["read", "write", "edit", "ls", "find", "grep", "bash"],
+      "max_turns": 200,
+      "max_minutes": 120,
+      "resources": {"cpu": 2, "memory_gb": 6},
+      "bash_allow": [
+        "cd", "pwd", "ls", "cat", "head", "tail", "wc", "grep", "rg", "fd", "fdfind", "find", "sed", "awk",
+        "sort", "uniq", "cut", "tr", "diff", "echo", "printf", "test", "[", "true", "false", "mkdir", "touch",
+        "cp", "mv", "rm", "chmod", "git", "python", "python3", "python3.12", "pip", "uv", "uvx", "poetry",
+        "pytest", "ruff", "black", "mypy", "node", "npm", "npx", "tsc", "make", "jq", "tee"
+      ]
     },
     "pi-missing-image": {
       "image": "harness-pi:no-such-image",
-      "tools": [
-        "read",
-        "write",
-        "edit",
-        "ls"
-      ],
+      "tools": ["read", "write", "edit", "ls"],
       "max_turns": 20,
       "max_minutes": 10
     }

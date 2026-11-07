@@ -83,8 +83,11 @@ ROUTE_RETRY = RetryPolicy(maximum_attempts=3, non_retryable_error_types=["Harnes
 CLEANUP_TIMEOUT = timedelta(seconds=60)
 PUBLISH_TIMEOUT = timedelta(minutes=2)
 PUBLISH_RETRY = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=3)
-# The whole pi run, from start to the [run] line.
-HARNESS_TIMEOUT = timedelta(minutes=10)
+# A run_harness attempt may take its profile's max_minutes plus this much: the clone, the per-run
+# sandbox's start, and the Collect step after pi stops at its own limit.
+HARNESS_GRACE = timedelta(minutes=10)
+# The limit for a profile that names no max_minutes.
+DEFAULT_RUN_MINUTES = 30
 # A worker that stops heartbeating for this long is treated as gone, and the attempt is retried.
 HARNESS_HEARTBEAT_TIMEOUT = timedelta(seconds=10)
 HARNESS_RETRY = RetryPolicy(
@@ -216,7 +219,12 @@ class RunTask:
                 run_id = run_id_for(info.workflow_id, attempt)
                 self._current_run_id = run_id
                 harness, decision, detail, run_spent = await self._try(
-                    prepared.prompt, run_id, candidate, left, prepared.repo
+                    prepared.prompt,
+                    run_id,
+                    candidate,
+                    left,
+                    prepared.repo,
+                    route_result.thinking if route_result is not None and not prepared.pinned else None,
                 )
                 spent += run_spent
                 attempts.append(
@@ -311,7 +319,7 @@ class RunTask:
         return published
 
     async def _try(
-        self, prompt: str, run_id: str, candidate: Candidate, left: Decimal, repo: str
+        self, prompt: str, run_id: str, candidate: Candidate, left: Decimal, repo: str, thinking: str | None
     ) -> tuple[HarnessResult | None, str, str, Decimal]:
         """One run on one candidate. Returns the result, the decision, why, and what the run spent."""
         try:
@@ -324,8 +332,9 @@ class RunTask:
                     spend_limit_usd=str(left),
                     repo=repo,
                     task_id=self._task_id,
+                    thinking=thinking,
                 ),
-                start_to_close_timeout=HARNESS_TIMEOUT,
+                start_to_close_timeout=harness_timeout(candidate),
                 heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
                 retry_policy=HARNESS_RETRY,
                 # On cancel, wait until the activity has stopped pi before the workflow ends.
@@ -363,6 +372,12 @@ class RunTask:
         if request.ceiling and route_result.tiers.index(request.ceiling) <= index:
             return None
         return route_result.tiers[index + 1]
+
+
+def harness_timeout(candidate: Candidate) -> timedelta:
+    """How long one run_harness attempt may take: the profile's max_minutes and the grace for start and Collect."""
+    minutes = float(candidate.profile.get("max_minutes") or DEFAULT_RUN_MINUTES)
+    return timedelta(minutes=minutes) + HARNESS_GRACE
 
 
 def _hints(request: RunTaskInput) -> str:

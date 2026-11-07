@@ -5,7 +5,7 @@
   "description": "The harness server and model client for the pi harness image: the Run API over pi's SDK, with every model call sent to the HTTP Gateway",
   "scripts": {
     "start": "node server/main.ts",
-    "test": "node --test test/server.test.ts",
+    "test": "node --test test/server.test.ts test/bash-allowlist.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

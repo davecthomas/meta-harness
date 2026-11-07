@@ -14,8 +14,9 @@ TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 DEFAULT_TEMPLATE = "hello-v1"
 # The template name a run reports when the caller gave the task text itself.
 INLINE_TEMPLATE = "inline"
-# Most a task may spend on model calls across all its runs, in USD. Each run's grant gets what is left.
-DEFAULT_SPEND_LIMIT_USD = "0.50"
+# Most a task may spend on model calls across all its runs, in USD, when the task names no max_usd.
+# Each run's grant gets what is left. A standard-tier run on these repos costs a few dollars.
+DEFAULT_SPEND_LIMIT_USD = "10.00"
 
 
 WORKFLOW_ID_PREFIX = "run-task-"
@@ -111,6 +112,8 @@ class RouteResult:
     on_exhausted: str
     classifier_usd: str
     config_id: str | None
+    # The tier's thinking level, else the router's; None when neither sets one.
+    thinking: str | None = None
 
 
 @dataclass
@@ -124,6 +127,8 @@ class HarnessRequest:
     repo: str = ""
     # Set for a Task API task: the Wait step forwards the run's events to the event service.
     task_id: str = ""
+    # The routing tier's thinking level, sent on every turn. None: the HTTP Gateway's default.
+    thinking: str | None = None
 
 
 @dataclass

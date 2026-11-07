@@ -110,7 +110,7 @@ after(async () => {
 	for (const server of started) await server.stop();
 });
 
-async function startServer(gatewayUrl: string): Promise<HarnessServer> {
+async function startServer(gatewayUrl: string, extraEnv: Record<string, string> = {}): Promise<HarnessServer> {
 	const workspace = mkdtempSync(join(tmpdir(), "harness-test-workspace-"));
 	const child = spawn(process.execPath, ["server/main.ts"], {
 		cwd: PACKAGE_DIR,
@@ -122,6 +122,7 @@ async function startServer(gatewayUrl: string): Promise<HarnessServer> {
 			GATEWAY_URL: gatewayUrl,
 			WORKSPACE_DIR: workspace,
 			HEARTBEAT_SECONDS: "1",
+			...extraEnv,
 		},
 		stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -459,6 +460,47 @@ test("submit_review records the verdict and ends the review run", async () => {
 	await gateway.close();
 });
 
+test("the profile's bash allowlist refuses a program it does not name, and pi goes on", async () => {
+	const gateway = await startGateway((n) =>
+		n === 1
+			? {
+					body: turn({
+						finish_reason: "tool_use",
+						tool_calls: [{ id: "toolu_bash", name: "bash", input: { command: "ls && curl -s https://example.com" } }],
+						token: "tok-bash",
+					}),
+				}
+			: { body: DONE_TURN },
+	);
+	const server = await startServer(gateway.url, { HARNESS_ALLOW_BASH: "1" });
+	const profile = { name: "pi-lean", tools: ["bash"], max_turns: 5, max_minutes: 5, bash_allow: ["ls", "git"] };
+	await api(server, "POST", "/run", runBody({ profile, thinking: "high" }));
+	const events = await eventsUntilFinished(server, "task-1:0");
+	assert.equal(events.at(-1)!.data.status, "FINISHED");
+	const result = events.find((e) => e.type === "tool_result" && e.data.tool === "bash");
+	assert.equal(result?.data.is_error, true);
+	assert.match(JSON.stringify(result?.data), /does not allow curl/);
+	// The refusal went back to the model as the tool's result, and every turn carried the tier's thinking level.
+	assert.equal(gateway.requests.length, 2);
+	assert.match(JSON.stringify(gateway.requests[1]!.body.messages), /does not allow curl/);
+	assert.deepEqual(
+		gateway.requests.map((r) => r.body.thinking),
+		["high", "high"],
+	);
+	await server.stop();
+	await gateway.close();
+});
+
+test("a run with no thinking level sends none, so the gateway's default applies", async () => {
+	const gateway = await startGateway(() => ({ body: DONE_TURN }));
+	const server = await startServer(gateway.url);
+	await api(server, "POST", "/run", runBody());
+	await eventsUntilFinished(server, "task-1:0");
+	assert.equal("thinking" in gateway.requests[0]!.body, false);
+	await server.stop();
+	await gateway.close();
+});
+
 test("rejects bad run requests", async () => {
 	const gateway = await startGateway(() => ({ body: DONE_TURN }));
 	const server = await startServer(gateway.url);
@@ -467,6 +509,9 @@ test("rejects bad run requests", async () => {
 	assert.equal((await api(server, "POST", "/run", runBody({ prompt: "" }))).status, 400);
 	assert.equal((await api(server, "POST", "/run", runBody({ harness_session_id: "../escape" }))).status, 400);
 	assert.equal((await api(server, "POST", "/run", runBody({ grant_key: undefined }))).status, 400);
+	assert.equal((await api(server, "POST", "/run", runBody({ thinking: "extreme" }))).status, 400);
+	const emptyAllow = { name: "pi-lean", tools: ["read"], max_turns: 10, max_minutes: 5, bash_allow: [] };
+	assert.equal((await api(server, "POST", "/run", runBody({ profile: emptyAllow }))).status, 400);
 	assert.equal((await api(server, "GET", "/status")).status, 404);
 	assert.equal(gateway.requests.length, 0);
 	await server.stop();

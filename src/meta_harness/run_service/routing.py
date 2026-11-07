@@ -81,18 +81,50 @@ def router() -> AiRouteClassifier:
     return AIFactory.get_route_classifier()
 
 
+THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "max"}
+
+
+def profile_errors(name: str, profile: dict[str, Any]) -> list[str]:
+    """What is wrong with one harness profile, as the harness server would refuse it at its first run."""
+    errors = []
+    tools = profile.get("tools")
+    if not (isinstance(tools, list) and tools and all(isinstance(t, str) for t in tools)):
+        errors.append(f"{name}: tools must be a non-empty list of tool names")
+    for key in ("max_turns", "max_minutes"):
+        value = profile.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            errors.append(f"{name}: {key} must be a positive number")
+    allow = profile.get("bash_allow")
+    if allow is not None and not (isinstance(allow, list) and allow and all(isinstance(p, str) and p for p in allow)):
+        errors.append(f"{name}: bash_allow must be a non-empty list of program names, or left out")
+    resources = profile.get("resources")
+    if resources is not None:
+        for key in ("cpu", "memory_gb"):
+            value = resources.get(key) if isinstance(resources, dict) else None
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                errors.append(f"{name}: resources.{key} must be a positive number")
+    return errors
+
+
 def validate() -> list[str]:
-    """Checks every tier candidate, and returns one line per tier for the worker's log.
+    """Checks every harness profile and tier candidate, and returns one line per tier for the worker's log.
 
     Raises:
-        CandidateError: A tier candidate is not a valid harness pair.
+        CandidateError: A harness profile is malformed, or a tier candidate is not a valid harness pair.
         ValueError: models.json has no router, or it names no default_tier.
     """
+    errors = [error for name, profile in profiles().items() for error in profile_errors(name, profile)]
+    if errors:
+        raise CandidateError(f"{PROFILES_PATH.name}: " + "; ".join(errors))
     lines = []
     config = router().config
     for tier in config.tiers:
         names = [candidate(c.engine, c.model).label for c in tier.candidates]
-        lines.append(f"tier {tier.name}: {', '.join(names)}")
+        thinking = getattr(tier, "thinking", None)
+        level = getattr(thinking, "value", thinking)
+        if level is not None and level not in THINKING_LEVELS:
+            raise CandidateError(f"tier {tier.name}: thinking {level} is not one the HTTP Gateway accepts")
+        lines.append(f"tier {tier.name}: {', '.join(names)}" + (f", thinking {level}" if level else ""))
     classifier = router().classifier
     lines.append(
         f"classifier: {classifier.model_name if classifier else 'none, so every task takes tier ' + str(config.default_tier)}"
