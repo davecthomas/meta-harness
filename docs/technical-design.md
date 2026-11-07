@@ -883,20 +883,14 @@ review the PR too. The offer needs no answer:
 
 ### Sequences
 
-In each diagram below, the meta-harness run service RunTask workflow runs the
-run service run activity, whose steps lease the pool manager sandbox, request
-the HTTP Gateway run grant, start and follow the harness server run, and
-collect. The RunTask workflow then decides. The ai-api-unified router
-in the run service process only classifies the task in the classify-only
-`route` activity and returns the tier's candidates.
-
-**1. Happy path**
+#### A task from admission to its pull request
 
 ```mermaid
 sequenceDiagram
     autonumber
     box rgba(128,128,128,0.14) Outside the system
     participant C as Caller (Task API client)
+    participant CH as Code host
     end
     box rgba(66,135,245,0.12) Meta-harness control plane
     participant TS as Task service
@@ -960,15 +954,18 @@ sequenceDiagram
         A->>EV: append event batch
     end
     Note over A: the run activity heartbeats to Temporal while it follows the harness server Run API event stream
-    SB->>SB: commit, push, open PR
     SB-->>A: run_finished (SSE)
     Note over A: Collect step
     A->>SB: GET /usage
     SB-->>A: usage and reported cost
+    A->>SB: GET /bundle
+    SB-->>A: the run's changes
     A->>GW: revoke HTTP Gateway run grant (run_id)
     A->>PM: release pool manager sandbox lease
-    A-->>W: terminal state FINISHED, PR URL, end reason, cost
+    A-->>W: terminal state FINISHED, end reason, cost
     W->>W: Decide: FINISHED ends the candidate loop
+    W->>A: Publish step
+    A->>CH: push the branch, open the PR with Closes and the run's summary
     W->>W: run row (owned by the run service)
     W->>EV: append attempt_finished
     Note over W,EV: the meta-harness review loop runs on the PR until a clean review, then merges it
@@ -978,7 +975,7 @@ sequenceDiagram
     Note over EV: the metering service tails these meta-harness domain events into task_outcome with dollar-hours
 ```
 
-**2. Console attaches to a run in progress**
+#### The operator console opening a run in progress
 
 ```mermaid
 sequenceDiagram
@@ -1010,7 +1007,7 @@ sequenceDiagram
     Note over WA,EV: an event service outage buffers in the event service client library, it never blocks the harness server run
 ```
 
-**3. Compaction or auxiliary call inside a run**
+#### A compaction or auxiliary call inside a run
 
 ```mermaid
 sequenceDiagram
@@ -1041,7 +1038,7 @@ sequenceDiagram
     Note over X,GW: auxiliary calls (commit message, PR description) take the same route trivial path through the HTTP Gateway router
 ```
 
-**4. Spend cap hit**
+#### A run reaching its spend limit
 
 ```mermaid
 sequenceDiagram
@@ -1089,7 +1086,7 @@ sequenceDiagram
     end
 ```
 
-**5. Review loop on an open PR**
+#### The review loop on an open pull request
 
 ```mermaid
 sequenceDiagram
@@ -1128,8 +1125,9 @@ sequenceDiagram
         RV->>EV: append operator_review_claimed (actor)
     end
     SR->>SR: read the diff, run the tests
-    SR->>CH: submit_review: code-host PR review with findings
+    SR->>SR: submit_review: verdict and findings
     SR-->>RV: run_finished, verdict changes, findings
+    RV->>CH: post the agent's findings as a PR review
     opt the review is claimed
         Note over RV: the review round blocks on a Temporal signal until the operator submits or releases
         CON->>RV: operator verdict and findings
@@ -1146,8 +1144,8 @@ sequenceDiagram
     Note over FX: Grant step: HTTP Gateway run grant pinned to the PR's model
     FX->>SF: Start step: POST /followup (findings only, run grant key)
     SF->>SF: switch_session, follow_up, fix, run the tests
-    SF->>CH: push commits to the PR branch
     SF-->>FX: run_finished
+    FX->>CH: Publish step: push the fix to the PR branch
     FX->>TS: set status: done
     TS->>W: signal RunTask workflow: fix task done
     Note over CH,W: the loop repeats from the next checks webhook, until a clean review on the PR head with passing checks
@@ -1158,7 +1156,7 @@ sequenceDiagram
     W->>TS: set status: closed
 ```
 
-**6. Operator cancel or kill switch**
+#### An operator cancel or kill switch
 
 ```mermaid
 sequenceDiagram
