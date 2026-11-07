@@ -14,7 +14,8 @@ lives only in the container's environment, so it stays out of Temporal's
 workflow history and out of process listings.
 
 pi's tools reach the host only through the run's workspace directory, mounted
-at /workspace. The container holds no model provider key: pi's model calls go
+at /workspace, and the clone's git directory beside it, mounted read-only at
+its own path (git_dir_for). The container holds no model provider key: pi's model calls go
 to the HTTP Gateway on this machine with the run's grant key.
 
 Network: each per-run sandbox has its own internal Docker network, with no
@@ -98,6 +99,49 @@ def log_path_for(ref: str, run_id: str) -> Path:
     return RUNS_DIR / ref / run_id.rsplit(":", 1)[-1] / "harness-server.log"
 
 
+def git_dir_for(ref: str, run_id: str) -> Path:
+    """The clone's git directory, beside the workspace and outside it: runs/<ref>/run-1/git.
+
+    The per-run sandbox mounts it read-only at this same path, so pi's git
+    commands in /workspace find it through the workspace's `.git` file, and
+    nothing pi does can change a hook or a setting the host's git would run.
+    """
+    return RUNS_DIR / ref / run_id.rsplit(":", 1)[-1] / "git"
+
+
+def run_args(
+    *, name: str, network: str, run_id: str, ref: str, workspace: Path, git_dir: Path, image: str
+) -> list[str]:
+    """The `docker run` arguments for a run's per-run sandbox."""
+    egress = f"http://{EGRESS_PROXY}:{EGRESS_PORT}"
+    volumes = ["--volume", f"{workspace}:/workspace"]
+    if git_dir.is_dir():
+        volumes += ["--volume", f"{git_dir}:{git_dir}:ro"]
+    return [
+        "run", "--detach", "--pull", "never", "--name", name, "--hostname", name,
+        "--network", network,
+        "--label", f"{SAMPLE_LABEL}=1",
+        "--label", f"meta-harness.run_id={run_id}",
+        "--label", f"meta-harness.ref={ref}",
+        *volumes,
+        "--user", f"{os.getuid()}:{os.getgid()}",
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--cpus", "2", "--memory", "4g", "--pids-limit", "512",
+        # A bare -e NAME copies the value from the docker command's own environment, set by the caller.
+        "--env", "HARNESS_SERVER_TOKEN",
+        "--env", f"GATEWAY_URL={SANDBOX_GATEWAY_URL}",
+        "--env", f"HEARTBEAT_SECONDS={HEARTBEAT_SECONDS}",
+        # Everything leaves through the egress proxy. Node's fetch uses these only with NODE_USE_ENV_PROXY.
+        "--env", f"HTTP_PROXY={egress}", "--env", f"HTTPS_PROXY={egress}",
+        "--env", f"http_proxy={egress}", "--env", f"https_proxy={egress}",
+        "--env", "NO_PROXY=localhost,127.0.0.1", "--env", "no_proxy=localhost,127.0.0.1",
+        "--env", "NODE_USE_ENV_PROXY=1",
+        "--env", "NODE_OPTIONS=--disable-warning=UNDICI-EHPA",
+        image,
+    ]  # fmt: skip
+
+
 async def control_proxy() -> str:
     """The egress proxy's control listener as this machine reaches it."""
     code, out, _ = await _docker("port", EGRESS_PROXY, f"{CONTROL_PORT}/tcp")
@@ -147,30 +191,15 @@ async def ensure(run_id: str, ref: str, image: str = IMAGE) -> Sandbox:
     workspace = workspace_for(ref, run_id)
     workspace.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(32)
-    egress = f"http://{EGRESS_PROXY}:{EGRESS_PORT}"
-    args = [
-        "run", "--detach", "--pull", "never", "--name", name, "--hostname", name,
-        "--network", network,
-        "--label", f"{SAMPLE_LABEL}=1",
-        "--label", f"meta-harness.run_id={run_id}",
-        "--label", f"meta-harness.ref={ref}",
-        "--volume", f"{workspace}:/workspace",
-        "--user", f"{os.getuid()}:{os.getgid()}",
-        "--cap-drop", "ALL",
-        "--security-opt", "no-new-privileges",
-        "--cpus", "2", "--memory", "4g", "--pids-limit", "512",
-        # A bare -e NAME copies the value from the docker command's own environment, set below.
-        "--env", "HARNESS_SERVER_TOKEN",
-        "--env", f"GATEWAY_URL={SANDBOX_GATEWAY_URL}",
-        "--env", f"HEARTBEAT_SECONDS={HEARTBEAT_SECONDS}",
-        # Everything leaves through the egress proxy. Node's fetch uses these only with NODE_USE_ENV_PROXY.
-        "--env", f"HTTP_PROXY={egress}", "--env", f"HTTPS_PROXY={egress}",
-        "--env", f"http_proxy={egress}", "--env", f"https_proxy={egress}",
-        "--env", "NO_PROXY=localhost,127.0.0.1", "--env", "no_proxy=localhost,127.0.0.1",
-        "--env", "NODE_USE_ENV_PROXY=1",
-        "--env", "NODE_OPTIONS=--disable-warning=UNDICI-EHPA",
-        image,
-    ]  # fmt: skip
+    args = run_args(
+        name=name,
+        network=network,
+        run_id=run_id,
+        ref=ref,
+        workspace=workspace,
+        git_dir=git_dir_for(ref, run_id),
+        image=image,
+    )
     code, _, err = await _docker(*args, env={"HARNESS_SERVER_TOKEN": token})
     if code != 0:
         # Another attempt may have started it a moment ago.

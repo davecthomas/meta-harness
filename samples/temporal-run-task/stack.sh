@@ -549,11 +549,27 @@ cmd_egress_check() {
   "$PY" -m meta_harness.run_service.egress_check
 }
 
+# The pieces a long-lived host (the cloud VM) runs under systemd instead of `up`:
+#   stack.sh images   build the per-run sandbox image and the egress proxy image
+#   stack.sh egress   start the egress proxy container and its network, and leave them running
+cmd_images() {
+  check_docker
+  build_image
+}
+
+cmd_egress() {
+  check_docker
+  start_egress
+  egress_started=
+}
+
 case "${1:-}" in
   run) cmd_run ;;
   up) cmd_up ;;
   down) cmd_down ;;
   task) cmd_task ;;
   egress-check) cmd_egress_check ;;
-  *) echo "usage: stack.sh run|up|down|task|egress-check" >&2; exit 2 ;;
+  images) cmd_images ;;
+  egress) cmd_egress ;;
+  *) echo "usage: stack.sh run|up|down|task|egress-check|images|egress" >&2; exit 2 ;;
 esac

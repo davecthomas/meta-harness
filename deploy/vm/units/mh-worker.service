@@ -1,0 +1,21 @@
+[Unit]
+Description=meta-harness run service worker: RunTask workflows, per-run sandboxes in Docker
+After=mh-temporal.service mh-gateway.service mh-egress.service mh-tasks.service mh-events.service
+Requires=mh-egress.service
+
+[Service]
+User=mh
+WorkingDirectory=/opt/meta-harness
+EnvironmentFile=/etc/meta-harness/env
+# The router's tiers, with their harness candidates. Only this unit reads this file: the HTTP Gateway cannot
+# build a `harness` engine, so it reads its own config/models.json.
+Environment=AI_MODELS_CONFIG=/opt/meta-harness/config/models.json
+ExecStart=/opt/meta-harness/.venv/bin/python -m meta_harness.run_service.worker
+Restart=always
+RestartSec=5
+# Let a running activity hand its run to the next worker attempt.
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

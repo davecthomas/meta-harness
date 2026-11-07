@@ -9,9 +9,16 @@ A repo is `owner/name` on GitHub, reached through the owner's GitHub App
 (meta_harness.github_app), or the path of a local bare git repo. The clone
 uses an installation token limited to that repo with `contents: read`; a push
 uses one with `contents: write`. Each token reaches git through the
-environment of that one git command, so neither the workspace's .git/config
+environment of that one git command, so neither the git directory's config
 nor the command line ever holds it, and the per-run sandbox, which mounts the
-workspace, never sees one. A local repo makes the whole path testable with no
+workspace, never sees one.
+
+The git directory lives outside the workspace and the sandbox mounts it
+read-only (sandbox.git_dir_for). Every host git command names that
+directory and the work tree outright. So nothing pi writes in the workspace,
+a hook, a `.git` file pointing elsewhere, a `core.fsmonitor` or
+`core.hooksPath` setting, runs on the host when the publish activity commits
+and pushes. A local repo makes the whole path testable with no
 code host: the branch is pushed to it, and the pull request is written to
 runs/<REF>/pull-request.md instead of opened. `make e2e` uses one.
 
@@ -133,35 +140,55 @@ def acceptance_checks(body: str) -> list[str]:
     return checks
 
 
-async def clone(repo: str, workspace: Path) -> str:
-    """Clones repo's default branch into workspace, unless an earlier attempt did. Returns the branch name."""
-    if (workspace / ".git").is_dir():
-        return await _git(workspace, "rev-parse", "--abbrev-ref", "HEAD")
+async def clone(repo: str, workspace: Path, git_dir: Path) -> str:
+    """Clones repo's default branch into workspace, unless an earlier attempt did. Returns the branch name.
+
+    The repository's git directory goes to git_dir, outside the workspace
+    (`git clone --separate-git-dir`). The per-run sandbox mounts the
+    workspace read-write and the git directory read-only, so pi can read
+    history and diffs but cannot plant a hook, a `core.fsmonitor` command or
+    any other git setting the host would run when it commits and pushes.
+    """
+    if git_dir.is_dir():
+        return await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
     workspace.parent.mkdir(parents=True, exist_ok=True)
+    git_dir.parent.mkdir(parents=True, exist_ok=True)
+    clone_args = ["clone", "--quiet", "--separate-git-dir", str(git_dir)]
     if is_local(repo):
-        await _run("git", "clone", "--quiet", repo, str(workspace))
+        await _run("git", *clone_args, repo, str(workspace))
     else:
         env = git_auth_env(await _token(repo, READ_CODE))
-        await _run("git", "clone", "--quiet", f"https://github.com/{repo}.git", str(workspace), env=env)
-    return await _git(workspace, "rev-parse", "--abbrev-ref", "HEAD")
+        await _run("git", *clone_args, f"https://github.com/{repo}.git", str(workspace), env=env)
+    return await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
 
 
 async def publish(
-    *, repo: str, workspace: Path, branch: str, title: str, body: str, commit_message: str, pr_record: Path
+    *,
+    repo: str,
+    workspace: Path,
+    git_dir: Path,
+    branch: str,
+    title: str,
+    body: str,
+    commit_message: str,
+    pr_record: Path,
 ) -> Published | None:
     """Commits whatever pi changed onto a new branch, pushes it, and opens the pull request.
 
     Returns None when pi changed nothing. A retried attempt finds the branch
     and the pull request the earlier attempt made, and makes neither again.
+    Every git command names git_dir and the workspace outright, so the
+    `.git` file pi could rewrite in the workspace decides nothing.
     """
-    base = await _git(workspace, "rev-parse", "--abbrev-ref", "origin/HEAD")
+    base = await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "origin/HEAD")
     base = base.removeprefix("origin/")
-    current = await _git(workspace, "rev-parse", "--abbrev-ref", "HEAD")
+    current = await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
     if current != branch:
-        await _git(workspace, "checkout", "--quiet", "-B", branch)
-    await _git(workspace, "add", "--all")
-    if await _git(workspace, "status", "--porcelain"):
+        await _git(git_dir, workspace, "checkout", "--quiet", "-B", branch)
+    await _git(git_dir, workspace, "add", "--all")
+    if await _git(git_dir, workspace, "status", "--porcelain"):
         await _git(
+            git_dir,
             workspace,
             "-c",
             f"user.name={COMMIT_NAME}",
@@ -172,12 +199,13 @@ async def publish(
             "--message",
             commit_message,
         )
-    files = [f for f in (await _git(workspace, "diff", "--name-only", f"origin/{base}...HEAD")).splitlines() if f]
+    diff = await _git(git_dir, workspace, "diff", "--name-only", f"origin/{base}...HEAD")
+    files = [f for f in diff.splitlines() if f]
     if not files:
         return None
-    commit = await _git(workspace, "rev-parse", "HEAD")
+    commit = await _git(git_dir, workspace, "rev-parse", "HEAD")
     env = None if is_local(repo) else git_auth_env(await _token(repo, WRITE_CODE))
-    await _git(workspace, "push", "--quiet", "--force-with-lease", "origin", f"{branch}:{branch}", env=env)
+    await _git(git_dir, workspace, "push", "--quiet", "--force-with-lease", "origin", f"{branch}:{branch}", env=env)
     if is_local(repo):
         created = not pr_record.exists()
         pr_record.write_text(f"# {title}\n\nbase: {base}\nhead: {branch} at {commit}\n\n{body}\n", encoding="utf-8")
@@ -202,8 +230,22 @@ async def publish(
     return Published(branch, base, commit, files, pull["html_url"], True)
 
 
-async def _git(workspace: Path, *args: str, env: dict[str, str] | None = None) -> str:
-    return await _run("git", "-C", str(workspace), *args, env=env)
+async def _git(git_dir: Path, workspace: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    """One git command on the run's repository, with its git directory and work tree named outright.
+
+    Hooks are turned off too. The git directory is outside the sandbox
+    mount, so pi cannot write one there; this keeps the host from running a
+    hook under any other path into the directory.
+    """
+    return await _run(
+        "git",
+        f"--git-dir={git_dir}",
+        f"--work-tree={workspace}",
+        "-c",
+        "core.hooksPath=/dev/null",
+        *args,
+        env=env,
+    )
 
 
 async def _run(*args: str, check: bool = True, env: dict[str, str] | None = None) -> str:

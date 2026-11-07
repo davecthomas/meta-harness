@@ -1,16 +1,17 @@
-"""The local edge: the console web app and the REST API on one origin, as the cloud serves them.
-
-In the cloud, the external load balancer routes each /v1 path to the service
-that owns it and Identity-Aware Proxy signs the operator in. On a developer's
-machine this process does both:
+"""The edge: the console web app and the REST API on one origin.
 
 - It serves the built console web app (console/dist) at /, falling back to
   index.html so the app's own routes load.
 - It forwards each /v1 request to the owning service, adding the service key
   and naming the signed-in operator in X-MH-Actor, and streams responses
   through, so /v1/events/tail stays live.
-- The signed-in operator is MH_CONSOLE_DEV_IDENTITY. An identity outside the
-  access list, MH_CONSOLE_OPERATORS, gets 403 on every /v1 path.
+- An identity outside the access list, MH_CONSOLE_OPERATORS, gets 403 on
+  every /v1 path.
+
+In the cloud the edge runs on Cloud Run behind Identity-Aware Proxy: with
+MH_EDGE_IAP_AUDIENCE set, the operator is the email in IAP's verified signed
+header, and a request without a valid one gets 401. Locally there is no IAP,
+and MH_CONSOLE_DEV_IDENTITY names the operator.
 
 GET /v1/me answers who is signed in.
 """
@@ -19,6 +20,7 @@ import os
 from pathlib import Path
 
 import httpx
+import jwt
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
@@ -49,6 +51,45 @@ def target_for(path: str) -> str | None:
     return None
 
 
+IAP_ASSERTION_HEADER = "x-goog-iap-jwt-assertion"
+IAP_KEYS_URL = "https://www.gstatic.com/iap/verify/public_key-jwk"
+IAP_ISSUER = "https://cloud.google.com/iap"
+
+
+class IapError(ValueError):
+    pass
+
+
+def iap_verifier(audience: str):
+    """A function from IAP's signed header to the verified email, or None when the edge runs without IAP.
+
+    The header is an ES256 JWT that IAP signs with keys Google publishes. Its audience names this
+    service; for Cloud Run that is /projects/<number>/locations/<region>/services/<name>.
+    """
+    if not audience:
+        return None
+    keys = jwt.PyJWKClient(IAP_KEYS_URL, cache_keys=True)
+
+    def verify(token: str) -> str:
+        if not token:
+            raise IapError("the request has no IAP assertion")
+        try:
+            claims = jwt.decode(
+                token,
+                keys.get_signing_key_from_jwt(token).key,
+                algorithms=["ES256"],
+                audience=audience,
+                issuer=IAP_ISSUER,
+            )
+        except jwt.PyJWTError as err:
+            raise IapError(str(err)) from err
+        email = str(claims.get("email", "")).lower()
+        # IAP prefixes external identities with their issuer, as in "accounts.google.com:dave@example.com".
+        return email.rsplit(":", 1)[-1]
+
+    return verify
+
+
 def create_app(
     dist: Path | None = None,
     operators: set[str] | None = None,
@@ -58,29 +99,41 @@ def create_app(
 ) -> FastAPI:
     app_dir = dist or REPO_ROOT / "console" / "dist"
     allowed = operators if operators is not None else operators_from_env()
-    who = (identity if identity is not None else os.environ.get("MH_CONSOLE_DEV_IDENTITY", "")).lower()
+    local_identity = (identity if identity is not None else os.environ.get("MH_CONSOLE_DEV_IDENTITY", "")).lower()
     key = service_key if service_key is not None else os.environ.get("MH_SERVICE_KEY", "")
+    iap = iap_verifier(os.environ.get("MH_EDGE_IAP_AUDIENCE", ""))
     client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None), transport=transport)
-    app = FastAPI(title="meta-harness local edge", docs_url=None, redoc_url=None)
+    app = FastAPI(title="meta-harness edge", docs_url=None, redoc_url=None)
 
-    def refused() -> JSONResponse | None:
+    def signed_in(request: Request) -> tuple[str, JSONResponse | None]:
+        """Who is asking, and the refusal to send when they may not. Behind IAP, only its verified
+        signed header counts; locally, MH_CONSOLE_DEV_IDENTITY names the operator."""
+        if iap is not None:
+            try:
+                who = iap(request.headers.get(IAP_ASSERTION_HEADER, ""))
+            except IapError as err:
+                return "", JSONResponse({"detail": f"not signed in through Identity-Aware Proxy: {err}"}, 401)
+        else:
+            who = local_identity
         if not who:
-            return JSONResponse({"detail": "nobody is signed in: set MH_CONSOLE_DEV_IDENTITY"}, status_code=401)
+            return "", JSONResponse({"detail": "nobody is signed in: set MH_CONSOLE_DEV_IDENTITY"}, status_code=401)
         if who not in allowed:
-            return JSONResponse({"detail": f"{who} is not on the console's access list"}, status_code=403)
-        return None
+            return who, JSONResponse({"detail": f"{who} is not on the console's access list"}, status_code=403)
+        return who, None
 
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok"}
 
     @app.get("/v1/me")
-    def me() -> Response:
-        return refused() or JSONResponse({"identity": who})
+    def me(request: Request) -> Response:
+        who, denied = signed_in(request)
+        return denied or JSONResponse({"identity": who})
 
     @app.api_route("/v1/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def forward(request: Request, rest: str) -> Response:
-        if denied := refused():
+        who, denied = signed_in(request)
+        if denied:
             return denied
         base = target_for(request.url.path)
         if base is None:
