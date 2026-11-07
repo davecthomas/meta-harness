@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Textarea, TextInput } from "@mantine/core";
 import { api } from "../api";
+import { ErrorAlert, PageHeader } from "../components/ui";
 
 export function NewGoal() {
   const navigate = useNavigate();
@@ -8,8 +10,8 @@ export function NewGoal() {
   const [statement, setStatement] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
   const [label, setLabel] = useState("");
-  const [budget, setBudget] = useState("");
-  const [priority, setPriority] = useState(0);
+  const [budget, setBudget] = useState<string | number>("");
+  const [priority, setPriority] = useState<string | number>(0);
   const [autoMerge, setAutoMerge] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -30,8 +32,8 @@ export function NewGoal() {
         statement,
         repos: chosen,
         label,
-        max_usd: budget || null,
-        priority,
+        max_usd: budget === "" ? null : String(budget),
+        priority: Number(priority) || 0,
         auto_merge: autoMerge,
       });
       navigate(`/goals/${goal.id}`);
@@ -43,52 +45,58 @@ export function NewGoal() {
 
   return (
     <>
-      <h1>New goal</h1>
-      {error && <div className="error">{error}</div>}
-      <form className="stack panel" onSubmit={submit}>
-        <label className="field">
-          Statement
-          <span className="hint">What the goal is. The planner reads it.</span>
-          <textarea required value={statement} onChange={(e) => setStatement(e.target.value)} />
-        </label>
-        <fieldset>
-          <legend>Repos</legend>
-          {repos.map((name) => (
-            <label key={name}>
-              <input
-                type="checkbox"
-                checked={chosen.includes(name)}
-                onChange={(e) => setChosen(e.target.checked ? [...chosen, name] : chosen.filter((c) => c !== name))}
+      <PageHeader title="New goal" description="A goal takes the open issues with its label, in its repos, and runs each one to a pull request." />
+      <ErrorAlert error={error} />
+      <Paper maw={720}>
+        <form onSubmit={submit}>
+          <Stack gap="lg">
+            <Textarea
+              label="Statement"
+              description="What the goal is. The planner reads it."
+              required
+              autosize
+              minRows={3}
+              value={statement}
+              onChange={(e) => setStatement(e.currentTarget.value)}
+            />
+            <Checkbox.Group label="Repos" description="The registered repos the goal may change." withAsterisk value={chosen} onChange={setChosen}>
+              <Stack gap="xs" mt="xs">
+                {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
+              </Stack>
+            </Checkbox.Group>
+            <TextInput
+              label="Label"
+              description="An open issue with this label, in any of the goal's repos, becomes one of its tasks."
+              required
+              placeholder="meta-harness:bootstrap"
+              value={label}
+              onChange={(e) => setLabel(e.currentTarget.value)}
+            />
+            <Group grow align="flex-start">
+              <NumberInput
+                label="Budget"
+                description="Optional. No more of the goal's tasks start once its runs have spent this."
+                prefix="$"
+                min={0}
+                decimalScale={2}
+                value={budget}
+                onChange={setBudget}
               />
-              <span className="mono">{name}</span>
-            </label>
-          ))}
-        </fieldset>
-        <label className="field">
-          Label
-          <span className="hint">An open issue with this label, in any of the goal's repos, becomes one of its tasks.</span>
-          <input type="text" required placeholder="meta-harness:bootstrap" value={label} onChange={(e) => setLabel(e.target.value)} />
-        </label>
-        <label className="field">
-          Budget, in dollars
-          <span className="hint">Optional. Admission holds the goal's tasks once its runs have spent this much.</span>
-          <input type="number" min="0" step="0.01" value={budget} onChange={(e) => setBudget(e.target.value)} />
-        </label>
-        <label className="field">
-          Priority
-          <input type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
-        </label>
-        <fieldset>
-          <legend>Merging</legend>
-          <label>
-            <input type="checkbox" checked={autoMerge} onChange={(e) => setAutoMerge(e.target.checked)} />
-            Merge pull requests without me
-          </label>
-        </fieldset>
-        <div className="actions">
-          <button type="submit" disabled={saving}>{saving ? "Creating…" : "Create goal"}</button>
-        </div>
-      </form>
+              <NumberInput label="Priority" description="Higher runs first." value={priority} onChange={setPriority} />
+            </Group>
+            <Switch
+              label="Merge pull requests without me"
+              description="Off: every pull request waits for you to merge it."
+              checked={autoMerge}
+              onChange={(e) => setAutoMerge(e.currentTarget.checked)}
+            />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => navigate(-1)}>Cancel</Button>
+              <Button type="submit" loading={saving}>Create goal</Button>
+            </Group>
+          </Stack>
+        </form>
+      </Paper>
     </>
   );
 }

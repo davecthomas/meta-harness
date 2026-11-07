@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, issueUrl, type Goal, type IssueLink, type Task } from "../api";
+import { Anchor, Badge, Button, Center, Group, Loader, Stack, Table, Text } from "@mantine/core";
+import { IconDownload, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { api, type Goal, type IssueLink as Issue, type Task } from "../api";
 import { useInfinite } from "../hooks";
+import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, SectionTitle, StatusBadge, when } from "../components/ui";
 
 export function GoalPage() {
   const { goalId = "" } = useParams();
-  const [goal, setGoal] = useState<(Goal & { issues: IssueLink[] }) | null>(null);
+  const [goal, setGoal] = useState<(Goal & { issues: Issue[] }) | null>(null);
   const [tasks, setTasks] = useState<Record<string, Task>>({});
   const [error, setError] = useState<string | null>(null);
 
@@ -42,78 +45,77 @@ export function GoalPage() {
     `${goalId}:${issues.length}`,
   );
 
-  if (!goal) return error ? <div className="error">{error}</div> : <p className="empty">Loading…</p>;
+  if (!goal) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const open = !["met", "canceled"].includes(goal.status);
 
   return (
     <>
-      <h1>{goal.statement}</h1>
-      {error && <div className="error">{error}</div>}
-      <div className="panel">
-        <dl className="facts">
-          <dt>Goal</dt><dd className="mono">{goal.id}</dd>
-          <dt>Status</dt><dd className={`status-${goal.status}`}>{goal.status}</dd>
-          <dt>Modality</dt><dd>{goal.modality}</dd>
-          <dt>Label</dt><dd><span className="chip">{goal.label}</span></dd>
-          <dt>Repos</dt><dd>{goal.repos.map((r) => <div className="mono" key={r}>{r}</div>)}</dd>
-          <dt>Auto-merge</dt><dd>{goal.auto_merge ? "on" : "off: pull requests wait for you"}</dd>
-          <dt>Budget</dt><dd>{goal.max_usd ? `$${goal.max_usd}` : "none"}</dd>
-          <dt>Created by</dt><dd>{goal.created_by}, {goal.created_at.slice(0, 16).replace("T", " ")}</dd>
-        </dl>
-      </div>
-
-      <h2>Actions</h2>
-      <div className="actions">
-        {goal.status === "active" && (
+      <PageHeader
+        title={goal.statement}
+        description={<Group gap="xs"><StatusBadge status={goal.status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>}
+        actions={
           <>
-            <button onClick={() => act(() => api.goalAction(goal.id, "sweep"))}>Take in labeled issues now</button>
-            <button className="quiet" onClick={() => act(() => api.goalAction(goal.id, "pause"))}>Pause</button>
+            {goal.status === "active" && (
+              <>
+                <Button leftSection={<IconDownload size={16} />} onClick={() => act(() => api.goalAction(goal.id, "sweep"))}>Take in issues now</Button>
+                <Button variant="default" leftSection={<IconPlayerPause size={16} />} onClick={() => act(() => api.goalAction(goal.id, "pause"))}>Pause</Button>
+              </>
+            )}
+            {["paused", "stalled", "budget_exhausted"].includes(goal.status) && (
+              <Button leftSection={<IconPlayerPlay size={16} />} onClick={() => act(() => api.goalAction(goal.id, "resume"))}>Resume</Button>
+            )}
+            {open && (
+              <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={() => act(() => api.goalAction(goal.id, "cancel"))}>Cancel goal</Button>
+            )}
           </>
-        )}
-        {["paused", "stalled", "budget_exhausted"].includes(goal.status) && (
-          <button onClick={() => act(() => api.goalAction(goal.id, "resume"))}>Resume</button>
-        )}
-        {open && (
-          <>
-            <button className="quiet" onClick={() => act(() => api.patchGoal(goal.id, { auto_merge: !goal.auto_merge }))}>
-              Turn auto-merge {goal.auto_merge ? "off" : "on"}
-            </button>
-            <button className="danger" onClick={() => act(() => api.goalAction(goal.id, "cancel"))}>Cancel goal</button>
-          </>
-        )}
-      </div>
+        }
+      />
+      <ErrorAlert error={error} />
+      <Facts
+        items={[
+          ["Modality", <Text size="sm">{goal.modality}</Text>],
+          ["Label", <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge>],
+          ["Repos", <Stack gap={2}>{goal.repos.map((r) => <Text ff="monospace" size="sm" key={r}>{r}</Text>)}</Stack>],
+          ["Auto-merge", (
+            <Group gap="sm">
+              <Text size="sm">{goal.auto_merge ? "On" : "Off: pull requests wait for you"}</Text>
+              {open && (
+                <Button size="compact-xs" variant="light" onClick={() => act(() => api.patchGoal(goal.id, { auto_merge: !goal.auto_merge }))}>
+                  Turn {goal.auto_merge ? "off" : "on"}
+                </Button>
+              )}
+            </Group>
+          )],
+          ["Budget", <Text size="sm">{goal.max_usd ? `$${goal.max_usd}` : "None"}</Text>],
+          ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
+        ]}
+      />
 
-      <h2>Issues and tasks</h2>
+      <SectionTitle>Issues and tasks</SectionTitle>
       {issues.length ? (
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Issue</th><th>Issue state</th><th>Task</th><th>Task status</th><th>Pull request</th><th>Waits on</th></tr></thead>
-            <tbody>
-              {shown.items.map((i) => {
-                const task = i.task_id ? tasks[i.task_id] : undefined;
-                const url = issueUrl(i.ref);
-                return (
-                  <tr key={i.ref}>
-                    <td>{url ? <a href={url}>{i.ref}</a> : i.ref}</td>
-                    <td>{i.state}</td>
-                    <td>{i.task_id && <Link className="mono" to={`/tasks/${i.task_id}`}>{i.task_id}</Link>}</td>
-                    <td className={`status-${task?.status ?? ""}`}>
-                      {task?.status ?? (i.refused_reason ? "refused" : "")}
-                      {i.refused_reason && <div className="hint">{i.refused_reason}</div>}
-                    </td>
-                    <td>{task?.pr_url && <a href={task.pr_url}>open</a>}</td>
-                    <td>{i.depends_on.map((d) => <div className="mono" key={d}>{d}</div>)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DataTable head={["Issue", "Issue state", "Task", "Task status", "Pull request", "Waits on"]}>
+          {shown.items.map((i) => {
+            const task = i.task_id ? tasks[i.task_id] : undefined;
+            return (
+              <Table.Tr key={i.ref}>
+                <Table.Td><IssueLink issueRef={i.ref} /></Table.Td>
+                <Table.Td><Text size="sm">{i.state}</Text></Table.Td>
+                <Table.Td>{i.task_id && <Anchor component={Link} to={`/tasks/${i.task_id}`} ff="monospace" size="xs">{i.task_id}</Anchor>}</Table.Td>
+                <Table.Td>
+                  {task ? <StatusBadge status={task.status} /> : i.refused_reason && <StatusBadge status="refused" />}
+                  {i.refused_reason && <Text size="xs" c="dimmed" mt={4}>{i.refused_reason}</Text>}
+                </Table.Td>
+                <Table.Td>{task?.pr_url && <Anchor href={task.pr_url} target="_blank" size="sm">Open</Anchor>}</Table.Td>
+                <Table.Td>{i.depends_on.map((d) => <Text ff="monospace" size="xs" key={d}>{d}</Text>)}</Table.Td>
+              </Table.Tr>
+            );
+          })}
+        </DataTable>
       ) : (
-        <p className="empty">
-          No issues yet. Label an open issue <span className="chip">{goal.label}</span> in one of the goal's repos; the
-          planner takes it in within a minute, or now with "Take in labeled issues now".
-        </p>
+        <Empty>
+          No issues yet. Label an open issue <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> in one of the goal's
+          repos. The planner takes it in within a minute, or now with Take in issues now.
+        </Empty>
       )}
       <div ref={shown.sentinel} />
     </>
