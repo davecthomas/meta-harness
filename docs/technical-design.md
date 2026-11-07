@@ -1423,44 +1423,36 @@ from the sandbox to the HTTP Gateway.
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/v1/tasks` | Submit a meta-harness task. Returns the meta-harness task id. Idempotent on `external_ref`. |
-| GET | `/v1/tasks?external_ref={ref}` | The Task API caller's meta-harness task with that `external_ref`. Lets a Task API caller find a meta-harness task by the Task API caller's own id |
-| GET | `/v1/tasks/{id}` | Meta-harness task state, current meta-harness run, meta-harness routing decision, code-host PR URL, task outcome |
-| GET | `/v1/tasks/{id}/events` | Server-sent meta-harness domain events for the meta-harness task's runs |
-| POST | `/v1/tasks/{id}/cancel` | Cancel the active meta-harness run and close the meta-harness task |
-| GET | `/v1/runs/{id}` | Meta-harness run state, meta-harness candidate, model token usage, cost so far |
-| POST | `/v1/webhooks/code-host` | Code-host PR, check and review webhook events for code-host PRs that meta-harness runs opened |
-| GET | `/v1/profiles` | The active harness profiles, routing tier candidates and meta-harness task policy with their config versions |
-| GET | `/health` | Task service liveness and configuration identity |
+| POST | `/v1/tasks` | Submit a task, idempotent on `external_ref`. Returns the task id |
+| GET | `/v1/tasks?external_ref={ref}` | The caller's task with that `external_ref` |
+| GET | `/v1/tasks/{id}` | State, current run, routing decision, pull request URL and outcome |
+| GET | `/v1/tasks/{id}/events` | The task's run events as server-sent events |
+| POST | `/v1/tasks/{id}/cancel` | Cancel the active run and close the task |
+| GET | `/v1/runs/{id}` | Run state, candidate, token usage and cost so far |
+| POST | `/v1/webhooks/code-host` | Pull request, check and review webhooks for pull requests the meta-harness opened |
+| GET | `/v1/profiles` | The active harness profiles, tier candidates and task policy, with their versions |
+| GET | `/health` | Liveness and configuration identity |
 
-Task fields:
-
-| Field | Required | Meaning |
+| Task field | Required | Meaning |
 |---|---|---|
-| `external_ref` | yes | The Task API caller's own id; the task service deduplication key |
-| `repo` | yes | Code-host repository URL |
-| `task_type` | yes | `bug`, `feature`, `refactor`, `dependency`, `test`, `security`, `docs`, or `plan` for a planning task (Goals and modalities below). The meta-harness itself tickets `review` and `fix` tasks; Task API callers cannot submit them |
-| `parent_task_id` | no | Set only on meta-harness review and fix tasks: the task whose PR they review or fix |
-| `priority` | yes | Integer; higher-priority meta-harness tasks run first |
-| `title`, `description` | yes | The meta-harness task text; treated as untrusted |
-| `acceptance_checks` | yes | Commands or code-host check names that define meta-harness task success |
-| `paths` | no | Repository paths the meta-harness task touches; scopes the meta-harness scheduler repo-area lock |
-| `complexity` | no | `low`, `medium`, `high`; becomes a `route_floor` routing hint |
-| `max_tier` | no | A routing tier name; becomes `route_ceiling` |
-| `max_usd` | no | A per-task spend cap; it caps each run's HTTP Gateway run grant spend limit |
-| `pin` | no | A meta-harness candidate such as `harness:pi-careful/claude:claude-opus-5-5`; the meta-harness task runs on exactly that harness profile and model with no ai-api-unified router classification or meta-harness escalation |
-| `goal_id` | no | The goal the task belongs to. The task service sets it on the tasks it makes from a goal's issues |
-| `depends_on` | no | `external_ref`s of tasks this one waits for; the meta-harness scheduler admits it once they are all closed |
+| `external_ref` | yes | The caller's own id, unique per caller |
+| `repo` | yes | The repository URL |
+| `task_type` | yes | `bug`, `feature`, `refactor`, `dependency`, `test`, `security`, `docs`, or `plan` for a planning task. The meta-harness alone creates `review` and `fix` tasks |
+| `parent_task_id` | no | On a review or fix task: the task whose pull request it reviews or fixes |
+| `priority` | yes | Higher runs first |
+| `title`, `description` | yes | The task text, treated as untrusted |
+| `acceptance_checks` | yes | Commands or check names that define success |
+| `paths` | no | The paths the task touches, which scope its repo-area lock |
+| `complexity` | no | `low`, `medium` or `high`, which becomes `route_floor` |
+| `max_tier` | no | A tier name, which becomes `route_ceiling` |
+| `max_usd` | no | The task's spend cap, which caps each run's grant |
+| `pin` | no | One candidate, such as `harness:pi-careful/claude:claude-opus-5-5`, run with no routing or escalation |
+| `goal_id` | no | The task's goal. The planner sets it |
+| `depends_on` | no | The `external_ref`s this task waits for |
 
-Task API callers authenticate to the task service with a per-caller Task API
-caller key. The Task API caller key sets the caller concurrency quota and the
-caller daily spend cap for that Task API caller.
-
-`external_ref` is unique per Task API caller. The task service's task table has
-a unique index on `(caller, external_ref)`, and both the task service
-deduplication and the `external_ref` lookup use it. One meta-harness task per
-Task API request: to fix three bugs, a Task API caller submits three
-meta-harness tasks and gets three meta-harness task ids.
+Each caller authenticates with its own Task API key, which sets its
+concurrency quota and daily spend cap. A unique index on `(caller,
+external_ref)` deduplicates submissions and serves the `external_ref` lookup.
 
 ### Goals and modalities
 
