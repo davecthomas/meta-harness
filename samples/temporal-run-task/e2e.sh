@@ -29,7 +29,7 @@ cd "$(dirname "$0")"
 
 # The zero-cost check never reaches a real code host: every repo it uses is a local bare repo,
 # and with no GitHub App configured, nothing it starts can clone, push or open a pull request.
-unset MH_GITHUB_APPS
+unset MH_GITHUB_APPS ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_APPLICATION_CREDENTIALS
 
 [ "${GATEWAY:-}" = fake ] || { echo "[e2e] run this through make e2e, which uses the fake gateway"; exit 2; }
 
