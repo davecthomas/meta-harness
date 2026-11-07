@@ -9,6 +9,18 @@ export default defineConfig({
     port: 5173,
     proxy: { "/v1": { target: "http://127.0.0.1:8300", changeOrigin: false } },
   },
-  build: { outDir: "dist", sourcemap: true },
-  test: { environment: "jsdom", globals: true },
+  build: {
+    outDir: "dist",
+    sourcemap: true,
+    // React and Mantine change less often than the app, so browsers keep them cached across deploys.
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom", "react-router-dom"],
+          mantine: ["@mantine/core", "@mantine/hooks", "@mantine/notifications"],
+        },
+      },
+    },
+  },
+  test: { environment: "jsdom", globals: true, setupFiles: ["./src/test-setup.ts"] },
 });
