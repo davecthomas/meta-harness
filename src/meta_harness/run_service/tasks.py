@@ -1,9 +1,9 @@
 """Looks at tasks the starter started: list them, show one, watch one, cancel one.
 
-    python -m run_task.tasks list
-    python -m run_task.tasks status REF
-    python -m run_task.tasks watch REF
-    python -m run_task.tasks cancel REF
+    python -m meta_harness.run_service.tasks list
+    python -m meta_harness.run_service.tasks status REF
+    python -m meta_harness.run_service.tasks watch REF
+    python -m meta_harness.run_service.tasks cancel REF
 
 REF is the name given to `make task` or `make run`. A task makes one run per
 tier candidate it tries. These commands ask the RunTask workflow which run it
@@ -31,9 +31,9 @@ from temporalio.client import (
 from temporalio.exceptions import CancelledError
 from temporalio.service import RPCError
 
-from run_task import harness_client, run_grants, sandbox
-from run_task.shared import TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, RunTaskResult, workflow_id_for
-from run_task.workflows import RunTask
+from meta_harness.run_service import harness_client, run_grants, sandbox
+from meta_harness.run_service.shared import TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, RunTaskResult, workflow_id_for
+from meta_harness.run_service.workflows import RunTask
 
 
 async def list_tasks(client: Client) -> int:

@@ -35,6 +35,7 @@ step logs once, when it first runs. A worker that picks the workflow up from
 history prints one line saying it replayed.
 """
 
+import asyncio
 from datetime import timedelta
 from decimal import Decimal
 
@@ -43,10 +44,14 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError, TimeoutError
 
 with workflow.unsafe.imports_passed_through():
-    from run_task.activities import cleanup_run, prepare, publish, route, run_harness
-    from run_task.shared import (
+    from meta_harness.run_service.activities import cleanup_run, prepare, publish, route, run_harness
+    from meta_harness.run_service.shared import (
         Attempt,
+        AttemptRecord,
         Candidate,
+        PublishedRecord,
+        RouteRecord,
+        TaskStatusRequest,
         HarnessRequest,
         HarnessResult,
         PreparedRun,
@@ -58,7 +63,19 @@ with workflow.unsafe.imports_passed_through():
         RunTaskResult,
         run_id_for,
     )
+    from meta_harness.run_service.task_activities import (
+        load_task,
+        record_attempt,
+        record_published,
+        record_route,
+        set_task_status,
+    )
 
+TASK_API_TIMEOUT = timedelta(seconds=30)
+# A refused call fails at once (task_activities marks it non-retryable); an unreachable task service is retried.
+TASK_API_RETRY = RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=10)
+RECORD_TIMEOUT = timedelta(seconds=30)
+RECORD_RETRY = RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=10)
 PREPARE_TIMEOUT = timedelta(seconds=30)
 PREPARE_RETRY = RetryPolicy(maximum_attempts=3)
 ROUTE_TIMEOUT = timedelta(seconds=60)
@@ -85,6 +102,8 @@ NEXT_CANDIDATE_ERROR_TYPES = frozenset({"SandboxUnavailable", "HarnessUnavailabl
 class RunTask:
     def __init__(self) -> None:
         self._current_run_id: str | None = None
+        self._task_id = ""
+        self._route_no = 0
 
     @workflow.query
     def current_run_id(self) -> str | None:
@@ -93,6 +112,63 @@ class RunTask:
 
     @workflow.run
     async def run(self, request: RunTaskInput) -> RunTaskResult:
+        """A task from the Task API, or a task the caller's REF and text describe.
+
+        A Task API task is loaded from the task service and moved through its
+        statuses: running while its runs go, then ready with its pull request,
+        failed, or canceled. Its routing and runs are recorded as they happen.
+        """
+        if not request.task_id:
+            return await self._run_loop(request)
+        self._task_id = request.task_id
+        spec = await workflow.execute_activity(
+            load_task, request.task_id, start_to_close_timeout=TASK_API_TIMEOUT, retry_policy=TASK_API_RETRY
+        )
+        request = RunTaskInput(
+            task=spec.description,
+            title=spec.title,
+            repo=spec.repo,
+            checks=spec.checks,
+            pin=spec.pin,
+            floor=spec.floor,
+            ceiling=spec.ceiling,
+            spend_limit_usd=spec.spend_limit_usd,
+            closes=spec.closes,
+            task_id=spec.task_id,
+        )
+        await self._task_status("running", "the meta-harness run service started its RunTask workflow")
+        try:
+            result = await self._run_loop(request)
+        except asyncio.CancelledError:
+            await self._task_status("canceled", "the RunTask workflow was canceled")
+            raise
+        except ActivityError as err:
+            if isinstance(err.cause, CancelledError):
+                await self._task_status("canceled", "the RunTask workflow was canceled")
+            else:
+                await self._task_status("failed", str(err.cause or err)[:500])
+            raise
+        except ApplicationError as err:
+            await self._task_status("failed", str(err)[:500])
+            raise
+        pr_url = result.published.pr_url if result.published else ""
+        await self._task_status("ready" if pr_url else "closed", "the run finished", pr_url)
+        return result
+
+    async def _task_status(self, status: str, reason: str, pr_url: str = "") -> None:
+        await workflow.execute_activity(
+            set_task_status,
+            TaskStatusRequest(task_id=self._task_id, status=status, reason=reason, pr_url=pr_url),
+            start_to_close_timeout=TASK_API_TIMEOUT,
+            retry_policy=TASK_API_RETRY,
+        )
+
+    async def _record(self, activity_fn, record) -> None:
+        await workflow.execute_activity(
+            activity_fn, record, start_to_close_timeout=RECORD_TIMEOUT, retry_policy=RECORD_RETRY
+        )
+
+    async def _run_loop(self, request: RunTaskInput) -> RunTaskResult:
         info = workflow.info()
         log = workflow.logger
         if workflow.unsafe.is_replaying():
@@ -127,6 +203,11 @@ class RunTask:
             else:
                 route_result = await self._route(prepared.prompt, floor, request.ceiling)
                 tier, candidates = route_result.tier, route_result.candidates
+                if self._task_id:
+                    self._route_no += 1
+                    await self._record(
+                        record_route, RouteRecord(self._task_id, self._route_no, floor, request.ceiling, route_result)
+                    )
             for candidate in candidates:
                 left = limit - spent
                 if left <= 0:
@@ -149,6 +230,8 @@ class RunTask:
                         spent_usd=str(run_spent),
                     )
                 )
+                if self._task_id:
+                    await self._record(record_attempt, AttemptRecord(self._task_id, attempts[-1], candidate, harness))
                 log.info(
                     "%s: run %d on %s: %s, so the Decide step says %s. Spent $%s of $%s",
                     info.workflow_id,
@@ -163,6 +246,8 @@ class RunTask:
                     published = await self._publish(prepared, harness, candidate, spent) if prepared.repo else None
                     if published is not None and not published.pr_url:
                         raise _failed(f"run {attempt} finished, but pi changed nothing in {prepared.repo}", attempts)
+                    if self._task_id and published is not None:
+                        await self._record(record_published, PublishedRecord(self._task_id, published))
                     log.info("%s: completed", info.workflow_id)
                     return RunTaskResult(
                         template=prepared.template,
@@ -232,7 +317,14 @@ class RunTask:
         try:
             harness = await workflow.execute_activity(
                 run_harness,
-                HarnessRequest(run_id=run_id, prompt=prompt, candidate=candidate, spend_limit_usd=str(left), repo=repo),
+                HarnessRequest(
+                    run_id=run_id,
+                    prompt=prompt,
+                    candidate=candidate,
+                    spend_limit_usd=str(left),
+                    repo=repo,
+                    task_id=self._task_id,
+                ),
                 start_to_close_timeout=HARNESS_TIMEOUT,
                 heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
                 retry_policy=HARNESS_RETRY,

@@ -1,6 +1,6 @@
 """A fake HTTP Gateway for the zero-cost end-to-end check. It makes no model calls.
 
-    python -m run_task.fake_gateway [--host 127.0.0.1] [--port 8099]
+    python -m meta_harness.run_service.fake_gateway [--host 127.0.0.1] [--port 8099]
 
 It answers the calls the sample makes to ai-api-unified-http 1.19.0, with
 the same paths, status codes and JSON fields:

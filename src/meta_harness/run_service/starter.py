@@ -1,6 +1,6 @@
 """Starts one RunTask workflow, waits for it, and prints the result.
 
-    python -m run_task.starter [--ref REF] [--task TEXT] [--pin PAIR]
+    python -m meta_harness.run_service.starter [--ref REF] [--task TEXT] [--pin PAIR]
                                [--floor TIER] [--ceiling TIER] [--spend-limit USD]
                                [--repo REPO] [--ticket OWNER/NAME#N] [--check CMD ...] [--follow]
 
@@ -40,8 +40,8 @@ from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import CancelledError, WorkflowAlreadyStartedError
 
-from run_task import harness_client, sandbox
-from run_task.shared import (
+from meta_harness.run_service import harness_client, sandbox
+from meta_harness.run_service.shared import (
     DEFAULT_SPEND_LIMIT_USD,
     TASK_QUEUE,
     TEMPORAL_ADDRESS,
@@ -50,7 +50,7 @@ from run_task.shared import (
     RunTaskResult,
     workflow_id_for,
 )
-from run_task.workflows import RunTask
+from meta_harness.run_service.workflows import RunTask
 
 UI_URL = os.environ.get("TEMPORAL_UI_URL", "http://localhost:8233")
 EXIT_CANCELED = 3

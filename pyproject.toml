@@ -4,12 +4,14 @@ version = "0.1.0"
 description = "The meta-harness control plane: task service, planner, run service, event service and operator console"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "ai-api-unified[openai]",
     "click==8.1.8",
     "fastapi==0.115.12",
     "httpx==0.28.1",
     "jsonschema==4.23.0",
     "psycopg-pool==3.2.6",
     "psycopg[binary]==3.2.9",
+    "temporalio==1.34.0",
     "uvicorn==0.34.3",
 ]
 
@@ -41,3 +43,6 @@ markers = [
 [tool.ruff]
 line-length = 120
 extend-exclude = ["samples", "images"]
+
+[tool.uv.sources]
+ai-api-unified = { git = "https://github.com/davecthomas/ai-api-unified", rev = "ebf9d489cc02ad075dddd313e1146e5e2d9840fc" }
