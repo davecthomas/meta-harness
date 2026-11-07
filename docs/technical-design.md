@@ -1496,8 +1496,8 @@ below it, or on a refusal, it sets `feature` and lists the goal as "modality
 uncertain" in the console, where an operator confirms or changes it without
 holding the goal up. The classifier also sets an unset latitude, starting from
 the modality's default and moving it up for a statement that asks for
-open-ended improvement and down for one that names an exact change. Each
-classification goes on record as `goal_classified` with its confidence, so the
+open-ended improvement and down for one that names an exact change. The planner
+records each classification as `goal_classified` with its confidence, so the
 harness analyzer can measure how often operators override it. An operator can
 change the modality or the latitude at any time; a new modality applies from
 the next planning task.
@@ -1645,7 +1645,7 @@ task, with the reason recorded.
 A `ref` names its tracker: `github:<owner>/<repo>#<number>`, `jira:<key>` or
 `linear:<identifier>`. Each repo in `config/repos.json` names its tracker, and
 for Jira or Linear the project or team and the field or label that names an
-issue's repo. The GitHub adapter comes first, over the GitHub App; Jira and
+issue's repo. The GitHub adapter works through the GitHub App, and the Jira and
 Linear adapters plug into the same interface.
 
 A `feature` or `new-system` goal's issues come from a planning task,
