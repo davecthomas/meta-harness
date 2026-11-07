@@ -127,3 +127,41 @@ async def test_a_paused_or_spent_goal_holds_its_tasks(repo):
     assert result.started == []
     assert "paused" in result.held[paused]
     assert "spent $1.05" in result.held[spent]
+
+
+async def test_the_kill_switch_admits_nothing_and_stops_running_tasks(repo):
+    from meta_harness.scheduler.admission import set_kill_switch
+
+    tasks = Tasks()
+    running, queued = tasks.add(repo, status="running"), tasks.add(f"{repo}-2")
+    canceled = []
+
+    async def cancel(task_id):
+        canceled.append(task_id)
+
+    admission, started = _admission(tasks)
+    admission.cancel = cancel
+    set_kill_switch(True, "test", "stop everything")
+    try:
+        result = await admission.pass_once()
+    finally:
+        set_kill_switch(False, "test", "lifted")
+    assert started == []
+    assert canceled == [running]
+    assert queued not in result.started
+
+
+async def test_a_cancel_request_stops_that_running_task(repo):
+    tasks = Tasks()
+    task_id = tasks.add(repo, status="running")
+    tasks.tasks[task_id]["cancel_requested"] = True
+    canceled = []
+
+    async def cancel(task_id):
+        canceled.append(task_id)
+
+    admission, _ = _admission(tasks)
+    admission.cancel = cancel
+    await admission.pass_once()
+    await admission.pass_once()
+    assert canceled == [task_id]

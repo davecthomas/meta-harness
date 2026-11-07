@@ -38,6 +38,7 @@ class AdmissionResult:
     started: list[str] = field(default_factory=list)
     held: dict[str, str] = field(default_factory=dict)
     released: list[str] = field(default_factory=list)
+    canceled: list[str] = field(default_factory=list)
 
 
 def areas_for(task: dict) -> list[str]:
@@ -59,17 +60,24 @@ class Admission:
         events: Any,
         start: Callable[[str], Awaitable[None]],
         max_running: int = 2,
+        cancel: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.tasks = tasks
         self.goals = goals
         self.events = events
         self.start = start
+        self.cancel = cancel
         self.max_running = max_running
         self._last_hold: dict[str, str] = {}
+        self._canceling: set[str] = set()
 
     async def pass_once(self) -> AdmissionResult:
         result = AdmissionResult()
+        engaged = await asyncio.to_thread(kill_switch_engaged)
+        await self._stop_running(engaged, result)
         await self._release_and_renew(result)
+        if engaged:
+            return result
         locked = await asyncio.to_thread(_locks)
         in_flight = {row["task_id"] for row in locked}
         queued = await asyncio.to_thread(self.tasks.list, ["queued"], None, 200)
@@ -103,6 +111,24 @@ class Admission:
             )
             result.started.append(task["id"])
         return result
+
+    async def _stop_running(self, engaged: bool, result: AdmissionResult) -> None:
+        """Cancels the RunTask workflow of each running task that has a cancel request, or of every
+        running task while the kill switch is on. The workflow stops pi and marks the task canceled."""
+        if self.cancel is None:
+            return
+        running = await asyncio.to_thread(self.tasks.list, ["running", "queued"], None, 1000)
+        for task in running:
+            stop = engaged and task["status"] == "running" or task.get("cancel_requested")
+            if not stop or task["id"] in self._canceling:
+                continue
+            try:
+                await self.cancel(task["id"])
+            except Exception as err:  # noqa: BLE001 - try again next pass
+                log.warning("could not cancel %s: %s", task["id"], err)
+                continue
+            self._canceling.add(task["id"])
+            result.canceled.append(task["id"])
 
     async def _release_and_renew(self, result: AdmissionResult) -> None:
         for task_id in {row["task_id"] for row in await asyncio.to_thread(_locks)}:
@@ -146,6 +172,29 @@ class Admission:
         if self._last_hold.get(task["id"]) != reason:
             self._last_hold[task["id"]] = reason
             self.events.emit("task_held", {"reason": reason}, task_id=task["id"], actor="scheduler")
+
+
+def kill_switch_engaged() -> bool:
+    with db.connect(autocommit=True) as conn:
+        row = conn.execute("SELECT engaged FROM scheduler.kill_switch WHERE id = 1").fetchone()
+    return bool(row and row[0])
+
+
+def kill_switch() -> dict:
+    with db.connect(autocommit=True) as conn:
+        row = conn.execute(
+            "SELECT engaged, changed_by, reason, changed_at FROM scheduler.kill_switch WHERE id = 1"
+        ).fetchone()
+    return {"engaged": row[0], "changed_by": row[1], "reason": row[2], "changed_at": row[3].isoformat()}
+
+
+def set_kill_switch(engaged: bool, changed_by: str, reason: str | None) -> dict:
+    with db.connect(autocommit=True) as conn:
+        conn.execute(
+            "UPDATE scheduler.kill_switch SET engaged = %s, changed_by = %s, reason = %s, changed_at = now() WHERE id = 1",
+            (engaged, changed_by, reason),
+        )
+    return kill_switch()
 
 
 def _locks() -> list[dict]:

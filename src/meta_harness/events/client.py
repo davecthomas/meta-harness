@@ -162,8 +162,15 @@ class EventClient:
 
     # Consumers
 
-    def read(self, from_position: int = 0, limit: int = 500, **filters: str) -> dict[str, Any]:
-        response = self.http.get("/v1/events", params={**filters, "from_position": from_position, "limit": limit})
+    def read(
+        self, from_position: int = 0, limit: int = 500, before_position: int | None = None, **filters: str
+    ) -> dict[str, Any]:
+        """Events after from_position, or with before_position the last `limit` before it. A filter value
+        may list several values separated by commas."""
+        params: dict[str, Any] = {**filters, "from_position": from_position, "limit": limit}
+        if before_position is not None:
+            params["before_position"] = before_position
+        response = self.http.get("/v1/events", params=params)
         response.raise_for_status()
         return response.json()
 

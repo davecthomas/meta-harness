@@ -19,7 +19,7 @@ from dataclasses import asdict
 from decimal import Decimal
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
@@ -156,9 +156,15 @@ def create_app(
         return goal
 
     @app.get("/v1/goals")
-    def list_goals(status: str | None = None, who: str = Depends(operator)) -> dict:
+    def list_goals(
+        status: str | None = None,
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+        who: str = Depends(operator),
+    ) -> dict:
         with app.state.pool.connection() as conn:
-            return {"goals": store.list_goals(conn, status.split(",") if status else None)}
+            goals, total = store.page_goals(conn, status.split(",") if status else None, limit, offset)
+        return {"goals": goals, "total": total, "offset": offset, "limit": limit}
 
     @app.get("/v1/goals/{goal_id}")
     def read(goal_id: str, who: str = Depends(operator)) -> dict:

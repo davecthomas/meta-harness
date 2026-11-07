@@ -2,8 +2,12 @@
 #
 #   make up        start Postgres (Docker Compose) and the Temporal dev server
 #   make migrate   apply every component's schema migrations
-#   make serve     start the control-plane services (event service, task service, planner, scheduler, console web app) in the background
+#   make serve     build the console, then start the control-plane services in the background: event
+#                  service, task service, planner, scheduler, and the local edge, which serves the
+#                  console at http://127.0.0.1:8300 and routes /v1 to the services as you
 #   make stop      stop them
+#   make console   build the console web app (React and TypeScript) into console/dist
+#   make console-dev  the console with hot reload at http://127.0.0.1:5173, over the edge
 #   make test      unit tests, plus the database tests when Postgres is up
 #   make lint      ruff
 #   make down      stop what `make up` started; Postgres keeps its data
@@ -28,7 +32,7 @@ export MH_SERVICE_KEY ?= local-service-key
 export MH_OPERATOR_KEYS ?= local-operator:local-operator-key
 export MH_OPERATOR_KEY ?= local-operator-key
 
-.PHONY: up down clean-db migrate serve stop test lint
+.PHONY: up down clean-db migrate serve stop test lint console console-dev
 
 up:
 	@mkdir -p $(STACK_DIR)
@@ -52,8 +56,14 @@ clean-db:
 migrate:
 	uv run mh migrate
 
-serve: migrate
+serve: migrate console
 	scripts/services.sh start
+
+console:
+	cd console && npm ci --no-audit --no-fund --silent && npm run build --silent
+
+console-dev:
+	cd console && npm run dev
 
 stop:
 	scripts/services.sh stop

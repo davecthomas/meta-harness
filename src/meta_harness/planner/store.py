@@ -85,15 +85,20 @@ def get(conn: psycopg.Connection, goal_id: str) -> dict:
 
 
 def list_goals(conn: psycopg.Connection, statuses: list[str] | None = None) -> list[dict]:
+    return page_goals(conn, statuses, limit=10_000, offset=0)[0]
+
+
+def page_goals(conn: psycopg.Connection, statuses: list[str] | None, limit: int, offset: int) -> tuple[list[dict], int]:
+    """One page of goals, newest first, and how many match in all."""
+    where, params = ("WHERE status = ANY(%s)", [statuses]) if statuses else ("", [])
     with conn.cursor(row_factory=dict_row) as cur:
-        if statuses:
-            cur.execute(
-                f"SELECT {GOAL_COLUMNS} FROM planner.goal WHERE status = ANY(%s) ORDER BY priority DESC, created_at",
-                (statuses,),
-            )
-        else:
-            cur.execute(f"SELECT {GOAL_COLUMNS} FROM planner.goal ORDER BY created_at DESC")
-        return [_goal(row) for row in cur.fetchall()]
+        cur.execute(
+            f"SELECT {GOAL_COLUMNS} FROM planner.goal {where} ORDER BY created_at DESC, id LIMIT %s OFFSET %s",
+            [*params, limit, offset],
+        )
+        rows = [_goal(row) for row in cur.fetchall()]
+        cur.execute(f"SELECT count(*) AS n FROM planner.goal {where}", params)
+        return rows, cur.fetchone()["n"]
 
 
 def update(conn: psycopg.Connection, goal_id: str, **fields: Any) -> tuple[dict, dict]:

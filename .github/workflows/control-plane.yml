@@ -45,3 +45,22 @@ jobs:
       - run: uv run mh migrate
       - name: make test, with every database test required to run
         run: uv run pytest -q -rs | tee pytest.out && ! grep -q "SKIPPED" pytest.out
+
+  console:
+    name: console web app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Protocol
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
@@ -33,6 +33,8 @@ class Events(Protocol):
 class Caller:
     label: str
     service: bool
+    # Who the audit events name: the key's label, or for a service key (the console) the operator it acts for.
+    actor: str = ""
 
 
 class TaskIn(BaseModel):
@@ -86,11 +88,11 @@ def create_app(
 
     app = FastAPI(title="meta-harness task service", lifespan=lifespan)
 
-    def caller(key: str = Depends(auth.bearer)) -> Caller:
+    def caller(key: str = Depends(auth.bearer), actor: str | None = Header(default=None, alias="X-MH-Actor")) -> Caller:
         if label := auth.label_for(key, services):
-            return Caller(label, service=True)
+            return Caller(label, service=True, actor=actor or label)
         if label := auth.label_for(key, callers):
-            return Caller(label, service=False)
+            return Caller(label, service=False, actor=label)
         raise HTTPException(status_code=401, detail="unknown API key")
 
     def service_only(who: Caller = Depends(caller)) -> Caller:
@@ -137,7 +139,7 @@ def create_app(
                     "parent_task_id": task["parent_task_id"],
                 },
                 task_id=task["id"],
-                actor=who.label,
+                actor=who.actor,
             )
         else:
             response.status_code = 200
@@ -149,6 +151,7 @@ def create_app(
         status: str | None = None,
         goal_id: str | None = None,
         limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
         who: Caller = Depends(caller),
     ) -> dict:
         owner = None if who.service else who.label
@@ -159,7 +162,8 @@ def create_app(
                 except store.NotFound as err:
                     raise HTTPException(status_code=404, detail="no such task") from err
             statuses = status.split(",") if status else None
-            return {"tasks": store.list_tasks(conn, owner, statuses, goal_id, limit)}
+            tasks, total = store.list_tasks(conn, owner, statuses, goal_id, limit, offset)
+            return {"tasks": tasks, "total": total, "offset": offset, "limit": limit}
 
     @app.get("/v1/tasks/{task_id}")
     def read(task_id: str, who: Caller = Depends(caller)) -> dict:
@@ -181,9 +185,9 @@ def create_app(
         except store.TaskError as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
         if task["status"] == "canceled":
-            emit_status(task, previous, who.label)
+            emit_status(task, previous, who.actor)
         else:
-            events.emit("task_cancel_requested", {"reason": reason}, task_id=task_id, actor=who.label)
+            events.emit("task_cancel_requested", {"reason": reason}, task_id=task_id, actor=who.actor)
         return task
 
     @app.post("/v1/tasks/{task_id}/status")
@@ -196,7 +200,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such task") from err
         except store.TaskError as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
-        emit_status(task, previous, who.label)
+        emit_status(task, previous, who.actor)
         return task
 
     return app

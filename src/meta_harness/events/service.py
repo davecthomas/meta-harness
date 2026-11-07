@@ -141,12 +141,17 @@ def create_app(database_url: str | None = None) -> FastAPI:
         event_type: str | None = None,
         source: str | None = None,
         from_position: int = 0,
+        before_position: int | None = None,
         limit: int = Query(500, ge=1, le=5000),
     ) -> dict[str, Any]:
+        """A comma-separated filter value matches any of its parts. before_position returns the last
+        `limit` events before it, for paging back."""
+        filters = _filters(run_id, task_id, event_type, source)
         with app.state.pool.connection() as conn:
-            events = store.read(conn, _filters(run_id, task_id, event_type, source), from_position, limit)
+            events = store.read(conn, filters, from_position, limit, before_position)
+            latest = conn.execute("SELECT coalesce(max(position), 0) FROM events.event").fetchone()[0]
         next_position = events[-1]["position"] if events else from_position
-        return {"events": events, "next_position": next_position}
+        return {"events": events, "next_position": next_position, "latest_position": latest}
 
     @app.get("/v1/events/tail")
     async def tail(
