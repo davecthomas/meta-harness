@@ -62,6 +62,9 @@ caps.
 - A task's cost includes every run it took, failed runs included, so the
   harness analyzer compares harness profiles and models on the full cost of a
   completed task.
+- Every decision, whether a meta-harness component, ai-api-unified or an
+  operator made it, is an audit record in the event service, where the
+  operator console reads it.
 
 ## Architecture
 
@@ -70,6 +73,7 @@ flowchart TB
     OP[Operators]
     CH[Code host and issue trackers]
     PROV[Model providers<br/>cloud or local]
+    LS[Cloud Logging log sink<br/>and Pub/Sub topic]
 
     subgraph CP["Meta-harness control plane"]
         CON[Operator console<br/>owns nothing]
@@ -134,6 +138,8 @@ flowchart TB
     RS -->|push branch, open PR, post review, merge| CH
     HX -->|model turns on the run grant key| GW
     GW --> PROV
+    GW -->|ai-api-unified request records| LS
+    LS -->|push subscription: gateway_request| EV
     PL & TS & SCHED & RS & PM & HA -->|append events| EV
     MET & HA -->|tail, read events| EV
     HA -->|proposals| CON
@@ -1655,7 +1661,7 @@ the same approval.
 | Planner | config_version | kind (modalities, repos), version, document, edited_by, effective_at |
 | Pool manager | sandbox | id, image, executor, executor_ref, state (provisioning, warm, leased, kept, draining, unhealthy, destroyed), created_at, destroyed_at, destroy_reason |
 | Pool manager | lease | run_id, sandbox_id, harness_session_id, session_state (new, kept, restored), granted_at, expires_at, released_at, release_reason |
-| Meta-harness event service | event | event_id (UUID, unique), position (assigned on insert, monotonic), event_type, schema_version, time_utc, source (task, meta-harness scheduler, dispatcher, route, run, workflow, pool, analyzer), actor, run_id, task_id, session_id, request_id, seq, trace_id, config_id, config_version, tags (jsonb), payload (jsonb) |
+| Meta-harness event service | event | event_id (UUID, unique), position (assigned on insert, monotonic), event_type, schema_version, time_utc, source (task, meta-harness scheduler, dispatcher, route, run, workflow, pool, analyzer, gateway), actor, run_id, task_id, session_id, request_id, seq, trace_id, config_id, config_version, tags (jsonb), payload (jsonb) |
 | Meta-harness event service | event_type | name, schema_version, json_schema, retention_class |
 | Metering service | model_call | run_id, seq, turn, purpose (turn, compaction, auxiliary), tier, method, engine, model, thinking, input_tokens, cached_input_tokens, cache_write_5m_tokens, cache_write_1h_tokens, output_tokens, usd, latency_ms |
 | Metering service | attempt_usage | run_id, usd_total, calls, input_tokens, cached_input_tokens, cache_write_5m_tokens, cache_write_1h_tokens, output_tokens, cache_hit_rate, active_hours |
@@ -1685,7 +1691,7 @@ two join.
 The event service is the record of what happened in every task and run. It
 owns the `event` table, the per-type schema registry, position assignment,
 partitions, retention and the commit notification, and it calls no other
-component. ai-api-unified keeps its own library events and cost ledger.
+component.
 
 | Operation | Contract |
 |---|---|
@@ -1706,6 +1712,37 @@ Meta-harness services append through the event service client library:
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
 | Meta-harness run service and planner | `config_changed` for every configuration version an operator saves, approves or rolls back, with the actor |
+
+ai-api-unified records its own decisions in one `ai_api_request_cost` record
+per request. The record lists every provider call the request made, failed
+attempts and fallbacks included with their `fallback_reason`, and holds the
+model that served the answer, `wasted_usd`, the router tier and method,
+guardrail flags and cache hits, tagged with the caller id and the caller's
+tags. In the meta-harness run service and the planner the library runs
+in-process, and the calling service copies the record into its own event,
+`task_routed` or `goal_classified`.
+
+The HTTP Gateway writes each record to stdout, and Cloud Logging stores it. A
+Cloud Logging log sink selects the HTTP Gateway records whose caller id is the
+meta-harness and publishes them to a Pub/Sub topic. The event service receives
+them on a Pub/Sub push subscription and appends each one as a
+`gateway_request` event, joined to its run by the `run_id` tag the HTTP
+Gateway sets from the run grant. Pub/Sub delivers at least once, so the event
+service ignores a `request_id` it has already stored. The HTTP Gateway refuses
+to start when its cost records would be lost, so every model turn of a run
+reaches the event service.
+
+| Decision | Made by | Event |
+|---|---|---|
+| A task's tier and candidates | The ai-api-unified router in the meta-harness run service | `task_routed` |
+| The next candidate, an escalation, or the end of the loop | The RunTask workflow's Decide step | `attempt_finished` |
+| Admitting or holding a task | The meta-harness scheduler | Admission decisions |
+| A goal's modality and latitude | The planner, through the ai-api-unified classifier | `goal_classified` |
+| Which drafted issues a plan keeps | The planner | `plan_drafted` |
+| A turn's model, its fallbacks, guardrail blocks and cache hits | ai-api-unified in the HTTP Gateway | `gateway_request` |
+| A review verdict | A meta-harness review run, or an operator | `review_submitted`, `operator_review_submitted` |
+| A merge | The meta-harness run service | `pr_merged` |
+| Approvals, takeovers, cancels and configuration changes | An operator | Audit events with the operator as actor, `config_changed` |
 
 The client library buffers events in its own outbox and retries, which is safe
 because `append` is idempotent on `event_id`, so an event service outage never
@@ -1741,8 +1778,8 @@ Consumers call:
 The event service partitions its `event` table by time and by
 each event type's retention class from the schema registry. Short-lived event
 types (per-turn text, tool output) expire by dropping whole partitions rather
-than deleting rows. The event service keeps run, routing, attempt and audit
-meta-harness domain events long.
+than deleting rows. The event service keeps run, routing, attempt,
+`gateway_request` and audit meta-harness domain events long.
 
 ### Signals
 
@@ -1771,13 +1808,13 @@ repo, time, harness profile, model, routing tier, task type and state.
 | Inputs | The queued GitHub issues across every registered repo, by repo and by goal: each one's state (queued, blocked and on what, running, pull request open, in review, merged, failed), issues no goal has picked up, and which repos each goal is working in now | Add an issue to a goal, drop one |
 | Goal | The goal's statement, its modality (with the classifier's confidence, or "set by operator") and latitude dial, its issue dependency graph across repos, the plan or the phase timeline with each phase's criteria, every success criterion's live state, spend over time, and its tasks. Each planner-drafted issue shows its `latitude_reason` | Approve plan or phase, set latitude, turn auto-merge on or off, pause, resume, cancel |
 | Tasks | One task: its issue, every ai-api-unified router routing decision, every run including fallbacks, every check result, the diff, the pull request, each review round's verdict and findings and the fix task it created, the merge, and cost per run | Take over, hand back, cancel |
-| Run | Live timeline of the run's events: each turn's model call (model, thinking, tokens, cost, latency), tool calls, file changes, test runs, compactions and guardrail blocks, the OpenTelemetry trace, and the per-run sandbox | Take over, cancel |
+| Run | Live timeline of the run's events: each turn's model call (model, thinking, tokens, cost, latency) and its ai-api-unified decisions (the model that served it, fallbacks, guardrail blocks, cache hits), tool calls, file changes, test runs, compactions and guardrail blocks, the OpenTelemetry trace, and the per-run sandbox | Take over, cancel |
 | Live runs | Every run in flight across every goal: task, repo, model, turn, spend as it accrues, time since its last event | Take over, cancel |
 | Routing | Tier picked versus the candidate whose run finished, classifier confidence, floors and ceilings by modality, moves between candidates and escalations | |
 | Pool | Per-run sandboxes by image and state, warm targets versus actual, lease latency, health failures | |
 | Spend and performance | Cost by goal, modality, repo, model, harness profile and routing tier. Cost per merged pull request and time to merge, by modality. Dollar-hours per completed task over time. Cache hit rate | |
 | Configuration | The active routing tiers, harness profiles, modalities, task policy and repo registry, their version history, and the harness analyzer's pending proposals | Edit any of them, roll back a version, approve or reject a proposal |
-| Audit | Every operator action and configuration change | |
+| Audit | Every recorded decision, by a meta-harness component, ai-api-unified or an operator, filtered by who made it | Export a time range |
 
 A task's runs, fallbacks and retries included, run one after another, and the
 Tasks view lists them in order with the task's review and fix tasks under
@@ -1884,6 +1921,7 @@ flowchart TB
         AR[Artifact Registry]
         SM[Secret Manager]
         OBS[Cloud Logging, Trace, Monitoring]
+        PS[Pub/Sub topic<br/>ai-api-unified request records]
     end
 
     USERS --> XLB
@@ -1905,6 +1943,9 @@ flowchart TB
     SM -->|secrets mounted only into the owning component's pods| CTRL
     AR -->|container images| GKE
     OTEL --> OBS
+    GW -->|ai-api-unified request records on stdout| OBS
+    OBS -->|log sink: HTTP Gateway records with the meta-harness caller id| PS
+    PS -->|push subscription| EV
 ```
 
 ### Deployment without GKE
@@ -1916,7 +1957,7 @@ managed services, plus one VM for the per-run sandboxes.
 |---|---|---|
 | Operator console | Cloud Run | GitHub sign-in |
 | Task service, planner, event service | Cloud Run, Cloud SQL for PostgreSQL | The Task API, the goal loop and the GitHub issue tracker adapter, code-host webhooks, the event table |
-| HTTP Gateway | Cloud Run | ai-api-unified-http |
+| HTTP Gateway | Cloud Run | ai-api-unified-http. Its stdout goes to Cloud Logging, so the same log sink and Pub/Sub topic carry its records to the event service |
 | Temporal | Temporal Cloud | The meta-harness run service namespace |
 | Meta-harness run service worker, egress proxy, per-run sandboxes | One Compute Engine VM with Docker | The Docker executor backend, as a systemd service that restarts on failure and on reboot |
 | Code host | A GitHub App on the registered repos | Issue and pull request webhooks keep the Inputs view live without polling; read-only clone tokens per run; the meta-harness run service's app token for every code-host write |
@@ -1961,6 +2002,7 @@ interfaces.
 | Cloud Storage | One bucket per owning component. The pool manager's Cloud Storage artifact bucket holds pi session directories under `harness_session_id` and per-run sandbox logs. The meta-harness run service's bucket holds run artifacts, and the event service's bucket holds event exports. | The pool manager's sandbox drain step retries artifact collection. A per-run sandbox stays in `draining` until the pool manager saves the per-run sandbox's artifacts to the pool manager's bucket or a limit passes. Follow-up tasks that need a saved pi session wait. |
 | Artifact Registry | Every container image: the per-run sandbox harness image and one image per meta-harness control-plane component. | Pods cannot pull uncached images. Running meta-harness services and warm per-run sandboxes keep running, and image rollover pauses. |
 | Secret Manager | Secret Manager mounts each secret only into its owning component's pods. Model provider API keys go to the HTTP Gateway, except the ai-api-unified router classifier's provider API key. The classifier's provider API key goes to the meta-harness run service and the planner. The meta-harness run service also receives an HTTP Gateway API key. The meta-harness run service run activity uses that HTTP Gateway API key to request and revoke HTTP Gateway run grants. | Secrets load into pods at pod start, so a Secret Manager outage blocks new pods only. |
+| Cloud Logging log sink and Pub/Sub | The log sink publishes the HTTP Gateway's meta-harness request records to one Pub/Sub topic, and a push subscription delivers them to the event service. | Pub/Sub keeps an undelivered message for 7 days and retries the push, so an event service outage delays `gateway_request` events and loses none. |
 | Cloud NAT and Secure Web Proxy | All egress from the GKE cluster. The Secure Web Proxy enforces the per-run sandbox egress allowlist. | Fails closed: per-run sandbox egress stops, runs fail on code-host clone or push, and the meta-harness run service retries them. No bypass route exists. |
 
 ### Network
@@ -2027,6 +2069,7 @@ through the local egress proxy's control listener.
 | Repo work in a run: each run starts from a fresh clone of the task's repo, pi's `bash` tool runs the acceptance checks, and the meta-harness run service's Publish step commits pi's changes, pushes the branch and opens the pull request with `Closes <issue>`. The per-run sandbox holds no code-host credential | built for local development | `samples/temporal-run-task`, `make repo-demo`, `make run TICKET=owner/name#N` |
 | Operator console: the Overview, Inputs, Goal, Tasks, Run, Live runs and Spend views, with take over and hand back on every running task, over the task service, the planner with its GitHub issue tracker adapter, and the event service on Cloud SQL, for `fix` goals. The Routing, Pool and Configuration views, review joining and proposals come with the services they read | **next** | |
 | Deployment without GKE: operator console, task service, planner and event service on Cloud Run, Temporal Cloud, and one Compute Engine VM running the meta-harness run service worker, the egress proxy and the per-run sandboxes with the Docker executor backend. The meta-harness runs with no Claude Code session and no terminal | planned | |
+| ai-api-unified decisions in the operator console: the Cloud Logging log sink, the Pub/Sub topic and push subscription, and `gateway_request` events in the event service | planned | |
 | Meta-harness review loop and merge: a review task on another model, fix tasks, and the merge at the reviewed head SHA, each round visible in the operator console | in progress | `samples/temporal-run-task` branch `feat/review-loop`; `submit_review` built in `images/harness-pi/extension` |
 | Goals with the `fix` modality: a label across the registered repos feeds a standing queue, and the operator console shows each issue's state | planned | |
 | Goals with the `feature` and `new-system` modalities: the planning task, plan and phase approval in the operator console, and goal success criteria | planned | |
