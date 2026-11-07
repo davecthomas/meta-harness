@@ -725,12 +725,9 @@ honors the hint within the band.
 
 ## Run lifecycle
 
-One meta-harness task can produce several harness runs: the first attempt,
-fallbacks to another candidate from the tier's candidate list that the
-ai-api-unified router returns, and retries on a higher tier. One harness run
-is one per-run sandbox. Once the task's PR is open, the task's RunTask
-workflow runs the meta-harness review loop below, which tickets meta-harness
-review and fix tasks, each with its own runs.
+A task's runs are its first attempt, fallbacks to other candidates and
+retries a tier up, each in its own per-run sandbox. Once the task's pull
+request is open, its RunTask workflow runs the review loop.
 
 ```mermaid
 stateDiagram-v2
@@ -758,18 +755,11 @@ stateDiagram-v2
     Unresolved --> [*]
 ```
 
-Each meta-harness task has one meta-harness run service Temporal workflow
-(RunTask), and its Temporal workflow id is the task id. Every harness run of
-the task happens inside that RunTask workflow: the first attempt, fallbacks
-and retries one tier up. A meta-harness review or fix task is a task of its
-own, with its own RunTask workflow. Temporal allows only one open
-execution per Temporal workflow id. `start` keeps the default conflict policy,
-Fail, so a second `start` for a running task fails with `Workflow execution
-already started` and never creates a duplicate RunTask workflow run. `start`
-also sets the reuse policy to Reject Duplicate, so a closed task's id never
-starts again. The Temporal web UI and `temporal workflow show --workflow-id
-<task id>` find any task's RunTask workflow from the task id that the task
-service Task API `POST /v1/tasks` returned.
+Each task has one RunTask workflow, whose Temporal workflow id is the task
+id, and every run of the task happens inside it. A review or fix task is a
+task of its own, with its own RunTask workflow. `start` uses Temporal's Fail
+conflict policy and Reject Duplicate reuse policy, so a task id starts at most
+one RunTask workflow, ever.
 
 The RunTask workflow runs these steps:
 
@@ -781,21 +771,10 @@ The RunTask workflow runs these steps:
    from a versioned prompt template: task spec, acceptance checks, the target
    repo's `AGENTS.md`, and the instruction to finish with a summary for the
    pull request, which the Publish step opens with the label `ai:meta-harness`.
-3. The run service `route` activity sends the task through
-   the ai-api-unified router (in the run service process) with the task's
-   floors, ceilings and exploration pin, and returns the tier and its
-   candidates. The RunTask workflow writes the `routing_decision` row, which
-   the meta-harness run service owns, and appends `task_routed` through the
-   event service client library. For each candidate the
-   RunTask workflow runs the run service run activity, which
-   leases a pool manager sandbox, requests an HTTP Gateway run grant, sends
-   `POST /run` to the harness server Run API, follows the harness server Run
-   API event stream to `run_finished`, and collects the result. The RunTask
-   workflow then decides. Each harness run appends one
-   `attempt_finished` meta-harness domain event. A retried run service
-   activity uses the same `run_id`, so it re-attaches to the pool manager
-   sandbox lease, the HTTP Gateway run grant and the harness server run in
-   progress.
+3. The run service `route` activity routes the task with its floors,
+   ceilings and exploration pin. The RunTask workflow writes the
+   `routing_decision` row, appends `task_routed`, and runs the candidates
+   through the run loop, appending one `attempt_finished` per run.
 4. The run service run activity is the only consumer of its
    sandbox's harness server Run API event stream. It writes the `run` row,
    appends the run's harness server Run API events through the event service
@@ -803,9 +782,8 @@ The RunTask workflow runs these steps:
    harness run stalled when the harness run misses a heartbeat window.
    Code-host webhooks for the run's PR (checks completed, merged, closed)
    arrive at the task service, which signals the RunTask workflow.
-5. The RunTask workflow tickets meta-harness review and fix
-   tasks on the PR until a review comes back clean, then merges the PR (see
-   Review loop below).
+5. The RunTask workflow tickets review and fix tasks on the pull request
+   until a review comes back clean, then merges it.
 6. When the PR merges or closes, when the meta-harness review loop
    ends `ready` or `review_unresolved`, or when attempts and task budget are
    spent, the RunTask workflow appends the outcome meta-harness domain events
@@ -821,16 +799,15 @@ The RunTask workflow runs these steps:
 
 Every terminal state releases the pool manager sandbox lease. The pool
 manager then collects run artifacts into its artifact store and destroys the
-per-run sandbox, or keeps it for the same pi session's next follow-up run
-.
+per-run sandbox, or keeps it for the same pi session's next follow-up run.
 
 Timeouts come from each harness profile (`max_minutes`), and the task policy
 sets the hard ceiling.
 
 ### Review loop
 
-No person has to review a meta-harness PR. The RunTask workflow of the task
-that opened the PR owns the PR until it merges or closes, and runs this loop:
+The RunTask workflow of the task that opened a pull request owns it until it
+merges or closes, and runs this loop:
 
 1. The RunTask workflow waits for the code-host checks webhook on
    the PR's head commit. A failed required check goes to step 3 with the
@@ -841,16 +818,16 @@ that opened the PR owns the PR until it merges or closes, and runs this loop:
    model did not write the PR, and starts a new pi session on a
    meta-harness review harness profile with no edit tools. The review run
    reads the PR diff, the parent task's spec and acceptance checks, and runs
-   the tests. Its `submit_review` pi extension tool posts the findings as a
-   code-host PR review and ends the run with verdict `clean` or `changes`,
-   recorded with the reviewed head SHA in a `review_submitted` meta-harness
-   domain event.
+   the tests. Its `submit_review` tool ends the run with verdict `clean` or
+   `changes` and its findings. The meta-harness run service posts them as a
+   pull request review and records the verdict with the reviewed head SHA in a
+   `review_submitted` event.
 3. On `changes` or a failed check, the RunTask workflow tickets a
    meta-harness fix task through the task service, with `parent_task_id`,
    the PR branch, and the findings or check output as the task description.
-   The fix task pins the pair that opened the PR and continues the PR's pi
-   session in a follow-up run (`POST /followup`), which pushes commits to the
-   PR branch. The loop returns to step 1.
+   The fix task pins the pair that opened the pull request and continues its
+   pi session in a follow-up run (`POST /followup`), and its Publish step
+   pushes to the pull request's branch. The loop returns to step 1.
 4. On `clean`, the meta-harness run service merges the PR through
    the code-host API at the reviewed head SHA, so a commit pushed after the
    review never merges unreviewed. A merge conflict with the base branch
@@ -890,7 +867,8 @@ review the PR too. The offer needs no answer:
 - A claimed review round waits for the operator. The review task's
   RunTask workflow waits on a Temporal signal, so the wait survives restarts.
   The agent review run's per-run sandbox is released when that run ends, and
-  Hi counts run time only, so the wait adds no dollar-hours. The
+  the metering service counts run time only, so the wait adds no
+  dollar-hours. The
   parent task keeps its repo-area lock while it waits.
 - The operator reads the PR on the code host and submits a
   verdict, `clean` or `changes`, with findings, from the operator console. The
