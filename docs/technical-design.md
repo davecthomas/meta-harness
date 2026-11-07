@@ -295,12 +295,12 @@ no pi virtual models (`registerVirtualModel`).
 
 ### Tools
 
-| Tool | Source | Limits |
+| Tool | Source | What the meta-harness adds |
 |---|---|---|
-| `read`, `ls`, `find`, `grep` | pi built-in tool | Output capped by bytes; binary files refused |
+| `read`, `ls`, `find`, `grep` | pi built-in tool | Nothing |
 | `write`, `edit` | pi built-in tool | The pi model client extension's tool-call hook refuses protected paths from the task repo policy |
-| `bash` | pi built-in tool | Timeout and output cap per harness profile. The pi model client extension's tool-call hook refuses commands outside the harness profile's allowlist. No network beyond the per-run sandbox egress allowlist |
-| `run_tests` | owned pi extension tool | Runs the acceptance checks named in the task; results emitted as `tests_run` harness server Run API events |
+| `bash` | pi built-in tool | A timeout and output cap from the harness profile. The pi model client extension's tool-call hook refuses commands outside the harness profile's allowlist |
+| `run_tests` | owned pi extension tool | Runs the acceptance checks named in the task and emits `tests_run` harness server Run API events |
 | `submit_review` | owned pi extension tool, meta-harness review harness profiles only | Ends the review run with verdict `clean` or `changes` and its findings, as a `review_submitted` harness server Run API event. The meta-harness run service posts them as a code-host pull request review |
 | `create_issue` | owned pi extension tool, planning harness profiles only | Records one issue draft (repo, title, body, labels, `Depends on:` lines) as an `issue_drafted` harness server Run API event. The planner creates the issues after the run |
 
@@ -344,12 +344,11 @@ model's conversation.
 
 | When | Where the conversation is | Owner |
 |---|---|---|
-| During a run | pi's session directory in the per-run sandbox, set through pi's SDK `SessionManager`. pi creates the pi session file once the pi session conversation has its first message, then appends each entry. | The per-run sandbox (harness server) |
+| During a run | pi's session directory in the per-run sandbox, set through pi's SDK `SessionManager` | The per-run sandbox (harness server) |
 | Between runs | A copy of that pi session directory in the pool manager's Cloud Storage bucket, stored under `harness_session_id` when the run ends | Pool manager |
 | Between runs, briefly | The finished per-run sandbox itself, kept for the pi session for up to `sticky_window` (default 10 minutes) | Pool manager |
 | On each model turn | The request the pi model client extension sends to the HTTP Gateway, which forwards it and keeps no copy | Nobody |
-| In ai-api-unified | Nothing. The meta-harness run service `route` activity sends the ai-api-unified router only the task prompt, and meta-harness review and fix tasks do not call the ai-api-unified router | None |
-| In the event service | Each turn's text and tool calls, as a meta-harness domain event record for the operator console and the metering service. A run never resumes from it. | Event service |
+| In the event service | Each turn's text and tool calls, as a meta-harness domain event record for the operator console and the metering service | Event service |
 
 A follow-up runs in a per-run sandbox that holds the pi session. Before the
 pool manager sandbox lease request returns, the pool manager either hands back
@@ -358,11 +357,6 @@ directory from its Cloud Storage bucket into a fresh per-run sandbox. The
 harness server then switches pi to that pi session and
 continues it, so the pi session conversation keeps its tool history on the
 same model.
-
-A pi session records its working directory and never changes it, and outside
-pi's interactive mode pi exits with an error when that working directory is
-missing. Every per-run sandbox therefore clones the task repo at the same
-path, `/workspace`, so a restored pi session finds its working directory.
 
 ### Events
 
@@ -1177,8 +1171,9 @@ Each run gets one per-run sandbox: a pod with the gVisor runtime class in the
   language toolchains, Node, pi, the pi model client extension and the harness
   server. A harness profile names another image when it needs another
   toolchain or another coding agent.
-- The per-run sandbox clones the task's repo at `/workspace`, the same path in every per-run sandbox,
-  with the run's read-only code-host access token. The meta-harness run service's Publish
+- The per-run sandbox clones the task's repo at `/workspace` with the run's
+  read-only code-host access token. Every per-run sandbox uses that path,
+  because a restored pi session needs the working directory it recorded. The meta-harness run service's Publish
   step reads the run's changes through `GET /bundle` and pushes them. With the
   Docker executor backend, the meta-harness run service clones on the host into the mounted
   workspace and publishes from it.
