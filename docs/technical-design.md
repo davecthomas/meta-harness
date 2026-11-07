@@ -1263,14 +1263,10 @@ Run API event streams for tests.
 
 ### Pool manager
 
-The pool manager is the only meta-harness service that creates and destroys
-per-run sandboxes. It is a single leader-elected service that owns the
-`sandbox` and `lease` tables and the pool manager artifact store, with a
-pool manager reconciliation loop against the pool manager executor backend's
-actual inventory. Other meta-harness services reach pool manager sandbox
-leases only through the pool manager interface.
-
-**Sandbox states**
+The pool manager creates and destroys every per-run sandbox. It is one
+leader-elected service that owns the `sandbox` and `lease` tables and the
+artifact store, and it reconciles them against the executor backend's actual
+sandboxes.
 
 ```mermaid
 stateDiagram-v2
@@ -1290,126 +1286,65 @@ stateDiagram-v2
     destroyed --> [*]
 ```
 
-- `provisioning`: pod created, harness profile image pulling, harness server
-  starting.
-- `warm`: harness server `/health` green, no task repo, no credentials, no
-  meta-harness run. Idle, ready for a pool manager sandbox lease.
-- `leased`: bound to one meta-harness run. The pool manager injects the run's
-  read-only code-host access token at pool manager sandbox lease time, and
-  the per-run sandbox clones the task repo then, always at `/workspace`. The HTTP Gateway
-  run grant key arrives later, in the `POST /run` or `POST /followup` body.
-- `kept`: the meta-harness run has ended and the per-run sandbox waits for the
-  same pi session's next follow-up, for up to `sticky_window`. The pool
-  manager has saved the pi session directory, and the meta-harness run service
-  run activity revoked the HTTP Gateway run grant when the meta-harness run
-  ended. The task repo and pi session directory stay in place.
-- `draining`: the meta-harness run has ended. The pool manager is collecting
-  artifacts (pi session directory, harness server logs, harness server
-  `/usage`).
-- `destroyed`: pod deleted, pool manager `sandbox` record kept for audit.
+A `warm` sandbox has a healthy harness server and no repo, credentials or run.
+At lease time the pool manager injects the run's read-only code-host access
+token and the sandbox clones the task repo at `/workspace`. The run grant key
+arrives later, in the `POST /run` or `POST /followup` body. A `kept` sandbox
+holds a finished run's repo and pi session for up to `sticky_window`, with its
+run grant already revoked. A `draining` sandbox is having its pi session
+directory, harness server logs and `/usage` collected. A `destroyed` sandbox
+keeps its `sandbox` record for audit.
 
-**Leases**
+The run activity requests `lease(run_id, image, harness_session_id,
+resources)`, idempotent on `run_id`. The response holds the sandbox address,
+the lease TTL and a `session_state`:
 
-- The meta-harness run service run activity requests `lease(run_id, image,
-  harness_session_id, resources)`. The pool manager sandbox lease request is
-  idempotent on `run_id`. The pool manager response holds the per-run sandbox
-  address, the pool manager sandbox lease TTL and a `session_state`:
-  - `kept`: the per-run sandbox kept for that pi session is still inside its
-    warm-sticky window, so the pool manager hands it back.
-  - `restored`: the pool manager's Cloud Storage artifact bucket holds a pi
-    session directory for that `harness_session_id`, so the pool manager takes
-    a warm per-run sandbox of that harness profile image (or provisions one)
-    and copies the pi session directory in before returning. The per-run
-    sandbox clones the task repo at `/workspace`, the working directory the
-    pi session recorded, because pi exits with an error when that directory
-    is missing.
-  - `new`: neither exists, so the pool manager hands out a warm per-run
-    sandbox of that harness profile image, or provisions one.
-- A pool manager sandbox lease has a TTL of the harness profile's
-  `max_minutes` plus a grace period. When the pool manager sandbox lease TTL
-  expires, the pool manager destroys the per-run sandbox whether or not the
-  meta-harness run service run activity released the pool manager sandbox lease. A meta-harness run service run
-  activity that crashes therefore cannot leak a per-run sandbox.
-- The pool manager sandbox lease is the only path to a per-run sandbox's
-  address and credentials. The harness server Run API accepts a per-lease
-  harness server bearer token, so a per-run sandbox cannot be addressed
-  outside its pool manager sandbox lease.
-- When a meta-harness run ends, the pool manager copies
-  its pi session directory to the pool manager's Cloud Storage artifact bucket
-  under `harness_session_id` before it keeps or drains the per-run sandbox. A
-  kept per-run sandbox that fails loses nothing.
-- When a meta-harness run finishes, the pool manager may keep
-  its per-run sandbox (`kept`) for a warm-sticky window (`sticky_window`,
-  default 10 minutes) keyed by `harness_session_id`. A follow-up for the same
-  pi session inside the warm-sticky window gets that per-run sandbox back and
-  skips the restore. Otherwise the pool manager drains the per-run sandbox and
-  the follow-up restores from the pi session directory in a fresh per-run
-  sandbox. The warm-sticky window never extends a pool manager sandbox lease
-  TTL, and a sticky per-run sandbox is still single-pi-session: it is never
-  leased to another meta-harness run.
+- `kept`: the sandbox kept for that pi session is still within its
+  `sticky_window`, and the pool manager hands it back.
+- `restored`: the artifact store holds a pi session directory for that
+  `harness_session_id`. The pool manager copies it into a warm sandbox of that
+  image, which clones the repo at `/workspace`, the working directory the pi
+  session recorded.
+- `new`: the pool manager hands out a warm sandbox of that image, or
+  provisions one.
 
-**Warm pool**
+A lease's TTL is the harness profile's `max_minutes` plus a grace period, and
+the pool manager destroys the sandbox when it expires, whether or not the run
+activity released the lease, so a crashed run activity leaks nothing. The
+lease is the only way to a sandbox's address, and the harness server Run API
+accepts only that lease's bearer token. When a run ends, the pool manager
+saves its pi session directory to the artifact store under
+`harness_session_id` before it keeps or drains the sandbox. A follow-up for
+the same pi session within `sticky_window` (default 10 minutes) gets the kept
+sandbox back and skips the restore. A kept sandbox stays on its lease TTL and
+its one pi session.
 
-- A target count of warm per-run sandboxes per harness profile image, set in
-  the pool manager pool configuration (`warm: 4`) and adjusted by the pool
-  manager from meta-harness scheduler queue depth: the number of admitted
-  tasks waiting per harness profile image over the last few minutes.
-- Warm per-run sandboxes hold no task repo and no secrets, so they are safe
-  to keep idle.
-- The pool manager destroys and replaces a warm per-run sandbox older than
-  `warm_ttl` (default 2 hours), so no per-run sandbox outlives a routine
-  harness profile image or node change.
-- Per-harness-profile-image and global maximums cap total per-run sandboxes.
-  The GKE node autoscaler follows the pool manager's demand.
+The pool manager keeps a warm target per image (`warm: 4`), adjusted from the
+scheduler's queue depth per image. A warm sandbox holds no repo and no secret.
+The pool manager replaces a warm sandbox older than `warm_ttl` (default 2
+hours), and per-image and global maximums cap the total. The GKE node
+autoscaler follows the pool manager's demand.
 
-**Health**
+A sandbox whose harness server is not healthy within `ready_timeout` is
+replaced, and the lease goes to the next warm sandbox. During a run, two missed
+harness server heartbeat windows mark the sandbox `unhealthy`; the pool manager
+destroys it, and the RunTask workflow's Decide step decides whether another
+candidate runs. The pool manager replaces an unhealthy sandbox and probes idle
+warm sandboxes on an interval. Every 30 seconds it reconciles: it destroys
+sandboxes with no record or an expired lease, marks records whose pod has
+vanished, and provisions back to each image's warm target.
 
-- Before a pool manager sandbox lease: the harness server `/health` must be
-  green within `ready_timeout`, else the pool manager marks the per-run sandbox
-  `unhealthy` and replaces it. The pool manager sandbox lease request moves to
-  the next warm per-run sandbox.
-- During a meta-harness run: the meta-harness run service run activity
-  forwards missed harness server heartbeat events to the pool manager. Two
-  missed harness server heartbeat windows mark the per-run sandbox
-  `unhealthy`. The pool manager destroys it, and the RunTask workflow's Decide
-  step decides whether another tier candidate runs. The pool
-  manager never repairs a per-run sandbox in place.
-- The pool manager probes idle warm per-run sandboxes on an interval and
-  destroys any that fail.
-- The pool manager reconciliation loop runs every 30 seconds: it lists the
-  pool manager executor backend's actual per-run sandboxes, destroys any with
-  no pool manager `sandbox` record or whose pool manager sandbox lease has
-  expired, marks pool manager `sandbox` records whose pod has vanished, and
-  provisions per-run sandboxes until each harness profile image is back at its
-  warm target.
+A sandbox serves one pi session: one run, and the follow-ups `sticky_window`
+hands back to it. A fresh sandbox per pi session is the security boundary
+between pi sessions, so recycling is drain, destroy and provision a
+replacement. When a harness profile changes its image version, the pool
+manager stops leasing the old image, replaces its warm sandboxes, and lets
+leased sandboxes on it finish. On a node drain, warm sandboxes go at once and
+leased ones run until their lease TTL.
 
-**Recycling**
-
-- A per-run sandbox serves exactly one pi session: one meta-harness run, or
-  that run and the follow-ups a warm-sticky window hands back to it. The task
-  repo, the read-only code-host access token
-  and HTTP Gateway run grant key, the pi session and any files the pi coding
-  agent created are specific to that pi session, and a fresh per-run sandbox
-  per pi session is the security boundary between pi sessions.
-- Recycling therefore means: drain (collect artifacts to the pool manager
-  artifact store, read harness server `/usage` for reconciliation), destroy
-  the pod, and provision a fresh replacement per-run sandbox to meet the
-  warm-pool target.
-- When a harness profile changes its harness profile image
-  version, the pool manager stops leasing the old harness profile image,
-  destroys its warm per-run sandboxes, provisions the new harness profile
-  image to the warm target, and lets leased per-run sandboxes on the old
-  harness profile image finish their meta-harness runs.
-- The pool manager honors the Kubernetes orchestrator's
-  drain signals: it destroys warm per-run sandboxes on a draining node at
-  once. Leased per-run sandboxes get until their pool manager sandbox lease
-  TTL, after which the GKE node autoscaler releases the node.
-
-**Metrics** (pool manager OpenTelemetry metrics, alertable): per-run sandboxes
-by state and harness profile image, provisioning time, time-to-lease, warm hit
-rate, harness server health failures by cause, pool manager sandbox lease TTL
-expiries, orphaned per-run sandboxes destroyed by pool manager reconciliation,
-and artifact collection failures.
+The pool manager's metrics: sandboxes by state and image, provisioning time,
+time to lease, warm hit rate, health failures by cause, lease TTL expiries,
+orphans destroyed by reconciliation, and artifact collection failures.
 
 ## Metering
 
