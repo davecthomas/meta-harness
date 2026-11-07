@@ -47,9 +47,11 @@ mkdir -p "$STATE/runs" "$ETC"
 chown -R mh:mh "$STATE"
 
 log "code at $REF"
-# This script runs as root and the checkouts belong to mh, which git refuses without this.
-git config --global --add safe.directory "$MH" >/dev/null 2>&1 || true
-git config --global --add safe.directory "$GW" >/dev/null 2>&1 || true
+# This script runs as root and the checkouts belong to mh, which git refuses without a safe.directory
+# entry. It goes in the system config, because the startup script that runs this has no HOME.
+for dir in "$MH" "$GW"; do
+  git config --system --get-all safe.directory 2>/dev/null | grep -qx "$dir" || git config --system --add safe.directory "$dir"
+done
 for pair in "$MH https://github.com/davecthomas/meta-harness.git $REF" "$GW https://github.com/davecthomas/ai-api-unified-http.git main"; do
   read -r dir url ref <<<"$pair"
   if [ -d "$dir/.git" ]; then

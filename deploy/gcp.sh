@@ -185,7 +185,9 @@ cmd_edge() {
 }
 
 cmd_update() {
-  g compute instances add-metadata "$VM" --zone "$ZONE" --metadata "mh-ref=$REF"
+  # The startup script lives in the VM's metadata, so a change to deploy/vm/startup.sh reaches the VM only here.
+  g compute instances add-metadata "$VM" --zone "$ZONE" --metadata "mh-ref=$REF" \
+    --metadata-from-file startup-script=deploy/vm/startup.sh
   g compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --command "sudo bash /opt/meta-harness/deploy/vm/boot.sh $REF 2>&1 | tail -n 5"
 }
 
