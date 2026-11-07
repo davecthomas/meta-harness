@@ -30,6 +30,7 @@ import {
 	type RunContext,
 	SPEND_LIMIT_ERROR,
 } from "../extension/model-client.ts";
+import { bashAllowlist } from "../extension/bash-allowlist.ts";
 import { OWNED_TOOLS, type Review, submitReviewTool } from "../extension/owned-tools.ts";
 import { EventLog, type RunEventType } from "./event-log.ts";
 
@@ -44,7 +45,13 @@ export interface Profile {
 	tools: string[];
 	max_turns: number;
 	max_minutes: number;
+	/** The programs pi's bash tool may run. Absent: any program. */
+	bash_allow?: string[];
 }
+
+/** The thinking levels the HTTP Gateway's conversation turn accepts. */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "max"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface RunRequest {
 	run_id: string;
@@ -52,6 +59,8 @@ export interface RunRequest {
 	prompt: string;
 	acceptance_checks: string[];
 	profile: Profile;
+	/** The routing tier's thinking level, sent on every turn. Absent: the gateway's default. */
+	thinking?: ThinkingLevel;
 	/** The run grant's key from the HTTP Gateway. The grant decides the engine, the model and the spend limit. */
 	grant_key: string;
 }
@@ -251,7 +260,7 @@ export class Harness {
 		}
 		const run = this.newRun(request.run_id, "run", request.harness_session_id, request.profile, request.acceptance_checks);
 		this.sessionProfile = request.profile;
-		this.context = { grantKey: request.grant_key, cacheKey: request.harness_session_id };
+		this.context = { grantKey: request.grant_key, cacheKey: request.harness_session_id, thinking: request.thinking };
 		this.track(run, async () => {
 			this.session = await this.createSession(request.harness_session_id, request.profile);
 			await this.execute(run, request.prompt);
@@ -270,7 +279,8 @@ export class Harness {
 			throw new HttpError(409, `Run ${this.current.run_id} is still ${this.current.status}.`);
 		}
 		const run = this.newRun(request.run_id, "followup", this.current.harness_session_id, this.sessionProfile, []);
-		this.context = { grantKey: request.grant_key, cacheKey: run.harness_session_id };
+		// A follow-up keeps the session's thinking level.
+		this.context = { grantKey: request.grant_key, cacheKey: run.harness_session_id, thinking: this.context?.thinking };
 		this.track(run, () => this.execute(run, request.prompt));
 		return { created: true, run };
 	}
@@ -347,6 +357,10 @@ export class Harness {
 			noPromptTemplates: true,
 			noThemes: true,
 			noContextFiles: true,
+			// Inline factories load even with noExtensions: they are the server's own code, not files from the repo.
+			extensionFactories: profile.bash_allow
+				? [{ name: "bash-allowlist", factory: bashAllowlist(profile.bash_allow) }]
+				: [],
 		});
 		await resourceLoader.reload();
 		const { session } = await createAgentSession({

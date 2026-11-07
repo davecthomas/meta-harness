@@ -109,8 +109,33 @@ def git_dir_for(ref: str, run_id: str) -> Path:
     return RUNS_DIR / ref / run_id.rsplit(":", 1)[-1] / "git"
 
 
+@dataclass(frozen=True)
+class Resources:
+    """What one per-run sandbox may use, from its harness profile's `resources`."""
+
+    cpus: float = 2
+    memory_gb: float = 4
+
+    @classmethod
+    def from_profile(cls, profile: dict) -> "Resources":
+        given = profile.get("resources") or {}
+        return cls(cpus=float(given.get("cpu", cls.cpus)), memory_gb=float(given.get("memory_gb", cls.memory_gb)))
+
+
+# Installing and testing a Python repo starts many processes; 512 stopped a pytest run with xdist.
+PIDS_LIMIT = 4096
+
+
 def run_args(
-    *, name: str, network: str, run_id: str, ref: str, workspace: Path, git_dir: Path, image: str
+    *,
+    name: str,
+    network: str,
+    run_id: str,
+    ref: str,
+    workspace: Path,
+    git_dir: Path,
+    image: str,
+    resources: Resources = Resources(),
 ) -> list[str]:
     """The `docker run` arguments for a run's per-run sandbox."""
     egress = f"http://{EGRESS_PROXY}:{EGRESS_PORT}"
@@ -127,7 +152,8 @@ def run_args(
         "--user", f"{os.getuid()}:{os.getgid()}",
         "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges",
-        "--cpus", "2", "--memory", "4g", "--pids-limit", "512",
+        "--cpus", f"{resources.cpus:g}", "--memory", f"{int(resources.memory_gb * 1024)}m",
+        "--pids-limit", str(PIDS_LIMIT),
         # A bare -e NAME copies the value from the docker command's own environment, set by the caller.
         "--env", "HARNESS_SERVER_TOKEN",
         "--env", f"GATEWAY_URL={SANDBOX_GATEWAY_URL}",
@@ -175,7 +201,7 @@ async def find(run_id: str) -> Sandbox | None:
     )
 
 
-async def ensure(run_id: str, ref: str, image: str = IMAGE) -> Sandbox:
+async def ensure(run_id: str, ref: str, image: str = IMAGE, resources: Resources = Resources()) -> Sandbox:
     """Returns the run's running per-run sandbox, starting one when there is none.
 
     Waits until the harness server's /health is green, which includes reaching
@@ -199,6 +225,7 @@ async def ensure(run_id: str, ref: str, image: str = IMAGE) -> Sandbox:
         workspace=workspace,
         git_dir=git_dir_for(ref, run_id),
         image=image,
+        resources=resources,
     )
     code, _, err = await _docker(*args, env={"HARNESS_SERVER_TOKEN": token})
     if code != 0:
