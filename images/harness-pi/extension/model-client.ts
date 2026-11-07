@@ -68,6 +68,8 @@ export interface RunContext {
 	grantKey: string;
 	/** `prompt_cache.key`: the harness session id, so every turn of a session shares one cache. */
 	cacheKey: string;
+	/** The routing tier's thinking level. Absent: the HTTP Gateway's default. */
+	thinking?: string;
 }
 
 /** One model call, as the model client saw it. */
@@ -167,6 +169,7 @@ export function createModelClientStream(clientOptions: ModelClientOptions) {
 					})),
 					max_response_tokens: options?.maxTokens ?? model.maxTokens,
 					prompt_cache: { retention: "extended", key: run.cacheKey },
+					...(run.thinking ? { thinking: run.thinking } : {}),
 					// pi's own retry is off; the gateway's fallback chain handles provider failures.
 					fallback: true,
 				};

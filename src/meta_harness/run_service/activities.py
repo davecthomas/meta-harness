@@ -177,6 +177,8 @@ async def route(request: RouteRequest) -> RouteResult:
         tier=str(decision.tier),
         method=decision.method,
         confidence=decision.confidence,
+        # The tier's thinking level. Every turn of the tier's runs asks the HTTP Gateway for it.
+        thinking=decision.thinking.value if decision.thinking is not None else None,
         candidates=candidates,
         tiers=[tier.name for tier in config.tiers],
         on_exhausted=config.on_exhausted,
@@ -208,7 +210,7 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
     image = str(request.candidate.profile["image"])
     if request.repo:
         await _clone(tag, request.repo, sandbox.workspace_for(ref, run_id), sandbox.git_dir_for(ref, run_id))
-    box = await _lease(tag, run_id, ref, image)
+    box = await _lease(tag, run_id, ref, image, sandbox.Resources.from_profile(request.candidate.profile))
     try:
         grant_key = await _issue_grant(tag, request, info.workflow_id)
         async with harness_client.client(box) as client:
@@ -373,10 +375,10 @@ async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path) -> None:
         print(f"{tag} cloned {repo} ({branch}) into {workspace}", flush=True)
 
 
-async def _lease(tag: str, run_id: str, ref: str, image: str) -> sandbox.Sandbox:
+async def _lease(tag: str, run_id: str, ref: str, image: str, resources: sandbox.Resources) -> sandbox.Sandbox:
     """The Lease step: the run's per-run sandbox, started now or found from an earlier attempt."""
     try:
-        box = await sandbox.ensure(run_id, ref, image)
+        box = await sandbox.ensure(run_id, ref, image, resources)
     except sandbox.SandboxError as err:
         raise ApplicationError(str(err), type="SandboxUnavailable", non_retryable=True) from err
     if box.created:
@@ -450,6 +452,26 @@ async def _revoke_grant(tag: str, run_id: str) -> str | None:
     return str(revoked["spent_usd"])
 
 
+def run_body(request: HarnessRequest, grant_key: str) -> dict[str, Any]:
+    """The POST /run body: the prompt, the harness profile's run limits and bash allowlist, and the thinking level."""
+    profile = request.candidate.profile
+    body: dict[str, Any] = {
+        "run_id": request.run_id,
+        # Each candidate is a new pi session: another model starts from the task, not from a transcript.
+        # A session id names a directory, so it has no ":".
+        "harness_session_id": request.run_id.replace(":", "."),
+        "prompt": request.prompt,
+        "profile": {
+            key: profile[key] for key in ("name", "tools", "max_turns", "max_minutes", "bash_allow") if key in profile
+        },
+        # The grant decides the engine, the model and the spend limit. The harness server sees only the key.
+        "grant_key": grant_key,
+    }
+    if request.thinking:
+        body["thinking"] = request.thinking
+    return body
+
+
 async def _start_or_reattach(
     client: httpx.AsyncClient,
     tag: str,
@@ -459,17 +481,7 @@ async def _start_or_reattach(
     harness_url: str,
 ) -> bool:
     """POST /run. Returns True when the run already existed, so this attempt re-attached to it."""
-    profile = request.candidate.profile
-    body = {
-        "run_id": request.run_id,
-        # Each candidate is a new pi session: another model starts from the task, not from a transcript.
-        # A session id names a directory, so it has no ":".
-        "harness_session_id": request.run_id.replace(":", "."),
-        "prompt": request.prompt,
-        "profile": {key: profile[key] for key in ("name", "tools", "max_turns", "max_minutes")},
-        # The grant decides the engine, the model and the spend limit. The harness server sees only the key.
-        "grant_key": grant_key,
-    }
+    body = run_body(request, grant_key)
     try:
         response = await client.post("/run", json=body)
     except httpx.HTTPError as err:

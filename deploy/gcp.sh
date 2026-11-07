@@ -29,7 +29,11 @@ SUBNET=mh-subnet
 SUBNET_RANGE=10.10.0.0/24
 VM=mh-vm
 VM_IP=10.10.0.10
-VM_TYPE=${VM_TYPE:-e2-standard-2}
+# 8 vCPU and 32 GB: the control plane, plus MH_MAX_RUNNING (2) per-run sandboxes at their profiles'
+# 2 vCPU and 6 GB each, while each one installs and tests a Python repo.
+VM_TYPE=${VM_TYPE:-e2-standard-8}
+# Docker images, each run's workspace and virtualenvs, Postgres and Temporal's history.
+VM_DISK_GB=${VM_DISK_GB:-100}
 EDGE=mh-edge
 REPO=mh
 # This deployment's data, from the local checkout: the repo registry, and the GitHub App for each repo
@@ -54,6 +58,28 @@ secret() {
 }
 random_value() { openssl rand -hex 24 | tr -d '\n'; }
 from_env_file() { grep -E "^$1=" .env | head -n 1 | cut -d= -f2- | tr -d '\n'; }
+
+# resize_vm: brings an existing VM to VM_TYPE and VM_DISK_GB. A machine type changes only while the VM is
+# stopped, so a running VM of another type is left as it is, with the command that changes it. The boot
+# disk grows in place; Debian grows its root file system at the next boot.
+resize_vm() {
+  local current status disk_gb
+  current=$(g compute instances describe "$VM" --zone "$ZONE" --format='value(machineType.basename())')
+  status=$(g compute instances describe "$VM" --zone "$ZONE" --format='value(status)')
+  if [ "$current" != "$VM_TYPE" ]; then
+    if [ "$status" = TERMINATED ]; then
+      g compute instances set-machine-type "$VM" --zone "$ZONE" --machine-type "$VM_TYPE" >/dev/null
+      log "VM $VM changed from $current to $VM_TYPE"
+    else
+      log "VM $VM is $current and $status; stop it, then run deploy/gcp.sh infra again to make it $VM_TYPE"
+    fi
+  fi
+  disk_gb=$(g compute disks describe "$VM" --zone "$ZONE" --format='value(sizeGb)')
+  if [ "$disk_gb" -lt "$VM_DISK_GB" ]; then
+    g compute disks resize "$VM" --zone "$ZONE" --size "${VM_DISK_GB}GB" >/dev/null
+    log "VM $VM boot disk grown from ${disk_gb} GB to ${VM_DISK_GB} GB"
+  fi
+}
 
 cmd_infra() {
   log "network $NETWORK, subnet $SUBNET ($SUBNET_RANGE), Cloud NAT"
@@ -116,8 +142,10 @@ cmd_infra() {
     g compute instances create "$VM" --zone "$ZONE" --machine-type "$VM_TYPE" \
       --subnet "$SUBNET" --private-network-ip "$VM_IP" --no-address --tags mh-vm \
       --service-account "mh-vm-sa@$PROJECT.iam.gserviceaccount.com" --scopes cloud-platform \
-      --image-family debian-12 --image-project debian-cloud --boot-disk-size 60GB --boot-disk-type pd-balanced \
+      --image-family debian-12 --image-project debian-cloud --boot-disk-size "${VM_DISK_GB}GB" --boot-disk-type pd-balanced \
       --shielded-secure-boot --metadata "mh-ref=$REF" --metadata-from-file startup-script=deploy/vm/startup.sh
+  else
+    resize_vm
   fi
   log "the VM runs deploy/vm/boot.sh at boot; its log is /var/log/mh-boot.log (deploy/gcp.sh status)"
 }

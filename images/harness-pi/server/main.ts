@@ -25,7 +25,15 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunEvent } from "./event-log.ts";
-import { Harness, HttpError, type FollowupRequest, type Profile, type RunRequest } from "./harness.ts";
+import {
+	Harness,
+	HttpError,
+	type FollowupRequest,
+	type Profile,
+	type RunRequest,
+	THINKING_LEVELS,
+	type ThinkingLevel,
+} from "./harness.ts";
 import { useEnvProxy } from "./proxy.ts";
 
 const log = (text: string) => console.log(`[harness-server] ${text}`);
@@ -136,12 +144,25 @@ function parseProfile(value: unknown): Profile {
 	const p = value as Record<string, unknown>;
 	const tools = stringList(p.tools, "profile.tools");
 	if (tools.length === 0) throw new HttpError(400, `"profile.tools" must name at least one tool.`);
-	return {
+	const profile: Profile = {
 		name: text(p, "name"),
 		tools,
 		max_turns: Math.floor(positive(p.max_turns, "profile.max_turns")),
 		max_minutes: positive(p.max_minutes, "profile.max_minutes"),
 	};
+	if (p.bash_allow !== undefined && p.bash_allow !== null) {
+		profile.bash_allow = stringList(p.bash_allow, "profile.bash_allow");
+		if (profile.bash_allow.length === 0) throw new HttpError(400, `"profile.bash_allow" must name at least one program.`);
+	}
+	return profile;
+}
+
+function parseThinking(value: unknown): ThinkingLevel | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "string" || !(THINKING_LEVELS as readonly string[]).includes(value)) {
+		throw new HttpError(400, `"thinking" must be one of ${THINKING_LEVELS.join(", ")}.`);
+	}
+	return value as ThinkingLevel;
 }
 
 function parseRun(body: Record<string, unknown>): RunRequest {
@@ -151,6 +172,7 @@ function parseRun(body: Record<string, unknown>): RunRequest {
 		prompt: text(body, "prompt"),
 		acceptance_checks: body.acceptance_checks === undefined ? [] : stringList(body.acceptance_checks, "acceptance_checks"),
 		profile: parseProfile(body.profile),
+		thinking: parseThinking(body.thinking),
 		grant_key: text(body, "grant_key"),
 	};
 }
