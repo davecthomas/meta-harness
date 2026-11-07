@@ -2,7 +2,7 @@
 #
 #   make up        start Postgres (Docker Compose) and the Temporal dev server
 #   make migrate   apply every component's schema migrations
-#   make serve     start the control-plane services (event service, task service, planner) in the background
+#   make serve     start the control-plane services (event service, task service, planner, scheduler, console web app) in the background
 #   make stop      stop them
 #   make test      unit tests, plus the database tests when Postgres is up
 #   make lint      ruff
@@ -14,7 +14,7 @@
 SHELL := /bin/bash
 # Local settings and secrets' locations (see .env.example). Git ignores .env.
 -include .env
-export MH_GITHUB_APPS
+export MH_GITHUB_APPS MH_CONSOLE_OPERATORS MH_CONSOLE_DEV_IDENTITY
 STACK_DIR := $(CURDIR)/stack
 MH_POSTGRES_PORT ?= 5444
 MH_TEMPORAL_PORT ?= 7233

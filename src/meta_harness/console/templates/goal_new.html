@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}New goal{% endblock %}
+{% block content %}
+<h1>New goal</h1>
+<form class="stack panel" method="post" action="/goals">
+  <label class="field">Statement
+    <span class="hint">What the goal is. The planner reads it.</span>
+    <textarea name="statement" required>{{ form.statement or "" }}</textarea>
+  </label>
+  <fieldset>
+    <legend>Repos</legend>
+    {% for r in repos %}
+    <label><input type="checkbox" name="repos" value="{{ r.name }}" {% if r.name in (form.repos or []) %}checked{% endif %}> <span class="mono">{{ r.name }}</span></label>
+    {% endfor %}
+  </fieldset>
+  <label class="field">Label
+    <span class="hint">An open issue with this label, in any of the goal's repos, becomes one of its tasks.</span>
+    <input type="text" name="label" required value="{{ form.label or "" }}" placeholder="meta-harness:bootstrap">
+  </label>
+  <label class="field">Budget, in dollars
+    <span class="hint">Optional. Admission holds the goal's tasks once its runs have spent this much.</span>
+    <input type="number" name="max_usd" min="0" step="0.01" value="{{ form.max_usd or "" }}">
+  </label>
+  <label class="field">Priority
+    <input type="number" name="priority" value="{{ form.priority or 0 }}">
+  </label>
+  <fieldset>
+    <legend>Merging</legend>
+    <label><input type="checkbox" name="auto_merge" value="on" {% if form.auto_merge %}checked{% endif %}> Merge pull requests without me</label>
+  </fieldset>
+  <div class="actions"><button type="submit">Create goal</button></div>
+</form>
+{% endblock %}

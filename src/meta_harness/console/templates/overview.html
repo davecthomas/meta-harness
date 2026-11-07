@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Overview</h1>
+
+<h2>Needs you</h2>
+{% if needs_you %}
+<div class="table-wrap"><table>
+  <tr><th>Task</th><th>Status</th><th>Issue</th><th>Pull request</th><th>Why</th></tr>
+  {% for t in needs_you %}
+  <tr>
+    <td class="mono">{{ t.id }}</td>
+    <td class="status-{{ t.status }}">{{ t.status }}</td>
+    <td>{% if t.issue_url %}<a href="{{ t.issue_url }}">{{ t.external_ref }}</a>{% else %}{{ t.external_ref }}{% endif %}</td>
+    <td>{% if t.pr_url %}<a href="{{ t.pr_url }}">open</a>{% endif %}</td>
+    <td>{{ t.why }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<p class="empty">Nothing waits on you.</p>
+{% endif %}
+
+<h2>Goals</h2>
+{% if goals %}
+<div class="table-wrap"><table>
+  <tr><th>Goal</th><th>Status</th><th>Label</th><th>Repos</th><th>Auto-merge</th><th>Created</th></tr>
+  {% for g in goals %}
+  <tr>
+    <td><a href="/goals/{{ g.id }}">{{ g.statement | truncate(80) }}</a><br><span class="mono">{{ g.id }}</span></td>
+    <td class="status-{{ g.status }}">{{ g.status }}</td>
+    <td><span class="chip">{{ g.label }}</span></td>
+    <td>{% for r in g.repos %}<div class="mono">{{ r }}</div>{% endfor %}</td>
+    <td>{{ "on" if g.auto_merge else "off" }}</td>
+    <td>{{ g.created_at[:16] | replace("T", " ") }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<p class="empty">No open goals. <a href="/goals/new">Create one.</a></p>
+{% endif %}
+{% if closed_count %}<p class="empty">{{ closed_count }} met or canceled goals are not listed.</p>{% endif %}
+{% endblock %}
