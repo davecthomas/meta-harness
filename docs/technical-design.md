@@ -1781,14 +1781,12 @@ meta-harness domain events long.
 
 ### Console
 
-The operator console is a cloud web app, the control point of the
-meta-harness. Operators sign in with GitHub; the first deployment allows one
-account, and a team allowlist comes later. The console owns no store and holds
-no database connection: it reads from the task service, the planner, the
-meta-harness run service, the event service, the metering service and the pool manager through
-their interfaces, and sends commands to the owning service, which records
-each as an audit event with the operator as actor. The console never writes a
-table.
+The operator console is the cloud web app operators steer the meta-harness
+from. Operators sign in with GitHub, against an allowlist of accounts. The
+console owns no store: it reads the task service, the planner, the run
+service, the event service, the metering service and the pool manager through
+their interfaces, and sends each command to the owning service, which records
+it as an audit event with the operator as actor.
 
 The console serves many parallel tasks pursuing several goals at once.
 Every view drills down to the next, and every list filters by goal, modality,
@@ -1808,16 +1806,13 @@ repo, time, harness profile, model, routing tier, task type and state.
 | Configuration | The active routing tiers, harness profiles, modalities, task policy and repo registry, their version history, and the harness analyzer's pending proposals | Approve or reject a proposal |
 | Audit | Every operator action and configuration change | |
 
-Tasks running at the same time differ by task id and
-goal. A task's own runs never overlap: fallback runs and retry runs run one
-after another. The Tasks view lists them by run id in order, with the task's
-review and fix tasks under it.
+A task's runs, fallbacks and retries included, run one after another, and the
+Tasks view lists them in order with the task's review and fix tasks under
+them.
 
-The console never connects to a per-run sandbox or to a
-producer service. To open a run, it calls the event service `read` for the
-run's history and then `tail` from the last position, so a run in progress
-opens at any point with no gap, and a slow console falls behind without
-slowing a producer. Tool calls, tool results, file changes, test runs,
+The console reads runs from the event service: `read` for a run's history,
+then `tail` from the last position, so a run in progress opens at any point
+with no gap, and a slow console falls behind without slowing a producer. Tool calls, tool results, file changes, test runs,
 guardrail blocks, compactions, model tokens and spend are live as they
 happen, from the `model_call` events recorded off the harness server Run API.
 Model text arrives once per turn, and token by token once the HTTP Gateway
@@ -1827,12 +1822,6 @@ Event payloads contain repository content. The console
 scrubs secrets from the events it reads. The HTTP Gateway's per-turn
 redaction applies to what the model receives.
 
-The first console serves the Overview,
-Inputs, Goal, Tasks, Run, Live runs and Spend views over the task service,
-the planner and the event service on Cloud SQL, with goals of the `fix` modality. The Routing,
-Pool and Configuration views, review joining and proposals follow the
-services they read from.
-
 ### Alerts
 
 Meta-harness alert rules tail the event service and read OpenTelemetry metrics.
@@ -1840,37 +1829,35 @@ They fire on: a meta-harness run stalled past its harness server heartbeat
 window, pool manager lease TTL expiries, warm sandbox pool below target for
 longer than the sandbox provisioning time, HTTP Gateway error rate or latency
 past its SLO, a meta-harness task failing with every routing tier exhausted,
-a meta-harness task ending `review_unresolved`, a claimed review round
+a meta-harness task ending `review_unresolved`, a goal `stalled`, a claimed review round
 waiting on an operator past `review.operator_alert_minutes`, spend past 80%
 of any cap, usage reconciliation gaps over 5%, and a harness
 profile and model whose cache hit rate falls below its configured floor.
 
 ## Security
 
-- A code-host app installed on each repo in the repo registry.
-  A per-run sandbox gets a read-only, repo-scoped code-host access token for
-  its clone, minted per meta-harness run and expiring within an hour. Only
-  the meta-harness run service writes to the code host, with its own
-  code-host app token, never from a per-run sandbox: it pushes
-  branches, opens pull requests, posts reviews, creates tickets and merges.
+- A GitHub App is installed on each registered repo. A per-run sandbox gets a
+  read-only, repo-scoped access token for its clone, minted per run and
+  expiring within an hour. The run service writes to the code host with the
+  app's own token: it pushes branches, opens pull requests, posts reviews and
+  merges, and the planner creates and updates issues.
 - Secret Manager mounts each secret only into its owner service's
   pods. The HTTP Gateway holds the model provider API keys for every model call
-  a meta-harness run makes. The meta-harness run service holds one more: a
-  classifier provider API key for the ai-api-unified router classifier model
-  only. A provider project limited to that model issues it, with its own spend
+  a run makes. The run service and the planner hold one more: a classifier
+  provider API key for the ai-api-unified classifier model only. A provider project limited to that model issues it, with its own spend
   limit, so a leaked classifier provider API key exposes classification and
   nothing else.
-  Per-run sandboxes hold a run-scoped HTTP Gateway run grant key and a
-  read-only code-host access token, both short-lived. No secret appears in prompts, meta-harness
-  task specs or logs.
+  A per-run sandbox holds only a run-scoped run grant key and a read-only
+  access token, both short-lived. Prompts, task specs and logs carry no
+  secret.
 - Task descriptions, meta-harness review findings, CI logs and
   every tool result pass ai-api-unified's prompt-injection and tool-result
   guardrail checks at the HTTP Gateway, and
   the meta-harness task prompt template places them in a delimited data
   section.
-- Each per-run sandbox has gVisor, a default-deny
-  NetworkPolicy, the Secure Web Proxy allowlist, no model provider API keys, no
-  cluster credentials and no Google Cloud permissions. The harness server is
+- Each per-run sandbox runs under gVisor with a default-deny NetworkPolicy and
+  the Secure Web Proxy allowlist, and holds no model provider key, cluster
+  credential or Google Cloud permission. The harness server is
   the only process in the per-run sandbox that talks to the meta-harness
   control plane, over mutual TLS.
 - Every meta-harness task launch, review and fix ticket, operator
