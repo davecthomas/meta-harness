@@ -54,3 +54,58 @@ def test_the_app_and_its_routes_load_from_dist(tmp_path):
     assert "root" in client.get("/goals/g-1").text
     assert client.get("/../pyproject.toml").status_code in (200, 404)
     assert "root" in client.get("/../pyproject.toml").text or client.get("/../pyproject.toml").status_code == 404
+
+
+def test_behind_iap_the_operator_is_the_verified_email(tmp_path, monkeypatch):
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from meta_harness.edge import app as edge
+
+    key = ec.generate_private_key(ec.SECP256R1())
+
+    class Keys:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_signing_key_from_jwt(self, token):
+            return type("SigningKey", (), {"key": key.public_key()})()
+
+    monkeypatch.setattr(edge.jwt, "PyJWKClient", Keys)
+    audience = "/projects/123/locations/us-central1/services/edge"
+    monkeypatch.setenv("MH_EDGE_IAP_AUDIENCE", audience)
+    (tmp_path / "index.html").write_text("<div id=root></div>")
+    client = TestClient(
+        create_app(
+            dist=tmp_path,
+            operators={"dave@example.com"},
+            identity="",
+            service_key="k",
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+        )
+    )
+
+    def assertion(email, aud=audience):
+        now = int(time.time())
+        claims = {
+            "email": f"accounts.google.com:{email}",
+            "aud": aud,
+            "iss": "https://cloud.google.com/iap",
+            "iat": now,
+            "exp": now + 600,
+        }
+        return jwt.encode(claims, key, algorithm="ES256")
+
+    assert client.get("/v1/me").status_code == 401
+    assert client.get("/v1/me", headers={"x-goog-iap-jwt-assertion": assertion("dave@example.com")}).json() == {
+        "identity": "dave@example.com"
+    }
+    assert client.get("/v1/me", headers={"x-goog-iap-jwt-assertion": assertion("eve@example.com")}).status_code == 403
+    assert (
+        client.get(
+            "/v1/me", headers={"x-goog-iap-jwt-assertion": assertion("dave@example.com", aud="/other")}
+        ).status_code
+        == 401
+    )

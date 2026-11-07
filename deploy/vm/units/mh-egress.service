@@ -1,0 +1,15 @@
+[Unit]
+Description=The egress proxy: a per-run sandbox's only way out (HTTP Gateway, code host, package registries)
+After=docker.service mh-images.service
+Requires=docker.service mh-images.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=mh
+WorkingDirectory=/opt/meta-harness/samples/temporal-run-task
+EnvironmentFile=/etc/meta-harness/env
+ExecStart=/usr/bin/make egress UV=/usr/local/bin/uv
+
+[Install]
+WantedBy=multi-user.target

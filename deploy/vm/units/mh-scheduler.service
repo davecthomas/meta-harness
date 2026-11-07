@@ -1,0 +1,15 @@
+[Unit]
+Description=meta-harness meta-harness scheduler, on the VM's private address for the edge
+After=mh-migrate.service mh-temporal.service
+Requires=mh-migrate.service
+
+[Service]
+User=mh
+WorkingDirectory=/opt/meta-harness
+EnvironmentFile=/etc/meta-harness/env
+ExecStart=/opt/meta-harness/.venv/bin/mh scheduler serve --host 0.0.0.0 --port 8304
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

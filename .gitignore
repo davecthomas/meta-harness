@@ -5,3 +5,4 @@ __pycache__/
 stack/
 runs/
 .env
+config/repos.local.json

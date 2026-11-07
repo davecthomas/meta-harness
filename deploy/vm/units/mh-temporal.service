@@ -1,0 +1,12 @@
+[Unit]
+Description=meta-harness Temporal dev server (history in /var/lib/meta-harness/temporal.db)
+After=network-online.target
+
+[Service]
+User=mh
+ExecStart=/usr/local/bin/temporal server start-dev --ip 127.0.0.1 --port 7233 --ui-port 8233 --db-filename /var/lib/meta-harness/temporal.db --headless --log-level warn
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

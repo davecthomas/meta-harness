@@ -91,7 +91,7 @@ export GATEWAY FAKE_GATEWAY_HOST FAKE_TURN_SECONDS HARNESS_DIR HARNESS_IMAGE EGR
   SANDBOX_GATEWAY_URL REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB \
   WAIT_SECONDS ROUTER_CONFIG MODELS_ENV PIN FLOOR CEILING REPO TICKET CHECKS SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT
 
-.PHONY: run cancel-demo restart-demo spend-limit-demo fallback-demo repo-demo egress-check e2e up down task tasks status watch cancel
+.PHONY: run cancel-demo restart-demo spend-limit-demo fallback-demo repo-demo egress-check e2e up down task tasks status watch cancel images egress
 
 run:
 	@./stack.sh run
@@ -117,6 +117,13 @@ repo-demo:
 
 egress-check:
 	@./stack.sh egress-check
+
+# For a long-lived host that runs the rest under systemd (deploy/vm): build the images, start the egress proxy.
+images:
+	@./stack.sh images
+
+egress:
+	@./stack.sh egress
 
 # Target-specific values, so GATEWAY_URL, SANDBOX_GATEWAY_URL and EGRESS_ALLOW follow the fake's port.
 e2e: GATEWAY = fake
