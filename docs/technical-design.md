@@ -65,6 +65,8 @@ caps.
 - Every decision, whether a meta-harness component, ai-api-unified or an
   operator made it, is an audit record in the event service, where the
   operator console reads it.
+- Operators and programs control the meta-harness through one REST API, and
+  the operator console reaches the meta-harness only through it.
 
 ## Architecture
 
@@ -149,7 +151,7 @@ flowchart TB
 | Component | Owns |
 |---|---|
 | Planner | `goal`, `plan`, `issue_link` |
-| Task service | `task` |
+| Task service | `task`, `config_version` |
 | Meta-harness scheduler | Repo-area locks in Redis |
 | Meta-harness run service | `run`, `routing_decision`, `config_version`, its Temporal namespace, code-host rate-limit buckets |
 | Pool manager | `sandbox`, `lease`, the artifact store |
@@ -163,7 +165,7 @@ flowchart TB
 Configuration is a set of versioned JSON documents, edited in the operator
 console. The meta-harness run service owns the router configuration, the
 harness profiles and the task policy; the planner owns the modalities and the
-repo registry. Each keeps its documents' versions in its `config_version`
+repo registry; the task service owns the access list. Each keeps its documents' versions in its `config_version`
 table. The owning service checks an edit the way it checks configuration at
 startup, refuses a bad one with the reason, records the new version as an
 audit event with the operator as actor, and applies it to tasks that start
@@ -1397,21 +1399,57 @@ Per run, the control plane's own load is one router classification, about two
 short completions, and the run's event stream. A harness's model turns go straight
 from the per-run sandbox to the HTTP Gateway.
 
-## Task API
+## REST API
 
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/v1/tasks` | Submit a task, idempotent on `external_ref`. Returns the task id |
-| GET | `/v1/tasks?external_ref={ref}` | The caller's task with that `external_ref` |
-| GET | `/v1/tasks/{id}` | State, current run, routing decision, pull request URL and outcome |
-| GET | `/v1/tasks/{id}/events` | The task's run events as server-sent events |
-| POST | `/v1/tasks/{id}/cancel` | Cancel the active run and close the task |
-| POST | `/v1/tasks/{id}/take-over` | Stop the active run, publish its work so far, and hand the task to the calling operator |
-| POST | `/v1/tasks/{id}/hand-back`, `/close` | End a takeover: a follow-up run continues on the branch, or the task closes with the operator's outcome |
-| GET | `/v1/runs/{id}` | Run state, candidate, token usage and cost so far |
-| POST | `/v1/webhooks/code-host` | Pull request, check and review webhooks for pull requests the meta-harness opened |
-| GET | `/v1/profiles` | The active harness profiles, tier candidates and task policy, with their versions |
-| GET | `/health` | Liveness and configuration identity |
+Every REST API path starts with `/v1` and enters through the external HTTPS
+load balancer, which routes it to the service that owns it.
+
+Identity-Aware Proxy authenticates every `/v1` path except the webhooks.
+Operators sign in with GitHub through Identity Platform, and programs present
+a Google service account's token. Each service accepts traffic only from the
+load balancer and checks the IAP signed header on every request. The access list, a configuration document,
+maps each verified identity to a role: an operator may call every path, and a
+caller may submit tasks and read its own tasks and runs. It also gives each
+caller its concurrency quota and daily spend cap. Every write
+records an audit event with that identity as actor. Locally, with no IAP,
+each service takes bearer keys from its environment instead.
+
+Each webhook path skips IAP, and its owning service checks the code host's or
+tracker's signature on every delivery. Services call one another with a
+Google-signed ID token for the target service, and each service accepts only
+the service accounts listed for it. A per-run sandbox holds no REST API
+credential.
+
+| Method | Path | Owner | Purpose |
+|---|---|---|---|
+| POST | `/v1/tasks` | Task service | Submit a task, idempotent on `external_ref`. Returns the task id |
+| GET | `/v1/tasks` | Task service | Tasks by status, goal or `external_ref`; a caller sees its own |
+| GET | `/v1/tasks/{id}` | Task service | State, current run, routing decision, pull request URL and outcome |
+| POST | `/v1/tasks/{id}/cancel` | Task service | Cancel a task that has not started, or stop its active run |
+| POST | `/v1/tasks/{id}/take-over` | Meta-harness run service | Stop the active run, publish its work so far, and hand the task to the calling operator |
+| POST | `/v1/tasks/{id}/hand-back`, `/close` | Meta-harness run service | End a takeover: a follow-up run continues on the branch, or the task closes with the operator's outcome |
+| GET | `/v1/runs/{id}` | Meta-harness run service | Run state, candidate, token usage and cost so far |
+| GET | `/v1/routing` | Meta-harness run service | Routing decisions and the candidate each task finished on, by modality, tier and time |
+| POST | `/v1/kill-switch` | Meta-harness run service | Stop runs by run, caller or everything, and stop admitting tasks in that scope |
+| DELETE | `/v1/kill-switch/{scope}` | Meta-harness run service | Lift a kill switch |
+| POST | `/v1/reviews/{task_id}/claim`, `/verdict`, `/release` | Meta-harness run service | An operator review: claim the round, submit a verdict with findings, or release the claim |
+| GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest |
+| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget |
+| POST | `/v1/goals/{id}/approve`, `/pause`, `/resume`, `/cancel` | Planner | Approve the pending plan or phase, or pause, resume or cancel the goal |
+| POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add an issue to the goal, or drop one |
+| GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state |
+| GET | `/v1/config/{kind}` | Meta-harness run service, planner or task service, by kind | The active version of `tiers`, `profiles`, `task_policy`, `modalities`, `repos` or `access` |
+| GET | `/v1/config/{kind}/versions` | The kind's owner | The document's version history |
+| PUT | `/v1/config/{kind}` | The kind's owner | Save a new version; the owner checks it as at startup and refuses a bad one with the reason |
+| POST | `/v1/config/{kind}/rollback` | The kind's owner | Make an earlier version the active one |
+| GET | `/v1/proposals` | Harness analyzer | Pending and decided proposals with their evidence |
+| POST | `/v1/proposals/{id}/approve`, `/reject` | Harness analyzer | Decide a proposal; an approved one applies as a new configuration version |
+| GET | `/v1/events` | Event service | Events by run, task, type or source after a position, paged |
+| GET | `/v1/events/tail` | Event service | The same filter as server-sent events, resumable from any position |
+| GET | `/v1/spend` | Metering service | Spend and dollar-hours grouped by goal, modality, repo, model, harness profile or tier, over a time range |
+| GET | `/v1/pool` | Pool manager | Per-run sandboxes by image and state, warm targets and lease latency |
+| POST | `/v1/webhooks/code-host`, `/v1/webhooks/{tracker}` | Task service, planner | Code-host and issue-tracker webhooks, each checked by its signature |
+| GET | `/health` | Every service | Liveness and configuration identity |
 
 | Task field | Required | Meaning |
 |---|---|---|
@@ -1430,8 +1468,7 @@ from the per-run sandbox to the HTTP Gateway.
 | `goal_id` | no | The task's goal. The planner sets it |
 | `depends_on` | no | The `external_ref`s this task waits for |
 
-Each caller authenticates with its own Task API key, which sets its
-concurrency quota and daily spend cap. A unique index on `(caller,
+A unique index on `(caller,
 external_ref)` deduplicates submissions and serves the `external_ref` lookup.
 
 ### Goals
@@ -1452,14 +1489,7 @@ capacity by priority.
 | `max_usd`, `priority` | One budget and one priority for all the goal's tasks, review and fix tasks included |
 | `status` | `planning`, `active`, `paused`, `met`, `stalled`, `budget_exhausted` or `canceled` |
 
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/v1/goals` | Create a goal from `statement`, `repos` and `label`; the planner sets the rest. A `feature` or `new-system` goal starts in `planning` |
-| GET | `/v1/goals/{id}` | The goal, its issues with their states and dependencies, its plan or phases, its criteria and its spend |
-| POST | `/v1/goals/{id}/approve` | Approve the pending plan or phase |
-| POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Pause, resume or cancel the goal |
-
-For every active goal the planner runs a loop:
+A `feature` or `new-system` goal starts in `planning`. For every active goal the planner runs a loop:
 
 1. Each open issue with the goal's label in one of its repos becomes a task,
    with `external_ref` `github:<owner>/<repo>#<number>`. The planner refuses
@@ -1659,6 +1689,7 @@ the same approval.
 | Meta-harness run service | operator_review | review_task_id, operator, claimed_at, verdict, findings, submitted_at, released_at |
 | Meta-harness run service | config_version | kind (tiers, profiles, task_policy), version, document, edited_by, effective_at |
 | Planner | config_version | kind (modalities, repos), version, document, edited_by, effective_at |
+| Task service | config_version | kind (access), version, document, edited_by, effective_at |
 | Pool manager | sandbox | id, image, executor, executor_ref, state (provisioning, warm, leased, kept, draining, unhealthy, destroyed), created_at, destroyed_at, destroy_reason |
 | Pool manager | lease | run_id, sandbox_id, harness_session_id, session_state (new, kept, restored), granted_at, expires_at, released_at, release_reason |
 | Meta-harness event service | event | event_id (UUID, unique), position (assigned on insert, monotonic), event_type, schema_version, time_utc, source (task, meta-harness scheduler, dispatcher, route, run, workflow, pool, analyzer, gateway), actor, run_id, task_id, session_id, request_id, seq, trace_id, config_id, config_version, tags (jsonb), payload (jsonb) |
@@ -1793,11 +1824,9 @@ than deleting rows. The event service keeps run, routing, attempt,
 ### Console
 
 Operators run and configure the meta-harness from the operator console, a
-cloud web app. Operators sign in with GitHub, against an allowlist of accounts. The
-operator console owns no store: it reads the task service, the planner, the
-meta-harness run service, the event service, the metering service and the pool manager through
-their interfaces, and sends each command to the owning service, which records
-it as an audit event with the operator as actor.
+cloud web app. Operators sign in with GitHub, and the access list names who
+may. The operator console owns no store and calls only the REST API, as the signed-in
+operator.
 
 Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
@@ -1884,18 +1913,19 @@ Gateway pods.
 
 ```mermaid
 flowchart TB
-    USERS[Operators and Task API callers]
+    USERS[Operators and REST API callers]
     CH[Code host]
     REG[Package registries]
     PROV[Model providers]
     TC[Temporal Cloud<br/>run service Temporal namespace]
 
     subgraph GCP["GCP project, one per environment"]
-        XLB[External HTTPS LB<br/>Identity-Aware Proxy for Task API and operator console,<br/>code-host webhook route without IAP]
+        XLB[External HTTPS LB<br/>Identity-Aware Proxy for the REST API and operator console,<br/>path routing to owning services, webhook routes without IAP]
         subgraph VPC["Private VPC"]
             subgraph GKE["GKE Autopilot cluster, private"]
                 subgraph CTRL["namespace: control, one Deployment and HPA per meta-harness component"]
                     TS[meta-harness task service<br/>Task API]
+                    PL[meta-harness planner]
                     SCHED[meta-harness scheduler]
                     RS[meta-harness run service Temporal workers<br/>ai-api-unified in-process]
                     PM[meta-harness pool manager]
@@ -1926,7 +1956,7 @@ flowchart TB
 
     USERS --> XLB
     CH -->|code-host webhooks, signature verified by the task service| XLB
-    XLB --> TS
+    XLB -->|/v1 paths, each to its owning service| TS & PL & RS & EV & MET & HA & PM
     XLB --> CON
     PM -->|Kubernetes API: create, delete per-run sandbox pods| POD
     RS -->|harness server Run API, mTLS, pod address from pool manager sandbox lease| POD
@@ -2015,13 +2045,9 @@ interfaces.
   the same limit inside the GKE cluster.
 - An internal HTTPS load balancer fronts the
   ai-api-unified-http HTTP Gateway.
-- An external HTTPS load balancer with
-  Identity-Aware Proxy fronts both the operator console and the task service
-  Task API. Programmatic Task API callers present a Google service account
-  identity to IAP and their per-caller Task API caller key to the Task API.
-  Code-host webhooks cannot present IAP credentials, so the code-host webhook
-  route uses its own load balancer backend without IAP, and the task service
-  verifies the code host's webhook signature on every delivery.
+- An external HTTPS load balancer with Identity-Aware Proxy fronts the
+  operator console and the REST API. Its URL map sends the webhook paths to a
+  backend without IAP, and Cloud Armor rate-limits each client.
 - Each meta-harness component has one Kubernetes
   service account bound to one Google service account. IAM grants follow
   component ownership: a component's Google service account reaches only its
@@ -2112,10 +2138,10 @@ merge any time before `feat/deploy-cloud`.
 | `feat/planner-goals` | The `goal` table, the Goals API, the `fix` modality, the GitHub adapter's `list_open`, `read` and `sweep`, and issues to tasks with `depends_on` | A labeled test issue becomes a task within one sweep |
 | `feat/admission` | Global concurrency, repo-area locks as expiring rows until the meta-harness scheduler moves them to Redis, closed dependencies, the goal's budget | `make e2e-admission`: two tasks on one repo area run in turn |
 | `feat/planner-sync` | Issue webhooks, state labels and comments, blocked tasks, refused issues, the goal's status | A test issue gets `meta-harness:running`, then `meta-harness:pr-open` |
-| `feat/console-shell` | Python with server-rendered pages: GitHub sign-in against an allowlist, the Overview with "needs you" and the kill switch, the Goal view | An account outside the allowlist gets 403 |
+| `feat/console-shell` | Python with server-rendered pages, calling only the REST API: GitHub sign-in checked against the access list, the Overview with "needs you" and the kill switch, the Goal view | An account outside the access list gets 403 |
 | `feat/console-runs` | The Tasks, Run and Live runs views, live over server-sent events, with take over and cancel | The Run view of a `make e2e` run updates as events arrive |
 | `feat/console-inputs` | The Inputs view: queued issues by repo and by goal, with their states | A test issue moves from queued to merged in Inputs |
-| `feat/deploy-cloud` | Terraform for Cloud Run, Cloud SQL, the VM, Secret Manager and the Temporal Cloud namespace, a deploy on each release tag, and router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `make deploy ENV=prod`, then a cloud task ends merged |
+| `feat/deploy-cloud` | Terraform for Cloud Run, Cloud SQL, the VM, Secret Manager and the Temporal Cloud namespace; the external load balancer with path routing, Identity-Aware Proxy with GitHub sign-in, and each service's IAP header check; a deploy on each release tag; router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `make deploy ENV=prod`, then a cloud task ends merged, and a request without IAP credentials gets 401 |
 | `docs/agents-md` in ai-api-unified-http and meta-harness | `AGENTS.md` with the repo's test, lint and versioning rules | None |
 
 An operator sets up what the meta-harness cannot:
