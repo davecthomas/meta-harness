@@ -2097,31 +2097,32 @@ through the local egress proxy's control listener.
 
 ### Bootstrap pull requests
 
-The bootstrap gets the meta-harness to work a `fix` goal in the cloud on its
-own. Its meta-harness pull requests merge one at a time, in this order. Each
-check joins the zero-cost end-to-end check, so it runs on
-every later pull request without model calls.
+The bootstrap ends at the point of entry: an operator signs in to the console
+web app in the cloud, creates a goal, and the meta-harness turns the goal's
+labeled issues into pull requests, with no process running on the operator's
+machine. Nothing self-improving starts before that. The meta-harness pull
+requests merge one at a time, in this order. Each check joins the zero-cost
+end-to-end check, so it runs on every later pull request without model calls.
 
 1. `feat/control-plane-skeleton`, `feat/event-service`, `feat/task-service`,
-   `feat/run-service`. Then `make e2e` submits a task through the Task API,
-   and the task ends with a pull request on a test repo and every event in the
-   event service.
-2. `feat/github-app`, `feat/sandbox-python`. Then a run clones a real repo
-   that the GitHub App alone can reach, and runs its Python tests.
-3. `feat/code-host-webhooks`, `feat/review-loop`, `feat/merge`,
-   `feat/takeover`. Then `make e2e-review` ends with the pull request merged
-   after a review, a fix and a second review, and an operator can take over
-   any run.
-4. `feat/planner-goals`, `feat/admission`, `feat/planner-sync`. Then a labeled
-   issue in a test repo becomes a task, runs, merges and closes, with its
-   state labels on the issue.
-5. `feat/console-shell`, `feat/console-runs`, `feat/console-inputs`. Then an
-   operator creates that goal in the browser and watches its runs live.
-6. `feat/deploy-cloud`. Then a task submitted to the cloud Task API ends
-   merged with no local process running.
+   `feat/run-service` (merged). Then `make e2e` submits a task through the
+   Task API, and the task ends with a pull request on a test repo and every
+   event in the event service.
+2. `feat/github-app` (merged). Then a run clones a real repo that the GitHub
+   App alone can reach, and opens its pull request as the app.
+3. `feat/planner-goals`, `feat/admission`. Then a labeled issue in a test repo
+   becomes a task and runs to a pull request, with no command naming the task.
+4. `feat/console-web-app-goals`, `feat/console-web-app-runs`. Then an operator
+   creates a goal in the browser and watches its runs live.
+5. `feat/deploy-cloud`. Then the point of entry works: a goal created in the
+   cloud console runs its issues to pull requests.
 
+With `auto_merge` off, each pull request waits for an operator to merge it,
+so the point of entry needs no review loop. After it, in this order:
+`feat/code-host-webhooks`, `feat/review-loop`, `feat/merge`, `feat/takeover`,
+`feat/planner-sync`, `feat/console-web-app-inputs` and `feat/sandbox-python`.
 An `AGENTS.md` pull request in ai-api-unified-http and one in meta-harness
-merge any time before `feat/deploy-cloud`.
+merge before the first self-improving goal.
 
 | Pull request | Builds | Check |
 |---|---|---|
@@ -2129,19 +2130,19 @@ merge any time before `feat/deploy-cloud`.
 | `feat/event-service` | The `event` table, the schema registry, `append`, `read` and `tail`, and the client library with its outbox | `mh events tail` keeps printing in position order across an event service restart |
 | `feat/task-service` | The `task` table and the Task API: create, read, look up by `external_ref`, cancel | Two `POST /v1/tasks` with one `external_ref` return one task |
 | `feat/run-service` | The RunTask workflow, moved from `samples/temporal-run-task`, started from a task id and writing its rows and events | `make e2e` through the Task API |
-| `feat/github-app` | A read-only installation token per run for the clone, and the app token for every code-host write | `make repo-demo` on a repo the GitHub App alone can reach |
-| `feat/sandbox-python` | Python 3.12 and Poetry in the per-run sandbox image | `poetry run pytest -q -m "not nonmock"` on ai-api-unified inside a per-run sandbox |
+| `feat/github-app` | A read-only installation token per run for the clone, and the app token for every code-host write | `make run REPO=owner/name` on a repo the GitHub App alone can reach |
+| `feat/planner-goals` | The `goal` table, the Goals API, the `fix` modality, the GitHub adapter's `list_open`, `read` and `sweep`, and issues to tasks with `depends_on` | A labeled test issue becomes a task within one sweep |
+| `feat/admission` | A loop that starts queued tasks' RunTask workflows: global concurrency, repo-area locks as expiring rows until the meta-harness scheduler moves them to Redis, closed dependencies, the goal's budget | `make e2e-admission`: two tasks on one repo area run in turn |
+| `feat/console-web-app-goals` | The console web app in Python with server-rendered pages, calling only the REST API: GitHub sign-in checked against the access list, the Overview with "needs you" and the kill switch, goal creation and the Goal page | An operator creates a goal in the browser, and an account outside the access list gets 403 |
+| `feat/console-web-app-runs` | The Tasks, Run and Live runs pages, live over server-sent events, with cancel | The Run page of a `make e2e` run updates as events arrive |
+| `feat/deploy-cloud` | Terraform for Cloud Run, Cloud SQL, the VM, Secret Manager and the Temporal Cloud namespace; the external load balancer with path routing, Identity-Aware Proxy with GitHub sign-in, and each service's IAP header check; a deploy on each release tag; router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `make deploy ENV=prod`, then a goal created in the cloud console runs a labeled issue to a pull request, and a request without IAP credentials gets 401 |
 | `feat/code-host-webhooks` | The webhook endpoint: signature check, and check, merge and close deliveries as RunTask workflow signals | `make webhook-replay` |
 | `feat/review-loop` | The review task with `submit_review`, the posted review, the fix task, and the round and budget limits. The VM's disk keeps pi session directories under `harness_session_id` until the pool manager exists | `make e2e-review`: `changes`, a fix, then `clean` |
 | `feat/merge` | The merge at the reviewed head SHA, `auto_merge`, the `ready` and `review_unresolved` ends, and merge conflicts as fix tasks | `make e2e-review` ends merged |
-| `feat/takeover` | Cancel, kill switch, take over, hand back and close, as audit events | `mh task take-over`, then `mh task hand-back` |
-| `feat/planner-goals` | The `goal` table, the Goals API, the `fix` modality, the GitHub adapter's `list_open`, `read` and `sweep`, and issues to tasks with `depends_on` | A labeled test issue becomes a task within one sweep |
-| `feat/admission` | Global concurrency, repo-area locks as expiring rows until the meta-harness scheduler moves them to Redis, closed dependencies, the goal's budget | `make e2e-admission`: two tasks on one repo area run in turn |
+| `feat/takeover` | Take over, hand back and close, as audit events | `mh task take-over`, then `mh task hand-back` |
 | `feat/planner-sync` | Issue webhooks, state labels and comments, blocked tasks, refused issues, the goal's status | A test issue gets `meta-harness:running`, then `meta-harness:pr-open` |
-| `feat/console-shell` | Python with server-rendered pages, calling only the REST API: GitHub sign-in checked against the access list, the Overview with "needs you" and the kill switch, the Goal view | An account outside the access list gets 403 |
-| `feat/console-runs` | The Tasks, Run and Live runs views, live over server-sent events, with take over and cancel | The Run view of a `make e2e` run updates as events arrive |
-| `feat/console-inputs` | The Inputs view: queued issues by repo and by goal, with their states | A test issue moves from queued to merged in Inputs |
-| `feat/deploy-cloud` | Terraform for Cloud Run, Cloud SQL, the VM, Secret Manager and the Temporal Cloud namespace; the external load balancer with path routing, Identity-Aware Proxy with GitHub sign-in, and each service's IAP header check; a deploy on each release tag; router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `make deploy ENV=prod`, then a cloud task ends merged, and a request without IAP credentials gets 401 |
+| `feat/console-web-app-inputs` | The Inputs page: queued issues by repo and by goal, with their states | A test issue moves from queued to merged in Inputs |
+| `feat/sandbox-python` | Python 3.12 and Poetry in the per-run sandbox image | `poetry run pytest -q -m "not nonmock"` on ai-api-unified inside a per-run sandbox |
 | `docs/agents-md` in ai-api-unified-http and meta-harness | `AGENTS.md` with the repo's test, lint and versioning rules | None |
 
 An operator sets up what the meta-harness cannot:
