@@ -19,7 +19,7 @@ teaches something.
 | The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity, escalation, pins and a task-wide spend limit (section 6.3) | built | ai-api-unified 3.30.0 (`AiRouteClassifier`), `samples/temporal-run-task`, `make fallback-demo` |
 | Repo work in a run: each run starts from a fresh clone of the task's repo, pi's `bash` tool runs the acceptance checks, and the run service's Publish step commits pi's changes, pushes the branch and opens the pull request with `Closes <ticket>`. The per-run sandbox holds no code-host credential (principle 9, sections 4, 6.3 and 14) | built for local development | `samples/temporal-run-task`, `make repo-demo`, `make run TICKET=owner/name#N` |
 | Operator console, first form: a cloud web app you sign in to with GitHub, over the task service, the planner with its GitHub issue tracker adapter, and the event service on Cloud SQL. Goals, the Inputs view of queued GitHub issues across the registered repos, tasks, live runs, spend, and the actions start, pause, cancel and kill switch (sections 11 and 13) | **next** | |
-| Standing cloud deployment: console, task service and event service on Cloud Run, Temporal Cloud, and one Compute Engine VM running the run service worker, the egress proxy and the per-run sandboxes with the Docker executor backend. The meta-harness runs with no Claude Code session and no terminal (section 15, First cloud deployment) | planned | |
+| Standing cloud deployment: console, task service, planner and event service on Cloud Run, Temporal Cloud, and one Compute Engine VM running the run service worker, the egress proxy and the per-run sandboxes with the Docker executor backend. The meta-harness runs with no Claude Code session and no terminal (section 15, First cloud deployment) | planned | |
 | Meta-harness review loop and merge: a review task on another model, fix tasks, and the merge at the reviewed head SHA, each round visible in the console (section 7, Review loop) | in progress | `samples/temporal-run-task` branch `feat/review-loop`; `submit_review` built in `images/harness-pi/extension` |
 | Goals with the `fix` modality: a label across the registered repos feeds a standing queue, and the console shows each issue's state (section 11, Goals and modalities) | planned | |
 | Goals with the `feature` and `new-system` modalities: the planning task, plan and phase approval in the console, and goal success criteria (section 11) | planned | |
@@ -102,7 +102,7 @@ component owns its data (principle 8).
 |---|---|---|
 | **Meta-harness control plane** | | `src/meta_harness/` in this repo |
 | Task service | Accepts, de-duplicates and tracks goals and tasks. Serves the task service Task API, turns a goal's issues into tasks, evaluates goal success criteria, and receives code-host webhooks. | `task_service/` |
-| Planner | Turns a goal into issues, and issues into tasks. Runs the goal loop's Take work, Evaluate and Decide steps, tickets planning tasks, creates the issues a planning run drafted, keeps the issue dependency graph, and syncs both ways with the issue trackers: it pulls in issues people wrote and writes back each task's state and outcome. It reaches every tracker through one issue tracker adapter interface: GitHub Issues first, Jira and Linear later (section 11, Planner). | `planner/` |
+| Planner | Turns a goal into issues, and issues into tasks. It runs the goal loop's Take work, Evaluate and Decide steps, tickets planning tasks, creates the issues a planning run drafted, and keeps the issue dependency graph. It syncs both ways with the issue trackers: it pulls in issues people wrote and writes back each task's state and outcome. It reaches every tracker through one issue tracker adapter interface: GitHub Issues first, Jira and Linear later (section 11, Planner). | `planner/` |
 | Meta-harness scheduler | Decides which task runs next: goal priority, modality rules, caller quotas, spend caps, repo-area locks, and the dependencies within a goal. | `scheduler/` |
 | Meta-harness run service | Runs each task from admission to outcome as a durable Temporal workflow, the RunTask workflow. The meta-harness run service is the only caller of the `ai-api-unified` router. It watches the per-run sandbox and closes the task. It runs the meta-harness review loop on the task's pull request and merges the pull request when a review is clean. | `run_service/` |
 | Pool manager | Supplies per-run sandboxes: leases them by run id, keeps a warm pool of sandboxes, checks sandbox health, recycles sandboxes. | `pool/` |
@@ -1899,7 +1899,7 @@ run capacity by priority. A goal has:
 | `repos` | The registered repos the goal may change (`config/repos.json`) |
 | `label` | The GitHub issue label that queues an issue for this goal, in any of its repos |
 | `statement` | What the goal is, in prose. The planning task reads it |
-| `success_criteria` | Checks the task service evaluates to decide whether the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a code-host check name |
+| `success_criteria` | Checks the planner evaluates to decide whether the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a code-host check name |
 | `latitude` | 0 to 1: how far the planner may go beyond what the goal names (Latitude, below). Left unset, the modality's default |
 | `max_usd`, `priority` | One budget and one priority for every task the goal queues, review and fix tasks included |
 | `status` | `active`, `paused`, `met`, `stalled`, `budget_exhausted`, `canceled` |
@@ -1935,25 +1935,24 @@ repos and label. The planner then classifies the statement's modality with the
 ai-api-unified classifier, the same `classify_choice` call the ai-api-unified
 router uses to pick a tier (section 6.1), with the three modalities as the
 choices and each modality's `description` from `config/modalities.json` as
-what the classifier reads. The classification carries a confidence. At or
+what the classifier reads. The classification has a confidence. At or
 above `modalities.classifier.min_confidence` the planner sets the modality and
 goes on. Below it, or when the classifier refuses, the planner sets the
-modality to `feature`, the middle one, and puts the goal in the console's
-"needs you" list as "modality uncertain", where the operator confirms or
-changes it with one click; the goal does not wait for that. The classifier
+modality to `feature`, the middle one, and lists the goal in the console's
+"needs you" list as "modality uncertain". The operator confirms or changes it
+with one click, and the goal does not wait for that. The classifier
 also sets the latitude when the goal leaves it unset: the modality's default,
 moved up when the statement asks for open-ended improvement ("keep
 improving", "find what else needs doing") and down when it names an exact
-change. Every classification is recorded as `goal_classified`, with its
-confidence and the statement, so the harness analyzer can measure how often
-operators overrode it. An operator sets or changes the modality and the
+change. The planner records every classification as `goal_classified`, with
+its confidence and the statement, so the harness analyzer can measure how
+often operators overrode it. An operator sets or changes the modality and the
 latitude on the Goal view at any time; a change of modality on an active goal
 takes effect at the next planning task, and the current tasks finish under
 the rules they started with.
 
 **The modalities.** Each is a configuration profile in
-`config/modalities.json` (principle 7), so changing how a modality behaves is
-a configuration change.
+`config/modalities.json` (principle 7).
 
 | | `fix` | `feature` | `new-system` |
 |---|---|---|---|
@@ -2007,8 +2006,8 @@ shows which of them each goal is working in now.
 
 **Order.** A goal's task waits in `blocked` until every issue it depends on is
 closed. Tasks with no open dependency run in parallel under the modality's
-parallelism and the usual repo-area locks (section 10). The task service
-refuses a dependency cycle and shows the issues in it. A task that waited on
+parallelism and the usual repo-area locks (section 10). The planner refuses a
+dependency cycle and shows the issues in it. A task that waited on
 another repo's change uses that repo's merged commit.
 
 **Operator issues.** Publishing a release and deploying stay with operators
@@ -2038,7 +2037,7 @@ closes the issue. A task that ends without a merge (`exhausted` or
 and the label `meta-harness:failed`, and the issues that depend on it stay
 blocked.
 
-**Joining later.** While a goal is active, the task service watches the goal's
+**Joining later.** While a goal is active, the planner watches the goal's
 repos for its label through the code-host app's issue webhooks. An issue
 labeled after the goal started joins it, such as one the planning task wrote.
 
@@ -2063,7 +2062,7 @@ planner accepts, and the Decide step.
 | 0.75 | Also draft improvements it finds in the goal's repos that serve the statement, as separate issues the operator sees in Inputs before they run | "Make the sample's end-to-end check faster and more thorough" |
 | 1 | Keep going on its own: when the criteria are met it proposes the next goal from what it learned, and continues under the same budget until the budget or the operator stops it | "Improve the meta-harness" |
 
-Above 0.5 every draft carries a `latitude_reason`, one line on why it serves
+Above 0.5 every draft has a `latitude_reason`, one line on why it serves
 the statement, which the console shows beside the issue. Latitude never
 loosens the modality's merge bar, the budget, the repo list or principle 9;
 it widens only what the planner may propose. The modality sets the default:
@@ -2276,13 +2275,13 @@ meta-harness domain events long.
 The operator console is a cloud web app, the control point of the
 meta-harness. Operators sign in with GitHub; the first deployment allows one
 account, and a team allowlist comes later. The console owns no store and holds
-no database connection: it reads from the task service, the meta-harness run
-service, the event service, the metering service and the pool manager through
+no database connection: it reads from the task service, the planner, the
+meta-harness run service, the event service, the metering service and the pool manager through
 their interfaces, and sends commands to the owning service, which records
 each as an audit event with the operator as actor. The console never writes a
 table.
 
-The console is built for many parallel tasks pursuing several goals at once.
+The console serves many parallel tasks pursuing several goals at once.
 Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 
@@ -2320,8 +2319,8 @@ scrubs secrets from the events it reads. The HTTP Gateway's per-turn
 redaction applies to what the model receives.
 
 **First form.** The first console (State of the build) serves the Overview,
-Inputs, Goal, Tasks, Run, Live runs and Spend views over the task service and
-event service on Cloud SQL, with goals of the `fix` modality. The Routing,
+Inputs, Goal, Tasks, Run, Live runs and Spend views over the task service,
+the planner and the event service on Cloud SQL, with goals of the `fix` modality. The Routing,
 Pool and Configuration views, review joining and proposals follow the
 services they read from.
 
@@ -2449,7 +2448,7 @@ is not built yet:
 | Component | Runs on | Notes |
 |---|---|---|
 | Operator console | Cloud Run | GitHub sign-in, one allowed account to start |
-| Task service, event service | Cloud Run, Cloud SQL for PostgreSQL | The goal loop, the Task API, code-host webhooks, the event table |
+| Task service, planner, event service | Cloud Run, Cloud SQL for PostgreSQL | The Task API, the goal loop and the GitHub issue tracker adapter, code-host webhooks, the event table |
 | HTTP Gateway | Cloud Run | ai-api-unified-http, already deployed |
 | Temporal | Temporal Cloud | The run service namespace |
 | Run service worker, egress proxy, per-run sandboxes | One Compute Engine VM with Docker | The Docker executor backend from `samples/temporal-run-task`, as a systemd service that restarts on failure and on reboot |
