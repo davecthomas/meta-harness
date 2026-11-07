@@ -1,0 +1,15 @@
+[Unit]
+Description=Build the per-run sandbox image and the egress proxy image
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=mh
+WorkingDirectory=/opt/meta-harness/samples/temporal-run-task
+EnvironmentFile=/etc/meta-harness/env
+ExecStart=/usr/bin/make images UV=/usr/local/bin/uv
+
+[Install]
+WantedBy=multi-user.target

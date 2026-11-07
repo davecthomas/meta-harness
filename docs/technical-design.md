@@ -1184,7 +1184,12 @@ Each run gets one per-run sandbox: a pod with the gVisor runtime class in the
   because a restored pi session needs the working directory it recorded. The meta-harness run service's Publish
   step reads the run's changes through `GET /bundle` and pushes them. With the
   Docker executor backend, the meta-harness run service clones on the host into the mounted
-  workspace and publishes from it.
+  workspace and publishes from it. The clone's git directory sits beside the
+  workspace, not inside it: the per-run sandbox mounts it read-only, and every
+  host git command names the git directory and the work tree outright. So a
+  hook, a rewritten `.git` file or a `core.fsmonitor` setting that pi writes
+  in the workspace never runs on the host when the Publish step commits and
+  pushes.
 - The image sets the HTTP Gateway URL, and the run grant key arrives in
   the `POST /run` or `POST /followup` body.
 - Egress reaches only the code host, package registries and the HTTP Gateway.
@@ -1881,6 +1886,11 @@ profile and model whose cache hit rate falls below its configured floor.
   expiring within an hour. The meta-harness run service writes to the code host with the
   app's own token: it pushes branches, opens pull requests, posts reviews and
   merges, and the planner creates and updates issues.
+- The Publish step runs git on the host against a workspace pi could write
+  to. The clone's git directory is outside the sandbox mount and read-only
+  inside it, and host git names that directory outright, so pi cannot make
+  the host run a hook or a configured command with the control plane's
+  credentials.
 - Secret Manager mounts each secret only into its owner service's
   pods. The HTTP Gateway holds the model provider API keys for every model call
   a run makes. The meta-harness run service and the planner hold one more: a classifier
@@ -1980,20 +1990,36 @@ flowchart TB
 
 ### Deployment without GKE
 
-A smaller deployment runs the same services without GKE and the pool manager:
-managed services, plus one VM for the per-run sandboxes.
+The deployment that exists, `deploy/gcp.sh`, runs the whole control plane on
+one Compute Engine VM and the console's edge on Cloud Run. GKE and the pool
+manager replace the VM behind the same meta-harness run service interfaces
+later.
 
 | Component | Runs on | Notes |
 |---|---|---|
-| Operator console | Cloud Run | GitHub sign-in |
-| Task service, planner, event service | Cloud Run, Cloud SQL for PostgreSQL | The Task API, the goal loop and the GitHub issue tracker adapter, code-host webhooks, the event table |
-| HTTP Gateway | Cloud Run | ai-api-unified-http. Its stdout goes to Cloud Logging, so the same log sink and Pub/Sub topic carry its records to the event service |
-| Temporal | Temporal Cloud | The meta-harness run service namespace |
-| Meta-harness run service worker, egress proxy, per-run sandboxes | One Compute Engine VM with Docker | The Docker executor backend, as a systemd service that restarts on failure and on reboot |
-| Code host | A GitHub App on the registered repos | Issue and pull request webhooks keep the Inputs view live without polling; read-only clone tokens per run; the meta-harness run service's app token for every code-host write |
+| Edge: the console web app and `/v1` routing | Cloud Run, behind Identity-Aware Proxy | `deploy/edge.Dockerfile`. IAP signs operators in with their Google account. The edge checks IAP's signed header and the access list, then reaches the VM's private address over Direct VPC egress |
+| Task service, planner, event service, meta-harness scheduler | The VM, as systemd units under the `mh` user | `deploy/vm/units`. Each listens on a private port that only the edge's subnet reaches |
+| Postgres | The VM, in a Docker container on a named volume | `mh-postgres.service`. One copy on one disk; Cloud SQL replaces it |
+| Temporal | The VM, the Temporal dev server with its history in one file | `mh-temporal.service`. A development server, one process, no replication. Temporal Cloud replaces it before runs that matter |
+| Redis | The VM, the distribution package | The HTTP Gateway's run grants and per-run spend counters |
+| HTTP Gateway | The VM, from a checkout of ai-api-unified-http, reading its own `config/models.json`. Its guardrails are off, as that file ships | `mh-gateway.service`. Bound to every interface so the egress proxy container reaches it; no firewall rule admits its port from outside the VM. The meta-harness `models.json`, whose router names `harness` candidates, reaches the worker alone: the gateway's completions factory refuses a `harness` engine |
+| Meta-harness run service worker, egress proxy, per-run sandboxes | The VM, with the Docker executor backend | `mh-worker.service`, `mh-egress.service`. Per-run sandboxes are containers on the VM, `MH_MAX_RUNNING` caps them, and each run's workspace and git directory live under `/var/lib/meta-harness/runs` |
+| Secrets | Secret Manager, read at boot into `/etc/meta-harness/env` | Provider keys, the service key, the gateway key, the repo registry and each GitHub App's private key. `deploy/gcp.sh infra` creates them from the operator's `.env` |
+| Code host | A GitHub App on the registered repos | Read-only clone tokens per run; the app token for every code-host write. Webhooks have no route yet, so the planner's sweep polls |
 
-GKE and the pool manager replace the VM behind the same meta-harness run service
-interfaces.
+`deploy/gcp.sh infra` creates the network, Cloud NAT, the firewall rules,
+the service accounts, the secrets and the VM. `edge` builds the edge image
+with Cloud Build and deploys it. `update` moves the VM to a ref and reruns
+`deploy/vm/boot.sh`, which installs packages, checks out the two repos,
+writes the environment file from Secret Manager and restarts the units.
+`status` reports the units. The VM has no public address and is reached
+through IAP-tunneled SSH.
+
+What this shape lacks against the design above: the Temporal dev server and
+the Postgres container are single copies on one disk; the sandbox host is the
+control-plane host; the VM's size bounds concurrent runs; and nothing deploys
+on a release tag. Cloud SQL, Temporal Cloud and a deploy per release tag are
+their own pull request after the point of entry.
 
 ### Compute
 
@@ -2094,7 +2120,7 @@ through the local egress proxy's control listener.
 | The RunTask workflow's run loop over the ai-api-unified router's candidates, with a meta-harness run service `route` activity, escalation, pins and a task-wide spend limit | built | ai-api-unified 3.30.0 (`AiRouteClassifier`), `samples/temporal-run-task`, `make fallback-demo` |
 | Repo work in a run: each run starts from a fresh clone of the task's repo, pi's `bash` tool runs the acceptance checks, and the meta-harness run service's Publish step commits pi's changes, pushes the branch and opens the pull request with `Closes <issue>`. The per-run sandbox holds no code-host credential | built for local development | `samples/temporal-run-task`, `make repo-demo`, `make run TICKET=owner/name#N` |
 | `submit_review`, the review run's owned pi tool | built | `images/harness-pi/extension` |
-
+| The clone's git directory outside the per-run sandbox mount, read-only inside it, so nothing pi writes runs on the host at Publish | built | `src/meta_harness/run_service/code_host.py`, `sandbox.py`, `tests/run_service` |
 ### Bootstrap pull requests
 
 The bootstrap ends at the point of entry: an operator signs in to the console
@@ -2135,7 +2161,8 @@ merge before the first self-improving goal.
 | `feat/admission` | A loop that starts queued tasks' RunTask workflows: global concurrency, repo-area locks as expiring rows until the meta-harness scheduler moves them to Redis, closed dependencies, the goal's budget | `make e2e-admission`: two tasks on one repo area run in turn |
 | `feat/console-web-app-goals` | The first console web app: goal creation, the Overview and the Goal page, calling only the REST API, with an identity outside the access list refused (merged as server-rendered pages, then replaced by the React app) | An operator creates a goal in the browser, and an account outside the access list gets 403 |
 | `feat/console-web-app-runs` | The console web app in React and TypeScript (`console/`), and the local edge that serves it and routes `/v1` as the signed-in operator. Lists read ahead as you scroll; the Tasks page shows running tasks as a list or as terminal tiles 4, 16 or 32 up, where only the tiles on screen stream, over one server-sent-event stream; the Task page shows the live run and loads older events as you scroll up; cancel and the kill switch, which the meta-harness scheduler carries out | The tiles of running tasks stream their events as they happen, and scrolling moves the stream to the tiles in view |
-| `feat/deploy-cloud` | Terraform for Cloud Run, Cloud SQL, the VM, Secret Manager and the Temporal Cloud namespace; the external load balancer with path routing, Identity-Aware Proxy with GitHub sign-in, and each service's IAP header check; a deploy on each release tag; router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `make deploy ENV=prod`, then a goal created in the cloud console runs a labeled issue to a pull request, and a request without IAP credentials gets 401 |
+| `feat/deploy-cloud` | `deploy/gcp.sh`: one VM running every control-plane service, Postgres, the Temporal dev server, Redis, the HTTP Gateway on its own configuration, the worker and its per-run sandboxes, as systemd units booted from Secret Manager; the edge on Cloud Run behind Identity-Aware Proxy with the IAP header check; the clone's git directory outside the sandbox mount (see Deployment without GKE) | `deploy/gcp.sh infra && deploy/gcp.sh edge`, then a goal created in the cloud console runs a labeled issue to a pull request, and a request without IAP credentials gets 401 |
+| `feat/deploy-managed` | Cloud SQL for the control plane's tables, Temporal Cloud for the run service namespace, a deploy on each release tag, and router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `deploy/gcp.sh update REF=v<tag>` on a tag, then the same goal check |
 | `feat/code-host-webhooks` | The webhook endpoint: signature check, and check, merge and close deliveries as RunTask workflow signals | `make webhook-replay` |
 | `feat/review-loop` | The review task with `submit_review`, the posted review, the fix task, and the round and budget limits. The VM's disk keeps pi session directories under `harness_session_id` until the pool manager exists | `make e2e-review`: `changes`, a fix, then `clean` |
 | `feat/merge` | The merge at the reviewed head SHA, `auto_merge`, the `ready` and `review_unresolved` ends, and merge conflicts as fix tasks | `make e2e-review` ends merged |

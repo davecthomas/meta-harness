@@ -1,0 +1,16 @@
+[Unit]
+Description=Apply the control plane's schema migrations
+After=mh-postgres.service
+Requires=mh-postgres.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=mh
+WorkingDirectory=/opt/meta-harness
+EnvironmentFile=/etc/meta-harness/env
+# Postgres may still be starting: try for a minute.
+ExecStart=/bin/bash -c 'for i in $(seq 1 30); do /opt/meta-harness/.venv/bin/mh migrate && exit 0; sleep 2; done; exit 1'
+
+[Install]
+WantedBy=multi-user.target

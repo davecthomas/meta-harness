@@ -207,7 +207,7 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
     ref = ref_for(info.workflow_id)
     image = str(request.candidate.profile["image"])
     if request.repo:
-        await _clone(tag, request.repo, sandbox.workspace_for(ref, run_id))
+        await _clone(tag, request.repo, sandbox.workspace_for(ref, run_id), sandbox.git_dir_for(ref, run_id))
     box = await _lease(tag, run_id, ref, image)
     try:
         grant_key = await _issue_grant(tag, request, info.workflow_id)
@@ -297,6 +297,7 @@ async def publish(request: PublishRequest) -> PublishResult:
         published = await code_host.publish(
             repo=request.repo,
             workspace=workspace,
+            git_dir=sandbox.git_dir_for(ref, request.run_id),
             branch=f"mh/{ref}",
             title=request.title,
             body=body,
@@ -357,11 +358,15 @@ async def cleanup_run(run_id: str) -> CleanupResult:
     return CleanupResult(grant_spent_usd=spent)
 
 
-async def _clone(tag: str, repo: str, workspace: Path) -> None:
-    """The repo task's clone, made on this machine before the per-run sandbox starts."""
-    existed = (workspace / ".git").is_dir()
+async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path) -> None:
+    """The repo task's clone, made on this machine before the per-run sandbox starts.
+
+    The git directory goes beside the workspace, not inside it, so the
+    sandbox gets it read-only and the host's publish never runs anything pi wrote.
+    """
+    existed = git_dir.is_dir()
     try:
-        branch = await code_host.clone(repo, workspace)
+        branch = await code_host.clone(repo, workspace, git_dir)
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     if not existed:

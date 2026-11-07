@@ -1,0 +1,17 @@
+{
+  "version": "2026-11-07.1",
+  "repos": {
+    "davecthomas/ai-api-unified": {
+      "tracker": "github",
+      "default_checks": ["poetry install --all-extras", "poetry run pytest -q -m \"not nonmock\""]
+    },
+    "davecthomas/ai-api-unified-http": {
+      "tracker": "github",
+      "default_checks": ["poetry install", "poetry run pytest -q"]
+    },
+    "davecthomas/meta-harness": {
+      "tracker": "github",
+      "default_checks": ["uv sync", "uv run ruff check .", "uv run pytest -q"]
+    }
+  }
+}

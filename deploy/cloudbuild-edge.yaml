@@ -1,0 +1,5 @@
+# Builds the edge image into Artifact Registry. deploy/gcp.sh runs it with the tag in _IMAGE.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "deploy/edge.Dockerfile", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
