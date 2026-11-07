@@ -32,6 +32,8 @@ packages = ["src/meta_harness"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A hung test fails with a traceback instead of stalling the run.
+timeout = 120
 markers = [
     "db: needs Postgres at MH_DATABASE_URL (make up starts one)",
 ]
