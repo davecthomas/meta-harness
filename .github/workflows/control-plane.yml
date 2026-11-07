@@ -1,0 +1,47 @@
+# The control plane's lint and tests, on every pull request, against a real Postgres.
+
+name: control plane
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: control-plane-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: control plane tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16.4
+        env:
+          POSTGRES_USER: mh
+          POSTGRES_PASSWORD: mh
+          POSTGRES_DB: mh
+        ports:
+          - 5444:5432
+        options: >-
+          --health-cmd "pg_isready -U mh -d mh"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      MH_DATABASE_URL: postgresql://mh:mh@127.0.0.1:5444/mh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.5"
+      - run: uv sync --locked
+      - run: make lint
+      - run: uv run mh migrate
+      - name: make test, with every database test required to run
+        run: uv run pytest -q -rs | tee pytest.out && ! grep -q "SKIPPED" pytest.out

@@ -1,0 +1,23 @@
+# Local Postgres for the meta-harness control plane. `make up` starts it with the
+# Temporal dev server; Cloud SQL for PostgreSQL takes its place in the cloud.
+name: meta-harness
+
+services:
+  postgres:
+    image: postgres:16.4
+    environment:
+      POSTGRES_USER: mh
+      POSTGRES_PASSWORD: mh
+      POSTGRES_DB: mh
+    ports:
+      - "${MH_POSTGRES_PORT:-5444}:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mh -d mh"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres:
