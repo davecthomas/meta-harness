@@ -447,29 +447,13 @@ A harness profile is the meta-harness harness's configuration and the
 
 ## Routing
 
-Routing happens at two levels. Level 1 runs once per task: the ai-api-unified
-router in the meta-harness run service picks a tier and that tier's
-candidates (each a harness profile and a model), and the meta-harness run
-service's RunTask workflow tries them. Level 2 runs on every model call inside
-a run, in the HTTP Gateway. The tier candidates and the harness profiles
-change only through `models.json` and `harness_profiles.json`. The harness
-analyzer proposes those changes as configuration pull requests (Architecture,
-harness analyzer).
+Routing happens twice. Once per task, the ai-api-unified router in the
+meta-harness run service picks a tier and returns its candidates, each a
+harness profile and a model, and the RunTask workflow tries them in order. On
+every model call inside a run, the HTTP Gateway routes the call.
 
-Every sequence diagram in this document groups its participants in boxes by
-owner: the meta-harness control plane, the ai-api-unified library running
-inside the meta-harness run service process, the per-run sandbox (a
-meta-harness harness profile image, one per run), the HTTP Gateway service
-(ai-api-unified-http), and parties outside the system (callers, the code
-host, model providers).
-
-The meta-harness run service's
-`route` activity asks the ai-api-unified router in the run service for the
-task's tier and tier candidates. The RunTask workflow then tries the tier
-candidates in order. Here both `standard` tier candidates fail
-for infrastructure reasons, so the RunTask workflow escalates to the
-`complex` tier. Had either run ended on a limit, the RunTask workflow's
-candidate loop would have ended there.
+In the diagram, both `standard` candidates fail on infrastructure, so the
+RunTask workflow escalates to `complex`.
 
 ```mermaid
 sequenceDiagram
@@ -504,10 +488,9 @@ sequenceDiagram
     Note over WF: the RunTask workflow records three runs, their costs, route_tier complex, route_method classifier
 ```
 
-The HTTP Gateway run grant
-pins the tier candidate's model. pi agent turns stay on that model. The pi
-model client extension's compaction call sets `route: trivial`, which the
-HTTP Gateway turns into a tier band so the compaction summary runs on a cheap
+Inside a run, the HTTP Gateway run grant pins the candidate's model, and pi
+agent turns stay on it. The pi model client extension's compaction call sets
+`route: trivial`, so the HTTP Gateway runs the compaction summary on a cheap
 tier.
 
 ```mermaid
@@ -577,67 +560,44 @@ in the per-run sandbox. The RunTask workflow runs them.
 ```
 
 A tier candidate takes the form `harness:<harness profile>/<provider>:<model>`.
-The ai-api-unified router splits a tier candidate string at its first colon,
-so it reads `harness` as the tier candidate's provider name and the rest as
-its model string, and returns both unchanged. The meta-harness run service
-validates each harness tier candidate at startup: the harness
-profile exists in `harness_profiles.json` and names a harness profile image
-the pool manager's executor backend can run, and the inner
-`<provider>:<model>` is a model configured in the ai-api-unified library. The
-ai-api-unified router's own startup model check probes a tier candidate's
-provider client (its ai-api-unified completions engine), and ai-api-unified
-has no `harness` provider client, so the meta-harness run service calls the
-ai-api-unified router in classify-only mode, which skips that probe.
+The ai-api-unified router reads `harness` as its provider and returns the
+string unchanged. In classify-only mode (`AiRouteClassifier`) the router never
+builds or probes a candidate, so the meta-harness run service validates each
+candidate itself at startup: its harness profile exists and names an image
+the executor backend can run, and its `<provider>:<model>` is a model the
+ai-api-unified library has configured.
 
 The ai-api-unified router's classifier model reads the latest user message,
 so the meta-harness run service dispatcher activity puts the task spec in
 that message and keeps instructions in the system prompt.
 
-The ai-api-unified library loads `models.json` once per process and reads
-settings only when it builds a provider client. So the run service `route`
-activity builds one ai-api-unified router client per process and
-configuration identity, and shares that router client across tasks. Sharing
-is safe because the ai-api-unified library keeps per-call state in context
-variables. The meta-harness's own configuration
-(`harness_profiles.json`, `task_policy.json`, `callers.json`) follows the
-same pattern: loaded and validated at startup, held in memory, reloaded on a
-file change with the new version recorded in `config_version`.
+The run service `route` activity builds one ai-api-unified router client per
+process and shares it across tasks; the library keeps per-call state in
+context variables. The meta-harness's own configuration files load the same
+way: validated at startup, held in memory, and reloaded on a change, with the
+new version recorded in `config_version`.
 
-The ai-api-unified router classifies each task, and the RunTask workflow acts on the result:
-
-- **Classify** (the ai-api-unified router): with the configured
-  ai-api-unified router classifier model; below `min_confidence`, use
-  `default_tier`.
-- **Try tier candidates in order** (the RunTask workflow): a run that ends
-  for an infrastructure reason (no per-run sandbox within `ready_timeout`,
-  rate limited or quota exhausted at the inner model, a lost harness server,
-  or `model_error` from a provider outage) moves to the next tier candidate
-  in the tier. A run that ends on a limit (`max_turns`, `max_minutes`,
-  `spend_limit`) is final.
-- **Escalate** (the RunTask workflow): when the RunTask workflow has exhausted the tier and
-  `on_exhausted` is `escalate`, the RunTask workflow calls the run service
-  `route` activity again with `route_floor` one tier up, within the task
-  policy's limits. A task that the ai-api-unified router's classifier model
-  called hard fails visibly rather than running on a weaker tier. The
-  RunTask workflow records every run's cost, including a failed run's.
-- **Pin** (the RunTask workflow): a meta-harness fix task, an exploration
-  run, and a task submitted with a `pin` field skip the run service `route`
-  activity and run one named harness-profile-and-model pair, such as
-  `harness:pi-careful/claude:claude-opus-5-5`, with no classification and no
-  escalation. A meta-harness fix task pins the pair that opened its pull
-  request, so its follow-up run continues the pull request's pi session on
-  the same model. A meta-harness review task tries the task policy's
-  reviewer pairs in order instead. The pair need not appear in
-  a tier. The meta-harness run
-  service checks the pair's inner model against the ai-api-unified model
-  catalog's allow and deny lists, so a denied pair fails before any pool
-  manager lease. The RunTask workflow records `route_method: model_pin` and
-  the pair.
-- **Floors per call** (the run service `route` activity): every
-  ai-api-unified router call sets its own `route_floor` and `route_ceiling`.
-  The run service `route` activity leaves the ai-api-unified router client's
-  client-wide follow-up setting unused, because that shared router client
-  serves many concurrent tasks.
+- The ai-api-unified router classifies the task with its classifier model,
+  and below `min_confidence` it picks `default_tier`.
+- The RunTask workflow tries the tier's candidates in order. A run that ends
+  on infrastructure (no per-run sandbox within `ready_timeout`, a rate limit or
+  exhausted quota at the model, a lost harness server, or `model_error` from a
+  provider outage) moves to the next candidate. A run that ends on a limit
+  (`max_turns`, `max_minutes`, `spend_limit`) ends the task.
+- When a tier runs out and `on_exhausted` is `escalate`, the RunTask workflow
+  calls the `route` activity again with `route_floor` one tier up, within the
+  task policy's limits. A task the classifier judged hard stays on hard tiers.
+- A meta-harness fix task, an exploration run and a task with a `pin` field
+  skip routing and run one named pair, such as
+  `harness:pi-careful/claude:claude-opus-5-5`, with no escalation. A fix task
+  pins the pair that opened its pull request, so it continues that pull
+  request's pi session on the same model. A review task tries the task
+  policy's reviewer pairs in order. The meta-harness run service checks a
+  pinned model against the ai-api-unified allow and deny lists before any
+  lease, and the RunTask workflow records `route_method: model_pin`.
+- Each router call carries its own `route_floor` and `route_ceiling`, because
+  one router client serves many tasks at once.
+- The RunTask workflow records every run's cost, failed runs included.
 
 Caller hints use the ai-api-unified router's per-call options:
 
@@ -665,8 +625,8 @@ lease record for that run.
 
 ### Task policy
 
-`config/task_policy.json` holds the task policy rules that are about the task
-rather than its difficulty.
+`config/task_policy.json` holds the rules for task types, exploration, run
+budgets and review.
 
 ```json
 {
@@ -681,8 +641,7 @@ rather than its difficulty.
 }
 ```
 
-- **Floors by task type** become `route_floor` on the ai-api-unified router
-  call.
+- `floors_by_task_type` sets `route_floor` on the router call.
 - The RunTask workflow pins a configured share of eligible
   tasks to a challenger harness-profile-and-model pair, so the harness analyzer keeps current data on every harness profile
   and model. Complex and security tasks never explore.
@@ -694,76 +653,31 @@ rather than its difficulty.
   harness-profile-and-model pairs in order. The RunTask workflow skips any
   reviewer pair whose model wrote the pull request, so a different model
   always reviews. `max_rounds` caps the meta-harness fix tasks per pull
-  request. `operator_alert_minutes` sets when a
-  review round blocked on an operator raises an alert (Operator
-  review). `merge: false` leaves a clean pull request open
-  instead of merging it; the repo policy can set it per repo.
+  request. `operator_alert_minutes` sets when a review round blocked on an
+  operator raises an alert. `merge: false` leaves a clean pull request open,
+  and a repo's policy can set it per repo.
 
 ### The run loop
 
-The meta-harness run service's Temporal workflow (the RunTask workflow) runs
-a task's tier candidates, one run per tier candidate. The ai-api-unified
-router in the run service picks the tier and lists its tier candidates. The
-RunTask workflow does everything after that.
-
-
-In ai-api-unified, a completions engine is a provider client class the
-ai-api-unified library's factory builds for one provider, such as its Claude
-client or its OpenAI client. A `harness` completions engine would make one
-`asend_conversation` call run a whole coding run, and the ai-api-unified
-router would try tier candidates through the ai-api-unified fallback chain as
-it does for model calls. The design does not do this:
-
-1. Temporal owns a run's durability, retries, cancel and per-attempt
-   visibility. An ai-api-unified library call would duplicate each of them
-   (re-attach by call id, the pool manager lease TTL as
-   `request_timeout_seconds`, cancel through the run's terminal state), and
-   the run's lifecycle would have two owners.
-2. The ai-api-unified fallback chain serves model calls that cost cents
-   and take seconds. For runs, each fallback is a new per-run sandbox and a
-   new multi-dollar attempt, decided by ai-api-unified library code that
-   cannot see the task's budget or its other attempts.
-3. ai-api-unified would hold a pool manager client and a harness server Run
-   API client, so the ai-api-unified library would depend on meta-harness
-   services, and each harness server Run API change would need an
-   ai-api-unified library release.
-
-ai-api-unified therefore includes no `harness` completions engine, and
-nothing in the ai-api-unified library depends on Temporal or on meta-harness
-services. A library user outside the meta-harness who wants to run a coding
-harness from ai-api-unified would need a separate `harness` completions
-engine that runs one run against a harness server Run API URL. It would not
-need Temporal. It is not part of this design, because no caller
-needs it.
-
-The `run_harness` activity (the run service run activity) in
-`samples/temporal-run-task` implements the Grant, Start, Wait and Collect
-steps below.
-
-The run service `route` activity sends the task
-prompt through `AiRouterCompletions` with a classify-only call and returns
-the route: the tier, `route_method`, `route_confidence`, and the tier's
-ordered tier candidates, each a harness profile and an inner model. No
-meta-harness code names a model or a harness profile.
-
-For each tier candidate the RunTask workflow runs one
-run service run activity, which performs the Identify through Collect steps
-below. The RunTask workflow then takes the Decide step: from the run's
-terminal state it tries the next tier candidate, escalates a tier under the
-task policy, or ends. The RunTask workflow checks the budget
-between tier candidates, because it holds the task's remaining spend, its
-attempts so far and the task policy's limits.
+The RunTask workflow runs a task's tier candidates, one run each. The run
+service `route` activity sends the task prompt to the ai-api-unified router in
+classify-only mode and returns the tier, `route_method`, `route_confidence`
+and the tier's ordered candidates. For each candidate the RunTask workflow
+runs one run activity, which takes the steps Identify through Collect below.
+The RunTask workflow then takes the Decide step: next candidate, escalation
+or end. It checks the budget between candidates, because it holds the task's
+remaining spend, its attempts so far and the task policy's limits.
 
 | Step | What happens |
 |---|---|
-| Identify | `run_id` is the RunTask workflow id, the attempt number and the tier candidate index, the same on every retry of the run activity. A meta-harness review or fix task has its own RunTask workflow id, so its runs get their own `run_id`s. The sample uses `<workflow id>:run-<n>`, n counting the tier candidates the task has tried. |
+| Identify | `run_id` is the RunTask workflow id, the attempt number and the tier candidate index, the same on every retry of the run activity. A meta-harness review or fix task has its own RunTask workflow id, so its runs get their own `run_id`s. |
 | Lease | Asks the pool manager for an existing pool manager lease on `run_id` first, so a retried run activity re-attaches to a run in progress. Otherwise requests `lease(run_id, image, harness_session_id, resources)` for the harness profile's image. The pool manager response holds the per-run sandbox address, the pool manager lease TTL and the `session_state`: `new`, `kept` or `restored`. In a deployment without the pool manager, the run activity starts one per-run sandbox per run itself, with the Docker executor backend. |
-| Grant | Asks the HTTP Gateway for an HTTP Gateway run grant (ai-api-unified-http 1.18.0), which the HTTP Gateway issues and stores. The run grant holds the run id, tags, the tier candidate's inner model as a pin, the spend limit, and an expiry at `max_minutes` plus grace. Only the run grant key goes to the per-run sandbox. A retried run activity asks again with the same terms and gets a new run grant key for the live run grant. |
+| Grant | Asks the HTTP Gateway for an HTTP Gateway run grant, which the HTTP Gateway issues and stores. The run grant holds the run id, tags, the tier candidate's inner model as a pin, the spend limit, and an expiry at `max_minutes` plus grace. Only the run grant key goes to the per-run sandbox. A retried run activity asks again with the same terms and gets a new run grant key for the live run grant. |
 | Start | When `session_state` is `new`, `POST /run` on the per-run sandbox's harness server Run API with the prompt, acceptance checks, harness profile, limits and run grant key. When it is `kept` or `restored`, `POST /followup` with the new input and its own run grant key. |
 | Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the pool manager lease TTL, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
 | Collect | Reads the harness server's `/usage`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
-| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Trying a more expensive tier candidate after a cheaper one spent its budget doubles the spend. So only the task policy's explicit retry-up rule or a human repeats a run that ended on a limit. |
-| Publish | A run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <ticket>` and the run's final summary. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix task pushes to its PR's branch instead. The sample commits and pushes from the mounted workspace with `git` and `gh` on the host. |
+| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. |
+| Publish | A run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <ticket>` and the run's final summary. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix task pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
 Each tier candidate is one run and one per-run sandbox. The RunTask
 workflow's Temporal history records every attempt, tier candidate and
@@ -771,10 +685,8 @@ decision. The RunTask workflow also writes each run's `attempt_finished`
 meta-harness domain event, which the operator console and the harness
 analyzer read from the event service.
 
-The RunTask workflow never calls a model itself. The ai-api-unified router's
-classifier model call happens in the run service `route` activity, through
-the ai-api-unified library. The run service `route` activity needs
-ai-api-unified 3.29.0 or later for `route_confidence`.
+The RunTask workflow calls no model. The classifier call happens in the run
+service `route` activity, through the ai-api-unified library.
 
 ### Model calls inside a run
 
@@ -805,15 +717,11 @@ its bearer credential. The HTTP Gateway:
    usage and total, and the harness server emits them in its `model_call`
    events. The meta-harness reads no HTTP Gateway event output.
 
-A pinned call ignores route hints. So the HTTP Gateway handles the
-`route: trivial` that the pi model client extension sets on compaction and
-auxiliary calls. When a request body includes `route`, the HTTP Gateway runs
-that one call as a tier band instead of a run grant pin, with no floor and
-the pinned model's tier as the ceiling. The call runs on the named tier, and
-an unknown route falls back to the pinned model. pi agent turns, which have
-no `route`, stay pinned. Under a banded run grant model
-policy the ai-api-unified router inside the HTTP Gateway honors the hint as
-it is, within the band.
+A request body with `route`, such as the `route: trivial` on compaction and
+auxiliary calls, runs that one call on the named tier, capped at the pinned
+model's tier. An unknown route falls back to the pinned model, and pi agent
+turns, which carry no `route`, stay pinned. Under a banded policy the router
+honors the hint within the band.
 
 ## Run lifecycle
 
@@ -1816,8 +1724,7 @@ parallelism and the usual repo-area locks. The planner refuses a
 dependency cycle and shows the issues in it. A task that waited on
 another repo's change uses that repo's merged commit.
 
-Publishing a release and deploying stay with operators
-. An issue labeled `meta-harness:operator`
+Publishing a release and deploying stay with operators. An issue labeled `meta-harness:operator`
 belongs to the goal, and the meta-harness never runs it. The console lists it
 under "needs you", and an operator closes it after doing the work, which
 unblocks the issues that depend on it. So a goal can hold "publish
