@@ -141,19 +141,19 @@ flowchart TB
     HA -->|config pull request| CH
 ```
 
-| Component | Owns | When it fails |
-|---|---|---|
-| Planner | `goal`, `plan`, `issue_link` | Goals stop taking new issues and planning. Tasks already queued run, and the planner's periodic sweep catches a missed tracker webhook on recovery. |
-| Task service | `task` | No new tasks or status reads. Running tasks continue, and the code host retries its webhooks. |
-| Meta-harness scheduler | Repo-area locks in Redis | No new admissions. Running tasks continue, and a dead leader's locks expire by TTL. |
-| Meta-harness run service | `run`, `routing_decision`, `config_version`, its Temporal namespace, code-host rate-limit buckets | RunTask workflows resume from their last step. A retried run activity re-attaches to its sandbox lease, its run grant and its event stream by `run_id`. |
-| Pool manager | `sandbox`, `lease`, the artifact store | New runs wait for a lease. Running sandboxes continue, and lease TTLs apply on recovery. |
-| Event service | `event`, the schema registry | Producers buffer and retry, so runs continue. Consumers catch up from their cursors. |
-| Metering service | Its projection tables | Projections lag. The HTTP Gateway still enforces each run's spend limit, and the meta-harness scheduler treats stale spend as at cap. |
-| Harness analyzer | `proposal` | No new proposals. Runs are unaffected. |
-| Operator console | Nothing | Operators lose sight of the system. Runs continue. |
-| HTTP Gateway | Run grants, per-run spend counters | Model turns fail and the run fails. The run loop moves to the next candidate, and when every candidate fails this way the RunTask workflow pauses the task. |
-| Harness server | The run's pi session directory | The run ends `ERROR`, and the run loop tries the next candidate. |
+| Component | Owns |
+|---|---|
+| Planner | `goal`, `plan`, `issue_link` |
+| Task service | `task` |
+| Meta-harness scheduler | Repo-area locks in Redis |
+| Meta-harness run service | `run`, `routing_decision`, `config_version`, its Temporal namespace, code-host rate-limit buckets |
+| Pool manager | `sandbox`, `lease`, the artifact store |
+| Event service | `event`, the schema registry |
+| Metering service | Its projection tables |
+| Harness analyzer | `proposal` |
+| Operator console | Nothing |
+| HTTP Gateway | Run grants, per-run spend counters |
+| Harness server | The run's pi session directory |
 
 The meta-harness run service loads `models.json`,
 `harness_profiles.json` and `task_policy.json`, and the planner loads
@@ -650,7 +650,7 @@ task's remaining spend, its attempts so far and the task policy's limits.
 | Start | When `session_state` is `new`, `POST /run` on the per-run sandbox's harness server Run API with the prompt, acceptance checks, harness profile, limits and run grant key. When it is `kept` or `restored`, `POST /followup` with the new input and its own run grant key. |
 | Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the pool manager lease TTL, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
 | Collect | Reads the harness server's `/usage`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
-| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. |
+| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate fails on infrastructure, as in an HTTP Gateway outage, the RunTask workflow pauses the task to resume later. |
 | Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix task pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
 The RunTask workflow's Temporal history records every attempt, tier candidate and
@@ -1363,7 +1363,8 @@ later turn, and the metering service raises an alert.
 - The harness server ends a run `EXPIRED` at `max_minutes`, and the lease TTL
   destroys the per-run sandbox if the harness server does not.
 - The meta-harness scheduler stops admitting a caller's tasks at the caller's daily spend
-  cap, and warns at 80%.
+  cap, and warns at 80%. When the metering service lags, the meta-harness
+  scheduler treats spend older than its staleness limit as at cap.
 - A hard daily global spend cap and a kill switch stop everything.
 
 ## Scheduling
@@ -1378,7 +1379,9 @@ every task event:
    is under its concurrency quota and daily spend cap, the pool manager has
    sandbox capacity, and no other run holds the task's repo area.
 3. A repo-area lock covers the repo plus the top-level directories the task
-   names, or the whole repo for a task that names none.
+   names, or the whole repo for a task that names none. Locks live in Redis
+   with a TTL, so a meta-harness scheduler leader that dies holding them
+   cannot strand a repo.
 4. It admits a goal's task once every issue the task depends on is closed,
    while the goal is active, has budget left, and is within its modality's
    parallelism.
