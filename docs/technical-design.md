@@ -2067,27 +2067,66 @@ through the local egress proxy's control listener.
 | Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | built | ai-api-unified-http 1.19.0, `images/harness-pi/extension` |
 | The RunTask workflow's run loop over the ai-api-unified router's candidates, with a meta-harness run service `route` activity, escalation, pins and a task-wide spend limit | built | ai-api-unified 3.30.0 (`AiRouteClassifier`), `samples/temporal-run-task`, `make fallback-demo` |
 | Repo work in a run: each run starts from a fresh clone of the task's repo, pi's `bash` tool runs the acceptance checks, and the meta-harness run service's Publish step commits pi's changes, pushes the branch and opens the pull request with `Closes <issue>`. The per-run sandbox holds no code-host credential | built for local development | `samples/temporal-run-task`, `make repo-demo`, `make run TICKET=owner/name#N` |
-| Operator console: the Overview, Inputs, Goal, Tasks, Run, Live runs and Spend views, with take over and hand back on every running task, over the task service, the planner with its GitHub issue tracker adapter, and the event service on Cloud SQL, for `fix` goals. The Routing, Pool and Configuration views, review joining and proposals come with the services they read | **next** | |
-| Deployment without GKE: operator console, task service, planner and event service on Cloud Run, Temporal Cloud, and one Compute Engine VM running the meta-harness run service worker, the egress proxy and the per-run sandboxes with the Docker executor backend. The meta-harness runs with no Claude Code session and no terminal | planned | |
-| ai-api-unified decisions in the operator console: the Cloud Logging log sink, the Pub/Sub topic and push subscription, and `gateway_request` events in the event service | planned | |
-| Meta-harness review loop and merge: a review task on another model, fix tasks, and the merge at the reviewed head SHA, each round visible in the operator console | in progress | `samples/temporal-run-task` branch `feat/review-loop`; `submit_review` built in `images/harness-pi/extension` |
-| Goals with the `fix` modality: a label across the registered repos feeds a standing queue, and the operator console shows each issue's state | planned | |
-| Goals with the `feature` and `new-system` modalities: the planning task, plan and phase approval in the operator console, and goal success criteria | planned | |
-| Self-hosting: a `new-system` goal whose repos are ai-api-unified, ai-api-unified-http and meta-harness, steered from the operator console | milestone | |
-| Pool manager, kept and restored pi sessions | later | |
-| Meta-harness owned pi tools, the `bash` command allowlist, pi compaction handler, `guardrail_blocked` harness server Run API events | later | |
-| Operator review | sketch | |
-| HTTP Gateway: `route` in the conversation request body, so on a run grant that pins a model one call can run on a tier range capped at the pinned model's tier. pi agent turns without `route` stay pinned | later | ai-api-unified-http |
-| Streaming: a `send_conversation` form in ai-api-unified that yields typed events and commits to one model at its first delta, and a server-sent-events form of the HTTP Gateway conversation endpoint, so the operator console shows model text token by token | optional | ai-api-unified, ai-api-unified-http |
-| Pool manager on GKE, metering service, harness analyzer, meta-harness scheduler as its own service | sketch | |
+| `submit_review`, the review run's owned pi tool | built | `images/harness-pi/extension` |
 
-The zero-cost end-to-end check runs on every pull request, so each later build
-step works end to end before any run spends money on model calls.
+### Bootstrap pull requests
 
-The steps up to the self-hosting milestone come first, in this order. After
-them, the meta-harness builds the rest of itself while the operator watches
-from the operator console. The operator console comes before the rest of the review loop, so the
-operator sees every review round from the first. Once pull requests merge
-without a person, a goal's issues run in order across repos, and the planner
-writes each next phase. Self-hosting needs stronger models than the sample's
-Haiku 4.5 and gpt-4o-mini, which cost more, so each goal has its own spend cap.
+These pull requests build the smallest meta-harness that works a `fix` goal in
+the cloud, from goal creation in the operator console to merged pull requests.
+They merge in this order, all in
+meta-harness unless the row names another repo. Each one extends the zero-cost
+end-to-end check, so its check runs on every later pull request without model
+calls.
+
+| Branch | Builds | Done when |
+|---|---|---|
+| `feat/control-plane-skeleton` | The `src/meta_harness/` package and the `mh` command line, Docker Compose with Postgres and the Temporal dev server, one schema and migration set per owning component, and CI for unit tests | `make up && make migrate` on a clean checkout, and CI passes |
+| `feat/event-service` | The event service: the `event` table, the schema registry, `append`, `read` and `tail` with Postgres `NOTIFY`, and the event service client library with its outbox | `mh events tail` prints a test producer's events in position order, and keeps going across an event service restart |
+| `feat/task-service` | The task service: the `task` table and the Task API to create, read, look up by `external_ref` and cancel a task, with `task_created` and status events | Two `POST /v1/tasks` calls with one `external_ref` return one task, and `mh events tail` shows `task_created` |
+| `feat/run-service` | The meta-harness run service: the RunTask workflow and activities move from `samples/temporal-run-task` into `src/meta_harness/run_service`. They start from a task id, write `run` and `routing_decision` rows, append `task_routed`, `attempt_finished` and the harness server Run API events, and set the task's status | `make e2e` submits a task through the Task API, and it ends with a pull request on a test repo, the task closed, and every event in the event service |
+| `feat/admission` | Admission in the task service: global concurrency, repo-area locks as rows with an expiry in the task service schema (Redis comes with the meta-harness scheduler), closed dependencies and the goal's budget | `make e2e-admission`: two tasks on one repo area run one after the other, and a task with an open dependency waits |
+| `feat/github-app` | GitHub App authentication: a read-only installation token per run for the clone, and the app token for pushes, pull requests, reviews and merges, in place of personal tokens | `make repo-demo` against a real repo the GitHub App alone can reach |
+| `feat/sandbox-python` | Python 3.12 and Poetry in the per-run sandbox image, for the ai-api-unified and ai-api-unified-http test suites | A run in a per-run sandbox runs `poetry run pytest -q -m "not nonmock"` in a clone of ai-api-unified |
+| `feat/code-host-webhooks` | The task service's code-host webhook endpoint: it checks the signature, and check, merge and close deliveries signal the RunTask workflow | `make webhook-replay` sends recorded GitHub deliveries, and a waiting RunTask workflow moves on |
+| `feat/review-loop` | The review loop: a review task on another model ending with `submit_review`, the review posted on the pull request, a fix task on its branch, `max_rounds` and the parent task's `max_usd`. The Docker executor backend keeps each pi session directory on the VM's disk under `harness_session_id`, so a fix task continues the pi session without the pool manager | `make e2e-review`: the fake HTTP Gateway scripts a `changes` verdict, then `clean`, and the pull request gets two reviews and a fix commit |
+| `feat/merge` | The merge at the reviewed head SHA, the goal's `auto_merge`, the `ready` and `review_unresolved` ends, and a merge conflict as a fix task | `make e2e-review` ends with the pull request merged and its issue closed |
+| `feat/takeover` | Cancel, kill switch, take over, hand back and close in the meta-harness run service and the Task API, each an audit event with the operator as actor | `mh task take-over` stops a run and opens a draft pull request with its work, and `mh task hand-back` continues it |
+| `feat/planner-goals` | The planner: the `goal` table, the Goals API, the `fix` modality set by the operator, the GitHub adapter's `list_open`, `read` and `sweep`, and issue-to-task conversion with `depends_on` | `mh goal create` with a label and three repos, and a labeled issue in a test repo becomes a task within one sweep |
+| `feat/planner-sync` | Issue webhooks, state labels and comments written back to issues, blocked and unblocked tasks, refused issues, and the goal's status and budget | Labeling, editing and closing a test issue each show in `mh events tail`, and the issue gets the label `meta-harness:running`, then `meta-harness:pr-open` |
+| `feat/console-shell` | The operator console in Python with server-rendered pages: GitHub sign-in against an allowlist, the Overview with its "needs you" list and the kill switch, and the Goal view with goal creation and auto-merge | A signed-in operator creates a goal in the browser, and an account outside the allowlist gets 403 |
+| `feat/console-runs` | The Tasks, Run and Live runs views, with live events from `tail` over server-sent events, and take over and cancel | The Run view of a `make e2e` run shows each event as it arrives, and take over works from the page |
+| `feat/console-inputs` | The Inputs view: queued issues by repo and by goal, with each one's state | A labeled test issue shows in Inputs as queued, then running, then merged |
+| `feat/deploy-cloud` | Terraform for Cloud Run (operator console, task service, planner, event service), Cloud SQL, the Compute Engine VM with the meta-harness run service worker, the egress proxy and Docker, Secret Manager and the Temporal Cloud namespace, and a deploy on each release tag. It seeds the configuration documents with router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `make deploy ENV=prod`, then a task submitted to the cloud Task API ends merged with no local process running |
+| ai-api-unified-http `docs/agents-md`, meta-harness `docs/agents-md` | An `AGENTS.md` in each repo with its test, lint and versioning rules, which the harness prompt reads | None |
+
+An operator sets up what the meta-harness cannot:
+
+- a Google Cloud project with billing, and a Temporal Cloud account;
+- the GitHub App, installed on ai-api-unified, ai-api-unified-http and
+  meta-harness, with its private key in Secret Manager;
+- branch protection with required checks on the three repos;
+- a spend limit on each model provider key the HTTP Gateway holds.
+
+### Built by the meta-harness
+
+Once `feat/deploy-cloud` merges, an operator creates a `fix` goal over the
+three repos with the label `meta-harness:bootstrap` and `auto_merge` off, and
+files the rest of this design as issues with that label. The operator turns
+`auto_merge` on after watching the first review rounds in the operator
+console.
+
+| Issue | Repo |
+|---|---|
+| The `feature` and `new-system` modalities: the planning task, plan and phase approval in the operator console, goal success criteria, and the modality classifier | meta-harness |
+| Configuration edited in the operator console, with versions and rollback | meta-harness |
+| ai-api-unified decisions in the operator console: the Cloud Logging log sink, the Pub/Sub topic and push subscription, and `gateway_request` events | meta-harness |
+| The metering service and the Spend view | meta-harness |
+| The harness analyzer, its proposals, and the Routing view | meta-harness |
+| Operator review | meta-harness |
+| The pool manager, GKE, and the meta-harness scheduler as its own service | meta-harness |
+| Meta-harness owned pi tools, the `bash` command allowlist, the pi compaction handler and `guardrail_blocked` events | meta-harness |
+| `route` in the conversation request body, so on a run grant that pins a model one call can run on a tier range capped at the pinned model's tier | ai-api-unified-http |
+| Streaming: a `send_conversation` form that yields typed events and commits to one model at its first delta, and a server-sent-events form of the HTTP Gateway conversation endpoint | ai-api-unified, ai-api-unified-http |
+
+Once the planning task exists, the meta-harness drafts its own next issues,
+and later goals use the `feature` and `new-system` modalities.
