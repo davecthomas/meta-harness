@@ -8,7 +8,7 @@ the tier's candidates. Each candidate is a harness profile and a model.
 run_harness is the design's run service run activity, for one candidate. Its
 Lease step starts the run's per-run sandbox: a Docker container of the
 candidate's harness profile image, named after the run id
-(run_task/sandbox.py). Its Start step sends POST /run to the harness server in
+(meta_harness/run_service/sandbox.py). Its Start step sends POST /run to the harness server in
 it, the Wait step follows GET /events until run_finished, and the Collect step
 reads GET /usage, revokes the run grant and removes the container. pi runs in
 the container, so the run keeps going when this worker dies, and the next
@@ -28,7 +28,7 @@ attempt re-attaches to it. That attempt asks for the grant again and gets a
 new key for the same grant.
 
 For a repo task, the Lease step first clones the task's repo into the run's
-own workspace on this machine (run_task/code_host.py), and once a run
+own workspace on this machine (meta_harness/run_service/code_host.py), and once a run
 finishes, the publish activity commits pi's changes to a branch, pushes it
 and opens the pull request. Code-host access stays on this machine: the
 per-run sandbox holds no code-host token and no SSH key.
@@ -49,8 +49,9 @@ import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from run_task import code_host, harness_client, routing, run_grants, sandbox
-from run_task.shared import (
+from meta_harness.events.types import HARNESS_EVENT_TYPES
+from meta_harness.run_service import code_host, events, harness_client, routing, run_grants, sandbox
+from meta_harness.run_service.shared import (
     INLINE_TEMPLATE,
     CleanupResult,
     HarnessRequest,
@@ -64,8 +65,7 @@ from run_task.shared import (
     ref_for,
 )
 
-SAMPLE_DIR = Path(__file__).resolve().parent.parent
-PROMPTS_DIR = SAMPLE_DIR / "prompts"
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 REPO_TEMPLATE = "repo-task-v1"
 
 # The grant outlives the run's own time limit by this much, so it never expires under a run still ending.
@@ -101,12 +101,15 @@ async def prepare(request: RunTaskInput) -> PreparedRun:
 async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
     """The repo-task prompt: the ticket's or the caller's task, the repo, and the acceptance checks."""
     try:
-        ticket = await code_host.read_ticket(request.ticket) if request.ticket else None
+        # A Task API task brings its own title and text, so no ticket is read.
+        ticket = await code_host.read_ticket(request.ticket) if request.ticket and not request.title else None
         repo = request.repo or (ticket.repo if ticket else "")
         code_host.check_repo(repo)
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="HarnessConfigError", non_retryable=not err.retryable) from err
-    if ticket:
+    if request.title:
+        title, description, checks = request.title, request.task.strip() or request.title, request.checks
+    elif ticket:
         title, description = ticket.title, ticket.body.strip() or "(the ticket has no description)"
         checks = ticket.checks or request.checks
     else:
@@ -131,7 +134,7 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         prompt=prompt.strip(),
         pinned=pinned,
         repo=repo,
-        ticket=ticket.ref if ticket else "",
+        ticket=ticket.ref if ticket else request.closes,
         title=title[:200],
     )
 
@@ -218,6 +221,8 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
                     progress["last_event_id"] = event["id"]
                     if event["run_id"] == run_id:
                         _record(progress, event)
+                        if request.task_id:
+                            _forward(request.task_id, event)
                         line = harness_client.describe(event)
                         if line:
                             print(f"{tag} #{event['id']} {line}", flush=True)
@@ -511,6 +516,20 @@ def _progress_from(heartbeat_details: object) -> dict[str, Any]:
     if isinstance(heartbeat_details, (list, tuple)) and heartbeat_details and isinstance(heartbeat_details[-1], dict):
         progress.update(heartbeat_details[-1])
     return progress
+
+
+def _forward(task_id: str, event: dict[str, Any]) -> None:
+    """Appends one harness server Run API event to the event service. Its event id makes a re-read a no-op."""
+    if event["type"] not in HARNESS_EVENT_TYPES:
+        return
+    events.emit(
+        event["type"],
+        event["data"] if isinstance(event.get("data"), dict) else {},
+        task_id=task_id,
+        run_id=event["run_id"],
+        seq=event["id"],
+        event_id=events.stable_id(event["run_id"], "harness", event["id"]),
+    )
 
 
 def _record(progress: dict[str, Any], event: dict[str, Any]) -> None:

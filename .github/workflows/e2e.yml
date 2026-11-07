@@ -23,6 +23,23 @@ jobs:
     name: zero-cost end-to-end check
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    # The task-api step runs the task service and event service on this Postgres.
+    services:
+      postgres:
+        image: postgres:16.4
+        env:
+          POSTGRES_USER: mh
+          POSTGRES_PASSWORD: mh
+          POSTGRES_DB: mh
+        ports:
+          - 5444:5432
+        options: >-
+          --health-cmd "pg_isready -U mh -d mh"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      MH_DATABASE_URL: postgresql://mh:mh@127.0.0.1:5444/mh
     steps:
       - uses: actions/checkout@v4
 
@@ -50,6 +67,7 @@ jobs:
           path: |
             samples/temporal-run-task/e2e-logs/
             samples/temporal-run-task/*.log
+            stack/*.log
             samples/temporal-run-task/runs/*/harness-server.log
           if-no-files-found: ignore
 

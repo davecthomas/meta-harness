@@ -21,10 +21,17 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from run_task import routing
-from run_task.activities import cleanup_run, prepare, publish, route, run_harness
-from run_task.shared import TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE
-from run_task.workflows import RunTask
+from meta_harness.run_service import events, routing
+from meta_harness.run_service.activities import cleanup_run, prepare, publish, route, run_harness
+from meta_harness.run_service.shared import TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE
+from meta_harness.run_service.task_activities import (
+    load_task,
+    record_attempt,
+    record_published,
+    record_route,
+    set_task_status,
+)
+from meta_harness.run_service.workflows import RunTask
 
 LOG_TAGS = {"temporalio.workflow": "[workflow]", "temporalio.activity": "[activity]"}
 
@@ -64,7 +71,18 @@ async def main() -> None:
         client,
         task_queue=TASK_QUEUE,
         workflows=[RunTask],
-        activities=[prepare, route, run_harness, cleanup_run, publish],
+        activities=[
+            prepare,
+            route,
+            run_harness,
+            cleanup_run,
+            publish,
+            load_task,
+            set_task_status,
+            record_route,
+            record_attempt,
+            record_published,
+        ],
         # A cancel reaches an activity only in the reply to a heartbeat. The SDK holds
         # heartbeats back to 0.8 x the heartbeat timeout by default (8 s here); this
         # sends them every second, so a cancel stops pi within about a second.
@@ -78,6 +96,8 @@ async def main() -> None:
         print(f"[worker] polling task queue {TASK_QUEUE} on {TEMPORAL_ADDRESS}", flush=True)
         await stop.wait()
         print("[worker] shutting down", flush=True)
+    # Send the events still in the outbox before the process ends.
+    events.close()
     print("[worker] stopped", flush=True)
 
 

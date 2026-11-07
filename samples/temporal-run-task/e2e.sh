@@ -2,7 +2,7 @@
 # The zero-cost end-to-end check. `make e2e` runs it, and CI runs it on every pull request.
 #
 # Every step runs the whole current path, the same as `make run` and the demos,
-# against the fake HTTP Gateway (run_task/fake_gateway.py), which makes no model
+# against the fake HTTP Gateway (src/meta_harness/run_service/fake_gateway.py), which makes no model
 # calls. It checks:
 #
 #   run           the task finishes, and pi wrote hello.txt with the fake's text into the workspace
@@ -13,7 +13,10 @@
 #                 mh/<REF> pushed back, and the pull request written to runs/<REF>/pull-request.md
 #   fallback      the run loop: tier standard's two candidates get no per-run sandbox, so the
 #                 workflow tries each, escalates to tier complex, and its candidate finishes the task
-#   egress        the per-run sandbox network rules (stack.sh egress-check)
+#   task-api      a repo task submitted through the Task API: the meta-harness run service runs it from
+#                 its task id, the task ends ready with its branch pushed, and the event service holds
+#                 its events from the task service and the run service
+#   egress       the per-run sandbox network rules (stack.sh egress-check)
 #   cleanup       no per-run sandbox container or network is left
 #
 # The Makefile sets GATEWAY=fake and the fake's port. Each step's output goes
@@ -44,8 +47,8 @@ step() {
   "$@" >"$LOGS/$name.log" 2>&1
 }
 
-expected=$(.venv/bin/python -c 'from run_task.fake_gateway import EXPECTED_TEXT; print(EXPECTED_TEXT)' 2>/dev/null) \
-  || { "$UV" sync --quiet && expected=$(.venv/bin/python -c 'from run_task.fake_gateway import EXPECTED_TEXT; print(EXPECTED_TEXT)'); }
+expected=$(../../.venv/bin/python -c 'from meta_harness.run_service.fake_gateway import EXPECTED_TEXT; print(EXPECTED_TEXT)' 2>/dev/null) \
+  || { "$UV" sync --quiet --project ../.. && expected=$(../../.venv/bin/python -c 'from meta_harness.run_service.fake_gateway import EXPECTED_TEXT; print(EXPECTED_TEXT)'); }
 
 ref="e2e-$STAMP-run"
 if step run env REF="$ref" DEMO= ./stack.sh run \
@@ -93,6 +96,30 @@ if step fallback env REF="e2e-$STAMP-fallback" DEMO=fallback MODELS_ENV=fallback
 else
   fail "fallback: expected runs 1 and 2 to move on and run 3, on tier complex, to finish" fallback
 fi
+
+# The control plane for the task-api step: Postgres, then the event service and task service.
+# It stops only what it started, so services from your own `make serve` keep running.
+PY=../../.venv/bin/python
+export MH_TASK_API_KEYS=${MH_TASK_API_KEYS:-local:local-task-key}
+export MH_SERVICE_KEYS=${MH_SERVICE_KEYS:-local-service:local-service-key}
+export MH_TASK_API_KEY=${MH_TASK_API_KEY:-local-task-key}
+export MH_SERVICE_KEY=${MH_SERVICE_KEY:-local-service-key}
+started_services=
+control_plane_up() {
+  "$PY" -c 'import psycopg; from meta_harness import db; psycopg.connect(db.database_url(), connect_timeout=3).close()' 2>/dev/null \
+    || docker compose -f ../../compose.yaml up --detach --wait postgres || return 1
+  "$PY" -m meta_harness.cli migrate || return 1
+  if ! ../../scripts/services.sh status | grep -q 'tasks: running'; then started_services=1; fi
+  ../../scripts/services.sh start
+}
+
+if step control-plane control_plane_up \
+  && step task-api env REF="e2e-$STAMP-task-api" DEMO=task-api ./stack.sh run; then
+  pass "task-api: a task submitted through the Task API ran, became ready with its branch, and every event reached the event service"
+else
+  fail "task-api: expected the task to end ready, its branch, and its events" task-api
+fi
+[ -z "$started_services" ] || ../../scripts/services.sh stop >/dev/null
 
 if step egress ./stack.sh egress-check; then
   pass "egress: every per-run sandbox network rule held"
