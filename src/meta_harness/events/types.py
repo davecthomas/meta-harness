@@ -129,6 +129,13 @@ REGISTRY: list[EventType] = [
     ),
     EventType("issue_closed", 1, _object({"ref": {"type": "string"}}, ["ref"])),
     EventType("task_unblocked", 1, _object({"ref": {"type": "string"}}, ["ref"])),
+    # Meta-harness scheduler
+    EventType(
+        "task_admitted",
+        1,
+        _object({"repo": {"type": "string"}, "areas": {"type": "array", "items": {"type": "string"}}}, ["repo"]),
+    ),
+    EventType("task_held", 1, _object({"reason": {"type": "string"}}, ["reason"])),
     # The harness server Run API event stream, as the run activity's Wait step reads it. The payload is
     # the harness server event's data; seq is its event id.
     *[
