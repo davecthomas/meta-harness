@@ -1,0 +1,35 @@
+[project]
+name = "meta-harness"
+version = "0.1.0"
+description = "The meta-harness control plane: task service, planner, run service, event service and operator console"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "click==8.1.8",
+    "psycopg[binary]==3.2.9",
+]
+
+[project.scripts]
+mh = "meta_harness.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==8.3.5",
+    "ruff==0.11.13",
+]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/meta_harness"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "db: needs Postgres at MH_DATABASE_URL (make up starts one)",
+]
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["samples", "images"]
