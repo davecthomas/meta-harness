@@ -12,6 +12,9 @@
 # The zero-cost end-to-end check still lives in samples/temporal-run-task (make e2e there).
 
 SHELL := /bin/bash
+# Local settings and secrets' locations (see .env.example). Git ignores .env.
+-include .env
+export MH_GITHUB_APPS
 STACK_DIR := $(CURDIR)/stack
 MH_POSTGRES_PORT ?= 5444
 MH_TEMPORAL_PORT ?= 7233

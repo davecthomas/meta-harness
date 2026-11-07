@@ -67,22 +67,25 @@ design). The workflow `RunTask` has five activities:
 bare git repo) or `TICKET` (a GitHub issue, `owner/name#number`), the task
 runs in a repo:
 
-1. `prepare` reads the ticket, read-only, through `gh`: its title and body
+1. `prepare` reads the ticket, read-only, through the owner's GitHub App: its title and body
    become the task, and a `## Acceptance checks` list in the body becomes
    the checks (or `CHECKS`). It fills `src/meta_harness/run_service/prompts/repo-task-v1.txt`, which puts
    the task text between markers as data, tells pi to run each check with
    `bash`, and tells it not to commit or push.
 2. `run_harness`'s Lease step clones the repo's default branch into the run's
-   own workspace, `runs/<REF>/run-<n>/workspace`, on this machine, with your
-   `gh` login. Each candidate starts from a fresh clone.
+   own workspace, `runs/<REF>/run-<n>/workspace`, on this machine, with a
+   GitHub App installation token that can only read that repo. Each candidate
+   starts from a fresh clone.
 3. pi works in the clone inside the per-run sandbox and runs the checks.
 4. `publish` commits, pushes and opens the pull request from this machine.
    For a local bare repo it pushes the branch there and writes the pull
    request to `runs/<REF>/pull-request.md`.
 
 The per-run sandbox never holds a code-host credential (design principle 9).
-The clone's remote is an SSH URL, and the container has no SSH key, no `gh`
-login and no route to port 22, so nothing pi runs can push. A finished run
+Each git command gets its token through its own environment, so the clone's
+`.git/config` holds a plain HTTPS remote and no token, and nothing pi runs can
+push. GitHub repos need `MH_GITHUB_APPS` in the repo root's `.env` (see
+`.env.example`). A finished run
 that changed nothing fails the task.
 
 The workflow's run loop (design section 6.3) runs one `run_harness` per
@@ -212,7 +215,7 @@ history.
 |---|---|
 | `src/meta_harness/run_service/workflows.py` | `RunTask`: the run loop and its Decide step, timeouts, retry policy and cancellation type for each activity, and the `current_run_id` query |
 | `src/meta_harness/run_service/activities.py` | `prepare`, `route`, `run_harness` (lease the per-run sandbox, start or re-attach, heartbeats, cancel, release) and `cleanup_run` |
-| `src/meta_harness/run_service/code_host.py` | Reads a ticket, clones the repo into a run's workspace, and publishes: commit, push, pull request, through `git` and `gh` on this machine, or a local bare repo |
+| `src/meta_harness/run_service/code_host.py` | Reads a ticket, clones the repo into a run's workspace, and publishes: commit, push, pull request, through `git` and the GitHub App on this machine, or a local bare repo |
 | `src/meta_harness/run_service/prompts/repo-task-v1.txt` | The repo-task prompt template |
 | `src/meta_harness/run_service/routing.py` | Reads harness profiles, splits a `harness:` candidate, checks every tier candidate when the worker starts, and holds the worker's `AiRouteClassifier` |
 | `config/models.json` | The router's tiers, classifier and default tier, and the `zero-cost` and `fallback-demo` environments |
@@ -869,7 +872,7 @@ Output from 2026-11-05 against ai-api-unified-http 1.19.0, lines shortened:
 ```
 
 On GitHub, `make run REPO=owner/name TASK="..."` or `make run TICKET=owner/name#12`
-does the same with `gh`. The pull request comes from `mh/<REF>`, labeled
+does the same through the owner's GitHub App. The pull request comes from `mh/<REF>`, labeled
 `ai:meta-harness`, and a ticket's pull request says `Closes owner/name#12`.
 
 On 2026-11-05 a one-sentence docs task ran against `davecthomas/meta-harness`,

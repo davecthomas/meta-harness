@@ -3,14 +3,17 @@
 Code-host access stays outside the per-run sandbox. The run activity clones
 the repo into the run's workspace on this machine before the per-run sandbox
 starts, and the publish activity commits, pushes and opens the pull request
-from this machine after pi finishes. The clone's remote is an SSH URL (gh's
-git_protocol), and the per-run sandbox holds no SSH key and no code-host
-token, so nothing pi runs can push.
+from this machine after pi finishes.
 
-A repo is either `owner/name` on GitHub, through the gh CLI and your own gh
-login, or the path of a local bare git repo. A local repo makes the whole path
-testable with no code host: the branch is pushed to it, and the pull request
-is written to runs/<REF>/pull-request.md instead of opened. `make e2e` uses one.
+A repo is `owner/name` on GitHub, reached through the owner's GitHub App
+(meta_harness.github_app), or the path of a local bare git repo. The clone
+uses an installation token limited to that repo with `contents: read`; a push
+uses one with `contents: write`. Each token reaches git through the
+environment of that one git command, so neither the workspace's .git/config
+nor the command line ever holds it, and the per-run sandbox, which mounts the
+workspace, never sees one. A local repo makes the whole path testable with no
+code host: the branch is pushed to it, and the pull request is written to
+runs/<REF>/pull-request.md instead of opened. `make e2e` uses one.
 
 A ticket is `owner/name#number`, a GitHub issue. Its title and body become the
 task, a `## Acceptance checks` list in the body becomes the checks, and the
@@ -18,10 +21,13 @@ pull request says `Closes owner/name#number`.
 """
 
 import asyncio
-import json
+import os
 import re
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
+
+from meta_harness.github_app import GitHubAppError, GitHubApps, git_auth_env
 
 PR_LABEL = "ai:meta-harness"
 COMMIT_NAME = "meta-harness"
@@ -29,9 +35,14 @@ COMMIT_EMAIL = "meta-harness@users.noreply.github.com"
 TICKET_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)$")
 GITHUB_REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
+READ_CODE = {"contents": "read"}
+WRITE_CODE = {"contents": "write"}
+READ_ISSUES = {"issues": "read"}
+OPEN_PULL_REQUEST = {"pull_requests": "write", "issues": "write"}
+
 
 class CodeHostError(RuntimeError):
-    """A git or gh command failed. `retryable` is False when repeating it would fail the same way."""
+    """A git command or code-host call failed. `retryable` is False when repeating it would fail the same way."""
 
     def __init__(self, message: str, retryable: bool = True) -> None:
         super().__init__(message)
@@ -57,18 +68,42 @@ class Published:
     created: bool
 
 
+@cache
+def apps() -> GitHubApps:
+    """One GitHubApps per process, so its installation tokens are cached across activities."""
+    return GitHubApps()
+
+
 def is_local(repo: str) -> bool:
     return repo.startswith("/")
 
 
 def check_repo(repo: str) -> None:
-    """Raises CodeHostError unless repo is owner/name or an absolute path to a bare git repo."""
+    """Raises CodeHostError unless repo is owner/name with a GitHub App, or a local bare git repo."""
     if is_local(repo):
         if not (Path(repo) / "HEAD").is_file():
             raise CodeHostError(f"{repo} is not a bare git repo", retryable=False)
         return
     if not GITHUB_REPO_PATTERN.match(repo):
         raise CodeHostError(f"REPO {repo!r} must be owner/name on GitHub, or the path of a bare git repo", False)
+    try:
+        apps().app_for(repo)
+    except GitHubAppError as err:
+        raise CodeHostError(str(err), retryable=False) from err
+
+
+async def _github(repo: str, permissions: dict[str, str], method: str, path: str, **kwargs):
+    try:
+        return await apps().call(repo, permissions, method, path, **kwargs)
+    except GitHubAppError as err:
+        raise CodeHostError(str(err), retryable=err.retryable) from err
+
+
+async def _token(repo: str, permissions: dict[str, str]) -> str:
+    try:
+        return await apps().token(repo, permissions)
+    except GitHubAppError as err:
+        raise CodeHostError(str(err), retryable=err.retryable) from err
 
 
 async def read_ticket(ref: str) -> Ticket:
@@ -77,10 +112,9 @@ async def read_ticket(ref: str) -> Ticket:
     if not match:
         raise CodeHostError(f"TICKET {ref!r} must be owner/name#number", retryable=False)
     repo, number = match.groups()
-    out = await _run("gh", "issue", "view", number, "--repo", repo, "--json", "title,body,state")
-    issue = json.loads(out)
-    if issue["state"] != "OPEN":
-        raise CodeHostError(f"{ref} is {issue['state'].lower()}, so there is nothing to do", retryable=False)
+    issue = await _github(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
+    if issue["state"] != "open":
+        raise CodeHostError(f"{ref} is {issue['state']}, so there is nothing to do", retryable=False)
     body = issue["body"] or ""
     return Ticket(ref=ref, repo=repo, title=issue["title"], body=body, checks=acceptance_checks(body))
 
@@ -107,7 +141,8 @@ async def clone(repo: str, workspace: Path) -> str:
     if is_local(repo):
         await _run("git", "clone", "--quiet", repo, str(workspace))
     else:
-        await _run("gh", "repo", "clone", repo, str(workspace), "--", "--quiet")
+        env = git_auth_env(await _token(repo, READ_CODE))
+        await _run("git", "clone", "--quiet", f"https://github.com/{repo}.git", str(workspace), env=env)
     return await _git(workspace, "rev-parse", "--abbrev-ref", "HEAD")
 
 
@@ -141,50 +176,43 @@ async def publish(
     if not files:
         return None
     commit = await _git(workspace, "rev-parse", "HEAD")
-    await _git(workspace, "push", "--quiet", "--force-with-lease", "origin", f"{branch}:{branch}")
+    env = None if is_local(repo) else git_auth_env(await _token(repo, WRITE_CODE))
+    await _git(workspace, "push", "--quiet", "--force-with-lease", "origin", f"{branch}:{branch}", env=env)
     if is_local(repo):
         created = not pr_record.exists()
         pr_record.write_text(f"# {title}\n\nbase: {base}\nhead: {branch} at {commit}\n\n{body}\n", encoding="utf-8")
         return Published(branch, base, commit, files, f"file://{pr_record}", created)
-    existing = await _pr_for(repo, branch)
-    if existing:
-        return Published(branch, base, commit, files, existing, False)
-    # The label exists after the first pull request. Creating it again fails, which is fine.
-    await _run("gh", "label", "create", PR_LABEL, "--repo", repo, "--color", "5319e7", check=False)
-    url = await _run(
-        "gh",
-        "pr",
-        "create",
-        "--repo",
-        repo,
-        "--base",
-        base,
-        "--head",
-        branch,
-        "--title",
-        title,
-        "--body",
-        body,
-        "--label",
-        PR_LABEL,
+    owner = repo.split("/", 1)[0]
+    existing = await _github(
+        repo, OPEN_PULL_REQUEST, "GET", f"/repos/{repo}/pulls", params={"head": f"{owner}:{branch}", "state": "open"}
     )
-    return Published(branch, base, commit, files, url.splitlines()[-1], True)
+    if existing:
+        return Published(branch, base, commit, files, existing[0]["html_url"], False)
+    pull = await _github(
+        repo,
+        OPEN_PULL_REQUEST,
+        "POST",
+        f"/repos/{repo}/pulls",
+        json={"title": title, "body": body, "head": branch, "base": base},
+    )
+    # Adding a label that does not exist yet creates it.
+    await _github(
+        repo, OPEN_PULL_REQUEST, "POST", f"/repos/{repo}/issues/{pull['number']}/labels", json={"labels": [PR_LABEL]}
+    )
+    return Published(branch, base, commit, files, pull["html_url"], True)
 
 
-async def _pr_for(repo: str, branch: str) -> str | None:
-    out = await _run("gh", "pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "url")
-    found = json.loads(out or "[]")
-    return found[0]["url"] if found else None
+async def _git(workspace: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    return await _run("git", "-C", str(workspace), *args, env=env)
 
 
-async def _git(workspace: Path, *args: str) -> str:
-    return await _run("git", "-C", str(workspace), *args)
-
-
-async def _run(*args: str, check: bool = True) -> str:
+async def _run(*args: str, check: bool = True, env: dict[str, str] | None = None) -> str:
     try:
         process = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, **env} if env else None,
         )
     except FileNotFoundError as err:
         raise CodeHostError(f"the {args[0]} command is not installed", retryable=False) from err

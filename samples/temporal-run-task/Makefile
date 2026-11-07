@@ -36,8 +36,11 @@
 #   make run REPO=owner/name TASK="..." CHECKS="make test"
 #   make run TICKET=owner/name#12           the issue's text and checks; the pull request closes it
 #   make repo-demo                          a repo task against a local bare repo: no code host, no PR opened
+# A GitHub repo task reaches GitHub through the owner's GitHub App, from MH_GITHUB_APPS in the repo root's .env.
 
 SHELL := /bin/bash
+-include ../../.env
+export MH_GITHUB_APPS
 
 HARNESS_DIR ?= $(abspath $(CURDIR)/../../images/harness-pi)
 HARNESS_IMAGE ?= harness-pi:dev
