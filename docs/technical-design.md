@@ -1,45 +1,5 @@
 # Meta-Harness Technical Design
 
-## State of the build
-
-Each pull request that lands a build step updates that step's row. Every build
-step past the current build step is a sketch, open to change when building it
-teaches something.
-
-| Step | State | Where |
-|---|---|---|
-| pi model client extension: pi's model calls through the HTTP Gateway | built | `images/harness-pi/extension` |
-| Harness server and the harness server Run API (section 8.2) | built | `images/harness-pi/server` |
-| Each run as a meta-harness run service Temporal workflow (the RunTask workflow), with re-attach to the harness server on retry and cancel (section 7) | built | `samples/temporal-run-task` |
-| HTTP Gateway run grants: model pin and spend limit per run (section 6.4) | built | ai-api-unified-http 1.18.0, `samples/temporal-run-task` |
-| Per-run sandbox: the harness server in a Docker container per run, which the run service run activity starts and removes with the Docker executor backend (sections 6.3, 8.1 and 8.3) | built for local development | `images/harness-pi/Dockerfile`, `samples/temporal-run-task` |
-| Per-run sandbox egress allowlist: each per-run sandbox on its own internal Docker network, with a local egress proxy that lets it reach only the HTTP Gateway, the code host and package registries (section 15, Local development) | built for local development | `samples/temporal-run-task/egress-proxy`, `make egress-check` |
-| A zero-cost end-to-end check: the RunTask workflow against a fake HTTP Gateway that makes no model calls, on every pull request | built | `samples/temporal-run-task/e2e.sh`, `make e2e`, `.github/workflows/e2e.yml` |
-| Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | built | ai-api-unified-http 1.19.0, `images/harness-pi/extension` |
-| The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity, escalation, pins and a task-wide spend limit (section 6.3) | built | ai-api-unified 3.30.0 (`AiRouteClassifier`), `samples/temporal-run-task`, `make fallback-demo` |
-| Repo work in a run: each run starts from a fresh clone of the task's repo, pi's `bash` tool runs the acceptance checks, and the run service's Publish step commits pi's changes, pushes the branch and opens the pull request with `Closes <ticket>`. The per-run sandbox holds no code-host credential (principle 9, sections 4, 6.3 and 14) | built for local development | `samples/temporal-run-task`, `make repo-demo`, `make run TICKET=owner/name#N` |
-| Operator console, first form: a cloud web app you sign in to with GitHub, over the task service, the planner with its GitHub issue tracker adapter, and the event service on Cloud SQL. Goals, the Inputs view of queued GitHub issues across the registered repos, tasks, live runs, spend, and the actions start, pause, cancel and kill switch (sections 11 and 13) | **next** | |
-| Standing cloud deployment: console, task service, planner and event service on Cloud Run, Temporal Cloud, and one Compute Engine VM running the run service worker, the egress proxy and the per-run sandboxes with the Docker executor backend. The meta-harness runs with no Claude Code session and no terminal (section 15, First cloud deployment) | planned | |
-| Meta-harness review loop and merge: a review task on another model, fix tasks, and the merge at the reviewed head SHA, each round visible in the console (section 7, Review loop) | in progress | `samples/temporal-run-task` branch `feat/review-loop`; `submit_review` built in `images/harness-pi/extension` |
-| Goals with the `fix` modality: a label across the registered repos feeds a standing queue, and the console shows each issue's state (section 11, Goals and modalities) | planned | |
-| Goals with the `feature` and `new-system` modalities: the planning task, plan and phase approval in the console, and goal success criteria (section 11) | planned | |
-| Self-hosting: a `new-system` goal whose repos are ai-api-unified, ai-api-unified-http and meta-harness, steered from the console | milestone | |
-| Pool manager, kept and restored pi sessions (section 8.4) | later | |
-| Meta-harness owned pi tools, the `bash` command allowlist, pi compaction handler, `guardrail_blocked` harness server Run API events (section 4) | later | |
-| Operator review (section 7) | sketch | |
-| Pool manager on GKE, metering service, harness analyzer, meta-harness scheduler as its own service (sections 8.4, 9, 10) | sketch | |
-
-The zero-cost end-to-end check runs on every pull request, so each later build
-step is proven end to end before it spends money on model calls.
-
-The steps up to the self-hosting milestone come first, in this order, so the
-meta-harness builds the rest of itself and the operator watches it from the console. The console comes before the review loop
-is finished because the review loop's rounds, like every later piece, must be
-visible as they land. Once pull requests merge without a person, a goal's
-issues can run in order across repos, and the planner writes each next phase
-of issues. Self-hosting tiers need stronger models than the sample's Haiku 4.5
-and gpt-4o-mini, so each goal has its own spend cap.
-
 ## 1. Scope
 
 The meta-harness runs AI coding tasks in parallel, each on its own harness profile and
@@ -2318,7 +2278,7 @@ Model text arrives once per turn; with the streaming additions in section
 scrubs secrets from the events it reads. The HTTP Gateway's per-turn
 redaction applies to what the model receives.
 
-**First form.** The first console (State of the build) serves the Overview,
+**First form.** The first console (section 19) serves the Overview,
 Inputs, Goal, Tasks, Run, Live runs and Spend views over the task service,
 the planner and the event service on Cloud SQL, with goals of the `fix` modality. The Routing,
 Pool and Configuration views, review joining and proposals follow the
@@ -2631,3 +2591,41 @@ The harness image contract test justifies a pi fork when it shows any of:
    pi model turns from a cheaper model tier changes the run's results. An A/B
    test between the two model policies on the same harness profile answers
    this.
+
+## 19. Build plan
+
+Steps after **next** are plans, and they change as the build goes.
+
+| Step | State | Where |
+|---|---|---|
+| pi model client extension: pi's model calls through the HTTP Gateway | built | `images/harness-pi/extension` |
+| Harness server and the harness server Run API (section 8.2) | built | `images/harness-pi/server` |
+| Each run as a meta-harness run service Temporal workflow (the RunTask workflow), with re-attach to the harness server on retry and cancel (section 7) | built | `samples/temporal-run-task` |
+| HTTP Gateway run grants: model pin and spend limit per run (section 6.4) | built | ai-api-unified-http 1.18.0, `samples/temporal-run-task` |
+| Per-run sandbox: the harness server in a Docker container per run, which the run service run activity starts and removes with the Docker executor backend (sections 6.3, 8.1 and 8.3) | built for local development | `images/harness-pi/Dockerfile`, `samples/temporal-run-task` |
+| Per-run sandbox egress allowlist: each per-run sandbox on its own internal Docker network, with a local egress proxy that lets it reach only the HTTP Gateway, the code host and package registries (section 15, Local development) | built for local development | `samples/temporal-run-task/egress-proxy`, `make egress-check` |
+| A zero-cost end-to-end check: the RunTask workflow against a fake HTTP Gateway that makes no model calls, on every pull request | built | `samples/temporal-run-task/e2e.sh`, `make e2e`, `.github/workflows/e2e.yml` |
+| Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | built | ai-api-unified-http 1.19.0, `images/harness-pi/extension` |
+| The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity, escalation, pins and a task-wide spend limit (section 6.3) | built | ai-api-unified 3.30.0 (`AiRouteClassifier`), `samples/temporal-run-task`, `make fallback-demo` |
+| Repo work in a run: each run starts from a fresh clone of the task's repo, pi's `bash` tool runs the acceptance checks, and the run service's Publish step commits pi's changes, pushes the branch and opens the pull request with `Closes <ticket>`. The per-run sandbox holds no code-host credential (principle 9, sections 4, 6.3 and 14) | built for local development | `samples/temporal-run-task`, `make repo-demo`, `make run TICKET=owner/name#N` |
+| Operator console, first form: a cloud web app you sign in to with GitHub, over the task service, the planner with its GitHub issue tracker adapter, and the event service on Cloud SQL. Goals, the Inputs view of queued GitHub issues across the registered repos, tasks, live runs, spend, and the actions start, pause, cancel and kill switch (sections 11 and 13) | **next** | |
+| Standing cloud deployment: console, task service, planner and event service on Cloud Run, Temporal Cloud, and one Compute Engine VM running the run service worker, the egress proxy and the per-run sandboxes with the Docker executor backend. The meta-harness runs with no Claude Code session and no terminal (section 15, First cloud deployment) | planned | |
+| Meta-harness review loop and merge: a review task on another model, fix tasks, and the merge at the reviewed head SHA, each round visible in the console (section 7, Review loop) | in progress | `samples/temporal-run-task` branch `feat/review-loop`; `submit_review` built in `images/harness-pi/extension` |
+| Goals with the `fix` modality: a label across the registered repos feeds a standing queue, and the console shows each issue's state (section 11, Goals and modalities) | planned | |
+| Goals with the `feature` and `new-system` modalities: the planning task, plan and phase approval in the console, and goal success criteria (section 11) | planned | |
+| Self-hosting: a `new-system` goal whose repos are ai-api-unified, ai-api-unified-http and meta-harness, steered from the console | milestone | |
+| Pool manager, kept and restored pi sessions (section 8.4) | later | |
+| Meta-harness owned pi tools, the `bash` command allowlist, pi compaction handler, `guardrail_blocked` harness server Run API events (section 4) | later | |
+| Operator review (section 7) | sketch | |
+| Pool manager on GKE, metering service, harness analyzer, meta-harness scheduler as its own service (sections 8.4, 9, 10) | sketch | |
+
+The zero-cost end-to-end check runs on every pull request, so each later build
+step is proven end to end before it spends money on model calls.
+
+The steps up to the self-hosting milestone come first, in this order. After
+them, the meta-harness builds the rest of itself while the operator watches
+from the console. The console comes before the review loop is finished, so the
+operator sees every review round from the first. Once pull requests merge
+without a person, a goal's issues run in order across repos, and the planner
+writes each next phase. Self-hosting needs stronger models than the sample's
+Haiku 4.5 and gpt-4o-mini, which cost more, so each goal has its own spend cap.
