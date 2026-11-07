@@ -5,7 +5,12 @@ description = "The meta-harness control plane: task service, planner, run servic
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "click==8.1.8",
+    "fastapi==0.115.12",
+    "httpx==0.28.1",
+    "jsonschema==4.23.0",
+    "psycopg-pool==3.2.6",
     "psycopg[binary]==3.2.9",
+    "uvicorn==0.34.3",
 ]
 
 [project.scripts]
@@ -14,6 +19,7 @@ mh = "meta_harness.cli:main"
 [dependency-groups]
 dev = [
     "pytest==8.3.5",
+    "pytest-timeout==2.3.1",
     "ruff==0.11.13",
 ]
 
@@ -26,6 +32,8 @@ packages = ["src/meta_harness"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A hung test fails with a traceback instead of stalling the run.
+timeout = 120
 markers = [
     "db: needs Postgres at MH_DATABASE_URL (make up starts one)",
 ]
