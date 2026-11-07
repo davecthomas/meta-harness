@@ -1669,10 +1669,6 @@ the same approval.
 
 ## Data model
 
-Each meta-harness table belongs to one owning meta-harness service (principle
-8). The owning meta-harness service keeps it in its own Postgres schema under
-its own Postgres role. No other Postgres role has a Postgres grant on it.
-
 | Owner | Entity | Fields |
 |---|---|---|
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `ready` and `review_unresolved`) |
@@ -1694,43 +1690,29 @@ its own Postgres role. No other Postgres role has a Postgres grant on it.
 | Metering service | spend | caller, period, cap_usd, spent_usd |
 | Harness analyzer | proposal | id, kind (tier, profile, task_policy), evidence, proposed_change, status (open, approved, rejected), decided_by, decided_at, config_pr_url |
 
-The metering service `model_call` table holds one row per model call inside a
-meta-harness run, so the harness analyzer can see which model answered each pi
-coding agent turn; the meta-harness run service's run row records only the
-meta-harness candidate the meta-harness run started on.
+The `run` row records the candidate a run started on, and `model_call` records
+which model answered each turn, which the harness analyzer reads. The `event`
+table is indexed on `(run_id, position)`, `(run_id, time_utc)` and
+`(event_type, time_utc)` and partitioned by time and retention class. The
+metering tables are projections of it and can be rebuilt by replaying it.
 
-The meta-harness event service indexes its `event` table on `(run_id, position)`,
-`(run_id, time_utc)` and `(event_type, time_utc)`, and partitions the `event` table by time and
-retention class. The metering service projection tables are projections of the
-`event` table, built from a metering service cursor, and can be rebuilt by
-replaying the `event` table.
-
-Meta-harness stores outside Postgres follow the same single-owner rule: the
-meta-harness scheduler owns its repo-area locks, the meta-harness run service
-owns its Temporal namespace and code-host API rate-limit buckets, the pool
-manager owns the pool manager artifact store, and the HTTP Gateway owns the
-HTTP Gateway run grants and HTTP Gateway per-run spend counters. Each Redis
-keyspace has one owning service.
+Stores outside Postgres have one owner each: the scheduler's repo-area locks,
+the run service's Temporal namespace and code-host rate-limit buckets, the
+pool manager's artifact store, and the HTTP Gateway's run grants and per-run
+spend counters.
 
 ## Observability
 
-Meta-harness domain events go to one meta-harness event service. Every
-meta-harness producer service appends to the event service and every consumer
-reads from the event service. The operator console is one of those readers.
-Operational logs, OpenTelemetry traces and OpenTelemetry metrics go to
-OpenTelemetry. Every meta-harness domain event includes the OpenTelemetry trace
-id, so meta-harness domain events and OpenTelemetry traces join on it. No one
-has to log into a machine to observe the system.
+Meta-harness domain events go to the event service, and logs, traces and
+metrics go to OpenTelemetry. Every domain event carries its trace id, so the
+two join.
 
 ### Event service
 
-The meta-harness event service is the system of record for what happened in
-every meta-harness task and every meta-harness run. The event service owns the
-`event` table, the per-type schema registry, position assignment, partitions,
-retention and the commit notification. The event service calls no
-other meta-harness component. It holds the meta-harness's own domain events
-only. The ai-api-unified library keeps its own library events, cost ledger and
-logs.
+The event service is the record of what happened in every task and run. It
+owns the `event` table, the per-type schema registry, position assignment,
+partitions, retention and the commit notification, and it calls no other
+component. ai-api-unified keeps its own library events and cost ledger.
 
 | Operation | Contract |
 |---|---|
@@ -1738,8 +1720,7 @@ logs.
 | `read(run_id, from_position)` | A meta-harness run's meta-harness domain events in `position` order, paged |
 | `tail(filter, from_position)` | A live stream of meta-harness domain events matching a filter (run, task, type, source), in `position` order, resumable from any position |
 
-Only meta-harness services append, through the event service
-client library.
+Meta-harness services append through the event service client library:
 
 | Producer | Events |
 |---|---|
@@ -1752,13 +1733,9 @@ client library.
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
 
-The operator console produces no meta-harness domain events.
-
-The event service client library buffers meta-harness domain
-events locally and retries. The outbox lives in the event service client
-library, not in each meta-harness producer service's tables. Retries are safe
-because `append` is idempotent on `event_id`. An event service outage never
-blocks a meta-harness run.
+The client library buffers events in its own outbox and retries, which is safe
+because `append` is idempotent on `event_id`, so an event service outage never
+blocks a run.
 
 After an event service append commits, the event service
 sends a commit notification, Postgres `NOTIFY`, with the run id and the new
@@ -1766,10 +1743,8 @@ highest `position`. The commit notification contains no meta-harness domain
 event data and is internal to the event service: its listeners are the event
 service's own `tail` handlers, which fetch the new event rows and stream them
 to their callers. A missed commit notification costs latency, not data, because
-the next `tail` handler fetch catches up. The design uses `NOTIFY` because it
-fires only on commit. If commit notification volume exceeds what the event
-service's Postgres database can handle, Redis can send the commit notification
-instead.
+the next `tail` handler fetch catches up. `NOTIFY` fires only on commit; Redis
+can replace it if the volume outgrows Postgres.
 
 Each meta-harness producer service sets `seq` within its own
 event stream. The event service assigns `position` on insert. Concurrent
@@ -1779,7 +1754,7 @@ suppresses repeats of meta-harness domain events it has sent. Delivery is at lea
 once, and a consuming service can drop a repeat meta-harness domain event by
 `event_id`.
 
-
+Consumers call:
 
 | Consumer | Calls |
 |---|---|
