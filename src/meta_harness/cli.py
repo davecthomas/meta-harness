@@ -305,6 +305,29 @@ def goal_sweep(goal_id: str) -> None:
 
 
 @main.group()
+def console() -> None:
+    """The console web app."""
+
+
+@console.command("serve")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8300, show_default=True)
+def console_serve(host: str, port: int) -> None:
+    """Run the console web app. MH_CONSOLE_OPERATORS is its access list; MH_CONSOLE_DEV_IDENTITY signs in locally."""
+    import os
+
+    import uvicorn
+
+    from meta_harness.console.app import create_app
+    from meta_harness.planner.client import GoalsClient
+    from meta_harness.tasks.client import TaskClient
+
+    service_key = os.environ.get("MH_SERVICE_KEY")
+    app = create_app(GoalsClient(api_key=service_key), TaskClient(api_key=service_key))
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+@main.group()
 def scheduler() -> None:
     """The meta-harness scheduler: admits queued tasks and starts their RunTask workflows."""
 

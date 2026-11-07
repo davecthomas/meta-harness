@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ goal.id }}{% endblock %}
+{% block content %}
+<h1>{{ goal.statement }}</h1>
+<div class="panel">
+  <dl class="facts">
+    <dt>Goal</dt><dd class="mono">{{ goal.id }}</dd>
+    <dt>Status</dt><dd class="status-{{ goal.status }}">{{ goal.status }}</dd>
+    <dt>Modality</dt><dd>{{ goal.modality }}</dd>
+    <dt>Label</dt><dd><span class="chip">{{ goal.label }}</span></dd>
+    <dt>Repos</dt><dd>{% for r in goal.repos %}<div class="mono">{{ r }}</div>{% endfor %}</dd>
+    <dt>Auto-merge</dt><dd>{{ "on" if goal.auto_merge else "off: pull requests wait for you" }}</dd>
+    <dt>Budget</dt><dd>{{ "$" ~ goal.max_usd if goal.max_usd else "none" }}</dd>
+    <dt>Created by</dt><dd>{{ goal.created_by }}, {{ goal.created_at[:16] | replace("T", " ") }}</dd>
+  </dl>
+</div>
+
+<h2>Actions</h2>
+<div class="actions">
+  {% if goal.status == "active" %}
+  <form method="post" action="/goals/{{ goal.id }}/sweep"><button type="submit">Take in labeled issues now</button></form>
+  <form method="post" action="/goals/{{ goal.id }}/pause"><button class="quiet" type="submit">Pause</button></form>
+  {% elif goal.status in ("paused", "stalled", "budget_exhausted") %}
+  <form method="post" action="/goals/{{ goal.id }}/resume"><button type="submit">Resume</button></form>
+  {% endif %}
+  {% if goal.status not in ("met", "canceled") %}
+  <form method="post" action="/goals/{{ goal.id }}/auto-merge"><input type="hidden" name="on" value="{{ "off" if goal.auto_merge else "on" }}"><button class="quiet" type="submit">Turn auto-merge {{ "off" if goal.auto_merge else "on" }}</button></form>
+  <form method="post" action="/goals/{{ goal.id }}/cancel"><button class="danger" type="submit">Cancel goal</button></form>
+  {% endif %}
+</div>
+
+<h2>Issues and tasks</h2>
+{% if issues %}
+<div class="table-wrap"><table>
+  <tr><th>Issue</th><th>Issue state</th><th>Task</th><th>Task status</th><th>Pull request</th><th>Waits on</th></tr>
+  {% for i in issues %}
+  <tr>
+    <td><a href="{{ i.issue_url }}">{{ i.ref }}</a></td>
+    <td>{{ i.state }}</td>
+    <td class="mono">{{ i.task_id or "" }}</td>
+    <td class="status-{{ i.task_status }}">{{ i.task_status or (i.refused_reason and "refused") or "" }}{% if i.refused_reason %}<br><span class="hint">{{ i.refused_reason }}</span>{% endif %}</td>
+    <td>{% if i.pr_url %}<a href="{{ i.pr_url }}">open</a>{% endif %}</td>
+    <td>{% for d in i.depends_on %}<div class="mono">{{ d }}</div>{% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<p class="empty">No issues yet. Label an open issue <span class="chip">{{ goal.label }}</span> in one of the goal's repos; the planner takes it in within a minute, or now with "Take in labeled issues now".</p>
+{% endif %}
+{% endblock %}

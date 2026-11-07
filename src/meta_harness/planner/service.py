@@ -19,7 +19,7 @@ from dataclasses import asdict
 from decimal import Decimal
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
@@ -87,11 +87,13 @@ def create_app(
 
     app = FastAPI(title="meta-harness planner", lifespan=lifespan)
 
-    def operator(key: str = Depends(auth.bearer)) -> str:
-        label = auth.label_for(key, operators) or auth.label_for(key, services)
-        if label is None:
-            raise HTTPException(status_code=401, detail="unknown API key")
-        return label
+    def operator(key: str = Depends(auth.bearer), actor: str | None = Header(default=None, alias="X-MH-Actor")) -> str:
+        """Who is acting: the operator key's label, or for a service key (the console) the operator it names."""
+        if label := auth.label_for(key, operators):
+            return label
+        if label := auth.label_for(key, services):
+            return actor or label
+        raise HTTPException(status_code=401, detail="unknown API key")
 
     def load(goal_id: str) -> dict:
         try:
@@ -121,6 +123,11 @@ def create_app(
         with app.state.pool.connection() as conn:
             conn.execute("SELECT 1")
         return {"status": "ok"}
+
+    @app.get("/v1/repos")
+    def registered_repos(who: str = Depends(operator)) -> dict:
+        """The repo registry: the repos a goal may name."""
+        return {"repos": [{"name": r.name, "tracker": r.tracker} for r in repos.registry().values()]}
 
     @app.post("/v1/goals", status_code=201)
     async def create(body: GoalIn, who: str = Depends(operator)) -> dict:

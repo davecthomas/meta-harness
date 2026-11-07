@@ -1,5 +1,8 @@
 """A client for the planner's goal endpoints, for the `mh` command line and the console web app."""
 
+# The class has a method named list, so annotations must not be evaluated inside its body.
+from __future__ import annotations
+
 import os
 from typing import Any
 
@@ -16,8 +19,9 @@ class GoalsClient:
         key = api_key or os.environ.get("MH_OPERATOR_KEY", "")
         self.http = httpx.Client(base_url=self.base_url, timeout=timeout, headers={"Authorization": f"Bearer {key}"})
 
-    def _call(self, method: str, path: str, **kwargs: Any) -> Any:
-        response = self.http.request(method, path, **kwargs)
+    def _call(self, method: str, path: str, actor: str | None = None, **kwargs: Any) -> Any:
+        headers = {"X-MH-Actor": actor} if actor else None
+        response = self.http.request(method, path, headers=headers, **kwargs)
         if response.status_code >= 400:
             try:
                 detail = response.json().get("detail", response.text)
@@ -26,8 +30,10 @@ class GoalsClient:
             raise TaskApiError(response.status_code, str(detail))
         return response.json()
 
-    def create(self, **goal: Any) -> dict:
-        return self._call("POST", "/v1/goals", json=goal)
+    # `actor` names the operator a service key acts for; the console passes the signed-in operator.
+
+    def create(self, actor: str | None = None, **goal: Any) -> dict:
+        return self._call("POST", "/v1/goals", actor=actor, json=goal)
 
     def list(self, statuses: list[str] | None = None) -> list[dict]:
         params = {"status": ",".join(statuses)} if statuses else {}
@@ -36,8 +42,11 @@ class GoalsClient:
     def get(self, goal_id: str) -> dict:
         return self._call("GET", f"/v1/goals/{goal_id}")
 
-    def patch(self, goal_id: str, **fields: Any) -> dict:
-        return self._call("PATCH", f"/v1/goals/{goal_id}", json=fields)
+    def patch(self, goal_id: str, actor: str | None = None, **fields: Any) -> dict:
+        return self._call("PATCH", f"/v1/goals/{goal_id}", actor=actor, json=fields)
 
-    def action(self, goal_id: str, name: str) -> dict:
-        return self._call("POST", f"/v1/goals/{goal_id}/{name}")
+    def action(self, goal_id: str, name: str, actor: str | None = None) -> dict:
+        return self._call("POST", f"/v1/goals/{goal_id}/{name}", actor=actor)
+
+    def repos(self) -> list[dict]:
+        return self._call("GET", "/v1/repos")["repos"]

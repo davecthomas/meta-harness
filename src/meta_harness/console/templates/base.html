@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}Meta-harness console{% endblock %}</title>
+  <link rel="stylesheet" href="/static/console.css">
+</head>
+<body>
+  <header>
+    <span class="brand">Meta-harness console</span>
+    <nav>
+      <a href="/">Overview</a>
+      <a href="/goals/new">New goal</a>
+    </nav>
+    {% if who %}<span class="who">Signed in as {{ who }}</span>{% endif %}
+  </header>
+  <main>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

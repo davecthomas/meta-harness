@@ -8,10 +8,12 @@ dependencies = [
     "click==8.1.8",
     "fastapi==0.115.12",
     "httpx==0.28.1",
+    "jinja2==3.1.6",
     "jsonschema==4.23.0",
     "psycopg-pool==3.2.6",
     "psycopg[binary]==3.2.9",
     "pyjwt[crypto]==2.10.1",
+    "python-multipart==0.0.20",
     "temporalio==1.34.0",
     "uvicorn==0.34.3",
 ]
