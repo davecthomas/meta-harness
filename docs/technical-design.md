@@ -12,33 +12,38 @@ the others running.
 
 ### Components
 
-| Component | What it does | Code |
-|---|---|---|
-| **Meta-harness control plane** | | `src/meta_harness/` |
-| Task service | Accepts and tracks tasks, serves the Task API, and receives code-host webhooks. | `task_service/` |
-| Planner | Turns a goal into issues and issues into tasks, and runs the goal loop. It syncs issues both ways with GitHub Issues, Jira and Linear through one adapter interface. | `planner/` |
-| Meta-harness scheduler | Picks the next task to run, by goal priority, modality, quotas, spend caps, repo-area locks and dependencies. | `scheduler/` |
-| Meta-harness run service | Runs each task as a Temporal workflow, the RunTask workflow: routes it, runs its candidates, reviews and merges its pull request. The only caller of the ai-api-unified router. | `run_service/` |
-| Pool manager | Leases per-run sandboxes by run id, keeps a warm pool, and replaces unhealthy sandboxes. | `pool/` |
-| Event service | Holds the ordered record of every meta-harness domain event. | `events/` |
-| Metering service | Computes cost, time and success per attempt and per task. | `metering/` |
-| Harness analyzer | Proposes changes to router tiers, harness profiles and task policy from metering evidence. | `analyzer/` |
-| Operator console | The cloud web app operators run and configure the meta-harness from. | `console/` |
-| **ai-api-unified library**, in the meta-harness run service and planner processes | | the `ai-api-unified` repo |
-| ai-api-unified router | Classifies a task, picks a tier, and returns the tier's ordered harness-profile-and-model candidates. | `AiRouterCompletions` |
-| **Per-run sandbox**, one container per run | | `images/harness-pi/` |
-| Harness server | Serves the harness server Run API and runs the harness in-process. | `server/` |
-| pi | The default harness: pi's coding agent, third-party (pi.dev), used unmodified. | `@earendil-works/pi-coding-agent` |
-| pi model client extension | Sends every pi model call to the HTTP Gateway. | `extension/` |
-| **HTTP Gateway** | The only model endpoint a per-run sandbox can reach. Holds the provider API keys, pins each run's model, runs guardrail checks and enforces each run's spend limit. | the `ai-api-unified-http` repo |
-| **Outside the system** | | |
-| Code host | Repositories, pull requests, checks, reviews and webhooks. | |
-| Model providers | Cloud model APIs, or local models on vLLM. | |
-| Temporal Cloud, Google Cloud | Workflow engine and infrastructure. | |
+This document is the design. Parts of it are built and parts are planned:
+the State column below says which, and the build plan at the end orders the
+rest. A section that describes a planned component says so.
 
-The meta-harness run service and the pool manager use the guardrails library,
-in-process, to scope repo access and credentials per run and to enforce spend
-caps.
+| Component | What it does | State | Code |
+|---|---|---|---|
+| **Meta-harness control plane** | | | `src/meta_harness/` |
+| Task service | Accepts and tracks tasks and serves the Task API. Code-host webhooks are planned. | built | `tasks/` |
+| Planner | Turns a goal's labeled GitHub issues into tasks with their dependencies, by a periodic sweep. Planning tasks, the `feature` and `new-system` modalities, issue write-back and Jira and Linear adapters are planned. | partly built | `planner/` |
+| Meta-harness scheduler | Admits queued tasks by priority, global concurrency, repo-area locks, closed dependencies and the goal's budget, and carries out cancels and the kill switch. Caller quotas and daily caps are planned. | built | `scheduler/` |
+| Meta-harness run service | Runs each task as a Temporal workflow, the RunTask workflow: routes it, runs its candidates, and opens its pull request. The review loop and the merge are planned. The only caller of the ai-api-unified router. | partly built | `run_service/` |
+| Pool manager | Leases per-run sandboxes by run id, keeps a warm pool, and replaces unhealthy sandboxes. Until it exists, the run activity starts each sandbox itself. | planned | |
+| Event service | Holds the ordered record of every meta-harness domain event. | built | `events/` |
+| Metering service | Computes cost, time and success per attempt and per task. | planned | |
+| Harness analyzer | Proposes changes to router tiers, harness profiles and task policy from metering evidence. | planned | |
+| Operator console | The cloud web app operators run the meta-harness from: goals, tasks, live runs, cancel and the kill switch. Its configuration, routing, spend and audit views are planned. | partly built | `console/`, `edge/` |
+| **ai-api-unified library**, in the meta-harness run service process | | | the `ai-api-unified` repo |
+| ai-api-unified router | Classifies a task, picks a tier, and returns the tier's ordered harness-profile-and-model candidates and thinking level, building none of them. | built | `AiRouteClassifier` |
+| **Per-run sandbox**, one container per run | | built | `images/harness-pi/` |
+| Harness server | Serves the harness server Run API and runs the harness in-process. | built | `server/` |
+| pi | The default harness: pi's coding agent, third-party (pi.dev), used unmodified. | built | `@earendil-works/pi-coding-agent` |
+| pi model client extension | Sends every pi model call to the HTTP Gateway. The compaction handler and owned `run_tests` and `create_issue` tools are planned. | partly built | `extension/` |
+| **HTTP Gateway** | The only model endpoint a per-run sandbox can reach. Holds the provider API keys, pins each run's model, and enforces each run's spend limit. Its guardrail checks ship off. | built | the `ai-api-unified-http` repo |
+| **Outside the system** | | | |
+| Code host | Repositories, pull requests, checks, reviews and webhooks. | | |
+| Model providers | Cloud model APIs, or local models on vLLM. | | |
+| Google Cloud | Infrastructure. Temporal runs on the deployment's VM today; Temporal Cloud is planned. | | |
+
+Per-run code-host access is scoped in the run service itself: a read-only
+clone token per run from the GitHub App, and the app's write token only for
+Publish. Spend caps live in the HTTP Gateway's run grants and the
+scheduler's goal budget.
 
 ## Principles
 
@@ -343,12 +348,14 @@ profile's `loop` settings:
 
 ### pi sessions
 
-A pi session is one conversation with pi, named by `harness_session_id`. The
-meta-harness run service picks the `harness_session_id`, one per pull request,
-when the task that opens the pull request starts. Every meta-harness fix task
-on that pull request continues the same pi session in a follow-up run. A meta-harness review task
-starts its own pi session, so the reviewing model never sees the authoring
-model's conversation.
+A pi session is one conversation with pi, named by `harness_session_id`.
+Today every run starts its own pi session, named after its `run_id`: a
+candidate that follows a failed one starts from the task, not from another
+model's transcript. With the review loop, the meta-harness run service keeps
+the session of the run that opened a pull request, and every meta-harness fix
+task on that pull request continues it in a follow-up run. A meta-harness
+review task starts its own pi session, so the reviewing model never sees the
+authoring model's conversation.
 
 | When | Where the conversation is | Owner |
 |---|---|---|
@@ -382,54 +389,51 @@ input on the harness server Run API.
 
 ### Harness profiles
 
-A harness profile sets a harness's image, prompts, tools and limits, and is
-the harness half of a router candidate.
+A harness profile sets a harness's image, tools, limits and resources, and is
+the harness half of a router candidate. `config/harness_profiles.json` holds
+them:
 
 ```json
 {
-  "version": "2026-11-03.1",
+  "version": "2026-11-07.1",
   "profiles": {
-    "pi-lean":    {"image": "harness-pi:1.0", "prompts": "lean/v3",
-                   "tools": ["read", "ls", "find", "grep", "edit", "bash", "run_tests"],
-                   "loop": {"max_turns": 60, "plan_first": false,
-                            "compaction": {"reserve_tokens": 16384, "keep_recent_tokens": 20000}},
-                   "context_files": false,
-                   "max_minutes": 20, "budget_multiplier": 3,
-                   "resources": {"cpu": 2, "memory_gb": 4}},
-    "pi-careful": {"image": "harness-pi:1.0", "prompts": "careful/v2",
-                   "tools": "*",
-                   "loop": {"max_turns": 200, "plan_first": true, "test_before_pr": true,
-                            "compaction": {"reserve_tokens": 32768, "keep_recent_tokens": 40000}},
-                   "context_files": false,
-                   "max_minutes": 120, "budget_multiplier": 6,
-                   "resources": {"cpu": 4, "memory_gb": 8}},
-    "pi-review":  {"image": "harness-pi:1.0", "prompts": "review/v1",
-                   "tools": ["read", "ls", "find", "grep", "bash", "run_tests", "submit_review"],
-                   "loop": {"max_turns": 80, "plan_first": false,
-                            "compaction": {"reserve_tokens": 16384, "keep_recent_tokens": 20000}},
-                   "context_files": false,
-                   "max_minutes": 30, "budget_multiplier": 2,
-                   "resources": {"cpu": 2, "memory_gb": 4}}
+    "pi-lean":    {"image": null,
+                   "tools": ["read", "write", "edit", "ls", "find", "grep", "bash"],
+                   "max_turns": 80, "max_minutes": 45,
+                   "resources": {"cpu": 2, "memory_gb": 6},
+                   "bash_allow": ["cd", "ls", "cat", "grep", "git", "python", "uv", "poetry", "pytest", "ruff", "..."]},
+    "pi-careful": {"image": null,
+                   "tools": ["read", "write", "edit", "ls", "find", "grep", "bash"],
+                   "max_turns": 200, "max_minutes": 120,
+                   "resources": {"cpu": 2, "memory_gb": 6},
+                   "bash_allow": ["..."]}
   }
 }
 ```
 
-- `image` names the harness profile image for the per-run sandbox.
-- `prompts` names a versioned harness prompt set: system prompt, task
-  template, pi session compaction template, pull request template.
-- `loop` sets the harness loop policy: pi turn limit, whether the first pi
-  turn must produce a plan, whether tests must pass before the Publish step,
-  and `compaction`, which maps to pi's
-  `compaction.reserveTokens` and `compaction.keepRecentTokens`.
-- `context_files` decides whether pi loads `AGENTS.md` and `CLAUDE.md` from
-  the task repo.
-- `max_minutes` and `budget_multiplier` bound the run. The task policy's
-  `review` rules bound the meta-harness review loop.
-- A review harness profile such as `pi-review` has read-only tools, and the
-  meta-harness run service publishes nothing from a review run.
-- The meta-harness run service validates every harness profile at startup:
-  the harness profile image exists, the harness prompt set exists, and every
-  pi tool name is known.
+- `image` names the harness profile image for the per-run sandbox. `null`
+  uses the deployment's default, `harness-pi`, which carries Node, git,
+  Python 3.12, uv and Poetry, so a run can install and test any of the three
+  registered repos.
+- `tools` lists the pi tools the run may use.
+- `max_turns` and `max_minutes` bound the run. The harness server stops pi at
+  either, and the run activity may take `max_minutes` plus 10 minutes before
+  Temporal retries it.
+- `resources` sets the per-run sandbox's CPU and memory.
+- `bash_allow` names the programs pi's `bash` tool may run. The harness
+  server loads it as an inline pi extension whose `tool_call` handler refuses
+  any other program, and any command or process substitution, with a reason
+  pi reads as the tool's result. It keeps a run to the tools its task needs;
+  the per-run sandbox, not the list, is the security boundary.
+- The meta-harness run service checks every harness profile at startup: its
+  tools, limits, resources and allowlist, and every tier candidate's profile
+  name.
+
+Planned profile fields, not built: `prompts`, a versioned harness prompt set;
+`loop.plan_first` and `loop.test_before_pr`; `loop.compaction`, mapped to pi's
+`compaction.reserveTokens` and `compaction.keepRecentTokens`; and
+`context_files`. A review harness profile, `pi-review`, with read-only tools
+and `submit_review`, arrives with the review loop.
 
 ## Routing
 
@@ -525,17 +529,14 @@ candidates, in order.
 ```json
 "router": {
   "tiers": [
-    {"name": "trivial", "description": "Config, copy, dependency bumps, one-file mechanical edits with existing tests.",
-     "models": ["harness:pi-lean/openai-compatible:qwen3-coder-next", "harness:pi-lean/google-gemini:gemini-3.5-flash-lite"],
-     "thinking": "off"},
-    {"name": "standard", "description": "A feature or fix inside one module, with clear acceptance checks.",
-     "models": ["harness:pi-lean/claude:claude-sonnet-5", "harness:pi-careful/openai:gpt-5.6-luna"],
-     "thinking": "low"},
+    {"name": "standard", "description": "A feature or fix inside one module, with clear acceptance checks, or anything smaller: config, copy, a one-file edit.",
+     "models": ["harness:pi-lean/claude:claude-sonnet-5", "harness:pi-lean/openai:gpt-5.6-luna"],
+     "thinking": "medium"},
     {"name": "complex", "description": "Cross-module changes, migrations, concurrency, security-sensitive code, or vague requirements.",
      "models": ["harness:pi-careful/claude:claude-opus-5-5", "harness:pi-careful/openai:gpt-6-sol"],
      "thinking": "high"}
   ],
-  "classifier": {"engine": "openai-decisions", "model": "gpt-6-luna", "min_confidence": 0.7},
+  "classifier": {"engine": "openai-decisions", "min_confidence": 0.7},
   "default_tier": "standard",
   "on_exhausted": "escalate"
 }
@@ -594,7 +595,7 @@ events.
 |---|---|
 | Meta-harness run service `route` activity result | From the ai-api-unified router: `route_tier`, `route_method`, `route_confidence`, `thinking`, the ordered tier candidates, and `classifier_usd` for the ai-api-unified router classifier model call |
 | Meta-harness run service run activity Collect result | `run_id`, `sandbox_id`, the harness profile, `end_reason`, `turns`, `elapsed_ms`, the prompt cache hit rate, the run's model token totals (input, output, `cached_input_tokens`, `cache_write_5m_tokens` and `cache_write_1h_tokens`) from the harness server Run API `GET /usage`, and the dollars the HTTP Gateway counted against the run's HTTP Gateway run grant |
-| `preview_route()` | Before a run: tier, confidence and `usd_max`, used for the run's HTTP Gateway run grant spend limit |
+| The task's `max_usd` | The task's spend limit across all its runs, $10.00 when the task names none. Each run's grant gets what the task has left |
 
 The RunTask workflow writes the meta-harness run service `route` activity result as the
 meta-harness domain event `task_routed`, and each meta-harness run service run activity
@@ -624,10 +625,12 @@ review.
 - The RunTask workflow pins a configured share of eligible
   tasks to a challenger harness-profile-and-model pair, so the harness analyzer keeps current data on every harness profile
   and model. Complex and security tasks never explore.
-- A run's HTTP Gateway run grant spend limit is
-  `preview_route()`'s `usd_max` for the tier times the harness profile's
-  `budget_multiplier`, capped by the task's `max_usd`. A task's `max_usd`
-  also caps the total of its meta-harness review and fix tasks.
+- A run's HTTP Gateway run grant spend limit is what the task has left of
+  its `max_usd`, $10.00 when the task names none, after the runs before it.
+  So a task's runs together never spend more than its limit. With the review
+  loop, a task's `max_usd` also caps the total of its meta-harness review and
+  fix tasks. `preview_route()` cannot estimate a harness run, because a run's
+  turn count is unknown before it starts.
 - `reviewers` lists the meta-harness review task's
   harness-profile-and-model pairs in order. The RunTask workflow skips any
   reviewer pair whose model wrote the pull request, so a different model
@@ -644,13 +647,13 @@ task's remaining spend, its attempts so far and the task policy's limits.
 
 | Step | What happens |
 |---|---|
-| Identify | `run_id` is the RunTask workflow id, the attempt number and the tier candidate index, the same on every retry of the run activity. A meta-harness review or fix task has its own RunTask workflow id, so its runs get their own `run_id`s. |
+| Identify | `run_id` is the RunTask workflow id and the attempt number, `run-task-<task>:run-<N>`, the same on every retry of the run activity. Each candidate tried, in any tier, takes the next attempt number, so no two runs of a task share an id. A meta-harness review or fix task has its own RunTask workflow id, so its runs get their own `run_id`s. |
 | Lease | Asks the pool manager for an existing pool manager lease on `run_id` first, so a retried run activity re-attaches to a run in progress. Otherwise requests `lease(run_id, image, harness_session_id, resources)` for the harness profile's image. The pool manager response holds the per-run sandbox address, the pool manager lease TTL and the `session_state`: `new`, `kept` or `restored`. In a deployment without the pool manager, the run activity starts one per-run sandbox per run itself, with the Docker executor backend. |
 | Grant | Asks the HTTP Gateway for an HTTP Gateway run grant, which the HTTP Gateway issues and stores. The run grant holds the run id, tags, the tier candidate's inner model as a pin, the spend limit, and an expiry at `max_minutes` plus grace. Only the run grant key goes to the per-run sandbox. A retried run activity asks again with the same terms and gets a new run grant key for the live run grant. |
-| Start | When `session_state` is `new`, `POST /run` on the per-run sandbox's harness server Run API with the prompt, acceptance checks, harness profile, limits and run grant key. When it is `kept` or `restored`, `POST /followup` with the new input and its own run grant key. |
-| Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the pool manager lease TTL, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
+| Start | When `session_state` is `new`, `POST /run` on the per-run sandbox's harness server Run API with the prompt, acceptance checks, harness profile, limits, bash allowlist, the tier's thinking level and run grant key. The pi model client extension sends that thinking level on every turn; a pinned run sends none, so the HTTP Gateway's default applies. When it is `kept` or `restored`, `POST /followup` with the new input and its own run grant key. |
+| Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the harness profile's `max_minutes` plus 10 minutes, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
 | Collect | Reads the harness server's `/usage`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
-| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate fails on infrastructure, as in an HTTP Gateway outage, the RunTask workflow pauses the task to resume later. |
+| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
 | Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix task pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
 The RunTask workflow's Temporal history records every attempt, tier candidate
@@ -1690,7 +1693,7 @@ the same approval.
 | Planner | plan | goal_id, phase, drafted_issues, refused_drafts, approved_by, approved_at, created_refs |
 | Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, last_webhook_at |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
-| Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, est_usd_max (from `preview_route()`'s `usd_max`), created_at |
+| Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |
 | Meta-harness run service | operator_review | review_task_id, operator, claimed_at, verdict, findings, submitted_at, released_at |
 | Meta-harness run service | config_version | kind (tiers, profiles, task_policy), version, document, edited_by, effective_at |
 | Planner | config_version | kind (modalities, repos), version, document, edited_by, effective_at |
@@ -2121,6 +2124,8 @@ through the local egress proxy's control listener.
 | Repo work in a run: each run starts from a fresh clone of the task's repo, pi's `bash` tool runs the acceptance checks, and the meta-harness run service's Publish step commits pi's changes, pushes the branch and opens the pull request with `Closes <issue>`. The per-run sandbox holds no code-host credential | built for local development | `samples/temporal-run-task`, `make repo-demo`, `make run TICKET=owner/name#N` |
 | `submit_review`, the review run's owned pi tool | built | `images/harness-pi/extension` |
 | The clone's git directory outside the per-run sandbox mount, read-only inside it, so nothing pi writes runs on the host at Publish | built | `src/meta_harness/run_service/code_host.py`, `sandbox.py`, `tests/run_service` |
+| Runs sized for real work: Python 3.12, uv and Poetry in the sandbox image; profile limits, resources and bash allowlist; the run activity's timeout from the profile; tier models and thinking levels | built | `images/harness-pi`, `config/`, `tests/run_service/test_workflow.py` |
+
 ### Bootstrap pull requests
 
 The bootstrap ends at the point of entry: an operator signs in to the console
@@ -2140,15 +2145,18 @@ end-to-end check, so it runs on every later pull request without model calls.
    becomes a task and runs to a pull request, with no command naming the task.
 4. `feat/console-web-app-goals`, `feat/console-web-app-runs`. Then an operator
    creates a goal in the browser and watches its runs live.
-5. `feat/deploy-cloud`. Then the point of entry works: a goal created in the
-   cloud console runs its issues to pull requests.
+5. `feat/deploy-cloud` (merged). Then the cloud deployment exists: the edge
+   behind IAP and the VM with every service.
+6. `feat/real-runs` and `docs/agents-md` in ai-api-unified-http and
+   meta-harness. Then a run on any of the three repos installs it, runs its
+   tests and works within limits sized for the task, and each repo tells the
+   run its own rules. After the deploy check, the point of entry works: a goal
+   created in the cloud console runs its issues to pull requests.
 
 With `auto_merge` off, each pull request waits for an operator to merge it,
 so the point of entry needs no review loop. After it, in this order:
 `feat/code-host-webhooks`, `feat/review-loop`, `feat/merge`, `feat/takeover`,
-`feat/planner-sync`, `feat/console-web-app-inputs` and `feat/sandbox-python`.
-An `AGENTS.md` pull request in ai-api-unified-http and one in meta-harness
-merge before the first self-improving goal.
+`feat/planner-sync` and `feat/console-web-app-inputs`.
 
 | Pull request | Builds | Check |
 |---|---|---|
@@ -2162,19 +2170,20 @@ merge before the first self-improving goal.
 | `feat/console-web-app-goals` | The first console web app: goal creation, the Overview and the Goal page, calling only the REST API, with an identity outside the access list refused (merged as server-rendered pages, then replaced by the React app) | An operator creates a goal in the browser, and an account outside the access list gets 403 |
 | `feat/console-web-app-runs` | The console web app in React and TypeScript (`console/`), and the local edge that serves it and routes `/v1` as the signed-in operator. Lists read ahead as you scroll; the Tasks page shows running tasks as a list or as terminal tiles 4, 16 or 32 up, where only the tiles on screen stream, over one server-sent-event stream; the Task page shows the live run and loads older events as you scroll up; cancel and the kill switch, which the meta-harness scheduler carries out | The tiles of running tasks stream their events as they happen, and scrolling moves the stream to the tiles in view |
 | `feat/deploy-cloud` | `deploy/gcp.sh`: one VM running every control-plane service, Postgres, the Temporal dev server, Redis, the HTTP Gateway on its own configuration, the worker and its per-run sandboxes, as systemd units booted from Secret Manager; the edge on Cloud Run behind Identity-Aware Proxy with the IAP header check; the clone's git directory outside the sandbox mount (see Deployment without GKE) | `deploy/gcp.sh infra && deploy/gcp.sh edge`, then a goal created in the cloud console runs a labeled issue to a pull request, and a request without IAP credentials gets 401 |
-| `feat/deploy-managed` | Cloud SQL for the control plane's tables, Temporal Cloud for the run service namespace, a deploy on each release tag, and router tiers on stronger models than the sample's Haiku 4.5 and gpt-4o-mini | `deploy/gcp.sh update REF=v<tag>` on a tag, then the same goal check |
+| `feat/real-runs` | Python 3.12, uv and Poetry in the per-run sandbox image; harness profiles sized for these repos, with resources and a bash allowlist; the run activity's timeout from the profile; router tiers on Sonnet 5 and Opus 5.5, with each tier's thinking level sent on every turn; a $10.00 default task limit; an e2-standard-8 VM | `uv run pytest -q`, `npm test` in `images/harness-pi`, and `make e2e` in CI |
+| `feat/deploy-managed` | Cloud SQL for the control plane's tables, Temporal Cloud for the run service namespace, and a deploy on each release tag | `deploy/gcp.sh update REF=v<tag>` on a tag, then the same goal check |
 | `feat/code-host-webhooks` | The webhook endpoint: signature check, and check, merge and close deliveries as RunTask workflow signals | `make webhook-replay` |
 | `feat/review-loop` | The review task with `submit_review`, the posted review, the fix task, and the round and budget limits. The VM's disk keeps pi session directories under `harness_session_id` until the pool manager exists | `make e2e-review`: `changes`, a fix, then `clean` |
 | `feat/merge` | The merge at the reviewed head SHA, `auto_merge`, the `ready` and `review_unresolved` ends, and merge conflicts as fix tasks | `make e2e-review` ends merged |
 | `feat/takeover` | Take over, hand back and close, as audit events | `mh task take-over`, then `mh task hand-back` |
 | `feat/planner-sync` | Issue webhooks, state labels and comments, blocked tasks, refused issues, the goal's status | A test issue gets `meta-harness:running`, then `meta-harness:pr-open` |
 | `feat/console-web-app-inputs` | The Inputs page: queued issues by repo and by goal, with their states | A test issue moves from queued to merged in Inputs |
-| `feat/sandbox-python` | Python 3.12 and Poetry in the per-run sandbox image | `poetry run pytest -q -m "not nonmock"` on ai-api-unified inside a per-run sandbox |
 | `docs/agents-md` in ai-api-unified-http and meta-harness | `AGENTS.md` with the repo's test, lint and versioning rules | None |
 
 An operator sets up what the meta-harness cannot:
 
-- a Google Cloud project with billing, and a Temporal Cloud account;
+- a Google Cloud project with billing, and, with `feat/deploy-managed`, a
+  Temporal Cloud account;
 - the GitHub App, installed on ai-api-unified, ai-api-unified-http and
   meta-harness, with its private key in Secret Manager;
 - branch protection with required checks on the three repos;
