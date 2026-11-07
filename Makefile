@@ -2,7 +2,7 @@
 #
 #   make up        start Postgres (Docker Compose) and the Temporal dev server
 #   make migrate   apply every component's schema migrations
-#   make serve     start the control-plane services (event service, task service) in the background
+#   make serve     start the control-plane services (event service, task service, planner) in the background
 #   make stop      stop them
 #   make test      unit tests, plus the database tests when Postgres is up
 #   make lint      ruff
@@ -24,6 +24,9 @@ export MH_POSTGRES_PORT
 export MH_TASK_API_KEYS ?= local:local-task-key
 export MH_SERVICE_KEYS ?= local-service:local-service-key
 export MH_TASK_API_KEY ?= local-task-key
+export MH_SERVICE_KEY ?= local-service-key
+export MH_OPERATOR_KEYS ?= local-operator:local-operator-key
+export MH_OPERATOR_KEY ?= local-operator-key
 
 .PHONY: up down clean-db migrate serve stop test lint
 
