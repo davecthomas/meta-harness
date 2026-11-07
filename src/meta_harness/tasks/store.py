@@ -1,0 +1,211 @@
+"""The task service's Postgres store and the task state machine."""
+
+import uuid
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Any
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+
+TASK_TYPES = {"bug", "feature", "refactor", "dependency", "test", "security", "docs", "plan", "review", "fix"}
+# Only the meta-harness creates these.
+INTERNAL_TASK_TYPES = {"review", "fix"}
+COMPLEXITIES = {"low", "medium", "high"}
+
+# Each status and the statuses it may move to. closed, failed and canceled are terminal.
+TRANSITIONS: dict[str, set[str]] = {
+    "queued": {"running", "blocked", "canceled"},
+    "blocked": {"queued", "canceled"},
+    "running": {"queued", "taken_over", "ready", "review_unresolved", "closed", "failed", "canceled"},
+    "taken_over": {"running", "closed", "canceled"},
+    "ready": {"closed", "canceled"},
+    "review_unresolved": {"closed", "canceled"},
+    "closed": set(),
+    "failed": set(),
+    "canceled": set(),
+}
+TERMINAL = {status for status, nexts in TRANSITIONS.items() if not nexts}
+COLUMNS = (
+    "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
+    "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
+    "pr_url, head_sha, created_at, updated_at"
+)
+
+
+class TaskError(ValueError):
+    """A request the task service refuses. The message says why."""
+
+
+class NotFound(LookupError):
+    pass
+
+
+@dataclass
+class NewTask:
+    external_ref: str
+    repo: str
+    task_type: str
+    priority: int
+    title: str
+    description: str
+    acceptance_checks: list[str]
+    parent_task_id: str | None = None
+    goal_id: str | None = None
+    depends_on: list[str] | None = None
+    paths: list[str] | None = None
+    complexity: str | None = None
+    max_tier: str | None = None
+    max_usd: Decimal | None = None
+    pin: str | None = None
+
+
+def new_task_id() -> str:
+    return f"t-{uuid.uuid4().hex[:12]}"
+
+
+def check(task: NewTask, *, internal: bool) -> None:
+    if task.task_type not in TASK_TYPES:
+        raise TaskError(f"task_type {task.task_type!r} is not one of {sorted(TASK_TYPES)}")
+    if task.task_type in INTERNAL_TASK_TYPES and not internal:
+        raise TaskError(f"only the meta-harness creates {task.task_type} tasks")
+    if task.task_type in INTERNAL_TASK_TYPES and not task.parent_task_id:
+        raise TaskError(f"a {task.task_type} task needs parent_task_id")
+    if task.complexity is not None and task.complexity not in COMPLEXITIES:
+        raise TaskError(f"complexity {task.complexity!r} is not one of {sorted(COMPLEXITIES)}")
+    if not task.acceptance_checks:
+        raise TaskError("a task needs at least one acceptance check")
+
+
+def create(conn: psycopg.Connection, caller: str, task: NewTask, *, internal: bool = False) -> tuple[dict, bool]:
+    """Create a task, or return the caller's existing one with that external_ref. Returns (task, created)."""
+    check(task, internal=internal)
+    status = "blocked" if task.depends_on else "queued"
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"INSERT INTO tasks.task (id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, "
+            f"priority, title, description, acceptance_checks, paths, complexity, max_tier, max_usd, pin, status) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"ON CONFLICT (caller, external_ref) DO NOTHING RETURNING {COLUMNS}",
+            (
+                new_task_id(),
+                caller,
+                task.external_ref,
+                task.repo,
+                task.task_type,
+                task.parent_task_id,
+                task.goal_id,
+                task.depends_on or [],
+                task.priority,
+                task.title,
+                task.description,
+                Jsonb(task.acceptance_checks),
+                task.paths or [],
+                task.complexity,
+                task.max_tier,
+                task.max_usd,
+                task.pin,
+                status,
+            ),
+        )
+        row = cur.fetchone()
+        if row is not None:
+            return _jsonable(row), True
+        cur.execute(
+            f"SELECT {COLUMNS} FROM tasks.task WHERE caller = %s AND external_ref = %s", (caller, task.external_ref)
+        )
+        return _jsonable(cur.fetchone()), False
+
+
+def get(conn: psycopg.Connection, task_id: str) -> dict:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT {COLUMNS} FROM tasks.task WHERE id = %s", (task_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise NotFound(task_id)
+    return _jsonable(row)
+
+
+def find(conn: psycopg.Connection, caller: str | None, external_ref: str) -> dict:
+    with conn.cursor(row_factory=dict_row) as cur:
+        if caller is None:
+            cur.execute(f"SELECT {COLUMNS} FROM tasks.task WHERE external_ref = %s", (external_ref,))
+        else:
+            cur.execute(
+                f"SELECT {COLUMNS} FROM tasks.task WHERE caller = %s AND external_ref = %s", (caller, external_ref)
+            )
+        row = cur.fetchone()
+    if row is None:
+        raise NotFound(external_ref)
+    return _jsonable(row)
+
+
+def list_tasks(
+    conn: psycopg.Connection, caller: str | None, statuses: list[str] | None, goal_id: str | None, limit: int
+) -> list[dict]:
+    clauses, params = [], []
+    if caller is not None:
+        clauses.append("caller = %s")
+        params.append(caller)
+    if statuses:
+        clauses.append("status = ANY(%s)")
+        params.append(statuses)
+    if goal_id:
+        clauses.append("goal_id = %s")
+        params.append(goal_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"SELECT {COLUMNS} FROM tasks.task {where} ORDER BY priority DESC, created_at LIMIT %s", [*params, limit]
+        )
+        return [_jsonable(row) for row in cur.fetchall()]
+
+
+def set_status(
+    conn: psycopg.Connection, task_id: str, status: str, reason: str | None = None, **fields: Any
+) -> tuple[dict, str]:
+    """Move a task to a new status, with any of pr_url, head_sha and owner. Returns (task, previous status)."""
+    if status not in TRANSITIONS:
+        raise TaskError(f"unknown status {status!r}")
+    allowed = {"pr_url", "head_sha", "owner"}
+    if set(fields) - allowed:
+        raise TaskError(f"set_status takes only {sorted(allowed)}")
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT status FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        previous = row["status"]
+        if status != previous and status not in TRANSITIONS[previous]:
+            raise TaskError(f"a {previous} task cannot become {status}")
+        sets = ["status = %s", "status_reason = %s", "updated_at = now()"]
+        params: list[Any] = [status, reason]
+        for name, value in fields.items():
+            sets.append(f"{name} = %s")
+            params.append(value)
+        cur.execute(f"UPDATE tasks.task SET {', '.join(sets)} WHERE id = %s RETURNING {COLUMNS}", [*params, task_id])
+        return _jsonable(cur.fetchone()), previous
+
+
+def request_cancel(conn: psycopg.Connection, task_id: str, reason: str) -> tuple[dict, str]:
+    """Cancel a task that has not started, or flag a running one for the meta-harness run service to stop."""
+    task = get(conn, task_id)
+    if task["status"] in TERMINAL:
+        raise TaskError(f"the task is already {task['status']}")
+    if task["status"] in {"queued", "blocked", "ready", "review_unresolved"}:
+        return set_status(conn, task_id, "canceled", reason)
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"UPDATE tasks.task SET cancel_requested = true, updated_at = now() WHERE id = %s RETURNING {COLUMNS}",
+            (task_id,),
+        )
+        return _jsonable(cur.fetchone()), task["status"]
+
+
+def _jsonable(row: dict) -> dict:
+    for key in ("created_at", "updated_at"):
+        row[key] = row[key].isoformat()
+    if row["max_usd"] is not None:
+        row["max_usd"] = str(row["max_usd"])
+    return row

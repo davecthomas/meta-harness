@@ -24,7 +24,6 @@ import psycopg
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
-from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from meta_harness import db
@@ -101,7 +100,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        pool = ConnectionPool(url, min_size=1, max_size=10, open=True)
+        pool = db.pool(url)
         with pool.connection() as conn:
             store.sync_registry(conn)
         signal = CommitSignal(url)
