@@ -1866,11 +1866,9 @@ profile and model whose cache hit rate falls below its configured floor.
 
 ## Deployment
 
-The meta-harness runs on Google Cloud, one GCP project per environment. Every
-managed service has one owning meta-harness component, and
-Workload Identity enforces the same rule at the infrastructure layer. The
-ai-api-unified library runs in-process in the meta-harness run service pods
-and the ai-api-unified-http HTTP Gateway pods.
+The meta-harness runs on Google Cloud, one project per environment. Workload
+Identity gives each managed service one owning component. The ai-api-unified
+library runs in-process in the run service and HTTP Gateway pods.
 
 ```mermaid
 flowchart TB
@@ -1936,27 +1934,24 @@ flowchart TB
 
 ### First cloud deployment
 
-The full deployment above is the target. The first deployment, which gets the
-meta-harness running on its own with the console as its control point, uses
-managed services where they exist and one VM where the design's pool manager
-is not built yet:
+A smaller deployment runs the same services without GKE and the pool manager:
+managed services, plus one VM for the per-run sandboxes.
 
 | Component | Runs on | Notes |
 |---|---|---|
-| Operator console | Cloud Run | GitHub sign-in, one allowed account to start |
+| Operator console | Cloud Run | GitHub sign-in |
 | Task service, planner, event service | Cloud Run, Cloud SQL for PostgreSQL | The Task API, the goal loop and the GitHub issue tracker adapter, code-host webhooks, the event table |
-| HTTP Gateway | Cloud Run | ai-api-unified-http, already deployed |
+| HTTP Gateway | Cloud Run | ai-api-unified-http |
 | Temporal | Temporal Cloud | The run service namespace |
-| Run service worker, egress proxy, per-run sandboxes | One Compute Engine VM with Docker | The Docker executor backend from `samples/temporal-run-task`, as a systemd service that restarts on failure and on reboot |
+| Run service worker, egress proxy, per-run sandboxes | One Compute Engine VM with Docker | The Docker executor backend, as a systemd service that restarts on failure and on reboot |
 | Code host | A GitHub App on the registered repos | Issue and pull request webhooks keep the Inputs view live without polling; read-only clone tokens per run; the run service's app token for every code-host write |
 
-The VM is the one piece GKE and the pool manager replace later, behind the
-same run service interfaces. Everything an operator does goes through the
-console; nothing requires a terminal or a coding-agent session.
+GKE and the pool manager replace the VM behind the same run service
+interfaces.
 
 ### Compute
 
-- **One GKE Autopilot cluster**, private and regional.
+- One private, regional GKE Autopilot cluster.
 - One Deployment per meta-harness component: the
   meta-harness task service, the meta-harness scheduler, the meta-harness run
   service Temporal workers, the pool manager, the event service, the metering
@@ -1977,9 +1972,6 @@ console; nothing requires a terminal or a coding-agent session.
   the pool manager's sandbox lease record, over mutual TLS. No load balancer
   sits in front of the per-run sandboxes, because each run talks to exactly
   one per-run sandbox pod.
-- Per-run sandboxes need GKE (Technology). The
-  ai-api-unified-http HTTP Gateway is the one component that could move to
-  Cloud Run later.
 - A GPU node pool runs vLLM behind the HTTP Gateway,
   as an `openai-compatible` ai-api-unified completions engine in the
   ai-api-unified `models.json` configuration.
@@ -1993,18 +1985,17 @@ console; nothing requires a terminal or a coding-agent session.
 | Memorystore for Redis | Standard tier with a replica. One key prefix per owning component. The HTTP Gateway keeps HTTP Gateway run grants and HTTP Gateway per-run spend counters. The meta-harness scheduler keeps repo-area locks. The meta-harness run service keeps code-host API rate-limit token buckets. The event service keeps a commit notification fallback, unused while Postgres `NOTIFY` suffices. | Memorystore failover keeps the data. If Memorystore loses the HTTP Gateway's spend counters or run grants, the HTTP Gateway fails closed. The HTTP Gateway then rejects model turns for any run it cannot verify or meter. Those runs end, and the meta-harness run service retries them as new attempts. If Memorystore loses the meta-harness scheduler's repo-area locks, the meta-harness scheduler stops admitting tasks until it rebuilds the locks from the run service's active runs. |
 | Cloud Storage | One bucket per owning component. The pool manager's Cloud Storage artifact bucket holds pi session directories under `harness_session_id` and per-run sandbox logs. The meta-harness run service's bucket holds run artifacts, and the event service's bucket holds event exports. | The pool manager's sandbox drain step retries artifact collection. A per-run sandbox stays in `draining` until the pool manager saves the per-run sandbox's artifacts to the pool manager's bucket or a limit passes. Follow-up tasks that need a saved pi session wait. |
 | Artifact Registry | Every container image: the per-run sandbox harness image and one image per meta-harness control-plane component. | Pods cannot pull uncached images. Running meta-harness services and warm per-run sandboxes keep running, and image rollover pauses. |
-| Secret Manager | Secret Manager mounts each secret only into its owning component's pods. Model provider API keys go to the HTTP Gateway, except the ai-api-unified router classifier's provider API key. The ai-api-unified router classifier's provider API key goes to the meta-harness run service. The meta-harness run service also receives an HTTP Gateway API key. The run service run activity uses that HTTP Gateway API key to request and revoke HTTP Gateway run grants. | Secrets load into pods at pod start, so a Secret Manager outage blocks new pods only. |
+| Secret Manager | Secret Manager mounts each secret only into its owning component's pods. Model provider API keys go to the HTTP Gateway, except the ai-api-unified router classifier's provider API key. The classifier's provider API key goes to the run service and the planner. The meta-harness run service also receives an HTTP Gateway API key. The run service run activity uses that HTTP Gateway API key to request and revoke HTTP Gateway run grants. | Secrets load into pods at pod start, so a Secret Manager outage blocks new pods only. |
 | Cloud NAT and Secure Web Proxy | All egress from the GKE cluster. The Secure Web Proxy enforces the per-run sandbox egress allowlist. | Fails closed: per-run sandbox egress stops, runs fail on code-host clone or push, and the meta-harness run service retries them. No bypass route exists. |
 
-### Network and identity
+### Network
 
 - The GKE cluster is private in its own VPC, with Cloud NAT for
   egress.
 - The Secure Web Proxy allows the HTTP Gateway's
   internal load balancer address, the code host and package registries, and
-  nothing else. A per-run sandbox never reaches a model provider. The
-  `sandbox` namespace's default-deny NetworkPolicy enforces the same limit
-  inside the GKE cluster.
+  nothing else. The `sandbox` namespace's default-deny NetworkPolicy enforces
+  the same limit inside the GKE cluster.
 - An internal HTTPS load balancer fronts the
   ai-api-unified-http HTTP Gateway.
 - An external HTTPS load balancer with
@@ -2023,8 +2014,8 @@ console; nothing requires a terminal or a coding-agent session.
   with no Google Cloud permissions.
 - Memorystore has no per-prefix IAM, so each owning
   component's Redis client wrapper enforces that component's key prefix.
-- **HTTP Gateway run grants** are application-level: a run grant key is not
-  a Google Cloud credential. The HTTP Gateway API key that the run service run
+- A run grant key is an application credential of the HTTP Gateway, with no
+  Google Cloud permissions. The HTTP Gateway API key that the run service run
   activity uses to request and revoke run grants reaches only the meta-harness
   run service pods, through Secret Manager.
 
