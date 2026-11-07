@@ -1454,73 +1454,62 @@ Each caller authenticates with its own Task API key, which sets its
 concurrency quota and daily spend cap. A unique index on `(caller,
 external_ref)` deduplicates submissions and serves the `external_ref` lookup.
 
-### Goals and modalities
+### Goals
 
-A goal is what the meta-harness works toward, and what the operator console
-tracks. Its tasks come from GitHub issues across one or more registered
-repos. Several goals run side by side, joint or independent, and compete for
-run capacity by priority. A goal has:
+A goal holds the work toward one outcome: its tasks come from GitHub issues
+across one or more registered repos. Goals run side by side and compete for run
+capacity by priority.
 
 | Field | Meaning |
 |---|---|
-| `modality` | `fix`, `feature` or `new-system`. Picks the goal's rules below. Left unset, the planner classifies it from the statement, and an operator can override it |
-| `repos` | The registered repos the goal may change (`config/repos.json`) |
-| `label` | The GitHub issue label that queues an issue for this goal, in any of its repos |
 | `statement` | What the goal is, in prose. The planning task reads it |
-| `success_criteria` | Checks the planner evaluates to decide whether the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a code-host check name |
-| `latitude` | 0 to 1: how far the planner may go beyond what the goal names. Left unset, the modality's default |
-| `max_usd`, `priority` | One budget and one priority for every task the goal queues, review and fix tasks included |
-| `status` | `active`, `paused`, `met`, `stalled`, `budget_exhausted`, `canceled` |
+| `repos` | The registered repos the goal may change |
+| `label` | The GitHub issue label that queues an issue for this goal, in any of its repos |
+| `modality` | `fix`, `feature` or `new-system`, which picks the goal's rules. The planner classifies it when it is unset |
+| `latitude` | 0 to 1: how far the planner may go beyond what the goal names. The modality's default when unset |
+| `success_criteria` | Checks the planner evaluates to decide the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a check name |
+| `max_usd`, `priority` | One budget and one priority for all the goal's tasks, review and fix tasks included |
+| `status` | `planning`, `active`, `paused`, `met`, `stalled`, `budget_exhausted` or `canceled` |
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/v1/goals` | Create a goal. Only `statement`, `repos` and `label` are required: the planner decides the rest. A `feature` or `new-system` goal starts in `planning` and waits for approval |
-| GET | `/v1/goals/{id}` | The goal, its issues across repos with each one's state and dependencies, its plan or phases, its criteria's live state, and its spend |
+| POST | `/v1/goals` | Create a goal from `statement`, `repos` and `label`; the planner sets the rest. A `feature` or `new-system` goal starts in `planning` |
+| GET | `/v1/goals/{id}` | The goal, its issues with their states and dependencies, its plan or phases, its criteria and its spend |
 | POST | `/v1/goals/{id}/approve` | Approve the pending plan or phase |
 | POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Steer the goal |
 
-For every active goal the planner runs this loop, and the
-modality decides each step:
+For every active goal the planner runs a loop:
 
-1. Open issues with the goal's label in the goal's repos become
-   tasks, one issue each, `external_ref` `github:<owner>/<repo>#<number>`.
-   The planner refuses an issue in a repo the goal does not list and says why
-   in a comment on the issue.
-2. The RunTask workflow routes and runs each task,
-   under the modality's routing floor and ceiling.
-3. The review loop reviews each pull request
-   to the modality's bar and merges it, closing its issue.
-4. When the goal's issues are all closed, or a phase ends, the
-   planner evaluates the success criteria.
-5. Criteria met: the goal is `met`. Not met and work remains: the
-   loop continues. Not met and nothing is queued: a `fix` goal waits for
-   issues, and a `feature` or `new-system` goal tickets a planning task to
-   plan the next step.
+1. Each open issue with the goal's label in one of its repos becomes a task,
+   with `external_ref` `github:<owner>/<repo>#<number>`. An issue in another
+   repo is refused, with a comment saying why.
+2. The RunTask workflow routes and runs each task within the modality's
+   routing floor and ceiling.
+3. The review loop reviews each pull request to the modality's bar, merges it
+   and so closes its issue.
+4. When the goal's issues are closed, or a phase ends, the planner evaluates
+   the success criteria.
+5. If they pass, the goal is `met`. If work is still queued, the loop goes on.
+   If nothing is queued, a `fix` goal waits for issues, and a `feature` or
+   `new-system` goal gets a planning task for its next step.
 
-The system decides everything a goal leaves unset,
-and an operator overrides what they want to. A goal needs only its statement,
-repos and label. The planner then classifies the statement's modality with the
-ai-api-unified classifier, the same `classify_choice` call the ai-api-unified
-router uses to pick a tier, with the three modalities as the
-choices and each modality's `description` from `config/modalities.json` as
-what the classifier reads. The classification has a confidence. At or
-above `modalities.classifier.min_confidence` the planner sets the modality and
-goes on. Below it, or when the classifier refuses, the planner sets the
-modality to `feature`, the middle one, and lists the goal in the console's
-"needs you" list as "modality uncertain". The operator confirms or changes it
-with one click, and the goal does not wait for that. The classifier
-also sets the latitude when the goal leaves it unset: the modality's default,
-moved up when the statement asks for open-ended improvement ("keep
-improving", "find what else needs doing") and down when it names an exact
-change. The planner records every classification as `goal_classified`, with
-its confidence and the statement, so the harness analyzer can measure how
-often operators overrode it. An operator sets or changes the modality and the
-latitude on the Goal view at any time; a change of modality on an active goal
-takes effect at the next planning task, and the current tasks finish under
-the rules they started with.
+A goal needs only its statement, repos and label. The planner classifies the
+statement's modality with the ai-api-unified classifier's `classify_choice`,
+the call the router uses to pick a tier, reading each modality's
+`description`. At or above `classifier.min_confidence` it sets the modality;
+below it, or on a refusal, it sets `feature` and lists the goal as "modality
+uncertain" in the console, where an operator confirms or changes it without
+holding the goal up. The classifier also sets an unset latitude, starting from
+the modality's default and moving it up for a statement that asks for
+open-ended improvement and down for one that names an exact change. Each
+classification is recorded as `goal_classified` with its confidence, so the
+harness analyzer can measure how often operators override it. An operator can
+change the modality or the latitude at any time; a new modality applies from
+the next planning task.
 
-Each is a configuration profile in
-`config/modalities.json`.
+#### Modalities
+
+`config/modalities.json` defines the three modalities.
 
 | | `fix` | `feature` | `new-system` |
 |---|---|---|---|
@@ -1555,7 +1544,7 @@ Each is a configuration profile in
 }
 ```
 
-
+The planner makes a task from an issue this way:
 
 | Task field | From the issue |
 |---|---|
@@ -1566,24 +1555,22 @@ Each is a configuration profile in
 | `depends_on` | `Depends on: <issue>` lines in the body, plus the tracker's blocked-by links |
 | `goal_id` | The goal |
 
-The repo registry, `config/repos.json`, lists the repos the meta-harness may
-change, each with its default branch, default acceptance checks and merge
-policy. For this project it holds `davecthomas/ai-api-unified`,
-`davecthomas/ai-api-unified-http` and `davecthomas/meta-harness`. The console
-shows which of them each goal is working in now.
+`config/repos.json`, the repo registry, lists the repos the meta-harness may
+change, with each one's default branch, default acceptance checks and merge
+policy. For this project they are `davecthomas/ai-api-unified`,
+`davecthomas/ai-api-unified-http` and `davecthomas/meta-harness`.
 
-A goal's task waits in `blocked` until every issue it depends on is
-closed. Tasks with no open dependency run in parallel under the modality's
-parallelism and the usual repo-area locks. The planner refuses a
-dependency cycle and shows the issues in it. A task that waited on
-another repo's change uses that repo's merged commit.
+A task waits in `blocked` until every issue it depends on is closed. Tasks
+with no open dependency run in parallel, within the modality's parallelism and
+the repo-area locks. The planner refuses a dependency cycle and shows its
+issues. A task that waited on another repo's change uses that repo's merged
+commit.
 
-Publishing a release and deploying stay with operators. An issue labeled `meta-harness:operator`
-belongs to the goal, and the meta-harness never runs it. The console lists it
-under "needs you", and an operator closes it after doing the work, which
-unblocks the issues that depend on it. So a goal can hold "publish
-ai-api-unified 3.31.0" between the library change and the ai-api-unified-http
-change that pins the new version:
+Operators publish releases and deploy. An issue labeled `meta-harness:operator`
+belongs to its goal, but the meta-harness never runs it: the console lists it
+as needing an operator, and closing it unblocks the issues that depend on it.
+A goal can therefore hold "publish ai-api-unified 3.31.0" between a library
+change and the ai-api-unified-http change that pins the new version:
 
 ```mermaid
 flowchart LR
@@ -1593,33 +1580,27 @@ flowchart LR
     D["meta-harness#31<br/>docs for the new option"]
 ```
 
-In this example the meta-harness runs ai-api-unified#120 and meta-harness#31
-at once, because they depend on nothing open. ai-api-unified-http#50 waits
-for an operator to close the release issue, and meta-harness#30 waits for
+Here ai-api-unified#120 and meta-harness#31 run at once. ai-api-unified-http#50
+waits for an operator to close the release issue, and meta-harness#30 waits for
 ai-api-unified-http#50 to merge.
 
-Each task's pull request says `Closes <issue>`, so the merge
-closes the issue. A task that ends without a merge (`exhausted` or
-`review_unresolved`) leaves its issue open, with a comment holding the outcome
-and the label `meta-harness:failed`, and the issues that depend on it stay
-blocked.
+Each pull request says `Closes <issue>`, so its merge closes the issue. A task
+that ends without a merge leaves its issue open, labeled `meta-harness:failed`
+with a comment holding the outcome, and the issues that depend on it stay
+blocked. An issue labeled while the goal is active joins it, including the
+issues a planning task writes.
 
-While a goal is active, the planner watches the goal's
-repos for its label through the code-host app's issue webhooks. An issue
-labeled after the goal started joins it, such as one the planning task wrote.
+A goal is `met` when its success criteria pass, and `stalled` when every open
+issue is blocked by a failed issue or waits on an operator issue, which raises
+an alert. Its `max_usd` covers every task it queued; once spent, the scheduler
+admits no more of its tasks and the goal ends `budget_exhausted`.
 
-A goal is `met` when its success criteria pass. It is
-`stalled` when every open issue is blocked by a failed issue or waits on an
-operator issue, and a meta-harness alert rule fires. Its `max_usd` covers
-every task it queued, review and fix tasks included; once spent, the
-meta-harness scheduler admits no more of the goal's tasks and the goal ends
-`budget_exhausted`.
+#### Latitude
 
-A goal's `latitude` is a number from 0 to 1 that sets how much
-scope the planner may add on its own, the way a sampling temperature sets how
-far a model may stray from the likeliest token. It applies wherever the
-planner decides what to do next: the planning task's prompt, the drafts the
-planner accepts, and the Decide step.
+A goal's `latitude`, from 0 to 1, sets how much scope the planner may add on
+its own, the way a sampling temperature sets how far a model strays from the
+likeliest token. It governs the planning task's prompt, the drafts the planner
+accepts, and the loop's decision step.
 
 | Latitude | The planner may | Example |
 |---|---|---|
@@ -1629,18 +1610,18 @@ planner accepts, and the Decide step.
 | 0.75 | Also draft improvements it finds in the goal's repos that serve the statement, as separate issues the operator sees in Inputs before they run | "Make the sample's end-to-end check faster and more thorough" |
 | 1 | Keep going on its own: when the criteria are met it proposes the next goal from what it learned, and continues under the same budget until the budget or the operator stops it | "Improve the meta-harness" |
 
-Above 0.5 every draft has a `latitude_reason`, one line on why it serves
-the statement, which the console shows beside the issue. Latitude widens only
-what the planner may propose. The merge bar, the budget, the repo list and the
-run service's sole write access to the code host stay as they are. The modality sets the default:
-`fix` 0, `feature` 0.25, `new-system` 0.5. The console shows the dial on the
-Goal view, and an operator changes it while the goal runs.
+Above 0.5 every draft carries a `latitude_reason`, one line on how it serves
+the statement, shown beside the issue in the console. Latitude changes only
+what the planner may propose; the merge bar, the budget, the repo list and the
+run service's sole write access to the code host stay fixed. The defaults are
+`fix` 0, `feature` 0.25 and `new-system` 0.5, and an operator turns the dial
+on the Goal view while the goal runs.
 
-The planner is the component that turns a goal into tasks and
-decides when a goal needs more of them. It owns the goal loop above, the
-`goal`, `plan` and `issue_link` tables, and the issue dependency graph. It is
-the only meta-harness component that talks to an issue tracker, and it does so
-through one interface, the issue tracker adapter:
+#### Planner
+
+The planner owns the goal loop, the `goal`, `plan` and `issue_link` tables and
+the issue dependency graph. It is the only component that talks to an issue
+tracker, through one adapter interface:
 
 | Adapter operation | Purpose |
 |---|---|
@@ -1654,50 +1635,37 @@ through one interface, the issue tracker adapter:
 | `webhook(payload)` | Turn a tracker's webhook into `issue_opened`, `issue_edited`, `issue_labeled`, `issue_closed` events, so the Inputs view and the goal loop never poll |
 | `sweep(repo, label, since)` | Issues changed since a time, for the reconciliation that catches a missed webhook |
 
-Issues flow both ways through the adapter. Inward, the
-planner pulls work people wrote in the trackers: an issue someone labels in
-GitHub, Jira or Linear joins its goal, and an edit to its body, labels or
-dependencies updates the task before it runs. Outward, the planner writes what
-it generated and what happened: the issues a plan drafted, each task's state
-as a label or status (`meta-harness:running`, `meta-harness:pr-open`,
-`meta-harness:failed`), the pull request link and the outcome as a comment,
-and the close on merge. The `issue_link` row is the join: one row per issue,
-holding the tracker's state and the meta-harness's, and the planner reconciles
-the two on every webhook and on a periodic sweep that catches a missed one.
-The tracker is the source of truth for what the work is; the meta-harness is
-the source of truth for what happened to it. A conflict, such as an issue
-closed by hand while its task runs, cancels the task and records why.
+The adapter syncs both ways. The planner pulls in work people write: an issue
+labeled in GitHub, Jira or Linear joins its goal, and an edit to its body,
+labels or dependencies updates the task before it runs. It writes back what it
+generated and what happened: the issues a plan drafted, each task's state as a
+label or status (`meta-harness:running`, `meta-harness:pr-open`,
+`meta-harness:failed`), the pull request link, the outcome, and the close on
+merge. One `issue_link` row per issue holds the tracker's state beside the
+meta-harness's, and the planner reconciles them on every webhook and on a
+periodic sweep. The tracker owns what the work is, and the meta-harness owns
+what happened to it. An issue closed by hand while its task runs cancels the
+task, with the reason recorded.
 
-A `ref` is tracker-qualified: `github:<owner>/<repo>#<number>`,
-`jira:<key>`, `linear:<identifier>`. Each registered repo in
-`config/repos.json` names its tracker, and for Jira or Linear the project or
-team and the field or label that names the repo an issue changes. The GitHub
-adapter is first, over the code-host app. The Jira and Linear adapters follow
-behind the same interface, and the planner, the console and the goal loop
-change nothing for them.
+A `ref` names its tracker: `github:<owner>/<repo>#<number>`, `jira:<key>` or
+`linear:<identifier>`. Each repo in `config/repos.json` names its tracker, and
+for Jira or Linear the project or team and the field or label that names an
+issue's repo. The GitHub adapter comes first, over the GitHub App; Jira and
+Linear adapters plug into the same interface.
 
-A `feature` or `new-system` goal's issues come from a
-planning task, `task_type: plan`, which the planner tickets with the goal
-statement, the modality and, for a later phase, what the earlier phases built.
-The planning run reads the goal's repos and drafts issues with its
-`create_ticket` pi extension tool: each in the repo it changes, labeled with
-the goal's label, with acceptance checks and `Depends on:` lines. The run
-writes nothing on any tracker. After the run, the planner checks
-each draft against the goal's repos and the modality's rules, refuses the
-rest with the reason, and writes the plan to the `plan` table. The goal then
-waits in `planning` until an operator approves the plan in the console, which
-is the modality's checkpoint. On approval the planner creates the issues
-through the adapter, which queues them. A `fix` goal never plans.
-
-The planner also replans. A `new-system` goal's phase that ends with its
-criteria unmet, or a task that fails and leaves dependents blocked, tickets a
-planning task with the failure as input, and the plan it drafts goes through
+A `feature` or `new-system` goal's issues come from a planning task,
+`task_type: plan`, which the planner tickets with the goal statement, the
+modality and, for a later phase, what earlier phases built. The planning run
+reads the goal's repos and drafts issues with its `create_ticket` tool, each
+in the repo it changes, labeled with the goal's label, with acceptance checks
+and `Depends on:` lines. After the run the planner checks each draft against
+the goal's repos and the modality's rules, refuses the rest with reasons, and
+stores the plan. The goal waits in `planning` until an operator approves the
+plan in the console, and then the planner creates the issues through the
+adapter. A `fix` goal never plans. When a `new-system` phase ends with its
+criteria unmet, or a failed task leaves dependents blocked, the planner
+tickets a planning task with the failure as input, and that plan goes through
 the same approval.
-
-The task service exposes the Task API over HTTP. The task service serves Task
-API task routes from its own task table and answers Task API run, profile and
-event routes by calling the meta-harness run service and the meta-harness event
-service.
 
 ## Data model
 
