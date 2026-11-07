@@ -142,8 +142,14 @@ def find(conn: psycopg.Connection, caller: str | None, external_ref: str) -> dic
 
 
 def list_tasks(
-    conn: psycopg.Connection, caller: str | None, statuses: list[str] | None, goal_id: str | None, limit: int
-) -> list[dict]:
+    conn: psycopg.Connection,
+    caller: str | None,
+    statuses: list[str] | None,
+    goal_id: str | None,
+    limit: int,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """One page of tasks, highest priority then oldest first, and how many match in all."""
     clauses, params = [], []
     if caller is not None:
         clauses.append("caller = %s")
@@ -157,9 +163,12 @@ def list_tasks(
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            f"SELECT {COLUMNS} FROM tasks.task {where} ORDER BY priority DESC, created_at LIMIT %s", [*params, limit]
+            f"SELECT {COLUMNS} FROM tasks.task {where} ORDER BY priority DESC, created_at, id LIMIT %s OFFSET %s",
+            [*params, limit, offset],
         )
-        return [_jsonable(row) for row in cur.fetchall()]
+        rows = [_jsonable(row) for row in cur.fetchall()]
+        cur.execute(f"SELECT count(*) AS n FROM tasks.task {where}", params)
+        return rows, cur.fetchone()["n"]
 
 
 def set_status(

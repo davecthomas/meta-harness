@@ -1,4 +1,11 @@
-"""The meta-harness scheduler service: an admission pass every MH_ADMISSION_SECONDS, and /health.
+"""The meta-harness scheduler service: an admission pass every MH_ADMISSION_SECONDS, and its REST API part.
+
+    GET  /v1/kill-switch     whether the kill switch is on, who changed it and why
+    POST /v1/kill-switch     turn it on or off: {"engaged": true, "reason": "..."}
+    GET  /health
+
+Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
+services with a service key, naming the operator in X-MH-Actor.
 
 Environment: MH_MAX_RUNNING (default 2), MH_ADMISSION_SECONDS (default 3),
 MH_TASKS_URL with MH_SERVICE_KEY, MH_PLANNER_URL, MH_EVENTS_URL, and the
@@ -10,15 +17,30 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel
 
+from meta_harness import auth
+from meta_harness.scheduler import admission as admission_module
 from meta_harness.scheduler.admission import Admission
 
 log = logging.getLogger("meta_harness.scheduler")
 
 
-def create_app(admission: Admission, interval: float | None = None) -> FastAPI:
+class KillSwitchIn(BaseModel):
+    engaged: bool
+    reason: str | None = None
+
+
+def create_app(
+    admission: Admission,
+    interval: float | None = None,
+    operator_keys: dict[str, str] | None = None,
+    service_keys: dict[str, str] | None = None,
+) -> FastAPI:
     every = interval if interval is not None else float(os.environ.get("MH_ADMISSION_SECONDS", "3"))
+    operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
+    services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
     state = {"passes": 0, "last_error": None}
 
     async def admit_forever() -> None:
@@ -29,6 +51,8 @@ def create_app(admission: Admission, interval: float | None = None) -> FastAPI:
                 state["last_error"] = None
                 if result.started:
                     log.info("admitted %s", ", ".join(result.started))
+                if result.canceled:
+                    log.info("canceled %s", ", ".join(result.canceled))
             except Exception as err:  # noqa: BLE001 - one failed pass must not stop admission
                 state["last_error"] = str(err)
                 log.warning("admission pass failed: %s", err)
@@ -36,17 +60,35 @@ def create_app(admission: Admission, interval: float | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        loop = asyncio.create_task(admit_forever())
+        loop = asyncio.create_task(admit_forever()) if every > 0 else None
         try:
             yield
         finally:
-            loop.cancel()
+            if loop:
+                loop.cancel()
 
     app = FastAPI(title="meta-harness scheduler", lifespan=lifespan)
+
+    def operator(key: str = Depends(auth.bearer), actor: str | None = Header(default=None, alias="X-MH-Actor")) -> str:
+        if label := auth.label_for(key, operators):
+            return label
+        if label := auth.label_for(key, services):
+            return actor or label
+        raise HTTPException(status_code=401, detail="unknown API key")
 
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok", **state}
+
+    @app.get("/v1/kill-switch")
+    def read_kill_switch(who: str = Depends(operator)) -> dict:
+        return admission_module.kill_switch()
+
+    @app.post("/v1/kill-switch")
+    def change_kill_switch(body: KillSwitchIn, who: str = Depends(operator)) -> dict:
+        switch = admission_module.set_kill_switch(body.engaged, who, body.reason)
+        admission.events.emit("kill_switch_changed", {"engaged": body.engaged, "reason": body.reason}, actor=who)
+        return switch
 
     return app
 
@@ -59,3 +101,10 @@ async def start_run_task(task_id: str) -> None:
         await start.start(task_id)
     except start.AlreadyStarted:
         pass
+
+
+async def cancel_run_task(task_id: str) -> None:
+    """Asks the task's RunTask workflow to stop. Its run activity stops pi, and the workflow marks the task canceled."""
+    from meta_harness.run_service import start
+
+    await (await start.client()).get_workflow_handle(task_id).cancel()

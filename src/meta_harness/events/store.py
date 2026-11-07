@@ -135,19 +135,39 @@ def append(conn: psycopg.Connection, events: list[NewEvent]) -> list[int]:
 
 
 def _where(filters: dict[str, str]) -> tuple[str, list[Any]]:
+    """A filter value with commas matches any of its parts, so one tail can follow many tasks."""
     clauses, params = [], []
     for column, value in filters.items():
         if column not in FILTER_COLUMNS:
             raise ValueError(f"unknown filter {column}")
-        clauses.append(f"{column} = %s")
-        params.append(value)
+        values = [v for v in value.split(",") if v]
+        if len(values) > 1:
+            clauses.append(f"{column} = ANY(%s)")
+            params.append(values)
+        else:
+            clauses.append(f"{column} = %s")
+            params.append(value)
     return ("".join(f" AND {c}" for c in clauses), params)
 
 
-def read(conn: psycopg.Connection, filters: dict[str, str], from_position: int, limit: int) -> list[dict[str, Any]]:
-    """Events after from_position that match the filters, in position order."""
+def read(
+    conn: psycopg.Connection,
+    filters: dict[str, str],
+    from_position: int,
+    limit: int,
+    before_position: int | None = None,
+) -> list[dict[str, Any]]:
+    """Events that match the filters, in position order: the first `limit` after from_position, or with
+    before_position the last `limit` before it, for paging back through a run's history."""
     where, params = _where(filters)
     with conn.cursor(row_factory=dict_row) as cur:
+        if before_position is not None:
+            cur.execute(
+                f"SELECT {COLUMNS} FROM events.event WHERE position < %s AND position > %s{where} "
+                f"ORDER BY position DESC LIMIT %s",
+                [before_position, from_position, *params, limit],
+            )
+            return [_jsonable(row) for row in reversed(cur.fetchall())]
         cur.execute(
             f"SELECT {COLUMNS} FROM events.event WHERE position > %s{where} ORDER BY position LIMIT %s",
             [from_position, *params, limit],
