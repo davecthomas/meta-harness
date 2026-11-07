@@ -7,6 +7,9 @@ Wants=redis-server.service
 User=mh
 WorkingDirectory=/opt/ai-api-unified-http
 EnvironmentFile=/etc/meta-harness/env
+# The gateway reads its own config/models.json (relative to WorkingDirectory). It must never get the
+# worker's AI_MODELS_CONFIG: that file's router names `harness` candidates, and the gateway's completions
+# factory refuses them ("Unsupported COMPLETIONS engine: 'harness'") on the first model call.
 # On all interfaces so the egress proxy container reaches it through the Docker bridge. No firewall rule
 # admits port 8080 from outside the VM.
 ExecStart=/opt/ai-api-unified-http/.venv/bin/uvicorn ai_api_unified_http.app:create_app --factory --host 0.0.0.0 --port 8080

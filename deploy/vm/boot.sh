@@ -93,7 +93,9 @@ umask 077
   echo "GATEWAY_URL=http://127.0.0.1:8080"
   echo "HTTP_REDIS_URL=redis://127.0.0.1:6379/0"
   echo "TEMPORAL_ADDRESS=127.0.0.1:7233"
-  echo "AI_MODELS_CONFIG=$MH/config/models.json"
+  # AI_MODELS_CONFIG is not shared. The worker's models.json holds the router's harness candidates, which
+  # only the classify-only router can read; the HTTP Gateway reads its own config/models.json. Each unit
+  # that needs the variable sets it (deploy/vm/units/mh-worker.service).
   echo "RUNS_DIR=$STATE/runs"
 } >"$ETC/env.new"
 secret MH_REPOS_CONFIG >"$ETC/repos.json.new"

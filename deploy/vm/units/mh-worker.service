@@ -7,6 +7,9 @@ Requires=mh-egress.service
 User=mh
 WorkingDirectory=/opt/meta-harness
 EnvironmentFile=/etc/meta-harness/env
+# The router's tiers, with their harness candidates. Only this unit reads this file: the HTTP Gateway cannot
+# build a `harness` engine, so it reads its own config/models.json.
+Environment=AI_MODELS_CONFIG=/opt/meta-harness/config/models.json
 ExecStart=/opt/meta-harness/.venv/bin/python -m meta_harness.run_service.worker
 Restart=always
 RestartSec=5
