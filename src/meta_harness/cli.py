@@ -305,26 +305,23 @@ def goal_sweep(goal_id: str) -> None:
 
 
 @main.group()
-def console() -> None:
-    """The console web app."""
+def edge() -> None:
+    """The local edge: the console web app and the REST API on one origin, as the cloud serves them."""
 
 
-@console.command("serve")
+@edge.command("serve")
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--port", default=8300, show_default=True)
-def console_serve(host: str, port: int) -> None:
-    """Run the console web app. MH_CONSOLE_OPERATORS is its access list; MH_CONSOLE_DEV_IDENTITY signs in locally."""
-    import os
+def edge_serve(host: str, port: int) -> None:
+    """Serve console/dist and forward /v1 to the owning services as the signed-in operator.
 
+    MH_CONSOLE_DEV_IDENTITY is who is signed in; MH_CONSOLE_OPERATORS is the access list.
+    """
     import uvicorn
 
-    from meta_harness.console.app import create_app
-    from meta_harness.planner.client import GoalsClient
-    from meta_harness.tasks.client import TaskClient
+    from meta_harness.edge.app import create_app
 
-    service_key = os.environ.get("MH_SERVICE_KEY")
-    app = create_app(GoalsClient(api_key=service_key), TaskClient(api_key=service_key))
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
 
 
 @main.group()
@@ -338,7 +335,7 @@ def _admission():
     from meta_harness.events.client import EventClient
     from meta_harness.planner.client import GoalsClient
     from meta_harness.scheduler.admission import Admission
-    from meta_harness.scheduler.service import start_run_task
+    from meta_harness.scheduler.service import cancel_run_task, start_run_task
     from meta_harness.tasks.client import TaskClient
 
     service_key = os.environ.get("MH_SERVICE_KEY")
@@ -348,6 +345,7 @@ def _admission():
         EventClient(source="scheduler"),
         start_run_task,
         max_running=int(os.environ.get("MH_MAX_RUNNING", "2")),
+        cancel=cancel_run_task,
     )
 
 

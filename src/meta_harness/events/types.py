@@ -136,6 +136,11 @@ REGISTRY: list[EventType] = [
         _object({"repo": {"type": "string"}, "areas": {"type": "array", "items": {"type": "string"}}}, ["repo"]),
     ),
     EventType("task_held", 1, _object({"reason": {"type": "string"}}, ["reason"])),
+    EventType(
+        "kill_switch_changed",
+        1,
+        _object({"engaged": {"type": "boolean"}, "reason": {"type": ["string", "null"]}}, ["engaged"]),
+    ),
     # The harness server Run API event stream, as the run activity's Wait step reads it. The payload is
     # the harness server event's data; seq is its event id.
     *[
