@@ -1932,7 +1932,7 @@ flowchart TB
     OTEL --> OBS
 ```
 
-### First cloud deployment
+### Deployment without GKE
 
 A smaller deployment runs the same services without GKE and the pool manager:
 managed services, plus one VM for the per-run sandboxes.
@@ -2054,8 +2054,8 @@ Steps after **next** are plans, and they change as the build goes.
 | Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | built | ai-api-unified-http 1.19.0, `images/harness-pi/extension` |
 | The RunTask workflow's run loop over the ai-api-unified router's candidates, with a run service `route` activity, escalation, pins and a task-wide spend limit | built | ai-api-unified 3.30.0 (`AiRouteClassifier`), `samples/temporal-run-task`, `make fallback-demo` |
 | Repo work in a run: each run starts from a fresh clone of the task's repo, pi's `bash` tool runs the acceptance checks, and the run service's Publish step commits pi's changes, pushes the branch and opens the pull request with `Closes <ticket>`. The per-run sandbox holds no code-host credential | built for local development | `samples/temporal-run-task`, `make repo-demo`, `make run TICKET=owner/name#N` |
-| Operator console, first form: a cloud web app you sign in to with GitHub, over the task service, the planner with its GitHub issue tracker adapter, and the event service on Cloud SQL. Goals, the Inputs view of queued GitHub issues across the registered repos, tasks, live runs, spend, and the actions start, pause, cancel and kill switch | **next** | |
-| Standing cloud deployment: console, task service, planner and event service on Cloud Run, Temporal Cloud, and one Compute Engine VM running the run service worker, the egress proxy and the per-run sandboxes with the Docker executor backend. The meta-harness runs with no Claude Code session and no terminal | planned | |
+| Operator console: the Overview, Inputs, Goal, Tasks, Run, Live runs and Spend views, over the task service, the planner with its GitHub issue tracker adapter, and the event service on Cloud SQL, for `fix` goals. The Routing, Pool and Configuration views, review joining and proposals come with the services they read | **next** | |
+| Deployment without GKE: console, task service, planner and event service on Cloud Run, Temporal Cloud, and one Compute Engine VM running the run service worker, the egress proxy and the per-run sandboxes with the Docker executor backend. The meta-harness runs with no Claude Code session and no terminal | planned | |
 | Meta-harness review loop and merge: a review task on another model, fix tasks, and the merge at the reviewed head SHA, each round visible in the console | in progress | `samples/temporal-run-task` branch `feat/review-loop`; `submit_review` built in `images/harness-pi/extension` |
 | Goals with the `fix` modality: a label across the registered repos feeds a standing queue, and the console shows each issue's state | planned | |
 | Goals with the `feature` and `new-system` modalities: the planning task, plan and phase approval in the console, and goal success criteria | planned | |
