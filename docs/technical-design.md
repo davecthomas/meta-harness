@@ -1917,9 +1917,9 @@ planner accepts, and the Decide step.
 | 1 | Keep going on its own: when the criteria are met it proposes the next goal from what it learned, and continues under the same budget until the budget or the operator stops it | "Improve the meta-harness" |
 
 Above 0.5 every draft has a `latitude_reason`, one line on why it serves
-the statement, which the console shows beside the issue. Latitude never
-loosens the modality's merge bar, the budget, the repo list or principle 9;
-it widens only what the planner may propose. The modality sets the default:
+the statement, which the console shows beside the issue. Latitude widens only
+what the planner may propose. The merge bar, the budget, the repo list and the
+run service's sole write access to the code host stay as they are. The modality sets the default:
 `fix` 0, `feature` 0.25, `new-system` 0.5. The console shows the dial on the
 Goal view, and an operator changes it while the goal runs.
 
@@ -2071,8 +2071,7 @@ client library.
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
 
-The operator console produces no meta-harness domain events (see Console
-below).
+The operator console produces no meta-harness domain events.
 
 **Write path.** The event service client library buffers meta-harness domain
 events locally and retries. The outbox lives in the event service client
