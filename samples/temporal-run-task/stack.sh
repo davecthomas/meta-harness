@@ -381,8 +381,51 @@ cmd_run() {
       check_task_events "$task_id"
       log "task $task_id is ready, branch mh/$task_id holds hello.txt, and the event service has its events"
       ;;
+    admission)
+      # Two tasks on one repo, submitted through the Task API and started by nobody here: the
+      # meta-harness scheduler (make serve at the repo root) admits them, one at a time, since both
+      # take the whole repo.
+      local origin="$RUNS_DIR/$REF/origin.git" first second
+      make_origin "$origin"
+      first=$("$PY" -m meta_harness.cli task create --ref "$REF-1" --repo "$origin" --priority 1 \
+        --title "Create hello.txt" --description "Create hello.txt containing one short friendly greeting." \
+        --check "test -s hello.txt" | awk '{print $1}')
+      second=$("$PY" -m meta_harness.cli task create --ref "$REF-2" --repo "$origin" \
+        --title "Create hello.txt again" --description "Create hello.txt containing one short friendly greeting." \
+        --check "test -s hello.txt" | awk '{print $1}')
+      [ -n "$first" ] && [ -n "$second" ] || { log "the Task API did not create both tasks"; exit 1; }
+      log "the Task API created $first and $second; waiting for the scheduler to run both"
+      wait_for_status "$first" ready
+      wait_for_status "$second" ready
+      check_in_turn "$first" "$second"
+      log "the scheduler ran $first, then $second once $first's pull request was open"
+      ;;
     *) starter ;;
   esac
+}
+
+# wait_for_status TASK_ID STATUS: polls the Task API until the task reaches STATUS, for up to 5 minutes.
+wait_for_status() {
+  local tick status
+  for tick in $(seq 1 300); do
+    status=$("$PY" -m meta_harness.cli task get "$1" | sed -n 's/.*"status": "\([a-z_]*\)".*/\1/p' | head -n 1)
+    [ "$status" = "$2" ] && { log "$1 is $2"; return 0; }
+    case "$status" in failed|canceled) log "$1 ended $status"; exit 1 ;; esac
+    sleep 1
+  done
+  log "$1 did not become $2 within 5 minutes (it is $status)"
+  exit 1
+}
+
+# check_in_turn FIRST SECOND: SECOND started running only after FIRST became ready.
+check_in_turn() {
+  local first_ready second_running
+  first_ready=$("$PY" -m meta_harness.cli events read --task "$1" --type task_status_changed \
+    | grep '"to": "ready"' | awk '{print $1}' | head -n 1)
+  second_running=$("$PY" -m meta_harness.cli events read --task "$2" --type task_status_changed \
+    | grep '"to": "running"' | awk '{print $1}' | head -n 1)
+  [ -n "$first_ready" ] && [ -n "$second_running" ] && [ "$second_running" -gt "$first_ready" ] \
+    || { log "expected $2 to start after $1 was ready (positions $first_ready and $second_running)"; exit 1; }
 }
 
 # make_origin PATH: a bare repo with one commit on main, standing in for the code host.

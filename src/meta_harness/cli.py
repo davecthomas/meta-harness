@@ -305,6 +305,61 @@ def goal_sweep(goal_id: str) -> None:
 
 
 @main.group()
+def scheduler() -> None:
+    """The meta-harness scheduler: admits queued tasks and starts their RunTask workflows."""
+
+
+def _admission():
+    import os
+
+    from meta_harness.events.client import EventClient
+    from meta_harness.planner.client import GoalsClient
+    from meta_harness.scheduler.admission import Admission
+    from meta_harness.scheduler.service import start_run_task
+    from meta_harness.tasks.client import TaskClient
+
+    service_key = os.environ.get("MH_SERVICE_KEY")
+    return Admission(
+        TaskClient(api_key=service_key),
+        GoalsClient(api_key=service_key),
+        EventClient(source="scheduler"),
+        start_run_task,
+        max_running=int(os.environ.get("MH_MAX_RUNNING", "2")),
+    )
+
+
+@scheduler.command("serve")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8304, show_default=True)
+def scheduler_serve(host: str, port: int) -> None:
+    """Run the meta-harness scheduler: an admission pass every MH_ADMISSION_SECONDS."""
+    import logging
+
+    import uvicorn
+
+    from meta_harness.scheduler.service import create_app
+
+    logging.basicConfig(level=logging.INFO, format="[scheduler] %(message)s")
+    uvicorn.run(create_app(_admission()), host=host, port=port, log_level="warning")
+
+
+@scheduler.command("admit")
+def scheduler_admit() -> None:
+    """Run one admission pass and print what it started and held."""
+    import asyncio
+
+    admission = _admission()
+    result = asyncio.run(admission.pass_once())
+    for task_id in result.started:
+        click.echo(f"started {task_id}")
+    for task_id, reason in result.held.items():
+        click.echo(f"held {task_id}: {reason}")
+    for task_id in result.released:
+        click.echo(f"released {task_id}")
+    admission.events.close()
+
+
+@main.group()
 def run() -> None:
     """The meta-harness run service: its worker, and starting a task's RunTask workflow."""
 
@@ -330,9 +385,11 @@ def run_start(task_id: str, wait: bool) -> None:
 
     try:
         workflow_id = asyncio.run(start.start(task_id))
+        click.echo(f"run: started RunTask workflow {workflow_id}")
     except start.AlreadyStarted as err:
-        raise click.ClickException(str(err)) from err
-    click.echo(f"run: started RunTask workflow {workflow_id}")
+        if not wait:
+            raise click.ClickException(str(err)) from err
+        click.echo(f"run: {err}, so this waits for it")
     if not wait:
         return
     result, outcome = asyncio.run(start.wait(task_id))

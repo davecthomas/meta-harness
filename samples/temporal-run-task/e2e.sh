@@ -16,7 +16,9 @@
 #   task-api      a repo task submitted through the Task API: the meta-harness run service runs it from
 #                 its task id, the task ends ready with its branch pushed, and the event service holds
 #                 its events from the task service and the run service
-#   egress       the per-run sandbox network rules (stack.sh egress-check)
+#   admission     two tasks on one repo, submitted through the Task API: the meta-harness scheduler
+#                 starts them, the second only after the first's pull request is open
+#   egress      the per-run sandbox network rules (stack.sh egress-check)
 #   cleanup       no per-run sandbox container or network is left
 #
 # The Makefile sets GATEWAY=fake and the fake's port. Each step's output goes
@@ -24,6 +26,10 @@
 
 set -uo pipefail
 cd "$(dirname "$0")"
+
+# The zero-cost check never reaches a real code host: every repo it uses is a local bare repo,
+# and with no GitHub App configured, nothing it starts can clone, push or open a pull request.
+unset MH_GITHUB_APPS
 
 [ "${GATEWAY:-}" = fake ] || { echo "[e2e] run this through make e2e, which uses the fake gateway"; exit 2; }
 
@@ -118,6 +124,12 @@ if step control-plane control_plane_up \
   pass "task-api: a task submitted through the Task API ran, became ready with its branch, and every event reached the event service"
 else
   fail "task-api: expected the task to end ready, its branch, and its events" task-api
+fi
+
+if step admission env REF="e2e-$STAMP-admission" DEMO=admission ./stack.sh run; then
+  pass "admission: the scheduler ran two tasks on one repo in turn, with no command starting either"
+else
+  fail "admission: expected the scheduler to run both tasks, the second after the first was ready" admission
 fi
 [ -z "$started_services" ] || ../../scripts/services.sh stop >/dev/null
 
