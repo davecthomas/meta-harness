@@ -17,6 +17,7 @@ SERVICES=(
   "tasks 8302 uv run mh tasks serve --port 8302"
   "planner 8303 uv run mh planner serve --port 8303"
   "scheduler 8304 uv run mh scheduler serve --port 8304"
+  "console 8300 uv run mh console serve --port 8300"
 )
 
 running() { [ -f "$STACK_DIR/$1.pid" ] && kill -0 "$(cat "$STACK_DIR/$1.pid")" 2>/dev/null; }
