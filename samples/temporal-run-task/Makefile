@@ -44,7 +44,7 @@ HARNESS_IMAGE ?= harness-pi:dev
 EGRESS_IMAGE ?= mh-egress-proxy:dev
 RUNS_DIR ?= $(CURDIR)/runs
 GATEWAY_DIR ?= $(abspath $(CURDIR)/../../../aiapi/ai-api-unified-http)
-# real: ai-api-unified-http from GATEWAY_DIR. fake: run_task/fake_gateway.py, which makes no model calls.
+# real: ai-api-unified-http from GATEWAY_DIR. fake: src/meta_harness/run_service/fake_gateway.py, which makes no model calls.
 GATEWAY ?= real
 # The fake binds here. CI on Linux sets 0.0.0.0, so the egress proxy container can reach it.
 FAKE_GATEWAY_HOST ?= 127.0.0.1
@@ -67,7 +67,7 @@ TEMPORAL_ADDRESS ?= localhost:$(TEMPORAL_PORT)
 TEMPORAL_UI_URL ?= http://localhost:$(shell echo $$(($(TEMPORAL_PORT) + 1000)))
 TEMPORAL_DB ?=
 WAIT_SECONDS ?= 60
-ROUTER_CONFIG ?= $(CURDIR)/config/models.json
+ROUTER_CONFIG ?= $(abspath $(CURDIR)/../../config/models.json)
 # An entry under `environments` in ROUTER_CONFIG. Empty uses the file as it is, or zero-cost with GATEWAY=fake.
 MODELS_ENV ?=
 PIN ?=
@@ -131,7 +131,7 @@ task:
 	@./stack.sh task
 
 tasks:
-	@.venv/bin/python -m run_task.tasks list
+	@../../.venv/bin/python -m meta_harness.run_service.tasks list
 
 status watch cancel:
-	@.venv/bin/python -m run_task.tasks $@ "$$REF"
+	@../../.venv/bin/python -m meta_harness.run_service.tasks $@ "$$REF"

@@ -186,6 +186,56 @@ def task_cancel(task_id: str, reason: str) -> None:
     click.echo(_task_line(t) + ("  (cancel requested)" if t["cancel_requested"] and t["status"] != "canceled" else ""))
 
 
+@main.group()
+def run() -> None:
+    """The meta-harness run service: its worker, and starting a task's RunTask workflow."""
+
+
+@run.command("worker")
+def run_worker() -> None:
+    """Run the meta-harness run service's Temporal worker."""
+    import asyncio
+
+    from meta_harness.run_service import worker
+
+    asyncio.run(worker.main())
+
+
+@run.command("start")
+@click.argument("task_id")
+@click.option("--wait", is_flag=True, help="Wait for the RunTask workflow to end, then print the task.")
+def run_start(task_id: str, wait: bool) -> None:
+    """Start the RunTask workflow for a task the task service holds."""
+    import asyncio
+
+    from meta_harness.run_service import start
+
+    try:
+        workflow_id = asyncio.run(start.start(task_id))
+    except start.AlreadyStarted as err:
+        raise click.ClickException(str(err)) from err
+    click.echo(f"run: started RunTask workflow {workflow_id}")
+    if not wait:
+        return
+    result, outcome = asyncio.run(start.wait(task_id))
+    if result is None:
+        click.echo(f"run: the RunTask workflow did not complete: {outcome}")
+    else:
+        for a in result.attempts:
+            click.echo(
+                f"run: run {a.attempt} on {a.candidate} (tier {a.tier or 'pinned'}): {a.decision}, ${a.spent_usd}"
+            )
+        click.echo(f"run: spent ${result.spent_usd}")
+    from meta_harness.tasks.client import TaskClient
+
+    import os
+
+    t = _task_call(TaskClient(api_key=os.environ.get("MH_SERVICE_KEY")).get, task_id)
+    click.echo(f"run: task {task_id} is {t['status']}" + (f", pull request {t['pr_url']}" if t["pr_url"] else ""))
+    if result is None:
+        raise SystemExit(1)
+
+
 @events.command("read")
 @click.option("--run", "run_id", default=None)
 @click.option("--task", "task_id", default=None)
@@ -200,3 +250,7 @@ def events_read(run_id, task_id, event_type, source, from_position, limit) -> No
     page = EventClient().read(from_position, limit, **_filters(run_id, task_id, event_type, source))
     for event in page["events"]:
         click.echo(_line(event))
+
+
+if __name__ == "__main__":
+    main()

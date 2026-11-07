@@ -28,10 +28,10 @@ from typing import Any
 
 from ai_api_unified import AIFactory, AiRouteClassifier
 
-from run_task.shared import Candidate
+from meta_harness.run_service.paths import REPO_ROOT
+from meta_harness.run_service.shared import Candidate
 
-SAMPLE_DIR = Path(__file__).resolve().parent.parent
-PROFILES_PATH = Path(os.environ.get("HARNESS_PROFILES") or SAMPLE_DIR / "config" / "harness_profiles.json")
+PROFILES_PATH = Path(os.environ.get("HARNESS_PROFILES") or REPO_ROOT / "config" / "harness_profiles.json")
 DEFAULT_IMAGE = os.environ.get("HARNESS_IMAGE", "harness-pi:dev")
 HARNESS_ENGINE = "harness"
 

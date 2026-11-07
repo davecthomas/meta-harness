@@ -37,11 +37,12 @@ from pathlib import Path
 
 import httpx
 
-SAMPLE_DIR = Path(__file__).resolve().parent.parent
+from meta_harness.run_service.paths import REPO_ROOT
+
 IMAGE = os.environ.get("HARNESS_IMAGE", "harness-pi:dev")
 # The HTTP Gateway as the egress proxy reaches it. host.docker.internal is this machine.
 SANDBOX_GATEWAY_URL = os.environ.get("SANDBOX_GATEWAY_URL", "http://host.docker.internal:8080")
-RUNS_DIR = Path(os.environ.get("RUNS_DIR") or SAMPLE_DIR / "runs").resolve()
+RUNS_DIR = Path(os.environ.get("RUNS_DIR") or REPO_ROOT / "runs").resolve()
 HEARTBEAT_SECONDS = os.environ.get("SANDBOX_HEARTBEAT_SECONDS", "2")
 READY_SECONDS = float(os.environ.get("SANDBOX_READY_SECONDS", "60"))
 # Every container and network this sample starts carries this label, so `make down` can find leftovers.

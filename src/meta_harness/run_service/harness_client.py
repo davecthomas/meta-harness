@@ -9,7 +9,7 @@ import httpx
 from temporalio.client import WorkflowQueryFailedError
 from temporalio.service import RPCError
 
-from run_task import sandbox
+from meta_harness.run_service import sandbox
 
 # The harness server sends a heartbeat event every few seconds, so a stream that is quiet this long is dead.
 EVENT_READ_TIMEOUT_SECONDS = 30.0

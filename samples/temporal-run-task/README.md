@@ -69,7 +69,7 @@ runs in a repo:
 
 1. `prepare` reads the ticket, read-only, through `gh`: its title and body
    become the task, and a `## Acceptance checks` list in the body becomes
-   the checks (or `CHECKS`). It fills `prompts/repo-task-v1.txt`, which puts
+   the checks (or `CHECKS`). It fills `src/meta_harness/run_service/prompts/repo-task-v1.txt`, which puts
    the task text between markers as data, tells pi to run each check with
    `bash`, and tells it not to commit or push.
 2. `run_harness`'s Lease step clones the repo's default branch into the run's
@@ -138,8 +138,8 @@ default data converter.
 | Design step (section 7) | In this sample |
 |---|---|
 | 1. Admit | The starter calls `start_workflow` with workflow id `run-task-<REF>`. `REF` plays the design's `external_ref`, and Temporal refuses a second task with the same one. There is no scheduler and no slot. |
-| 2. Prepare | `prepare` uses `TASK`, or reads `prompts/hello-v1.txt`. There are no guardrails, no code-host token and no `AGENTS.md`. |
-| 3. Route and run | `route` asks the ai-api-unified router for the tier and its candidates, and the workflow's run loop tries them (section 6.3). For each, `run_harness` runs the design's run activity steps. Lease: with no pool manager, it starts the run's per-run sandbox itself with the Docker executor backend (`run_task/sandbox.py`). Grant, Start, Wait and Collect follow. A retried attempt re-attaches by run id to the same container and the same run. There is no exploration share and no task policy file. |
+| 2. Prepare | `prepare` uses `TASK`, or reads `src/meta_harness/run_service/prompts/hello-v1.txt`. There are no guardrails, no code-host token and no `AGENTS.md`. |
+| 3. Route and run | `route` asks the ai-api-unified router for the tier and its candidates, and the workflow's run loop tries them (section 6.3). For each, `run_harness` runs the design's run activity steps. Lease: with no pool manager, it starts the run's per-run sandbox itself with the Docker executor backend (`src/meta_harness/run_service/sandbox.py`). Grant, Start, Wait and Collect follow. A retried attempt re-attaches by run id to the same container and the same run. There is no exploration share and no task policy file. |
 | 4. Watch | `run_harness` reads the harness server's event stream and prints it to the worker log. There is no event service, pool manager or stall detection beyond the heartbeat timeout. |
 | 5. Follow up | Left out. The harness server has `POST /followup`, but no pull request, code-host webhooks or signals drive it here. |
 | 6. Close | The workflow returns the result to the starter. There is no task service. |
@@ -210,27 +210,27 @@ history.
 
 | File | Role |
 |---|---|
-| `run_task/workflows.py` | `RunTask`: the run loop and its Decide step, timeouts, retry policy and cancellation type for each activity, and the `current_run_id` query |
-| `run_task/activities.py` | `prepare`, `route`, `run_harness` (lease the per-run sandbox, start or re-attach, heartbeats, cancel, release) and `cleanup_run` |
-| `run_task/code_host.py` | Reads a ticket, clones the repo into a run's workspace, and publishes: commit, push, pull request, through `git` and `gh` on this machine, or a local bare repo |
-| `prompts/repo-task-v1.txt` | The repo-task prompt template |
-| `run_task/routing.py` | Reads harness profiles, splits a `harness:` candidate, checks every tier candidate when the worker starts, and holds the worker's `AiRouteClassifier` |
+| `src/meta_harness/run_service/workflows.py` | `RunTask`: the run loop and its Decide step, timeouts, retry policy and cancellation type for each activity, and the `current_run_id` query |
+| `src/meta_harness/run_service/activities.py` | `prepare`, `route`, `run_harness` (lease the per-run sandbox, start or re-attach, heartbeats, cancel, release) and `cleanup_run` |
+| `src/meta_harness/run_service/code_host.py` | Reads a ticket, clones the repo into a run's workspace, and publishes: commit, push, pull request, through `git` and `gh` on this machine, or a local bare repo |
+| `src/meta_harness/run_service/prompts/repo-task-v1.txt` | The repo-task prompt template |
+| `src/meta_harness/run_service/routing.py` | Reads harness profiles, splits a `harness:` candidate, checks every tier candidate when the worker starts, and holds the worker's `AiRouteClassifier` |
 | `config/models.json` | The router's tiers, classifier and default tier, and the `zero-cost` and `fallback-demo` environments |
 | `config/harness_profiles.json` | Harness profiles: image, tools, turn and minute limits |
-| `run_task/sandbox.py` | The Docker executor backend: starts, finds and removes a run's per-run sandbox container and its network |
-| `run_task/fake_gateway.py` | The fake HTTP Gateway: run grants and scripted model turns, with no model calls |
+| `src/meta_harness/run_service/sandbox.py` | The Docker executor backend: starts, finds and removes a run's per-run sandbox container and its network |
+| `src/meta_harness/run_service/fake_gateway.py` | The fake HTTP Gateway: run grants and scripted model turns, with no model calls |
 | `e2e.sh` | `make e2e`: the zero-cost end-to-end check, which CI runs on every pull request |
-| `run_task/egress_check.py` | `make egress-check`: the network rules, checked from inside a throwaway per-run sandbox |
+| `src/meta_harness/run_service/egress_check.py` | `make egress-check`: the network rules, checked from inside a throwaway per-run sandbox |
 | `egress-proxy/` | The local egress proxy: `proxy.py` (Python standard library only) and its `Dockerfile` |
-| `run_task/harness_client.py` | Reads the harness server's event stream and prints one line per event |
-| `run_task/run_grants.py` | Issues, reads and revokes run grants on the HTTP Gateway |
-| `run_task/shared.py` | Task queue name, the workflow id for a `REF`, and the dataclass payloads |
-| `run_task/worker.py` | Runs the workflow and activities. Stops on SIGINT or SIGTERM. |
-| `run_task/starter.py` | Starts one task, prints its id and web UI link, waits, then prints the event history and the result. `--follow` also prints the run's events. |
-| `run_task/tasks.py` | `list`, `status`, `watch` and `cancel` for tasks already started |
-| `prompts/hello-v1.txt` | The prompt template: create hello.txt and read it back |
+| `src/meta_harness/run_service/harness_client.py` | Reads the harness server's event stream and prints one line per event |
+| `src/meta_harness/run_service/run_grants.py` | Issues, reads and revokes run grants on the HTTP Gateway |
+| `src/meta_harness/run_service/shared.py` | Task queue name, the workflow id for a `REF`, and the dataclass payloads |
+| `src/meta_harness/run_service/worker.py` | Runs the workflow and activities. Stops on SIGINT or SIGTERM. |
+| `src/meta_harness/run_service/starter.py` | Starts one task, prints its id and web UI link, waits, then prints the event history and the result. `--follow` also prints the run's events. |
+| `src/meta_harness/run_service/tasks.py` | `list`, `status`, `watch` and `cancel` for tasks already started |
+| `src/meta_harness/run_service/prompts/hello-v1.txt` | The prompt template: create hello.txt and read it back |
 | `stack.sh` | Builds the per-run sandbox and egress proxy images, starts and stops the services and the egress proxy, and removes leftover per-run sandbox containers and networks |
-| `Makefile` | The commands below. Each one calls `stack.sh` or `run_task.tasks`. |
+| `Makefile` | The commands below. Each one calls `stack.sh` or `meta_harness.run_service.tasks`. |
 
 ## Settings
 
@@ -316,7 +316,7 @@ while the server runs.
 
 | Variable | Default |
 |---|---|
-| `TASK` | empty: the task in `prompts/hello-v1.txt` |
+| `TASK` | empty: the task in `src/meta_harness/run_service/prompts/hello-v1.txt` |
 | `REF` | 8 random hex characters. Letters, digits, `.`, `_` and `-`, starting with a letter or digit. A `REF` used before is refused. |
 | `ROUTER_CONFIG` | `config/models.json`: the router's tiers and classifier |
 | `MODELS_ENV` | empty: `ROUTER_CONFIG` as it is, or its `zero-cost` entry (no classifier call) with `GATEWAY=fake` |
@@ -332,7 +332,7 @@ while the server runs.
 | `SANDBOX_GATEWAY_URL` | `http://host.docker.internal:8080`, the gateway as the egress proxy reaches it |
 | `EGRESS_ALLOW` | `host.docker.internal:8080,github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443`: the `host:port` patterns a per-run sandbox may reach, `*` as a wildcard |
 | `EGRESS_IMAGE` | `mh-egress-proxy:dev` |
-| `GATEWAY` | `real`: ai-api-unified-http from `GATEWAY_DIR`. `fake`: `run_task/fake_gateway.py`, which makes no model calls and needs no Redis |
+| `GATEWAY` | `real`: ai-api-unified-http from `GATEWAY_DIR`. `fake`: `src/meta_harness/run_service/fake_gateway.py`, which makes no model calls and needs no Redis |
 | `FAKE_GATEWAY_HOST`, `FAKE_TURN_SECONDS` | `127.0.0.1`, `2`: where the fake listens, and how long each scripted turn takes |
 | `E2E_GATEWAY_PORT` | `8099`: the fake's port under `make e2e`, apart from a real gateway on 8080 |
 | `GATEWAY_DIR` | `../../../aiapi/ai-api-unified-http`, the gateway checkout |
@@ -670,7 +670,7 @@ another terminal while the task runs, then start a new worker:
 make up
 make task REF=restart-1 TASK="Create count.txt with the numbers 1 to 5, one per line, then read it back and add them up."
 # in another terminal, during the run:
-pkill -KILL -f run_task.worker
+pkill -KILL -f meta_harness.run_service.worker
 make up
 ```
 
@@ -942,7 +942,7 @@ make e2e
 ```
 
 This runs the whole current path against a fake HTTP Gateway
-(`run_task/fake_gateway.py`), which makes no model calls, so it needs no
+(`src/meta_harness/run_service/fake_gateway.py`), which makes no model calls, so it needs no
 provider keys and costs nothing. CI runs it on every pull request
 (`.github/workflows/e2e.yml`), along with the harness server's tests.
 

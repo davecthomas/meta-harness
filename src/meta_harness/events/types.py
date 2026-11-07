@@ -56,7 +56,83 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("task_cancel_requested", 1, _object({"reason": {"type": "string"}}, ["reason"])),
+    # Meta-harness run service: the RunTask workflow's route and run activities
+    EventType(
+        "task_routed",
+        1,
+        _object(
+            {
+                "route_no": {"type": "integer"},
+                "tier": {"type": "string"},
+                "method": {"type": "string"},
+                "confidence": {"type": ["number", "null"]},
+                "candidates": {"type": "array", "items": {"type": "string"}},
+                "floor": {"type": ["string", "null"]},
+                "ceiling": {"type": ["string", "null"]},
+                "classifier_usd": {"type": "string"},
+            },
+            ["route_no", "tier", "method", "candidates"],
+        ),
+    ),
+    EventType(
+        "attempt_finished",
+        1,
+        _object(
+            {
+                "attempt": {"type": "integer"},
+                "tier": {"type": ["string", "null"]},
+                "candidate": {"type": "string"},
+                "decision": {"type": "string", "enum": ["finished", "next_candidate", "final"]},
+                "detail": {"type": "string"},
+                "spent_usd": {"type": "string"},
+                "status": {"type": ["string", "null"]},
+                "end_reason": {"type": ["string", "null"]},
+            },
+            ["attempt", "candidate", "decision", "detail", "spent_usd"],
+        ),
+    ),
+    EventType(
+        "pull_request_opened",
+        1,
+        _object(
+            {"pr_url": {"type": "string"}, "branch": {"type": "string"}, "files": {"type": "array"}},
+            ["pr_url", "branch"],
+        ),
+    ),
+    # The harness server Run API event stream, as the run activity's Wait step reads it. The payload is
+    # the harness server event's data; seq is its event id.
+    *[
+        EventType(name, 1, _object({}), retention)
+        for name, retention in (
+            ("turn_started", "short"),
+            ("model_call", "long"),
+            ("tool_call", "short"),
+            ("tool_result", "short"),
+            ("file_changed", "short"),
+            ("tests_run", "long"),
+            ("guardrail_blocked", "long"),
+            ("compacted", "short"),
+            ("turn_finished", "short"),
+            ("run_finished", "long"),
+        )
+    ],
 ]
+
+# The harness server Run API event types the run activity forwards to the event service.
+HARNESS_EVENT_TYPES = frozenset(
+    {
+        "turn_started",
+        "model_call",
+        "tool_call",
+        "tool_result",
+        "file_changed",
+        "tests_run",
+        "guardrail_blocked",
+        "compacted",
+        "turn_finished",
+        "run_finished",
+    }
+)
 
 
 def by_key() -> dict[tuple[str, int], EventType]:

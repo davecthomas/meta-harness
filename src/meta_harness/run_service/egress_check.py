@@ -1,6 +1,6 @@
 """Checks the per-run sandbox network rules, with no model call.
 
-    python -m run_task.egress_check
+    python -m meta_harness.run_service.egress_check
 
 `make egress-check` runs it after starting the HTTP Gateway and the egress
 proxy. It starts a throwaway per-run sandbox the way the run activity does,
@@ -20,7 +20,7 @@ import asyncio
 import secrets
 import sys
 
-from run_task import sandbox
+from meta_harness.run_service import sandbox
 
 
 async def _exec(container: str, *command: str) -> tuple[int, str]:
@@ -70,9 +70,14 @@ async def main() -> int:
         code, out = await _exec(
             box.name, "curl", "-s", "-o", "/dev/null", "-w", "%{http_connect}", "-m", "10", "https://example.com"
         )
-        report(out == "403", f"https://example.com through the egress proxy: the proxy answered {out or 'nothing'} (curl exit {code})")
+        report(
+            out == "403",
+            f"https://example.com through the egress proxy: the proxy answered {out or 'nothing'} (curl exit {code})",
+        )
 
-        code, out = await _exec(box.name, "curl", "-s", "-o", "/dev/null", "-m", "5", "--noproxy", "*", "https://example.com")
+        code, out = await _exec(
+            box.name, "curl", "-s", "-o", "/dev/null", "-m", "5", "--noproxy", "*", "https://example.com"
+        )
         report(code != 0, f"https://example.com bypassing the proxy: curl exit {code}, no route out")
 
         control = f"http://{await _control_address()}:{sandbox.CONTROL_PORT}"

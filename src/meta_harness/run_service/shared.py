@@ -59,6 +59,12 @@ class RunTaskInput:
     ticket: str = ""
     # Acceptance checks, when the ticket names none or there is no ticket.
     checks: list[str] = field(default_factory=list)
+    # Set when the task came through the Task API: the workflow loads the rest from the task service,
+    # moves the task's status, and records its routing and runs.
+    task_id: str = ""
+    # A Task API task's own title, so prepare reads no ticket, and the issue its pull request closes.
+    title: str = ""
+    closes: str = ""
 
 
 @dataclass
@@ -116,6 +122,8 @@ class HarnessRequest:
     spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
     # The repo the Lease step clones into the run's workspace before pi starts. Empty: an empty workspace.
     repo: str = ""
+    # Set for a Task API task: the Wait step forwards the run's events to the event service.
+    task_id: str = ""
 
 
 @dataclass
@@ -193,3 +201,56 @@ class RunTaskResult:
     harness: HarnessResult
     spent_usd: str
     published: PublishResult | None = None
+
+
+@dataclass
+class TaskSpec:
+    """A task from the task service, as the RunTask workflow needs it."""
+
+    task_id: str
+    status: str
+    repo: str
+    title: str
+    description: str
+    checks: list[str]
+    pin: str
+    floor: str
+    ceiling: str
+    spend_limit_usd: str
+    # The issue the pull request closes, owner/name#number, from a github: external_ref.
+    closes: str
+
+
+@dataclass
+class TaskStatusRequest:
+    task_id: str
+    status: str
+    reason: str = ""
+    pr_url: str = ""
+
+
+@dataclass
+class RouteRecord:
+    """One routing decision, for the run service's routing_decision table and a task_routed event."""
+
+    task_id: str
+    route_no: int
+    floor: str
+    ceiling: str
+    route: RouteResult
+
+
+@dataclass
+class AttemptRecord:
+    """One run, for the run service's run table and an attempt_finished event."""
+
+    task_id: str
+    attempt: Attempt
+    candidate: Candidate
+    harness: HarnessResult | None = None
+
+
+@dataclass
+class PublishedRecord:
+    task_id: str
+    published: PublishResult

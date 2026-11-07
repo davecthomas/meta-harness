@@ -7,12 +7,12 @@
 #   stack.sh down   stop what `up` started
 #   stack.sh egress-check   check the per-run sandbox network rules, with no model call
 #
-# GATEWAY=fake starts run_task/fake_gateway.py, which makes no model calls,
+# GATEWAY=fake starts src/meta_harness/run_service/fake_gateway.py, which makes no model calls,
 # in place of ai-api-unified-http, and skips Redis. e2e.sh uses it.
 #
 # Every run gets its own per-run sandbox: a Docker container of the harness-pi
 # image on its own internal network, which the run activity starts and removes
-# (run_task/sandbox.py). Its only way out is the egress proxy (egress-proxy/),
+# (src/meta_harness/run_service/sandbox.py). Its only way out is the egress proxy (egress-proxy/),
 # which this script starts. This script builds both images. The harness
 # server's log and pi's workspace go in runs/<REF>/. Settings come from the
 # environment, which the Makefile sets.
@@ -22,6 +22,9 @@ cd "$(dirname "$0")"
 
 STACK_DIR=stack
 RUNS_DIR=${RUNS_DIR:-$PWD/runs}
+# The meta-harness project at the repo root holds the run service code and its virtual environment.
+ROOT=$(cd ../.. && pwd)
+PY="$ROOT/.venv/bin/python"
 
 temporal_pid=; redis_pid=; gateway_pid=; worker_pid=; tail_pid=; egress_started=
 EGRESS_PROXY=mh-egress-proxy
@@ -132,7 +135,7 @@ stop_egress() {
 
 install() {
   check_docker
-  "$UV" sync --quiet
+  "$UV" sync --quiet --project "$ROOT"
   build_image
 }
 
@@ -199,7 +202,7 @@ start_fake_gateway() {
   fi
   log "starting the fake HTTP Gateway on $FAKE_GATEWAY_HOST:$GATEWAY_PORT, no model calls, log: $PWD/$1"
   set -m
-  nohup .venv/bin/python -m run_task.fake_gateway --host "$FAKE_GATEWAY_HOST" --port "$GATEWAY_PORT" \
+  nohup "$PY" -m meta_harness.run_service.fake_gateway --host "$FAKE_GATEWAY_HOST" --port "$GATEWAY_PORT" \
     >"$1" 2>&1 </dev/null &
   gateway_pid=$!
   set +m
@@ -244,7 +247,7 @@ start_worker() {
   local models_env=${MODELS_ENV:-}
   [ -n "$models_env" ] || [ "$GATEWAY" != fake ] || models_env=zero-cost
   AI_MODELS_CONFIG="$ROUTER_CONFIG" AI_MODELS_ENV="$models_env" \
-    nohup .venv/bin/python -m run_task.worker >>"$1" 2>&1 </dev/null &
+    nohup "$PY" -m meta_harness.run_service.worker >>"$1" 2>&1 </dev/null &
   worker_pid=$!
   set +m
   for second in $(seq 1 "$WAIT_SECONDS"); do
@@ -272,7 +275,7 @@ check_ref() {
 starter() {
   local check_args=()
   [ -z "$CHECKS" ] || check_args=(--check "$CHECKS")
-  .venv/bin/python -m run_task.starter --ref "$REF" --pin "$PIN" --floor "$FLOOR" --ceiling "$CEILING" \
+  "$PY" -m meta_harness.run_service.starter --ref "$REF" --pin "$PIN" --floor "$FLOOR" --ceiling "$CEILING" \
     --spend-limit "$SPEND_LIMIT" --task "$TASK" --repo "$REPO" --ticket "$TICKET" "${check_args[@]}" "$@"
 }
 
@@ -344,14 +347,8 @@ cmd_run() {
       log "the run stopped at its \$$SPEND_LIMIT spend limit, as expected"
       ;;
     repo)
-      # A bare repo with one commit on main stands in for the code host.
-      local origin="$RUNS_DIR/$REF/origin.git" seed="$RUNS_DIR/$REF/seed"
-      git init --quiet --bare --initial-branch=main "$origin"
-      git init --quiet --initial-branch=main "$seed"
-      printf '# demo repo\n\nA repo the repo demo clones.\n' >"$seed/README.md"
-      git -C "$seed" add README.md
-      git -C "$seed" -c user.name=demo -c user.email=demo@localhost commit --quiet -m "first commit"
-      git -C "$seed" push --quiet "$origin" main
+      local origin="$RUNS_DIR/$REF/origin.git"
+      make_origin "$origin"
       REPO="$origin"
       TASK=${TASK:-"Create hello.txt containing one short friendly greeting."}
       CHECKS=${CHECKS:-"test -s hello.txt"}
@@ -366,8 +363,55 @@ cmd_run() {
       grep -qF "escalates to" worker.log || { log "the task finished, but did not escalate a tier. See worker.log"; exit 1; }
       log "the first tier's candidates failed without a per-run sandbox, and the next tier finished the task"
       ;;
+    task-api)
+      # A repo task submitted through the Task API, as a caller would: the task service and event
+      # service must be up (make serve at the repo root), and the RunTask workflow starts from the task id.
+      local origin="$RUNS_DIR/$REF/origin.git" task_id
+      make_origin "$origin"
+      task_id=$("$PY" -m meta_harness.cli task create --ref "$REF" --repo "$origin" --type feature \
+        --title "Create hello.txt" --description "Create hello.txt containing one short friendly greeting." \
+        --check "test -s hello.txt" | awk '{print $1}')
+      [ -n "$task_id" ] || { log "the Task API did not create the task"; exit 1; }
+      log "the Task API created task $task_id"
+      "$PY" -m meta_harness.cli run start "$task_id" --wait
+      git --git-dir "$origin" cat-file -e "mh/$task_id:hello.txt" \
+        || { log "expected branch mh/$task_id with hello.txt in $origin"; exit 1; }
+      "$PY" -m meta_harness.cli task get "$task_id" | grep -q '"status": "ready"' \
+        || { log "expected task $task_id to be ready with its pull request"; exit 1; }
+      check_task_events "$task_id"
+      log "task $task_id is ready, branch mh/$task_id holds hello.txt, and the event service has its events"
+      ;;
     *) starter ;;
   esac
+}
+
+# make_origin PATH: a bare repo with one commit on main, standing in for the code host.
+make_origin() {
+  local origin=$1 seed="$1.seed"
+  git init --quiet --bare --initial-branch=main "$origin"
+  git init --quiet --initial-branch=main "$seed"
+  printf '# demo repo\n\nA repo the repo demo clones.\n' >"$seed/README.md"
+  git -C "$seed" add README.md
+  git -C "$seed" -c user.name=demo -c user.email=demo@localhost commit --quiet -m "first commit"
+  git -C "$seed" push --quiet "$origin" main
+}
+
+# check_task_events TASK_ID: the event service holds the task's events, from the task service and the
+# run service. The run service sends them through its outbox, so give it a few seconds.
+check_task_events() {
+  local wanted="task_created task_status_changed task_routed turn_started model_call run_finished attempt_finished pull_request_opened"
+  local out missing tick
+  for tick in $(seq 1 20); do
+    out=$("$PY" -m meta_harness.cli events read --task "$1" --limit 2000)
+    missing=
+    for type in $wanted; do
+      grep -q " $type " <<<"$out" || missing="$missing $type"
+    done
+    [ -z "$missing" ] && { log "the event service holds $(wc -l <<<"$out" | tr -d ' ') events for $1"; return 0; }
+    sleep 0.5
+  done
+  log "the event service is missing these events for $1:$missing"
+  exit 1
 }
 
 # The stack file lists "name pid" for each service `up` started.
@@ -459,7 +503,7 @@ cmd_egress_check() {
   start_redis_if_needed redis.log
   start_gateway gateway.log
   start_egress
-  .venv/bin/python -m run_task.egress_check
+  "$PY" -m meta_harness.run_service.egress_check
 }
 
 case "${1:-}" in
