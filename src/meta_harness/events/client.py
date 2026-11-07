@@ -37,6 +37,15 @@ def events_url() -> str:
     return os.environ.get("MH_EVENTS_URL", DEFAULT_URL)
 
 
+# Fixed, so the same parts give the same event id in every process.
+STABLE_ID_NAMESPACE = uuid.UUID("5b1f3a52-7d0c-4c3e-9a3b-6f1e2d4c8a90")
+
+
+def stable_event_id(*parts: object) -> str:
+    """An event id made from what the event records, so recording the same fact twice appends one event."""
+    return str(uuid.uuid5(STABLE_ID_NAMESPACE, "/".join(str(p) for p in parts)))
+
+
 def new_event(event_type: str, source: str, payload: dict[str, Any] | None = None, **fields: Any) -> dict[str, Any]:
     """An event ready to append: a fresh event_id and the current time, plus any envelope fields."""
     return {

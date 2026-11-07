@@ -99,6 +99,36 @@ REGISTRY: list[EventType] = [
             ["pr_url", "branch"],
         ),
     ),
+    # Planner
+    EventType(
+        "goal_created",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "statement": {"type": "string"},
+                "repos": {"type": "array", "items": {"type": "string"}},
+                "label": {"type": "string"},
+                "modality": {"type": "string"},
+                "auto_merge": {"type": "boolean"},
+            },
+            ["goal_id", "statement", "repos", "label", "modality"],
+        ),
+    ),
+    EventType("goal_changed", 1, _object({"goal_id": {"type": "string"}, "changes": {"type": "object"}}, ["goal_id"])),
+    EventType(
+        "issue_joined",
+        1,
+        _object(
+            {"ref": {"type": "string"}, "goal_id": {"type": "string"}, "depends_on": {"type": "array"}},
+            ["ref", "goal_id"],
+        ),
+    ),
+    EventType(
+        "issue_refused", 1, _object({"ref": {"type": "string"}, "reason": {"type": "string"}}, ["ref", "reason"])
+    ),
+    EventType("issue_closed", 1, _object({"ref": {"type": "string"}}, ["ref"])),
+    EventType("task_unblocked", 1, _object({"ref": {"type": "string"}}, ["ref"])),
     # The harness server Run API event stream, as the run activity's Wait step reads it. The payload is
     # the harness server event's data; seq is its event id.
     *[

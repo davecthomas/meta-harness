@@ -1,0 +1,176 @@
+"""The planner's Postgres store: goals and issue links."""
+
+import uuid
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Any
+
+import psycopg
+from psycopg.rows import dict_row
+
+MODALITIES = {"fix", "feature", "new-system"}
+# The modalities the planner runs today. feature and new-system need the planning task.
+BUILT_MODALITIES = {"fix"}
+GOAL_STATUSES = {"active", "paused", "met", "stalled", "budget_exhausted", "canceled"}
+GOAL_MOVES = {
+    "active": {"paused", "met", "stalled", "budget_exhausted", "canceled"},
+    "paused": {"active", "canceled"},
+    "stalled": {"active", "canceled"},
+    "budget_exhausted": {"active", "canceled"},
+    "met": set(),
+    "canceled": set(),
+}
+GOAL_COLUMNS = (
+    "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
+    "status, created_at, updated_at, closed_at"
+)
+LINK_COLUMNS = "ref, goal_id, repo, task_id, state, depends_on, refused_reason, first_seen_at, last_seen_at"
+
+
+class GoalError(ValueError):
+    """A request the planner refuses. The message says why."""
+
+
+class NotFound(LookupError):
+    pass
+
+
+@dataclass
+class NewGoal:
+    statement: str
+    repos: list[str]
+    label: str
+    modality: str = "fix"
+    auto_merge: bool = False
+    max_usd: Decimal | None = None
+    priority: int = 0
+
+
+def new_goal_id() -> str:
+    return f"g-{uuid.uuid4().hex[:12]}"
+
+
+def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
+    if goal.modality not in MODALITIES:
+        raise GoalError(f"modality {goal.modality!r} is not one of {sorted(MODALITIES)}")
+    if goal.modality not in BUILT_MODALITIES:
+        raise GoalError(f"the {goal.modality} modality needs the planning task, which is not built yet; use fix")
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"INSERT INTO planner.goal (id, created_by, statement, repos, label, modality, modality_source, "
+            f"auto_merge, max_usd, priority, status) VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, 'active') "
+            f"RETURNING {GOAL_COLUMNS}",
+            (
+                new_goal_id(),
+                created_by,
+                goal.statement,
+                goal.repos,
+                goal.label,
+                goal.modality,
+                goal.auto_merge,
+                goal.max_usd,
+                goal.priority,
+            ),
+        )
+        return _goal(cur.fetchone())
+
+
+def get(conn: psycopg.Connection, goal_id: str) -> dict:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT {GOAL_COLUMNS} FROM planner.goal WHERE id = %s", (goal_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise NotFound(goal_id)
+    return _goal(row)
+
+
+def list_goals(conn: psycopg.Connection, statuses: list[str] | None = None) -> list[dict]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        if statuses:
+            cur.execute(
+                f"SELECT {GOAL_COLUMNS} FROM planner.goal WHERE status = ANY(%s) ORDER BY priority DESC, created_at",
+                (statuses,),
+            )
+        else:
+            cur.execute(f"SELECT {GOAL_COLUMNS} FROM planner.goal ORDER BY created_at DESC")
+        return [_goal(row) for row in cur.fetchall()]
+
+
+def update(conn: psycopg.Connection, goal_id: str, **fields: Any) -> tuple[dict, dict]:
+    """Change auto_merge, priority, max_usd or status. Returns (goal, the fields that changed with their old values)."""
+    allowed = {"auto_merge", "priority", "max_usd", "status"}
+    if set(fields) - allowed:
+        raise GoalError(f"a goal update takes only {sorted(allowed)}")
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT {GOAL_COLUMNS} FROM planner.goal WHERE id = %s FOR UPDATE", (goal_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(goal_id)
+        if "status" in fields and fields["status"] != row["status"]:
+            if fields["status"] not in GOAL_MOVES.get(row["status"], set()):
+                raise GoalError(f"a {row['status']} goal cannot become {fields['status']}")
+        changed = {k: row[k] for k, v in fields.items() if row[k] != v}
+        if not changed:
+            return _goal(row), {}
+        sets = [f"{k} = %s" for k in changed] + ["updated_at = now()"]
+        if fields.get("status") in {"met", "canceled"}:
+            sets.append("closed_at = now()")
+        cur.execute(
+            f"UPDATE planner.goal SET {', '.join(sets)} WHERE id = %s RETURNING {GOAL_COLUMNS}",
+            [*(fields[k] for k in changed), goal_id],
+        )
+        return _goal(cur.fetchone()), changed
+
+
+def link(conn: psycopg.Connection, ref: str) -> dict | None:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT {LINK_COLUMNS} FROM planner.issue_link WHERE ref = %s", (ref,))
+        row = cur.fetchone()
+    return _link(row) if row else None
+
+
+def links(conn: psycopg.Connection, goal_id: str) -> list[dict]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"SELECT {LINK_COLUMNS} FROM planner.issue_link WHERE goal_id = %s ORDER BY first_seen_at", (goal_id,)
+        )
+        return [_link(row) for row in cur.fetchall()]
+
+
+def save_link(
+    conn: psycopg.Connection,
+    ref: str,
+    goal_id: str,
+    repo: str,
+    state: str,
+    depends_on: list[str],
+    task_id: str | None = None,
+    refused_reason: str | None = None,
+) -> None:
+    with conn.transaction():
+        conn.execute(
+            "INSERT INTO planner.issue_link (ref, goal_id, repo, task_id, state, depends_on, refused_reason) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (ref) DO UPDATE SET "
+            "task_id = COALESCE(EXCLUDED.task_id, planner.issue_link.task_id), state = EXCLUDED.state, "
+            "depends_on = EXCLUDED.depends_on, refused_reason = EXCLUDED.refused_reason, last_seen_at = now()",
+            (ref, goal_id, repo, task_id, state, depends_on, refused_reason),
+        )
+
+
+def set_link_state(conn: psycopg.Connection, ref: str, state: str) -> None:
+    with conn.transaction():
+        conn.execute("UPDATE planner.issue_link SET state = %s, last_seen_at = now() WHERE ref = %s", (state, ref))
+
+
+def _goal(row: dict) -> dict:
+    for key in ("created_at", "updated_at", "closed_at"):
+        row[key] = row[key].isoformat() if row[key] else None
+    row["latitude"] = float(row["latitude"])
+    row["max_usd"] = str(row["max_usd"]) if row["max_usd"] is not None else None
+    return row
+
+
+def _link(row: dict) -> dict:
+    for key in ("first_seen_at", "last_seen_at"):
+        row[key] = row[key].isoformat()
+    return row

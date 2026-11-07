@@ -187,6 +187,124 @@ def task_cancel(task_id: str, reason: str) -> None:
 
 
 @main.group()
+def planner() -> None:
+    """The planner: serve it, or sweep goals' issues into tasks now."""
+
+
+def _planner_parts():
+    import os
+
+    from meta_harness.events.client import EventClient
+    from meta_harness.planner.tracker import GitHubTracker
+    from meta_harness.tasks.client import TaskClient
+
+    return EventClient(source="planner"), GitHubTracker(), TaskClient(api_key=os.environ.get("MH_SERVICE_KEY"))
+
+
+@planner.command("serve")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8303, show_default=True)
+def planner_serve(host: str, port: int) -> None:
+    """Run the planner service. It sweeps every active goal every MH_PLANNER_SWEEP_SECONDS."""
+    import uvicorn
+
+    from meta_harness.planner.service import create_app
+
+    events_client, tracker, tasks_client = _planner_parts()
+    uvicorn.run(create_app(events_client, tracker, tasks_client), host=host, port=port, log_level="warning")
+
+
+@planner.command("sweep")
+def planner_sweep() -> None:
+    """Sweep every active goal once and print what each took in."""
+    import asyncio
+
+    from meta_harness.planner.sweep import sweep_active
+
+    events_client, tracker, tasks_client = _planner_parts()
+    for result in asyncio.run(sweep_active(tracker, tasks_client, events_client)):
+        click.echo(
+            f"{result.goal_id}: joined {result.joined or '-'}, refused {result.refused or '-'}, "
+            f"closed {result.closed or '-'}, unblocked {result.unblocked or '-'}"
+            + (f", errors {result.errors}" if result.errors else "")
+        )
+    events_client.close()
+
+
+@main.group()
+def goal() -> None:
+    """Create and steer goals through the planner (MH_PLANNER_URL, MH_OPERATOR_KEY)."""
+
+
+def _goals():
+    from meta_harness.planner.client import GoalsClient
+
+    return GoalsClient()
+
+
+def _goal_line(g: dict) -> str:
+    return f"{g['id']}  {g['status']:<16} {g['modality']:<4} label {g['label']:<24} {', '.join(g['repos'])}"
+
+
+@goal.command("create")
+@click.option("--statement", required=True)
+@click.option("--repo", "repos", multiple=True, required=True, help="A registered repo; repeat for more.")
+@click.option("--label", required=True, help="The issue label that queues an issue for this goal.")
+@click.option("--auto-merge/--no-auto-merge", default=False, show_default=True)
+@click.option("--max-usd", default=None)
+@click.option("--priority", default=0, show_default=True)
+def goal_create(statement, repos, label, auto_merge, max_usd, priority) -> None:
+    """Create a fix goal. The planner takes in its labeled issues right away."""
+    body = {
+        "statement": statement,
+        "repos": list(repos),
+        "label": label,
+        "auto_merge": auto_merge,
+        "max_usd": max_usd,
+        "priority": priority,
+    }
+    click.echo(_goal_line(_task_call(_goals().create, **body)))
+
+
+@goal.command("list")
+def goal_list() -> None:
+    for g in _task_call(_goals().list):
+        click.echo(_goal_line(g))
+
+
+@goal.command("get")
+@click.argument("goal_id")
+def goal_get(goal_id: str) -> None:
+    """A goal and the issues it took in."""
+    click.echo(json.dumps(_task_call(_goals().get, goal_id), indent=2))
+
+
+@goal.command("pause")
+@click.argument("goal_id")
+def goal_pause(goal_id: str) -> None:
+    click.echo(_goal_line(_task_call(_goals().action, goal_id, "pause")))
+
+
+@goal.command("resume")
+@click.argument("goal_id")
+def goal_resume(goal_id: str) -> None:
+    click.echo(_goal_line(_task_call(_goals().action, goal_id, "resume")))
+
+
+@goal.command("cancel")
+@click.argument("goal_id")
+def goal_cancel(goal_id: str) -> None:
+    click.echo(_goal_line(_task_call(_goals().action, goal_id, "cancel")))
+
+
+@goal.command("sweep")
+@click.argument("goal_id")
+def goal_sweep(goal_id: str) -> None:
+    """Take in the goal's labeled issues now."""
+    click.echo(json.dumps(_task_call(_goals().action, goal_id, "sweep"), indent=2))
+
+
+@main.group()
 def run() -> None:
     """The meta-harness run service: its worker, and starting a task's RunTask workflow."""
 
