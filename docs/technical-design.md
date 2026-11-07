@@ -1194,44 +1194,32 @@ sequenceDiagram
 
 ### Sandbox
 
-One per-run sandbox per meta-harness run, as a pod with the gVisor runtime
-class in the `sandbox` namespace.
+Each run gets one per-run sandbox: a pod with the gVisor runtime class in the
+`sandbox` namespace.
 
-- **One image**, the harness profile image, built from a common base: git,
-  language toolchains, Node, pi, the pi model client extension and the
-  **harness server**. Harness profiles select prompts, pi tools
-  and limits on that harness profile image. A harness profile may name a
-  different harness profile image when a toolchain or a different coding
-  agent needs it.
-- **Repo**: the task's code-host repository, cloned with the run's read-only
-  code-host access token at `/workspace`, the same path in every per-run
-  sandbox. The per-run sandbox never pushes: the run service's
-  Publish step reads the run's changes through the harness server Run API
-  `GET /bundle` and pushes them. In the Docker executor backend the run
-  service clones on the host into the mounted workspace and publishes from
-  it, so no code-host token enters the container at all.
-- **Model endpoint**: the HTTP Gateway URL, set in the harness profile image,
-  and the HTTP Gateway run grant key, which arrives in the `POST /run` or
-  `POST /followup` body. No model provider key exists in the per-run sandbox.
-- **Egress** from the per-run sandbox limited to the code host, package
-  registries and the HTTP Gateway.
-- **Resources** from the harness profile; 2 vCPU and 4 GB by default.
-- **Lifecycle**: owned by the pool manager. A per-run sandbox
-  serves exactly one meta-harness run at a time. When the meta-harness run
-  ends, the pool manager destroys the per-run sandbox, or keeps it for the
-  same pi session's next follow-up run (`kept`, Pool manager).
+- The pod runs the harness profile's image, built from a common base with git,
+  language toolchains, Node, pi, the pi model client extension and the harness
+  server. A harness profile names another image when it needs another
+  toolchain or another coding agent.
+- The task's repo is cloned at `/workspace`, the same path in every sandbox,
+  with the run's read-only code-host access token. The run service's Publish
+  step reads the run's changes through `GET /bundle` and pushes them. With the
+  Docker executor backend, the run service clones on the host into the mounted
+  workspace and publishes from it.
+- The HTTP Gateway URL is set in the image, and the run grant key arrives in
+  the `POST /run` or `POST /followup` body.
+- Egress reaches only the code host, package registries and the HTTP Gateway.
+- CPU and memory come from the harness profile, 2 vCPU and 4 GB by default.
+- The pool manager owns the sandbox. It serves one run at a time, and when the
+  run ends the pool manager destroys it, or keeps it for the same pi session's
+  next follow-up run.
 
-### Harness server and the Run API
+### Harness server
 
-The harness server is a small TypeScript service inside every per-run
-sandbox. It exposes one authenticated HTTP API, the harness server Run API, to
-the meta-harness run service run activity, and runs pi in-process through
-pi's SDK (`@earendil-works/pi-coding-agent`). The harness server creates the
-pi session with `createAgentSession()` and the pi session setup in The harness,
-and uses `AgentSessionRuntime` for `newSession()`, `switchSession()` and
-`fork()`. pi reports every pi session state change as a typed pi SDK event
-through `session.subscribe()`, so the harness server parses nothing from
-terminal output.
+The harness server is a small TypeScript service in every per-run sandbox. It
+serves the harness server Run API to the run service run activity and runs pi
+in-process through pi's SDK, using `AgentSessionRuntime` for `newSession()`,
+`switchSession()` and `fork()`.
 
 | Endpoint | Purpose | pi SDK calls |
 |---|---|---|
@@ -1243,24 +1231,19 @@ terminal output.
 | `POST /cancel` | Stop pi. The pi session file keeps every pi session entry written before the cancel, so a later follow-up run can continue the pi session. | `abort()`, which waits until the pi session is idle |
 | `GET /usage` | Model token totals (input, output, `cached_input_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens`), model call counts, and the HTTP Gateway's running total, as the pi model client extension recorded them. These totals serve reconciliation against the run's `model_call` meta-harness domain events | pi model client extension counters |
 | `GET /metrics` | Harness server OpenTelemetry metrics: pi turns, pi tool calls, files changed, test runs, elapsed time | harness server counters |
-| `GET /bundle` | The run's changes against the commit it cloned, as a git bundle, for the run service's Publish step. Planned for the pool manager's executor backends; the Docker executor backend reads the mounted workspace | none: git in the workspace |
+| `GET /bundle` | The run's changes against the commit it cloned, as a git bundle, for the run service's Publish step. The Docker executor backend reads the mounted workspace instead | none: git in the workspace |
 
-The harness server waits with `waitForIdle()` and sends `steer()` or
-`followUp()` when input arrives while pi is still working. The harness server
-never calls `setModel`: the model comes from the run's HTTP Gateway run grant,
-and the thinking level from the `POST /run` body. The pi coding agent gets
-shell access only through pi's `bash` tool, under the harness profile's
-limits.
+The harness server waits with `waitForIdle()`, and sends `steer()` or
+`followUp()` when input arrives while pi is working. The model comes from the
+run grant and the thinking level from the `POST /run` body, so the harness
+server calls no `setModel`.
 
-### Executor interface in the control plane
+### Executor backends
 
-The pool manager executor interface is the pool manager's interface to
-wherever per-run sandboxes run. The meta-harness run service run activity
-does not go through it: the run activity calls the harness server Run API
-(`POST /run`, `POST /followup`, `GET /events`, `GET /usage`, `POST /cancel`)
-directly, over mutual TLS, at the pod address in its pool manager sandbox
-lease, with that lease's per-lease harness server bearer token. Every pool
-manager executor backend provides these operations:
+The pool manager reaches per-run sandboxes through an executor backend. The
+run activity calls the harness server Run API directly, over mutual TLS, at
+the address and with the bearer token in its lease. Every executor backend
+provides these operations:
 
 | Operation | Called by | Purpose |
 |---|---|---|
@@ -1274,9 +1257,9 @@ manager executor backend provides these operations:
 | restore session | Pool manager, before a `restored` pool manager sandbox lease returns | Copy a pi session directory from the pool manager's Cloud Storage artifact bucket into a fresh per-run sandbox, which has the task repo cloned at `/workspace` |
 | artifacts | Pool manager, on drain | Harness server logs and the final pi session directory, copied to the pool manager's Cloud Storage artifact bucket |
 
-Pool manager executor backend implementations: Kubernetes pods on GKE, Docker
-(development), managed sandbox services, and a fake pool manager executor
-backend that replays recorded harness server Run API event streams for tests.
+The backends are Kubernetes pods on GKE, Docker for development and the first
+cloud deployment, managed sandbox services, and a fake that replays recorded
+Run API event streams for tests.
 
 ### Pool manager
 
