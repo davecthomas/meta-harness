@@ -2027,7 +2027,8 @@ later.
 `deploy/gcp.sh infra` creates the network, Cloud NAT, the firewall rules,
 the service accounts, the secrets, the VM, the edge's IAP access, and the
 deploy access below. `deploy` deploys a commit: `vm`, then `edge`, which
-builds the edge image with Cloud Build and deploys it. `status` reports the
+builds the edge image with Cloud Build, or takes the one CI built in
+`EDGE_IMAGE`, and deploys it. `status` reports the
 VM's last deploy. The Makefile's `deploy`, `deploy-status` and `deploy-infra`
 targets run them.
 
@@ -2035,8 +2036,9 @@ Every merge to main deploys itself. `.github/workflows/deploy.yml` waits for
 main's four checks to pass at the merged commit, then runs `deploy/gcp.sh
 deploy` as `mh-deploy-sa`. It signs in through workload identity federation,
 whose provider accepts only this repo's main branch, so GitHub holds no
-Google Cloud key. The account may build and deploy the edge, and set the
-VM's metadata.
+Google Cloud key. CI builds the edge image on its runner and pushes it to Artifact
+Registry; the account may push there, deploy the edge, and set the VM's
+metadata.
 
 A VM deploy needs no SSH. `deploy/gcp.sh vm` sets two metadata values on the
 VM: `mh-ref`, the commit, and `mh-deploy-id`, new for each deploy. The VM's

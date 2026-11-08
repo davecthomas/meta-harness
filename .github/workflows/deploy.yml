@@ -49,5 +49,12 @@ jobs:
           workload_identity_provider: projects/57473592166/locations/global/workloadIdentityPools/github/providers/github
           service_account: mh-deploy-sa@meta-harness-prod.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
+      - name: build and push the edge image
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker build -f deploy/edge.Dockerfile -t "$EDGE_IMAGE" .
+          docker push "$EDGE_IMAGE"
       - name: deploy/gcp.sh deploy
         run: REF=${{ github.sha }} deploy/gcp.sh deploy
+    env:
+      EDGE_IMAGE: us-central1-docker.pkg.dev/meta-harness-prod/mh/edge:${{ github.sha }}

@@ -214,14 +214,20 @@ deploy_access() {
   exists g iam service-accounts describe "$sa" || g iam service-accounts create "$DEPLOY_SA" --display-name "meta-harness deploys"
   member="principalSet://iam.googleapis.com/projects/$num/locations/global/workloadIdentityPools/github/attribute.repository/$GITHUB_REPO"
   retry g iam service-accounts add-iam-policy-binding "$sa" --member "$member" --role roles/iam.workloadIdentityUser
-  for role in roles/run.admin roles/cloudbuild.builds.editor roles/serviceusage.serviceUsageConsumer roles/logging.viewer; do
-    retry g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$sa" --role "$role" --condition=None
+  retry g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$sa" --role roles/run.admin --condition=None
+  # CI builds the edge image on its runner and pushes it here; it does not use Cloud Build.
+  retry g artifacts repositories add-iam-policy-binding "$REPO" --location "$REGION" --member "serviceAccount:$sa" \
+    --role roles/artifactregistry.writer
+  # Cloud Build grants from before CI built the image itself.
+  for role in roles/cloudbuild.builds.editor roles/serviceusage.serviceUsageConsumer roles/logging.viewer; do
+    exists g projects remove-iam-policy-binding "$PROJECT" --member "serviceAccount:$sa" --role "$role" --condition=None || true
   done
-  retry g storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" --member "serviceAccount:$sa" \
-    --role roles/storage.admin
-  # It acts as the accounts the edge, its build and the VM run as.
-  for target in "mh-edge-sa@$PROJECT.iam.gserviceaccount.com" "$num-compute@developer.gserviceaccount.com" \
-    "mh-vm-sa@$PROJECT.iam.gserviceaccount.com"; do
+  exists g storage buckets remove-iam-policy-binding "gs://${PROJECT}_cloudbuild" --member "serviceAccount:$sa" \
+    --role roles/storage.admin || true
+  exists g iam service-accounts remove-iam-policy-binding "$num-compute@developer.gserviceaccount.com" \
+    --member "serviceAccount:$sa" --role roles/iam.serviceAccountUser || true
+  # It acts as the accounts the edge and the VM run as.
+  for target in "mh-edge-sa@$PROJECT.iam.gserviceaccount.com" "mh-vm-sa@$PROJECT.iam.gserviceaccount.com"; do
     retry g iam service-accounts add-iam-policy-binding "$target" --member "serviceAccount:$sa" \
       --role roles/iam.serviceAccountUser
   done
@@ -234,9 +240,14 @@ cmd_edge() {
   num=$(number)
   tag=$(git rev-parse --short HEAD)
   image="$REGION-docker.pkg.dev/$PROJECT/$REPO/edge:$tag"
-  log "building $image"
-  g builds submit --region "$REGION" --config deploy/cloudbuild-edge.yaml --substitutions "_IMAGE=$image" \
-    --suppress-logs . >/dev/null
+  # CI builds and pushes the image on its own runner, and names it in EDGE_IMAGE. By hand, Cloud Build does.
+  if [ -n "${EDGE_IMAGE:-}" ]; then
+    image=$EDGE_IMAGE
+  else
+    log "building $image"
+    g builds submit --region "$REGION" --config deploy/cloudbuild-edge.yaml --substitutions "_IMAGE=$image" \
+      --suppress-logs . >/dev/null
+  fi
   log "deploying $EDGE behind Identity-Aware Proxy"
   g run deploy "$EDGE" --region "$REGION" --image "$image" \
     --service-account "mh-edge-sa@$PROJECT.iam.gserviceaccount.com" \
