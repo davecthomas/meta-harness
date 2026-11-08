@@ -130,6 +130,9 @@ def test_a_deploy_updates_the_running_vm_in_place_unless_terraform_replaced_it()
     release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
     platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
     assert "if: steps.apply.outputs.replaced == 'false'" in deploy
+    # Whether the VM is replaced comes from Terraform's plan, so it is right on the first deploy too.
+    assert 'select(.address == "google_compute_instance.vm") | .change.actions[]] | index("delete")' in deploy
+    assert "terraform apply -input=false release.tfplan" in deploy
     assert "--tunnel-through-iap" in deploy and "systemd-run --wait --collect" in deploy
     assert "--setenv=MH_DEPLOY_MODE=update" in deploy
     assert re.search(r'enable-oslogin\s+= "TRUE"', release)

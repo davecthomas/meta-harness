@@ -70,12 +70,14 @@ jobs:
         working-directory: deploy/terraform/release
         run: |
           terraform init -input=false
-          before=$(terraform output -raw vm_instance_id 2>/dev/null || true)
           # No -replace: the VM keeps running, and only its metadata (the commit) changes. Terraform
-          # replaces it only when its definition changed, and then it boots the commit by itself.
-          terraform apply -input=false -auto-approve -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"
-          after=$(terraform output -raw vm_instance_id)
-          if [ -n "$before" ] && [ "$before" = "$after" ]; then echo "replaced=false" >> "$GITHUB_OUTPUT"; else echo "replaced=true" >> "$GITHUB_OUTPUT"; fi
+          # replaces it only when its definition changed, and then it boots the commit by itself. The plan
+          # says which: a VM change that deletes is a replacement.
+          terraform plan -input=false -out=release.tfplan -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"
+          replaced=$(terraform show -json release.tfplan | jq -r '[.resource_changes[] | select(.address == "google_compute_instance.vm") | .change.actions[]] | index("delete") != null')
+          echo "replaced=$replaced" >> "$GITHUB_OUTPUT"
+          echo "the VM is $([ "$replaced" = true ] && echo replaced || echo updated in place)"
+          terraform apply -input=false release.tfplan
       - name: update the running VM in place
         if: steps.apply.outputs.replaced == 'false'
         run: |
