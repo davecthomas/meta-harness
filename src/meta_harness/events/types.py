@@ -127,6 +127,14 @@ REGISTRY: list[EventType] = [
             ["round", "verdict", "reviewer", "head_sha"],
         ),
     ),
+    EventType(
+        "pull_request_merged",
+        1,
+        _object(
+            {"pr_url": {"type": "string"}, "head_sha": {"type": "string"}, "merge_sha": {"type": "string"}},
+            ["pr_url", "head_sha"],
+        ),
+    ),
     # Planner
     EventType(
         "goal_created",
