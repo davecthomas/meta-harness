@@ -152,3 +152,80 @@ def test_the_worker_reads_the_files_by_default(monkeypatch):
     monkeypatch.delenv(store.SOURCE_ENV, raising=False)
 
     assert routing.profiles() == PROFILES["profiles"]
+
+
+# --- What the shipped files add -----------------------------------------------------------------------
+
+
+def _ship_profiles_without(monkeypatch, name: str) -> None:
+    """Seed as if the deployment first ran code that did not have profile `name` yet."""
+    older = copy.deepcopy(PROFILES)
+    del older["profiles"][name]
+    monkeypatch.setitem(
+        kinds.KINDS, "profiles", dataclasses.replace(kinds.KINDS["profiles"], seed=lambda: copy.deepcopy(older))
+    )
+
+
+def _ship_profiles(monkeypatch, document: dict) -> None:
+    monkeypatch.setitem(
+        kinds.KINDS, "profiles", dataclasses.replace(kinds.KINDS["profiles"], seed=lambda: copy.deepcopy(document))
+    )
+
+
+def test_a_profile_shipped_after_the_first_seed_is_added_as_a_new_version(monkeypatch):
+    _ship_profiles_without(monkeypatch, "pi-review")
+    with db.connect(autocommit=True) as conn:
+        first = store.active(conn, "profiles")
+        assert "pi-review" not in first["document"]["profiles"]
+        _ship_profiles(monkeypatch, PROFILES)
+
+        saved = store.add_shipped(conn)
+
+        assert [(s["kind"], s["origin"], s["edited_by"]) for s in saved] == [("profiles", "shipped", "meta-harness")]
+        assert saved[0]["note"] == "added from the shipped file: pi-review"
+        now = store.active(conn, "profiles")
+        assert now["version"] == first["version"] + 1
+        assert now["document"]["profiles"]["pi-review"] == PROFILES["profiles"]["pi-review"]
+        assert set(now["document"]["profiles"]) == set(PROFILES["profiles"])
+        assert store.add_shipped(conn) == [], "a second start adds nothing"
+
+
+def test_an_operator_change_is_kept_and_a_removed_profile_stays_removed(monkeypatch):
+    with db.connect(autocommit=True) as conn:
+        seeded = store.active(conn, "profiles")["document"]
+        edited = copy.deepcopy(seeded)
+        del edited["profiles"]["pi-review"]
+        edited["profiles"]["pi-lean"]["max_turns"] = 12
+        store.save(conn, "profiles", edited, "op@example.com", "no reviews here")
+
+        assert store.add_shipped(conn) == []
+
+        now = store.active(conn, "profiles")["document"]["profiles"]
+        assert "pi-review" not in now and now["pi-lean"]["max_turns"] == 12
+
+
+def test_a_shipped_profile_the_check_would_refuse_is_not_added(monkeypatch):
+    with db.connect(autocommit=True) as conn:
+        before = store.active(conn, "profiles")
+        broken = copy.deepcopy(PROFILES)
+        broken["profiles"]["pi-broken"] = {"tools": ["teleport"], "max_turns": 5, "max_minutes": 5}
+        _ship_profiles(monkeypatch, broken)
+
+        assert store.add_shipped(conn) == []
+        assert store.active(conn, "profiles")["version"] == before["version"]
+
+
+def test_the_planner_adds_shipped_profiles_at_startup_and_records_it(monkeypatch):
+    from meta_harness.planner.service import add_shipped_configuration
+
+    _ship_profiles_without(monkeypatch, "pi-review")
+    with db.connect(autocommit=True) as conn:
+        store.active(conn, "profiles")
+    _ship_profiles(monkeypatch, PROFILES)
+    events = Events()
+
+    add_shipped_configuration(db.pool(), events)
+
+    assert [(t, p["kind"], p["origin"], f["actor"]) for t, p, f in events.events] == [
+        ("config_changed", "profiles", "shipped", "meta-harness")
+    ]

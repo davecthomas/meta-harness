@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
 from meta_harness.config import api as config_api
+from meta_harness.config import store as config_store
 from meta_harness.planner import drafting, repos, store
 from meta_harness.planner.sweep import Events, SweepResult, active_goals, sweep_goal
 from meta_harness.planner.tracker import Tracker
@@ -53,6 +54,24 @@ class GoalPatch(BaseModel):
     auto_merge: bool | None = None
     priority: int | None = None
     max_usd: Decimal | None = Field(default=None, gt=0)
+
+
+def add_shipped_configuration(pool, events: Events) -> None:
+    """At startup: what the shipped files add to the configuration reaches the active versions."""
+    with pool.connection() as conn:
+        for saved in config_store.add_shipped(conn):
+            print(f"[planner] configuration {saved['kind']} v{saved['version']}: {saved['note']}", flush=True)
+            events.emit(
+                "config_changed",
+                {
+                    "kind": saved["kind"],
+                    "version": saved["version"],
+                    "origin": saved["origin"],
+                    "note": saved["note"],
+                    "rolled_back_from": None,
+                },
+                actor=config_store.SHIPPED_BY,
+            )
 
 
 def create_app(
@@ -88,6 +107,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.pool = db.pool(database_url)
+        if config_store.from_database():
+            await asyncio.to_thread(add_shipped_configuration, app.state.pool, events)
         loop = asyncio.create_task(sweep_forever()) if interval > 0 else None
         try:
             yield
