@@ -177,6 +177,15 @@ in `config.active`. The planner process serves its API for every kind, until
 the run service has an HTTP API of its own. A kind's first version is seeded
 from the deployment's file on the first read.
 
+A harness profile added in code reaches the deployment by itself. At startup
+the planner compares the shipped `config/harness_profiles.json` with the
+history of the `profiles` kind, and adds every profile whose name no version
+ever had, as a new version with origin `shipped` and a `config_changed` event.
+A profile an operator changed or removed is never touched, because its name is
+in the history. An addition the check would refuse is skipped. Tiers are not
+added this way: they are an ordered routing list, and an added tier would
+change how tasks route.
+
 A save is checked the way the service that reads the kind checks its
 configuration at startup: the router must parse and name a default tier, every
 tier candidate must be a harness pair naming a profile that exists, every

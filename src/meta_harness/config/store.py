@@ -99,6 +99,46 @@ def rollback(conn: psycopg.Connection, kind: str, version: int, who: str, note: 
         return _insert(conn, kind, row[0], who, note or f"rolled back to version {version}", "rollback", version)
 
 
+# The kinds whose entries, by name, reach the deployment from the shipped files: the document's key
+# holding them. Tiers are left out: they are an ordered routing list, and an added tier changes routing.
+SHIPPED_ENTRIES = {"profiles": "profiles"}
+SHIPPED_BY = "meta-harness"
+
+
+def add_shipped(conn: psycopg.Connection) -> list[dict[str, Any]]:
+    """Adds to each kind in SHIPPED_ENTRIES the entries its shipped file has that no version ever had.
+
+    So a profile added in code reaches a deployment that reads its configuration from here. An entry
+    whose name is in any earlier version is never added again: an operator who changed or removed it
+    meant to. Each addition is a new version, origin `shipped`, checked like any save. A kind whose
+    additions would be refused is left as it is. Returns the versions saved.
+    """
+    saved = []
+    for kind, key in SHIPPED_ENTRIES.items():
+        current = active(conn, kind)
+        shipped = KINDS[kind].seed().get(key) or {}
+        with conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"config:{kind}",))
+            seen = {
+                name
+                for (name,) in conn.execute(
+                    "SELECT DISTINCT jsonb_object_keys(document->%s) FROM config.config_version WHERE kind = %s",
+                    (key, kind),
+                ).fetchall()
+            }
+            added = {name: entry for name, entry in shipped.items() if name not in seen}
+            if not added:
+                continue
+            document = {**current["document"], key: {**current["document"].get(key, {}), **added}}
+            try:
+                check(conn, kind, document)
+            except ConfigError:
+                continue
+            note = f"added from the shipped file: {', '.join(sorted(added))}"
+            saved.append(_insert(conn, kind, document, SHIPPED_BY, note, "shipped", None))
+    return saved
+
+
 def _seed(conn: psycopg.Connection, kind: str) -> dict[str, Any]:
     document = KINDS[kind].seed()
     with conn.transaction():
