@@ -1487,6 +1487,9 @@ credential.
 | POST | `/v1/reviews/{task_id}/claim`, `/verdict`, `/release` | Meta-harness run service | An operator review: claim the round, submit a verdict with findings, or release the claim |
 | GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest |
 | GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget |
+| GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo |
+| GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues with a `label`, each with the open goal that holds it, if any |
+| POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing |
 | POST | `/v1/goals/{id}/approve`, `/pause`, `/resume`, `/cancel` | Planner | Approve the pending plan or phase, or pause, resume or cancel the goal |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add an issue to the goal, or drop one |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state |

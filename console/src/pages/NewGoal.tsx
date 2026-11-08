@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Textarea, TextInput } from "@mantine/core";
-import { api } from "../api";
+import { api, type GoalDraft } from "../api";
+import { LabelStart } from "../components/LabelStart";
 import { ErrorAlert, PageHeader } from "../components/ui";
 
 export function NewGoal() {
@@ -19,6 +20,12 @@ export function NewGoal() {
   useEffect(() => {
     api.repos().then((r) => setRepos(r.map((x) => x.name)), (err) => setError(String(err.message ?? err)));
   }, []);
+
+  function fromDraft(draft: GoalDraft) {
+    setStatement(draft.statement);
+    setLabel(draft.label);
+    setChosen(draft.repos);
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -47,6 +54,7 @@ export function NewGoal() {
     <>
       <PageHeader title="New goal" description="A goal takes the open issues with its label, in its repos, and runs each one to a pull request." />
       <ErrorAlert error={error} />
+      <LabelStart onDraft={fromDraft} />
       <Paper maw={720}>
         <form onSubmit={submit}>
           <Stack gap="lg">

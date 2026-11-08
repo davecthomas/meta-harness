@@ -134,6 +134,22 @@ def link(conn: psycopg.Connection, ref: str) -> dict | None:
     return _link(row) if row else None
 
 
+# A goal in one of these still holds its issues: an issue it holds is not offered to another goal.
+OPEN_GOAL_STATUSES = ("active", "paused", "stalled", "budget_exhausted")
+
+
+def holders(conn: psycopg.Connection, refs: list[str]) -> dict[str, str]:
+    """For each ref an open goal holds, that goal's id."""
+    if not refs:
+        return {}
+    rows = conn.execute(
+        "SELECT l.ref, l.goal_id FROM planner.issue_link l JOIN planner.goal g ON g.id = l.goal_id "
+        "WHERE l.ref = ANY(%s) AND g.status = ANY(%s)",
+        (refs, list(OPEN_GOAL_STATUSES)),
+    ).fetchall()
+    return {ref: goal_id for ref, goal_id in rows}
+
+
 def links(conn: psycopg.Connection, goal_id: str) -> list[dict]:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(

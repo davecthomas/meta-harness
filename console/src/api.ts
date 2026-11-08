@@ -50,6 +50,33 @@ function query(params: Record<string, string | number | undefined | null>): stri
   return pairs.length ? "?" + new URLSearchParams(pairs.map(([k, v]) => [k, String(v)])).toString() : "";
 }
 
+export interface LabelCount {
+  label: string;
+  total: number;
+  repos: Record<string, number>;
+}
+
+export interface LabelIssue {
+  ref: string;
+  number: number;
+  title: string;
+  labels: string[];
+  updated_at: string;
+  held_by: string | null;
+}
+
+export interface GoalDraft {
+  title: string;
+  statement: string;
+  theme: string;
+  modality: string;
+  model: string;
+  usd_cost: string;
+  label: string;
+  repos: string[];
+  refs: string[];
+}
+
 export interface Goal {
   id: string;
   statement: string;
@@ -130,6 +157,12 @@ export const api = {
   },
   goal: (id: string) => call<Goal & { issues: IssueLink[] }>(`/v1/goals/${id}`),
   createGoal: (body: Record<string, unknown>) => call<Goal>("/v1/goals", { method: "POST", body: JSON.stringify(body) }),
+  // Goals from labels: every label on the registered repos' open issues, a label's issues, and a drafted goal.
+  labels: (repo?: string) => call<{ repos: string[]; labels: LabelCount[] }>("/v1/labels" + query({ repo })),
+  labelIssues: (repo: string, label: string) =>
+    call<{ issues: LabelIssue[] }>(`/v1/repos/${repo}/issues` + query({ label })).then((r) => r.issues),
+  draftGoal: (body: { label: string; repos: string[]; refs: string[] }) =>
+    call<GoalDraft>("/v1/goals/draft", { method: "POST", body: JSON.stringify(body) }),
   goalAction: (id: string, action: "pause" | "resume" | "cancel" | "sweep") =>
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
   patchGoal: (id: string, fields: Record<string, unknown>) =>

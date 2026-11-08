@@ -29,10 +29,12 @@ class Issue:
     state: str
     depends_on: list[str] = field(default_factory=list)
     checks: list[str] = field(default_factory=list)
+    updated_at: str = ""
 
 
 class Tracker(Protocol):
-    async def list_open(self, repo: str, label: str) -> list[Issue]: ...
+    # label None: every open issue in the repo.
+    async def list_open(self, repo: str, label: str | None) -> list[Issue]: ...
 
     async def read(self, ref: str) -> Issue: ...
 
@@ -71,6 +73,7 @@ def _issue(repo: str, data: dict) -> Issue:
         state=data["state"],
         depends_on=depends_on(repo, body),
         checks=acceptance_checks(body),
+        updated_at=data.get("updated_at") or "",
     )
 
 
@@ -78,16 +81,15 @@ class GitHubTracker:
     def __init__(self, apps: GitHubApps | None = None) -> None:
         self.apps = apps or GitHubApps()
 
-    async def list_open(self, repo: str, label: str) -> list[Issue]:
+    async def list_open(self, repo: str, label: str | None) -> list[Issue]:
         issues: list[Issue] = []
         page = 1
+        params: dict = {"state": "open", "per_page": 100}
+        if label is not None:
+            params["labels"] = label
         while True:
             batch = await self.apps.call(
-                repo,
-                READ_ISSUES,
-                "GET",
-                f"/repos/{repo}/issues",
-                params={"labels": label, "state": "open", "per_page": 100, "page": page},
+                repo, READ_ISSUES, "GET", f"/repos/{repo}/issues", params={**params, "page": page}
             )
             # The issues endpoint lists pull requests too.
             issues += [_issue(repo, item) for item in batch if "pull_request" not in item]
