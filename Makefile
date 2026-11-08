@@ -98,4 +98,4 @@ deploy:
 
 deploy-status:
 	@echo "VM booted: $$(gcloud compute instances get-guest-attributes mh-vm --zone us-central1-a --project meta-harness-prod --query-path mh/boot --format='value(value)' 2>/dev/null || echo nothing yet)"
-	@echo "console:   $$(gcloud run services describe mh-edge --region us-central1 --project meta-harness-prod --format='value(status.url)' 2>/dev/null || echo not deployed)"
+	@echo "console:   https://meta-harness.web.app"

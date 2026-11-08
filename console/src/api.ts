@@ -1,5 +1,5 @@
-// The console's only way to the meta-harness: the /v1 REST API. In the cloud the load balancer and
-// Identity-Aware Proxy route it; locally the edge (`mh edge serve`) does, as the signed-in operator.
+// The console's only way to the meta-harness: the /v1 REST API, through the edge (src/meta_harness/edge).
+// In the cloud the edge needs a Google sign-in session (/auth); locally it names the operator itself.
 
 export class ApiError extends Error {
   // `reasons`: every reason a configuration save was refused, when the service listed them.
@@ -114,6 +114,10 @@ export interface KillSwitch {
 
 export const api = {
   me: () => call<{ identity: string }>("/v1/me"),
+  authConfig: () => call<{ google_client_id: string | null }>("/auth/config"),
+  signIn: (credential: string) =>
+    call<{ identity: string }>("/auth/google", { method: "POST", body: JSON.stringify({ credential }) }),
+  signOut: () => call<{ signed_out: boolean }>("/auth/logout", { method: "POST" }),
   repos: () => call<{ repos: { name: string }[] }>("/v1/repos").then((r) => r.repos),
 
   goals: async (statuses: string[], offset: number, limit: number): Promise<Page<Goal>> => {

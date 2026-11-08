@@ -45,3 +45,44 @@ test("an identity outside the access list sees why, and no page", async () => {
   expect(await screen.findByText("Not allowed")).toBeTruthy();
   expect(screen.getByText(/not on the console's access list/)).toBeTruthy();
 });
+
+test("without a session the console shows Google sign-in, and signing in opens the page", async () => {
+  let signedIn = false;
+  const posted: unknown[] = [];
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/me") return signedIn ? respond({ identity: "operator@example.com" }) : respond({ detail: "not signed in" }, 401);
+    if (url === "/auth/config") return respond({ google_client_id: "client.apps.googleusercontent.com" });
+    if (url === "/auth/google") {
+      posted.push(JSON.parse(String(init?.body)));
+      signedIn = true;
+      return respond({ identity: "operator@example.com" });
+    }
+    if (url.startsWith("/v1/goals")) return respond({ goals: [], total: 0 });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  // Google Identity Services, as the page sees it: the button calls back with an ID token.
+  let callback: ((r: { credential: string }) => void) | null = null;
+  vi.stubGlobal("google", {
+    accounts: {
+      id: {
+        initialize: (options: { client_id: string; callback: (r: { credential: string }) => void }) => {
+          expect(options.client_id).toBe("client.apps.googleusercontent.com");
+          callback = options.callback;
+        },
+        renderButton: (element: HTMLElement) => {
+          element.textContent = "Sign in with Google";
+        },
+        disableAutoSelect: () => {},
+      },
+    },
+  });
+
+  renderAt("/goals");
+
+  expect(await screen.findByText("Sign in with Google")).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Goals" })).toBeNull();
+  callback!({ credential: "google-id-token" });
+
+  expect(await screen.findByRole("heading", { name: "Goals" })).toBeTruthy();
+  expect(posted).toEqual([{ credential: "google-id-token" }]);
+});

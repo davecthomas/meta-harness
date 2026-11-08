@@ -7,8 +7,8 @@ Two stacks, both under `deploy/terraform`, with state in the bucket
 
 | Stack | Holds | Applied by |
 |---|---|---|
-| `platform` | network, NAT, firewall, the VM's address and data disk, service accounts and their roles, the GitHub sign-in, the secrets' containers, Artifact Registry, the console's access list | an operator: `make platform` |
-| `release` | the VM at a commit, and the edge on Cloud Run from that commit's image | CI on every merge; by hand, `make deploy` |
+| `platform` | network, NAT, firewall, the VM's address and data disk, service accounts and their roles, the GitHub sign-in, the secrets' containers and the generated session key, Artifact Registry, Firebase Hosting's `meta-harness` site | an operator: `make platform` |
+| `release` | the VM at a commit, the edge on Cloud Run from that commit's image, and the Hosting site's rewrite to it | CI on every merge; by hand, `make deploy` |
 
 A deploy replaces the VM. Its boot disk is new every time; the data disk
 (`mh-data`: Postgres, Temporal's history, run workspaces) moves to the new VM.
@@ -23,11 +23,11 @@ A deploy replaces the VM. Its boot disk is new every time; the data disk
    for each secret in `platform/variables.tf`. `MH_REPOS_CONFIG` is the repo
    registry JSON; `MH_GITHUB_APPS` is `owner=app_id` pairs, and each owner's
    private key is `MH_GITHUB_APP_KEY_<owner>`.
-3. Identity-Aware Proxy's OAuth client, once, in the Google Cloud console
-   (APIs and services, Credentials): a web client with the redirect URI
-   `https://iap.googleapis.com/v1/oauth/clientIds/<client id>:handleRedirect`,
-   then `gcloud iap settings set` with the client id and secret on the
-   Cloud Run service `mh-edge`.
+3. The console's Google sign-in, once, in the Google Cloud console (Google
+   Auth Platform, Clients): the web client named in `platform/variables.tf`
+   as `google_client_id` lists `https://meta-harness.web.app` as an
+   authorized JavaScript origin. While the app is in testing, each operator
+   is a test user on its Audience page.
 4. Merge to main, or `make deploy`.
 
 ## Reading the VM
