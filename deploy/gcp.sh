@@ -2,13 +2,15 @@
 # Deploys the meta-harness into its Google Cloud project. Every step creates what is missing and leaves
 # what exists, so any command can run again.
 #
-#   deploy/gcp.sh infra    network, NAT, firewall, service accounts, secrets, and the VM
-#   deploy/gcp.sh edge     build the edge image and deploy it to Cloud Run behind Identity-Aware Proxy
-#   deploy/gcp.sh update   point the VM at REF and rerun its boot script (pull code, restart services)
-#   deploy/gcp.sh status   the VM's services and the edge's URL
+#   deploy/gcp.sh infra    network, NAT, firewall, service accounts, secrets, the VM, the edge's access,
+#                          and the deploy access GitHub Actions uses (run once, and after changing these)
+#   deploy/gcp.sh deploy   vm, then edge: what CI runs after every merge to main (make deploy)
+#   deploy/gcp.sh vm       deploy REF to the VM and wait for its result (no SSH; see deploy/vm/deployer.sh)
+#   deploy/gcp.sh edge     build the edge image from the checkout and deploy it to Cloud Run behind IAP
+#   deploy/gcp.sh status   the VM's last deploy and services, and the edge's URL
 #
 # Settings: PROJECT (meta-harness-prod), REGION (us-central1), ZONE (us-central1-a), REF (main, the
-# meta-harness branch or commit the VM runs), OPERATORS (the console's access list, comma-separated).
+# meta-harness branch, tag or commit to deploy), OPERATORS (the console's access list, comma-separated).
 # Provider keys come from the repo's .env once, into Secret Manager; no secret is printed.
 #
 # The shape (docs/technical-design.md, Deployment without GKE): one VM with no public address runs the
@@ -39,6 +41,11 @@ REPO=mh
 # This deployment's data, from the local checkout: the repo registry, and the GitHub App for each repo
 # owner (MH_GITHUB_APPS in .env, owner=app_id:key_file pairs). Neither is in the code.
 REPOS_CONFIG=${REPOS_CONFIG:-config/repos.local.json}
+# GitHub Actions deploys as mh-deploy-sa, through workload identity federation, from main only.
+GITHUB_REPO=davecthomas/meta-harness
+DEPLOY_SA=mh-deploy-sa
+# How long a VM deploy may take: packages on a fresh VM, both repos' dependencies, the harness image.
+VM_DEPLOY_MINUTES=${VM_DEPLOY_MINUTES:-30}
 
 g() { gcloud --project "$PROJECT" --quiet "$@"; }
 log() { echo "[deploy] $*"; }
@@ -147,14 +154,17 @@ cmd_infra() {
   else
     resize_vm
   fi
+  edge_access
+  deploy_access
   log "the VM runs deploy/vm/boot.sh at boot; its log is /var/log/mh-boot.log (deploy/gcp.sh status)"
 }
 
-cmd_edge() {
-  local image tag num
+# edge_access: the Artifact Registry repository, what Cloud Build's account may do, and who may call the
+# edge through IAP. The edge's first deploy needs it; IAP's grants need the service, so a first infra run
+# on a new project grants them on the next run, after deploy/gcp.sh edge.
+edge_access() {
+  local num
   num=$(number)
-  tag=$(git rev-parse --short HEAD)
-  image="$REGION-docker.pkg.dev/$PROJECT/$REPO/edge:$tag"
   log "Artifact Registry $REPO, and Cloud Build's service account"
   exists g artifacts repositories describe "$REPO" --location "$REGION" ||
     g artifacts repositories create "$REPO" --repository-format docker --location "$REGION"
@@ -162,16 +172,10 @@ cmd_edge() {
     g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$num-compute@developer.gserviceaccount.com" \
       --role "$role" --condition=None >/dev/null
   done
-  log "building $image"
-  g builds submit --region "$REGION" --config deploy/cloudbuild-edge.yaml --substitutions "_IMAGE=$image" . >/dev/null
-  log "deploying $EDGE behind Identity-Aware Proxy"
-  g run deploy "$EDGE" --region "$REGION" --image "$image" \
-    --service-account "mh-edge-sa@$PROJECT.iam.gserviceaccount.com" \
-    --network "$NETWORK" --subnet "$SUBNET" --vpc-egress private-ranges-only \
-    --set-env-vars "^;^MH_PLANNER_URL=http://$VM_IP:8303;MH_TASKS_URL=http://$VM_IP:8302;MH_EVENTS_URL=http://$VM_IP:8301;MH_SCHEDULER_URL=http://$VM_IP:8304;MH_EDGE_IAP_AUDIENCE=/projects/$num/locations/$REGION/services/$EDGE;MH_CONSOLE_OPERATORS=$OPERATORS" \
-    --set-secrets MH_SERVICE_KEY=MH_SERVICE_KEY:latest \
-    --timeout 3600 --memory 1Gi --min-instances 0 --max-instances 2 \
-    --no-allow-unauthenticated --iap >/dev/null
+  if ! exists g run services describe "$EDGE" --region "$REGION"; then
+    log "the edge is not deployed yet: run deploy/gcp.sh edge, then infra again for its IAP grants"
+    return
+  fi
   log "IAP may call the edge, and the operators may pass IAP"
   exists g beta services identity create --service iap.googleapis.com
   g run services add-iam-policy-binding "$EDGE" --region "$REGION" \
@@ -181,26 +185,123 @@ cmd_edge() {
     g iap web add-iam-policy-binding --resource-type cloud-run --service "$EDGE" --region "$REGION" \
       --member "user:$person" --role roles/iap.httpsResourceAccessor >/dev/null
   done
+}
+
+# deploy_access: GitHub Actions on main deploys as $DEPLOY_SA with no stored key. It may build and deploy
+# the edge, and set the VM's metadata, which is how the VM is told to deploy.
+deploy_access() {
+  local num sa member
+  num=$(number)
+  sa="$DEPLOY_SA@$PROJECT.iam.gserviceaccount.com"
+  log "deploys from GitHub Actions: workload identity pool github, and $DEPLOY_SA"
+  exists g iam workload-identity-pools describe github --location global ||
+    g iam workload-identity-pools create github --location global --display-name "GitHub Actions"
+  exists g iam workload-identity-pools providers describe github --location global --workload-identity-pool github ||
+    g iam workload-identity-pools providers create-oidc github --location global --workload-identity-pool github \
+      --issuer-uri https://token.actions.githubusercontent.com \
+      --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
+      --attribute-condition "assertion.repository=='$GITHUB_REPO' && assertion.ref=='refs/heads/main'"
+  exists g iam service-accounts describe "$sa" || g iam service-accounts create "$DEPLOY_SA" --display-name "meta-harness deploys"
+  member="principalSet://iam.googleapis.com/projects/$num/locations/global/workloadIdentityPools/github/attribute.repository/$GITHUB_REPO"
+  g iam service-accounts add-iam-policy-binding "$sa" --member "$member" --role roles/iam.workloadIdentityUser >/dev/null
+  for role in roles/run.admin roles/cloudbuild.builds.editor roles/serviceusage.serviceUsageConsumer roles/logging.viewer; do
+    g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$sa" --role "$role" --condition=None >/dev/null
+  done
+  g storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" --member "serviceAccount:$sa" \
+    --role roles/storage.admin >/dev/null
+  # It acts as the accounts the edge, its build and the VM run as.
+  for target in "mh-edge-sa@$PROJECT.iam.gserviceaccount.com" "$num-compute@developer.gserviceaccount.com" \
+    "mh-vm-sa@$PROJECT.iam.gserviceaccount.com"; do
+    g iam service-accounts add-iam-policy-binding "$target" --member "serviceAccount:$sa" \
+      --role roles/iam.serviceAccountUser >/dev/null
+  done
+  g compute instances add-iam-policy-binding "$VM" --zone "$ZONE" --member "serviceAccount:$sa" \
+    --role roles/compute.instanceAdmin.v1 >/dev/null
+}
+
+cmd_edge() {
+  local image tag num
+  num=$(number)
+  tag=$(git rev-parse --short HEAD)
+  image="$REGION-docker.pkg.dev/$PROJECT/$REPO/edge:$tag"
+  log "building $image"
+  g builds submit --region "$REGION" --config deploy/cloudbuild-edge.yaml --substitutions "_IMAGE=$image" \
+    --suppress-logs . >/dev/null
+  log "deploying $EDGE behind Identity-Aware Proxy"
+  g run deploy "$EDGE" --region "$REGION" --image "$image" \
+    --service-account "mh-edge-sa@$PROJECT.iam.gserviceaccount.com" \
+    --network "$NETWORK" --subnet "$SUBNET" --vpc-egress private-ranges-only \
+    --set-env-vars "^;^MH_PLANNER_URL=http://$VM_IP:8303;MH_TASKS_URL=http://$VM_IP:8302;MH_EVENTS_URL=http://$VM_IP:8301;MH_SCHEDULER_URL=http://$VM_IP:8304;MH_EDGE_IAP_AUDIENCE=/projects/$num/locations/$REGION/services/$EDGE;MH_CONSOLE_OPERATORS=$OPERATORS" \
+    --set-secrets MH_SERVICE_KEY=MH_SERVICE_KEY:latest \
+    --timeout 3600 --memory 1Gi --min-instances 0 --max-instances 2 \
+    --no-allow-unauthenticated --iap >/dev/null
   log "the console: $(g run services describe "$EDGE" --region "$REGION" --format='value(status.url)')"
 }
 
-cmd_update() {
-  # The startup script lives in the VM's metadata, so a change to deploy/vm/startup.sh reaches the VM only here.
-  g compute instances add-metadata "$VM" --zone "$ZONE" --metadata "mh-ref=$REF" \
-    --metadata-from-file startup-script=deploy/vm/startup.sh
-  g compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --command "sudo bash /opt/meta-harness/deploy/vm/boot.sh $REF 2>&1 | tail -n 5"
+# commit_of REF: the full commit a branch, tag or commit names on GitHub.
+commit_of() {
+  if [[ $1 =~ ^[0-9a-f]{40}$ ]]; then
+    echo "$1"
+    return
+  fi
+  git ls-remote "https://github.com/$GITHUB_REPO.git" "refs/heads/$1" "refs/tags/$1" | head -n 1 | cut -f1
+}
+
+deploy_result() {
+  g compute instances get-guest-attributes "$VM" --zone "$ZONE" --query-path "mh/$1" --format='value(value)' 2>/dev/null
+}
+
+cmd_vm() {
+  local commit id result waited=0
+  commit=$(commit_of "$REF")
+  [ -n "$commit" ] || { log "$REF is not a branch, tag or commit on GitHub"; exit 1; }
+  id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:7}"
+  log "VM deploy $id: $REF ($commit)"
+  # The startup script lives in the VM's metadata, so a change to deploy/vm/startup.sh reaches the VM here.
+  g compute instances add-metadata "$VM" --zone "$ZONE" \
+    --metadata "mh-ref=$commit,mh-deploy-id=$id,enable-guest-attributes=TRUE" \
+    --metadata-from-file startup-script=deploy/vm/startup.sh >/dev/null
+  if [ "$(deploy_result deployer)" != ready ]; then
+    # A VM booted before the deployer existed. Its startup script installs the deployer as it deploys.
+    log "the VM has no deployer yet: restarting it, so its startup script deploys $id and installs one"
+    g compute instances reset "$VM" --zone "$ZONE" >/dev/null
+  fi
+  while [ "$waited" -lt $((VM_DEPLOY_MINUTES * 60)) ]; do
+    result=$(deploy_result deploy || true)
+    case "$result" in
+      "$id ok"*) log "VM deploy ${result#"$id "}"; return 0 ;;
+      "$id failed"*) log "VM deploy ${result#"$id "}"; exit 1 ;;
+    esac
+    sleep 15
+    waited=$((waited + 15))
+  done
+  log "VM deploy $id has no result after $VM_DEPLOY_MINUTES minutes (last: ${result:-none}); see deploy/gcp.sh status"
+  exit 1
+}
+
+cmd_deploy() {
+  local commit
+  commit=$(commit_of "$REF")
+  # The edge is built from this checkout, so it must hold the commit the VM gets.
+  if [ "$(git rev-parse HEAD)" != "$commit" ]; then
+    log "this checkout is at $(git rev-parse --short HEAD), not $REF (${commit:0:7}): check it out and pull first"
+    exit 1
+  fi
+  REF=$commit cmd_vm
+  cmd_edge
 }
 
 cmd_status() {
-  g compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --command \
-    "systemctl is-active mh-postgres mh-temporal mh-gateway mh-events mh-tasks mh-planner mh-scheduler mh-worker | paste -sd' '; sudo tail -n 3 /var/log/mh-boot.log"
+  log "VM deployer: $(deploy_result deployer || echo absent); last deploy: $(deploy_result deploy || echo none)"
   log "the console: $(g run services describe "$EDGE" --region "$REGION" --format='value(status.url)' 2>/dev/null || echo 'not deployed')"
+  log "the boot log, which needs SSH: gcloud compute ssh $VM --zone $ZONE --project $PROJECT --tunnel-through-iap --command 'sudo tail -n 40 /var/log/mh-boot.log'"
 }
 
 case "${1:-}" in
   infra) cmd_infra ;;
   edge) cmd_edge ;;
-  update) cmd_update ;;
+  deploy) cmd_deploy ;;
+  vm) cmd_vm ;;
   status) cmd_status ;;
-  *) echo "usage: deploy/gcp.sh infra|edge|update|status" >&2; exit 2 ;;
+  *) echo "usage: deploy/gcp.sh infra|deploy|vm|edge|status" >&2; exit 2 ;;
 esac

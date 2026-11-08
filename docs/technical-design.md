@@ -2025,18 +2025,37 @@ later.
 | Code host | A GitHub App on the registered repos | Read-only clone tokens per run; the app token for every code-host write. Webhooks have no route yet, so the planner's sweep polls |
 
 `deploy/gcp.sh infra` creates the network, Cloud NAT, the firewall rules,
-the service accounts, the secrets and the VM. `edge` builds the edge image
-with Cloud Build and deploys it. `update` moves the VM to a ref and reruns
-`deploy/vm/boot.sh`, which installs packages, checks out the two repos,
-writes the environment file from Secret Manager and restarts the units.
-`status` reports the units. The VM has no public address and is reached
-through IAP-tunneled SSH.
+the service accounts, the secrets, the VM, the edge's IAP access, and the
+deploy access below. `deploy` deploys a commit: `vm`, then `edge`, which
+builds the edge image with Cloud Build and deploys it. `status` reports the
+VM's last deploy. The Makefile's `deploy`, `deploy-status` and `deploy-infra`
+targets run them.
+
+Every merge to main deploys itself. `.github/workflows/deploy.yml` waits for
+main's four checks to pass at the merged commit, then runs `deploy/gcp.sh
+deploy` as `mh-deploy-sa`. It signs in through workload identity federation,
+whose provider accepts only this repo's main branch, so GitHub holds no
+Google Cloud key. The account may build and deploy the edge, and set the
+VM's metadata.
+
+A VM deploy needs no SSH. `deploy/gcp.sh vm` sets two metadata values on the
+VM: `mh-ref`, the commit, and `mh-deploy-id`, new for each deploy. The VM's
+deployer, `mh-deployer.service` (`deploy/vm/deployer.sh`), waits for the id
+to change. It runs the startup script from the metadata in a transient unit
+of its own, so the boot script can restart the deployer without stopping the
+deploy. The startup script checks out the commit and runs
+`deploy/vm/boot.sh`. That script installs packages, checks out the two
+repos, writes the environment file from Secret Manager and restarts the
+units. The deployer writes the result to the guest attribute `mh/deploy`,
+and `deploy/gcp.sh vm` waits for it. A VM that boots runs the same startup
+script. The VM has no public address; an operator reaches it through
+IAP-tunneled SSH, only to read logs.
 
 What this shape lacks against the design above: the Temporal dev server and
 the Postgres container are single copies on one disk; the sandbox host is the
-control-plane host; the VM's size bounds concurrent runs; and nothing deploys
-on a release tag. Cloud SQL, Temporal Cloud and a deploy per release tag are
-their own pull request after the point of entry.
+control-plane host; the VM's size bounds concurrent runs; and a deploy
+restarts the run worker, so an attempt in flight restarts. Cloud SQL and
+Temporal Cloud are their own pull request after the point of entry.
 
 ### Compute
 
@@ -2186,7 +2205,8 @@ so the point of entry needs no review loop. After it, in this order:
 | `feat/console-web-app-runs` | The console web app in React and TypeScript (`console/`), and the local edge that serves it and routes `/v1` as the signed-in operator. Lists read ahead as you scroll; the Tasks page shows running tasks as a list or as terminal tiles 4, 16 or 32 up, where only the tiles on screen stream, over one server-sent-event stream; the Task page shows the live run and loads older events as you scroll up; cancel and the kill switch, which the meta-harness scheduler carries out | The tiles of running tasks stream their events as they happen, and scrolling moves the stream to the tiles in view |
 | `feat/deploy-cloud` | `deploy/gcp.sh`: one VM running every control-plane service, Postgres, the Temporal dev server, Redis, the HTTP Gateway on its own configuration, the worker and its per-run sandboxes, as systemd units booted from Secret Manager; the edge on Cloud Run behind Identity-Aware Proxy with the IAP header check; the clone's git directory outside the sandbox mount (see Deployment without GKE) | `deploy/gcp.sh infra && deploy/gcp.sh edge`, then a goal created in the cloud console runs a labeled issue to a pull request, and a request without IAP credentials gets 401 |
 | `feat/real-runs` | Python 3.12, uv and Poetry in the per-run sandbox image; harness profiles sized for these repos, with resources and a bash allowlist; the run activity's timeout from the profile; router tiers on Sonnet 5 and Opus 5.5, with each tier's thinking level sent on every turn; a $10.00 default task limit; an e2-standard-8 VM | `uv run pytest -q`, `npm test` in `images/harness-pi`, and `make e2e` in CI |
-| `feat/deploy-managed` | Cloud SQL for the control plane's tables, Temporal Cloud for the run service namespace, and a deploy on each release tag | `deploy/gcp.sh update REF=v<tag>` on a tag, then the same goal check |
+| `feat/deploy-on-merge` | Every merge to main deploys itself once main's checks pass, through workload identity federation; the VM deploys through its metadata and a deployer unit, with no SSH; `make deploy` by hand | A merge to main deploys, and `make deploy-status` names its commit as the VM's last deploy |
+| `feat/deploy-managed` | Cloud SQL for the control plane's tables, and Temporal Cloud for the run service namespace | `make deploy`, then the same goal check |
 | `feat/code-host-webhooks` | The webhook endpoint: signature check, and check, merge and close deliveries as RunTask workflow signals | `make webhook-replay` |
 | `feat/review-loop` | The review task with `submit_review`, the posted review, the fix task, and the round and budget limits. The VM's disk keeps pi session directories under `harness_session_id` until the pool manager exists | `make e2e-review`: `changes`, a fix, then `clean` |
 | `feat/merge` | The merge at the reviewed head SHA, `auto_merge`, the `ready` and `review_unresolved` ends, and merge conflicts as fix tasks | `make e2e-review` ends merged |

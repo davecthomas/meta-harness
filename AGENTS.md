@@ -24,8 +24,8 @@ and what is planned.
 
 - Never call a model provider, the real HTTP Gateway, GitHub or Google Cloud
   from a test.
-- Do not run `deploy/gcp.sh` or change anything in a Google Cloud project. An
-  operator deploys.
+- Do not run `deploy/gcp.sh` or change anything in a Google Cloud project.
+  A merge to main deploys itself (`.github/workflows/deploy.yml`).
 - Code names no model and no harness profile: they live in `config/`.
 - Every new or changed setting is checked at service startup, so a bad one
   stops the service with its name.
