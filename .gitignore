@@ -6,3 +6,8 @@ stack/
 runs/
 .env
 config/repos.local.json
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*

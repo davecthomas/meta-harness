@@ -1,12 +1,12 @@
 [Unit]
-Description=meta-harness Postgres (data in the mh-postgres Docker volume)
+Description=meta-harness Postgres (data on the data disk, /var/lib/meta-harness/postgres)
 After=docker.service
 Requires=docker.service
 
 [Service]
 EnvironmentFile=/etc/meta-harness/env
 ExecStartPre=-/usr/bin/docker rm -f mh-postgres
-ExecStart=/usr/bin/docker run --rm --name mh-postgres -p 127.0.0.1:5444:5432 -v mh-postgres:/var/lib/postgresql/data -e POSTGRES_USER=mh -e POSTGRES_PASSWORD=${MH_POSTGRES_PASSWORD} -e POSTGRES_DB=mh postgres:16.4
+ExecStart=/usr/bin/docker run --rm --name mh-postgres -p 127.0.0.1:5444:5432 -v /var/lib/meta-harness/postgres:/var/lib/postgresql/data -e POSTGRES_USER=mh -e POSTGRES_PASSWORD=${MH_POSTGRES_PASSWORD} -e POSTGRES_DB=mh postgres:16.4
 ExecStop=/usr/bin/docker stop mh-postgres
 Restart=always
 RestartSec=3

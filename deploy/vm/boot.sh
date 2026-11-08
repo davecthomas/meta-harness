@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Brings the meta-harness VM to its running state. The VM's startup script runs it at every boot, and
-# the deployer (deploy/vm/deployer.sh) runs it again for each deploy. It is safe to run any number of times.
+# Brings the meta-harness VM to its running state. The VM's startup script (deploy/vm/startup.sh) runs
+# it at every boot, on a boot disk that is new at every deploy. It is safe to run any number of times.
 #
 # The VM runs what a developer's machine runs: Postgres, the Temporal dev server (its history in a
 # file on the disk), Redis for run grants, the HTTP Gateway, the event service, task service, planner
 # and scheduler, the run worker, its per-run sandboxes and the egress proxy. Each is a systemd unit
 # from deploy/vm/units, so it restarts after a crash or a reboot. Secrets come from Secret Manager into
-# /etc/meta-harness/env, readable by root and the mh user only.
+# /etc/meta-harness/env, readable by root and the mh user only. Everything that must outlive the VM
+# is under /var/lib/meta-harness, the data disk the startup script mounted.
 
 set -euo pipefail
 REF=${1:-$(curl -fs -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/mh-ref" || echo main)}
@@ -43,8 +44,8 @@ if ! sudo -u mh /usr/local/bin/poetry --version >/dev/null 2>&1; then
     /usr/local/bin/uv tool install --force --python 3.12 poetry==2.1.4
   chmod -R a+rX /opt/uv-python /opt/uv-tools
 fi
-mkdir -p "$STATE/runs" "$ETC"
-chown -R mh:mh "$STATE"
+mkdir -p "$STATE/runs" "$STATE/postgres" "$ETC"
+chown mh:mh "$STATE" "$STATE/runs"
 
 log "code at $REF"
 # This script runs as root and the checkouts belong to mh, which git refuses without a safe.directory
@@ -117,14 +118,9 @@ sudo -u mh -H bash -c "cd $GW && /usr/local/bin/poetry config virtualenvs.in-pro
 
 log "systemd units"
 install -m 644 "$MH"/deploy/vm/units/*.service /etc/systemd/system/
-# install writes a new file, so a deploy running the old copy keeps reading it.
-install -m 755 "$MH"/deploy/vm/deployer.sh /usr/local/bin/mh-deployer
 systemctl daemon-reload
 systemctl enable mh-postgres mh-temporal mh-gateway mh-images mh-egress mh-migrate \
-  mh-events mh-tasks mh-planner mh-scheduler mh-worker mh-deployer
-# The deployer runs each deploy in its own unit, so restarting it never stops one. --no-block: at boot
-# it is ordered after the startup script that runs this, and waiting for it would never end.
-systemctl restart --no-block mh-deployer
+  mh-events mh-tasks mh-planner mh-scheduler mh-worker
 # A code change restarts everything that runs code; Postgres and Temporal keep running.
 systemctl restart mh-postgres mh-temporal
 systemctl restart mh-images mh-egress mh-migrate
