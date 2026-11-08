@@ -69,7 +69,9 @@ jobs:
         working-directory: deploy/terraform/release
         run: |
           terraform init -input=false
-          terraform apply -input=false -auto-approve -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"
+          # -replace: every deploy is a new VM on a fresh boot disk; its state is on the data disk.
+          terraform apply -input=false -auto-approve -replace=google_compute_instance.vm \
+            -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"
       - name: wait for the VM to boot the commit
         run: |
           for i in $(seq 1 120); do

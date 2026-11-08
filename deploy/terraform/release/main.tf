@@ -1,8 +1,8 @@
 # A release: the commit the meta-harness runs. CI applies this stack after every merge to main
 # (.github/workflows/deploy.yml) with the merged commit and the edge image it built from it.
 #
-# The VM is replaced, never changed in place: a new commit makes a new VM, whose startup script checks the
-# commit out and runs deploy/vm/boot.sh. The data disk, from the platform stack, carries Postgres,
+# The VM is replaced, never changed in place: every apply passes -replace=google_compute_instance.vm, so
+# the commit gets a new VM, whose startup script checks it out and runs deploy/vm/boot.sh. The data disk, from the platform stack, carries Postgres,
 # Temporal's history and run workspaces across. The edge gets a new Cloud Run revision from the image.
 
 terraform {
@@ -45,11 +45,6 @@ provider "google" {
 
 # --- The VM ----------------------------------------------------------------------------------------
 
-# A new commit replaces the VM (replace_triggered_by), so the boot disk is always fresh.
-resource "terraform_data" "commit" {
-  input = var.commit
-}
-
 resource "google_compute_instance" "vm" {
   name         = "mh-vm"
   zone         = local.platform.zone
@@ -88,10 +83,6 @@ resource "google_compute_instance" "vm" {
     enable-guest-attributes = "TRUE"
     startup-script          = file("${path.module}/../../vm/startup.sh")
   }
-
-  lifecycle {
-    replace_triggered_by = [terraform_data.commit]
-  }
 }
 
 # --- The edge --------------------------------------------------------------------------------------
@@ -113,14 +104,17 @@ resource "google_cloud_run_v2_service" "edge" {
     vpc_access {
       egress = "PRIVATE_RANGES_ONLY"
       network_interfaces {
-        network    = local.platform.network
-        subnetwork = local.platform.subnet
+        # Cloud Run keeps the names, not the full paths; full paths would differ at every plan.
+        network    = basename(local.platform.network)
+        subnetwork = basename(local.platform.subnet)
       }
     }
     containers {
       image = var.edge_image
+      # As Cloud Run stores them, so a plan shows no difference: CPU in millicores, idle between requests.
       resources {
-        limits = { memory = "1Gi", cpu = "1" }
+        limits   = { memory = "1Gi", cpu = "1000m" }
+        cpu_idle = true
       }
       dynamic "env" {
         for_each = {
