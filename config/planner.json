@@ -1,0 +1,10 @@
+{
+  "version": "2026-11-08.1",
+  "goal_drafting": {
+    "engine": "claude",
+    "model": "claude-haiku-4-5",
+    "max_response_tokens": 1200,
+    "body_chars": 2000,
+    "max_issues": 40
+  }
+}

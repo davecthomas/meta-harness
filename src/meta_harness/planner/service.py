@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
 from meta_harness.config import api as config_api
-from meta_harness.planner import repos, store
+from meta_harness.planner import drafting, repos, store
 from meta_harness.planner.sweep import Events, SweepResult, active_goals, sweep_goal
 from meta_harness.planner.tracker import Tracker
 from meta_harness.tasks.client import TaskClient
@@ -39,6 +39,14 @@ class GoalIn(BaseModel):
     auto_merge: bool = False
     max_usd: Decimal | None = Field(default=None, gt=0)
     priority: int = 0
+
+
+class DraftIn(BaseModel):
+    label: str = Field(min_length=1)
+    # The repos to read the label's issues from. Empty: every registered repo.
+    repos: list[str] = Field(default_factory=list)
+    # The issues to draft from, as refs. Empty: every open issue with the label.
+    refs: list[str] = Field(default_factory=list)
 
 
 class GoalPatch(BaseModel):
@@ -55,6 +63,7 @@ def create_app(
     operator_keys: dict[str, str] | None = None,
     service_keys: dict[str, str] | None = None,
     sweep_seconds: float | None = None,
+    drafter=None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -120,6 +129,22 @@ def create_app(
             )
         return goal
 
+    drafting.check_settings()
+    draft = drafter or drafting.draft_goal
+
+    def registered(names: list[str]) -> list[str]:
+        """The registry's names for the repos asked for, or every registered repo. 404 for an unknown one."""
+        if not names:
+            return [r.name for r in repos.registry().values()]
+        unknown = [name for name in names if repos.get(name) is None]
+        if unknown:
+            raise HTTPException(status_code=404, detail=f"not in the repo registry: {', '.join(unknown)}")
+        return [repos.get(name).name for name in names]
+
+    async def open_issues(names: list[str], label: str | None) -> dict[str, list]:
+        found = await asyncio.gather(*(tracker.list_open(name, label) for name in names))
+        return dict(zip(names, found, strict=True))
+
     # The configuration API, for every kind, until the run service has an HTTP API of its own.
     app.include_router(config_api.router(lambda: app.state.pool, operator, events))
 
@@ -133,6 +158,60 @@ def create_app(
     def registered_repos(who: str = Depends(operator)) -> dict:
         """The repo registry: the repos a goal may name."""
         return {"repos": [{"name": r.name, "tracker": r.tracker} for r in repos.registry().values()]}
+
+    @app.get("/v1/labels")
+    async def labels(repo: str | None = None, who: str = Depends(operator)) -> dict:
+        """Every label on the open issues of the registered repos, or of one, with its issue counts."""
+        names = registered([repo] if repo else [])
+        return {"repos": names, "labels": drafting.count_labels(await open_issues(names, None))}
+
+    @app.get("/v1/repos/{owner}/{name}/issues")
+    async def label_issues(owner: str, name: str, label: str = Query(min_length=1), who: str = Depends(operator)):
+        """A registered repo's open issues with the label, each with the open goal that holds it, if any."""
+        [repo] = registered([f"{owner}/{name}"])
+        issues = (await open_issues([repo], label))[repo]
+        with app.state.pool.connection() as conn:
+            held = store.holders(conn, [i.ref for i in issues])
+        return {
+            "repo": repo,
+            "label": label,
+            "issues": [
+                {
+                    "ref": i.ref,
+                    "number": i.number,
+                    "title": i.title,
+                    "labels": i.labels,
+                    "updated_at": i.updated_at,
+                    "held_by": held.get(i.ref),
+                }
+                for i in issues
+            ],
+        }
+
+    @app.post("/v1/goals/draft")
+    async def draft_goal(body: DraftIn, who: str = Depends(operator)) -> dict:
+        """A goal drafted by a model from a label's open issues. Nothing is saved: the operator edits it first."""
+        names = registered(body.repos)
+        issues = [i for found in (await open_issues(names, body.label)).values() for i in found]
+        if body.refs:
+            wanted = set(body.refs)
+            issues = [i for i in issues if i.ref in wanted]
+        try:
+            drafted = await draft(body.label, issues)
+        except drafting.DraftError as err:
+            raise HTTPException(status_code=502, detail=str(err)) from err
+        events.emit(
+            "goal_drafted",
+            {
+                "label": body.label,
+                "repos": names,
+                "issues": len(issues),
+                "model": drafted.model,
+                "usd_cost": drafted.usd_cost,
+            },
+            actor=who,
+        )
+        return {**asdict(drafted), "label": body.label, "repos": names, "refs": [i.ref for i in issues]}
 
     @app.post("/v1/goals", status_code=201)
     async def create(body: GoalIn, who: str = Depends(operator)) -> dict:
