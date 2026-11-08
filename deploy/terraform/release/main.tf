@@ -1,10 +1,13 @@
 # A release: the commit the meta-harness runs. CI applies this stack after every merge to main
 # (.github/workflows/deploy.yml) with the merged commit and the edge image it built from it.
 #
-# The VM is replaced, never changed in place: every apply passes -replace=google_compute_instance.vm, so
-# the commit gets a new VM, whose startup script checks it out and runs deploy/vm/boot.sh. The data
-# disk, from the platform stack, carries Postgres, Temporal's history and run workspaces across. The
-# edge gets a new Cloud Run revision from the image.
+# A deploy updates the running VM in place: the apply changes only its metadata (the commit, the startup
+# script), and the deploy workflow then runs the startup script on it over IAP SSH, which checks the
+# commit out and restarts the services one at a time (deploy/vm/boot.sh, update mode). Running tasks
+# keep going. Terraform replaces the VM only when its definition changes (machine type, boot image,
+# disks); the new VM boots the commit, and the data disk, from the platform stack, carries Postgres,
+# Temporal's history and run workspaces across. The edge gets a new Cloud Run revision from the image,
+# which takes traffic once it is healthy.
 #
 # The console's address is the platform stack's Firebase Hosting site, https://meta-harness.web.app,
 # which forwards every request to the edge. The edge signs operators in with Google itself, so the
@@ -97,7 +100,9 @@ resource "google_compute_instance" "vm" {
   metadata = {
     mh-ref                  = var.commit
     enable-guest-attributes = "TRUE"
-    startup-script          = file("${path.module}/../../vm/startup.sh")
+    # The deploy workflow reaches the VM over IAP SSH as its service account, through OS Login.
+    enable-oslogin = "TRUE"
+    startup-script = file("${path.module}/../../vm/startup.sh")
   }
 }
 

@@ -3,3 +3,4 @@ output "console_url" { value = local.platform.console_origin }
 output "edge_url" { value = google_cloud_run_v2_service.edge.uri }
 output "vm" { value = google_compute_instance.vm.name }
 output "zone" { value = google_compute_instance.vm.zone }
+output "vm_instance_id" { value = google_compute_instance.vm.instance_id }

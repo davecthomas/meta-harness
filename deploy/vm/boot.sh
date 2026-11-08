@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Brings the meta-harness VM to its running state. The VM's startup script (deploy/vm/startup.sh) runs
-# it at every boot, on a boot disk that is new at every deploy. It is safe to run any number of times.
+# it at every boot, and again for each deploy that updates the running VM in place. It is safe to run
+# any number of times.
+#
+# At boot it starts everything. A deploy's update (MH_DEPLOY_MODE=update) keeps the VM serving: Postgres
+# and Temporal keep running, the sandbox images are rebuilt only when their sources changed, the egress
+# proxy and the HTTP Gateway restart only when they changed (a restart drops a running sandbox's model
+# calls), and the control-plane services restart one at a time, each back up before the next. Running
+# sandboxes are containers, so they keep going, and the run activity re-attaches to them when the
+# worker comes back.
 #
 # The VM runs what a developer's machine runs: Postgres, the Temporal dev server (its history in a
 # file on the disk), Redis for run grants, the HTTP Gateway, the event service, task service, planner
@@ -47,7 +55,11 @@ fi
 mkdir -p "$STATE/runs" "$STATE/postgres" "$ETC"
 chown mh:mh "$STATE" "$STATE/runs"
 
-log "code at $REF"
+MODE=${MH_DEPLOY_MODE:-boot}
+PREVIOUS=${MH_PREVIOUS_COMMIT:-}
+GW_PREVIOUS=$(git -C "$GW" rev-parse HEAD 2>/dev/null || true)
+
+log "code at $REF ($MODE)"
 # This script runs as root and the checkouts belong to mh, which git refuses without a safe.directory
 # entry. It goes in the system config, because the startup script that runs this has no HOME.
 for dir in "$MH" "$GW"; do
@@ -121,8 +133,48 @@ install -m 644 "$MH"/deploy/vm/units/*.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable mh-postgres mh-temporal mh-gateway mh-images mh-egress mh-migrate \
   mh-events mh-tasks mh-planner mh-scheduler mh-worker
-# A code change restarts everything that runs code; Postgres and Temporal keep running.
-systemctl restart mh-postgres mh-temporal
-systemctl restart mh-images mh-egress mh-migrate
-systemctl restart mh-gateway mh-events mh-tasks mh-planner mh-scheduler mh-worker
+# changed PATH...: true when the meta-harness changed under PATH since the commit being replaced, or that
+# commit is unknown.
+changed() {
+  [ -n "$PREVIOUS" ] || return 0
+  ! git -C "$MH" diff --quiet "$PREVIOUS" HEAD -- "$@"
+}
+# healthy UNIT PORT: waits up to 60 seconds for the unit to be active and, with a port, to answer /health.
+healthy() {
+  for _ in $(seq 1 60); do
+    if systemctl is-active -q "$1" && { [ -z "${2:-}" ] || curl -fs "http://127.0.0.1:$2/health" >/dev/null; }; then
+      return 0
+    fi
+    sleep 1
+  done
+  log "$1 did not come back"
+  return 1
+}
+
+if [ "$MODE" = boot ]; then
+  # A boot starts everything.
+  systemctl restart mh-postgres mh-temporal
+  systemctl restart mh-images mh-egress mh-migrate
+  systemctl restart mh-gateway mh-events mh-tasks mh-planner mh-scheduler mh-worker
+else
+  systemctl start mh-postgres mh-temporal
+  systemctl restart mh-migrate
+  if changed images samples/temporal-run-task/Makefile samples/temporal-run-task/egress-proxy deploy/vm/units/mh-images.service; then
+    log "the sandbox images changed: rebuilding (running sandboxes keep their images)"
+    systemctl restart mh-images
+  fi
+  if changed samples/temporal-run-task/egress-proxy deploy/vm/units/mh-egress.service; then
+    systemctl restart mh-egress
+  fi
+  if [ "$(git -C "$GW" rev-parse HEAD)" != "$GW_PREVIOUS" ] || changed deploy/vm/units/mh-gateway.service; then
+    systemctl restart mh-gateway
+    healthy mh-gateway 8080
+  fi
+  # One at a time, each back before the next, so at most one service is down at once.
+  for pair in mh-events:8301 mh-tasks:8302 mh-planner:8303 mh-scheduler:8304 mh-worker:; do
+    unit=${pair%%:*}
+    systemctl restart "$unit"
+    healthy "$unit" "${pair#*:}"
+  done
+fi
 log "done: $(systemctl is-active mh-postgres mh-temporal mh-gateway mh-events mh-tasks mh-planner mh-scheduler mh-worker | tr '\n' ' ')"

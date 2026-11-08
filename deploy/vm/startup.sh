@@ -1,6 +1,7 @@
 #!/bin/bash
-# The VM's startup script, from its metadata (deploy/terraform/release). The VM is new at every deploy, so
-# this runs on a fresh boot disk: mount the data disk, get the meta-harness at the commit in the mh-ref
+# The VM's startup script, from its metadata (deploy/terraform/release). It runs at every boot, and
+# again for every deploy that updates the running VM in place (MH_DEPLOY_MODE=update, started by the
+# deploy workflow over IAP SSH): mount the data disk, get the meta-harness at the commit in the mh-ref
 # metadata, and run its boot script. Output goes to /var/log/mh-boot.log, and the result to the guest
 # attribute mh/boot, which the deploy waits for: "running", "ok <commit>" or "failed <commit>".
 exec >>/var/log/mh-boot.log 2>&1
@@ -30,6 +31,9 @@ git config --system --get-all safe.directory 2>/dev/null | grep -qx /opt/meta-ha
 if [ ! -d /opt/meta-harness/.git ]; then
   git clone -q https://github.com/davecthomas/meta-harness.git /opt/meta-harness
 fi
+# The commit being replaced, so an update restarts only what changed since it.
+export MH_PREVIOUS_COMMIT
+MH_PREVIOUS_COMMIT=$(git -C /opt/meta-harness rev-parse HEAD 2>/dev/null || true)
 if ! git -C /opt/meta-harness fetch -q origin "$REF"; then
   echo "[startup] could not fetch $REF"
   report "failed $REF"
