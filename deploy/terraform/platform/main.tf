@@ -198,10 +198,12 @@ resource "google_artifact_registry_repository_iam_member" "deploy_pushes" {
   member     = "serviceAccount:${local.deploy_sa}"
 }
 
+# The release stack's state, and the platform stack's outputs it reads.
 resource "google_storage_bucket_iam_member" "deploy_state" {
-  bucket = var.state_bucket
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${local.deploy_sa}"
+  for_each = toset(["roles/storage.objectAdmin", "roles/storage.legacyBucketReader"])
+  bucket   = var.state_bucket
+  role     = each.value
+  member   = "serviceAccount:${local.deploy_sa}"
 }
 
 # --- Images and secrets ------------------------------------------------------------------------------

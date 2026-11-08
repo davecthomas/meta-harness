@@ -90,5 +90,6 @@ def test_the_release_stack_gets_the_commit_and_the_image_the_workflow_built():
     release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
     assert '-var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"' in deploy
     assert "edge:${{ github.sha }}" in deploy
-    assert "replace_triggered_by = [terraform_data.commit]" in release
+    # Every deploy is a new VM. An in-place update would keep the old boot disk and never attach the data disk.
+    assert "-replace=google_compute_instance.vm" in deploy
     assert 'startup-script          = file("${path.module}/../../vm/startup.sh")' in release
