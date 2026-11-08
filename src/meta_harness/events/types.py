@@ -99,6 +99,34 @@ REGISTRY: list[EventType] = [
             ["pr_url", "branch"],
         ),
     ),
+    # The review loop on a task's pull request
+    EventType(
+        "pull_request_checks",
+        1,
+        _object(
+            {
+                "head_sha": {"type": "string"},
+                "state": {"type": "string", "enum": ["passed", "failed", "none"]},
+                "failed": {"type": "array", "items": {"type": "string"}},
+            },
+            ["head_sha", "state"],
+        ),
+    ),
+    EventType(
+        "pull_request_reviewed",
+        1,
+        _object(
+            {
+                "round": {"type": "integer"},
+                "verdict": {"type": "string", "enum": ["clean", "changes"]},
+                "reviewer": {"type": "string"},
+                "head_sha": {"type": "string"},
+                "findings": {"type": "integer"},
+                "review_url": {"type": "string"},
+            },
+            ["round", "verdict", "reviewer", "head_sha"],
+        ),
+    ),
     # Planner
     EventType(
         "goal_created",
@@ -168,6 +196,7 @@ REGISTRY: list[EventType] = [
             ("file_changed", "short"),
             ("tests_run", "long"),
             ("guardrail_blocked", "long"),
+            ("review_submitted", "long"),
             ("compacted", "short"),
             ("turn_finished", "short"),
             ("run_finished", "long"),
@@ -185,6 +214,7 @@ HARNESS_EVENT_TYPES = frozenset(
         "file_changed",
         "tests_run",
         "guardrail_blocked",
+        "review_submitted",
         "compacted",
         "turn_finished",
         "run_finished",

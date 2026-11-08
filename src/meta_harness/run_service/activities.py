@@ -40,6 +40,7 @@ calls cleanup_run, which revokes the grant and removes the per-run sandbox.
 """
 
 import asyncio
+import json
 import re
 from pathlib import Path
 from string import Template
@@ -53,6 +54,12 @@ from meta_harness.events.types import HARNESS_EVENT_TYPES
 from meta_harness.run_service import code_host, events, harness_client, routing, run_grants, sandbox
 from meta_harness.run_service.shared import (
     INLINE_TEMPLATE,
+    ChecksRequest,
+    ChecksResult,
+    FailedCheck,
+    LoopPromptRequest,
+    PostReviewRequest,
+    ReviewPolicy,
     CleanupResult,
     HarnessRequest,
     HarnessResult,
@@ -136,6 +143,8 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         repo=repo,
         ticket=ticket.ref if ticket else request.closes,
         title=title[:200],
+        description=description,
+        checks=list(checks),
     )
 
 
@@ -209,7 +218,9 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
     ref = ref_for(info.workflow_id)
     image = str(request.candidate.profile["image"])
     if request.repo:
-        await _clone(tag, request.repo, sandbox.workspace_for(ref, run_id), sandbox.git_dir_for(ref, run_id))
+        await _clone(
+            tag, request.repo, sandbox.workspace_for(ref, run_id), sandbox.git_dir_for(ref, run_id), request.branch
+        )
     box = await _lease(tag, run_id, ref, image, sandbox.Resources.from_profile(request.candidate.profile))
     try:
         grant_key = await _issue_grant(tag, request, info.workflow_id)
@@ -280,6 +291,7 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         spend_limit_usd=request.spend_limit_usd,
         grant_spent_usd=grant_spent,
         error=data.get("error"),
+        review=data.get("review"),
     )
 
 
@@ -360,7 +372,7 @@ async def cleanup_run(run_id: str) -> CleanupResult:
     return CleanupResult(grant_spent_usd=spent)
 
 
-async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path) -> None:
+async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path, branch: str = "") -> None:
     """The repo task's clone, made on this machine before the per-run sandbox starts.
 
     The git directory goes beside the workspace, not inside it, so the
@@ -368,11 +380,11 @@ async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path) -> None:
     """
     existed = git_dir.is_dir()
     try:
-        branch = await code_host.clone(repo, workspace, git_dir)
+        checked_out = await code_host.clone(repo, workspace, git_dir, branch)
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     if not existed:
-        print(f"{tag} cloned {repo} ({branch}) into {workspace}", flush=True)
+        print(f"{tag} cloned {repo} ({checked_out}) into {workspace}", flush=True)
 
 
 async def _lease(tag: str, run_id: str, ref: str, image: str, resources: sandbox.Resources) -> sandbox.Sandbox:
@@ -555,3 +567,166 @@ def _record(progress: dict[str, Any], event: dict[str, Any]) -> None:
         progress["files_changed"].append(data["path"])
     if event["type"] == "turn_finished" and isinstance(data.get("text"), str) and data["text"]:
         progress["answer"] = data["text"].strip()
+
+
+# --- The review loop --------------------------------------------------------------------------------
+#
+# The RunTask workflow runs it once a task's pull request is open (docs/technical-design.md, Review loop):
+# wait for the checks on the head commit, review it on another model, and fix what the review or the
+# checks found, until a review is clean or the limits are reached.
+
+CHECKS_POLL_SECONDS = 30
+# A commit with no checks at all after this long belongs to a repo that runs none.
+NO_CHECKS_SECONDS = 300
+# A check run that ends with one of these did not fail.
+PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
+
+
+@activity.defn
+async def wait_checks(request: ChecksRequest) -> ChecksResult:
+    """Waits until every check on the head commit has completed, and says how they ended."""
+    if code_host.is_local(request.repo):
+        return ChecksResult(state="none")
+    details = activity.info().heartbeat_details
+    waited = int(details[0]) if details else 0
+    while True:
+        try:
+            runs = await code_host.check_runs(request.repo, request.head_sha)
+        except code_host.CodeHostError as err:
+            raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+        pending = [r.name for r in runs if r.status != "completed"]
+        if runs and not pending:
+            failed = [FailedCheck(r.name, r.summary) for r in runs if r.conclusion not in PASSING_CONCLUSIONS]
+            result = ChecksResult(state="failed" if failed else "passed", failed=failed)
+            break
+        if not runs and waited >= NO_CHECKS_SECONDS:
+            result = ChecksResult(state="none")
+            break
+        activity.heartbeat(waited)
+        await asyncio.sleep(CHECKS_POLL_SECONDS)
+        waited += CHECKS_POLL_SECONDS
+    if request.task_id:
+        events.emit(
+            "pull_request_checks",
+            {"head_sha": request.head_sha, "state": result.state, "failed": [f.name for f in result.failed]},
+            task_id=request.task_id,
+            event_id=events.stable_id(request.task_id, "pull_request_checks", request.head_sha),
+        )
+    activity.logger.info(
+        "wait_checks: %s at %s: %s%s",
+        request.repo,
+        request.head_sha[:12],
+        result.state,
+        f" ({', '.join(f.name for f in result.failed)})" if result.failed else "",
+    )
+    return result
+
+
+@activity.defn
+async def review_policy(author_model: str) -> ReviewPolicy:
+    """The task policy's reviewer pairs, resolved against the active harness profiles, without any pair
+    whose model wrote the pull request, so a different model always reviews."""
+    policy = json.loads(routing.TASK_POLICY_PATH.read_text(encoding="utf-8"))["review"]
+    reviewers, unresolved = [], []
+    for pair in policy["reviewers"]:
+        try:
+            candidate = routing.pinned(pair)
+        except routing.CandidateError as err:
+            unresolved.append(f"{pair}: {err}")
+            continue
+        if f"{candidate.engine}:{candidate.model}" != author_model:
+            reviewers.append(candidate)
+    return ReviewPolicy(reviewers=reviewers, max_rounds=int(policy["max_rounds"]), unresolved=unresolved)
+
+
+@activity.defn
+async def loop_prompt(request: LoopPromptRequest) -> str:
+    """A review or fix run's prompt, from prompts/review-v1.txt or prompts/fix-v1.txt."""
+    checks = (
+        "\n".join(f"- {c}" for c in request.checks) or "- None were given. Run the repository's tests, if it has them."
+    )
+    values = {
+        "repo": request.repo,
+        "title": request.title,
+        "description": request.description,
+        "checks": checks,
+        "base": request.base,
+        "branch": request.branch,
+        "round_no": str(request.round_no),
+        "requested": _requested(request),
+    }
+    name = "review-v1" if request.kind == "review" else "fix-v1"
+    template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
+    return Template(template).safe_substitute(values).strip()
+
+
+def _requested(request: LoopPromptRequest) -> str:
+    """What a fix run answers: each finding, or each failed check with its output."""
+    if request.failed_checks:
+        parts = ["These checks failed on the branch's head commit. Make them pass."]
+        for check in request.failed_checks:
+            parts.append(f"Check {check.name}:\n{check.summary or '(it gave no output)'}")
+        return "\n\n".join(parts)
+    lines = [f"The review's summary: {request.summary}", "", "Its findings:"] if request.summary else ["Findings:"]
+    for n, finding in enumerate(request.findings, 1):
+        where = finding.get("path") or ""
+        if where and finding.get("line"):
+            where += f" line {finding['line']}"
+        lines.append(f"{n}. {where + ': ' if where else ''}{finding['body']}")
+    return "\n".join(lines)
+
+
+@activity.defn
+async def post_review(request: PostReviewRequest) -> str:
+    """Posts a review run's verdict and findings on the pull request, and records it. Returns the review's URL."""
+    review = request.review
+    findings = review.get("findings") or []
+    body = "\n".join(
+        [
+            f"**meta-harness review, round {request.round_no}**: `{review['verdict']}`, by `{request.reviewer}`",
+            "",
+            review.get("summary") or "",
+        ]
+        + (
+            [""] + [f"- {_finding_line(f)}" for f in findings if not (f.get("path") and f.get("line"))]
+            if findings
+            else []
+        )
+    )
+    comments = [
+        {"path": f["path"], "line": f["line"], "side": "RIGHT", "body": f["body"]}
+        for f in findings
+        if f.get("path") and f.get("line")
+    ]
+    if code_host.is_local(request.repo):
+        ref = ref_for(activity.info().workflow_id)
+        path = sandbox.task_dir_for(ref) / f"review-{request.round_no}.md"
+        placed = "\n".join(f"- `{c['path']}` line {c['line']}: {c['body']}" for c in comments)
+        path.write_text(f"{body}\n\n{placed}\n", encoding="utf-8")
+        url = f"file://{path}"
+    else:
+        try:
+            repo, number = code_host.pr_number(request.pr_url)
+            url = await code_host.post_review(repo, number, request.head_sha, body, comments)
+        except code_host.CodeHostError as err:
+            raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    if request.task_id:
+        events.emit(
+            "pull_request_reviewed",
+            {
+                "round": request.round_no,
+                "verdict": review["verdict"],
+                "reviewer": request.reviewer,
+                "head_sha": request.head_sha,
+                "findings": len(findings),
+                "review_url": url,
+            },
+            task_id=request.task_id,
+            event_id=events.stable_id(request.task_id, "pull_request_reviewed", request.round_no),
+        )
+    return url
+
+
+def _finding_line(finding: dict) -> str:
+    where = finding.get("path") or ""
+    return f"`{where}`: {finding['body']}" if where else finding["body"]

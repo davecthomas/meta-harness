@@ -46,14 +46,21 @@ READ_CODE = {"contents": "read"}
 WRITE_CODE = {"contents": "write"}
 READ_ISSUES = {"issues": "read"}
 OPEN_PULL_REQUEST = {"pull_requests": "write", "issues": "write"}
+READ_CHECKS = {"checks": "read", "statuses": "read"}
+REVIEW = {"pull_requests": "write"}
+PR_URL_PATTERN = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)$")
+# A check run's summary, in a fix prompt, is cut to this many characters.
+CHECK_SUMMARY_CHARS = 2000
 
 
 class CodeHostError(RuntimeError):
     """A git command or code-host call failed. `retryable` is False when repeating it would fail the same way."""
 
-    def __init__(self, message: str, retryable: bool = True) -> None:
+    def __init__(self, message: str, retryable: bool = True, status: int | None = None) -> None:
         super().__init__(message)
         self.retryable = retryable
+        # The code host's HTTP status, when it answered one.
+        self.status = status
 
 
 @dataclass
@@ -103,7 +110,7 @@ async def _github(repo: str, permissions: dict[str, str], method: str, path: str
     try:
         return await apps().call(repo, permissions, method, path, **kwargs)
     except GitHubAppError as err:
-        raise CodeHostError(str(err), retryable=err.retryable) from err
+        raise CodeHostError(str(err), retryable=err.retryable, status=err.status) from err
 
 
 async def _token(repo: str, permissions: dict[str, str]) -> str:
@@ -140,8 +147,9 @@ def acceptance_checks(body: str) -> list[str]:
     return checks
 
 
-async def clone(repo: str, workspace: Path, git_dir: Path) -> str:
-    """Clones repo's default branch into workspace, unless an earlier attempt did. Returns the branch name.
+async def clone(repo: str, workspace: Path, git_dir: Path, branch: str = "") -> str:
+    """Clones repo into workspace, unless an earlier attempt did, and checks out branch, else the default
+    branch. Returns the branch checked out.
 
     The repository's git directory goes to git_dir, outside the workspace
     (`git clone --separate-git-dir`). The per-run sandbox mounts the
@@ -159,6 +167,9 @@ async def clone(repo: str, workspace: Path, git_dir: Path) -> str:
     else:
         env = git_auth_env(await _token(repo, READ_CODE))
         await _run("git", *clone_args, f"https://github.com/{repo}.git", str(workspace), env=env)
+    if branch:
+        # A review or fix run works on the pull request's branch; the clone has it as origin/<branch>.
+        await _git(git_dir, workspace, "checkout", "--quiet", "-B", branch, f"origin/{branch}")
     return await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
 
 
@@ -228,6 +239,74 @@ async def publish(
         repo, OPEN_PULL_REQUEST, "POST", f"/repos/{repo}/issues/{pull['number']}/labels", json={"labels": [PR_LABEL]}
     )
     return Published(branch, base, commit, files, pull["html_url"], True)
+
+
+def pr_number(pr_url: str) -> tuple[str, int]:
+    """The repo and number of a GitHub pull request URL."""
+    match = PR_URL_PATTERN.match(pr_url)
+    if not match:
+        raise CodeHostError(f"{pr_url!r} is not a GitHub pull request URL", retryable=False)
+    return match.group(1), int(match.group(2))
+
+
+@dataclass
+class CheckRun:
+    name: str
+    # queued, in_progress or completed; conclusion is set once completed.
+    status: str
+    conclusion: str | None
+    summary: str
+
+
+async def check_runs(repo: str, sha: str) -> list[CheckRun]:
+    """Every check on a commit: its check runs, and its commit statuses as runs of their own."""
+    runs = await _github(repo, READ_CHECKS, "GET", f"/repos/{repo}/commits/{sha}/check-runs", params={"per_page": 100})
+    found = [
+        CheckRun(
+            name=run["name"],
+            status=run["status"],
+            conclusion=run.get("conclusion"),
+            summary=_check_summary(run.get("output") or {}),
+        )
+        for run in runs.get("check_runs", [])
+    ]
+    combined = await _github(repo, READ_CHECKS, "GET", f"/repos/{repo}/commits/{sha}/status")
+    for status in combined.get("statuses", []):
+        state = status["state"]
+        found.append(
+            CheckRun(
+                name=status["context"],
+                status="in_progress" if state == "pending" else "completed",
+                conclusion=None if state == "pending" else ("success" if state == "success" else "failure"),
+                summary=status.get("description") or "",
+            )
+        )
+    return found
+
+
+def _check_summary(output: dict) -> str:
+    text = "\n\n".join(part for part in (output.get("title"), output.get("summary"), output.get("text")) if part)
+    return text[:CHECK_SUMMARY_CHARS]
+
+
+async def post_review(repo: str, number: int, head_sha: str, body: str, comments: list[dict]) -> str:
+    """Posts a review on the pull request at head_sha, with inline comments, and returns its URL.
+
+    It is a comment review: GitHub refuses an approval or a change request
+    from the pull request's own author, and the meta-harness's GitHub App
+    opened it. A comment GitHub cannot place on the diff (422) moves into the
+    review's body, so the review is never lost to a finding on an unchanged line.
+    """
+    payload = {"commit_id": head_sha, "event": "COMMENT", "body": body, "comments": comments}
+    try:
+        review = await _github(repo, REVIEW, "POST", f"/repos/{repo}/pulls/{number}/reviews", json=payload)
+    except CodeHostError as err:
+        if not comments or err.status != 422:
+            raise
+        placed = "\n".join(f"- `{c['path']}` line {c['line']}: {c['body']}" for c in comments)
+        payload = {"commit_id": head_sha, "event": "COMMENT", "body": f"{body}\n\n{placed}", "comments": []}
+        review = await _github(repo, REVIEW, "POST", f"/repos/{repo}/pulls/{number}/reviews", json=payload)
+    return str(review.get("html_url", ""))
 
 
 async def _git(git_dir: Path, workspace: Path, *args: str, env: dict[str, str] | None = None) -> str:
