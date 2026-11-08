@@ -34,9 +34,17 @@ request, in this workflow:
    pair that wrote the pull request, in a new pi session on the branch, whose
    publish pushes to the same branch. Then back to step 1.
 
+4. After a clean review, when the task's goal has auto_merge on, merge_pr
+   merges the pull request at the reviewed head commit. A commit that landed
+   after the review goes back to step 1, so it is checked and reviewed too. A
+   conflict with the base goes to a fix run that resolves the merge the host
+   started, and back to step 1.
+
 The loop ends review_unresolved after max_rounds fix runs, when the task's
 spend limit is used up, when a fix run changes nothing, or when no reviewer
-pair returns a verdict. A clean loop ends the task ready.
+pair returns a verdict. A merged pull request ends the task closed. A clean
+one that does not merge (auto_merge off, no goal, or GitHub refusing) ends it
+ready, with the reason.
 
 The task's spend limit covers all its runs: each run's grant gets what the
 earlier runs left. A run run_harness gave up on still counts, from what
@@ -62,7 +70,9 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 with workflow.unsafe.imports_passed_through():
     from meta_harness.run_service.activities import (
         cleanup_run,
+        goal_auto_merge,
         loop_prompt,
+        merge_pr,
         post_review,
         prepare,
         publish,
@@ -75,6 +85,8 @@ with workflow.unsafe.imports_passed_through():
         Attempt,
         ChecksRequest,
         LoopPromptRequest,
+        MergeRequest,
+        MergeResult,
         PostReviewRequest,
         AttemptRecord,
         Candidate,
@@ -172,6 +184,7 @@ class RunTask:
             spend_limit_usd=spec.spend_limit_usd,
             closes=spec.closes,
             task_id=spec.task_id,
+            goal_id=spec.goal_id,
         )
         await self._task_status("running", "the meta-harness run service started its RunTask workflow")
         try:
@@ -191,6 +204,8 @@ class RunTask:
         pr_url = result.published.pr_url if result.published else ""
         if result.outcome == "review_unresolved":
             await self._task_status("review_unresolved", result.outcome_reason, pr_url)
+        elif result.outcome == "merged":
+            await self._task_status("closed", result.outcome_reason, pr_url)
         elif pr_url:
             await self._task_status("ready", result.outcome_reason or "the run finished", pr_url)
         else:
@@ -415,10 +430,21 @@ class RunTask:
                     )
                     log.info("%s: review round %d by %s: %s", info.workflow_id, reviews, reviewer, review["verdict"])
                     if review["verdict"] == "clean":
-                        return "clean", f"review round {reviews} by {reviewer} came back clean at {loop.head[:12]}"
-                    fix = loop.prompt_request(
-                        "fix", findings=list(review.get("findings") or []), summary=str(review.get("summary") or "")
-                    )
+                        clean = f"review round {reviews} by {reviewer} came back clean at {loop.head[:12]}"
+                        merged = await self._merge(loop, clean)
+                        if merged.state == "head_changed":
+                            log.info("%s: a commit landed after the review: %s", info.workflow_id, merged.head_sha)
+                            loop.head = merged.head_sha
+                            continue
+                        if merged.state != "conflict":
+                            return ("merged" if merged.state == "merged" else "clean"), merged.detail
+                        fix = loop.prompt_request("fix", conflict=True)
+                    else:
+                        fix = loop.prompt_request(
+                            "fix",
+                            findings=list(review.get("findings") or []),
+                            summary=str(review.get("summary") or ""),
+                        )
                 if fixes >= policy.max_rounds:
                     return "review_unresolved", f"the review loop used its {policy.max_rounds} fix rounds"
                 fixes += 1
@@ -443,13 +469,50 @@ class RunTask:
             why = f"{reviewer.label}: {detail}"
         return None, "", why
 
+    async def _merge(self, loop: "_Loop", clean: str):
+        """The merge after a clean review, when the goal allows it. Returns the merge's result, whose
+        detail is the reason the task ends with."""
+        auto = False
+        if loop.request.goal_id:
+            auto = await workflow.execute_activity(
+                goal_auto_merge,
+                loop.request.goal_id,
+                start_to_close_timeout=TASK_API_TIMEOUT,
+                retry_policy=TASK_API_RETRY,
+            )
+        if not auto:
+            why = "its goal has auto_merge off" if loop.request.goal_id else "the task has no goal to allow a merge"
+            return MergeResult(state="ready", detail=f"{clean}; {why}, so it waits for an operator")
+        merged = await workflow.execute_activity(
+            merge_pr,
+            MergeRequest(
+                task_id=self._task_id,
+                repo=loop.prepared.repo,
+                pr_url=loop.published.pr_url,
+                branch=loop.published.branch,
+                base=loop.published.base,
+                head_sha=loop.head,
+            ),
+            start_to_close_timeout=CODE_HOST_TIMEOUT,
+            retry_policy=CODE_HOST_RETRY,
+        )
+        workflow.logger.info("%s: merge at %s: %s", workflow.info().workflow_id, loop.head[:12], merged.state)
+        if merged.state == "merged":
+            merged.detail = f"{clean}; merged as {merged.merge_sha[:12]}"
+        elif merged.state == "blocked":
+            merged.detail = f"{clean}; GitHub would not merge it: {merged.detail}"
+        return merged
+
     async def _fix(self, loop: "_Loop", fix: LoopPromptRequest, round_no: int) -> str:
         """One fix run on the pull request's branch, published to it. Returns why the loop must stop, or ""."""
         if loop.left() <= 0:
             return f"the task spent its ${loop.limit} spend limit before fix round {round_no}"
         fix.round_no = round_no
         prompt = await self._loop_prompt(fix)
-        harness, detail = await self._loop_run(loop, prompt, loop.author, "fix", thinking=loop.thinking)
+        merge_base = loop.published.base if fix.conflict else ""
+        harness, detail = await self._loop_run(
+            loop, prompt, loop.author, "fix", thinking=loop.thinking, merge_base=merge_base
+        )
         if harness is None or harness.status != "FINISHED":
             return f"fix round {round_no} on {loop.author.label} did not finish: {detail}"
         republished = await self._publish(loop.prepared, harness, loop.author, loop.spent)
@@ -459,7 +522,13 @@ class RunTask:
         return ""
 
     async def _loop_run(
-        self, loop: "_Loop", prompt: str, candidate: Candidate, kind: str, thinking: str | None
+        self,
+        loop: "_Loop",
+        prompt: str,
+        candidate: Candidate,
+        kind: str,
+        thinking: str | None,
+        merge_base: str = "",
     ) -> tuple[HarnessResult | None, str]:
         """A review or fix run on the pull request's branch, recorded as the task's next attempt."""
         info = workflow.info()
@@ -467,7 +536,14 @@ class RunTask:
         run_id = run_id_for(info.workflow_id, attempt)
         self._current_run_id = run_id
         harness, decision, detail, run_spent = await self._try(
-            prompt, run_id, candidate, loop.left(), loop.prepared.repo, thinking, branch=loop.published.branch
+            prompt,
+            run_id,
+            candidate,
+            loop.left(),
+            loop.prepared.repo,
+            thinking,
+            branch=loop.published.branch,
+            merge_base=merge_base,
         )
         loop.spent += run_spent
         loop.attempts.append(
@@ -509,6 +585,7 @@ class RunTask:
         repo: str,
         thinking: str | None,
         branch: str = "",
+        merge_base: str = "",
     ) -> tuple[HarnessResult | None, str, str, Decimal]:
         """One run on one candidate. Returns the result, the decision, why, and what the run spent."""
         try:
@@ -523,6 +600,7 @@ class RunTask:
                     task_id=self._task_id,
                     thinking=thinking,
                     branch=branch,
+                    merge_base=merge_base,
                 ),
                 start_to_close_timeout=harness_timeout(candidate),
                 heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
