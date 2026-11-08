@@ -150,6 +150,7 @@ def create_app(
         external_ref: str | None = None,
         status: str | None = None,
         goal_id: str | None = None,
+        pr: bool | None = None,
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         who: Caller = Depends(caller),
@@ -162,7 +163,7 @@ def create_app(
                 except store.NotFound as err:
                     raise HTTPException(status_code=404, detail="no such task") from err
             statuses = status.split(",") if status else None
-            tasks, total = store.list_tasks(conn, owner, statuses, goal_id, limit, offset)
+            tasks, total = store.list_tasks(conn, owner, statuses, goal_id, limit, offset, pr)
             return {"tasks": tasks, "total": total, "offset": offset, "limit": limit}
 
     @app.get("/v1/tasks/{task_id}")

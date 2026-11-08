@@ -169,12 +169,14 @@ export const api = {
     call<Goal>(`/v1/goals/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
 
   tasks: async (
-    params: { statuses?: string[]; goalId?: string },
+    // pr: true for tasks with a pull request, false for tasks without one.
+    params: { statuses?: string[]; goalId?: string; pr?: boolean },
     offset: number,
     limit: number,
   ): Promise<Page<Task>> => {
+    const pr = params.pr === undefined ? undefined : String(params.pr);
     const r = await call<{ tasks: Task[]; total: number }>(
-      "/v1/tasks" + query({ status: params.statuses?.join(","), goal_id: params.goalId, offset, limit }),
+      "/v1/tasks" + query({ status: params.statuses?.join(","), goal_id: params.goalId, pr, offset, limit }),
     );
     return { items: r.tasks, total: r.total };
   },

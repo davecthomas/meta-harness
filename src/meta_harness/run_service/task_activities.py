@@ -185,7 +185,24 @@ async def record_attempt(record: AttemptRecord) -> None:
 
 @activity.defn
 async def record_published(record: PublishedRecord) -> None:
+    """Saves the pull request on the task as soon as it opens, and records pull_request_opened.
+
+    The task stays running through its review loop, so without this its record would show no pull
+    request until the task ended, and the console could not list it.
+    """
     p = record.published
+    try:
+        await asyncio.to_thread(
+            lambda: _tasks().set_status(
+                record.task_id,
+                "running",
+                "its pull request is open, in the review loop",
+                pr_url=p.pr_url,
+                head_sha=p.commit,
+            )
+        )
+    except TaskApiError as err:
+        raise _task_api_error(err) from err
     events.emit(
         "pull_request_opened",
         {"pr_url": p.pr_url, "branch": p.branch, "files": p.files},
