@@ -844,6 +844,27 @@ RunTask workflow then leaves the pull request open, ends the task `review_unreso
 and a meta-harness alert rule fires. A pull request closed on the code host
 ends the loop and the task.
 
+As built (#85), the loop differs from the above in three ways, each until
+what it waits on exists:
+
+- Review and fix are runs of the parent task, inside its RunTask workflow,
+  recorded as its attempts with tier `review` or `fix`, rather than tasks of
+  their own. The parent holds its scheduler slot and runs no sandbox while
+  they run, so separate tasks would add signals without adding control.
+- A fix run starts a new pi session on a fresh clone of the pull request's
+  branch, rather than continuing the session that wrote it, because a saved
+  pi session cannot be restored into a new sandbox yet. The branch carries
+  the earlier work.
+- `wait_checks` polls the code host for the head commit's check runs and
+  statuses until all complete, rather than waiting for a webhook. A repo with
+  no checks five minutes after a push counts as passing.
+
+The review is posted as a comment review, because GitHub refuses an approval
+or a change request from the pull request's own author. A reviewer pair whose
+harness profile is not active is skipped; with no reviewer left, the task
+ends `ready` and unreviewed, with the reason. The merge on a clean review is
+#86.
+
 ### Operator review
 
 When a meta-harness review run starts, the meta-harness run service appends a

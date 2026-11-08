@@ -22,7 +22,17 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from meta_harness.run_service import events, routing
-from meta_harness.run_service.activities import cleanup_run, prepare, publish, route, run_harness
+from meta_harness.run_service.activities import (
+    cleanup_run,
+    loop_prompt,
+    post_review,
+    prepare,
+    publish,
+    review_policy,
+    route,
+    run_harness,
+    wait_checks,
+)
 from meta_harness.run_service.shared import TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE
 from meta_harness.run_service.task_activities import (
     load_task,
@@ -77,6 +87,10 @@ async def main() -> None:
             run_harness,
             cleanup_run,
             publish,
+            wait_checks,
+            review_policy,
+            loop_prompt,
+            post_review,
             load_task,
             set_task_status,
             record_route,
