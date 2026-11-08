@@ -18,6 +18,7 @@ export const theme = createTheme({
 const STATUS_COLORS: Record<string, string> = {
   active: "teal",
   running: "blue",
+  in_review: "violet",
   ready: "teal",
   closed: "gray",
   met: "teal",

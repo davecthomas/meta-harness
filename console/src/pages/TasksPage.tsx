@@ -1,17 +1,20 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Anchor, Badge, Group, SegmentedControl, Table, Text } from "@mantine/core";
-import { api } from "../api";
+import { api, type Task } from "../api";
 import { useInfinite } from "../hooks";
 import { TileGrid, type TileSize } from "../components/TileGrid";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, StatusBadge, TitleLink, when } from "../components/ui";
 
-const FILTERS: [string, string, string[]][] = [
-  ["running", "Running", ["running"]],
-  ["waiting", "Queued and blocked", ["queued", "blocked"]],
-  ["ready", "Pull request open", ["ready", "review_unresolved"]],
-  ["ended", "Ended", ["closed", "failed", "canceled"]],
-  ["all", "All", []],
+// Each tab: its key, its label, the statuses it shows, and whether the tasks have a pull request.
+// A task keeps running after it opens its pull request, through checks, review and fixes, so "Running"
+// is the tasks still on their first run and "Pull request open" is every unfinished task with one.
+const FILTERS: [string, string, string[], boolean | undefined][] = [
+  ["running", "Running", ["running"], false],
+  ["waiting", "Queued and blocked", ["queued", "blocked"], undefined],
+  ["ready", "Pull request open", ["running", "ready", "review_unresolved"], true],
+  ["ended", "Ended", ["closed", "failed", "canceled"], undefined],
+  ["all", "All", [], undefined],
 ];
 const VIEWS = [
   { value: "list", label: "List" },
@@ -30,7 +33,7 @@ export function TasksPage() {
   const [streamState, setStreamState] = useState("idle");
 
   const tasks = useInfinite(
-    (offset, limit) => api.tasks({ statuses: filter[2] }, offset, limit),
+    (offset, limit) => api.tasks({ statuses: filter[2], pr: filter[3] }, offset, limit),
     tiles ? size : 50,
     `${filter[0]}:${tiles}:${size}`,
   );
@@ -65,7 +68,7 @@ export function TasksPage() {
             {tasks.items.map((t) => (
               <Table.Tr key={t.id}>
                 <Table.Td maw={420}><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
-                <Table.Td><StatusBadge status={t.status} /></Table.Td>
+                <Table.Td><StatusBadge status={shownStatus(t)} /></Table.Td>
                 <Table.Td><Text ff="monospace" size="xs">{t.repo}</Text></Table.Td>
                 <Table.Td><IssueLink issueRef={t.external_ref} /></Table.Td>
                 <Table.Td>{t.pr_url && <Anchor href={t.pr_url} target="_blank" size="sm">Open</Anchor>}</Table.Td>
@@ -80,4 +83,9 @@ export function TasksPage() {
       </div>
     </>
   );
+}
+
+// A running task with a pull request is in its review loop: checks, review, fixes.
+export function shownStatus(task: Task): string {
+  return task.status === "running" && task.pr_url ? "in_review" : task.status;
 }
