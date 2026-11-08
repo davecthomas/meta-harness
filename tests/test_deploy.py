@@ -90,9 +90,9 @@ def test_the_release_stack_gets_the_commit_and_the_image_the_workflow_built():
     release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
     assert '-var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"' in deploy
     assert "edge:${{ github.sha }}" in deploy
-    # Every deploy is a new VM. An in-place update would keep the old boot disk and never attach the data disk.
-    assert "-replace=google_compute_instance.vm" in deploy
-    assert 'startup-script          = file("${path.module}/../../vm/startup.sh")' in release
+    # A deploy keeps the VM: no -replace, so running tasks survive a merge.
+    assert "-replace=" not in deploy
+    assert re.search(r'startup-script\s+= file\("\$\{path.module\}/../../vm/startup.sh"\)', release)
 
 
 def test_the_edge_reads_every_sign_in_setting_the_release_stack_gives_it():
@@ -123,3 +123,29 @@ def test_the_console_address_forwards_everything_to_the_edge_and_nothing_else_si
     assert "iap_enabled         = false" in release
     assert 'member   = "allUsers"' in release
     assert "iap_web_cloud_run_service_iam_member" not in platform
+
+
+def test_a_deploy_updates_the_running_vm_in_place_unless_terraform_replaced_it():
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
+    platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
+    assert "if: steps.apply.outputs.replaced == 'false'" in deploy
+    assert "--tunnel-through-iap" in deploy and "systemd-run --wait --collect" in deploy
+    assert "--setenv=MH_DEPLOY_MODE=update" in deploy
+    assert re.search(r'enable-oslogin\s+= "TRUE"', release)
+    assert '"roles/iap.tunnelResourceAccessor"' in platform and '"roles/compute.osAdminLogin"' in platform
+
+
+def test_an_update_keeps_the_databases_running_and_restarts_services_one_at_a_time():
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    update = boot[boot.index('if [ "$MODE" = boot ]; then') :]
+    update = update[update.index("else") : update.index("\nfi\nlog")]
+    assert "systemctl restart mh-postgres" not in update and "systemctl restart mh-temporal" not in update
+    assert "systemctl start mh-postgres mh-temporal" in update
+    assert 'systemctl restart "$unit"' in update and 'healthy "$unit"' in update
+    assert "for pair in mh-events:8301 mh-tasks:8302 mh-planner:8303 mh-scheduler:8304 mh-worker:" in update
+    # A gateway or egress restart drops a running sandbox's model calls, so each restarts only when it changed.
+    assert "if changed samples/temporal-run-task/egress-proxy" in update
+    assert 'GW_PREVIOUS" ] || changed deploy/vm/units/mh-gateway.service' in update
+    startup = (ROOT / "deploy" / "vm" / "startup.sh").read_text()
+    assert startup.index("MH_PREVIOUS_COMMIT=$(git") < startup.index("checkout -q -f FETCH_HEAD")

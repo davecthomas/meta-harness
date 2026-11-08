@@ -34,7 +34,14 @@ and what is planned.
   may hold a code-host credential or write where the host will run it.
 - Keep `docs/technical-design.md` true to the code: a change that alters a
   documented behavior updates the design in the same pull request.
-- The project has no published version, so a change bumps none.
+- Every pull request that changes what ships bumps the version by semantic
+  versioning (patch for a fix, minor for a feature), in `pyproject.toml`
+  (then `uv lock`), `src/meta_harness/__init__.py`, `console/package.json`
+  and both `version` fields of `console/package-lock.json`.
+- A deploy restarts the services one at a time on the running VM, so old
+  and new code run side by side for a few seconds. A migration only adds:
+  a new column is nullable or has a default, and a column, table or event
+  field is removed in a later pull request, once no running code reads it.
 
 ## Style
 

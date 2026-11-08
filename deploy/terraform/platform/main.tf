@@ -193,13 +193,17 @@ resource "google_service_account_iam_member" "deploy_from_github" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
 
-# What a deploy may do: replace the VM, deploy the edge, push its image, and read and write the release
-# stack's state. It cannot change IAM, secrets or the network: those are this stack's, applied by hand.
+# What a deploy may do: update or replace the VM, deploy the edge, push its image, and read and write the
+# release stack's state. It cannot change IAM, secrets or the network: those are this stack's, applied by hand.
+# The last two let it update the running VM over IAP SSH, with sudo, through OS Login.
 resource "google_project_iam_member" "deploy" {
-  for_each = toset(["roles/compute.instanceAdmin.v1", "roles/run.admin", "roles/firebasehosting.admin"])
-  project  = var.project
-  role     = each.value
-  member   = "serviceAccount:${local.deploy_sa}"
+  for_each = toset([
+    "roles/compute.instanceAdmin.v1", "roles/run.admin", "roles/firebasehosting.admin",
+    "roles/iap.tunnelResourceAccessor", "roles/compute.osAdminLogin",
+  ])
+  project = var.project
+  role    = each.value
+  member  = "serviceAccount:${local.deploy_sa}"
 }
 
 resource "google_service_account_iam_member" "deploy_acts_as" {

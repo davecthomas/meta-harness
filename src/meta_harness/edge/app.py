@@ -37,6 +37,7 @@ operator and there is no sign-in.
 GET /v1/me answers who is signed in; GET /auth/config, the OAuth client id.
 """
 
+import asyncio
 import os
 import time
 from collections.abc import Callable
@@ -60,6 +61,9 @@ ROUTES: list[tuple[str, str, str]] = [
     ("/v1/events", "MH_EVENTS_URL", "http://127.0.0.1:8301"),
     ("/v1/kill-switch", "MH_SCHEDULER_URL", "http://127.0.0.1:8304"),
 ]
+# A deploy restarts each service for a few seconds. A request that cannot connect is tried again for this
+# long: a refused connection means the service never saw it, so even a change is safe to send again.
+RESTART_WAIT_SECONDS = 20.0
 # Request headers the edge passes on; it sets Authorization and X-MH-Actor itself.
 PASSED_HEADERS = {"content-type", "accept", "last-event-id"}
 # cache-control: the edge sets its own (no-store), so an upstream's cannot let Firebase Hosting cache.
@@ -149,6 +153,7 @@ def create_app(
     identity: str | None = None,
     service_key: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    restart_wait_seconds: float = RESTART_WAIT_SECONDS,
     google_client_id: str | None = None,
     session_key: str | None = None,
     console_origin: str | None = None,
@@ -270,17 +275,29 @@ def create_app(
         params = [(k, v) for k, v in request.query_params.multi_items() if k != "ticket"]
         headers["Authorization"] = f"Bearer {key}"
         headers["X-MH-Actor"] = who
-        upstream = client.build_request(
-            request.method,
-            f"{base}{request.url.path}",
-            params=params,
-            headers=headers,
-            content=await request.body(),
-        )
-        try:
-            response = await client.send(upstream, stream=True)
-        except httpx.HTTPError as err:
-            return JSONResponse({"detail": f"{base} is unreachable: {err}"}, status_code=502)
+        content = await request.body()
+        waited, pause = 0.0, 0.25
+        while True:
+            upstream = client.build_request(
+                request.method, f"{base}{request.url.path}", params=params, headers=headers, content=content
+            )
+            try:
+                response = await client.send(upstream, stream=True)
+                break
+            except httpx.ConnectError as err:
+                if waited >= restart_wait_seconds:
+                    return private(
+                        JSONResponse(
+                            {"detail": f"the meta-harness is updating and {base} is not back yet: {err}"},
+                            status_code=503,
+                            headers={"Retry-After": "5"},
+                        )
+                    )
+                await asyncio.sleep(pause)
+                waited += pause
+                pause = min(pause * 2, 2.0)
+            except httpx.HTTPError as err:
+                return JSONResponse({"detail": f"{base} is unreachable: {err}"}, status_code=502)
         passed = {k: v for k, v in response.headers.items() if k.lower() not in DROPPED_RESPONSE_HEADERS}
         passed["Cache-Control"] = "no-store"
         # The console opens the stream on this address from its own origin: let it read the stream, only.
