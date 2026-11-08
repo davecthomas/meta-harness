@@ -148,8 +148,12 @@ def list_tasks(
     goal_id: str | None,
     limit: int,
     offset: int = 0,
+    pr: bool | None = None,
 ) -> tuple[list[dict], int]:
-    """One page of tasks, highest priority then oldest first, and how many match in all."""
+    """One page of tasks, highest priority then oldest first, and how many match in all.
+
+    pr True: only tasks with a pull request; False: only tasks without one; None: either.
+    """
     clauses, params = [], []
     if caller is not None:
         clauses.append("caller = %s")
@@ -160,6 +164,8 @@ def list_tasks(
     if goal_id:
         clauses.append("goal_id = %s")
         params.append(goal_id)
+    if pr is not None:
+        clauses.append("pr_url IS NOT NULL" if pr else "pr_url IS NULL")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(

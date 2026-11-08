@@ -128,3 +128,23 @@ def test_cancel_ends_a_queued_task_and_flags_a_running_one(api, events):
     assert events.types(running["id"])[-1] == "task_cancel_requested"
     again = api.get(f"/v1/tasks/{running['id']}", headers=_as(CALLER_KEY)).json()
     assert again["cancel_requested"] is True
+
+
+def test_a_running_task_keeps_its_pull_request_and_the_list_finds_it_by_pr(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(SERVICE_KEY)).json()
+    status = f"/v1/tasks/{task['id']}/status"
+    api.post(status, json={"status": "running"}, headers=_as(SERVICE_KEY))
+    changes = len([e for e in events.events if e[0] == "task_status_changed"])
+
+    saved = api.post(
+        status,
+        json={"status": "running", "pr_url": "https://github.com/o/r/pull/9", "head_sha": "abc"},
+        headers=_as(SERVICE_KEY),
+    ).json()
+
+    assert (saved["status"], saved["pr_url"], saved["head_sha"]) == ("running", "https://github.com/o/r/pull/9", "abc")
+    assert len([e for e in events.events if e[0] == "task_status_changed"]) == changes, "no status changed"
+    with_pr = api.get("/v1/tasks", params={"status": "running", "pr": "true", "limit": 1000}, headers=_as(SERVICE_KEY))
+    without = api.get("/v1/tasks", params={"status": "running", "pr": "false", "limit": 1000}, headers=_as(SERVICE_KEY))
+    assert task["id"] in {t["id"] for t in with_pr.json()["tasks"]}
+    assert task["id"] not in {t["id"] for t in without.json()["tasks"]}
