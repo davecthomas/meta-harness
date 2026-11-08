@@ -50,6 +50,16 @@ VM_DEPLOY_MINUTES=${VM_DEPLOY_MINUTES:-30}
 g() { gcloud --project "$PROJECT" --quiet "$@"; }
 log() { echo "[deploy] $*"; }
 exists() { "$@" >/dev/null 2>&1; }
+# retry COMMAND: a service account created a moment ago takes up to a minute or two to be visible to
+# every service's IAM, so a grant to it is tried for three minutes.
+retry() {
+  local i
+  for i in $(seq 1 18); do
+    "$@" >/dev/null 2>&1 && return 0
+    sleep 10
+  done
+  "$@" >/dev/null
+}
 number() { gcloud projects describe "$PROJECT" --format='value(projectNumber)'; }
 
 # secret NAME SOURCE: creates the secret from SOURCE's output when it does not exist yet.
@@ -203,20 +213,20 @@ deploy_access() {
       --attribute-condition "assertion.repository=='$GITHUB_REPO' && assertion.ref=='refs/heads/main'"
   exists g iam service-accounts describe "$sa" || g iam service-accounts create "$DEPLOY_SA" --display-name "meta-harness deploys"
   member="principalSet://iam.googleapis.com/projects/$num/locations/global/workloadIdentityPools/github/attribute.repository/$GITHUB_REPO"
-  g iam service-accounts add-iam-policy-binding "$sa" --member "$member" --role roles/iam.workloadIdentityUser >/dev/null
+  retry g iam service-accounts add-iam-policy-binding "$sa" --member "$member" --role roles/iam.workloadIdentityUser
   for role in roles/run.admin roles/cloudbuild.builds.editor roles/serviceusage.serviceUsageConsumer roles/logging.viewer; do
-    g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$sa" --role "$role" --condition=None >/dev/null
+    retry g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$sa" --role "$role" --condition=None
   done
-  g storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" --member "serviceAccount:$sa" \
-    --role roles/storage.admin >/dev/null
+  retry g storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" --member "serviceAccount:$sa" \
+    --role roles/storage.admin
   # It acts as the accounts the edge, its build and the VM run as.
   for target in "mh-edge-sa@$PROJECT.iam.gserviceaccount.com" "$num-compute@developer.gserviceaccount.com" \
     "mh-vm-sa@$PROJECT.iam.gserviceaccount.com"; do
-    g iam service-accounts add-iam-policy-binding "$target" --member "serviceAccount:$sa" \
-      --role roles/iam.serviceAccountUser >/dev/null
+    retry g iam service-accounts add-iam-policy-binding "$target" --member "serviceAccount:$sa" \
+      --role roles/iam.serviceAccountUser
   done
-  g compute instances add-iam-policy-binding "$VM" --zone "$ZONE" --member "serviceAccount:$sa" \
-    --role roles/compute.instanceAdmin.v1 >/dev/null
+  retry g compute instances add-iam-policy-binding "$VM" --zone "$ZONE" --member "serviceAccount:$sa" \
+    --role roles/compute.instanceAdmin.v1
 }
 
 cmd_edge() {
