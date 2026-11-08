@@ -23,6 +23,14 @@ here. The edge signs operators in itself, with Google:
 - The cookie is HttpOnly, Secure and SameSite=Strict, and a request that
   changes something must come from the console's origin, MH_CONSOLE_ORIGIN.
 
+- The live event stream does not go through Firebase Hosting, which ends a
+  request at 60 seconds. POST /auth/stream-ticket gives a signed-in console a
+  ticket: read-only, for /v1/events/tail only, good for five minutes. The
+  console opens the stream on the edge's own Cloud Run address,
+  MH_STREAM_ORIGIN, with the ticket in the query, and Cloud Run keeps it open
+  for up to an hour. That address answers the console's origin for the stream
+  only (CORS), and the ticket never reaches the event service.
+
 With MH_GOOGLE_CLIENT_ID unset (locally), MH_CONSOLE_DEV_IDENTITY names the
 operator and there is no sign-in.
 
@@ -72,6 +80,9 @@ GOOGLE_KEYS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
 SESSION_COOKIE = "__session"
 SESSION_SECONDS = 12 * 3600
+# A stream ticket opens the event stream; long enough to cover a reconnect after a dropped connection.
+TICKET_SECONDS = 300
+STREAM_PATH = "/v1/events/tail"
 # Changes, which must come from the console's origin.
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -113,14 +124,22 @@ def new_session(who: str, key: str, now: float | None = None) -> str:
     return jwt.encode({"sub": who, "iat": issued, "exp": issued + SESSION_SECONDS}, key, algorithm="HS256")
 
 
-def session_identity(token: str, key: str) -> str:
-    """The operator a session names, or "" when it is missing, forged or expired."""
+def session_identity(token: str, key: str, scope: str = "session") -> str:
+    """The operator a session (or, with scope "stream", a stream ticket) names, or "" when it is missing,
+    forged, expired, or of the other scope."""
     if not token:
         return ""
     try:
-        return str(jwt.decode(token, key, algorithms=["HS256"], options={"require": ["exp", "sub"]})["sub"])
+        claims = jwt.decode(token, key, algorithms=["HS256"], options={"require": ["exp", "sub"]})
     except jwt.PyJWTError:
         return ""
+    return str(claims["sub"]) if claims.get("scope", "session") == scope else ""
+
+
+def new_ticket(who: str, key: str, now: float | None = None) -> str:
+    issued = int(now if now is not None else time.time())
+    claims = {"sub": who, "scope": "stream", "iat": issued, "exp": issued + TICKET_SECONDS}
+    return jwt.encode(claims, key, algorithm="HS256")
 
 
 def create_app(
@@ -133,6 +152,7 @@ def create_app(
     session_key: str | None = None,
     console_origin: str | None = None,
     verify_google: Callable[[str], str] | None = None,
+    stream_origin: str | None = None,
 ) -> FastAPI:
     app_dir = dist or REPO_ROOT / "console" / "dist"
     allowed = operators if operators is not None else operators_from_env()
@@ -141,6 +161,7 @@ def create_app(
     client_id = google_client_id if google_client_id is not None else os.environ.get("MH_GOOGLE_CLIENT_ID", "")
     signing_key = session_key if session_key is not None else os.environ.get("MH_SESSION_KEY", "")
     origin = (console_origin if console_origin is not None else os.environ.get("MH_CONSOLE_ORIGIN", "")).rstrip("/")
+    stream_base = (stream_origin if stream_origin is not None else os.environ.get("MH_STREAM_ORIGIN", "")).rstrip("/")
     if client_id and not signing_key:
         raise RuntimeError("MH_GOOGLE_CLIENT_ID is set without MH_SESSION_KEY: sessions could not be signed")
     verify = verify_google or (google_verifier(client_id) if client_id else None)
@@ -152,6 +173,8 @@ def create_app(
         valid session counts; locally, MH_CONSOLE_DEV_IDENTITY names the operator."""
         if verify is not None:
             who = session_identity(request.cookies.get(SESSION_COOKIE, ""), signing_key)
+            if not who and request.url.path == STREAM_PATH:
+                who = session_identity(request.query_params.get("ticket", ""), signing_key, scope="stream")
             if not who:
                 return "", private(JSONResponse({"detail": "not signed in"}, status_code=401))
         else:
@@ -203,6 +226,18 @@ def create_app(
         )
         return response
 
+    @app.post("/auth/stream-ticket")
+    def stream_ticket(request: Request) -> Response:
+        """Where to open the live event stream, and the ticket that opens it."""
+        who, denied = signed_in(request)
+        if denied:
+            return denied
+        refused = foreign(request)
+        if refused:
+            return refused
+        ticket = new_ticket(who, signing_key) if verify is not None else None
+        return private(JSONResponse({"base": stream_base, "ticket": ticket}))
+
     @app.post("/auth/logout")
     def sign_out() -> Response:
         response = private(JSONResponse({"signed_out": True}))
@@ -230,12 +265,14 @@ def create_app(
         if base is None:
             return JSONResponse({"detail": f"no service owns {request.url.path}"}, status_code=404)
         headers = {k: v for k, v in request.headers.items() if k.lower() in PASSED_HEADERS}
+        # The ticket is the edge's; the event service never sees it.
+        params = [(k, v) for k, v in request.query_params.multi_items() if k != "ticket"]
         headers["Authorization"] = f"Bearer {key}"
         headers["X-MH-Actor"] = who
         upstream = client.build_request(
             request.method,
             f"{base}{request.url.path}",
-            params=request.query_params,
+            params=params,
             headers=headers,
             content=await request.body(),
         )
@@ -245,6 +282,10 @@ def create_app(
             return JSONResponse({"detail": f"{base} is unreachable: {err}"}, status_code=502)
         passed = {k: v for k, v in response.headers.items() if k.lower() not in DROPPED_RESPONSE_HEADERS}
         passed["Cache-Control"] = "no-store"
+        # The console opens the stream on this address from its own origin: let it read the stream, only.
+        if origin and request.url.path == STREAM_PATH and request.headers.get("origin", "").rstrip("/") == origin:
+            passed["Access-Control-Allow-Origin"] = origin
+            passed["Vary"] = "Origin"
 
         async def body():
             # A response already read (an in-process transport) is sent whole; a live one streams.

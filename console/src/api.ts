@@ -118,6 +118,8 @@ export const api = {
   signIn: (credential: string) =>
     call<{ identity: string }>("/auth/google", { method: "POST", body: JSON.stringify({ credential }) }),
   signOut: () => call<{ signed_out: boolean }>("/auth/logout", { method: "POST" }),
+  // Where to open the live event stream, and the ticket that opens it (null locally).
+  streamTicket: () => call<{ base: string; ticket: string | null }>("/auth/stream-ticket", { method: "POST" }),
   repos: () => call<{ repos: { name: string }[] }>("/v1/repos").then((r) => r.repos),
 
   goals: async (statuses: string[], offset: number, limit: number): Promise<Page<Goal>> => {
@@ -169,8 +171,8 @@ export const api = {
 };
 
 // One server-sent-event stream for many tasks: the event service's tail, filtered by task ids.
-export function tailUrl(taskIds: string[], fromPosition: number): string {
-  return "/v1/events/tail" + query({ task_id: taskIds.join(","), from_position: fromPosition });
+export function tailUrl(taskIds: string[], fromPosition: number, base = "", ticket: string | null = null): string {
+  return base + "/v1/events/tail" + query({ task_id: taskIds.join(","), from_position: fromPosition, ticket: ticket ?? undefined });
 }
 
 export function issueUrl(ref: string): string | null {

@@ -102,6 +102,7 @@ def test_the_edge_reads_every_sign_in_setting_the_release_stack_gives_it():
     for name in (
         "MH_GOOGLE_CLIENT_ID",
         "MH_CONSOLE_ORIGIN",
+        "MH_STREAM_ORIGIN",
         "MH_CONSOLE_OPERATORS",
         "MH_SERVICE_KEY",
         "MH_SESSION_KEY",
