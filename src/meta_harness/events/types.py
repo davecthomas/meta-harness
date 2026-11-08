@@ -116,6 +116,21 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("goal_changed", 1, _object({"goal_id": {"type": "string"}, "changes": {"type": "object"}}, ["goal_id"])),
+    # Configuration: every saved or rolled-back version, with the operator as actor
+    EventType(
+        "config_changed",
+        1,
+        _object(
+            {
+                "kind": {"type": "string"},
+                "version": {"type": "integer"},
+                "origin": {"type": "string"},
+                "note": {"type": ["string", "null"]},
+                "rolled_back_from": {"type": ["integer", "null"]},
+            },
+            ["kind", "version", "origin"],
+        ),
+    ),
     EventType(
         "issue_joined",
         1,

@@ -2,7 +2,8 @@
 // Identity-Aware Proxy route it; locally the edge (`mh edge serve`) does, as the signed-in operator.
 
 export class ApiError extends Error {
-  constructor(public status: number, public detail: string) {
+  // `reasons`: every reason a configuration save was refused, when the service listed them.
+  constructor(public status: number, public detail: string, public reasons: string[] = []) {
     super(detail);
   }
 }
@@ -15,10 +16,33 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await response.text();
   const body = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    const detail = body && typeof body.detail === "string" ? body.detail : JSON.stringify(body?.detail ?? body);
-    throw new ApiError(response.status, detail || response.statusText);
+    const reasons: string[] = Array.isArray(body?.detail?.reasons) ? body.detail.reasons : [];
+    const detail = body && typeof body.detail === "string" ? body.detail : reasons.join("; ") || JSON.stringify(body?.detail ?? body);
+    throw new ApiError(response.status, detail || response.statusText, reasons);
   }
   return body as T;
+}
+
+export type ConfigKind = "tiers" | "profiles" | "repos";
+
+export interface ConfigSummary {
+  kind: ConfigKind;
+  title: string;
+  description: string;
+  version: number;
+  edited_by: string;
+  created_at: string;
+}
+
+export interface ConfigVersion {
+  kind: ConfigKind;
+  version: number;
+  document: Record<string, any>;
+  edited_by: string;
+  note: string | null;
+  origin: "seed" | "edit" | "rollback";
+  rolled_back_from: number | null;
+  created_at: string;
 }
 
 function query(params: Record<string, string | number | undefined | null>): string {
@@ -125,6 +149,15 @@ export const api = {
       "/v1/events" + query({ task_id: taskIds.join(","), limit, before_position: before ?? Number.MAX_SAFE_INTEGER }),
     ),
   latestPosition: () => call<{ latest_position: number }>("/v1/events" + query({ limit: 1, from_position: 0 })),
+
+  configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file" }>("/v1/config"),
+  config: (kind: ConfigKind) => call<ConfigVersion>(`/v1/config/${kind}`),
+  configVersions: (kind: ConfigKind) =>
+    call<{ versions: ConfigVersion[] }>(`/v1/config/${kind}/versions`).then((r) => r.versions),
+  saveConfig: (kind: ConfigKind, document: unknown, note: string) =>
+    call<ConfigVersion>(`/v1/config/${kind}`, { method: "PUT", body: JSON.stringify({ document, note: note || null }) }),
+  rollbackConfig: (kind: ConfigKind, version: number) =>
+    call<ConfigVersion>(`/v1/config/${kind}/rollback`, { method: "POST", body: JSON.stringify({ version }) }),
 
   killSwitch: () => call<KillSwitch>("/v1/kill-switch"),
   setKillSwitch: (engaged: boolean, reason: string) =>
