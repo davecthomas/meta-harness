@@ -4,6 +4,7 @@
     GET, PATCH /v1/goals/{id}                 a goal with its issues, or change auto_merge, priority or budget
     POST       /v1/goals/{id}/pause, /resume, /cancel
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
+    GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
     GET        /health
 
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
@@ -23,6 +24,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
+from meta_harness.config import api as config_api
 from meta_harness.planner import repos, store
 from meta_harness.planner.sweep import Events, SweepResult, active_goals, sweep_goal
 from meta_harness.planner.tracker import Tracker
@@ -117,6 +119,9 @@ def create_app(
                 actor=who,
             )
         return goal
+
+    # The configuration API, for every kind, until the run service has an HTTP API of its own.
+    app.include_router(config_api.router(lambda: app.state.pool, operator, events))
 
     @app.get("/health")
     def health() -> dict[str, str]:

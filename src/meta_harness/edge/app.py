@@ -31,6 +31,7 @@ from meta_harness.run_service.paths import REPO_ROOT
 ROUTES: list[tuple[str, str, str]] = [
     ("/v1/goals", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/repos", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
+    ("/v1/config", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/tasks", "MH_TASKS_URL", "http://127.0.0.1:8302"),
     ("/v1/events", "MH_EVENTS_URL", "http://127.0.0.1:8301"),
     ("/v1/kill-switch", "MH_SCHEDULER_URL", "http://127.0.0.1:8304"),
