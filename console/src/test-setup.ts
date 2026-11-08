@@ -19,4 +19,8 @@ class Observer {
   disconnect() {}
 }
 window.ResizeObserver = Observer as unknown as typeof ResizeObserver;
+// Autosizing text areas re-measure when web fonts finish loading.
+Object.defineProperty(document, "fonts", {
+  value: { addEventListener: () => {}, removeEventListener: () => {}, ready: Promise.resolve() },
+});
 window.IntersectionObserver = Observer as unknown as typeof IntersectionObserver;

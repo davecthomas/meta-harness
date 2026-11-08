@@ -27,7 +27,8 @@ rest. A section that describes a planned component says so.
 | Event service | Holds the ordered record of every meta-harness domain event. | built | `events/` |
 | Metering service | Computes cost, time and success per attempt and per task. | planned | |
 | Harness analyzer | Proposes changes to router tiers, harness profiles and task policy from metering evidence. | planned | |
-| Operator console | The cloud web app operators run the meta-harness from: goals, tasks, live runs, cancel and the kill switch. Its configuration, routing, spend and audit views are planned. | partly built | `console/`, `edge/` |
+| Operator console | The cloud web app operators run the meta-harness from, built on Mantine: goals, tasks, live runs, cancel, the kill switch, and configuration with versions and rollback. Its routing, spend and audit views are planned. | partly built | `console/`, `edge/` |
+| Configuration | Versioned router tiers, harness profiles and repo registry, checked on save, served by the planner process | built | `config/` |
 | **ai-api-unified library**, in the meta-harness run service process | | | the `ai-api-unified` repo |
 | ai-api-unified router | Classifies a task, picks a tier, and returns the tier's ordered harness-profile-and-model candidates and thinking level, building none of them. | built | `AiRouteClassifier` |
 | **Per-run sandbox**, one container per run | | built | `images/harness-pi/` |
@@ -168,14 +169,27 @@ flowchart TB
 | Harness server | The run's pi session directory |
 
 Configuration is a set of versioned JSON documents, edited in the operator
-console. The meta-harness run service owns the router configuration, the
-harness profiles and the task policy; the planner owns the modalities and the
-repo registry; the task service owns the access list. Each keeps its documents' versions in its `config_version`
-table. The owning service checks an edit the way it checks configuration at
-startup, refuses a bad one with the reason, records the new version as an
-audit event with the operator as actor, and applies it to tasks that start
-after it. An operator can roll back to any earlier version, and an approved
-harness analyzer proposal applies as a new version the same way.
+console's Configuration view. The built kinds are `tiers` (the ai-api-unified
+router's `router` section), `profiles` (the harness profiles) and `repos` (the
+repo registry). The `config` component, `src/meta_harness/config/`, keeps
+every version of each in its `config.config_version` table and the active one
+in `config.active`. The planner process serves its API for every kind, until
+the run service has an HTTP API of its own. A kind's first version is seeded
+from the deployment's file on the first read.
+
+A save is checked the way the service that reads the kind checks its
+configuration at startup: the router must parse and name a default tier, every
+tier candidate must be a harness pair naming a profile that exists, every
+profile needs known tools and positive limits, and a profile a tier still
+names cannot be removed. A refused save lists every reason. A saved version
+becomes active at once, is a `config_changed` event with the operator as
+actor, and applies to the next task routed; a running task keeps what it
+started with. Rolling back saves an earlier version's document again as a new
+version, after the same check. With `MH_CONFIG_SOURCE=db`, as the cloud
+deployment sets it, the worker and the planner read the active versions;
+otherwise they read the files, as the zero-cost end-to-end check does. The
+`task_policy`, `modalities` and `access` kinds are planned, and an approved
+harness analyzer proposal will apply as a new version the same way.
 
 ## The harness
 
@@ -1446,10 +1460,11 @@ credential.
 | POST | `/v1/goals/{id}/approve`, `/pause`, `/resume`, `/cancel` | Planner | Approve the pending plan or phase, or pause, resume or cancel the goal |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add an issue to the goal, or drop one |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state |
-| GET | `/v1/config/{kind}` | Meta-harness run service, planner or task service, by kind | The active version of `tiers`, `profiles`, `task_policy`, `modalities`, `repos` or `access` |
-| GET | `/v1/config/{kind}/versions` | The kind's owner | The document's version history |
-| PUT | `/v1/config/{kind}` | The kind's owner | Save a new version; the owner checks it as at startup and refuses a bad one with the reason |
-| POST | `/v1/config/{kind}/rollback` | The kind's owner | Make an earlier version the active one |
+| GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version |
+| GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles` or `repos`; `task_policy`, `modalities` and `access` are planned |
+| GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history |
+| PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused |
+| POST | `/v1/config/{kind}/rollback` | Configuration, in the planner process | Make an earlier version's document active again, as a new version |
 | GET | `/v1/proposals` | Harness analyzer | Pending and decided proposals with their evidence |
 | POST | `/v1/proposals/{id}/approve`, `/reject` | Harness analyzer | Decide a proposal; an approved one applies as a new configuration version |
 | GET | `/v1/events` | Event service | Events by run, task, type or source after a position, paged |
@@ -1695,9 +1710,8 @@ the same approval.
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |
 | Meta-harness run service | operator_review | review_task_id, operator, claimed_at, verdict, findings, submitted_at, released_at |
-| Meta-harness run service | config_version | kind (tiers, profiles, task_policy), version, document, edited_by, effective_at |
-| Planner | config_version | kind (modalities, repos), version, document, edited_by, effective_at |
-| Task service | config_version | kind (access), version, document, edited_by, effective_at |
+| Configuration | config_version | kind (tiers, profiles, repos; task_policy, modalities and access planned), version, document, edited_by, note, origin (seed, edit, rollback), rolled_back_from, created_at |
+| Configuration | active | kind, version, changed_at |
 | Pool manager | sandbox | id, image, executor, executor_ref, state (provisioning, warm, leased, kept, draining, unhealthy, destroyed), created_at, destroyed_at, destroy_reason |
 | Pool manager | lease | run_id, sandbox_id, harness_session_id, session_state (new, kept, restored), granted_at, expires_at, released_at, release_reason |
 | Meta-harness event service | event | event_id (UUID, unique), position (assigned on insert, monotonic), event_type, schema_version, time_utc, source (task, meta-harness scheduler, dispatcher, route, run, workflow, pool, analyzer, gateway), actor, run_id, task_id, session_id, request_id, seq, trace_id, config_id, config_version, tags (jsonb), payload (jsonb) |
@@ -2125,6 +2139,7 @@ through the local egress proxy's control listener.
 | `submit_review`, the review run's owned pi tool | built | `images/harness-pi/extension` |
 | The clone's git directory outside the per-run sandbox mount, read-only inside it, so nothing pi writes runs on the host at Publish | built | `src/meta_harness/run_service/code_host.py`, `sandbox.py`, `tests/run_service` |
 | Runs sized for real work: Python 3.12, uv and Poetry in the sandbox image; profile limits, resources and bash allowlist; the run activity's timeout from the profile; tier models and thinking levels | built | `images/harness-pi`, `config/`, `tests/run_service/test_workflow.py` |
+| The operator console on Mantine: a sidebar shell, data tables, a Goals page, and a Configuration view of router tiers, harness profiles and the repo registry, with versions, checked saves and rollback | built | `console/`, `src/meta_harness/config`, `tests/config` |
 
 ### Bootstrap pull requests
 
@@ -2200,7 +2215,7 @@ console.
 | Issue | Repo |
 |---|---|
 | The `feature` and `new-system` modalities: the planning task, plan and phase approval in the operator console, goal success criteria, and the modality classifier | meta-harness |
-| Configuration edited in the operator console, with versions and rollback | meta-harness |
+| The `task_policy`, `modalities` and `access` configuration kinds, beside the built tiers, profiles and repo registry | meta-harness |
 | ai-api-unified decisions in the operator console: the Cloud Logging log sink, the Pub/Sub topic and push subscription, and `gateway_request` events | meta-harness |
 | The metering service and the Spend view | meta-harness |
 | The harness analyzer, its proposals, and the Routing view | meta-harness |

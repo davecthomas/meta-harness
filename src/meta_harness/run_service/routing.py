@@ -15,18 +15,26 @@ harness profile or a malformed pair stops the worker instead of failing a
 task (principle 4). The worker builds one AiRouteClassifier and every route
 activity shares it.
 
+With MH_CONFIG_SOURCE=db, as the cloud deployment sets it, the tiers and the
+profiles are instead the active versions an operator edits in the console
+(meta_harness.config), seeded from those files. Every route activity reads the
+active version, so a saved edit applies to the next task routed, and a
+running task keeps what it started with.
+
 Environment: AI_MODELS_CONFIG (the models.json path), AI_MODELS_ENV (one of
 its `environments`), HARNESS_PROFILES (default config/harness_profiles.json),
-HARNESS_IMAGE (the image a harness profile with no image of its own runs).
+HARNESS_IMAGE (the image a harness profile with no image of its own runs),
+MH_CONFIG_SOURCE (file, the default, or db).
 """
 
 import json
 import os
-from functools import cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
 from ai_api_unified import AIFactory, AiRouteClassifier
+from ai_api_unified.routing.router_config import load_router_config
 
 from meta_harness.run_service.paths import REPO_ROOT
 from meta_harness.run_service.shared import Candidate
@@ -40,9 +48,23 @@ class CandidateError(ValueError):
     """A tier candidate or pin that names no harness profile, or is not a harness pair."""
 
 
-@cache
+def _from_database() -> bool:
+    from meta_harness.config import store
+
+    return store.from_database()
+
+
 def profiles() -> dict[str, dict[str, Any]]:
-    """config/harness_profiles.json's harness profiles, read once per process."""
+    """The harness profiles: the active configuration version, or config/harness_profiles.json."""
+    if _from_database():
+        from meta_harness.config import store
+
+        return dict(store.active_document("profiles")[1]["profiles"])
+    return _file_profiles()
+
+
+@cache
+def _file_profiles() -> dict[str, dict[str, Any]]:
     loaded = json.loads(PROFILES_PATH.read_text(encoding="utf-8"))
     return dict(loaded["profiles"])
 
@@ -63,7 +85,7 @@ def candidate(engine: str, model: str) -> Candidate:
         raise CandidateError(f"{label} is malformed: write harness:<profile>/<engine>:<model>")
     known = profiles()
     if profile_name not in known:
-        raise CandidateError(f"{label} names harness profile {profile_name}, which {PROFILES_PATH.name} lacks")
+        raise CandidateError(f"{label} names harness profile {profile_name}, which the harness profiles lack")
     profile = {"name": profile_name, **known[profile_name]}
     profile["image"] = profile.get("image") or DEFAULT_IMAGE
     return Candidate(label=label, profile_name=profile_name, engine=inner_engine, model=inner_model, profile=profile)
@@ -75,10 +97,25 @@ def pinned(pin: str) -> Candidate:
     return candidate(engine.strip(), model.strip())
 
 
-@cache
 def router() -> AiRouteClassifier:
-    """The process's classify-only ai-api-unified router, over models.json's `router`."""
+    """The classify-only ai-api-unified router: over the active tiers version, or models.json's `router`."""
+    if _from_database():
+        from meta_harness.config import store
+
+        version, document = store.active_document("tiers")
+        return _versioned_router(version, json.dumps(document, sort_keys=True))
+    return _file_router()
+
+
+@cache
+def _file_router() -> AiRouteClassifier:
     return AIFactory.get_route_classifier()
+
+
+@lru_cache(maxsize=4)
+def _versioned_router(version: int, document: str) -> AiRouteClassifier:
+    """One router per tiers version, built once and shared by every route activity that sees that version."""
+    return AIFactory.get_route_classifier(router=load_router_config(document))
 
 
 THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "max"}

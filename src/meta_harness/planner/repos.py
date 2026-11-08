@@ -3,7 +3,8 @@
 The registry is deployment data, not code: config/repos.json ships empty.
 A deployment supplies its own as MH_REPOS_CONFIG, or locally as
 config/repos.local.json (git ignores it; config/repos.example.json shows the
-shape). Configuration edited in the operator console replaces the file later.
+shape). With MH_CONFIG_SOURCE=db the registry is the active `repos` version
+an operator edits in the console, seeded from that file.
 """
 
 import json
@@ -30,9 +31,20 @@ def registry_path() -> Path:
     return local if local.is_file() else REPO_ROOT / "config" / "repos.json"
 
 
-@cache
 def registry() -> dict[str, Repo]:
-    loaded = json.loads(registry_path().read_text(encoding="utf-8"))
+    from meta_harness.config import store
+
+    if store.from_database():
+        return _parse(store.active_document("repos")[1])
+    return _file_registry()
+
+
+@cache
+def _file_registry() -> dict[str, Repo]:
+    return _parse(json.loads(registry_path().read_text(encoding="utf-8")))
+
+
+def _parse(loaded: dict) -> dict[str, Repo]:
     return {
         name.lower(): Repo(name, spec.get("tracker", "github"), list(spec.get("default_checks", [])))
         for name, spec in loaded["repos"].items()

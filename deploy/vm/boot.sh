@@ -99,6 +99,9 @@ umask 077
   # only the classify-only router can read; the HTTP Gateway reads its own config/models.json. Each unit
   # that needs the variable sets it (deploy/vm/units/mh-worker.service).
   echo "RUNS_DIR=$STATE/runs"
+  # Router tiers, harness profiles and the repo registry are the versions operators edit in the console,
+  # seeded from the files on the first read.
+  echo "MH_CONFIG_SOURCE=db"
 } >"$ETC/env.new"
 secret MH_REPOS_CONFIG >"$ETC/repos.json.new"
 mv "$ETC/env.new" "$ETC/env"
