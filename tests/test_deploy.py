@@ -93,3 +93,32 @@ def test_the_release_stack_gets_the_commit_and_the_image_the_workflow_built():
     # Every deploy is a new VM. An in-place update would keep the old boot disk and never attach the data disk.
     assert "-replace=google_compute_instance.vm" in deploy
     assert 'startup-script          = file("${path.module}/../../vm/startup.sh")' in release
+
+
+def test_the_edge_reads_every_sign_in_setting_the_release_stack_gives_it():
+    """A renamed variable on either side would start the edge without sign-in, or refuse to start it."""
+    release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
+    edge = (ROOT / "src" / "meta_harness" / "edge" / "app.py").read_text()
+    for name in (
+        "MH_GOOGLE_CLIENT_ID",
+        "MH_CONSOLE_ORIGIN",
+        "MH_CONSOLE_OPERATORS",
+        "MH_SERVICE_KEY",
+        "MH_SESSION_KEY",
+    ):
+        assert name in release, name
+        assert f'os.environ.get("{name}"' in edge or f'"{name}"' in edge, name
+    assert "MH_EDGE_IAP_AUDIENCE" not in release
+
+
+def test_the_console_address_forwards_everything_to_the_edge_and_nothing_else_signs_in():
+    release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
+    platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
+    variables = (ROOT / "deploy" / "terraform" / "platform" / "variables.tf").read_text()
+    assert 'default     = "meta-harness"' in variables
+    assert 'resource "google_firebase_hosting_site" "console"' in platform
+    assert 'glob = "**"' in release and "service_id = google_cloud_run_v2_service.edge.name" in release
+    # Firebase Hosting calls without credentials: Cloud Run is open, IAP is off, and the edge's session decides.
+    assert "iap_enabled         = false" in release
+    assert 'member   = "allUsers"' in release
+    assert "iap_web_cloud_run_service_iam_member" not in platform

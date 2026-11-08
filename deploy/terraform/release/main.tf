@@ -2,14 +2,23 @@
 # (.github/workflows/deploy.yml) with the merged commit and the edge image it built from it.
 #
 # The VM is replaced, never changed in place: every apply passes -replace=google_compute_instance.vm, so
-# the commit gets a new VM, whose startup script checks it out and runs deploy/vm/boot.sh. The data disk, from the platform stack, carries Postgres,
-# Temporal's history and run workspaces across. The edge gets a new Cloud Run revision from the image.
+# the commit gets a new VM, whose startup script checks it out and runs deploy/vm/boot.sh. The data
+# disk, from the platform stack, carries Postgres, Temporal's history and run workspaces across. The
+# edge gets a new Cloud Run revision from the image.
+#
+# The console's address is the platform stack's Firebase Hosting site, https://meta-harness.web.app,
+# which forwards every request to the edge. The edge signs operators in with Google itself, so the
+# service is open to the internet at the Cloud Run level, and every /v1 request needs its session.
 
 terraform {
   required_version = ">= 1.9"
   required_providers {
     google = {
       source  = "hashicorp/google"
+      version = "~> 7.0"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
       version = "~> 7.0"
     }
   }
@@ -41,6 +50,13 @@ provider "google" {
   user_project_override = true
   billing_project       = local.project
   region                = local.region
+}
+
+provider "google-beta" {
+  project               = local.project
+  region                = local.region
+  user_project_override = true
+  billing_project       = local.project
 }
 
 # --- The VM ----------------------------------------------------------------------------------------
@@ -88,10 +104,12 @@ resource "google_compute_instance" "vm" {
 # --- The edge --------------------------------------------------------------------------------------
 
 resource "google_cloud_run_v2_service" "edge" {
-  name                = local.edge
-  location            = local.region
-  ingress             = "INGRESS_TRAFFIC_ALL"
-  iap_enabled         = true
+  name     = local.edge
+  location = local.region
+  ingress  = "INGRESS_TRAFFIC_ALL"
+  # Firebase Hosting forwards requests without credentials, so neither IAP nor Cloud Run's own sign-in
+  # can sit in front; the edge's Google sign-in does.
+  iap_enabled         = false
   deletion_protection = false
 
   template {
@@ -122,7 +140,8 @@ resource "google_cloud_run_v2_service" "edge" {
           MH_TASKS_URL         = "http://${local.vm_ip}:8302"
           MH_EVENTS_URL        = "http://${local.vm_ip}:8301"
           MH_SCHEDULER_URL     = "http://${local.vm_ip}:8304"
-          MH_EDGE_IAP_AUDIENCE = "/projects/${local.platform.project_number}/locations/${local.region}/services/${local.edge}"
+          MH_GOOGLE_CLIENT_ID  = local.platform.google_client_id
+          MH_CONSOLE_ORIGIN    = local.platform.console_origin
           MH_CONSOLE_OPERATORS = join(",", local.platform.operators)
         }
         content {
@@ -130,12 +149,15 @@ resource "google_cloud_run_v2_service" "edge" {
           value = env.value
         }
       }
-      env {
-        name = "MH_SERVICE_KEY"
-        value_source {
-          secret_key_ref {
-            secret  = "MH_SERVICE_KEY"
-            version = "latest"
+      dynamic "env" {
+        for_each = { MH_SERVICE_KEY = "MH_SERVICE_KEY", MH_SESSION_KEY = local.platform.session_key_secret }
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value
+              version = "latest"
+            }
           }
         }
       }
@@ -143,26 +165,32 @@ resource "google_cloud_run_v2_service" "edge" {
   }
 }
 
-# Identity-Aware Proxy calls the edge on the operators' behalf.
-resource "google_cloud_run_v2_service_iam_member" "iap_invokes" {
+# Firebase Hosting calls the edge without credentials.
+resource "google_cloud_run_v2_service_iam_member" "public" {
   name     = google_cloud_run_v2_service.edge.name
   location = local.region
   role     = "roles/run.invoker"
-  member   = "serviceAccount:service-${local.platform.project_number}@gcp-sa-iap.iam.gserviceaccount.com"
+  member   = "allUsers"
 }
 
-# Adopted from deploy/gcp.sh on the first apply; these blocks can be deleted after it.
-import {
-  to = google_compute_instance.vm
-  id = "projects/${local.project}/zones/${local.platform.zone}/instances/mh-vm"
+# The console's address: every path on the Hosting site goes to the edge.
+resource "google_firebase_hosting_version" "console" {
+  provider = google-beta
+  site_id  = local.platform.console_site
+  config {
+    rewrites {
+      glob = "**"
+      run {
+        service_id = google_cloud_run_v2_service.edge.name
+        region     = local.region
+      }
+    }
+  }
 }
 
-import {
-  to = google_cloud_run_v2_service.edge
-  id = "projects/${local.project}/locations/${local.region}/services/mh-edge"
-}
-
-import {
-  to = google_cloud_run_v2_service_iam_member.iap_invokes
-  id = "projects/${local.project}/locations/${local.region}/services/mh-edge roles/run.invoker serviceAccount:service-${local.platform.project_number}@gcp-sa-iap.iam.gserviceaccount.com"
+resource "google_firebase_hosting_release" "console" {
+  provider     = google-beta
+  site_id      = local.platform.console_site
+  version_name = google_firebase_hosting_version.console.name
+  message      = "every path to the Cloud Run service ${local.edge}"
 }

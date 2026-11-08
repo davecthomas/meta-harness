@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { NavLink as RouterLink, Route, Routes, useLocation } from "react-router-dom";
 import {
   ActionIcon,
@@ -31,6 +31,7 @@ import {
   IconTarget,
 } from "@tabler/icons-react";
 import { api, ApiError } from "./api";
+import { SignIn, signOut } from "./components/SignIn";
 import { Overview } from "./pages/Overview";
 import { NewGoal } from "./pages/NewGoal";
 import { GoalPage } from "./pages/GoalPage";
@@ -60,17 +61,29 @@ function isActive(path: string, to: string): boolean {
 export function App() {
   const [who, setWho] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
+  const [signIn, setSignIn] = useState(false);
   const [opened, { toggle, close }] = useDisclosure();
   const location = useLocation();
 
   useEffect(() => {
     api.me().then(
       (me) => setWho(me.identity),
-      (err) => setRefused(err instanceof ApiError ? err.detail : String(err)),
+      (err) => {
+        if (err instanceof ApiError && err.status === 401) setSignIn(true);
+        else setRefused(err instanceof ApiError ? err.detail : String(err));
+      },
     );
   }, []);
+  const signedIn = useCallback((identity: string) => {
+    setSignIn(false);
+    setWho(identity);
+  }, []);
+
 
   useEffect(close, [location.pathname, close]);
+
+  // After every hook: React needs the same hooks on every render.
+  if (signIn) return <SignIn onSignedIn={signedIn} />;
 
   return (
     <AppShell header={{ height: 56 }} navbar={{ width: 240, breakpoint: "sm", collapsed: { mobile: !opened } }} padding="lg">
@@ -165,10 +178,10 @@ function UserMenu({ who }: { who: string }) {
         </UnstyledButton>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Label>Signed in through Identity-Aware Proxy</Menu.Label>
+        <Menu.Label>Signed in with Google</Menu.Label>
         <Menu.Item disabled>{who}</Menu.Item>
         <Menu.Divider />
-        <Menu.Item component="a" href="/?gcp-iap-mode=CLEAR_LOGIN_COOKIE">Sign out</Menu.Item>
+        <Menu.Item onClick={() => void signOut()}>Sign out</Menu.Item>
       </Menu.Dropdown>
     </Menu>
   );

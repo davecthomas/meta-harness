@@ -56,15 +56,23 @@ def test_the_app_and_its_routes_load_from_dist(tmp_path):
     assert "root" in client.get("/../pyproject.toml").text or client.get("/../pyproject.toml").status_code == 404
 
 
-def test_behind_iap_the_operator_is_the_verified_email(tmp_path, monkeypatch):
+# --- Google sign-in, as in the cloud -----------------------------------------------------------------
+
+CLIENT_ID = "console-client.apps.googleusercontent.com"
+ORIGIN = "https://meta-harness.web.app"
+SESSION_KEY = "test-session-key-0123456789abcdef"
+
+
+def _google_tokens():
+    """Google's side of sign-in: an RSA key, its ID tokens, and the edge's verifier using that key."""
     import time
 
     import jwt
-    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     from meta_harness.edge import app as edge
 
-    key = ec.generate_private_key(ec.SECP256R1())
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
     class Keys:
         def __init__(self, *args, **kwargs):
@@ -73,39 +81,137 @@ def test_behind_iap_the_operator_is_the_verified_email(tmp_path, monkeypatch):
         def get_signing_key_from_jwt(self, token):
             return type("SigningKey", (), {"key": key.public_key()})()
 
-    monkeypatch.setattr(edge.jwt, "PyJWKClient", Keys)
-    audience = "/projects/123/locations/us-central1/services/edge"
-    monkeypatch.setenv("MH_EDGE_IAP_AUDIENCE", audience)
-    (tmp_path / "index.html").write_text("<div id=root></div>")
-    client = TestClient(
-        create_app(
-            dist=tmp_path,
-            operators={"dave@example.com"},
-            identity="",
-            service_key="k",
-            transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
-        )
-    )
-
-    def assertion(email, aud=audience):
+    def token(email="dave@example.com", aud=CLIENT_ID, iss="https://accounts.google.com", verified=True, ttl=600):
         now = int(time.time())
-        claims = {
-            "email": f"accounts.google.com:{email}",
-            "aud": aud,
-            "iss": "https://cloud.google.com/iap",
-            "iat": now,
-            "exp": now + 600,
-        }
-        return jwt.encode(claims, key, algorithm="ES256")
+        claims = {"email": email, "email_verified": verified, "aud": aud, "iss": iss, "iat": now, "exp": now + ttl}
+        return jwt.encode(claims, key, algorithm="RS256")
 
-    assert client.get("/v1/me").status_code == 401
-    assert client.get("/v1/me", headers={"x-goog-iap-jwt-assertion": assertion("dave@example.com")}).json() == {
-        "identity": "dave@example.com"
-    }
-    assert client.get("/v1/me", headers={"x-goog-iap-jwt-assertion": assertion("eve@example.com")}).status_code == 403
-    assert (
-        client.get(
-            "/v1/me", headers={"x-goog-iap-jwt-assertion": assertion("dave@example.com", aud="/other")}
-        ).status_code
-        == 401
+    original = edge.jwt.PyJWKClient
+    edge.jwt.PyJWKClient = Keys
+    try:
+        verify = edge.google_verifier(CLIENT_ID)
+    finally:
+        edge.jwt.PyJWKClient = original
+    return token, verify
+
+
+def _cloud_edge(tmp_path):
+    token, verify = _google_tokens()
+    seen: list[httpx.Request] = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True}, headers={"Cache-Control": "public, max-age=600"})
+
+    (tmp_path / "index.html").write_text("<div id=root></div>")
+    app = create_app(
+        dist=tmp_path,
+        operators={"dave@example.com"},
+        identity="",
+        service_key="svc-key",
+        transport=httpx.MockTransport(upstream),
+        google_client_id=CLIENT_ID,
+        session_key=SESSION_KEY,
+        console_origin=ORIGIN,
+        verify_google=verify,
     )
+    # TestClient talks plain HTTP; the session cookie is Secure, so the client must look like HTTPS.
+    return TestClient(app, base_url="https://testserver"), token, seen
+
+
+def test_without_a_session_every_v1_path_is_401_and_nothing_is_forwarded(tmp_path):
+    client, _, seen = _cloud_edge(tmp_path)
+    assert client.get("/v1/me").status_code == 401
+    assert client.get("/v1/goals").status_code == 401
+    assert client.post("/v1/goals", json={}, headers={"origin": ORIGIN}).status_code == 401
+    assert seen == []
+
+
+def test_signing_in_sets_a_strict_secure_session_and_forwards_as_the_operator(tmp_path):
+    client, token, seen = _cloud_edge(tmp_path)
+    signed = client.post("/auth/google", json={"credential": token()}, headers={"origin": ORIGIN})
+    assert signed.status_code == 200 and signed.json() == {"identity": "dave@example.com"}
+    cookie = signed.headers["set-cookie"]
+    assert cookie.startswith("__session=")
+    for attribute in ("HttpOnly", "Secure", "SameSite=strict", "Path=/", "Max-Age=43200"):
+        assert attribute.lower() in cookie.lower(), attribute
+    assert client.get("/v1/me").json() == {"identity": "dave@example.com"}
+    client.get("/v1/goals")
+    assert seen[-1].headers["x-mh-actor"] == "dave@example.com"
+
+
+def test_a_token_google_did_not_issue_for_this_console_signs_nobody_in(tmp_path):
+    client, token, _ = _cloud_edge(tmp_path)
+    for bad in (
+        token(aud="another-client.apps.googleusercontent.com"),
+        token(iss="https://evil.example.com"),
+        token(verified=False),
+        token(ttl=-60),
+        "not-a-jwt",
+    ):
+        response = client.post("/auth/google", json={"credential": bad}, headers={"origin": ORIGIN})
+        assert response.status_code == 401, bad
+        assert "set-cookie" not in response.headers
+    assert client.get("/v1/me").status_code == 401
+
+
+def test_a_google_account_off_the_access_list_gets_403_and_no_session(tmp_path):
+    client, token, _ = _cloud_edge(tmp_path)
+    response = client.post("/auth/google", json={"credential": token("eve@example.com")}, headers={"origin": ORIGIN})
+    assert response.status_code == 403
+    assert "set-cookie" not in response.headers
+
+
+def test_a_forged_or_expired_session_is_401(tmp_path):
+    from meta_harness.edge.app import new_session
+
+    client, _, seen = _cloud_edge(tmp_path)
+    client.cookies.set("__session", new_session("dave@example.com", "some-other-key"))
+    assert client.get("/v1/me").status_code == 401
+    client.cookies.set("__session", new_session("dave@example.com", SESSION_KEY, now=0))
+    assert client.get("/v1/me").status_code == 401
+    assert seen == []
+
+
+def test_a_change_from_another_origin_is_refused_even_when_signed_in(tmp_path):
+    client, token, seen = _cloud_edge(tmp_path)
+    client.post("/auth/google", json={"credential": token()}, headers={"origin": ORIGIN})
+    assert client.post("/v1/goals", json={}, headers={"origin": "https://evil.example.com"}).status_code == 403
+    assert (
+        client.post(
+            "/auth/google", json={"credential": token()}, headers={"origin": "https://evil.example.com"}
+        ).status_code
+        == 403
+    )
+    assert seen == []
+    assert client.post("/v1/goals", json={}, headers={"origin": ORIGIN}).status_code == 200
+
+
+def test_signing_out_ends_the_session(tmp_path):
+    client, token, _ = _cloud_edge(tmp_path)
+    client.post("/auth/google", json={"credential": token()}, headers={"origin": ORIGIN})
+    out = client.post("/auth/logout", headers={"origin": ORIGIN})
+    assert out.status_code == 200 and "__session=" in out.headers["set-cookie"]
+    assert client.get("/v1/me").status_code == 401
+
+
+def test_nothing_signed_in_is_cacheable(tmp_path):
+    """Firebase Hosting caches what a response allows; an upstream's public header must not leak through."""
+    client, token, _ = _cloud_edge(tmp_path)
+    client.post("/auth/google", json={"credential": token()}, headers={"origin": ORIGIN})
+    for response in (client.get("/v1/me"), client.get("/v1/goals"), client.get("/auth/config")):
+        assert response.headers["cache-control"] == "no-store"
+    assert client.get("/auth/config").json() == {"google_client_id": CLIENT_ID}
+
+
+def test_google_sign_in_without_a_session_key_refuses_to_start(tmp_path):
+    import pytest
+
+    with pytest.raises(RuntimeError, match="MH_SESSION_KEY"):
+        create_app(dist=tmp_path, operators=set(), google_client_id=CLIENT_ID, session_key="")
+
+
+def test_locally_there_is_no_sign_in(tmp_path):
+    client, _ = _edge(tmp_path)
+    assert client.get("/auth/config").json() == {"google_client_id": None}
+    assert client.post("/auth/google", json={"credential": "x"}).status_code == 404

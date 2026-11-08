@@ -5,7 +5,9 @@
 # comes only through Identity-Aware Proxy, and only the subnet (the edge's Direct VPC egress) reaches
 # the services' ports. Identity: a service account each for the VM, the edge, and CI's deploys. CI
 # signs in through workload identity federation, limited to this repository's main branch, so GitHub
-# holds no key. Secrets: the containers only; an operator adds the values (deploy/README.md).
+# holds no key. Secrets: the containers only; an operator adds the values (deploy/README.md), except the
+# session key, which is generated here. The console: Firebase Hosting's site meta-harness, so its address
+# is https://meta-harness.web.app; the release stack points the site at the edge.
 
 terraform {
   required_version = ">= 1.9"
@@ -13,6 +15,14 @@ terraform {
     google = {
       source  = "hashicorp/google"
       version = "~> 7.0"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 7.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
     }
   }
   backend "gcs" {
@@ -29,6 +39,13 @@ provider "google" {
   region                = var.region
 }
 
+provider "google-beta" {
+  project               = var.project
+  region                = var.region
+  user_project_override = true
+  billing_project       = var.project
+}
+
 data "google_project" "this" {}
 
 locals {
@@ -40,6 +57,7 @@ locals {
     "compute.googleapis.com", "run.googleapis.com", "iap.googleapis.com", "secretmanager.googleapis.com",
     "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com",
     "sts.googleapis.com", "cloudresourcemanager.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com",
+    "firebase.googleapis.com", "firebasehosting.googleapis.com",
   ]
 }
 
@@ -178,7 +196,7 @@ resource "google_service_account_iam_member" "deploy_from_github" {
 # What a deploy may do: replace the VM, deploy the edge, push its image, and read and write the release
 # stack's state. It cannot change IAM, secrets or the network: those are this stack's, applied by hand.
 resource "google_project_iam_member" "deploy" {
-  for_each = toset(["roles/compute.instanceAdmin.v1", "roles/run.admin"])
+  for_each = toset(["roles/compute.instanceAdmin.v1", "roles/run.admin", "roles/firebasehosting.admin"])
   project  = var.project
   role     = each.value
   member   = "serviceAccount:${local.deploy_sa}"
@@ -224,21 +242,51 @@ resource "google_secret_manager_secret" "this" {
   }
 }
 
-# The edge reads the service key to call the control plane.
+# The edge reads the service key to call the control plane, and the session key to sign sessions.
 resource "google_secret_manager_secret_iam_member" "edge_service_key" {
   secret_id = google_secret_manager_secret.this["MH_SERVICE_KEY"].id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${local.edge_sa}"
 }
 
-# --- The console's access list ------------------------------------------------------------------------
+# The key the edge signs console sessions with. Generated here, so it is in this stack's state, which
+# only the state bucket's readers can read. A new key (terraform apply -replace=random_password.session_key)
+# signs everyone out.
+resource "random_password" "session_key" {
+  length  = 48
+  special = false
+}
 
-# Who may pass Identity-Aware Proxy to the edge. IAP's OAuth client is set once by hand (deploy/README.md).
-resource "google_iap_web_cloud_run_service_iam_member" "operators" {
-  for_each               = toset(var.operators)
-  project                = var.project
-  location               = var.region
-  cloud_run_service_name = "mh-edge"
-  role                   = "roles/iap.httpsResourceAccessor"
-  member                 = "user:${each.value}"
+resource "google_secret_manager_secret" "session_key" {
+  secret_id = "MH_SESSION_KEY"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "session_key" {
+  secret      = google_secret_manager_secret.session_key.id
+  secret_data = random_password.session_key.result
+}
+
+resource "google_secret_manager_secret_iam_member" "edge_session_key" {
+  secret_id = google_secret_manager_secret.session_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${local.edge_sa}"
+}
+
+# --- The console's address ---------------------------------------------------------------------------
+
+# Firebase on the project, for Hosting only: the site's address is https://<site_id>.web.app.
+resource "google_firebase_project" "this" {
+  provider   = google-beta
+  project    = var.project
+  depends_on = [google_project_service.this]
+}
+
+resource "google_firebase_hosting_site" "console" {
+  provider   = google-beta
+  project    = var.project
+  site_id    = var.console_site
+  depends_on = [google_firebase_project.this]
 }

@@ -87,9 +87,3 @@ import {
   to       = google_secret_manager_secret.this[each.value]
   id       = "projects/${local.p}/secrets/${each.value}"
 }
-
-import {
-  for_each = toset(var.operators)
-  to       = google_iap_web_cloud_run_service_iam_member.operators[each.value]
-  id       = "projects/${local.p}/iap_web/cloud_run-${local.r}/services/mh-edge roles/iap.httpsResourceAccessor user:${each.value}"
-}
