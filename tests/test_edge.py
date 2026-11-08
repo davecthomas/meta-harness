@@ -285,3 +285,46 @@ def test_another_origin_gets_no_cors_grant_to_read_the_stream(tmp_path):
     assert "access-control-allow-origin" not in stream.headers
     other = client.get("/v1/goals", headers={"origin": ORIGIN})
     assert "access-control-allow-origin" not in other.headers
+
+
+# --- Through a deploy's restarts ----------------------------------------------------------------------
+
+
+def _restarting_edge(tmp_path, refusals: int, wait: float):
+    """A local edge whose upstream refuses connections `refusals` times, as a restarting service does."""
+    seen: list[httpx.Request] = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if len(seen) <= refusals:
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(200, json={"ok": True})
+
+    (tmp_path / "index.html").write_text("<div id=root></div>")
+    app = create_app(
+        dist=tmp_path,
+        operators={"dave@example.com"},
+        identity="dave@example.com",
+        service_key="svc-key",
+        transport=httpx.MockTransport(upstream),
+        restart_wait_seconds=wait,
+    )
+    return TestClient(app), seen
+
+
+def test_a_request_to_a_restarting_service_waits_for_it_and_arrives_once(tmp_path):
+    client, seen = _restarting_edge(tmp_path, refusals=3, wait=5)
+
+    response = client.post("/v1/goals", json={"statement": "x"})
+
+    assert response.status_code == 200 and response.json() == {"ok": True}
+    assert len(seen) == 4, "three refused connections, then the one that arrived"
+
+
+def test_a_service_that_stays_down_is_a_503_saying_the_meta_harness_is_updating(tmp_path):
+    client, _ = _restarting_edge(tmp_path, refusals=1000, wait=0.5)
+
+    response = client.get("/v1/goals")
+
+    assert response.status_code == 503
+    assert "updating" in response.json()["detail"] and response.headers["retry-after"] == "5"

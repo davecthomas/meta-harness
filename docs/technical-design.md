@@ -2083,49 +2083,42 @@ may replace the VM, deploy the edge, push its image and write the release
 state; it cannot change IAM, secrets or the network, which are the platform
 stack's.
 
-The VM is replaced, never changed in place. A new commit replaces the
-instance, whose boot disk is new; the startup script in its metadata mounts
-the data disk (Postgres data, Temporal's history and run workspaces), checks
-the commit out and runs `deploy/vm/boot.sh`, which installs packages, checks
-out the two repos, writes the environment file from Secret Manager and
-starts the systemd units. The script reports `ok <commit>` or `failed
-<commit>` in a guest attribute, and the workflow waits for it. `make deploy`
-runs the workflow by hand and `make deploy-status` reads the attribute. The
-VM has no public address; an operator reaches it through IAP-tunneled SSH,
-only to read logs.
+A deploy updates the running VM in place. The release apply changes only
+the VM's metadata (the commit, the startup script), so the VM keeps running.
+The workflow then runs the startup script on it over IAP SSH, as the deploy
+account through OS Login, inside a `systemd-run` unit so a dropped connection
+can't stop it. The script checks the commit out and runs
+`deploy/vm/boot.sh` in update mode:
 
-The console's address is `https://meta-harness.web.app`: a Firebase
-Hosting site, from the platform stack, whose one rewrite sends every path to
-the edge. Without a domain of its own, this is the address a project can
-name; Cloud Run's own address is fixed by Google. Firebase Hosting forwards
-requests without credentials, so neither IAP nor Cloud Run's sign-in can
-stand in front of it, and the edge signs operators in itself:
+- Postgres and Temporal keep running, and migrations apply.
+- The sandbox images are rebuilt only when their sources changed.
+- The egress proxy and the HTTP Gateway restart only when they changed,
+  because a restart drops a running sandbox's model calls.
+- The control-plane services restart one at a time, each answering
+  `/health` before the next.
 
-- The console shows Google's sign-in button (Google Identity Services) for
-  the console's OAuth client, whose only JavaScript origin is the console's
-  address. The edge verifies the ID token Google returns (Google's
-  signature, the client as audience, a verified email), checks the access
-  list, and sets a session signed with `MH_SESSION_KEY`, which the platform
-  stack generates. The session is the cookie `__session`, the only cookie
-  Firebase Hosting passes on; it is HttpOnly, Secure and SameSite=Strict,
-  and lasts 12 hours.
-- Every `/v1` request needs a valid session, so the Cloud Run address,
-  open at the network level, serves the console's files and nothing else.
-  A change must come from the console's origin. Every response the edge
-  forwards is `Cache-Control: no-store`, so Firebase Hosting caches none.
-- The live event stream does not go through Firebase Hosting, which ends a
-  request at 60 seconds. The console asks the edge for a stream ticket
-  (signed, read-only, for the tail path only, five minutes), and opens the
-  stream on the edge's own Cloud Run address with it; Cloud Run keeps a
-  stream open for an hour. That address grants CORS to the console's origin
-  for the stream only, and the edge drops the ticket before forwarding. A
-  dropped stream resumes from the last event's position.
+Running sandboxes are Docker containers that outlive the restart, and
+Temporal hands the interrupted run activity to the restarted worker, which
+re-attaches to the same container, so no running task is lost. The edge
+retries a request whose connection is refused for up to 20 seconds, so a
+service's few seconds down don't reach the console. Old and new code run
+side by side for those seconds, so migrations only add, and anything removed
+goes in a later pull request.
+
+Terraform replaces the VM only when its definition changes (machine type,
+boot image, disks). The new VM's startup script mounts the data disk, which
+carries Postgres data, Temporal's history and run workspaces, checks the
+commit out and runs `deploy/vm/boot.sh`, which starts everything. Both paths
+report `ok <commit>` or `failed <commit>` in a guest attribute, and the
+workflow waits for it. `make deploy` runs the workflow by hand, and
+`make deploy-status` reads the attribute. The VM has no public address; an
+operator reaches it through IAP-tunneled SSH, only to read logs.
 
 What this shape lacks against the design above: the Temporal dev server and
 the Postgres container are single copies on one disk; the sandbox host is the
-control-plane host; the VM's size bounds concurrent runs; and a deploy
-replaces the VM, so an attempt in flight restarts and the control plane is
-down for the minutes the new VM takes to boot. Cloud SQL and Temporal Cloud
+control-plane host; the VM's size bounds concurrent runs; and a deploy that
+replaces the VM (a change to its definition) stops the tasks running on it
+and takes the control plane down while the new VM boots (#99). Cloud SQL and Temporal Cloud
 are their own pull request after the point of entry, as Terraform resources
 replacing the two containers.
 

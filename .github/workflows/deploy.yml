@@ -1,7 +1,7 @@
 # Deploys main to Google Cloud after every merge, once main's checks pass at that commit.
 #
 # The deploy is the release Terraform stack (deploy/terraform/release): the edge image this workflow
-# builds from the commit, and the commit itself, which replaces the VM. It signs in to Google Cloud as
+# builds from the commit, and the commit itself, which the running VM is updated to in place. It signs in to Google Cloud as
 # mh-deploy-sa through workload identity federation, which only this repo's main branch may use, so no
 # key is stored here. The platform stack (deploy/terraform/platform), applied by an operator, grants that.
 # Run it again from the Actions tab (Run workflow), or with make deploy.
@@ -66,12 +66,23 @@ jobs:
           docker build -f deploy/edge.Dockerfile -t "$EDGE_IMAGE" .
           docker push "$EDGE_IMAGE"
       - name: apply the release stack
+        id: apply
         working-directory: deploy/terraform/release
         run: |
           terraform init -input=false
-          # -replace: every deploy is a new VM on a fresh boot disk; its state is on the data disk.
-          terraform apply -input=false -auto-approve -replace=google_compute_instance.vm \
-            -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"
+          before=$(terraform output -raw vm_instance_id 2>/dev/null || true)
+          # No -replace: the VM keeps running, and only its metadata (the commit) changes. Terraform
+          # replaces it only when its definition changed, and then it boots the commit by itself.
+          terraform apply -input=false -auto-approve -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"
+          after=$(terraform output -raw vm_instance_id)
+          if [ -n "$before" ] && [ "$before" = "$after" ]; then echo "replaced=false" >> "$GITHUB_OUTPUT"; else echo "replaced=true" >> "$GITHUB_OUTPUT"; fi
+      - name: update the running VM in place
+        if: steps.apply.outputs.replaced == 'false'
+        run: |
+          # The startup script, from the metadata the apply just set, run as its own unit so a dropped SSH
+          # connection cannot stop it. It checks the commit out and restarts the services one at a time.
+          timeout 1500 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \
+            --command "sudo systemd-run --wait --collect --unit mh-update-${GITHUB_RUN_ID} --setenv=MH_DEPLOY_MODE=update --setenv=HOME=/root bash -c 'curl -fs -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/attributes/startup-script > /run/mh-update.sh && bash /run/mh-update.sh'"
       - name: wait for the VM to boot the commit
         run: |
           for i in $(seq 1 120); do
