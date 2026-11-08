@@ -114,6 +114,7 @@ def _cloud_edge(tmp_path):
         session_key=SESSION_KEY,
         console_origin=ORIGIN,
         verify_google=verify,
+        stream_origin="https://edge-123.us-central1.run.app",
     )
     # TestClient talks plain HTTP; the session cookie is Secure, so the client must look like HTTPS.
     return TestClient(app, base_url="https://testserver"), token, seen
@@ -215,3 +216,72 @@ def test_locally_there_is_no_sign_in(tmp_path):
     client, _ = _edge(tmp_path)
     assert client.get("/auth/config").json() == {"google_client_id": None}
     assert client.post("/auth/google", json={"credential": "x"}).status_code == 404
+
+
+# --- The live event stream, straight to Cloud Run with a ticket ---------------------------------------
+
+
+def _signed_in(tmp_path):
+    client, token, seen = _cloud_edge(tmp_path)
+    client.post("/auth/google", json={"credential": token()}, headers={"origin": ORIGIN})
+    return client, seen
+
+
+def test_a_signed_in_console_gets_the_stream_address_and_a_ticket(tmp_path):
+    client, _ = _signed_in(tmp_path)
+    issued = client.post("/auth/stream-ticket", headers={"origin": ORIGIN})
+    assert issued.status_code == 200 and issued.headers["cache-control"] == "no-store"
+    assert issued.json()["base"] == "https://edge-123.us-central1.run.app"
+    assert issued.json()["ticket"]
+
+
+def test_without_a_session_there_is_no_ticket(tmp_path):
+    client, _, _ = _cloud_edge(tmp_path)
+    assert client.post("/auth/stream-ticket", headers={"origin": ORIGIN}).status_code == 401
+
+
+def test_a_ticket_opens_the_stream_and_nothing_else(tmp_path):
+    client, seen = _signed_in(tmp_path)
+    ticket = client.post("/auth/stream-ticket", headers={"origin": ORIGIN}).json()["ticket"]
+    client.cookies.clear()
+    # On the Cloud Run address there is no session cookie: the ticket is the credential.
+    stream = client.get(f"/v1/events/tail?task_id=t-1&from_position=5&ticket={ticket}", headers={"origin": ORIGIN})
+    assert stream.status_code == 200
+    assert seen[-1].headers["x-mh-actor"] == "dave@example.com"
+    assert "ticket" not in str(seen[-1].url), "the event service must never see the ticket"
+    assert "from_position=5" in str(seen[-1].url)
+    assert stream.headers["access-control-allow-origin"] == ORIGIN
+    forwarded = len(seen)
+    assert client.get(f"/v1/goals?ticket={ticket}").status_code == 401
+    assert client.get(f"/v1/me?ticket={ticket}").status_code == 401
+    assert len(seen) == forwarded
+
+
+def test_a_ticket_is_not_a_session_and_a_session_is_not_a_ticket(tmp_path):
+    from meta_harness.edge.app import new_session, new_ticket
+
+    client, _, seen = _cloud_edge(tmp_path)
+    client.cookies.set("__session", new_ticket("dave@example.com", SESSION_KEY))
+    assert client.get("/v1/me").status_code == 401
+    client.cookies.clear()
+    session = new_session("dave@example.com", SESSION_KEY)
+    assert client.get(f"/v1/events/tail?ticket={session}").status_code == 401
+    assert seen == []
+
+
+def test_an_expired_or_forged_ticket_does_not_open_the_stream(tmp_path):
+    from meta_harness.edge.app import new_ticket
+
+    client, _, seen = _cloud_edge(tmp_path)
+    for ticket in (new_ticket("dave@example.com", SESSION_KEY, now=0), new_ticket("dave@example.com", "other-key")):
+        assert client.get(f"/v1/events/tail?ticket={ticket}").status_code == 401
+    assert seen == []
+
+
+def test_another_origin_gets_no_cors_grant_to_read_the_stream(tmp_path):
+    client, _ = _signed_in(tmp_path)
+    ticket = client.post("/auth/stream-ticket", headers={"origin": ORIGIN}).json()["ticket"]
+    stream = client.get(f"/v1/events/tail?ticket={ticket}", headers={"origin": "https://evil.example.com"})
+    assert "access-control-allow-origin" not in stream.headers
+    other = client.get("/v1/goals", headers={"origin": ORIGIN})
+    assert "access-control-allow-origin" not in other.headers

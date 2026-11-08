@@ -136,12 +136,14 @@ resource "google_cloud_run_v2_service" "edge" {
       }
       dynamic "env" {
         for_each = {
-          MH_PLANNER_URL       = "http://${local.vm_ip}:8303"
-          MH_TASKS_URL         = "http://${local.vm_ip}:8302"
-          MH_EVENTS_URL        = "http://${local.vm_ip}:8301"
-          MH_SCHEDULER_URL     = "http://${local.vm_ip}:8304"
-          MH_GOOGLE_CLIENT_ID  = local.platform.google_client_id
-          MH_CONSOLE_ORIGIN    = local.platform.console_origin
+          MH_PLANNER_URL      = "http://${local.vm_ip}:8303"
+          MH_TASKS_URL        = "http://${local.vm_ip}:8302"
+          MH_EVENTS_URL       = "http://${local.vm_ip}:8301"
+          MH_SCHEDULER_URL    = "http://${local.vm_ip}:8304"
+          MH_GOOGLE_CLIENT_ID = local.platform.google_client_id
+          MH_CONSOLE_ORIGIN   = local.platform.console_origin
+          # The edge's own address, which the live event stream uses (Firebase Hosting ends requests at 60s).
+          MH_STREAM_ORIGIN     = "https://${local.edge}-${local.platform.project_number}.${local.region}.run.app"
           MH_CONSOLE_OPERATORS = join(",", local.platform.operators)
         }
         content {
