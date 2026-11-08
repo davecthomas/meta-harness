@@ -147,7 +147,7 @@ def acceptance_checks(body: str) -> list[str]:
     return checks
 
 
-async def clone(repo: str, workspace: Path, git_dir: Path, branch: str = "") -> str:
+async def clone(repo: str, workspace: Path, git_dir: Path, branch: str = "", merge_base: str = "") -> str:
     """Clones repo into workspace, unless an earlier attempt did, and checks out branch, else the default
     branch. Returns the branch checked out.
 
@@ -170,6 +170,25 @@ async def clone(repo: str, workspace: Path, git_dir: Path, branch: str = "") -> 
     if branch:
         # A review or fix run works on the pull request's branch; the clone has it as origin/<branch>.
         await _git(git_dir, workspace, "checkout", "--quiet", "-B", branch, f"origin/{branch}")
+    if merge_base:
+        # A conflict fix: merge the base in here, on the host. A clean merge commits; a conflict leaves its
+        # markers and MERGE_HEAD, so the run resolves them and the publish's commit completes the merge.
+        await _run(
+            "git",
+            f"--git-dir={git_dir}",
+            f"--work-tree={workspace}",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            f"user.name={COMMIT_NAME}",
+            "-c",
+            f"user.email={COMMIT_EMAIL}",
+            "merge",
+            "--no-edit",
+            f"origin/{merge_base}",
+            check=False,
+            cwd=workspace,
+        )
     return await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
 
 
@@ -309,6 +328,43 @@ async def post_review(repo: str, number: int, head_sha: str, body: str, comments
     return str(review.get("html_url", ""))
 
 
+MERGE = {"contents": "write", "pull_requests": "write"}
+
+
+async def merge_pull_request(repo: str, number: int, head_sha: str) -> tuple[str, str, str, str]:
+    """Squash-merges the pull request if its head is still head_sha. Returns (state, merge sha, head, detail).
+
+    state is merged, head_changed (a commit landed after head_sha; head is the new one), conflict (the
+    branch conflicts with its base), or blocked (GitHub refused for another reason, such as branch
+    protection or a required human review).
+    """
+    try:
+        merged = await _github(
+            repo, MERGE, "PUT", f"/repos/{repo}/pulls/{number}/merge", json={"sha": head_sha, "merge_method": "squash"}
+        )
+        return "merged", str(merged.get("sha", "")), head_sha, ""
+    except CodeHostError as err:
+        if err.status not in (405, 409, 422):
+            raise
+        refused = str(err)
+    pull = await _github(repo, {"pull_requests": "read"}, "GET", f"/repos/{repo}/pulls/{number}")
+    head = str(pull.get("head", {}).get("sha", ""))
+    if head and head != head_sha:
+        return "head_changed", "", head, refused
+    if pull.get("mergeable_state") == "dirty" or pull.get("mergeable") is False:
+        return "conflict", "", head_sha, refused
+    return "blocked", "", head_sha, f"{refused} (mergeable_state {pull.get('mergeable_state')})"
+
+
+async def merge_local(repo: str, base: str, head_sha: str) -> tuple[str, str, str, str]:
+    """A local bare repo's merge: fast-forward its base to head_sha, or a conflict when the base has moved on."""
+    tip = await _run("git", f"--git-dir={repo}", "rev-parse", base)
+    if await _run("git", f"--git-dir={repo}", "merge-base", base, head_sha) != tip:
+        return "conflict", "", head_sha, f"{base} has moved on since the branch left it"
+    await _run("git", f"--git-dir={repo}", "update-ref", f"refs/heads/{base}", head_sha, tip)
+    return "merged", head_sha, head_sha, ""
+
+
 async def _git(git_dir: Path, workspace: Path, *args: str, env: dict[str, str] | None = None) -> str:
     """One git command on the run's repository, with its git directory and work tree named outright.
 
@@ -327,13 +383,14 @@ async def _git(git_dir: Path, workspace: Path, *args: str, env: dict[str, str] |
     )
 
 
-async def _run(*args: str, check: bool = True, env: dict[str, str] | None = None) -> str:
+async def _run(*args: str, check: bool = True, env: dict[str, str] | None = None, cwd: Path | None = None) -> str:
     try:
         process = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env={**os.environ, **env} if env else None,
+            cwd=cwd,
         )
     except FileNotFoundError as err:
         raise CodeHostError(f"the {args[0]} command is not installed", retryable=False) from err

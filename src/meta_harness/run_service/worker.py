@@ -24,7 +24,9 @@ from temporalio.worker import Worker
 from meta_harness.run_service import events, routing
 from meta_harness.run_service.activities import (
     cleanup_run,
+    goal_auto_merge,
     loop_prompt,
+    merge_pr,
     post_review,
     prepare,
     publish,
@@ -91,6 +93,8 @@ async def main() -> None:
             review_policy,
             loop_prompt,
             post_review,
+            goal_auto_merge,
+            merge_pr,
             load_task,
             set_task_status,
             record_route,

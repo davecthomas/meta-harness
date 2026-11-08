@@ -22,6 +22,8 @@ from meta_harness.run_service.shared import (
     HarnessRequest,
     HarnessResult,
     LoopPromptRequest,
+    MergeRequest,
+    MergeResult,
     PostReviewRequest,
     PreparedRun,
     PublishRequest,
@@ -73,6 +75,9 @@ class Script:
     max_rounds: int = 3
     unresolved: list[str] = field(default_factory=list)
     run_cost: str = "1.00"
+    # The goal's auto_merge, and each merge's result in order (a state, or (state, new head)).
+    auto_merge: bool = False
+    merges: list = field(default_factory=list)
 
     runs: list[HarnessRequest] = field(default_factory=list)
     prompts: list[LoopPromptRequest] = field(default_factory=list)
@@ -80,6 +85,8 @@ class Script:
     posted: list[PostReviewRequest] = field(default_factory=list)
     publishes: int = 0
     policy_asked_for: list[str] = field(default_factory=list)
+    merge_requests: list[MergeRequest] = field(default_factory=list)
+    goals_asked: list[str] = field(default_factory=list)
 
     def activities(self):
         @activity.defn(name="prepare")
@@ -171,7 +178,21 @@ class Script:
             self.posted.append(request)
             return f"https://github.com/{REPO}/pull/7#review-{request.round_no}"
 
+        @activity.defn(name="goal_auto_merge")
+        async def goal_auto_merge(goal_id: str) -> bool:
+            self.goals_asked.append(goal_id)
+            return self.auto_merge
+
+        @activity.defn(name="merge_pr")
+        async def merge_pr(request: MergeRequest) -> MergeResult:
+            self.merge_requests.append(request)
+            answer = self.merges.pop(0) if self.merges else "merged"
+            state, head = answer if isinstance(answer, tuple) else (answer, request.head_sha)
+            return MergeResult(state=state, merge_sha="m1" if state == "merged" else "", head_sha=head, detail="x")
+
         return [
+            goal_auto_merge,
+            merge_pr,
             prepare,
             route,
             run_harness,
@@ -194,11 +215,11 @@ async def env():
         yield environment
 
 
-async def _run(env: WorkflowEnvironment, script: Script, spend: str = "10.00", review: bool = True):
+async def _run(env: WorkflowEnvironment, script: Script, spend: str = "10.00", review: bool = True, goal_id=""):
     async with Worker(env.client, task_queue=QUEUE, workflows=[RunTask], activities=script.activities()):
         return await env.client.execute_workflow(
             RunTask.run,
-            RunTaskInput(task="Fix the bug.", repo=REPO, spend_limit_usd=spend, review=review),
+            RunTaskInput(task="Fix the bug.", repo=REPO, spend_limit_usd=spend, review=review, goal_id=goal_id),
             id=f"run-task-test-{uuid.uuid4().hex[:8]}",
             task_queue=QUEUE,
         )
@@ -323,3 +344,80 @@ async def test_with_the_loop_off_the_pull_request_is_left_as_opened(env):
     assert result.outcome == ""
     assert _kinds(result) == ["standard"]
     assert script.waited_on == []
+
+
+# --- The merge ----------------------------------------------------------------------------------------
+
+
+async def test_a_clean_pull_request_merges_at_the_reviewed_commit_when_its_goal_allows(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True)
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert script.goals_asked == ["g-1"]
+    merge = script.merge_requests[0]
+    assert (merge.head_sha, merge.base, merge.branch) == ("c0", "main", BRANCH)
+    assert "merged as m1" in result.outcome_reason
+
+
+async def test_with_auto_merge_off_a_clean_pull_request_waits_for_an_operator(env):
+    script = Script(verdicts=[CLEAN], auto_merge=False)
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "clean"
+    assert script.merge_requests == []
+    assert "auto_merge off" in result.outcome_reason
+
+
+async def test_a_task_with_no_goal_never_merges_and_never_asks(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True)
+
+    result = await _run(env, script)
+
+    assert result.outcome == "clean" and script.goals_asked == [] and script.merge_requests == []
+    assert "no goal" in result.outcome_reason
+
+
+async def test_a_commit_after_the_review_is_checked_and_reviewed_before_it_merges(env):
+    script = Script(verdicts=[CLEAN, CLEAN], auto_merge=True, merges=[("head_changed", "c9"), "merged"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert script.waited_on == ["c0", "c9"]
+    assert [p.head_sha for p in script.posted] == ["c0", "c9"]
+    assert [m.head_sha for m in script.merge_requests] == ["c0", "c9"]
+
+
+async def test_a_conflict_goes_to_a_fix_run_that_resolves_the_merge_then_merges(env):
+    script = Script(verdicts=[CLEAN, CLEAN], auto_merge=True, merges=["conflict", "merged"], fix_commits=["c1"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert _kinds(result) == ["standard", "review", "fix", "review"]
+    fix_run = script.runs[2]
+    assert fix_run.merge_base == "main", "the host merges the base into the fix run's clone"
+    fix_prompt = next(p for p in script.prompts if p.kind == "fix")
+    assert fix_prompt.conflict is True
+    assert [m.head_sha for m in script.merge_requests] == ["c0", "c1"]
+
+
+async def test_a_pull_request_github_refuses_to_merge_ends_ready_with_the_reason(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True, merges=["blocked"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "clean"
+    assert "would not merge" in result.outcome_reason
+
+
+async def test_an_unreviewed_pull_request_never_merges(env):
+    script = Script(reviewers=[], unresolved=["no reviewer"], auto_merge=True)
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "unreviewed"
+    assert script.merge_requests == [] and script.goals_asked == []

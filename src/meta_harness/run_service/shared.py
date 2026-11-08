@@ -68,6 +68,8 @@ class RunTaskInput:
     closes: str = ""
     # Whether an opened pull request goes through the review loop: checks, review, fixes.
     review: bool = True
+    # The task's goal, whose auto_merge decides whether a clean pull request merges.
+    goal_id: str = ""
 
 
 @dataclass
@@ -136,6 +138,9 @@ class HarnessRequest:
     thinking: str | None = None
     # The branch to clone, for a review or fix run on a pull request. Empty: the repo's default branch.
     branch: str = ""
+    # For a fix run on a merge conflict: the base branch the host merges into the clone first, leaving
+    # the conflict markers for the run to resolve.
+    merge_base: str = ""
 
 
 @dataclass
@@ -236,6 +241,7 @@ class TaskSpec:
     spend_limit_usd: str
     # The issue the pull request closes, owner/name#number, from a github: external_ref.
     closes: str
+    goal_id: str = ""
 
 
 @dataclass
@@ -313,6 +319,8 @@ class LoopPromptRequest:
     findings: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
     failed_checks: list[FailedCheck] = field(default_factory=list)
+    # The branch conflicts with its base: the fix run resolves the merge the host started.
+    conflict: bool = False
 
 
 @dataclass
@@ -334,3 +342,25 @@ class PostReviewRequest:
     reviewer: str
     review: dict[str, Any]
     round_no: int
+
+
+@dataclass
+class MergeRequest:
+    task_id: str
+    repo: str
+    pr_url: str
+    branch: str
+    base: str
+    # The reviewed head commit: GitHub merges only if the pull request's head is still this commit.
+    head_sha: str
+
+
+@dataclass
+class MergeResult:
+    """merged, head_changed (a commit landed after the review), conflict, or blocked (GitHub refused)."""
+
+    state: str
+    merge_sha: str = ""
+    # The pull request's head now: a new commit when the state is head_changed.
+    head_sha: str = ""
+    detail: str = ""

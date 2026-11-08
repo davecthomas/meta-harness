@@ -41,6 +41,7 @@ calls cleanup_run, which revokes the grant and removes the per-run sandbox.
 
 import asyncio
 import json
+import os
 import re
 from pathlib import Path
 from string import Template
@@ -58,6 +59,8 @@ from meta_harness.run_service.shared import (
     ChecksResult,
     FailedCheck,
     LoopPromptRequest,
+    MergeRequest,
+    MergeResult,
     PostReviewRequest,
     ReviewPolicy,
     CleanupResult,
@@ -219,7 +222,12 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
     image = str(request.candidate.profile["image"])
     if request.repo:
         await _clone(
-            tag, request.repo, sandbox.workspace_for(ref, run_id), sandbox.git_dir_for(ref, run_id), request.branch
+            tag,
+            request.repo,
+            sandbox.workspace_for(ref, run_id),
+            sandbox.git_dir_for(ref, run_id),
+            request.branch,
+            request.merge_base,
         )
     box = await _lease(tag, run_id, ref, image, sandbox.Resources.from_profile(request.candidate.profile))
     try:
@@ -372,7 +380,7 @@ async def cleanup_run(run_id: str) -> CleanupResult:
     return CleanupResult(grant_spent_usd=spent)
 
 
-async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path, branch: str = "") -> None:
+async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path, branch: str = "", merge_base: str = "") -> None:
     """The repo task's clone, made on this machine before the per-run sandbox starts.
 
     The git directory goes beside the workspace, not inside it, so the
@@ -380,7 +388,7 @@ async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path, branch: st
     """
     existed = git_dir.is_dir()
     try:
-        checked_out = await code_host.clone(repo, workspace, git_dir, branch)
+        checked_out = await code_host.clone(repo, workspace, git_dir, branch, merge_base)
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     if not existed:
@@ -661,7 +669,14 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
 
 
 def _requested(request: LoopPromptRequest) -> str:
-    """What a fix run answers: each finding, or each failed check with its output."""
+    """What a fix run answers: a merge conflict, each failed check with its output, or each finding."""
+    if request.conflict:
+        return (
+            f"The branch conflicts with origin/{request.base}. The meta-harness has merged origin/{request.base} "
+            "into it in /workspace and left the conflicts unresolved: every conflicted file holds conflict "
+            "markers (<<<<<<<, =======, >>>>>>>). Resolve each one, keeping what both sides meant, so no marker "
+            "is left. The merge commit is made when you finish."
+        )
     if request.failed_checks:
         parts = ["These checks failed on the branch's head commit. Make them pass."]
         for check in request.failed_checks:
@@ -730,3 +745,42 @@ async def post_review(request: PostReviewRequest) -> str:
 def _finding_line(finding: dict) -> str:
     where = finding.get("path") or ""
     return f"`{where}`: {finding['body']}" if where else finding["body"]
+
+
+@activity.defn
+async def goal_auto_merge(goal_id: str) -> bool:
+    """Whether the goal merges its clean pull requests, read when the merge is due, so a change applies at once."""
+    from meta_harness.planner.client import GoalsClient
+
+    key = os.environ.get("MH_SERVICE_KEY", "")
+    if not key:
+        raise ApplicationError("set MH_SERVICE_KEY in the worker's environment", type="HarnessConfigError")
+    try:
+        goal = await asyncio.to_thread(lambda: GoalsClient(api_key=key).get(goal_id))
+    except Exception as err:  # noqa: BLE001 - an unreachable planner is retried by the activity's policy
+        raise ApplicationError(
+            f"could not read goal {goal_id} from the planner: {err}", type="PlannerUnavailable"
+        ) from err
+    return bool(goal.get("auto_merge"))
+
+
+@activity.defn
+async def merge_pr(request: MergeRequest) -> MergeResult:
+    """Merges the pull request at the reviewed head commit, so nothing pushed after the review merges unreviewed."""
+    try:
+        if code_host.is_local(request.repo):
+            state, sha, head, detail = await code_host.merge_local(request.repo, request.base, request.head_sha)
+        else:
+            repo, number = code_host.pr_number(request.pr_url)
+            state, sha, head, detail = await code_host.merge_pull_request(repo, number, request.head_sha)
+    except code_host.CodeHostError as err:
+        raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    if state == "merged" and request.task_id:
+        events.emit(
+            "pull_request_merged",
+            {"pr_url": request.pr_url, "head_sha": request.head_sha, "merge_sha": sha},
+            task_id=request.task_id,
+            event_id=events.stable_id(request.task_id, "pull_request_merged"),
+        )
+    activity.logger.info("merge_pr: %s at %s: %s %s", request.pr_url, request.head_sha[:12], state, detail)
+    return MergeResult(state=state, merge_sha=sha, head_sha=head, detail=detail[:500])

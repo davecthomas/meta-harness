@@ -862,8 +862,17 @@ what it waits on exists:
 The review is posted as a comment review, because GitHub refuses an approval
 or a change request from the pull request's own author. A reviewer pair whose
 harness profile is not active is skipped; with no reviewer left, the task
-ends `ready` and unreviewed, with the reason. The merge on a clean review is
-#86.
+ends `ready` and unreviewed, with the reason, and never merges.
+
+The merge (#86) reads the goal's `auto_merge` from the planner when it is
+due, so a change made while the task runs applies. It squash-merges with
+`sha` set to the reviewed head commit. A commit that landed after the review
+goes back to the checks and a new review. A conflict with the base becomes a
+fix run: the host merges the base into the fix run's clone, the run resolves
+the conflict markers, and its publish commits the merge. Branch protection or
+any other refusal ends the task `ready` with GitHub's reason. A merged pull
+request ends the task `closed`, and GitHub closes the issue from the pull
+request's `Closes` line.
 
 ### Operator review
 
