@@ -2015,9 +2015,9 @@ stacks with state in a Cloud Storage bucket.
 
 | Component | Runs on | Notes |
 |---|---|---|
-| Edge: the console web app and `/v1` routing | Cloud Run, behind Identity-Aware Proxy | `deploy/edge.Dockerfile`. IAP signs operators in with their Google account. The edge checks IAP's signed header and the access list, then reaches the VM's private address over Direct VPC egress |
+| Edge: the console web app and `/v1` routing | Cloud Run, behind Firebase Hosting at `https://meta-harness.web.app` | `deploy/edge.Dockerfile`. The edge signs operators in with Google itself (see below), checks the access list, then reaches the VM's private address over Direct VPC egress |
 | Task service, planner, event service, meta-harness scheduler | The VM, as systemd units under the `mh` user | `deploy/vm/units`. Each listens on a private port that only the edge's subnet reaches |
-| Postgres | The VM, in a Docker container on a named volume | `mh-postgres.service`. One copy on one disk; Cloud SQL replaces it |
+| Postgres | The VM, in a Docker container, its data on the data disk (`/var/lib/meta-harness/postgres`) | `mh-postgres.service`. One copy on one disk; Cloud SQL replaces it |
 | Temporal | The VM, the Temporal dev server with its history in one file | `mh-temporal.service`. A development server, one process, no replication. Temporal Cloud replaces it before runs that matter |
 | Redis | The VM, the distribution package | The HTTP Gateway's run grants and per-run spend counters |
 | HTTP Gateway | The VM, from a checkout of ai-api-unified-http, reading its own `config/models.json`. Its guardrails are off, as that file ships | `mh-gateway.service`. Bound to every interface so the egress proxy container reaches it; no firewall rule admits its port from outside the VM. The meta-harness `models.json`, whose router names `harness` candidates, reaches the worker alone: the gateway's completions factory refuses a `harness` engine |
@@ -2051,6 +2051,29 @@ starts the systemd units. The script reports `ok <commit>` or `failed
 runs the workflow by hand and `make deploy-status` reads the attribute. The
 VM has no public address; an operator reaches it through IAP-tunneled SSH,
 only to read logs.
+
+The console's address is `https://meta-harness.web.app`: a Firebase
+Hosting site, from the platform stack, whose one rewrite sends every path to
+the edge. Without a domain of its own, this is the address a project can
+name; Cloud Run's own address is fixed by Google. Firebase Hosting forwards
+requests without credentials, so neither IAP nor Cloud Run's sign-in can
+stand in front of it, and the edge signs operators in itself:
+
+- The console shows Google's sign-in button (Google Identity Services) for
+  the console's OAuth client, whose only JavaScript origin is the console's
+  address. The edge verifies the ID token Google returns (Google's
+  signature, the client as audience, a verified email), checks the access
+  list, and sets a session signed with `MH_SESSION_KEY`, which the platform
+  stack generates. The session is the cookie `__session`, the only cookie
+  Firebase Hosting passes on; it is HttpOnly, Secure and SameSite=Strict,
+  and lasts 12 hours.
+- Every `/v1` request needs a valid session, so the Cloud Run address,
+  open at the network level, serves the console's files and nothing else.
+  A change must come from the console's origin. Every response the edge
+  forwards is `Cache-Control: no-store`, so Firebase Hosting caches none.
+- Firebase Hosting ends a request at 60 seconds, which ends a live event
+  stream. The browser reconnects with the last event's position, and the
+  event service resumes from it, so no event is lost.
 
 What this shape lacks against the design above: the Temporal dev server and
 the Postgres container are single copies on one disk; the sandbox host is the

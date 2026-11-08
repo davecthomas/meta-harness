@@ -43,7 +43,7 @@ variable "state_bucket" {
 }
 
 variable "operators" {
-  description = "Who may open the console: the people allowed through Identity-Aware Proxy."
+  description = "Who may open the console: the Google accounts the edge lets sign in."
   type        = list(string)
   default     = ["davidcthomas@gmail.com"]
 }
@@ -56,4 +56,16 @@ variable "secrets" {
     "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_GEMINI_API_KEY",
     "MH_REPOS_CONFIG", "MH_GITHUB_APPS", "MH_GITHUB_APP_KEY_davecthomas",
   ]
+}
+
+variable "console_site" {
+  description = "The Firebase Hosting site, and so the console's address: https://<console_site>.web.app."
+  type        = string
+  default     = "meta-harness"
+}
+
+variable "google_client_id" {
+  description = "The OAuth client the console's Google sign-in uses (a client id is public)."
+  type        = string
+  default     = "57473592166-7gaei6qjh7rp5p21j0fnmaaqtbr4ovqn.apps.googleusercontent.com"
 }
