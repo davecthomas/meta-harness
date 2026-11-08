@@ -1,0 +1,53 @@
+# Deploys main to Google Cloud after every merge, once main's checks pass: the VM, then the edge.
+#
+# It signs in to Google Cloud as mh-deploy-sa through workload identity federation, which only this
+# repo's main branch may use, so no key is stored here. deploy/gcp.sh infra sets that access up.
+# Run it again by hand from the Actions tab (Run workflow), or locally with make deploy.
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time. A newer merge waits for the running deploy, and replaces any that is waiting.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  checks: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: deploy to Google Cloud
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: wait for main's checks to pass at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECKS: "control plane tests|console web app|zero-cost end-to-end check|harness server tests"
+        run: |
+          for i in $(seq 1 120); do
+            runs=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs?per_page=100" \
+              --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv')
+            failed=$(echo "$runs" | awk -F'\t' -v c="$CHECKS" '$1 ~ "^("c")$" && $2=="completed" && $3!="success"')
+            [ -z "$failed" ] || { echo "a check did not pass: $failed"; exit 1; }
+            passed=$(echo "$runs" | awk -F'\t' -v c="$CHECKS" '$1 ~ "^("c")$" && $3=="success"' | cut -f1 | sort -u | wc -l)
+            [ "$passed" -eq 4 ] && { echo "all four checks passed"; exit 0; }
+            sleep 15
+          done
+          echo "the checks did not finish in 30 minutes"
+          exit 1
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/57473592166/locations/global/workloadIdentityPools/github/providers/github
+          service_account: mh-deploy-sa@meta-harness-prod.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: deploy/gcp.sh deploy
+        run: REF=${{ github.sha }} deploy/gcp.sh deploy
