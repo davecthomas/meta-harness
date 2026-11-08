@@ -54,7 +54,11 @@ class FakeTracker:
         return ref
 
     async def list_open(self, repo, label):
-        return [i for i in self.issues.values() if i.repo == repo and i.state == "open" and label in i.labels]
+        return [
+            i
+            for i in self.issues.values()
+            if i.repo == repo and i.state == "open" and (label is None or label in i.labels)
+        ]
 
     async def read(self, ref):
         return self.issues[ref]
@@ -179,3 +183,101 @@ async def test_a_paused_goal_is_not_swept_now(api):
     assert api.post(f"/v1/goals/{goal['id']}/pause", headers=OPERATOR).json()["status"] == "paused"
     assert api.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).status_code == 409
     assert api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR).json()["status"] == "active"
+
+
+# --- Goals from labels --------------------------------------------------------------------------------
+
+REPO = "davecthomas/meta-harness"
+
+
+def _number() -> int:
+    """An issue number no other test uses: the other tests take numbers under 11000, and links persist."""
+    return 100_000 + uuid.uuid4().int % 900_000
+
+
+def test_labels_are_listed_with_their_open_issue_counts(api, parts):
+    _, tracker, _ = parts
+    label = _label()
+    tracker.add(REPO, _number(), labels=[label, "bug"])
+    tracker.add(REPO, _number(), labels=[label])
+    tracker.add(REPO, _number(), labels=[label], state="closed")
+
+    found = api.get("/v1/labels", params={"repo": REPO}, headers=OPERATOR).json()
+
+    row = next(r for r in found["labels"] if r["label"] == label)
+    assert row == {"label": label, "total": 2, "repos": {REPO: 2}}
+    assert api.get("/v1/labels", params={"repo": "someone/else"}, headers=OPERATOR).status_code == 404
+    assert api.get("/v1/labels").status_code == 401
+
+
+async def test_a_labels_issues_show_which_open_goal_holds_each(api, parts):
+    _, tracker, _ = parts
+    label = _label()
+    held = tracker.add(REPO, _number(), labels=[label])
+    goal = api.post("/v1/goals", json={"statement": "Fix", "repos": [REPO], "label": label}, headers=OPERATOR).json()
+    _sweep(api, goal)
+    free = tracker.add(REPO, _number(), labels=[label], title="Not held yet")
+
+    listed = api.get(f"/v1/repos/{REPO}/issues", params={"label": label}, headers=OPERATOR).json()
+
+    by_ref = {i["ref"]: i for i in listed["issues"]}
+    assert by_ref[held]["held_by"] == goal["id"]
+    assert by_ref[free]["held_by"] is None and by_ref[free]["title"] == "Not held yet"
+    api.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
+    again = api.get(f"/v1/repos/{REPO}/issues", params={"label": label}, headers=OPERATOR).json()
+    assert {i["ref"]: i["held_by"] for i in again["issues"]}[held] is None, "a canceled goal holds nothing"
+
+
+def _drafting_api(parts, drafter):
+    events, tracker, tasks = parts
+    app = create_app(
+        events, tracker, tasks, operator_keys={"op-key": "dave"}, service_keys={}, sweep_seconds=0, drafter=drafter
+    )
+    return TestClient(app)
+
+
+def test_a_goal_is_drafted_from_the_chosen_issues_and_nothing_is_saved(parts):
+    from meta_harness.planner.drafting import Draft
+
+    events, tracker, _ = parts
+    label = _label()
+    first = tracker.add(REPO, _number(), labels=[label], title="First")
+    tracker.add(REPO, _number(), labels=[label], title="Left out")
+    seen = []
+
+    async def drafter(label_asked, issues):
+        seen.append((label_asked, [i.ref for i in issues]))
+        return Draft(title="T", statement="S", theme="Th", modality="feature", model="claude:m", usd_cost="0.001")
+
+    with _drafting_api(parts, drafter) as client:
+        drafted = client.post(
+            "/v1/goals/draft", json={"label": label, "repos": [REPO], "refs": [first]}, headers=OPERATOR
+        )
+        goals_after = client.get("/v1/goals", headers=OPERATOR).json()["goals"]
+
+    assert drafted.status_code == 200
+    body = drafted.json()
+    assert (body["title"], body["statement"], body["modality"], body["theme"]) == ("T", "S", "feature", "Th")
+    assert body["refs"] == [first] and body["label"] == label and body["repos"] == [REPO]
+    assert seen == [(label, [first])]
+    assert not any(g["label"] == label for g in goals_after), "a draft creates no goal"
+    drafted_events = [p for t, p in events.events if t == "goal_drafted"]
+    assert drafted_events[-1] == {
+        "label": label,
+        "repos": [REPO],
+        "issues": 1,
+        "model": "claude:m",
+        "usd_cost": "0.001",
+    }
+
+
+def test_a_draft_the_gateway_could_not_make_is_a_502_with_the_reason(parts):
+    from meta_harness.planner.drafting import DraftError
+
+    async def drafter(label, issues):
+        raise DraftError("the model did not finish its draft (max_tokens)")
+
+    with _drafting_api(parts, drafter) as client:
+        refused = client.post("/v1/goals/draft", json={"label": _label(), "repos": [REPO]}, headers=OPERATOR)
+
+    assert refused.status_code == 502 and "did not finish" in refused.json()["detail"]
