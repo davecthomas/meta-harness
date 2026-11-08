@@ -356,7 +356,10 @@ cmd_run() {
       git --git-dir "$origin" cat-file -e "mh/$REF:hello.txt" \
         || { log "expected branch mh/$REF with hello.txt in $origin"; exit 1; }
       [ -s "$RUNS_DIR/$REF/pull-request.md" ] || { log "expected the pull request record runs/$REF/pull-request.md"; exit 1; }
-      log "branch mh/$REF in $origin holds hello.txt, and runs/$REF/pull-request.md holds the pull request"
+      # The review loop: a review run on another model, its verdict posted as runs/$REF/review-1.md.
+      grep -qF '`clean`' "$RUNS_DIR/$REF/review-1.md" 2>/dev/null \
+        || { log "expected a clean review posted to runs/$REF/review-1.md. See worker.log"; exit 1; }
+      log "branch mh/$REF in $origin holds hello.txt, runs/$REF/pull-request.md the pull request, and review-1.md its clean review"
       ;;
     fallback)
       starter
@@ -378,6 +381,8 @@ cmd_run() {
         || { log "expected branch mh/$task_id with hello.txt in $origin"; exit 1; }
       "$PY" -m meta_harness.cli task get "$task_id" | grep -q '"status": "ready"' \
         || { log "expected task $task_id to be ready with its pull request"; exit 1; }
+      "$PY" -m meta_harness.cli task get "$task_id" | grep -q 'came back clean' \
+        || { log "expected task $task_id to be ready because its review came back clean"; exit 1; }
       check_task_events "$task_id"
       log "task $task_id is ready, branch mh/$task_id holds hello.txt, and the event service has its events"
       ;;
@@ -442,7 +447,7 @@ make_origin() {
 # check_task_events TASK_ID: the event service holds the task's events, from the task service and the
 # run service. The run service sends them through its outbox, so give it a few seconds.
 check_task_events() {
-  local wanted="task_created task_status_changed task_routed turn_started model_call run_finished attempt_finished pull_request_opened"
+  local wanted="task_created task_status_changed task_routed turn_started model_call run_finished attempt_finished pull_request_opened pull_request_checks review_submitted pull_request_reviewed"
   local out missing tick
   for tick in $(seq 1 20); do
     out=$("$PY" -m meta_harness.cli events read --task "$1" --limit 2000)

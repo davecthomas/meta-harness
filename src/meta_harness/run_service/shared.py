@@ -66,6 +66,8 @@ class RunTaskInput:
     # A Task API task's own title, so prepare reads no ticket, and the issue its pull request closes.
     title: str = ""
     closes: str = ""
+    # Whether an opened pull request goes through the review loop: checks, review, fixes.
+    review: bool = True
 
 
 @dataclass
@@ -90,6 +92,9 @@ class PreparedRun:
     repo: str = ""
     ticket: str = ""
     title: str = ""
+    # The task's own text and acceptance checks, for the review loop's prompts.
+    description: str = ""
+    checks: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -129,6 +134,8 @@ class HarnessRequest:
     task_id: str = ""
     # The routing tier's thinking level, sent on every turn. None: the HTTP Gateway's default.
     thinking: str | None = None
+    # The branch to clone, for a review or fix run on a pull request. Empty: the repo's default branch.
+    branch: str = ""
 
 
 @dataclass
@@ -174,6 +181,8 @@ class HarnessResult:
     spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
     grant_spent_usd: str | None = None
     error: str | None = None
+    # A review run's verdict, from submit_review: {"verdict", "summary", "findings"}. None for any other run.
+    review: dict[str, Any] | None = None
 
 
 @dataclass
@@ -206,6 +215,9 @@ class RunTaskResult:
     harness: HarnessResult
     spent_usd: str
     published: PublishResult | None = None
+    # How the review loop ended: clean, unreviewed or review_unresolved, and why. Empty when it did not run.
+    outcome: str = ""
+    outcome_reason: str = ""
 
 
 @dataclass
@@ -259,3 +271,66 @@ class AttemptRecord:
 class PublishedRecord:
     task_id: str
     published: PublishResult
+
+
+# --- The review loop --------------------------------------------------------------------------------
+
+
+@dataclass
+class ChecksRequest:
+    repo: str
+    head_sha: str
+    task_id: str = ""
+
+
+@dataclass
+class FailedCheck:
+    name: str
+    summary: str
+
+
+@dataclass
+class ChecksResult:
+    """How the code host's checks on a commit ended: passed, failed, or none (the repo runs no checks)."""
+
+    state: str
+    failed: list[FailedCheck] = field(default_factory=list)
+
+
+@dataclass
+class LoopPromptRequest:
+    """What a review or fix run's prompt is built from. kind: review, or fix."""
+
+    kind: str
+    repo: str
+    title: str
+    description: str
+    checks: list[str]
+    base: str
+    branch: str
+    round_no: int = 0
+    # What the fix run answers: the review's findings and summary, or the checks that failed.
+    findings: list[dict[str, Any]] = field(default_factory=list)
+    summary: str = ""
+    failed_checks: list[FailedCheck] = field(default_factory=list)
+
+
+@dataclass
+class ReviewPolicy:
+    """The task policy's review rules, with each reviewer pair resolved against the active harness profiles."""
+
+    reviewers: list[Candidate]
+    max_rounds: int
+    # Reviewer pairs that could not be resolved, and why: shown when no reviewer is left.
+    unresolved: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PostReviewRequest:
+    task_id: str
+    repo: str
+    pr_url: str
+    head_sha: str
+    reviewer: str
+    review: dict[str, Any]
+    round_no: int

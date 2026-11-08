@@ -166,4 +166,36 @@ def validate() -> list[str]:
     lines.append(
         f"classifier: {classifier.model_name if classifier else 'none, so every task takes tier ' + str(config.default_tier)}"
     )
+    lines.extend(review_policy_lines())
+    return lines
+
+
+TASK_POLICY_PATH = REPO_ROOT / "config" / "task_policy.json"
+
+
+def review_policy_lines() -> list[str]:
+    """Checks the task policy's review rules, and says which reviewer pairs can run.
+
+    A malformed policy stops the worker. A reviewer pair whose harness profile
+    is not in the active profiles is only reported: the review loop skips it,
+    and with no reviewer left, a pull request waits for an operator.
+
+    Raises:
+        CandidateError: The review rules are malformed.
+    """
+    try:
+        review = json.loads(TASK_POLICY_PATH.read_text(encoding="utf-8"))["review"]
+        reviewers, max_rounds = review["reviewers"], review["max_rounds"]
+    except (OSError, ValueError, KeyError, TypeError) as err:
+        raise CandidateError(f"{TASK_POLICY_PATH.name}: no review rules ({err})") from err
+    if not (isinstance(reviewers, list) and reviewers and all(isinstance(r, str) for r in reviewers)):
+        raise CandidateError(f"{TASK_POLICY_PATH.name}: review.reviewers must be a non-empty list of pairs")
+    if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or max_rounds < 0:
+        raise CandidateError(f"{TASK_POLICY_PATH.name}: review.max_rounds must be a whole number, 0 or more")
+    lines = [f"review: up to {max_rounds} fix rounds"]
+    for pair in reviewers:
+        try:
+            lines.append(f"reviewer {pinned(pair).label}")
+        except CandidateError as err:
+            lines.append(f"reviewer {pair} cannot run, so the review loop skips it: {err}")
     return lines

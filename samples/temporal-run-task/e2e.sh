@@ -88,8 +88,9 @@ fi
 ref="e2e-$STAMP-repo"
 if step repo env REF="$ref" DEMO=repo ./stack.sh run \
   && [ "$(git --git-dir "$RUNS_DIR/$ref/origin.git" show "mh/$ref:hello.txt" 2>/dev/null)" = "$expected" ] \
-  && grep -q "^head: mh/$ref at " "$RUNS_DIR/$ref/pull-request.md"; then
-  pass "repo: the run's change is on branch mh/$ref in the bare repo, with its pull request record"
+  && grep -q "^head: mh/$ref at " "$RUNS_DIR/$ref/pull-request.md" \
+  && grep -qF '`clean`' "$RUNS_DIR/$ref/review-1.md"; then
+  pass "repo: the run's change is on branch mh/$ref in the bare repo, with its pull request record and a clean review from another model"
 else
   fail "repo: expected hello.txt on branch mh/$ref and runs/$ref/pull-request.md" repo
 fi

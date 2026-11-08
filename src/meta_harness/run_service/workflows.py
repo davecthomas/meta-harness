@@ -19,8 +19,24 @@ A pinned task runs its one pair, with no routing and no escalation.
 
 A repo task's runs each start from a fresh clone of the repo. When a run
 finishes, the publish activity commits pi's changes to the branch mh/<REF>,
-pushes it and opens the pull request, and the task completes with its URL. A
-finished run that changed nothing fails the task.
+pushes it and opens the pull request. A finished run that changed nothing
+fails the task.
+
+Then the review loop (docs/technical-design.md, Review loop) runs on the pull
+request, in this workflow:
+
+1. wait_checks waits for the code host's checks on the head commit.
+2. Failed checks go to a fix run. Passing checks, or none, go to a review run
+   on the first reviewer pair in config/task_policy.json whose model did not
+   write the pull request, on the pull request's branch. Its submit_review
+   verdict is posted on the pull request.
+3. A clean verdict ends the loop. A changes verdict goes to a fix run: the
+   pair that wrote the pull request, in a new pi session on the branch, whose
+   publish pushes to the same branch. Then back to step 1.
+
+The loop ends review_unresolved after max_rounds fix runs, when the task's
+spend limit is used up, when a fix run changes nothing, or when no reviewer
+pair returns a verdict. A clean loop ends the task ready.
 
 The task's spend limit covers all its runs: each run's grant gets what the
 earlier runs left. A run run_harness gave up on still counts, from what
@@ -44,9 +60,22 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError, TimeoutError
 
 with workflow.unsafe.imports_passed_through():
-    from meta_harness.run_service.activities import cleanup_run, prepare, publish, route, run_harness
+    from meta_harness.run_service.activities import (
+        cleanup_run,
+        loop_prompt,
+        post_review,
+        prepare,
+        publish,
+        review_policy,
+        route,
+        run_harness,
+        wait_checks,
+    )
     from meta_harness.run_service.shared import (
         Attempt,
+        ChecksRequest,
+        LoopPromptRequest,
+        PostReviewRequest,
         AttemptRecord,
         Candidate,
         PublishedRecord,
@@ -99,6 +128,11 @@ HARNESS_RETRY = RetryPolicy(
 NEXT_CANDIDATE_END_REASONS = frozenset({"model_error", "harness_error", "server_shutdown"})
 # run_harness failures the next candidate may get past. A failed clone (CodeHostError) is the repo's, not the candidate's.
 NEXT_CANDIDATE_ERROR_TYPES = frozenset({"SandboxUnavailable", "HarnessUnavailable", "GatewayUnavailable"})
+# The review loop's steps. A repo's checks may take a while; wait_checks heartbeats while it polls.
+CHECKS_TIMEOUT = timedelta(minutes=75)
+CHECKS_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
+CODE_HOST_TIMEOUT = timedelta(minutes=2)
+CODE_HOST_RETRY = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5)
 
 
 @workflow.defn
@@ -155,7 +189,12 @@ class RunTask:
             await self._task_status("failed", str(err)[:500])
             raise
         pr_url = result.published.pr_url if result.published else ""
-        await self._task_status("ready" if pr_url else "closed", "the run finished", pr_url)
+        if result.outcome == "review_unresolved":
+            await self._task_status("review_unresolved", result.outcome_reason, pr_url)
+        elif pr_url:
+            await self._task_status("ready", result.outcome_reason or "the run finished", pr_url)
+        else:
+            await self._task_status("closed", "the run finished")
         return result
 
     async def _task_status(self, status: str, reason: str, pr_url: str = "") -> None:
@@ -256,7 +295,15 @@ class RunTask:
                         raise _failed(f"run {attempt} finished, but pi changed nothing in {prepared.repo}", attempts)
                     if self._task_id and published is not None:
                         await self._record(record_published, PublishedRecord(self._task_id, published))
-                    log.info("%s: completed", info.workflow_id)
+                    outcome, reason = "", ""
+                    if published is not None and request.review:
+                        thinking = route_result.thinking if route_result is not None and not prepared.pinned else None
+                        loop = _Loop(request, prepared, candidate, published, limit, spent, attempts, thinking)
+                        outcome, reason = await self._review_loop(loop)
+                        spent = loop.spent
+                    log.info(
+                        "%s: completed%s", info.workflow_id, f", review loop {outcome}: {reason}" if outcome else ""
+                    )
                     return RunTaskResult(
                         template=prepared.template,
                         prompt=prepared.prompt,
@@ -265,6 +312,8 @@ class RunTask:
                         harness=harness,
                         spent_usd=str(spent),
                         published=published,
+                        outcome=outcome,
+                        outcome_reason=reason,
                     )
                 if decision == "final":
                     raise _failed(f"run {attempt} on {candidate.label} ended for good: {detail}", attempts)
@@ -318,8 +367,148 @@ class RunTask:
             workflow.logger.info("%s: pull request %s", info.workflow_id, published.pr_url)
         return published
 
+    async def _review_loop(self, loop: "_Loop") -> tuple[str, str]:
+        """The review loop on the task's pull request. Returns its outcome and why."""
+        info = workflow.info()
+        log = workflow.logger
+        try:
+            policy = await workflow.execute_activity(
+                review_policy,
+                f"{loop.author.engine}:{loop.author.model}",
+                start_to_close_timeout=RECORD_TIMEOUT,
+                retry_policy=PREPARE_RETRY,
+            )
+            fixes = 0
+            reviews = 0
+            while True:
+                checks = await workflow.execute_activity(
+                    wait_checks,
+                    ChecksRequest(repo=loop.prepared.repo, head_sha=loop.head, task_id=self._task_id),
+                    start_to_close_timeout=CHECKS_TIMEOUT,
+                    heartbeat_timeout=CHECKS_HEARTBEAT_TIMEOUT,
+                    retry_policy=CODE_HOST_RETRY,
+                )
+                log.info("%s: checks at %s: %s", info.workflow_id, loop.head[:12], checks.state)
+                if checks.state == "failed":
+                    fix = loop.prompt_request("fix", failed_checks=checks.failed)
+                else:
+                    if not policy.reviewers:
+                        why = "; ".join(policy.unresolved) or "every reviewer pair is the model that wrote it"
+                        return "unreviewed", f"the pull request has no reviewer: {why}"
+                    reviews += 1
+                    review, reviewer, why = await self._review(loop, policy.reviewers, reviews)
+                    if review is None:
+                        return "review_unresolved", f"review round {reviews} got no verdict: {why}"
+                    await workflow.execute_activity(
+                        post_review,
+                        PostReviewRequest(
+                            task_id=self._task_id,
+                            repo=loop.prepared.repo,
+                            pr_url=loop.published.pr_url,
+                            head_sha=loop.head,
+                            reviewer=reviewer,
+                            review=review,
+                            round_no=reviews,
+                        ),
+                        start_to_close_timeout=CODE_HOST_TIMEOUT,
+                        retry_policy=CODE_HOST_RETRY,
+                    )
+                    log.info("%s: review round %d by %s: %s", info.workflow_id, reviews, reviewer, review["verdict"])
+                    if review["verdict"] == "clean":
+                        return "clean", f"review round {reviews} by {reviewer} came back clean at {loop.head[:12]}"
+                    fix = loop.prompt_request(
+                        "fix", findings=list(review.get("findings") or []), summary=str(review.get("summary") or "")
+                    )
+                if fixes >= policy.max_rounds:
+                    return "review_unresolved", f"the review loop used its {policy.max_rounds} fix rounds"
+                fixes += 1
+                stopped = await self._fix(loop, fix, fixes)
+                if stopped:
+                    return "review_unresolved", stopped
+        except ActivityError as err:
+            if isinstance(err.cause, CancelledError):
+                raise
+            return "review_unresolved", f"the review loop stopped: {err.cause or err}"[:500]
+
+    async def _review(self, loop: "_Loop", reviewers: list[Candidate], round_no: int) -> tuple[dict | None, str, str]:
+        """One review round: each reviewer pair in order until one returns a verdict."""
+        prompt = await self._loop_prompt(loop.prompt_request("review"))
+        why = ""
+        for reviewer in reviewers:
+            if loop.left() <= 0:
+                return None, "", f"the task spent its ${loop.limit} spend limit"
+            harness, detail = await self._loop_run(loop, prompt, reviewer, "review", thinking=None)
+            if harness is not None and harness.review:
+                return harness.review, reviewer.label, ""
+            why = f"{reviewer.label}: {detail}"
+        return None, "", why
+
+    async def _fix(self, loop: "_Loop", fix: LoopPromptRequest, round_no: int) -> str:
+        """One fix run on the pull request's branch, published to it. Returns why the loop must stop, or ""."""
+        if loop.left() <= 0:
+            return f"the task spent its ${loop.limit} spend limit before fix round {round_no}"
+        fix.round_no = round_no
+        prompt = await self._loop_prompt(fix)
+        harness, detail = await self._loop_run(loop, prompt, loop.author, "fix", thinking=loop.thinking)
+        if harness is None or harness.status != "FINISHED":
+            return f"fix round {round_no} on {loop.author.label} did not finish: {detail}"
+        republished = await self._publish(loop.prepared, harness, loop.author, loop.spent)
+        if not republished.pr_url or republished.commit == loop.head:
+            return f"fix round {round_no} changed nothing"
+        loop.head = republished.commit
+        return ""
+
+    async def _loop_run(
+        self, loop: "_Loop", prompt: str, candidate: Candidate, kind: str, thinking: str | None
+    ) -> tuple[HarnessResult | None, str]:
+        """A review or fix run on the pull request's branch, recorded as the task's next attempt."""
+        info = workflow.info()
+        attempt = len(loop.attempts) + 1
+        run_id = run_id_for(info.workflow_id, attempt)
+        self._current_run_id = run_id
+        harness, decision, detail, run_spent = await self._try(
+            prompt, run_id, candidate, loop.left(), loop.prepared.repo, thinking, branch=loop.published.branch
+        )
+        loop.spent += run_spent
+        loop.attempts.append(
+            Attempt(
+                attempt=attempt,
+                tier=kind,
+                candidate=candidate.label,
+                run_id=run_id,
+                decision=decision,
+                detail=detail,
+                spent_usd=str(run_spent),
+            )
+        )
+        if self._task_id:
+            await self._record(record_attempt, AttemptRecord(self._task_id, loop.attempts[-1], candidate, harness))
+        workflow.logger.info(
+            "%s: %s run %d on %s: %s. Spent $%s of $%s",
+            info.workflow_id,
+            kind,
+            attempt,
+            candidate.label,
+            detail,
+            loop.spent,
+            loop.limit,
+        )
+        return harness, detail
+
+    async def _loop_prompt(self, request: LoopPromptRequest) -> str:
+        return await workflow.execute_activity(
+            loop_prompt, request, start_to_close_timeout=PREPARE_TIMEOUT, retry_policy=PREPARE_RETRY
+        )
+
     async def _try(
-        self, prompt: str, run_id: str, candidate: Candidate, left: Decimal, repo: str, thinking: str | None
+        self,
+        prompt: str,
+        run_id: str,
+        candidate: Candidate,
+        left: Decimal,
+        repo: str,
+        thinking: str | None,
+        branch: str = "",
     ) -> tuple[HarnessResult | None, str, str, Decimal]:
         """One run on one candidate. Returns the result, the decision, why, and what the run spent."""
         try:
@@ -333,6 +522,7 @@ class RunTask:
                     repo=repo,
                     task_id=self._task_id,
                     thinking=thinking,
+                    branch=branch,
                 ),
                 start_to_close_timeout=harness_timeout(candidate),
                 heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
@@ -372,6 +562,46 @@ class RunTask:
         if request.ceiling and route_result.tiers.index(request.ceiling) <= index:
             return None
         return route_result.tiers[index + 1]
+
+
+class _Loop:
+    """What the review loop carries between its steps: the pull request, its head, and the task's spend."""
+
+    def __init__(
+        self,
+        request: RunTaskInput,
+        prepared: PreparedRun,
+        author: Candidate,
+        published: PublishResult,
+        limit: Decimal,
+        spent: Decimal,
+        attempts: list[Attempt],
+        thinking: str | None,
+    ) -> None:
+        self.request = request
+        self.prepared = prepared
+        self.author = author
+        self.published = published
+        self.head = published.commit
+        self.limit = limit
+        self.spent = spent
+        self.attempts = attempts
+        self.thinking = thinking
+
+    def left(self) -> Decimal:
+        return self.limit - self.spent
+
+    def prompt_request(self, kind: str, **fields) -> LoopPromptRequest:
+        return LoopPromptRequest(
+            kind=kind,
+            repo=self.prepared.repo,
+            title=self.prepared.title,
+            description=self.prepared.description,
+            checks=list(self.prepared.checks),
+            base=self.published.base,
+            branch=self.published.branch,
+            **fields,
+        )
 
 
 def harness_timeout(candidate: Candidate) -> timedelta:

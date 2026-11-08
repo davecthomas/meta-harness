@@ -13,6 +13,10 @@ the same paths, status codes and JSON fields:
 
 The scripted run: the first turn asks pi to write hello.txt with
 EXPECTED_TEXT, and any turn after a tool result answers that it is done.
+The review loop's runs are scripted too. A review run (its tools include
+submit_review) submits a verdict: FAKE_FIRST_REVIEW (default clean) for a
+task's first review, clean after that. A fix run (its prompt is the fix
+prompt) appends a line to hello.txt, so its publish pushes a new commit.
 Tool results count only in the HTTP Gateway's neutral shape
 ({"type": "tool_result", "tool_call_id", "result", "is_error"}), and a
 malformed one gets 400, so the check fails if pi sends an engine's own shape.
@@ -41,6 +45,9 @@ EXPECTED_FILE = "hello.txt"
 EXPECTED_TEXT = "Hello from the fake HTTP Gateway."
 TURN_USD = Decimal("0.002")
 TURN_SECONDS = float(os.environ.get("FAKE_TURN_SECONDS", "2"))
+FIRST_REVIEW = os.environ.get("FAKE_FIRST_REVIEW", "clean")
+FIX_MARKER = "You are fixing a pull request"
+FIXED_TEXT = EXPECTED_TEXT + "\nFixed after review.\n"
 API_KEY = os.environ.get("GATEWAY_API_KEY", "local-dev-key")
 GRANT_PATH = re.compile(r"^/v1/run-grants/([^/]+)$")
 
@@ -134,7 +141,22 @@ def has_tool_result(messages: list[Any]) -> bool:
     return any(isinstance(m, dict) and m.get("type") == "tool_result" and "role" not in m for m in messages)
 
 
-def scripted_turn(grant: dict[str, Any], messages: list[Any]) -> dict[str, Any]:
+# The tasks (workflow ids) whose first review has been given, so each task's later reviews are clean.
+REVIEWED: set[str] = set()
+
+
+def review_call(grant: dict[str, Any]) -> dict[str, Any]:
+    """A submit_review call: the first review of a task gets FAKE_FIRST_REVIEW, the rest clean."""
+    task = grant["run_id"].rsplit(":", 1)[0]
+    verdict = FIRST_REVIEW if task not in REVIEWED else "clean"
+    REVIEWED.add(task)
+    findings = [] if verdict == "clean" else [{"path": EXPECTED_FILE, "line": 1, "body": "Say that it was fixed."}]
+    summary = "The change does the task." if verdict == "clean" else "One change is needed."
+    arguments = {"verdict": verdict, "summary": summary, "findings": findings}
+    return {"id": f"call_{grant['turns']}", "name": "submit_review", "input": arguments}
+
+
+def scripted_turn(grant: dict[str, Any], messages: list[Any], tools: list[str] | None = None) -> dict[str, Any]:
     grant["turns"] += 1
     usage = {
         "input_tokens": 1000,
@@ -155,7 +177,10 @@ def scripted_turn(grant: dict[str, Any], messages: list[Any]) -> dict[str, Any]:
     }
     if has_tool_result(messages):
         return {**base, "text": f"Done. I wrote {EXPECTED_FILE}.", "tool_calls": [], "finish_reason": "complete"}
-    call = {"id": f"call_{grant['turns']}", "name": "write", "input": {"path": EXPECTED_FILE, "content": EXPECTED_TEXT}}
+    if "submit_review" in (tools or []):
+        return {**base, "text": None, "tool_calls": [review_call(grant)], "finish_reason": "tool_use"}
+    content = FIXED_TEXT if FIX_MARKER in json.dumps(messages) else EXPECTED_TEXT
+    call = {"id": f"call_{grant['turns']}", "name": "write", "input": {"path": EXPECTED_FILE, "content": content}}
     return {**base, "text": None, "tool_calls": [call], "finish_reason": "tool_use"}
 
 
@@ -241,7 +266,8 @@ class Handler(BaseHTTPRequestHandler):
             log(f"turn refused for {grant['run_id']}: {problem}")
             return self._send(400, {"detail": problem})
         time.sleep(TURN_SECONDS)
-        result = scripted_turn(grant, messages)
+        tools = [t.get("name") for t in body.get("tools") or [] if isinstance(t, dict)]
+        result = scripted_turn(grant, messages, tools)
         GRANTS.charge(grant)
         result["run_grant"] = {**{k: grant[k] for k in ("run_id", "spent_usd", "spend_limit_usd", "expires_at")}}
         calls = ",".join(c["name"] for c in result["tool_calls"]) or "none"
