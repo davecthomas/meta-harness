@@ -88,7 +88,7 @@ platform:
 	gcloud storage buckets describe gs://$(STATE_BUCKET) --project meta-harness-prod >/dev/null 2>&1 || \
 	  gcloud storage buckets create gs://$(STATE_BUCKET) --project meta-harness-prod --location us-central1 \
 	    --uniform-bucket-level-access --public-access-prevention
-	terraform -chdir=deploy/terraform/platform init -input=false
+	terraform -chdir=deploy/terraform/platform init -input=false -reconfigure
 	terraform -chdir=deploy/terraform/platform apply -input=false
 
 deploy:
