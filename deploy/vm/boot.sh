@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Brings the meta-harness VM to its running state. The VM's startup script runs it at every boot, and
-# deploy/gcp.sh runs it again after a code change. It is safe to run any number of times.
+# the deployer (deploy/vm/deployer.sh) runs it again for each deploy. It is safe to run any number of times.
 #
 # The VM runs what a developer's machine runs: Postgres, the Temporal dev server (its history in a
 # file on the disk), Redis for run grants, the HTTP Gateway, the event service, task service, planner
@@ -117,9 +117,14 @@ sudo -u mh -H bash -c "cd $GW && /usr/local/bin/poetry config virtualenvs.in-pro
 
 log "systemd units"
 install -m 644 "$MH"/deploy/vm/units/*.service /etc/systemd/system/
+# install writes a new file, so a deploy running the old copy keeps reading it.
+install -m 755 "$MH"/deploy/vm/deployer.sh /usr/local/bin/mh-deployer
 systemctl daemon-reload
 systemctl enable mh-postgres mh-temporal mh-gateway mh-images mh-egress mh-migrate \
-  mh-events mh-tasks mh-planner mh-scheduler mh-worker
+  mh-events mh-tasks mh-planner mh-scheduler mh-worker mh-deployer
+# The deployer runs each deploy in its own unit, so restarting it never stops one. --no-block: at boot
+# it is ordered after the startup script that runs this, and waiting for it would never end.
+systemctl restart --no-block mh-deployer
 # A code change restarts everything that runs code; Postgres and Temporal keep running.
 systemctl restart mh-postgres mh-temporal
 systemctl restart mh-images mh-egress mh-migrate

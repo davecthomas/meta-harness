@@ -14,6 +14,12 @@
 #   make clean-db  stop Postgres and delete its data
 #
 # The zero-cost end-to-end check still lives in samples/temporal-run-task (make e2e there).
+#
+# Google Cloud (deploy/gcp.sh). Every merge to main deploys itself (.github/workflows/deploy.yml);
+# these are for doing it by hand.
+#   make deploy         deploy main: the VM, then the edge (check out main and pull first)
+#   make deploy-status  the VM's last deploy, and the console's URL
+#   make deploy-infra   create or update the cloud resources and the access CI deploys with
 
 SHELL := /bin/bash
 # Local settings and secrets' locations (see .env.example). Git ignores .env.
@@ -32,7 +38,7 @@ export MH_SERVICE_KEY ?= local-service-key
 export MH_OPERATOR_KEYS ?= local-operator:local-operator-key
 export MH_OPERATOR_KEY ?= local-operator-key
 
-.PHONY: up down clean-db migrate serve stop test lint console console-dev
+.PHONY: up down clean-db migrate serve stop test lint console console-dev deploy deploy-status deploy-infra
 
 up:
 	@mkdir -p $(STACK_DIR)
@@ -74,3 +80,12 @@ test:
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
+
+deploy:
+	deploy/gcp.sh deploy
+
+deploy-status:
+	deploy/gcp.sh status
+
+deploy-infra:
+	deploy/gcp.sh infra
