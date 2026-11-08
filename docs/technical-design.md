@@ -2071,9 +2071,13 @@ stand in front of it, and the edge signs operators in itself:
   open at the network level, serves the console's files and nothing else.
   A change must come from the console's origin. Every response the edge
   forwards is `Cache-Control: no-store`, so Firebase Hosting caches none.
-- Firebase Hosting ends a request at 60 seconds, which ends a live event
-  stream. The browser reconnects with the last event's position, and the
-  event service resumes from it, so no event is lost.
+- The live event stream does not go through Firebase Hosting, which ends a
+  request at 60 seconds. The console asks the edge for a stream ticket
+  (signed, read-only, for the tail path only, five minutes), and opens the
+  stream on the edge's own Cloud Run address with it; Cloud Run keeps a
+  stream open for an hour. That address grants CORS to the console's origin
+  for the stream only, and the edge drops the ticket before forwarding. A
+  dropped stream resumes from the last event's position.
 
 What this shape lacks against the design above: the Temporal dev server and
 the Postgres container are single copies on one disk; the sandbox host is the

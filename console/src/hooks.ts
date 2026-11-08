@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MhEvent, Page } from "./api";
-import { tailUrl } from "./api";
+import { api, tailUrl } from "./api";
 
 // A list that reads ahead: it loads the first page, then the next whenever the sentinel element
 // (put it after the last item) comes within a screen of view.
@@ -54,6 +54,11 @@ export function useInfinite<T>(load: (offset: number, limit: number) => Promise<
 }
 
 // One server-sent-event stream for a set of tasks. A new set of ids opens a new stream from `from`.
+//
+// In the cloud the stream does not go through the console's address (Firebase Hosting ends a request at
+// 60 seconds): the edge hands out a short-lived ticket and the edge's own Cloud Run address, which keeps
+// a stream open for an hour. The browser reconnects a dropped stream by itself, from the last event; a
+// stream the edge refuses (an expired ticket) is reopened here with a new ticket, from the last event.
 export function useEventStream(taskIds: string[], from: number | null, onEvent: (e: MhEvent) => void) {
   const [state, setState] = useState<"idle" | "connecting" | "live" | "reconnecting">("idle");
   const handler = useRef(onEvent);
@@ -65,12 +70,45 @@ export function useEventStream(taskIds: string[], from: number | null, onEvent: 
       setState("idle");
       return;
     }
+    let live = true;
+    let stream: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let position = from;
+
+    const open = () =>
+      api.streamTicket().then(
+        ({ base, ticket }) => {
+          if (!live) return;
+          stream = new EventSource(tailUrl(key.split(","), position, base, ticket));
+          stream.addEventListener("event", (message) => {
+            const event = message as MessageEvent;
+            const seen = Number(event.lastEventId);
+            if (Number.isFinite(seen) && seen > position) position = seen;
+            handler.current(JSON.parse(event.data));
+          });
+          stream.onopen = () => setState("live");
+          stream.onerror = () => {
+            setState("reconnecting");
+            if (stream?.readyState === EventSource.CLOSED) {
+              stream.close();
+              retry = setTimeout(open, 2000);
+            }
+          };
+        },
+        () => {
+          if (!live) return;
+          setState("reconnecting");
+          retry = setTimeout(open, 5000);
+        },
+      );
+
     setState("connecting");
-    const stream = new EventSource(tailUrl(key.split(","), from));
-    stream.addEventListener("event", (message) => handler.current(JSON.parse((message as MessageEvent).data)));
-    stream.onopen = () => setState("live");
-    stream.onerror = () => setState("reconnecting");
-    return () => stream.close();
+    void open();
+    return () => {
+      live = false;
+      clearTimeout(retry);
+      stream?.close();
+    };
   }, [key, from]);
 
   return state;
