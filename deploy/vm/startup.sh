@@ -1,9 +1,27 @@
 #!/bin/bash
-# The VM's startup script (instance metadata): get the meta-harness at the ref in the mh-ref metadata,
-# then run its boot script. Output goes to /var/log/mh-boot.log.
+# The VM's startup script, from its metadata (deploy/terraform/release). The VM is new at every deploy, so
+# this runs on a fresh boot disk: mount the data disk, get the meta-harness at the commit in the mh-ref
+# metadata, and run its boot script. Output goes to /var/log/mh-boot.log, and the result to the guest
+# attribute mh/boot, which the deploy waits for: "running", "ok <commit>" or "failed <commit>".
 exec >>/var/log/mh-boot.log 2>&1
 echo "[startup] $(date -u +%FT%TZ)"
-REF=$(curl -fs -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/mh-ref" || echo main)
+MD=http://metadata.google.internal/computeMetadata/v1/instance
+H="Metadata-Flavor: Google"
+REF=$(curl -fs -H "$H" "$MD/attributes/mh-ref")
+report() { curl -fs -X PUT -H "$H" --data "$1" "$MD/guest-attributes/mh/boot" >/dev/null || echo "[startup] could not report: $1"; }
+report running
+
+# The data disk (device name "data" in the release stack) holds Postgres, Temporal's history and run
+# workspaces. A new disk has no file system and gets one; a disk from the last VM is mounted as it is.
+DEV=/dev/disk/by-id/google-data
+STATE=/var/lib/meta-harness
+if ! blkid "$DEV" >/dev/null 2>&1; then
+  mkfs.ext4 -q -F "$DEV"
+fi
+mkdir -p "$STATE"
+grep -qs " $STATE " /proc/mounts || mount -o discard,defaults "$DEV" "$STATE"
+grep -qs "$STATE" /etc/fstab || echo "$DEV $STATE ext4 discard,defaults,nofail 0 2" >>/etc/fstab
+
 command -v git >/dev/null || { apt-get update -q && apt-get install -y -q git; }
 # The checkout belongs to the mh user and this script runs as root, which git refuses without a
 # safe.directory entry. A startup script has no HOME, so the entry goes in the system config.
@@ -12,10 +30,16 @@ git config --system --get-all safe.directory 2>/dev/null | grep -qx /opt/meta-ha
 if [ ! -d /opt/meta-harness/.git ]; then
   git clone -q https://github.com/davecthomas/meta-harness.git /opt/meta-harness
 fi
-# A ref that no longer exists, such as a merged and deleted branch, stops here rather than booting old code.
 if ! git -C /opt/meta-harness fetch -q origin "$REF"; then
-  echo "[startup] could not fetch $REF. Set the mh-ref metadata to a branch, tag or commit that exists: deploy/gcp.sh update REF=main"
+  echo "[startup] could not fetch $REF"
+  report "failed $REF"
   exit 1
 fi
 git -C /opt/meta-harness checkout -q -f FETCH_HEAD
-bash /opt/meta-harness/deploy/vm/boot.sh "$REF"
+if bash /opt/meta-harness/deploy/vm/boot.sh "$REF"; then
+  report "ok $REF"
+else
+  echo "[startup] boot.sh failed"
+  report "failed $REF"
+  exit 1
+fi

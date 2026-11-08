@@ -1,8 +1,10 @@
-# Deploys main to Google Cloud after every merge, once main's checks pass: the VM, then the edge.
+# Deploys main to Google Cloud after every merge, once main's checks pass at that commit.
 #
-# It signs in to Google Cloud as mh-deploy-sa through workload identity federation, which only this
-# repo's main branch may use, so no key is stored here. deploy/gcp.sh infra sets that access up.
-# Run it again by hand from the Actions tab (Run workflow), or locally with make deploy.
+# The deploy is the release Terraform stack (deploy/terraform/release): the edge image this workflow
+# builds from the commit, and the commit itself, which replaces the VM. It signs in to Google Cloud as
+# mh-deploy-sa through workload identity federation, which only this repo's main branch may use, so no
+# key is stored here. The platform stack (deploy/terraform/platform), applied by an operator, grants that.
+# Run it again from the Actions tab (Run workflow), or with make deploy.
 
 name: deploy
 
@@ -20,6 +22,11 @@ permissions:
   contents: read
   checks: read
   id-token: write
+
+env:
+  PROJECT: meta-harness-prod
+  REGION: us-central1
+  EDGE_IMAGE: us-central1-docker.pkg.dev/meta-harness-prod/mh/edge:${{ github.sha }}
 
 jobs:
   deploy:
@@ -49,5 +56,30 @@ jobs:
           workload_identity_provider: projects/57473592166/locations/global/workloadIdentityPools/github/providers/github
           service_account: mh-deploy-sa@meta-harness-prod.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
-      - name: deploy/gcp.sh deploy
-        run: REF=${{ github.sha }} deploy/gcp.sh deploy
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.3"
+          terraform_wrapper: false
+      - name: build the edge image and push it to Artifact Registry
+        run: |
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build -f deploy/edge.Dockerfile -t "$EDGE_IMAGE" .
+          docker push "$EDGE_IMAGE"
+      - name: apply the release stack
+        working-directory: deploy/terraform/release
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"
+      - name: wait for the VM to boot the commit
+        run: |
+          for i in $(seq 1 120); do
+            result=$(gcloud compute instances get-guest-attributes mh-vm --zone "$REGION-a" --project "$PROJECT" \
+              --query-path mh/boot --format='value(value)' 2>/dev/null || true)
+            case "$result" in
+              "ok ${{ github.sha }}") echo "the VM runs ${{ github.sha }}"; exit 0 ;;
+              "failed ${{ github.sha }}") echo "the VM's boot failed; read /var/log/mh-boot.log over IAP SSH"; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "the VM did not report in 30 minutes (last: ${result:-nothing})"
+          exit 1

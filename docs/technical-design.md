@@ -2007,10 +2007,11 @@ flowchart TB
 
 ### Deployment without GKE
 
-The deployment that exists, `deploy/gcp.sh`, runs the whole control plane on
-one Compute Engine VM and the console's edge on Cloud Run. GKE and the pool
-manager replace the VM behind the same meta-harness run service interfaces
-later.
+The deployment that exists runs the whole control plane on one Compute
+Engine VM and the console's edge on Cloud Run. GKE and the pool manager
+replace the VM behind the same meta-harness components when runs outgrow one
+machine. The cloud is declared in Terraform, under `deploy/terraform`, as two
+stacks with state in a Cloud Storage bucket.
 
 | Component | Runs on | Notes |
 |---|---|---|
@@ -2021,41 +2022,43 @@ later.
 | Redis | The VM, the distribution package | The HTTP Gateway's run grants and per-run spend counters |
 | HTTP Gateway | The VM, from a checkout of ai-api-unified-http, reading its own `config/models.json`. Its guardrails are off, as that file ships | `mh-gateway.service`. Bound to every interface so the egress proxy container reaches it; no firewall rule admits its port from outside the VM. The meta-harness `models.json`, whose router names `harness` candidates, reaches the worker alone: the gateway's completions factory refuses a `harness` engine |
 | Meta-harness run service worker, egress proxy, per-run sandboxes | The VM, with the Docker executor backend | `mh-worker.service`, `mh-egress.service`. Per-run sandboxes are containers on the VM, `MH_MAX_RUNNING` caps them, and each run's workspace and git directory live under `/var/lib/meta-harness/runs` |
-| Secrets | Secret Manager, read at boot into `/etc/meta-harness/env` | Provider keys, the service key, the gateway key, the repo registry and each GitHub App's private key. `deploy/gcp.sh infra` creates them from the operator's `.env` |
-| Code host | A GitHub App on the registered repos | Read-only clone tokens per run; the app token for every code-host write. Webhooks have no route yet, so the planner's sweep polls |
+| Secrets | Secret Manager, read at boot into `/etc/meta-harness/env` | Provider keys, the service key, the gateway key, the repo registry and each GitHub App's private key. 
 
-`deploy/gcp.sh infra` creates the network, Cloud NAT, the firewall rules,
-the service accounts, the secrets, the VM, the edge's IAP access, and the
-deploy access below. `deploy` deploys a commit: `vm`, then `edge`, which
-builds the edge image with Cloud Build and deploys it. `status` reports the
-VM's last deploy. The Makefile's `deploy`, `deploy-status` and `deploy-infra`
-targets run them.
+The **platform** stack is what changes rarely, and an operator applies it
+(`make platform`): the network, Cloud NAT, the firewall rules, the VM's
+fixed address and its data disk, the service accounts and every role they
+hold, the GitHub sign-in, the secrets' containers, Artifact Registry and the
+console's access list. The **release** stack is a commit: the VM at that
+commit, and the edge on Cloud Run from the image built from it.
 
-Every merge to main deploys itself. `.github/workflows/deploy.yml` waits for
-main's four checks to pass at the merged commit, then runs `deploy/gcp.sh
-deploy` as `mh-deploy-sa`. It signs in through workload identity federation,
-whose provider accepts only this repo's main branch, so GitHub holds no
-Google Cloud key. The account may build and deploy the edge, and set the
-VM's metadata.
+Every merge to main deploys itself. `.github/workflows/deploy.yml` waits
+for main's four checks to pass at the merged commit, builds the edge image
+and pushes it to Artifact Registry tagged with the commit, and applies the
+release stack with the commit and the image. It signs in as `mh-deploy-sa`
+through workload identity federation, whose provider accepts only this
+repository's main branch, so GitHub holds no Google Cloud key. The account
+may replace the VM, deploy the edge, push its image and write the release
+state; it cannot change IAM, secrets or the network, which are the platform
+stack's.
 
-A VM deploy needs no SSH. `deploy/gcp.sh vm` sets two metadata values on the
-VM: `mh-ref`, the commit, and `mh-deploy-id`, new for each deploy. The VM's
-deployer, `mh-deployer.service` (`deploy/vm/deployer.sh`), waits for the id
-to change. It runs the startup script from the metadata in a transient unit
-of its own, so the boot script can restart the deployer without stopping the
-deploy. The startup script checks out the commit and runs
-`deploy/vm/boot.sh`. That script installs packages, checks out the two
-repos, writes the environment file from Secret Manager and restarts the
-units. The deployer writes the result to the guest attribute `mh/deploy`,
-and `deploy/gcp.sh vm` waits for it. A VM that boots runs the same startup
-script. The VM has no public address; an operator reaches it through
-IAP-tunneled SSH, only to read logs.
+The VM is replaced, never changed in place. A new commit replaces the
+instance, whose boot disk is new; the startup script in its metadata mounts
+the data disk (Postgres data, Temporal's history and run workspaces), checks
+the commit out and runs `deploy/vm/boot.sh`, which installs packages, checks
+out the two repos, writes the environment file from Secret Manager and
+starts the systemd units. The script reports `ok <commit>` or `failed
+<commit>` in a guest attribute, and the workflow waits for it. `make deploy`
+runs the workflow by hand and `make deploy-status` reads the attribute. The
+VM has no public address; an operator reaches it through IAP-tunneled SSH,
+only to read logs.
 
 What this shape lacks against the design above: the Temporal dev server and
 the Postgres container are single copies on one disk; the sandbox host is the
 control-plane host; the VM's size bounds concurrent runs; and a deploy
-restarts the run worker, so an attempt in flight restarts. Cloud SQL and
-Temporal Cloud are their own pull request after the point of entry.
+replaces the VM, so an attempt in flight restarts and the control plane is
+down for the minutes the new VM takes to boot. Cloud SQL and Temporal Cloud
+are their own pull request after the point of entry, as Terraform resources
+replacing the two containers.
 
 ### Compute
 
@@ -2203,9 +2206,9 @@ so the point of entry needs no review loop. After it, in this order:
 | `feat/admission` | A loop that starts queued tasks' RunTask workflows: global concurrency, repo-area locks as expiring rows until the meta-harness scheduler moves them to Redis, closed dependencies, the goal's budget | `make e2e-admission`: two tasks on one repo area run in turn |
 | `feat/console-web-app-goals` | The first console web app: goal creation, the Overview and the Goal page, calling only the REST API, with an identity outside the access list refused (merged as server-rendered pages, then replaced by the React app) | An operator creates a goal in the browser, and an account outside the access list gets 403 |
 | `feat/console-web-app-runs` | The console web app in React and TypeScript (`console/`), and the local edge that serves it and routes `/v1` as the signed-in operator. Lists read ahead as you scroll; the Tasks page shows running tasks as a list or as terminal tiles 4, 16 or 32 up, where only the tiles on screen stream, over one server-sent-event stream; the Task page shows the live run and loads older events as you scroll up; cancel and the kill switch, which the meta-harness scheduler carries out | The tiles of running tasks stream their events as they happen, and scrolling moves the stream to the tiles in view |
-| `feat/deploy-cloud` | `deploy/gcp.sh`: one VM running every control-plane service, Postgres, the Temporal dev server, Redis, the HTTP Gateway on its own configuration, the worker and its per-run sandboxes, as systemd units booted from Secret Manager; the edge on Cloud Run behind Identity-Aware Proxy with the IAP header check; the clone's git directory outside the sandbox mount (see Deployment without GKE) | `deploy/gcp.sh infra && deploy/gcp.sh edge`, then a goal created in the cloud console runs a labeled issue to a pull request, and a request without IAP credentials gets 401 |
+| `feat/deploy-cloud` | One VM running every control-plane service, Postgres, the Temporal dev server, Redis, the HTTP Gateway on its own configuration, the worker and its per-run sandboxes, as systemd units booted from Secret Manager; the edge on Cloud Run behind Identity-Aware Proxy with the IAP header check; the clone's git directory outside the sandbox mount (see Deployment without GKE) | `deploy/gcp.sh infra && deploy/gcp.sh edge`, then a goal created in the cloud console runs a labeled issue to a pull request, and a request without IAP credentials gets 401 |
 | `feat/real-runs` | Python 3.12, uv and Poetry in the per-run sandbox image; harness profiles sized for these repos, with resources and a bash allowlist; the run activity's timeout from the profile; router tiers on Sonnet 5 and Opus 5.5, with each tier's thinking level sent on every turn; a $10.00 default task limit; an e2-standard-8 VM | `uv run pytest -q`, `npm test` in `images/harness-pi`, and `make e2e` in CI |
-| `feat/deploy-on-merge` | Every merge to main deploys itself once main's checks pass, through workload identity federation; the VM deploys through its metadata and a deployer unit, with no SSH; `make deploy` by hand | A merge to main deploys, and `make deploy-status` names its commit as the VM's last deploy |
+| `feat/terraform-deploy` | The cloud in Terraform: a platform stack an operator applies and a release stack CI applies on every merge to main through workload identity federation; the VM replaced per commit with its state on a data disk; `make platform`, `make deploy`, `make deploy-status` | A merge to main deploys, and `make deploy-status` names the merged commit as what the VM booted |
 | `feat/deploy-managed` | Cloud SQL for the control plane's tables, and Temporal Cloud for the run service namespace | `make deploy`, then the same goal check |
 | `feat/code-host-webhooks` | The webhook endpoint: signature check, and check, merge and close deliveries as RunTask workflow signals | `make webhook-replay` |
 | `feat/review-loop` | The review task with `submit_review`, the posted review, the fix task, and the round and budget limits. The VM's disk keeps pi session directories under `harness_session_id` until the pool manager exists | `make e2e-review`: `changes`, a fix, then `clean` |

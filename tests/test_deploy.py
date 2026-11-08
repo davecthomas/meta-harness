@@ -43,14 +43,26 @@ def test_every_tier_candidate_is_a_harness_pair():
 WORKFLOWS = ROOT / ".github" / "workflows"
 
 
-def test_boot_installs_the_deployer_and_restarts_it_without_waiting():
-    """At boot the deployer is ordered after the startup script running boot.sh, so a blocking restart hangs."""
-    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
-    assert 'install -m 755 "$MH"/deploy/vm/deployer.sh /usr/local/bin/mh-deployer' in boot
-    assert "systemctl restart --no-block mh-deployer" in boot
-    unit = (UNITS / "mh-deployer.service").read_text()
-    assert "ExecStart=/usr/local/bin/mh-deployer watch" in unit
-    assert "google-startup-scripts.service" in unit
+def test_the_startup_script_reports_the_commit_the_deploy_waits_for():
+    """CI waits for the guest attribute mh/boot to read "ok <commit>"; the startup script must write exactly that."""
+    startup = (ROOT / "deploy" / "vm" / "startup.sh").read_text()
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    assert 'report "ok $REF"' in startup and 'report "failed $REF"' in startup
+    assert "guest-attributes/mh/boot" in startup
+    assert "--query-path mh/boot" in deploy
+    assert '"ok ${{ github.sha }}"' in deploy and '"failed ${{ github.sha }}"' in deploy
+
+
+def test_the_vm_state_lives_on_the_data_disk():
+    """A deploy replaces the VM and its boot disk, so everything that must survive is under the mount."""
+    startup = (ROOT / "deploy" / "vm" / "startup.sh").read_text()
+    release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
+    assert "/dev/disk/by-id/google-data" in startup and 'device_name = "data"' in release
+    assert 'mount -o discard,defaults "$DEV" "$STATE"' in startup
+    postgres = (UNITS / "mh-postgres.service").read_text()
+    assert "-v /var/lib/meta-harness/postgres:/var/lib/postgresql/data" in postgres
+    temporal = (UNITS / "mh-temporal.service").read_text()
+    assert "--db-filename /var/lib/meta-harness/temporal.db" in temporal
 
 
 def test_the_deploy_workflow_waits_for_every_check_main_runs():
@@ -64,10 +76,19 @@ def test_the_deploy_workflow_waits_for_every_check_main_runs():
     assert f'"$passed" -eq {len(jobs)}' in deploy
 
 
-def test_the_deploy_workflow_signs_in_with_what_infra_creates():
-    gcp = (ROOT / "deploy" / "gcp.sh").read_text()
+def test_the_deploy_workflow_signs_in_with_what_the_platform_stack_creates():
+    platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
     deploy = (WORKFLOWS / "deploy.yml").read_text()
     assert "workloadIdentityPools/github/providers/github" in deploy
-    assert "workload-identity-pools providers create-oidc github" in gcp
-    assert "DEPLOY_SA=mh-deploy-sa" in gcp and "mh-deploy-sa@meta-harness-prod" in deploy
-    assert "assertion.ref=='refs/heads/main'" in gcp
+    assert 'workload_identity_pool_provider_id = "github"' in platform
+    assert 'account_id   = "mh-deploy-sa"' in platform and "mh-deploy-sa@meta-harness-prod" in deploy
+    assert "assertion.ref=='refs/heads/main'" in platform
+
+
+def test_the_release_stack_gets_the_commit_and_the_image_the_workflow_built():
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
+    assert '-var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"' in deploy
+    assert "edge:${{ github.sha }}" in deploy
+    assert "replace_triggered_by = [terraform_data.commit]" in release
+    assert 'startup-script          = file("${path.module}/../../vm/startup.sh")' in release

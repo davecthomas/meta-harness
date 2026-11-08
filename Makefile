@@ -15,11 +15,10 @@
 #
 # The zero-cost end-to-end check still lives in samples/temporal-run-task (make e2e there).
 #
-# Google Cloud (deploy/gcp.sh). Every merge to main deploys itself (.github/workflows/deploy.yml);
-# these are for doing it by hand.
-#   make deploy         deploy main: the VM, then the edge (check out main and pull first)
-#   make deploy-status  the VM's last deploy, and the console's URL
-#   make deploy-infra   create or update the cloud resources and the access CI deploys with
+# Google Cloud (deploy/README.md). Every merge to main deploys itself (.github/workflows/deploy.yml).
+#   make platform       apply the platform Terraform stack: network, identity, secrets' containers, disk
+#   make deploy         deploy main by hand: runs the deploy workflow and follows it
+#   make deploy-status  the commit the VM last booted, and the console's URL
 
 SHELL := /bin/bash
 # Local settings and secrets' locations (see .env.example). Git ignores .env.
@@ -38,7 +37,7 @@ export MH_SERVICE_KEY ?= local-service-key
 export MH_OPERATOR_KEYS ?= local-operator:local-operator-key
 export MH_OPERATOR_KEY ?= local-operator-key
 
-.PHONY: up down clean-db migrate serve stop test lint console console-dev deploy deploy-status deploy-infra
+.PHONY: up down clean-db migrate serve stop test lint console console-dev platform deploy deploy-status
 
 up:
 	@mkdir -p $(STACK_DIR)
@@ -81,11 +80,22 @@ lint:
 	uv run ruff check .
 	uv run ruff format --check .
 
+STATE_BUCKET := meta-harness-prod-terraform
+# Terraform acts as the account gcloud is signed in as, rather than whatever application default
+# credentials happen to hold (often another account).
+platform: export GOOGLE_OAUTH_ACCESS_TOKEN = $(shell gcloud auth print-access-token)
+platform:
+	gcloud storage buckets describe gs://$(STATE_BUCKET) --project meta-harness-prod >/dev/null 2>&1 || \
+	  gcloud storage buckets create gs://$(STATE_BUCKET) --project meta-harness-prod --location us-central1 \
+	    --uniform-bucket-level-access --public-access-prevention
+	terraform -chdir=deploy/terraform/platform init -input=false
+	terraform -chdir=deploy/terraform/platform apply -input=false
+
 deploy:
-	deploy/gcp.sh deploy
+	gh workflow run deploy --ref main
+	sleep 5
+	gh run watch $$(gh run list --workflow deploy --limit 1 --json databaseId --jq '.[0].databaseId') --exit-status
 
 deploy-status:
-	deploy/gcp.sh status
-
-deploy-infra:
-	deploy/gcp.sh infra
+	@echo "VM booted: $$(gcloud compute instances get-guest-attributes mh-vm --zone us-central1-a --project meta-harness-prod --query-path mh/boot --format='value(value)' 2>/dev/null || echo nothing yet)"
+	@echo "console:   $$(gcloud run services describe mh-edge --region us-central1 --project meta-harness-prod --format='value(status.url)' 2>/dev/null || echo not deployed)"
