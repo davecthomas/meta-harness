@@ -242,3 +242,14 @@ async def test_a_review_or_fix_run_clones_the_pull_requests_branch(tmp_path: Pat
 
     assert branch == "mh/t-1"
     assert (workspace / "app.py").read_text() == "x = 2\n", "the branch's work is checked out"
+
+
+async def test_a_local_repo_runs_no_checks_and_its_result_is_still_recorded(monkeypatch):
+    emitted = []
+    monkeypatch.setattr(activities.events, "emit", lambda kind, payload, **fields: emitted.append((kind, payload)))
+
+    request = ChecksRequest(repo="/tmp/origin.git", head_sha="abc", task_id="t-1")
+    result = await ActivityEnvironment().run(activities.wait_checks, request)
+
+    assert result.state == "none"
+    assert emitted == [("pull_request_checks", {"head_sha": "abc", "state": "none", "failed": []})]

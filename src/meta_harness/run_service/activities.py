@@ -585,11 +585,11 @@ PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
 @activity.defn
 async def wait_checks(request: ChecksRequest) -> ChecksResult:
     """Waits until every check on the head commit has completed, and says how they ended."""
-    if code_host.is_local(request.repo):
-        return ChecksResult(state="none")
     details = activity.info().heartbeat_details
     waited = int(details[0]) if details else 0
-    while True:
+    # A local bare repo has no code host, so it runs no checks.
+    result = ChecksResult(state="none") if code_host.is_local(request.repo) else None
+    while result is None:
         try:
             runs = await code_host.check_runs(request.repo, request.head_sha)
         except code_host.CodeHostError as err:
