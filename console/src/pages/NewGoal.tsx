@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Textarea } from "@mantine/core";
+import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, TextInput, Textarea } from "@mantine/core";
 import { IconDeviceFloppy, IconPlayerPlay } from "@tabler/icons-react";
 import { api, type GoalDraft } from "../api";
 import { LabelField } from "../components/LabelField";
@@ -10,6 +10,7 @@ import { ErrorAlert, PageHeader } from "../components/ui";
 export function NewGoal() {
   const navigate = useNavigate();
   const [repos, setRepos] = useState<string[]>([]);
+  const [title, setTitle] = useState("");
   const [statement, setStatement] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
   const [label, setLabel] = useState("");
@@ -26,6 +27,7 @@ export function NewGoal() {
   }, []);
 
   function fromDraft(draft: GoalDraft) {
+    setTitle(draft.title);
     setStatement(draft.statement);
     setLabel(draft.label);
     setChosen(draft.repos);
@@ -40,6 +42,8 @@ export function NewGoal() {
     setSaving(start.current);
     try {
       const goal = await api.createGoal({
+        // Left empty, the planner's model names the goal from its description.
+        ...(title.trim() ? { title: title.trim() } : {}),
         statement,
         repos: chosen,
         label,
@@ -63,8 +67,15 @@ export function NewGoal() {
       <Paper maw={720}>
         <form onSubmit={submit}>
           <Stack gap="lg">
+            <TextInput
+              label="Title"
+              description="A few words for lists. Leave it empty and a model writes one from the description."
+              maxLength={80}
+              value={title}
+              onChange={(e) => setTitle(e.currentTarget.value)}
+            />
             <Textarea
-              label="Statement"
+              label="Description"
               description="What the goal is. The planner reads it."
               required
               autosize

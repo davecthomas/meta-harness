@@ -195,3 +195,45 @@ test("a row with a task opens the task, and its links open GitHub instead", asyn
 
   expect(await screen.findByText("task page")).toBeTruthy();
 });
+
+test("a goal shows its title over its description, and Edit title saves a new one", async () => {
+  let current = { ...goal("active"), started_at: "2026-11-08T20:41:00Z", title: "Fix issue 55", statement: "Close #55: the save loses the last edit." };
+  const patched: unknown[] = [];
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body));
+      patched.push(body);
+      current = { ...current, ...body };
+      return respond(current);
+    }
+    if (url.startsWith("/v1/tasks")) return respond({ tasks: [], total: 0 });
+    return respond(current);
+  });
+  renderAt("/goals/g-1", <GoalPage />);
+
+  expect(await screen.findByRole("heading", { name: /Fix issue 55/ })).toBeTruthy();
+  expect(screen.getByText("Close #55: the save loses the last edit.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Edit title" }));
+  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Save keeps every edit" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save title" }));
+
+  await waitFor(() => expect(patched).toEqual([{ title: "Save keeps every edit" }]));
+  expect(await screen.findByRole("heading", { name: /Save keeps every edit/ })).toBeTruthy();
+});
+
+test("the Goals list shows each goal's title, or the start of its description when it has none", async () => {
+  vi.stubGlobal("fetch", () =>
+    respond({
+      goals: [
+        { ...SAVED, title: "Save bugs" },
+        { ...SAVED, id: "g-2", title: null, statement: "A description long enough that a list shows only its start, cut short to keep every row on one line." },
+      ],
+      total: 2,
+    }),
+  );
+
+  renderAt("/goals", <GoalsPage />);
+
+  expect(await screen.findByText("Save bugs")).toBeTruthy();
+  expect(screen.getByText(/^A description long enough .*…$/)).toBeTruthy();
+});

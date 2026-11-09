@@ -82,6 +82,9 @@ export interface GoalDraft {
 
 export interface Goal {
   id: string;
+  // The goal's short name. Null until the operator or the planner's model gives it one: goalTitle covers that.
+  title: string | null;
+  // The goal's description: what it is, which the planner reads.
   statement: string;
   repos: string[];
   label: string;
@@ -96,6 +99,13 @@ export interface Goal {
   started_at: string | null;
   // When the goal was met or canceled; null while it is open.
   closed_at: string | null;
+}
+
+// The name a goal shows in lists and headers: its title, or until it has one, the start of its description.
+export function goalTitle(goal: Pick<Goal, "title" | "statement">): string {
+  if (goal.title) return goal.title;
+  const text = goal.statement.trim().replace(/\s+/g, " ");
+  return text.length > 80 ? `${text.slice(0, 79)}…` : text;
 }
 
 // The status a goal shows: a paused goal that never started is "not_started", told apart from one paused after running.

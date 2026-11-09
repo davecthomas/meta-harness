@@ -198,7 +198,7 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
             <Text size="xs" c="dimmed" mt={4}>
               Drafted by {draft.model} for ${draft.usd_cost}. The issues read as {draft.modality}
               {draft.modality === "feature" ? "; feature goals aren't built yet, so this one runs as fix" : ""}. The
-              form below has the statement, label and repos: edit them, then create the goal.
+              form below has the title, description, label and repos: edit them, then create the goal.
             </Text>
           </Alert>
         )}

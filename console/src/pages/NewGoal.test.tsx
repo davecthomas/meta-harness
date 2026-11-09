@@ -33,7 +33,7 @@ function fillAndPress(button: string, created: Record<string, unknown>[]) {
   );
   return (async () => {
     fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
-    fireEvent.change(screen.getByLabelText(/Statement/), { target: { value: "Fix the save bugs" } });
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
     fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
     fireEvent.click(screen.getByRole("button", { name: button }));
     expect(await screen.findByText("Goal page")).toBeTruthy();
