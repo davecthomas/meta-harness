@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react
 import { Link, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Group, Loader, Stack, Table, Text } from "@mantine/core";
 import { IconArrowBackUp, IconCircleCheck, IconDownload, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
-import { api, type Goal, type IssueLink as Issue, type Task } from "../api";
+import { api, goalStatus, type Goal, type IssueLink as Issue, type LabelIssue, type Task } from "../api";
 import { useInfinite } from "../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, SectionTitle, StatusBadge, when } from "../components/ui";
 
@@ -10,6 +10,8 @@ export function GoalPage() {
   const { goalId = "" } = useParams();
   const [goal, setGoal] = useState<(Goal & { issues: Issue[] }) | null>(null);
   const [tasks, setTasks] = useState<Record<string, Task>>({});
+  // For a goal not started yet: its label's open issues, read but not taken in, so the operator sees what Start runs.
+  const [waiting, setWaiting] = useState<(LabelIssue & { repo: string })[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -18,6 +20,14 @@ export function GoalPage() {
       setGoal(g);
       const page = await api.tasks({ goalId }, 0, 1000);
       setTasks(Object.fromEntries(page.items.map((t) => [t.id, t])));
+      if (goalStatus(g) === "not_started") {
+        const found = await Promise.all(
+          g.repos.map(async (repo) => (await api.labelIssues(repo, g.label)).map((issue) => ({ ...issue, repo }))),
+        );
+        setWaiting(found.flat());
+      } else {
+        setWaiting(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -47,12 +57,13 @@ export function GoalPage() {
 
   if (!goal) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const open = !["met", "canceled"].includes(goal.status);
+  const status = goalStatus(goal);
 
   return (
     <>
       <PageHeader
         title={goal.statement}
-        description={<Group gap="xs"><StatusBadge status={goal.status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>}
+        description={<Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>}
         actions={
           <>
             {goal.status === "active" && (
@@ -61,7 +72,10 @@ export function GoalPage() {
                 <Button variant="default" leftSection={<IconPlayerPause size={16} />} onClick={() => act(() => api.goalAction(goal.id, "pause"))}>Pause</Button>
               </>
             )}
-            {["paused", "stalled", "budget_exhausted"].includes(goal.status) && (
+            {status === "not_started" && (
+              <Button leftSection={<IconPlayerPlay size={16} />} onClick={() => act(() => api.goalAction(goal.id, "resume"))}>Start</Button>
+            )}
+            {["paused", "stalled", "budget_exhausted"].includes(status) && (
               <Button leftSection={<IconPlayerPlay size={16} />} onClick={() => act(() => api.goalAction(goal.id, "resume"))}>Resume</Button>
             )}
             {["active", "paused", "stalled"].includes(goal.status) && (
@@ -94,9 +108,37 @@ export function GoalPage() {
           )],
           ["Budget", <Text size="sm">{goal.max_usd ? `$${goal.max_usd}` : "None"}</Text>],
           ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
+          ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
           ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),
         ]}
       />
+
+      {waiting && (
+        <>
+          <SectionTitle>Open issues with its label</SectionTitle>
+          <Text size="sm" c="dimmed" mb="sm">
+            Read, not taken in. Start turns each one into a task, except one another goal already holds.
+          </Text>
+          {waiting.length ? (
+            <DataTable head={["Issue", "Title", "Updated", "Held by"]}>
+              {waiting.map((i) => (
+                <Table.Tr key={i.ref}>
+                  <Table.Td><IssueLink issueRef={i.ref} /></Table.Td>
+                  <Table.Td><Text size="sm">{i.title}</Text></Table.Td>
+                  <Table.Td><Text size="sm" c="dimmed">{when(i.updated_at)}</Text></Table.Td>
+                  <Table.Td>
+                    {i.held_by && <Anchor component={Link} to={`/goals/${i.held_by}`} ff="monospace" size="xs">{i.held_by}</Anchor>}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </DataTable>
+          ) : (
+            <Empty>
+              No open issue has the label <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> in the goal's repos yet.
+            </Empty>
+          )}
+        </>
+      )}
 
       <SectionTitle>Issues and tasks</SectionTitle>
       {issues.length ? (
@@ -118,6 +160,8 @@ export function GoalPage() {
             );
           })}
         </DataTable>
+      ) : status === "not_started" ? (
+        <Empty>No tasks yet: the goal takes in its issues when it starts.</Empty>
       ) : (
         <Empty>
           No issues yet. Label an open issue <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> in one of the goal's

@@ -26,7 +26,8 @@ goal is checked, so a paused goal, and one saved without starting, is left
 alone.
 
 The planner runs a sweep on every active goal every MH_PLANNER_SWEEP_SECONDS,
-and right after a goal is created. Webhooks make it immediate later.
+and right after a goal first starts: when it is created, or on its first
+resume when it was saved without starting. Webhooks make it immediate later.
 """
 
 import asyncio

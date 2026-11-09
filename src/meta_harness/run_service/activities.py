@@ -638,11 +638,12 @@ async def review_policy(author_model: str) -> ReviewPolicy:
     reviewers, unresolved = [], []
     for pair in policy["reviewers"]:
         try:
-            candidate = routing.pinned(pair)
+            candidate = routing.pinned(routing.replace_engine(pair))
         except routing.CandidateError as err:
             unresolved.append(f"{pair}: {err}")
             continue
-        if f"{candidate.engine}:{candidate.model}" != author_model:
+        # By model, not engine: one model reached through two engines is still the author.
+        if candidate.model != author_model.partition(":")[2]:
             reviewers.append(candidate)
     return ReviewPolicy(reviewers=reviewers, max_rounds=int(policy["max_rounds"]), unresolved=unresolved)
 

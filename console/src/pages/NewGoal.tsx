@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Textarea } from "@mantine/core";
+import { IconDeviceFloppy, IconPlayerPlay } from "@tabler/icons-react";
 import { api, type GoalDraft } from "../api";
 import { LabelField } from "../components/LabelField";
 import { LabelStart } from "../components/LabelStart";
@@ -16,7 +17,9 @@ export function NewGoal() {
   const [priority, setPriority] = useState<string | number>(0);
   const [autoMerge, setAutoMerge] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  // Which button submitted the form: Save (false) or Save and start (true). Null while not saving.
+  const [saving, setSaving] = useState<boolean | null>(null);
+  const start = useRef(true);
 
   useEffect(() => {
     api.repos().then((r) => setRepos(r.map((x) => x.name)), (err) => setError(String(err.message ?? err)));
@@ -34,7 +37,7 @@ export function NewGoal() {
       setError("Pick at least one repo.");
       return;
     }
-    setSaving(true);
+    setSaving(start.current);
     try {
       const goal = await api.createGoal({
         statement,
@@ -43,11 +46,12 @@ export function NewGoal() {
         max_usd: budget === "" ? null : String(budget),
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
+        start: start.current,
       });
       navigate(`/goals/${goal.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setSaving(false);
+      setSaving(null);
     }
   }
 
@@ -94,7 +98,26 @@ export function NewGoal() {
             />
             <Group justify="flex-end">
               <Button variant="default" onClick={() => navigate(-1)}>Cancel</Button>
-              <Button type="submit" loading={saving}>Create goal</Button>
+              <Button
+                type="submit"
+                variant="default"
+                leftSection={<IconDeviceFloppy size={16} />}
+                loading={saving === false}
+                disabled={saving === true}
+                onClick={() => (start.current = false)}
+              >
+                Save
+              </Button>
+              <Button
+                type="submit"
+                variant="filled"
+                leftSection={<IconPlayerPlay size={16} />}
+                loading={saving === true}
+                disabled={saving === false}
+                onClick={() => (start.current = true)}
+              >
+                Save and start
+              </Button>
             </Group>
           </Stack>
         </form>

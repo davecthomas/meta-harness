@@ -18,6 +18,8 @@ from typing import Any, Callable
 
 from ai_api_unified.routing.router_config import load_router_config
 
+from meta_harness.run_service.routing import replaced_engine_reason
+
 from meta_harness.run_service.paths import REPO_ROOT
 
 KNOWN_TOOLS = {"read", "write", "edit", "ls", "find", "grep", "bash", "submit_review"}
@@ -88,6 +90,8 @@ def check_tiers(document: dict[str, Any], others: dict[str, dict[str, Any]]) -> 
                 reasons.append(f"tier {tier.name}: {label} is not harness:<profile>/<engine>:<model>")
             elif profile not in profiles:
                 reasons.append(f"tier {tier.name}: {label} names harness profile {profile}, which the profiles lack")
+            elif why := replaced_engine_reason(label, engine):
+                reasons.append(f"tier {tier.name}: {why}")
     return reasons
 
 
