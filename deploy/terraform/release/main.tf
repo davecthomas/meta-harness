@@ -69,6 +69,9 @@ resource "google_compute_instance" "vm" {
   zone         = local.platform.zone
   machine_type = var.machine_type
   tags         = ["mh-vm"]
+  # A new machine type stops the VM, changes it and starts it again, which boots the commit like a new VM.
+  # Without this, Terraform refuses the change on a running VM and the deploy fails.
+  allow_stopping_for_update = true
 
   boot_disk {
     initialize_params {

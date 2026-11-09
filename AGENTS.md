@@ -46,6 +46,8 @@ and what is planned.
   and new code run side by side for a few seconds. A migration only adds:
   a new column is nullable or has a default, and a column, table or event
   field is removed in a later pull request, once no running code reads it.
+  An event type's schema never changes once it has merged: register a new
+  version beside it (`tests/events/registered_schemas.json` holds them).
 
 ## Style
 
