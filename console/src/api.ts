@@ -92,6 +92,13 @@ export interface Goal {
   priority: number;
   created_by: string;
   created_at: string;
+  // When the goal first became active: null for a goal saved without starting.
+  started_at: string | null;
+}
+
+// The status a goal shows: a paused goal that never started is "not_started", told apart from one paused after running.
+export function goalStatus(goal: Pick<Goal, "status" | "started_at">): string {
+  return goal.status === "paused" && !goal.started_at ? "not_started" : goal.status;
 }
 
 export interface IssueLink {

@@ -27,10 +27,13 @@ export function SectionTitle(props: { children: ReactNode; right?: ReactNode }) 
   );
 }
 
+// A status whose badge reads otherwise than its name.
+const STATUS_LABELS: Record<string, string> = { not_started: "Not started" };
+
 export function StatusBadge({ status }: { status: string }) {
   return (
     <Badge color={statusColor(status)} variant="light" radius="sm" tt="none">
-      {status.replace(/_/g, " ")}
+      {STATUS_LABELS[status] ?? status.replace(/_/g, " ")}
     </Badge>
   );
 }

@@ -10,7 +10,8 @@ and moves a blocked task to `queued` once every issue it depends on is
 closed. An issue already in another goal stays there.
 
 The planner runs a sweep on every active goal every MH_PLANNER_SWEEP_SECONDS,
-and right after a goal is created. Webhooks make it immediate later.
+and right after a goal first starts: when it is created, or on its first
+resume when it was saved without starting. Webhooks make it immediate later.
 """
 
 import asyncio

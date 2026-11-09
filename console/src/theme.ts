@@ -25,6 +25,7 @@ const STATUS_COLORS: Record<string, string> = {
   queued: "yellow",
   blocked: "yellow",
   paused: "yellow",
+  not_started: "cyan",
   taken_over: "violet",
   failed: "red",
   canceled: "gray",
