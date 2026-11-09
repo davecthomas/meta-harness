@@ -23,7 +23,7 @@ GOAL_MOVES = {
 }
 GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
-    "status, created_at, updated_at, started_at, closed_at"
+    "status, created_at, updated_at, started_at, closed_at, title"
 )
 LINK_COLUMNS = "ref, goal_id, repo, task_id, state, depends_on, refused_reason, first_seen_at, last_seen_at"
 
@@ -47,6 +47,8 @@ class NewGoal:
     priority: int = 0
     # False: save the goal paused and never started, so it takes in no issue until its first resume.
     start: bool = True
+    # The goal's short name. None: the planner's model writes one.
+    title: str | None = None
 
 
 def new_goal_id() -> str:
@@ -61,8 +63,8 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             f"INSERT INTO planner.goal (id, created_by, statement, repos, label, modality, modality_source, "
-            f"auto_merge, max_usd, priority, status, started_at) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END) "
+            f"auto_merge, max_usd, priority, status, started_at, title) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s) "
             f"RETURNING {GOAL_COLUMNS}",
             (
                 new_goal_id(),
@@ -76,6 +78,7 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
                 goal.priority,
                 "active" if goal.start else "paused",
                 goal.start,
+                goal.title,
             ),
         )
         return _goal(cur.fetchone())
@@ -108,14 +111,14 @@ def page_goals(conn: psycopg.Connection, statuses: list[str] | None, limit: int,
 
 
 def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, **fields: Any) -> tuple[dict, dict]:
-    """Change auto_merge, priority, max_usd or status. Returns (goal, the fields that changed with their old values).
+    """Change title, auto_merge, priority, max_usd or status. Returns (goal, the fields that changed with their old values).
 
     only_if: change nothing unless the goal's status is this one when its row is locked.
 
     A goal's first move to active sets started_at, and the changes then hold started_at too, so the caller
     can tell a goal's first start, which sweeps at once, from a resume.
     """
-    allowed = {"auto_merge", "priority", "max_usd", "status"}
+    allowed = {"title", "auto_merge", "priority", "max_usd", "status"}
     if set(fields) - allowed:
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
@@ -145,6 +148,22 @@ def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, *
             [*values, goal_id],
         )
         return _goal(cur.fetchone()), changed
+
+
+def untitled(conn: psycopg.Connection) -> list[dict]:
+    """Every goal with no title yet, oldest first."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT {GOAL_COLUMNS} FROM planner.goal WHERE title IS NULL ORDER BY created_at")
+        return [_goal(row) for row in cur.fetchall()]
+
+
+def set_title(conn: psycopg.Connection, goal_id: str, title: str) -> bool:
+    """Give a goal the title a model wrote, unless it has one by now. Returns whether it was set."""
+    with conn.transaction():
+        updated = conn.execute(
+            "UPDATE planner.goal SET title = %s, updated_at = now() WHERE id = %s AND title IS NULL", (title, goal_id)
+        )
+        return updated.rowcount == 1
 
 
 def link(conn: psycopg.Connection, ref: str) -> dict | None:

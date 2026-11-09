@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, Stack, Text } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
-import { api, type MhEvent, type Task } from "../api";
+import { api, goalTitle, type MhEvent, type Task } from "../api";
 import { useEventStream } from "../hooks";
 import { describe, fold, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "../components/Terminal";
@@ -23,6 +23,8 @@ export function TaskPage() {
   const [facts, setFacts] = useState<TileFacts>(EMPTY);
   const [from, setFrom] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The task's goal's name, for the link back to it. Null until read, or when the task has no goal.
+  const [goalName, setGoalName] = useState<string | null>(null);
   const oldest = useRef<number | null>(null);
   const newest = useRef(0);
   const loadingOlder = useRef(false);
@@ -39,6 +41,7 @@ export function TaskPage() {
         const [t, page] = await Promise.all([api.task(taskId), api.events([taskId], FIRST)]);
         if (stale) return;
         setTask(t);
+        if (t.goal_id) api.goal(t.goal_id).then((g) => !stale && setGoalName(goalTitle(g)), () => undefined);
         setLines(page.events.map(describe).filter((l): l is Line => l !== null));
         setFacts(page.events.reduce(fold, EMPTY));
         oldest.current = page.events[0]?.position ?? null;
@@ -114,7 +117,7 @@ export function TaskPage() {
           )],
           ["Repo", <Code>{task.repo}</Code>],
           ["Issue", <IssueLink issueRef={task.external_ref} />],
-          ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} ff="monospace" size="sm">{task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
+          ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
           ["Pull request", task.pr_url ? <Anchor href={task.pr_url} target="_blank" size="sm">{task.pr_url}</Anchor> : <Text size="sm" c="dimmed">None yet</Text>],
           ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
           ["Turn and spend", <Text size="sm">Turn {facts.turn}, ${facts.usd.toFixed(4)} {facts.model && <Code>{facts.model}</Code>}</Text>],

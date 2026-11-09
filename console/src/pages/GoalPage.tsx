@@ -1,8 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Anchor, Badge, Button, Center, Group, Loader, Stack, Table, Text } from "@mantine/core";
-import { IconArrowBackUp, IconCircleCheck, IconDownload, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
-import { api, goalStatus, type Goal, type IssueLink as Issue, type LabelIssue, type Task } from "../api";
+import { Anchor, Badge, Button, Center, Group, Loader, Stack, Table, Text, TextInput } from "@mantine/core";
+import { IconArrowBackUp, IconCheck, IconCircleCheck, IconDownload, IconPencil, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type LabelIssue, type Task } from "../api";
 import { useInfinite } from "../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, SectionTitle, StatusBadge, when } from "../components/ui";
 
@@ -14,6 +14,8 @@ export function GoalPage() {
   // For a goal not started yet: its label's open issues, read but not taken in, so the operator sees what Start runs.
   const [waiting, setWaiting] = useState<(LabelIssue & { repo: string })[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The title being edited, or null while it is not.
+  const [editing, setEditing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -37,6 +39,10 @@ export function GoalPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (goal) document.title = `${goalTitle(goal)} · meta-harness`;
+  }, [goal]);
 
   async function act(action: () => Promise<unknown>) {
     try {
@@ -63,8 +69,22 @@ export function GoalPage() {
   return (
     <>
       <PageHeader
-        title={goal.statement}
-        description={<Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>}
+        title={
+          <Group gap="xs" wrap="nowrap" align="center">
+            <span>{goalTitle(goal)}</span>
+            {editing === null && (
+              <Button size="compact-xs" variant="subtle" leftSection={<IconPencil size={14} />} onClick={() => setEditing(goal.title ?? goalTitle(goal))}>
+                Edit title
+              </Button>
+            )}
+          </Group>
+        }
+        description={
+          <Stack gap={6}>
+            <Text size="sm">{goal.statement}</Text>
+            <Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>
+          </Stack>
+        }
         actions={
           <>
             {goal.status === "active" && (
@@ -92,6 +112,20 @@ export function GoalPage() {
         }
       />
       <ErrorAlert error={error} />
+      {editing !== null && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act(() => api.patchGoal(goal.id, { title: editing.trim() })).then(() => setEditing(null));
+          }}
+        >
+          <Group gap="xs" mb="md" maw={720}>
+            <TextInput aria-label="Title" value={editing} maxLength={80} required onChange={(e) => setEditing(e.currentTarget.value)} style={{ flex: 1 }} />
+            <Button type="submit" leftSection={<IconCheck size={16} />}>Save title</Button>
+            <Button variant="default" onClick={() => setEditing(null)}>Cancel</Button>
+          </Group>
+        </form>
+      )}
       <Facts
         items={[
           ["Modality", <Text size="sm">{goal.modality}</Text>],

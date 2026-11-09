@@ -148,6 +148,7 @@ REGISTRY: list[EventType] = [
         _object(
             {
                 "goal_id": {"type": "string"},
+                "title": {"type": ["string", "null"]},
                 "statement": {"type": "string"},
                 "repos": {"type": "array", "items": {"type": "string"}},
                 "label": {"type": "string"},
@@ -155,6 +156,19 @@ REGISTRY: list[EventType] = [
                 "auto_merge": {"type": "boolean"},
             },
             ["goal_id", "statement", "repos", "label", "modality"],
+        ),
+    ),
+    EventType(
+        "goal_titled",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "title": {"type": "string"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "title", "model", "usd_cost"],
         ),
     ),
     EventType(
