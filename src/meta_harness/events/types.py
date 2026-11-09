@@ -166,6 +166,7 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("goal_changed", 1, _object({"goal_id": {"type": "string"}, "changes": {"type": "object"}}, ["goal_id"])),
+    EventType("goal_met", 1, _object({"goal_id": {"type": "string"}, "reason": {"type": "string"}}, ["goal_id"])),
     # Configuration: every saved or rolled-back version, with the operator as actor
     EventType(
         "config_changed",

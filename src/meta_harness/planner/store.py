@@ -14,11 +14,12 @@ BUILT_MODALITIES = {"fix"}
 GOAL_STATUSES = {"active", "paused", "met", "stalled", "budget_exhausted", "canceled"}
 GOAL_MOVES = {
     "active": {"paused", "met", "stalled", "budget_exhausted", "canceled"},
-    "paused": {"active", "canceled"},
-    "stalled": {"active", "canceled"},
+    "paused": {"active", "met", "canceled"},
+    "stalled": {"active", "met", "canceled"},
     "budget_exhausted": {"active", "canceled"},
-    "met": set(),
-    "canceled": set(),
+    # An operator reopens a met or canceled goal, and the planner takes in its label's open issues again.
+    "met": {"active"},
+    "canceled": {"active"},
 }
 GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
@@ -101,8 +102,10 @@ def page_goals(conn: psycopg.Connection, statuses: list[str] | None, limit: int,
         return rows, cur.fetchone()["n"]
 
 
-def update(conn: psycopg.Connection, goal_id: str, **fields: Any) -> tuple[dict, dict]:
-    """Change auto_merge, priority, max_usd or status. Returns (goal, the fields that changed with their old values)."""
+def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, **fields: Any) -> tuple[dict, dict]:
+    """Change auto_merge, priority, max_usd or status. Returns (goal, the fields that changed with their old values).
+
+    only_if: change nothing unless the goal's status is this one when its row is locked."""
     allowed = {"auto_merge", "priority", "max_usd", "status"}
     if set(fields) - allowed:
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
@@ -111,6 +114,8 @@ def update(conn: psycopg.Connection, goal_id: str, **fields: Any) -> tuple[dict,
         row = cur.fetchone()
         if row is None:
             raise NotFound(goal_id)
+        if only_if is not None and row["status"] != only_if:
+            return _goal(row), {}
         if "status" in fields and fields["status"] != row["status"]:
             if fields["status"] not in GOAL_MOVES.get(row["status"], set()):
                 raise GoalError(f"a {row['status']} goal cannot become {fields['status']}")
@@ -120,6 +125,8 @@ def update(conn: psycopg.Connection, goal_id: str, **fields: Any) -> tuple[dict,
         sets = [f"{k} = %s" for k in changed] + ["updated_at = now()"]
         if fields.get("status") in {"met", "canceled"}:
             sets.append("closed_at = now()")
+        elif fields.get("status") == "active":
+            sets.append("closed_at = NULL")
         cur.execute(
             f"UPDATE planner.goal SET {', '.join(sets)} WHERE id = %s RETURNING {GOAL_COLUMNS}",
             [*(fields[k] for k in changed), goal_id],

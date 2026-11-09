@@ -92,6 +92,8 @@ export interface Goal {
   priority: number;
   created_by: string;
   created_at: string;
+  // When the goal was met or canceled; null while it is open.
+  closed_at: string | null;
 }
 
 export interface IssueLink {
@@ -166,7 +168,7 @@ export const api = {
     call<{ issues: LabelIssue[] }>(`/v1/repos/${repo}/issues` + query({ label })).then((r) => r.issues),
   draftGoal: (body: { label: string; repos: string[]; refs: string[] }) =>
     call<GoalDraft>("/v1/goals/draft", { method: "POST", body: JSON.stringify(body) }),
-  goalAction: (id: string, action: "pause" | "resume" | "cancel" | "sweep") =>
+  goalAction: (id: string, action: "pause" | "resume" | "cancel" | "complete" | "reopen" | "sweep") =>
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
   patchGoal: (id: string, fields: Record<string, unknown>) =>
     call<Goal>(`/v1/goals/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
