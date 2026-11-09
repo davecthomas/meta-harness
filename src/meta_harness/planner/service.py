@@ -65,7 +65,7 @@ class GoalPatch(BaseModel):
 def add_shipped_configuration(pool, events: Events) -> None:
     """At startup: what the shipped files add to the configuration reaches the active versions."""
     with pool.connection() as conn:
-        for saved in config_store.add_shipped(conn):
+        for saved in [*config_store.add_shipped(conn), *config_store.replace_engines(conn)]:
             print(f"[planner] configuration {saved['kind']} v{saved['version']}: {saved['note']}", flush=True)
             events.emit(
                 "config_changed",
