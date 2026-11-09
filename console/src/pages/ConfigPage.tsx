@@ -25,6 +25,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { IconArrowBackUp, IconCode, IconDeviceFloppy, IconEdit, IconInfoCircle } from "@tabler/icons-react";
 import { api, ApiError, type ConfigKind, type ConfigSummary, type ConfigVersion } from "../api";
+import { useUnsavedChanges } from "../components/UnsavedChanges";
 import { DataTable, ErrorAlert, Facts, PageHeader, SectionTitle, when } from "../components/ui";
 
 const ORIGIN_COLORS: Record<string, string> = { seed: "gray", edit: "indigo", rollback: "orange" };
@@ -206,32 +207,48 @@ function RollbackButton({ version, onConfirm }: { version: number; onConfirm: ()
 }
 
 function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () => void; onSaved: (v: ConfigVersion) => void }) {
-  const [text, setText] = useState(JSON.stringify(props.current.document, null, 2));
+  const original = JSON.stringify(props.current.document, null, 2);
+  const [text, setText] = useState(original);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [reasons, setReasons] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  async function save() {
+  // The checked save. Resolves true when the version is saved; a refusal stays in the editor with its reasons.
+  async function save(): Promise<boolean> {
     let document: unknown;
     try {
       document = JSON.parse(text);
     } catch (err) {
       setError(`The document is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
-      return;
+      return false;
     }
     setSaving(true);
     setReasons([]);
     setError(null);
     try {
-      props.onSaved(await api.saveConfig(props.kind, document, note));
+      const saved = await api.saveConfig(props.kind, document, note);
+      unsaved.release();
+      props.onSaved(saved);
+      return true;
     } catch (err) {
       if (err instanceof ApiError && err.reasons.length) setReasons(err.reasons);
       else setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setSaving(false);
     }
   }
+
+  const unsaved = useUnsavedChanges({
+    dirty: text !== original || note.trim() !== "",
+    describe: `the ${props.kind === "tiers" ? "router tiers" : props.kind === "profiles" ? "harness profiles" : "repo registry"}, edited from version ${props.current.version}`,
+    save,
+    discard: () => {
+      setText(original);
+      setNote("");
+    },
+  });
 
   return (
     <Paper mb="lg">
@@ -242,6 +259,7 @@ function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () 
           </Alert>
         )}
         <ErrorAlert error={error} />
+        {unsaved.element}
         <JsonInput
           label={`Edit version ${props.current.version}`}
           description="Saving checks it the way the service that reads it checks its configuration at startup."
@@ -256,8 +274,8 @@ function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () 
         />
         <TextInput label="Note" description="Why you changed it. It shows in the version history." value={note} onChange={(e) => setNote(e.currentTarget.value)} />
         <Group justify="flex-end">
-          <Button variant="default" onClick={props.onCancel}>Cancel</Button>
-          <Button leftSection={<IconDeviceFloppy size={16} />} loading={saving} onClick={save}>Save as version {props.current.version + 1}</Button>
+          <Button variant="default" onClick={() => unsaved.confirm(props.onCancel)}>Cancel</Button>
+          <Button leftSection={<IconDeviceFloppy size={16} />} loading={saving} onClick={() => void save()}>Save as version {props.current.version + 1}</Button>
         </Group>
       </Stack>
     </Paper>
