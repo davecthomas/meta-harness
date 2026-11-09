@@ -7,6 +7,8 @@ export interface Line {
   position: number;
   kind: LineKind;
   text: string;
+  // The run the event belongs to, if any.
+  run?: string | null;
 }
 
 function short(value: unknown, n: number): string {
