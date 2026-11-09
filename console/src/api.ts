@@ -121,6 +121,21 @@ export interface IssueLink {
   refused_reason: string | null;
 }
 
+// An issue of a goal with its task's progress, from GET /v1/goals/{id}/issues.
+export interface IssueProgress {
+  ref: string;
+  repo: string;
+  state: string;
+  depends_on: string[];
+  refused_reason: string | null;
+  task_id: string | null;
+  task_status: string | null;
+  task_status_reason: string | null;
+  pr_url: string | null;
+  pr_state: "open" | "merged" | "closed" | null;
+  checks: { head_sha: string | null; state: "passed" | "failed" | "pending" | "none"; failed: string[] } | null;
+}
+
 export interface Task {
   id: string;
   external_ref: string;
@@ -211,6 +226,25 @@ export const api = {
     call<{ events: MhEvent[]; latest_position: number }>(
       "/v1/events" + query({ task_id: taskIds.join(","), limit, before_position: before ?? Number.MAX_SAFE_INTEGER }),
     ),
+  // Every event of these types on these tasks, oldest first: a goal's attempts, for what its tasks spent.
+  taskEvents: async (taskIds: string[], eventTypes: string[]) => {
+    const found: MhEvent[] = [];
+    for (let start = 0; start < taskIds.length; start += 100) {
+      let from = 0;
+      for (;;) {
+        const page = await call<{ events: MhEvent[]; next_position: number }>(
+          "/v1/events" +
+            query({ task_id: taskIds.slice(start, start + 100).join(","), event_type: eventTypes.join(","), from_position: from, limit: 5000 }),
+        );
+        found.push(...page.events);
+        if (page.events.length < 5000) break;
+        from = page.next_position;
+      }
+    }
+    return found.sort((a, b) => a.position - b.position);
+  },
+  // Each of a goal's issues with its task's status and its pull request's state and checks.
+  goalIssues: (id: string) => call<{ issues: IssueProgress[] }>(`/v1/goals/${id}/issues`).then((r) => r.issues),
   latestPosition: () => call<{ latest_position: number }>("/v1/events" + query({ limit: 1, from_position: 0 })),
 
   configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file" }>("/v1/config"),

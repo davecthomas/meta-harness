@@ -2031,7 +2031,14 @@ Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
-The rest of the table is planned.
+The Goal page shows an active goal's issues as a board, columns Queued,
+Running, In review, Done and Needs attention (a failed task, failing
+checks, a refused issue, or a failed dependency), each card with its task's
+status and cost and its pull request with its checks. A Graph view lays the
+same issues out by dependency, colored by column, and a Table view lists
+them. Issues done and spend against budget head the section, and the page
+reloads them as the goal's tasks record events. The rest of the table is
+planned.
 
 | View | Shows | Actions |
 |---|---|---|
