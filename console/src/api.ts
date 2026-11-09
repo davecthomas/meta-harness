@@ -54,6 +54,9 @@ export interface LabelCount {
   label: string;
   total: number;
   repos: Record<string, number>;
+  // How many of the label's open issues an open goal holds, and those goals.
+  held: number;
+  held_by: string[];
 }
 
 export interface LabelIssue {
