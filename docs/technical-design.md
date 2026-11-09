@@ -1490,7 +1490,7 @@ every task event:
    while the goal is active, has budget left, and is within its modality's
    parallelism.
 
-As built, the global limit is `MH_MAX_RUNNING`, and the locks are expiring
+As built, the global limit is `MH_MAX_RUNNING`, 8 on the deployment's VM, and the locks are expiring
 Postgres rows the scheduler renews while a task is `queued`, `running` or
 `taken_over`, which covers the task's review loop. An area is a top-level
 directory, so two tasks naming `console/src/a` and `console/src/b` exclude
@@ -2188,7 +2188,7 @@ stacks with state in a Cloud Storage bucket.
 | Temporal | The VM, the Temporal dev server with its history in one file | `mh-temporal.service`. A development server, one process, no replication. Temporal Cloud replaces it before runs that matter |
 | Redis | The VM, the distribution package | The HTTP Gateway's run grants and per-run spend counters. The scheduler's locks and kill switch are Postgres rows |
 | HTTP Gateway | The VM, from a checkout of ai-api-unified-http, reading its own `config/models.json`. Its guardrails are off, as that file ships | `mh-gateway.service`. Bound to every interface so the egress proxy container reaches it; no firewall rule admits its port from outside the VM. The meta-harness `models.json`, whose router names `harness` candidates, reaches the worker alone: the gateway's completions factory refuses a `harness` engine |
-| Meta-harness run service worker, egress proxy, per-run sandboxes | The VM, with the Docker executor backend | `mh-worker.service`, `mh-egress.service`. Per-run sandboxes are containers on the VM, `MH_MAX_RUNNING` caps them, and each run's workspace and git directory live under `/var/lib/meta-harness/runs` |
+| Meta-harness run service worker, egress proxy, per-run sandboxes | The VM, with the Docker executor backend | `mh-worker.service`, `mh-egress.service`. Per-run sandboxes are containers on the VM, and `MH_MAX_RUNNING` caps them at 8: the VM, an `e2-standard-16` (16 vCPU, 64 GB), holds eight sandboxes at their profiles' 6 GB cap and 16 GB for everything else. Each run's workspace and git directory live under `/var/lib/meta-harness/runs` |
 | Secrets | Secret Manager, read at boot into `/etc/meta-harness/env` | Provider keys, the service key, the gateway key, the repo registry and each GitHub App's private key. 
 
 The **platform** stack is what changes rarely: the network, Cloud NAT, the
