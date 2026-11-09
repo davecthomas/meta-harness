@@ -84,17 +84,30 @@ def check_settings() -> None:
             raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: goal_drafting.{key} must be a positive whole number")
 
 
-def count_labels(issues_by_repo: dict[str, list[Issue]]) -> list[dict[str, Any]]:
-    """Each label on the open issues, with its count in total and per repo, most issues first."""
+def count_labels(issues_by_repo: dict[str, list[Issue]], held: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Each label on the open issues, with its count in total and per repo, most issues first.
+
+    held maps an issue ref to the open goal holding it. Each row counts its held issues and names
+    their goals, so the console can tell when a new goal on the label would find nothing.
+    """
+    held = held or {}
     per_repo: dict[str, Counter] = {
         repo: Counter(name for issue in issues for name in set(issue.labels)) for repo, issues in issues_by_repo.items()
     }
+    holders: dict[str, Counter] = {}
+    for issues in issues_by_repo.values():
+        for issue in issues:
+            if issue.ref in held:
+                for name in set(issue.labels):
+                    holders.setdefault(name, Counter())[held[issue.ref]] += 1
     labels = {label for counts in per_repo.values() for label in counts}
     rows = [
         {
             "label": label,
             "total": sum(counts[label] for counts in per_repo.values()),
             "repos": {repo: counts[label] for repo, counts in per_repo.items() if counts[label]},
+            "held": sum(holders.get(label, Counter()).values()),
+            "held_by": sorted(holders.get(label, Counter())),
         }
         for label in labels
     ]

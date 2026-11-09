@@ -182,9 +182,12 @@ def create_app(
 
     @app.get("/v1/labels")
     async def labels(repo: str | None = None, who: str = Depends(operator)) -> dict:
-        """Every label on the open issues of the registered repos, or of one, with its issue counts."""
+        """Every label on the open issues of the registered repos, or of one, with its issue counts and how many an open goal holds."""
         names = registered([repo] if repo else [])
-        return {"repos": names, "labels": drafting.count_labels(await open_issues(names, None))}
+        issues = await open_issues(names, None)
+        with app.state.pool.connection() as conn:
+            held = store.holders(conn, [i.ref for found in issues.values() for i in found])
+        return {"repos": names, "labels": drafting.count_labels(issues, held)}
 
     @app.get("/v1/repos/{owner}/{name}/issues")
     async def label_issues(owner: str, name: str, label: str = Query(min_length=1), who: str = Depends(operator)):

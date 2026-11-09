@@ -29,9 +29,19 @@ def test_labels_are_counted_per_repo_and_in_total_most_first():
         }
     )
 
-    assert rows[0] == {"label": "bug", "total": 3, "repos": {"o/a": 2, "o/b": 1}}
+    assert rows[0] == {"label": "bug", "total": 3, "repos": {"o/a": 2, "o/b": 1}, "held": 0, "held_by": []}
     assert {r["label"]: r["total"] for r in rows[1:]} == {"docs": 1, "ui": 1}
     assert [r["label"] for r in rows[1:]] == ["docs", "ui"], "ties sort by name"
+
+
+def test_each_label_counts_the_issues_an_open_goal_holds():
+    a1, a2, b1 = _issue("o/a", 1, ["bug", "ui"]), _issue("o/a", 2, ["bug"]), _issue("o/b", 1, ["bug"])
+
+    rows = drafting.count_labels({"o/a": [a1, a2], "o/b": [b1]}, {a1.ref: "g-2", b1.ref: "g-1"})
+
+    by_label = {r["label"]: r for r in rows}
+    assert (by_label["bug"]["held"], by_label["bug"]["held_by"]) == (2, ["g-1", "g-2"])
+    assert (by_label["ui"]["held"], by_label["ui"]["held_by"]) == (1, ["g-2"]), "ui's only issue is held"
 
 
 def test_the_prompt_marks_the_issues_as_data_and_cuts_long_bodies():
