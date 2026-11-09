@@ -2,7 +2,7 @@
 
     GET, POST  /v1/goals                      list goals, or create one
     GET, PATCH /v1/goals/{id}                 a goal with its issues, or change auto_merge, priority or budget
-    POST       /v1/goals/{id}/pause, /resume, /cancel
+    POST       /v1/goals/{id}/pause, /resume, /cancel   resume also starts a goal saved without starting
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
@@ -10,8 +10,10 @@
 
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
 services with a service key (MH_SERVICE_KEYS). The planner sweeps every
-active goal every MH_PLANNER_SWEEP_SECONDS, and a new or reopened goal at once.
-A sweep moves a goal to met once its issues are closed and its tasks are done.
+active goal every MH_PLANNER_SWEEP_SECONDS, and a goal at once when it first
+starts (on creation, or on its first resume when it was saved with start false)
+or is reopened. A sweep moves a goal to met once its issues are closed and its
+tasks are done.
 """
 
 import asyncio
@@ -42,6 +44,8 @@ class GoalIn(BaseModel):
     auto_merge: bool = False
     max_usd: Decimal | None = Field(default=None, gt=0)
     priority: int = 0
+    # False: save the goal paused and never started; resume starts it.
+    start: bool = True
 
 
 class DraftIn(BaseModel):
@@ -137,6 +141,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such goal") from err
 
     def change(goal_id: str, who: str, **fields: Any) -> dict:
+        goal, _ = change_with(goal_id, who, **fields)
+        return goal
+
+    def change_with(goal_id: str, who: str, **fields: Any) -> tuple[dict, dict]:
+        """Change a goal and record goal_changed. Returns (goal, the fields that changed with their old values)."""
         try:
             with app.state.pool.connection() as conn:
                 goal, changed = store.update(conn, goal_id, **fields)
@@ -150,14 +159,19 @@ def create_app(
                 {"goal_id": goal_id, "changes": {k: {"from": str(v), "to": str(goal[k])} for k, v in changed.items()}},
                 actor=who,
             )
-        return goal
+        return goal, changed
 
     def move(goal_id: str, who: str, status: str, origins: set[str]) -> dict:
         """Change a goal's status, but only from one of origins: resume is not reopen."""
+        goal, _ = move_with(goal_id, who, status, origins)
+        return goal
+
+    def move_with(goal_id: str, who: str, status: str, origins: set[str]) -> tuple[dict, dict]:
+        """move, returning the fields that changed with their old values, as change_with does."""
         current = load(goal_id)["status"]
         if current not in origins:
             raise HTTPException(status_code=409, detail=f"a {current} goal cannot become {status} this way")
-        return change(goal_id, who, status=status)
+        return change_with(goal_id, who, status=status)
 
     drafting.check_settings()
     draft = drafter or drafting.draft_goal
@@ -266,10 +280,12 @@ def create_app(
                 "label": goal["label"],
                 "modality": goal["modality"],
                 "auto_merge": goal["auto_merge"],
+                "start": body.start,
             },
             actor=who,
         )
-        asyncio.create_task(sweep_one(goal))
+        if goal["status"] == "active":
+            asyncio.create_task(sweep_one(goal))
         return goal
 
     @app.get("/v1/goals")
@@ -300,8 +316,15 @@ def create_app(
         return change(goal_id, who, status="paused")
 
     @app.post("/v1/goals/{goal_id}/resume")
-    def resume(goal_id: str, who: str = Depends(operator)) -> dict:
-        return move(goal_id, who, "active", {"active", "paused", "stalled", "budget_exhausted"})
+    async def resume(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Make the goal active, but not a met or canceled one: that is reopen. Its first start, for a goal
+        saved without starting, sweeps it at once."""
+        goal, changed = await asyncio.to_thread(
+            move_with, goal_id, who, "active", {"active", "paused", "stalled", "budget_exhausted"}
+        )
+        if "started_at" in changed:
+            asyncio.create_task(sweep_one(goal))
+        return goal
 
     @app.post("/v1/goals/{goal_id}/cancel")
     def cancel(goal_id: str, who: str = Depends(operator)) -> dict:
