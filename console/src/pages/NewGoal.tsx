@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, TextInput, Textarea } from "@mantine/core";
-import { IconDeviceFloppy, IconPlayerPlay } from "@tabler/icons-react";
+import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
+import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
+import { IssuesPicker } from "../components/IssuesPicker";
 import { api, type GoalDraft } from "../api";
 import { LabelField } from "../components/LabelField";
 import { LabelStart } from "../components/LabelStart";
@@ -13,6 +14,9 @@ export function NewGoal() {
   const [title, setTitle] = useState("");
   const [statement, setStatement] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
+  // Issues picked by ref: the goal holds these besides its label's, and needs no label when there are some.
+  const [refs, setRefs] = useState<string[]>([]);
+  const [picking, setPicking] = useState(false);
   const [label, setLabel] = useState("");
   const [budget, setBudget] = useState<string | number>("");
   const [priority, setPriority] = useState<string | number>(0);
@@ -41,12 +45,18 @@ export function NewGoal() {
     }
     setSaving(start.current);
     try {
+      if (!label.trim() && !refs.length) {
+        setError("Give the goal a label, or pick its issues.");
+        setSaving(null);
+        return;
+      }
       const goal = await api.createGoal({
         // Left empty, the planner's model names the goal from its description.
         ...(title.trim() ? { title: title.trim() } : {}),
         statement,
         repos: chosen,
-        label,
+        ...(label.trim() ? { label: label.trim() } : {}),
+        refs,
         max_usd: budget === "" ? null : String(budget),
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
@@ -88,7 +98,16 @@ export function NewGoal() {
                 {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
               </Stack>
             </Checkbox.Group>
-            <LabelField value={label} onChange={setLabel} repos={chosen} />
+            <LabelField value={label} onChange={setLabel} repos={chosen} required={!refs.length} />
+            <Group gap="sm">
+              <Button variant="default" leftSection={<IconListCheck size={16} />} disabled={!chosen.length} onClick={() => setPicking(true)}>
+                Pick issues
+              </Button>
+              <Text size="sm" c="dimmed">
+                {refs.length ? `${refs.length} picked: the goal takes these besides its label's, or instead of a label.` : "Optional: pick open issues for the goal by hand."}
+              </Text>
+            </Group>
+            <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} action="Use these issues" onPick={setRefs} />
             <Group grow align="flex-start">
               <NumberInput
                 label="Budget"

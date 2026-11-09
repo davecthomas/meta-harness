@@ -232,6 +232,22 @@
     "required": [],
     "type": "object"
   },
+  "issue_added v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ref",
+      "goal_id"
+    ],
+    "type": "object"
+  },
   "issue_closed v1": {
     "additionalProperties": true,
     "properties": {
@@ -241,6 +257,22 @@
     },
     "required": [
       "ref"
+    ],
+    "type": "object"
+  },
+  "issue_dropped v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ref",
+      "goal_id"
     ],
     "type": "object"
   },

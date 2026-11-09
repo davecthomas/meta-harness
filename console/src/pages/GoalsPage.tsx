@@ -41,7 +41,7 @@ export function GoalsPage() {
               <Table.Td maw={420}><TitleLink to={`/goals/${g.id}`} title={goalTitle(g)} id={g.id} /></Table.Td>
               <Table.Td><StatusBadge status={goalStatus(g)} /></Table.Td>
               <Table.Td><Text size="sm">{g.modality}</Text></Table.Td>
-              <Table.Td><Badge variant="outline" tt="none" radius="sm">{g.label}</Badge></Table.Td>
+              <Table.Td>{g.label ? <Badge variant="outline" tt="none" radius="sm">{g.label}</Badge> : <Text size="xs" c="dimmed">Picked issues</Text>}</Table.Td>
               <Table.Td>{g.repos.map((r) => <Text ff="monospace" size="xs" key={r}>{r}</Text>)}</Table.Td>
               <Table.Td><Text size="sm">{g.max_usd ? `$${g.max_usd}` : "None"}</Text></Table.Td>
               <Table.Td><Text size="sm" c="dimmed">{when(g.created_at)}</Text></Table.Td>

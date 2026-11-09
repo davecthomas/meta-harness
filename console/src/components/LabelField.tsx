@@ -6,7 +6,7 @@ import { api, type LabelCount } from "../api";
 // registered repo when none is picked). Each suggestion shows its open-issue count, and is marked when
 // open goals already hold all its issues. A label with no open issue can still be typed, and the field
 // says so, so a typo shows. If the labels can't be read, the field is plain text and says why.
-export function LabelField({ value, onChange, repos }: { value: string; onChange: (label: string) => void; repos: string[] }) {
+export function LabelField({ value, onChange, repos, required = true }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean }) {
   const [labels, setLabels] = useState<LabelCount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,7 +30,7 @@ export function LabelField({ value, onChange, repos }: { value: string; onChange
       <Autocomplete
         label="Label"
         description="An open issue with this label, in any of the goal's repos, becomes one of its tasks."
-        required
+        required={required}
         placeholder="meta-harness:bootstrap"
         value={value}
         onChange={onChange}
