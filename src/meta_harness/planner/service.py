@@ -3,6 +3,7 @@
     GET, POST  /v1/goals                      list goals, or create one
     GET, PATCH /v1/goals/{id}                 a goal with its issues, or change auto_merge, priority or budget
     POST       /v1/goals/{id}/pause, /resume, /cancel   resume also starts a goal saved without starting
+    POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
     GET        /health
@@ -10,7 +11,9 @@
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
 services with a service key (MH_SERVICE_KEYS). The planner sweeps every
 active goal every MH_PLANNER_SWEEP_SECONDS, and a goal at once when it first
-starts: on creation, or on its first resume when it was saved with start false.
+starts (on creation, or on its first resume when it was saved with start false)
+or is reopened. A sweep moves a goal to met once its issues are closed and its
+tasks are done.
 """
 
 import asyncio
@@ -158,6 +161,18 @@ def create_app(
             )
         return goal, changed
 
+    def move(goal_id: str, who: str, status: str, origins: set[str]) -> dict:
+        """Change a goal's status, but only from one of origins: resume is not reopen."""
+        goal, _ = move_with(goal_id, who, status, origins)
+        return goal
+
+    def move_with(goal_id: str, who: str, status: str, origins: set[str]) -> tuple[dict, dict]:
+        """move, returning the fields that changed with their old values, as change_with does."""
+        current = load(goal_id)["status"]
+        if current not in origins:
+            raise HTTPException(status_code=409, detail=f"a {current} goal cannot become {status} this way")
+        return change_with(goal_id, who, status=status)
+
     drafting.check_settings()
     draft = drafter or drafting.draft_goal
 
@@ -302,8 +317,11 @@ def create_app(
 
     @app.post("/v1/goals/{goal_id}/resume")
     async def resume(goal_id: str, who: str = Depends(operator)) -> dict:
-        """Make the goal active. Its first start, for a goal saved without starting, sweeps it at once."""
-        goal, changed = await asyncio.to_thread(change_with, goal_id, who, status="active")
+        """Make the goal active, but not a met or canceled one: that is reopen. Its first start, for a goal
+        saved without starting, sweeps it at once."""
+        goal, changed = await asyncio.to_thread(
+            move_with, goal_id, who, "active", {"active", "paused", "stalled", "budget_exhausted"}
+        )
         if "started_at" in changed:
             asyncio.create_task(sweep_one(goal))
         return goal
@@ -311,6 +329,27 @@ def create_app(
     @app.post("/v1/goals/{goal_id}/cancel")
     def cancel(goal_id: str, who: str = Depends(operator)) -> dict:
         return change(goal_id, who, status="canceled")
+
+    @app.post("/v1/goals/{goal_id}/complete")
+    def complete(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Set a goal met by hand, for one whose remaining issues no longer matter."""
+        before = load(goal_id)["status"]
+        goal = move(goal_id, who, "met", {"active", "paused", "stalled", "met"})
+        if before != "met":
+            events.emit(
+                "goal_met",
+                {"goal_id": goal_id, "reason": f"completed by {who}"},
+                actor=who,
+                tags={"goal_id": goal_id},
+            )
+        return goal
+
+    @app.post("/v1/goals/{goal_id}/reopen")
+    async def reopen(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Make a met or canceled goal active again, and take in its label's open issues at once."""
+        goal = await asyncio.to_thread(move, goal_id, who, "active", {"met", "canceled", "active"})
+        asyncio.create_task(sweep_one(goal))
+        return goal
 
     @app.post("/v1/goals/{goal_id}/sweep")
     async def sweep_now(goal_id: str, who: str = Depends(operator)) -> dict:

@@ -8,6 +8,7 @@ import { DataTable, Empty, ErrorAlert, PageHeader, StatusBadge, TitleLink, when 
 
 const FILTERS: Record<string, { label: string; statuses: string[] }> = {
   open: { label: "Open", statuses: ["planning", "active", "paused", "stalled", "budget_exhausted"] },
+  met: { label: "Met", statuses: ["met"] },
   ended: { label: "Ended", statuses: ["met", "canceled"] },
   all: { label: "All", statuses: [] },
 };
