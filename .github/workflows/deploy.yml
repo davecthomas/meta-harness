@@ -91,12 +91,16 @@ jobs:
         run: |
           terraform init -input=false
           # No -replace: the VM keeps running, and only its metadata (the commit) changes. Terraform
-          # replaces it only when its definition changed, and then it boots the commit by itself. The plan
-          # says which: a VM change that deletes is a replacement.
+          # replaces it only when its definition changed, and stops and starts it for a new machine type;
+          # either way it boots the commit by itself. The plan says which: a VM change that deletes is a
+          # replacement, and one that changes the machine type is a restart.
           terraform plan -input=false -out=release.tfplan -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"
-          replaced=$(terraform show -json release.tfplan | jq -r '[.resource_changes[] | select(.address == "google_compute_instance.vm") | .change.actions[]] | index("delete") != null')
+          vm='[.resource_changes[] | select(.address == "google_compute_instance.vm")]'
+          deleted=$(terraform show -json release.tfplan | jq -r "$vm"' | [.[].change.actions[]] | index("delete") != null')
+          resized=$(terraform show -json release.tfplan | jq -r "$vm"' | any(.[]; .change.before != null and .change.before.machine_type != .change.after.machine_type)')
+          replaced=$([ "$deleted" = true ] || [ "$resized" = true ] && echo true || echo false)
           echo "replaced=$replaced" >> "$GITHUB_OUTPUT"
-          echo "the VM is $([ "$replaced" = true ] && echo replaced || echo updated in place)"
+          echo "the VM is $([ "$deleted" = true ] && echo replaced || ([ "$resized" = true ] && echo "stopped, resized and started" || echo updated in place))"
           terraform apply -input=false release.tfplan
       - name: update the running VM in place
         if: steps.apply.outputs.replaced == 'false'

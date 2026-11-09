@@ -2295,9 +2295,9 @@ only shows on the VM, such as a migration against production data, a
 setting checked at startup, or a missing secret. Without it, a merge that
 broke the worker would leave nothing to run the fix.
 
-Terraform replaces the VM only when its definition changes (machine type,
-boot image, disks). The new VM's startup script mounts the data disk, which
-carries Postgres data, Temporal's history and run workspaces, checks the
+Terraform replaces the VM only when its definition changes (boot image,
+disks), and stops, resizes and starts it for a new machine type. Either
+way the VM boots: its startup script mounts the data disk, which carries Postgres data, Temporal's history and run workspaces, checks the
 commit out and runs `deploy/vm/boot.sh`, which starts everything. Both paths
 report `ok <commit>` or `failed <commit>` in a guest attribute, and the
 workflow waits for it. `make deploy` runs the workflow by hand, and

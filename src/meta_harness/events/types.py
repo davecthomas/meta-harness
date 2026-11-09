@@ -148,7 +148,6 @@ REGISTRY: list[EventType] = [
         _object(
             {
                 "goal_id": {"type": "string"},
-                "title": {"type": ["string", "null"]},
                 "statement": {"type": "string"},
                 "repos": {"type": "array", "items": {"type": "string"}},
                 "label": {"type": "string"},
