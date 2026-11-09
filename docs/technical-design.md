@@ -1561,7 +1561,7 @@ credential.
 | POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing | built |
 | POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval | built |
-| POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set a goal `met` by hand, or move a `met` or `canceled` goal back to `active` | planned (#111) |
+| POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | The goal's pending plan with its drafts, or an edited plan saved as a new version | planned (#73) |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve the pending plan or phase, or run a new planning task with a note | planned (#73) |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet | planned (#71) |
@@ -1641,7 +1641,8 @@ A `feature` or `new-system` goal starts in `planning`. For every active goal the
 
 A goal's statuses move this way. `planning` becomes `active` when its plan
 is approved. `active` becomes `paused` and back by an operator, `met` when
-its criteria pass or an operator completes it, `stalled` when every open
+its criteria pass or an operator completes it (a `paused` or `stalled` goal
+can be completed too), `stalled` when every open
 issue is blocked by a failed issue or waits on an operator, and
 `budget_exhausted` when its `max_usd` is spent. `stalled` and
 `budget_exhausted` return to `active` once an operator unblocks the goal or
@@ -1652,9 +1653,18 @@ reopened, or given a criterion that never passes. A goal can also be saved
 without starting: it is created `paused` and takes no issue until its first
 resume (#95).
 
-As built, every goal is a `fix` goal with a label, is created `active`, and
-stays `active` until an operator pauses or cancels it. Nothing sets `met`
-or `stalled` yet, and completing and reopening are planned (#111).
+As built, every goal is a `fix` goal with a label and is created `active`.
+With no success criteria yet, a goal is met by the rule for one that names
+none: on each sweep, which is also when the planner sees that a task's merge
+closed an issue, an `active` goal that has held at least one issue, whose
+issues are all closed, whose label has no open issue it could take in, and
+none of whose tasks is queued, blocked, running, taken over, ready or
+unresolved, becomes `met`, and the planner emits `goal_met`. A goal that never
+held an issue waits for its first one, and a paused goal, including one saved
+without starting, is not checked. An operator completes a goal with Complete
+goal and reopens a `met` or `canceled` one with Reopen goal; a reopened goal
+whose label has no open issue is met again on its next sweep. Every move is a
+`goal_changed` event, the goal's history. Nothing sets `stalled` yet.
 `planning`, `success_criteria`, the modality classifier and latitude are
 planned with the planning task (#72, #73).
 
@@ -1898,7 +1908,7 @@ Meta-harness services append through the event service client library:
 | Producer | Events |
 |---|---|
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
-| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's settings or status, `goal_drafted`, `issue_joined`, `issue_refused`, `issue_closed` and `task_unblocked`. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, `goal_met`, and the tracker webhooks it received |
+| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's settings or status, `goal_drafted`, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason the meta-harness scheduler holds a meta-harness task. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
