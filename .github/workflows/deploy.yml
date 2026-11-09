@@ -1,9 +1,12 @@
 # Deploys main to Google Cloud after every merge, once main's checks pass at that commit.
 #
-# The deploy is the release Terraform stack (deploy/terraform/release): the edge image this workflow
-# builds from the commit, and the commit itself, which the running VM is updated to in place. It signs in to Google Cloud as
-# mh-deploy-sa through workload identity federation, which only this repo's main branch may use, so no
-# key is stored here. The platform stack (deploy/terraform/platform), applied by an operator, grants that.
+# A deploy is both Terraform stacks, in order. First the platform stack (deploy/terraform/platform): the
+# network, the identities and their roles, the secrets' containers. It is applied only when its plan
+# shows a change, and never when deploy/platform_guard.py refuses the plan. Then the release stack
+# (deploy/terraform/release), which reads the platform's outputs: the edge image this workflow builds
+# from the commit, and the commit itself, which the running VM is updated to in place. It signs in to
+# Google Cloud as mh-deploy-sa through workload identity federation, which only this repo's main branch
+# may use, so no key is stored here.
 # Run it again from the Actions tab (Run workflow), or with make deploy.
 
 name: deploy
@@ -61,6 +64,22 @@ jobs:
         with:
           terraform_version: "1.13.3"
           terraform_wrapper: false
+      - name: apply the platform stack when it changed
+        id: platform
+        working-directory: deploy/terraform/platform
+        run: |
+          terraform init -input=false
+          # Exit code 0: the cloud matches the stack. 2: the plan has changes. Anything else: the plan failed.
+          code=0
+          terraform plan -input=false -detailed-exitcode -out=platform.tfplan || code=$?
+          case "$code" in
+            0) echo "the platform stack matches the cloud: nothing to apply" ;;
+            2)
+              terraform show -json platform.tfplan | python3 "$GITHUB_WORKSPACE/deploy/platform_guard.py"
+              terraform apply -input=false platform.tfplan
+              ;;
+            *) exit "$code" ;;
+          esac
       - name: build the edge image and push it to Artifact Registry
         run: |
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
@@ -111,5 +130,7 @@ jobs:
           gh issue create --repo "${{ github.repository }}" --label meta-harness:operations \
             --title "Deploy of ${GITHUB_SHA::7} failed" \
             --body "The deploy of ${{ github.sha }} failed: $RUN_URL
+
+          The platform stack step: ${{ steps.platform.outcome || 'not reached' }}. The release stack step: ${{ steps.apply.outcome || 'not reached' }}. A platform step that failed with \"refused\" lines met deploy/platform_guard.py: the change destroys something a deploy must keep.
 
           The VM reported: \`${result:-nothing}\`. A result ending in \"rolled back to <commit>\" means the VM runs that commit again and every service is healthy; the change in ${GITHUB_SHA::7} needs fixing before it can deploy. Its boot log is /var/log/mh-boot.log on mh-vm."

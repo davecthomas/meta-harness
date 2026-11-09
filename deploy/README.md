@@ -1,13 +1,14 @@
 # Deploying the meta-harness
 
 Every merge to main deploys itself: `.github/workflows/deploy.yml` waits for
-main's checks, builds the edge image, and applies the release Terraform stack.
+main's checks, applies the platform Terraform stack when it changed, builds
+the edge image, and applies the release Terraform stack.
 Two stacks, both under `deploy/terraform`, with state in the bucket
 `meta-harness-prod-terraform`:
 
 | Stack | Holds | Applied by |
 |---|---|---|
-| `platform` | network, NAT, firewall, the VM's address and data disk, service accounts and their roles, the GitHub sign-in, the secrets' containers and the generated session key, Artifact Registry, Firebase Hosting's `meta-harness` site | an operator: `make platform` |
+| `platform` | network, NAT, firewall, the VM's address and data disk, service accounts and their roles, the GitHub sign-in, the secrets' containers and the generated session key, Artifact Registry, Firebase Hosting's `meta-harness` site | CI on every merge, when its plan shows a change and `deploy/platform_guard.py` allows it; by hand, `make platform`, for a new project or a plan the guard refuses |
 | `release` | the VM at a commit, the edge on Cloud Run from that commit's image, and the Hosting site's rewrite to it | CI on every merge; by hand, `make deploy` |
 
 A deploy replaces the VM. Its boot disk is new every time; the data disk

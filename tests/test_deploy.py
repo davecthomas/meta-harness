@@ -155,3 +155,33 @@ def test_an_update_keeps_the_databases_running_and_restarts_services_one_at_a_ti
     assert 'GW_PREVIOUS" ] || changed deploy/vm/units/mh-gateway.service' in update
     startup = (ROOT / "deploy" / "vm" / "startup.sh").read_text()
     assert startup.index("MH_PREVIOUS_COMMIT=$(git") < startup.index("checkout -q -f FETCH_HEAD")
+
+
+def test_a_deploy_applies_the_platform_stack_before_the_release_stack_and_only_past_the_guard():
+    """An infrastructure change needs no one to run Terraform: the merge applies it, platform first,
+    because the release stack reads the platform's outputs."""
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    platform = deploy.index("working-directory: deploy/terraform/platform")
+    release = deploy.index("working-directory: deploy/terraform/release")
+    assert platform < release
+    step = deploy[platform:release]
+    assert "terraform plan -input=false -detailed-exitcode -out=platform.tfplan" in step
+    # The guard reads the plan before the apply, and the apply is of that plan, not a new one.
+    assert step.index("deploy/platform_guard.py") < step.index("terraform apply -input=false platform.tfplan")
+
+
+def test_the_platform_stack_lets_the_deploy_account_apply_it():
+    platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
+    for role in (
+        "roles/compute.networkAdmin",
+        "roles/compute.securityAdmin",
+        "roles/iam.serviceAccountAdmin",
+        "roles/iam.workloadIdentityPoolAdmin",
+        "roles/resourcemanager.projectIamAdmin",
+        "roles/secretmanager.admin",
+        "roles/artifactregistry.admin",
+        "roles/serviceusage.serviceUsageAdmin",
+        "roles/firebase.admin",
+        "roles/storage.admin",
+    ):
+        assert f'"{role}"' in platform, role
