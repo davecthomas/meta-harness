@@ -162,3 +162,36 @@ test("Complete goal sets the goal met, and Reopen goal makes it active again", a
   await waitFor(() => expect(screen.getByRole("button", { name: "Complete goal" })).toBeTruthy());
   expect(posted).toEqual(["complete", "reopen"]);
 });
+
+test("a row with a task opens the task, and its links open GitHub instead", async () => {
+  const running = { ...goal("active"), started_at: "2026-11-08T20:41:00Z", issues: [
+    { ref: "github:o/r#7", repo: "o/r", task_id: "t-7", state: "open", depends_on: [], refused_reason: null },
+    { ref: "github:o/r#8", repo: "o/r", task_id: null, state: "open", depends_on: [], refused_reason: "no checks" },
+  ] };
+  const task = { id: "t-7", external_ref: "github:o/r#7", repo: "o/r", task_type: "bug", title: "Fix the crash", status: "running",
+    status_reason: null, cancel_requested: false, goal_id: "g-1", pr_url: "https://github.com/o/r/pull/9", acceptance_checks: [],
+    created_at: "2026-11-08T20:41:00Z", updated_at: "2026-11-08T20:42:00Z" };
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url.startsWith("/v1/tasks")) return respond({ tasks: [task], total: 1 });
+    return respond(running);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/g-1"]}>
+        <Routes>
+          <Route path="/goals/:goalId" element={<GoalPage />} />
+          <Route path="/tasks/:taskId" element={<p>task page</p>} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  expect(await screen.findByText("Fix the crash")).toBeTruthy();
+  expect(screen.getByTestId("issue-row-github:o/r#8").getAttribute("role")).toBeNull();
+  fireEvent.click(screen.getByText("Open"));
+  expect(screen.queryByText("task page")).toBeNull();
+
+  fireEvent.keyDown(screen.getByRole("link", { name: "Open task Fix the crash" }), { key: "Enter" });
+
+  expect(await screen.findByText("task page")).toBeTruthy();
+});
