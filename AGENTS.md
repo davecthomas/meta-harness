@@ -24,9 +24,13 @@ and what is planned.
 
 - Never call a model provider, the real HTTP Gateway, GitHub or Google Cloud
   from a test.
-- A merge to main deploys itself (`.github/workflows/deploy.yml`). A change to
-  the platform stack takes effect when it is applied, with `make platform`
-  (deploy/README.md).
+- A merge to main deploys itself (`.github/workflows/deploy.yml`): it applies
+  the platform Terraform stack when that changed, then the release stack. So
+  an infrastructure change is a pull request like any other, and no one
+  applies it by hand. `deploy/platform_guard.py` refuses a plan that deletes
+  or replaces what the deployment cannot lose; write the change so it keeps
+  those. A new Google Cloud role the deploy needs goes in the platform stack
+  in a pull request before the one that uses it.
 - Code names no model and no harness profile: they live in `config/`.
 - Every new or changed setting is checked at service startup, so a bad one
   stops the service with its name.
