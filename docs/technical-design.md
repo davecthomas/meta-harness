@@ -1583,6 +1583,7 @@ credential.
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | The goal's pending plan with its drafts, or an edited plan saved as a new version | planned (#73) |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve the pending plan or phase, or run a new planning task with a note | planned (#73) |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet. A ref another goal holds is refused, naming that goal | built |
+| GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days`, grouped by goal, repo or label: each one's state (in review, waiting, blocked, merged, closed), cost, fix rounds and latest run, the tasks that spent without opening one, and the cost scale. From the Task API, the planner's goals and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles` or `repos`; `task_policy`, `modalities` and `access` are planned | built |
@@ -2048,6 +2049,7 @@ planned.
 | Tasks | One task: its issue, every ai-api-unified router routing decision, every run including fallbacks, every check result, the diff, the pull request, each review round's verdict and findings and the fix run it led to, the merge, and cost per run | Take over, hand back, cancel |
 | Run | Live timeline of the run's events: each turn's model call (model, thinking, tokens, cost, latency) and its ai-api-unified decisions (the model that served it, fallbacks, guardrail blocks, cache hits), tool calls, file changes, test runs, compactions and guardrail blocks, the OpenTelemetry trace, and the per-run sandbox | Take over, cancel |
 | Live runs | Every run in flight across every goal: task, repo, model, turn, spend as it accrues, time since its last event | Take over, cancel |
+| Activity | A heat map of pull requests, one cell each, oldest first, in a row per goal, repo or label: colored by state (blocked and waiting strongest) or by cost on a gradient between the 5th and 95th percentile, with the tasks that spent without a pull request hatched. The Overview shows one row of them all | Open a cell's latest run (`/tasks/{id}?run=`) |
 | Routing | Tier picked versus the candidate whose run finished, classifier confidence, floors and ceilings by modality, moves between candidates and escalations | |
 | Pool | Per-run sandboxes by image and state, warm targets versus actual, lease latency, health failures | |
 | Spend and performance | Cost by goal, modality, repo, model, harness profile and routing tier. Cost per merged pull request and time to merge, by modality. Dollar-hours per completed task over time. Cache hit rate | |

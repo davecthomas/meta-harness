@@ -7,6 +7,7 @@
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
+    GET        /v1/activity                   every pull request opened, by goal, repo or label, for the heat map
     GET        /health
 
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
@@ -33,7 +34,7 @@ from pydantic import BaseModel, Field
 from meta_harness import auth, db
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
-from meta_harness.planner import drafting, progress, repos, store
+from meta_harness.planner import activity, drafting, progress, repos, store
 from meta_harness.planner.sweep import CodeHost, Events, SweepResult, active_goals, sweep_goal
 from meta_harness.planner.tracker import Tracker, parse_ref
 from meta_harness.tasks.client import TaskApiError, TaskClient
@@ -462,6 +463,21 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(err)) from err
         events.emit("issue_dropped", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
         return {"goal_id": goal_id, "dropped": ref}
+
+    @app.get("/v1/activity")
+    def pull_request_activity(
+        group_by: str = Query("goal", pattern="^(goal|repo|label)$"),
+        days: int = Query(91, ge=1, le=366),
+        who: str = Depends(operator),
+    ) -> dict:
+        """Every pull request the meta-harness opened in the last days, grouped, for the console's heat map."""
+        with app.state.pool.connection() as conn:
+            goals = {goal["id"]: goal for goal in store.list_goals(conn)}
+        try:
+            found = tasks.list(None, None, TASKS_PAGE)
+            return activity.activity(found, goals, events, group_by, days)
+        except TaskApiError as err:
+            raise HTTPException(status_code=502, detail=f"could not read the tasks: {err}") from err
 
     @app.patch("/v1/goals/{goal_id}")
     def patch(goal_id: str, body: GoalPatch, who: str = Depends(operator)) -> dict:

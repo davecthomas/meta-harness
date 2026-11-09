@@ -716,3 +716,58 @@ def test_a_repos_open_issues_are_browsed_by_label_text_and_page(api, parts):
     unlabeled = api.get(f"/v1/repos/{REPO}/issues", params={"q": "something else"}, headers=OPERATOR).json()
     assert unlabeled["total"] >= 1
     assert api.get("/v1/repos/o/unknown/issues", headers=OPERATOR).status_code == 404
+
+
+# --- The pull request activity map ----------------------------------------------------------------------
+
+
+def test_activity_groups_each_tasks_pull_request_with_its_state_cost_and_latest_run(api, parts):
+    from datetime import datetime, timezone
+
+    events, _, tasks = parts
+    goal = api.post(
+        "/v1/goals",
+        json={"title": "Saves", "statement": "Fix saves.", "repos": [REPO], "label": _label(), "start": False},
+        headers=OPERATOR,
+    ).json()
+    now = datetime.now(timezone.utc).isoformat()
+    base = {"repo": REPO, "goal_id": goal["id"], "created_at": now, "updated_at": now}
+    tasks.tasks["t-a"] = {
+        **base,
+        "id": "t-a",
+        "title": "Merged one",
+        "status": "closed",
+        "pr_url": "https://github.com/o/r/pull/1",
+    }
+    tasks.tasks["t-b"] = {
+        **base,
+        "id": "t-b",
+        "title": "Waiting one",
+        "status": "ready",
+        "pr_url": "https://github.com/o/r/pull/2",
+    }
+    tasks.tasks["t-c"] = {**base, "id": "t-c", "title": "Failed one", "status": "failed", "pr_url": None}
+    for task_id, run, tier, usd in (
+        ("t-a", "r1", "standard", "1.00"),
+        ("t-a", "r2", "fix", "0.50"),
+        ("t-b", "r3", "standard", "2.00"),
+        ("t-c", "r4", "standard", "0.25"),
+    ):
+        events.emit("attempt_finished", {"tier": tier, "spent_usd": usd}, task_id=task_id, run_id=run)
+    events.emit("pull_request_merged", {"pr_url": "https://github.com/o/r/pull/1"}, task_id="t-a")
+
+    shown = api.get("/v1/activity", params={"group_by": "goal"}, headers=OPERATOR).json()
+
+    [row] = [g for g in shown["groups"] if g["key"] == goal["id"]]
+    assert row["name"] == "Saves" and row["total"] == 2 and row["left_out"] == 0
+    by_task = {p["task_id"]: p for p in row["prs"]}
+    assert (
+        by_task["t-a"]["state"],
+        by_task["t-a"]["usd"],
+        by_task["t-a"]["fix_rounds"],
+        by_task["t-a"]["latest_run_id"],
+    ) == ("merged", 1.5, 1, "r2")
+    assert by_task["t-b"]["state"] == "waiting"
+    assert [(p["task_id"], p["usd"]) for p in row["spent_without_pr"]] == [("t-c", 0.25)]
+    assert shown["cost_scale"]["low"] <= shown["cost_scale"]["high"]
+    assert api.get("/v1/activity", params={"group_by": "day"}, headers=OPERATOR).status_code == 422

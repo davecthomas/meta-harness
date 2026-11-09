@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, Stack, Text } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
 import { api, goalTitle, type MhEvent, type Task } from "../api";
@@ -10,6 +10,12 @@ import { Terminal } from "../components/Terminal";
 import { ErrorAlert, Facts, IssueLink, PageHeader, SectionTitle, StatusBadge } from "../components/ui";
 
 const FIRST = 400;
+
+// An event as a terminal line, carrying its run so one run's lines can be shown alone.
+function withRun(e: MhEvent): Line | null {
+  const line = describe(e);
+  return line ? { ...line, run: e.run_id } : null;
+}
 const OLDER = 200;
 const EMPTY: TileFacts = { turn: 0, usd: 0, model: "", status: null };
 const STREAM_COLORS: Record<string, string> = { live: "teal", connecting: "yellow", reconnecting: "orange", idle: "gray" };
@@ -20,6 +26,9 @@ export function TaskPage() {
   const { taskId = "" } = useParams();
   const [task, setTask] = useState<Task | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
+  // ?run=<run id> opens on one run's events, as a cell on the activity map links; null shows every run.
+  const [params, setParams] = useSearchParams();
+  const onlyRun = params.get("run");
   const [facts, setFacts] = useState<TileFacts>(EMPTY);
   const [from, setFrom] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +51,7 @@ export function TaskPage() {
         if (stale) return;
         setTask(t);
         if (t.goal_id) api.goal(t.goal_id).then((g) => !stale && setGoalName(goalTitle(g)), () => undefined);
-        setLines(page.events.map(describe).filter((l): l is Line => l !== null));
+        setLines(page.events.map(withRun).filter((l): l is Line => l !== null));
         setFacts(page.events.reduce(fold, EMPTY));
         oldest.current = page.events[0]?.position ?? null;
         exhausted.current = page.events.length < FIRST;
@@ -63,7 +72,7 @@ export function TaskPage() {
     setFacts((f) => fold(f, e));
     if (e.event_type === "task_status_changed") setTask((t) => (t ? { ...t, status: e.payload.to } : t));
     if (e.event_type === "pull_request_opened") setTask((t) => (t ? { ...t, pr_url: e.payload.pr_url } : t));
-    const line = describe(e);
+    const line = withRun(e);
     if (line) setLines((current) => [...current, line]);
   }, []);
 
@@ -77,7 +86,7 @@ export function TaskPage() {
       exhausted.current = page.events.length < OLDER;
       if (page.events.length) {
         oldest.current = page.events[0].position;
-        const older = page.events.map(describe).filter((l): l is Line => l !== null);
+        const older = page.events.map(withRun).filter((l): l is Line => l !== null);
         setLines((current) => [...older, ...current]);
       }
     } finally {
@@ -124,8 +133,14 @@ export function TaskPage() {
         ]}
       />
       <SectionTitle right={<Badge variant="dot" color={STREAM_COLORS[state] ?? "gray"} tt="none">{state}</Badge>}>Run</SectionTitle>
+      {onlyRun && (
+        <Group gap="xs" mb="xs">
+          <Text size="sm">Showing run <Code>{onlyRun}</Code></Text>
+          <Button size="compact-xs" variant="subtle" onClick={() => setParams({})}>Show every run</Button>
+        </Group>
+      )}
       <Paper p={0} style={{ overflow: "hidden" }}>
-        <Terminal lines={lines} className="tall" onScrollTop={loadOlder} />
+        <Terminal lines={onlyRun ? lines.filter((l) => l.run === onlyRun) : lines} className="tall" onScrollTop={loadOlder} />
       </Paper>
     </>
   );

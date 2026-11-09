@@ -24,6 +24,7 @@ import {
   IconAdjustments,
   IconHexagons,
   IconLayoutDashboard,
+  IconGridDots,
   IconListCheck,
   IconMoon,
   IconPlus,
@@ -37,6 +38,7 @@ import { NewGoal } from "./pages/NewGoal";
 import { GoalPage } from "./pages/GoalPage";
 import { GoalsPage } from "./pages/GoalsPage";
 import { TasksPage } from "./pages/TasksPage";
+import { ActivityPage } from "./pages/ActivityPage";
 import { TaskPage } from "./pages/TaskPage";
 import { ConfigPage } from "./pages/ConfigPage";
 
@@ -47,6 +49,7 @@ const NAV = [
       { to: "/", label: "Overview", icon: IconLayoutDashboard },
       { to: "/goals", label: "Goals", icon: IconTarget },
       { to: "/tasks", label: "Tasks", icon: IconListCheck },
+      { to: "/activity", label: "Activity", icon: IconGridDots },
     ],
   },
   { section: "Configure", items: [{ to: "/config", label: "Configuration", icon: IconAdjustments }] },
@@ -148,6 +151,7 @@ export function App() {
             <Route path="/goals/new" element={<NewGoal />} />
             <Route path="/goals/:goalId" element={<GoalPage />} />
             <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/activity" element={<ActivityPage />} />
             <Route path="/tasks/:taskId" element={<TaskPage />} />
             <Route path="/config" element={<ConfigPage />} />
           </Routes>

@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Table, Text, TextInput } from "@mantine/core";
 import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons-react";
-import { goalTitle, api, goalStatus, type KillSwitch } from "../api";
+import { goalTitle, api, goalStatus, type Activity, type KillSwitch } from "../api";
+import { ActivityMap } from "./ActivityPage";
 import { useInfinite } from "../hooks";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, SectionTitle, StatusBadge, TitleLink, when } from "../components/ui";
 
@@ -26,6 +27,8 @@ export function Overview() {
         <Stat label="Needs you" value={waiting.total} />
         <Stat label="Open goals" value={goals.total} to="/goals" link="All goals" />
       </SimpleGrid>
+
+      <PullRequestsRow />
 
       <SectionTitle>Needs you</SectionTitle>
       <ErrorAlert error={waiting.error} />
@@ -132,5 +135,26 @@ function KillSwitchPanel() {
         </Group>
       </Group>
     </Paper>
+  );
+}
+
+// Every pull request in one row, by state, and how many are blocked or waiting on an operator now.
+function PullRequestsRow() {
+  const [activity, setActivity] = useState<Activity | null>(null);
+  useEffect(() => {
+    api.activity("goal").then(setActivity, () => setActivity(null));
+  }, []);
+  if (!activity || !activity.groups.some((g) => g.prs.length)) return null;
+  const prs = activity.groups.flatMap((g) => g.prs);
+  const blocked = prs.filter((p) => p.state === "blocked").length;
+  const waiting = prs.filter((p) => p.state === "waiting").length;
+  return (
+    <>
+      <SectionTitle right={<Anchor component={Link} to="/activity" size="sm">Activity</Anchor>}>Pull requests</SectionTitle>
+      <Text size="sm" c="dimmed" mb="xs">{blocked} blocked · {waiting} waiting for you</Text>
+      <Paper p="sm" mb="lg" withBorder>
+        <ActivityMap activity={activity} view="state" compact />
+      </Paper>
+    </>
   );
 }
