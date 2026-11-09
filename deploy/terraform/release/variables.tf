@@ -13,8 +13,11 @@ variable "edge_image" {
 }
 
 variable "machine_type" {
-  # 8 vCPU and 32 GB: the control plane, plus MH_MAX_RUNNING (2) per-run sandboxes at their profiles'
-  # 2 vCPU and 6 GB each, while each one installs and tests a Python repo.
+  # 16 vCPU and 64 GB: MH_MAX_RUNNING (8, deploy/vm/boot.sh) per-run sandboxes at their profiles' cap of
+  # 6 GB each, 48 GB at most, and 16 GB for Postgres, Temporal, Redis, the HTTP Gateway, the egress proxy
+  # and the services. A sandbox's 2 vCPU is a cap, not a reservation, and an agent spends most of a run
+  # waiting on its model, so eight share 16 vCPU and slow down, not fail, when several test at once.
+  # tests/test_deploy.py checks this sum. A change here replaces the VM, which stops the runs on it.
   type    = string
-  default = "e2-standard-8"
+  default = "e2-standard-16"
 }

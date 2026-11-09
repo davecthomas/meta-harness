@@ -185,3 +185,24 @@ def test_the_platform_stack_lets_the_deploy_account_apply_it():
         "roles/storage.admin",
     ):
         assert f'"{role}"' in platform, role
+
+
+# Memory in GB of the machine types the deployment's VM may be. A type not listed fails the check below,
+# so a new one is added here with its memory.
+MACHINE_MEMORY_GB = {"e2-standard-8": 32, "e2-standard-16": 64, "e2-standard-32": 128}
+# What the VM keeps for Postgres, Temporal, Redis, the HTTP Gateway, the egress proxy and the services.
+CONTROL_PLANE_GB = 16
+
+
+def test_the_vm_holds_every_sandbox_the_running_limit_allows():
+    """MH_MAX_RUNNING sandboxes at the largest profile's memory cap, plus the control plane, fit the VM,
+    so raising the limit or a profile's memory without a bigger VM fails here, not on the VM."""
+    variables = (ROOT / "deploy" / "terraform" / "release" / "variables.tf").read_text()
+    machine = re.search(r'variable "machine_type" \{.*?default\s*=\s*"([^"]+)"', variables, re.S)[1]
+    running = int(re.search(r'echo "MH_MAX_RUNNING=(\d+)"', (ROOT / "deploy" / "vm" / "boot.sh").read_text())[1])
+    profiles = json.loads((ROOT / "config" / "harness_profiles.json").read_text())["profiles"].values()
+    largest = max(p.get("resources", {}).get("memory_gb", 4) for p in profiles)
+
+    assert machine in MACHINE_MEMORY_GB, f"add {machine}'s memory to MACHINE_MEMORY_GB"
+    assert running * largest + CONTROL_PLANE_GB <= MACHINE_MEMORY_GB[machine], (machine, running, largest)
+    assert running == 8, "the deployment runs up to eight tasks at once (#125)"
