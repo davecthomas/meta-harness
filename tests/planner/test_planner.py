@@ -185,7 +185,8 @@ async def test_a_task_waits_on_an_open_dependency_and_is_released_when_it_closes
         json={"statement": "Fix bugs", "repos": ["davecthomas/meta-harness"], "label": label},
         headers=OPERATOR,
     ).json()
-    n = 7000 + hash(label) % 1000
+    # A fresh number: issue links persist across runs, so a reused one may belong to an older goal.
+    n = _number()
     first = tracker.add("davecthomas/meta-harness", n, labels=[label])
     second = tracker.add("davecthomas/meta-harness", n + 1, body=f"Depends on: #{n}", labels=[label])
     _sweep(api, goal)

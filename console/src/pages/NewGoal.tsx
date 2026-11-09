@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
 import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "../components/IssuesPicker";
+import { useUnsavedChanges } from "../components/UnsavedChanges";
 import { api, type GoalDraft } from "../api";
 import { LabelField } from "../components/LabelField";
 import { LabelStart } from "../components/LabelStart";
@@ -37,19 +38,22 @@ export function NewGoal() {
     setChosen(draft.repos);
   }
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  // Creates the goal, started or not. Returns its id, or null when it is refused (the form shows why).
+  async function create(started: boolean): Promise<string | null> {
     if (!chosen.length) {
       setError("Pick at least one repo.");
-      return;
+      return null;
     }
-    setSaving(start.current);
+    if (!statement.trim()) {
+      setError("Describe the goal.");
+      return null;
+    }
+    if (!label.trim() && !refs.length) {
+      setError("Give the goal a label, or pick its issues.");
+      return null;
+    }
+    setSaving(started);
     try {
-      if (!label.trim() && !refs.length) {
-        setError("Give the goal a label, or pick its issues.");
-        setSaving(null);
-        return;
-      }
       const goal = await api.createGoal({
         // Left empty, the planner's model names the goal from its description.
         ...(title.trim() ? { title: title.trim() } : {}),
@@ -60,19 +64,47 @@ export function NewGoal() {
         max_usd: budget === "" ? null : String(budget),
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
-        start: start.current,
+        start: started,
       });
-      navigate(`/goals/${goal.id}`);
+      return goal.id;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return null;
+    } finally {
       setSaving(null);
     }
   }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const id = await create(start.current);
+    if (id) {
+      unsaved.release();
+      navigate(`/goals/${id}`);
+    }
+  }
+
+  // Anything typed or drafted is worth asking about before it is lost.
+  const dirty = Boolean(title.trim() || statement.trim() || label.trim() || refs.length || budget !== "");
+  const unsaved = useUnsavedChanges({
+    dirty,
+    describe: `the new goal${title.trim() || statement.trim() ? ` "${(title.trim() || statement.trim()).slice(0, 60)}"` : ""}`,
+    // Save here saves the goal without starting it, so leaving never starts work.
+    save: async () => (await create(false)) !== null,
+    discard: () => {
+      setTitle("");
+      setStatement("");
+      setLabel("");
+      setRefs([]);
+      setBudget("");
+    },
+  });
 
   return (
     <>
       <PageHeader title="New goal" description="A goal takes the open issues with its label, in its repos, and runs each one to a pull request." />
       <ErrorAlert error={error} />
+      {unsaved.element}
       <LabelStart onDraft={fromDraft} />
       <Paper maw={720}>
         <form onSubmit={submit}>
