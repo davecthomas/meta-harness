@@ -71,7 +71,7 @@ test("a label's issues draft a goal, without the issues left out, and the draft 
   expect(await screen.findByText("Fix the save bugs")).toBeTruthy();
   expect(drafted).toEqual([{ label: "bug", repos: ["o/a", "o/b"], refs: ["github:o/a#1"] }]);
   await waitFor(() => expect((screen.getByLabelText(/Statement/) as HTMLTextAreaElement).value).toBe("Make saving reliable."));
-  expect((screen.getByRole("textbox", { name: /^Label/ }) as HTMLInputElement).value).toBe("bug");
+  expect((screen.getByRole("combobox", { name: /^Label/ }) as HTMLInputElement).value).toBe("bug");
   expect((screen.getByRole("checkbox", { name: "o/b" }) as HTMLInputElement).checked).toBe(true);
 });
 

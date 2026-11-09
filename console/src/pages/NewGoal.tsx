@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Textarea, TextInput } from "@mantine/core";
+import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Textarea } from "@mantine/core";
 import { api, type GoalDraft } from "../api";
+import { LabelField } from "../components/LabelField";
 import { LabelStart } from "../components/LabelStart";
 import { ErrorAlert, PageHeader } from "../components/ui";
 
@@ -72,14 +73,7 @@ export function NewGoal() {
                 {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
               </Stack>
             </Checkbox.Group>
-            <TextInput
-              label="Label"
-              description="An open issue with this label, in any of the goal's repos, becomes one of its tasks."
-              required
-              placeholder="meta-harness:bootstrap"
-              value={label}
-              onChange={(e) => setLabel(e.currentTarget.value)}
-            />
+            <LabelField value={label} onChange={setLabel} repos={chosen} />
             <Group grow align="flex-start">
               <NumberInput
                 label="Budget"

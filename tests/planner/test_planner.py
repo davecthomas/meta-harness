@@ -205,7 +205,7 @@ def test_labels_are_listed_with_their_open_issue_counts(api, parts):
     found = api.get("/v1/labels", params={"repo": REPO}, headers=OPERATOR).json()
 
     row = next(r for r in found["labels"] if r["label"] == label)
-    assert row == {"label": label, "total": 2, "repos": {REPO: 2}}
+    assert row == {"label": label, "total": 2, "repos": {REPO: 2}, "held": 0, "held_by": []}
     assert api.get("/v1/labels", params={"repo": "someone/else"}, headers=OPERATOR).status_code == 404
     assert api.get("/v1/labels").status_code == 401
 
