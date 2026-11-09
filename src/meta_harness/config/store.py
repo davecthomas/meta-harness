@@ -4,6 +4,7 @@ A kind with no versions is seeded from the deployment's file the first time
 anything reads it, so a fresh deployment starts from what it shipped with.
 """
 
+import json
 import os
 from typing import Any
 
@@ -137,6 +138,31 @@ def add_shipped(conn: psycopg.Connection) -> list[dict[str, Any]]:
             note = f"added from the shipped file: {', '.join(sorted(added))}"
             saved.append(_insert(conn, kind, document, SHIPPED_BY, note, "shipped", None))
     return saved
+
+
+def replace_engines(conn: psycopg.Connection) -> list[dict[str, Any]]:
+    """Moves the active tiers' candidates off engines that cannot run a harness (REPLACED_ENGINES).
+
+    Every run on such a candidate fails on its first model call, so no operator meant to keep one. The
+    change is a new version, origin `shipped`, checked like any save, and nothing else in the document
+    moves. Returns the versions saved: none when the tiers name no replaced engine.
+    """
+    from meta_harness.run_service.routing import replace_engine
+
+    with conn.transaction():
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("config:tiers",))
+        current = active(conn, "tiers")
+        document = json.loads(json.dumps(current["document"]))
+        moved = []
+        for tier in document.get("tiers", []):
+            models = tier.get("models", [])
+            tier["models"] = [replace_engine(str(m)) for m in models]
+            moved += [f"{old} to {new}" for old, new in zip(models, tier["models"]) if old != new]
+        if not moved:
+            return []
+        check(conn, "tiers", document)
+        note = f"moved off an engine a harness cannot use: {'; '.join(moved)}"
+        return [_insert(conn, "tiers", document, SHIPPED_BY, note, "shipped", None)]
 
 
 def _seed(conn: psycopg.Connection, kind: str) -> dict[str, Any]:

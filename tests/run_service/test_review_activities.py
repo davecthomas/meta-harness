@@ -33,21 +33,25 @@ async def test_the_model_that_wrote_the_pull_request_never_reviews_it(tmp_path, 
     _policy(
         tmp_path,
         monkeypatch,
-        ["harness:pi-review/claude:claude-opus-5-5", "harness:pi-review/openai:gpt-6-sol"],
+        ["harness:pi-review/claude:claude-opus-5-5", "harness:pi-review/openai-responses:gpt-6-sol"],
     )
 
     policy = await ActivityEnvironment().run(activities.review_policy, "claude:claude-opus-5-5")
 
-    assert [r.label for r in policy.reviewers] == ["harness:pi-review/openai:gpt-6-sol"]
+    assert [r.label for r in policy.reviewers] == ["harness:pi-review/openai-responses:gpt-6-sol"]
     assert policy.max_rounds == 3 and policy.unresolved == []
 
 
 async def test_a_reviewer_pair_with_no_active_profile_is_skipped_and_named(tmp_path, monkeypatch):
-    _policy(tmp_path, monkeypatch, ["harness:pi-gone/claude:claude-opus-5-5", "harness:pi-review/openai:gpt-6-sol"])
+    _policy(
+        tmp_path,
+        monkeypatch,
+        ["harness:pi-gone/claude:claude-opus-5-5", "harness:pi-review/openai-responses:gpt-6-sol"],
+    )
 
     policy = await ActivityEnvironment().run(activities.review_policy, "claude:claude-sonnet-5")
 
-    assert [r.label for r in policy.reviewers] == ["harness:pi-review/openai:gpt-6-sol"]
+    assert [r.label for r in policy.reviewers] == ["harness:pi-review/openai-responses:gpt-6-sol"]
     assert len(policy.unresolved) == 1 and "pi-gone" in policy.unresolved[0]
 
 
@@ -253,3 +257,28 @@ async def test_a_local_repo_runs_no_checks_and_its_result_is_still_recorded(monk
 
     assert result.state == "none"
     assert emitted == [("pull_request_checks", {"head_sha": "abc", "state": "none", "failed": []})]
+
+
+async def test_a_reviewer_on_the_openai_engine_runs_on_openai_responses(tmp_path, monkeypatch):
+    _policy(tmp_path, monkeypatch, ["harness:pi-review/openai:gpt-6-sol"])
+
+    policy = await ActivityEnvironment().run(activities.review_policy, "claude:claude-opus-5-5")
+
+    assert [r.label for r in policy.reviewers] == ["harness:pi-review/openai-responses:gpt-6-sol"]
+
+
+async def test_the_author_is_matched_by_model_whatever_engine_reached_it(tmp_path, monkeypatch):
+    _policy(tmp_path, monkeypatch, ["harness:pi-review/openai-responses:gpt-6-sol"])
+
+    policy = await ActivityEnvironment().run(activities.review_policy, "openai:gpt-6-sol")
+
+    assert policy.reviewers == []
+
+
+def test_no_shipped_candidate_or_reviewer_names_an_engine_a_harness_cannot_use():
+    from meta_harness.run_service.paths import REPO_ROOT
+
+    router = json.loads((REPO_ROOT / "config" / "models.json").read_text())["router"]
+    pairs = [m for tier in router["tiers"] for m in tier["models"]]
+    pairs += json.loads((REPO_ROOT / "config" / "task_policy.json").read_text())["review"]["reviewers"]
+    assert pairs and all(routing.replace_engine(p) == p for p in pairs), pairs
