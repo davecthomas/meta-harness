@@ -91,7 +91,9 @@ async def sweep_goal(
 ) -> SweepResult:
     result = SweepResult(goal["id"])
     seen: set[str] = set()
-    for repo in goal["repos"]:
+    # A goal with no label takes only the issues an operator added by ref: listing with no label would
+    # list every open issue in the repo.
+    for repo in goal["repos"] if goal["label"] else []:
         try:
             issues = await tracker.list_open(repo, goal["label"])
         except GitHubAppError as err:
@@ -100,6 +102,7 @@ async def sweep_goal(
         for issue in issues:
             seen.add(issue.ref)
             await _take_in(goal, issue, tracker, tasks, events, result)
+    await _take_in_added(goal, seen, tracker, tasks, events, result)
     await _watch_pull_requests(goal, tasks, events, host or code_host, result)
     await _record_closed(goal, seen, tracker, events, result)
     await _release_unblocked(goal, tracker, tasks, events, result)
@@ -125,7 +128,7 @@ async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, even
     if unfinished:
         return
     # The label may have picked up an issue since the sweep listed it: look once more before closing the goal.
-    for repo in goal["repos"]:
+    for repo in goal["repos"] if goal["label"] else []:
         try:
             issues = await tracker.list_open(repo, goal["label"])
         except GitHubAppError as err:
@@ -153,6 +156,23 @@ async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, even
     )
     goal["status"] = met["status"]
     result.met = True
+
+
+async def _take_in_added(
+    goal: dict, seen: set[str], tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult
+):
+    """Take in the issues an operator added to the goal by ref, which its label did not list."""
+    for link in await asyncio.to_thread(_links, goal["id"]):
+        if link["task_id"] or link["refused_reason"] or link["state"] != "open" or link["ref"] in seen:
+            continue
+        try:
+            issue = await tracker.read(link["ref"])
+        except (GitHubAppError, ValueError) as err:
+            result.errors.append(f"{link['ref']}: {err}")
+            continue
+        seen.add(issue.ref)
+        if issue.state == "open":
+            await _take_in(goal, issue, tracker, tasks, events, result)
 
 
 async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult):
