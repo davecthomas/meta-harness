@@ -20,21 +20,21 @@ rest. A section that describes a planned component says so.
 |---|---|---|---|
 | **Meta-harness control plane** | | | `src/meta_harness/` |
 | Task service | Accepts and tracks tasks and serves the Task API. Code-host webhooks are planned. | built | `tasks/` |
-| Planner | Turns a goal's labeled GitHub issues into tasks with their dependencies, by a periodic sweep. Planning tasks, the `feature` and `new-system` modalities, issue write-back and Jira and Linear adapters are planned. | partly built | `planner/` |
-| Meta-harness scheduler | Admits queued tasks by priority, global concurrency, repo-area locks, closed dependencies and the goal's budget, and carries out cancels and the kill switch. Caller quotas and daily caps are planned. | built | `scheduler/` |
-| Meta-harness run service | Runs each task as a Temporal workflow, the RunTask workflow: routes it, runs its candidates, and opens its pull request. The review loop and the merge are planned. The only caller of the ai-api-unified router. | partly built | `run_service/` |
+| Planner | Turns a goal's labeled GitHub issues into tasks with their dependencies, by a periodic sweep, and drafts a goal from a label's issues. Planning tasks, the `feature` and `new-system` modalities, issue write-back and Jira and Linear adapters are planned. | partly built | `planner/` |
+| Meta-harness scheduler | Admits queued tasks by priority, global concurrency, repo-area locks, closed dependencies and the goal's budget, and carries out cancels and the kill switch, which it owns. Caller quotas and daily caps are planned. | built | `scheduler/` |
+| Meta-harness run service | Runs each task as a Temporal workflow, the RunTask workflow: routes it, runs its candidates, opens its pull request, runs the review loop on it and merges it. Takeover, operator review, exploration and an HTTP API of its own are planned. The only caller of the ai-api-unified router. | partly built | `run_service/` |
 | Pool manager | Leases per-run sandboxes by run id, keeps a warm pool, and replaces unhealthy sandboxes. Until it exists, the run activity starts each sandbox itself. | planned | |
 | Event service | Holds the ordered record of every meta-harness domain event. | built | `events/` |
 | Metering service | Computes cost, time and success per attempt and per task. | planned | |
 | Harness analyzer | Proposes changes to router tiers, harness profiles and task policy from metering evidence. | planned | |
-| Operator console | The cloud web app operators run the meta-harness from, built on Mantine: goals, tasks, live runs, cancel, the kill switch, and configuration with versions and rollback. Its routing, spend and audit views are planned. | partly built | `console/`, `edge/` |
+| Operator console | The cloud web app operators run the meta-harness from, built on Mantine: goals, tasks, live runs, cancel, the kill switch, and configuration with versions and rollback. Its Inputs, Routing, Pool, Spend and Audit views are planned. | partly built | `console/`, `edge/` |
 | Configuration | Versioned router tiers, harness profiles and repo registry, checked on save, served by the planner process | built | `config/` |
 | **ai-api-unified library**, in the meta-harness run service process | | | the `ai-api-unified` repo |
 | ai-api-unified router | Classifies a task, picks a tier, and returns the tier's ordered harness-profile-and-model candidates and thinking level, building none of them. | built | `AiRouteClassifier` |
 | **Per-run sandbox**, one container per run | | built | `images/harness-pi/` |
 | Harness server | Serves the harness server Run API and runs the harness in-process. | built | `server/` |
 | pi | The default harness: pi's coding agent, third-party (pi.dev), used unmodified. | built | `@earendil-works/pi-coding-agent` |
-| pi model client extension | Sends every pi model call to the HTTP Gateway. The compaction handler and owned `run_tests` and `create_issue` tools are planned. | partly built | `extension/` |
+| pi model client extension | Sends every pi model call to the HTTP Gateway, and holds the owned `submit_review` tool. The compaction handler and the owned `run_tests` and `create_issue` tools are planned. | partly built | `extension/` |
 | **HTTP Gateway** | The only model endpoint a per-run sandbox can reach. Holds the provider API keys, pins each run's model, and enforces each run's spend limit. Its guardrail checks ship off. | built | the `ai-api-unified-http` repo |
 | **Outside the system** | | | |
 | Code host | Repositories, pull requests, checks, reviews and webhooks. | | |
@@ -96,8 +96,8 @@ flowchart TB
 
         PLDB[(goal, plan, issue_link,<br/>config_version)]
         TSDB[(task)]
-        SCDB[(repo-area locks)]
-        RSDB[(run, routing_decision,<br/>config_version)]
+        SCDB[(repo-area locks,<br/>kill switch)]
+        RSDB[(run, routing_decision,<br/>operator_review)]
         PMDB[(sandbox, lease,<br/>artifact store)]
         EVDB[(event, schema registry)]
         MEDB[(metering projections)]
@@ -129,7 +129,8 @@ flowchart TB
     OP -->|goals, approvals, cancel, kill switch| CON
     CON -->|create goal, approve, pause| PL
     CON -->|read, tail events| EV
-    CON -->|tasks, runs, cancel, kill switch| TS & RS
+    CON -->|tasks, runs, cancel| TS & RS
+    CON -->|kill switch| SCHED
     CON -->|spend| MET
     CH -->|issue, PR, check webhooks| PL & TS
     PL -->|issues: read, create, update, close| CH
@@ -151,15 +152,16 @@ flowchart TB
     PL & TS & SCHED & RS & PM & HA -->|append events| EV
     MET & HA -->|tail, read events| EV
     HA -->|proposals| CON
-    CON -->|configuration edits| RS & PL
+    CON -->|configuration edits| PL
 ```
 
 | Component | Owns |
 |---|---|
 | Planner | `goal`, `plan`, `issue_link` |
-| Task service | `task`, `config_version` |
-| Meta-harness scheduler | Repo-area locks in Redis |
-| Meta-harness run service | `run`, `routing_decision`, `config_version`, its Temporal namespace, code-host rate-limit buckets |
+| Configuration, in the planner process | `config_version`, `active` |
+| Task service | `task` |
+| Meta-harness scheduler | Repo-area locks and the kill switch: Postgres rows today, Redis for the locks later |
+| Meta-harness run service | `run`, `routing_decision`, `operator_review`, its Temporal namespace, code-host rate-limit buckets |
 | Pool manager | `sandbox`, `lease`, the artifact store |
 | Event service | `event`, the schema registry |
 | Metering service | Its projection tables |
@@ -167,6 +169,12 @@ flowchart TB
 | Operator console | Nothing |
 | HTTP Gateway | Run grants, per-run spend counters |
 | Harness server | The run's pi session directory |
+
+A component reads and writes only its own tables. What it needs from
+another component it gets from that component's API or from the event
+service, as the scheduler reads a goal's spend from `attempt_finished`
+events: no query joins two components' schemas, though today they share one
+Postgres.
 
 Configuration is a set of versioned JSON documents, edited in the operator
 console's Configuration view. The built kinds are `tiers` (the ai-api-unified
@@ -336,11 +344,13 @@ no pi virtual models (`registerVirtualModel`).
 | `read`, `ls`, `find`, `grep` | pi built-in tool | Nothing |
 | `write`, `edit` | pi built-in tool | The pi model client extension's tool-call hook refuses protected paths from the task repo policy |
 | `bash` | pi built-in tool | A timeout and output cap from the harness profile. The pi model client extension's tool-call hook refuses commands outside the harness profile's allowlist |
-| `run_tests` | owned pi extension tool | Runs the acceptance checks named in the task and emits `tests_run` harness server Run API events |
+| `run_tests` | owned pi extension tool, planned | Runs the acceptance checks named in the task and emits `tests_run` harness server Run API events |
 | `submit_review` | owned pi extension tool, meta-harness review harness profiles only | Ends the review run with verdict `clean` or `changes` and its findings, as a `review_submitted` harness server Run API event. The meta-harness run service posts them as a code-host pull request review |
-| `create_issue` | owned pi extension tool, planning harness profiles only | Records one issue draft (repo, title, body, labels, `Depends on:` lines) as an `issue_drafted` harness server Run API event. The planner creates the issues after the run |
+| `create_issue` | owned pi extension tool, planning harness profiles only, planned | Records one issue draft (repo, title, body, labels, `Depends on:` lines) as an `issue_drafted` harness server Run API event. The planner creates the issues after the run |
 
-A harness profile's `tools` list chooses from these tools. Branch protection
+A harness profile's `tools` list chooses from these tools. Until `run_tests`
+exists, a run runs its acceptance checks with `bash`. The protected-path
+refusal on `write` and `edit` is planned too. Branch protection
 blocks default branches. The pull request description holds the run's final
 summary, which the harness prompt asks to list the assumptions the run made,
 since no person answers questions during a run.
@@ -348,7 +358,10 @@ since no person answers questions during a run.
 ### Loop policy
 
 The pi model client extension and the harness server enforce the harness
-profile's `loop` settings:
+profile's `loop` settings. Of these, the turn and minute limits are built;
+plan-first, `test_before_pr` and the compaction handler are planned, and
+until the handler exists pi compacts with its own summary request, on the
+run's model:
 
 - The harness server counts pi turns from pi SDK
   events and sends `abort` to the pi session at `max_turns` or `max_minutes`.
@@ -377,7 +390,7 @@ candidate that follows a failed one starts from the task, not from another
 model's transcript. With the review loop, the meta-harness run service keeps
 the session of the run that opened a pull request, and every meta-harness fix
 task on that pull request continues it in a follow-up run. A meta-harness
-review task starts its own pi session, so the reviewing model never sees the
+review run starts its own pi session, so the reviewing model never sees the
 authoring model's conversation.
 
 | When | Where the conversation is | Owner |
@@ -455,8 +468,9 @@ them:
 Planned profile fields, not built: `prompts`, a versioned harness prompt set;
 `loop.plan_first` and `loop.test_before_pr`; `loop.compaction`, mapped to pi's
 `compaction.reserveTokens` and `compaction.keepRecentTokens`; and
-`context_files`. A review harness profile, `pi-review`, with read-only tools
-and `submit_review`, arrives with the review loop.
+`context_files`. The review harness profile, `pi-review`, has no `write` or
+`edit` tool and adds `submit_review`. A planning harness profile with
+`create_issue` is planned.
 
 ## Routing
 
@@ -487,11 +501,11 @@ sequenceDiagram
     WF->>RT: run service route activity: classify-only call to the ai-api-unified router (task spec as latest user message, route_floor)
     RT->>CL: classifier model call: classify(task spec)
     CL-->>RT: tier standard, confidence 0.82
-    RT-->>WF: tier standard, tier candidates pi-lean with claude-sonnet-5, then pi-careful with gpt-5.6-luna
+    RT-->>WF: tier standard, tier candidates pi-lean with claude-sonnet-5, then pi-lean with gpt-5.6-luna
     WF->>SB: run service run activity: pool manager lease, HTTP Gateway run grant, harness server start run (pi-lean, claude-sonnet-5)
     SB-->>WF: harness server run ended ERROR model_error (provider outage)
     Note over WF: an infrastructure failure, so the RunTask workflow tries the next tier candidate
-    WF->>SB: run service run activity: pool manager lease, HTTP Gateway run grant, harness server start run (pi-careful, gpt-5.6-luna)
+    WF->>SB: run service run activity: pool manager lease, HTTP Gateway run grant, harness server start run (pi-lean, gpt-5.6-luna)
     Note over WF,SB: the pool manager lease fails, no per-run sandbox within ready_timeout
     Note over WF: the standard tier is exhausted and the task policy allows escalation, so the RunTask workflow moves up one tier
     WF->>RT: run service route activity: tier candidates for tier complex
@@ -565,6 +579,12 @@ candidates, in order.
 }
 ```
 
+The shipped tiers are `standard` and `complex`. The `trivial` tier that the
+task policy and the `route: trivial` calls name is planned, with the
+compaction handler and the auxiliary calls that would use it. Until a tier
+of that name exists, a `trivial` floor is no floor, and a `route: trivial`
+call runs on the run's pinned model, as any unknown route does.
+
 A tier candidate takes the form `harness:<harness profile>/<provider>:<model>`.
 The ai-api-unified router reads `harness` as its provider and returns the
 string unchanged. In classify-only mode (`AiRouteClassifier`) the router never
@@ -591,11 +611,11 @@ context variables.
 - When a tier runs out and `on_exhausted` is `escalate`, the RunTask workflow
   calls the `route` activity again with `route_floor` one tier up, within the
   task policy's limits.
-- A meta-harness fix task, an exploration run and a task with a `pin` field
+- A fix run, an exploration run and a task with a `pin` field
   skip routing and run one named pair, such as
-  `harness:pi-careful/claude:claude-opus-5-5`, with no escalation. A fix task
+  `harness:pi-careful/claude:claude-opus-5-5`, with no escalation. A fix run
   pins the pair that opened its pull request, so it continues that pull
-  request's pi session on the same model. A review task tries the task
+  request's pi session on the same model. A review run tries the task
   policy's reviewer pairs in order. The meta-harness run service checks a
   pinned model against the ai-api-unified allow and deny lists before any
   lease, and the RunTask workflow records `route_method: model_pin`.
@@ -629,7 +649,10 @@ lease record for that run.
 ### Task policy
 
 The task policy holds the rules for task types, exploration, run budgets and
-review.
+review. Built today: `review.reviewers` and `review.max_rounds`, which the
+run service reads from `config/task_policy.json`. The other fields below,
+and `task_policy` as a configuration kind an operator edits in the console,
+are planned.
 
 ```json
 {
@@ -652,12 +675,12 @@ review.
   its `max_usd`, $10.00 when the task names none, after the runs before it.
   So a task's runs together never spend more than its limit. With the review
   loop, a task's `max_usd` also caps the total of its meta-harness review and
-  fix tasks. `preview_route()` cannot estimate a harness run, because a run's
+  fix runs. `preview_route()` cannot estimate a harness run, because a run's
   turn count is unknown before it starts.
-- `reviewers` lists the meta-harness review task's
+- `reviewers` lists the review run's
   harness-profile-and-model pairs in order. The RunTask workflow skips any
   reviewer pair whose model wrote the pull request, so a different model
-  always reviews. `max_rounds` caps the meta-harness fix tasks per pull
+  always reviews. `max_rounds` caps the fix runs per pull
   request. `operator_alert_minutes` sets when a review round blocked on an
   operator raises an alert. Whether a clean pull request merges is the goal's
   `auto_merge` setting.
@@ -670,14 +693,14 @@ task's remaining spend, its attempts so far and the task policy's limits.
 
 | Step | What happens |
 |---|---|
-| Identify | `run_id` is the RunTask workflow id and the attempt number, `run-task-<task>:run-<N>`, the same on every retry of the run activity. Each candidate tried, in any tier, takes the next attempt number, so no two runs of a task share an id. A meta-harness review or fix task has its own RunTask workflow id, so its runs get their own `run_id`s. |
+| Identify | `run_id` is the RunTask workflow id and the attempt number, `run-task-<task>:run-<N>`, the same on every retry of the run activity. Each candidate tried, in any tier, takes the next attempt number, so no two runs of a task share an id. A review or fix run takes its task's next attempt number, with tier `review` or `fix`. |
 | Lease | Asks the pool manager for an existing pool manager lease on `run_id` first, so a retried run activity re-attaches to a run in progress. Otherwise requests `lease(run_id, image, harness_session_id, resources)` for the harness profile's image. The pool manager response holds the per-run sandbox address, the pool manager lease TTL and the `session_state`: `new`, `kept` or `restored`. In a deployment without the pool manager, the run activity starts one per-run sandbox per run itself, with the Docker executor backend. |
 | Grant | Asks the HTTP Gateway for an HTTP Gateway run grant, which the HTTP Gateway issues and stores. The run grant holds the run id, tags, the tier candidate's inner model as a pin, the spend limit, and an expiry at `max_minutes` plus grace. Only the run grant key goes to the per-run sandbox. A retried run activity asks again with the same terms and gets a new run grant key for the live run grant. |
 | Start | When `session_state` is `new`, `POST /run` on the per-run sandbox's harness server Run API with the prompt, acceptance checks, harness profile, limits, bash allowlist, the tier's thinking level and run grant key. The pi model client extension sends that thinking level on every turn; a pinned run sends none, so the HTTP Gateway's default applies. When it is `kept` or `restored`, `POST /followup` with the new input and its own run grant key. |
 | Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the harness profile's `max_minutes` plus 10 minutes, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
 | Collect | Reads the harness server's `/usage`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
 | Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
-| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix task pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
+| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
 The RunTask workflow's Temporal history records every attempt, tier candidate
 and decision. The operator console and the harness analyzer read each run's
@@ -734,16 +757,16 @@ stateDiagram-v2
     Running --> Failed: tier exhausted, timeout, task budget hit
     Failed --> Routing: retry, one tier up, attempts left
     Failed --> Exhausted: no attempts or task budget left
-    Checks --> Reviewing: required checks passed, review task created
-    Checks --> Fixing: a required check failed, fix task created
-    Reviewing --> Fixing: verdict changes, fix task created
+    Checks --> Reviewing: required checks passed, review run started
+    Checks --> Fixing: a required check failed, fix run started
+    Reviewing --> Fixing: verdict changes, fix run started
     Reviewing --> Merging: verdict clean
     Reviewing --> Ready: verdict clean, merging off
-    Fixing --> Checks: fix task pushed commits
+    Fixing --> Checks: fix run pushed commits
     Merging --> Closed: PR merged
-    Merging --> Fixing: merge conflict, fix task created
-    Checks --> Unresolved: fix tasks or task budget used up
-    Reviewing --> Unresolved: fix tasks or task budget used up
+    Merging --> Fixing: merge conflict, fix run started
+    Checks --> Unresolved: fix runs or task budget used up
+    Reviewing --> Unresolved: fix runs or task budget used up
     Closed --> [*]
     Ready --> [*]
     Exhausted --> [*]
@@ -751,8 +774,8 @@ stateDiagram-v2
 ```
 
 Each task has one RunTask workflow, whose Temporal workflow id is the task
-id, and every run of the task happens inside it. A review or fix task is a
-task of its own, with its own RunTask workflow. `start` uses Temporal's Fail
+id, and every run of the task happens inside it. A review or fix run is a
+run of that task, inside the same RunTask workflow. `start` uses Temporal's Fail
 conflict policy and Reject Duplicate reuse policy, so a task id starts at most
 one RunTask workflow, even after it ends.
 
@@ -777,20 +800,24 @@ From admission to close:
    harness run stalled when the harness run misses a heartbeat window.
    Code-host webhooks for the run's pull request (checks completed, merged, closed)
    arrive at the task service, which signals the RunTask workflow.
-5. The RunTask workflow creates review and fix tasks on the pull request
+5. The RunTask workflow runs review and fix runs on the pull request
    until a review comes back clean, then merges it.
 6. When the pull request merges or closes, when the meta-harness review loop
    ends `ready` or `review_unresolved`, or when attempts and task budget are
    spent, the RunTask workflow appends the outcome meta-harness domain events
    and sets the task's terminal status through the task service.
-7. The operator console sends cancel or kill switch (per run, per
-   caller, global) to the meta-harness run service, which appends the audit
-   meta-harness domain event with the operator as actor. The RunTask workflow
-   cancels the meta-harness run service run activity, which calls the harness server Run
+7. The operator console sends a cancel to the task service, which records
+   the request on the task, and the kill switch to the meta-harness
+   scheduler. Each appends the audit meta-harness domain event with the
+   operator as actor. On its next admission pass the scheduler cancels the
+   RunTask workflow of each task with a cancel request, or of every running
+   task while the kill switch is on, and admits none. The kill switch is
+   global today; per-run and per-caller scopes are planned. The RunTask
+   workflow cancels the meta-harness run service run activity, which calls the harness server Run
    API `POST /cancel` on the per-run sandbox directly, revokes the HTTP
    Gateway run grant, and releases the sandbox lease
    with the pool manager, which destroys the per-run sandbox.
-8. An operator can take over any running task from the operator console. The
+8. Planned: an operator can take over any running task from the operator console. The
    meta-harness run service stops the active run with `POST /cancel`, revokes its run grant,
    and runs the Publish step on the work so far: the branch `mh/<task>` gets
    the run's changes and the pull request opens as a draft, or the existing pull
@@ -813,53 +840,44 @@ sets the hard ceiling.
 ### Review loop
 
 The RunTask workflow of the task that opened a pull request owns it until it
-merges or closes, and runs this loop:
+merges or closes. Review and fix are runs of that task, inside its workflow,
+recorded as its attempts with tier `review` or `fix`. The task keeps its
+scheduler slot and its repo-area lock while they run, so separate review and
+fix tasks would add signals between workflows without adding control. The
+loop:
 
-1. The RunTask workflow waits for the code-host checks webhook on
-   the pull request's head commit. A failed required check goes to step 3 with the
+1. The RunTask workflow waits for the code host's checks on the pull
+   request's head commit. A failed required check goes to step 3 with the
    check's output. Passing checks go to step 2.
-2. The RunTask workflow creates a meta-harness review task through
-   the task service, with `parent_task_id`, the pull request URL and the head commit
-   SHA. The review task pins the first reviewer pair in the task policy whose
-   model did not write the pull request, and starts a new pi session on a
-   meta-harness review harness profile with no edit tools. The review run
-   reads the pull request diff, the parent task's spec and acceptance checks, and runs
-   the tests. Its `submit_review` tool ends the run with verdict `clean` or
-   `changes` and its findings. The meta-harness run service posts them as a
-   pull request review and records the verdict with the reviewed head SHA in a
-   `review_submitted` event.
-3. On `changes` or a failed check, the RunTask workflow creates a
-   meta-harness fix task through the task service, with `parent_task_id`,
-   the pull request branch, and the findings or check output as the task description.
-   The fix task pins the pair that opened the pull request and continues its
-   pi session in a follow-up run (`POST /followup`), and its Publish step
-   pushes to the pull request's branch. The loop returns to step 1.
+2. A review run: the first reviewer pair in the task policy whose model did
+   not write the pull request, in a new pi session on the review harness
+   profile, which has no edit tools. The review run reads the pull request
+   diff, the task's spec and acceptance checks, and runs the tests. Its
+   `submit_review` tool ends the run with verdict `clean` or `changes` and
+   its findings. The meta-harness run service posts them as a pull request
+   review and records the verdict with the reviewed head SHA in a
+   `pull_request_reviewed` event.
+3. On `changes` or a failed check, a fix run: the pair that opened the pull
+   request, with the findings or the check output as its input. It continues
+   the pull request's pi session in a follow-up run (`POST /followup`), and
+   its Publish step pushes to the pull request's branch. The loop returns to
+   step 1.
 4. On `clean`, the meta-harness run service merges the pull request through
    the code-host API at the reviewed head SHA, so a commit pushed after the
    review never merges unreviewed. A merge conflict with the base branch
-   creates a fix task to rebase. When the goal's `auto_merge` is off, or the
-   repo's merge policy forbids merging, the RunTask workflow leaves the clean
-   pull request open and ends the task `ready`, and the operator console lists it for
-   an operator to merge.
+   goes to a fix run. When the goal's `auto_merge` is off, or the repo's
+   merge policy forbids merging, the RunTask workflow leaves the clean pull
+   request open and ends the task `ready`, and the operator console lists it
+   for an operator to merge.
 
-The meta-harness scheduler admits each review and fix task under the parent
-task's repo-area lock, and the task service signals the parent task's RunTask
-workflow when it ends. The parent task holds its lock until the pull request
-merges or closes.
+The loop stops at the task policy's `max_rounds` fix runs per pull request,
+or when the task's runs have spent its `max_usd`. The RunTask workflow then
+leaves the pull request open, ends the task `review_unresolved`, and a
+meta-harness alert rule fires. A pull request closed on the code host ends
+the loop and the task.
 
-The loop stops at the task policy's `max_rounds` meta-harness fix tasks per pull request
-or when the review and fix tasks have spent the parent task's `max_usd`. The
-RunTask workflow then leaves the pull request open, ends the task `review_unresolved`,
-and a meta-harness alert rule fires. A pull request closed on the code host
-ends the loop and the task.
+Two parts are built differently (#85), each until what it waits on exists:
 
-As built (#85), the loop differs from the above in three ways, each until
-what it waits on exists:
-
-- Review and fix are runs of the parent task, inside its RunTask workflow,
-  recorded as its attempts with tier `review` or `fix`, rather than tasks of
-  their own. The parent holds its scheduler slot and runs no sandbox while
-  they run, so separate tasks would add signals without adding control.
 - A fix run starts a new pi session on a fresh clone of the pull request's
   branch, rather than continuing the session that wrote it, because a saved
   pi session cannot be restored into a new sandbox yet. The branch carries
@@ -883,9 +901,18 @@ any other refusal ends the task `ready` with GitHub's reason. A merged pull
 request ends the task `closed`, and GitHub closes the issue from the pull
 request's `Closes` line.
 
+A task that ends `ready` or `review_unresolved` leaves its pull request open
+with no workflow watching it, and its repo-area lock is released. When the
+pull request later merges, the task becomes `closed`; when it closes
+unmerged, the task becomes `canceled` with that reason. The task service
+will make that move from the code-host webhook. Until webhooks exist nothing
+makes it, so such a task stays `ready` after an operator merges its pull
+request; the planner's sweep is planned to read those pull requests and
+report the merge or the close to the task service (#74).
+
 ### Operator review
 
-When a meta-harness review run starts, the meta-harness run service appends a
+Operator review is planned. When a meta-harness review run starts, the meta-harness run service appends a
 `review_started` meta-harness domain event. The operator console shows it as a
 notification to every operator watching, with the pull request link and an offer to
 review the pull request too. The offer needs no answer:
@@ -899,18 +926,18 @@ review the pull request too. The offer needs no answer:
   and the operator console tells later operators who holds it. The agent
   review run still finishes, and the operator console shows its findings to
   the operator.
-- A claimed review round waits for the operator. The review task's
+- A claimed review round waits for the operator. The task's
   RunTask workflow waits on a Temporal signal, so the wait survives restarts.
   The pool manager releases the agent review run's sandbox when that run
   ends, and the metering service counts run time only, so the wait adds no
   dollar-hours. The
-  parent task keeps its repo-area lock while it waits.
+  task keeps its repo-area lock while it waits.
 - The operator reads the pull request on the code host and submits a
   verdict, `clean` or `changes`, with findings, from the operator console. The
   meta-harness run service posts the operator's findings as a code-host pull request
   review that names the operator, and appends `operator_review_submitted`.
   The round's verdict is `changes` when the agent or the operator says
-  `changes`, and the fix task gets both sets of findings.
+  `changes`, and the fix run gets both sets of findings.
 - The operator can release the claim from the operator console,
   and the round then decides on the agent's verdict. A meta-harness alert
   fires when a claimed round has waited longer than the task policy's
@@ -1005,8 +1032,8 @@ sequenceDiagram
     W->>EV: append attempt_finished
     Note over W,EV: the meta-harness review loop runs on the PR until a clean review, then merges it
     W->>W: on PR merge or close: outcome
-    W->>EV: append task_closed
     W->>TS: set status: closed
+    TS->>EV: append task_status_changed (closed)
     Note over EV: the metering service tails these meta-harness domain events into task_outcome with dollar-hours
 ```
 
@@ -1131,10 +1158,8 @@ sequenceDiagram
     end
     box rgba(66,135,245,0.12) Meta-harness control plane
     participant TS as Task service
-    participant S as Meta-harness scheduler
     participant W as Meta-harness run service: RunTask workflow of the task that opened the PR
-    participant RV as Meta-harness run service: RunTask workflow and run activity of a review task
-    participant FX as Meta-harness run service: RunTask workflow and run activity of a fix task
+    participant A as Meta-harness run service: activities
     participant PM as Pool manager
     participant EV as Event service
     participant CON as Operator console
@@ -1146,48 +1171,49 @@ sequenceDiagram
 
     CH->>TS: code-host webhook: required checks passed on the PR head
     TS->>W: signal RunTask workflow: checks passed
-    W->>TS: create review task (parent_task_id, PR URL, head SHA)
-    S->>RV: admit under the parent task's repo-area lock, start RunTask workflow
-    Note over RV: first reviewer pair in the task policy whose model did not write the PR, new pi session
-    RV->>PM: Lease step: lease(run_id, pi-review image, new harness_session_id)
-    Note over RV: Grant step: HTTP Gateway run grant for the reviewer model
-    RV->>SR: Start step: POST /run (PR diff, parent task spec, acceptance checks, run grant key)
-    RV->>EV: append review_started (PR URL, head SHA)
+    W->>EV: append pull_request_checks (head SHA, passed)
+    Note over W: review run: first reviewer pair in the task policy whose model did not write the PR, new pi session
+    W->>A: run activity (pi-review harness profile, the reviewer model)
+    A->>PM: Lease step: lease(run_id, pi-review image, new harness_session_id)
+    Note over A: Grant step: HTTP Gateway run grant for the reviewer model
+    A->>SR: Start step: POST /run (PR diff, task spec, acceptance checks, run grant key)
+    W->>EV: append review_started (PR URL, head SHA)
     EV-->>CON: tail: review_started
     Note over CON: notification to watching operators, with an offer to review the PR too
     opt an operator claims the review before the agent review run ends
-        CON->>RV: claim review (operator)
-        RV->>EV: append operator_review_claimed (actor)
+        CON->>W: claim review (operator)
+        W->>EV: append operator_review_claimed (actor)
     end
     SR->>SR: read the diff, run the tests
     SR->>SR: submit_review: verdict and findings
-    SR-->>RV: run_finished, verdict changes, findings
-    RV->>CH: post the agent's findings as a PR review
+    SR-->>A: review_submitted, then run_finished
+    A-->>W: verdict changes, findings
+    W->>A: post the review
+    A->>CH: post the agent's findings as a PR review
     opt the review is claimed
-        Note over RV: the review round blocks on a Temporal signal until the operator submits or releases
-        CON->>RV: operator verdict and findings
-        RV->>CH: post the operator's findings as a code-host PR review naming the operator
-        RV->>EV: append operator_review_submitted (actor)
+        Note over W: the review round blocks on a Temporal signal until the operator submits or releases
+        CON->>W: operator verdict and findings
+        W->>A: post the review
+        A->>CH: post the operator's findings as a code-host PR review naming the operator
+        W->>EV: append operator_review_submitted (actor)
     end
-    RV->>EV: append review_submitted (verdict changes if the agent or the operator says changes, both findings, head SHA)
-    RV->>TS: set status: done, verdict changes
-    TS->>W: signal RunTask workflow: review task done
-    W->>TS: create fix task (parent_task_id, findings as untrusted data, pin: the PR's pair)
-    S->>FX: admit under the parent task's repo-area lock, start RunTask workflow
-    FX->>PM: Lease step: lease(run_id, the PR's image, the PR's harness_session_id)
-    PM-->>FX: sandbox, session_state kept or restored
-    Note over FX: Grant step: HTTP Gateway run grant pinned to the PR's model
-    FX->>SF: Start step: POST /followup (findings only, run grant key)
+    W->>EV: append pull_request_reviewed (round, verdict changes if the agent or the operator says changes, head SHA), attempt_finished (tier review)
+    Note over W: fix run: the pair that opened the PR, with the findings as untrusted data
+    W->>A: run activity (the PR's harness profile and model)
+    A->>PM: Lease step: lease(run_id, the PR's image, the PR's harness_session_id)
+    PM-->>A: sandbox, session_state kept or restored
+    Note over A: Grant step: HTTP Gateway run grant pinned to the PR's model
+    A->>SF: Start step: POST /followup (findings only, run grant key)
     SF->>SF: switch_session, follow_up, fix, run the tests
-    SF-->>FX: run_finished
-    FX->>CH: Publish step: push the fix to the PR branch
-    FX->>TS: set status: done
-    TS->>W: signal RunTask workflow: fix task done
+    SF-->>A: run_finished
+    A-->>W: terminal state FINISHED, the fix run's changes
+    W->>A: Publish step
+    A->>CH: push the fix to the PR branch
+    W->>EV: append attempt_finished (tier fix)
     Note over CH,W: the loop repeats from the next checks webhook, until a clean review on the PR head with passing checks
-    W->>CH: merge the PR at the reviewed head SHA
-    CH->>TS: code-host webhook: PR merged
-    TS->>W: signal RunTask workflow: PR merged
-    W->>EV: append task_closed
+    W->>A: merge the PR
+    A->>CH: merge the PR at the reviewed head SHA
+    W->>EV: append pull_request_merged
     W->>TS: set status: closed
 ```
 
@@ -1198,6 +1224,8 @@ sequenceDiagram
     autonumber
     box rgba(66,135,245,0.12) Meta-harness control plane
     participant CON as Operator console
+    participant TS as Task service
+    participant S as Meta-harness scheduler
     participant W as Meta-harness run service: RunTask workflow
     participant A as Meta-harness run service: run activity
     participant PM as Pool manager
@@ -1210,8 +1238,15 @@ sequenceDiagram
     participant GW as HTTP Gateway
     end
 
-    CON->>W: cancel (per run, caller, or global kill switch)
-    W->>EV: append operator_action (actor, scope)
+    alt cancel one task
+        CON->>TS: POST /v1/tasks/{id}/cancel
+        TS->>EV: append task_cancel_requested (actor)
+    else kill switch
+        CON->>S: POST /v1/kill-switch (engaged, reason)
+        S->>EV: append kill_switch_changed (actor)
+    end
+    Note over S: next admission pass: tasks with a cancel request, or every running task while the kill switch is on
+    S->>W: cancel the RunTask workflow
     W->>A: cancel the run activity
     A->>SB: POST /cancel (direct, per-lease harness server bearer token)
     SB->>SB: abort, clear_queue, flush pi session
@@ -1222,6 +1257,7 @@ sequenceDiagram
     A-->>W: terminal state canceled, partial cost
     W->>W: run end_reason canceled (owned)
     W->>EV: append attempt_finished with partial cost
+    W->>TS: set status: canceled
 ```
 
 ## Harness execution
@@ -1398,9 +1434,8 @@ dollar-hours per successfully completed task = Σi (Di × Hi) / Σi Ci
 | Hi, hours for attempt i | The run's time from `RUNNING` to a terminal state |
 | Ci, success for the task | The share of the task's checks that passed: CI checks on its pull request, its acceptance checks, and the merge |
 
-A task's attempts include its review and fix tasks, which the metering service
-rolls up to the parent by `parent_task_id`, and it reports the review loop's
-share apart. Each run's `attempt_finished` event, with the dollars the HTTP
+A task's attempts include its review and fix runs, and the metering service
+reports the review loop's share apart, from each attempt's tier. Each run's `attempt_finished` event, with the dollars the HTTP
 Gateway counted against its run grant, and the harness server's `GET /usage`
 cross-check Di, and the metering service flags a gap over 5%. Spend on failed
 runs, including every run of a task whose candidates all failed, counts as
@@ -1446,6 +1481,20 @@ every task event:
    while the goal is active, has budget left, and is within its modality's
    parallelism.
 
+As built, the global limit is `MH_MAX_RUNNING`, and the locks are expiring
+Postgres rows the scheduler renews while a task is `queued`, `running` or
+`taken_over`, which covers the task's review loop. An area is a top-level
+directory, so two tasks naming `console/src/a` and `console/src/b` exclude
+each other, and a task made from an issue names no `paths` and takes its
+whole repo: one task per repo at a time. The planner, not the scheduler,
+holds a task `blocked` until its dependencies close. Caller quotas, spend
+caps, sandbox capacity and the modality's parallelism are planned.
+
+Planned, to run a repo's tasks side by side (#96, #98): a parallel limit in
+the task policy that a goal may lower; a task with no `paths` taking no
+area; areas matched by path prefix, from a `Paths:` line in the issue; and
+one merge at a time per repo, each on a head that holds the current base.
+
 ### Throughput
 
 | Resource | Scales by | Notes |
@@ -1465,8 +1514,18 @@ from the per-run sandbox to the HTTP Gateway.
 Every REST API path starts with `/v1` and enters through the external HTTPS
 load balancer, which routes it to the service that owns it.
 
+In the deployment that exists, the edge does this work. It signs operators
+in with Google, admits the identities on the access list
+(`MH_CONSOLE_OPERATORS`, the platform stack's `operators` variable), and
+holds the session in a signed cookie. It forwards each `/v1` request to the
+service that owns the path's prefix, from its `ROUTES` table, with the
+service key and the operator's identity in `X-MH-Actor`, so a new path
+prefix needs a `ROUTES` entry. Every operator may call every path; roles
+are planned (#63). The rest of this section is the design for the GKE
+deployment.
+
 Identity-Aware Proxy authenticates every `/v1` path except the webhooks.
-Operators sign in with GitHub through Identity Platform, and programs present
+Operators sign in through Identity Platform, and programs present
 a Google service account's token. Each service accepts traffic only from the
 load balancer and checks the IAP signed header on every request. The access list, a configuration document,
 maps each verified identity to a role: an operator may call every path, and a
@@ -1481,47 +1540,57 @@ Google-signed ID token for the target service, and each service accepts only
 the service accounts listed for it. A per-run sandbox holds no REST API
 credential.
 
-| Method | Path | Owner | Purpose |
-|---|---|---|---|
-| POST | `/v1/tasks` | Task service | Submit a task, idempotent on `external_ref`. Returns the task id |
-| GET | `/v1/tasks` | Task service | Tasks by status, goal or `external_ref`; a caller sees its own |
-| GET | `/v1/tasks/{id}` | Task service | State, current run, routing decision, pull request URL and outcome |
-| POST | `/v1/tasks/{id}/cancel` | Task service | Cancel a task that has not started, or stop its active run |
-| POST | `/v1/tasks/{id}/take-over` | Meta-harness run service | Stop the active run, publish its work so far, and hand the task to the calling operator |
-| POST | `/v1/tasks/{id}/hand-back`, `/close` | Meta-harness run service | End a takeover: a follow-up run continues on the branch, or the task closes with the operator's outcome |
-| GET | `/v1/runs/{id}` | Meta-harness run service | Run state, candidate, token usage and cost so far |
-| GET | `/v1/routing` | Meta-harness run service | Routing decisions and the candidate each task finished on, by modality, tier and time |
-| POST | `/v1/kill-switch` | Meta-harness run service | Stop runs by run, caller or everything, and stop admitting tasks in that scope |
-| DELETE | `/v1/kill-switch/{scope}` | Meta-harness run service | Lift a kill switch |
-| POST | `/v1/reviews/{task_id}/claim`, `/verdict`, `/release` | Meta-harness run service | An operator review: claim the round, submit a verdict with findings, or release the claim |
-| GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest |
-| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget |
-| GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it |
-| GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues with a `label`, each with the open goal that holds it, if any |
-| POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing |
-| POST | `/v1/goals/{id}/approve`, `/pause`, `/resume`, `/cancel` | Planner | Approve the pending plan or phase, or pause, resume or cancel the goal |
-| POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add an issue to the goal, or drop one |
-| GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state |
-| GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version |
-| GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles` or `repos`; `task_policy`, `modalities` and `access` are planned |
-| GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history |
-| PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused |
-| POST | `/v1/config/{kind}/rollback` | Configuration, in the planner process | Make an earlier version's document active again, as a new version |
-| GET | `/v1/proposals` | Harness analyzer | Pending and decided proposals with their evidence |
-| POST | `/v1/proposals/{id}/approve`, `/reject` | Harness analyzer | Decide a proposal; an approved one applies as a new configuration version |
-| GET | `/v1/events` | Event service | Events by run, task, type or source after a position, paged |
-| GET | `/v1/events/tail` | Event service | The same filter as server-sent events, resumable from any position |
-| GET | `/v1/spend` | Metering service | Spend and dollar-hours grouped by goal, modality, repo, model, harness profile or tier, over a time range |
-| GET | `/v1/pool` | Pool manager | Per-run sandboxes by image and state, warm targets and lease latency |
-| POST | `/v1/webhooks/code-host`, `/v1/webhooks/{tracker}` | Task service, planner | Code-host and issue-tracker webhooks, each checked by its signature |
-| GET | `/health` | Every service | Liveness and configuration identity |
+| Method | Path | Owner | Purpose | State |
+|---|---|---|---|---|
+| POST | `/v1/tasks` | Task service | Submit a task, idempotent on `external_ref`. Returns the task id | built |
+| GET | `/v1/tasks` | Task service | Tasks by status, goal or `external_ref`; a caller sees its own | built |
+| GET | `/v1/tasks/{id}` | Task service | State, current run, routing decision, pull request URL and outcome | built |
+| POST | `/v1/tasks/{id}/cancel` | Task service | Cancel a task that has not started, or ask for its active run to stop, which the scheduler carries out | built |
+| POST | `/v1/tasks/{id}/status` | Task service | Set a task's status. Services only: the RunTask workflow and the planner | built |
+| POST | `/v1/tasks/{id}/take-over` | Meta-harness run service | Stop the active run, publish its work so far, and hand the task to the calling operator | planned |
+| POST | `/v1/tasks/{id}/hand-back`, `/close` | Meta-harness run service | End a takeover: a follow-up run continues on the branch, or the task closes with the operator's outcome | planned |
+| GET | `/v1/runs/{id}` | Meta-harness run service | Run state, candidate, token usage and cost so far | planned |
+| GET | `/v1/routing` | Meta-harness run service | Routing decisions and the candidate each task finished on, by modality, tier and time | planned |
+| GET, POST | `/v1/kill-switch` | Meta-harness scheduler | Read the kill switch, or turn it on or off with a reason. While it is on, the scheduler stops every running task and admits none. Scopes smaller than everything (a run, a caller) are planned | built |
+| POST | `/v1/reviews/{task_id}/claim`, `/verdict`, `/release` | Meta-harness run service | An operator review: claim the round, submit a verdict with findings, or release the claim | planned |
+| GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest | built |
+| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to `auto_merge`, priority and budget | partly built |
+| GET | `/v1/repos` | Planner | The repo registry: the repos a goal may name | built |
+| GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
+| GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues with a `label`, each with the open goal that holds it, if any | built |
+| POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing | built |
+| POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal | built |
+| POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval | built |
+| POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set a goal `met` by hand, or move a `met` or `canceled` goal back to `active` | planned (#111) |
+| GET, PUT | `/v1/goals/{id}/plan` | Planner | The goal's pending plan with its drafts, or an edited plan saved as a new version | planned (#73) |
+| POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve the pending plan or phase, or run a new planning task with a note | planned (#73) |
+| POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet | planned (#71) |
+| GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
+| GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
+| GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles` or `repos`; `task_policy`, `modalities` and `access` are planned | built |
+| GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history | built |
+| PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused | built |
+| POST | `/v1/config/{kind}/rollback` | Configuration, in the planner process | Make an earlier version's document active again, as a new version | built |
+| GET | `/v1/proposals` | Harness analyzer | Pending and decided proposals with their evidence | planned |
+| POST | `/v1/proposals/{id}/approve`, `/reject` | Harness analyzer | Decide a proposal; an approved one applies as a new configuration version | planned |
+| GET, POST | `/v1/events` | Event service | Events by run, task, type or source after a position, paged; services append with POST | built |
+| GET | `/v1/events/tail` | Event service | The same filter as server-sent events, resumable from any position | built |
+| GET | `/v1/spend` | Metering service | Spend and dollar-hours grouped by goal, modality, repo, model, harness profile or tier, over a time range | planned |
+| GET | `/v1/pool` | Pool manager | Per-run sandboxes by image and state, warm targets and lease latency | planned |
+| POST | `/v1/webhooks/code-host`, `/v1/webhooks/{tracker}` | Task service, planner | Code-host and issue-tracker webhooks, each checked by its signature | planned |
+| GET | `/v1/me` | Edge | The signed-in operator's identity | built |
+| GET | `/health` | Every service | Liveness and configuration identity | built |
+
+The run service has no HTTP API yet. Until it has one, a path it owns that
+needs the GitHub App, such as a pull request's diff, is served from the
+planner process, as the configuration API is, by run service code.
 
 | Task field | Required | Meaning |
 |---|---|---|
 | `external_ref` | yes | The caller's own id, unique per caller |
 | `repo` | yes | The repository URL |
-| `task_type` | yes | `bug`, `feature`, `refactor`, `dependency`, `test`, `security`, `docs`, or `plan` for a planning task. The meta-harness alone creates `review` and `fix` tasks |
-| `parent_task_id` | no | On a review or fix task: the task whose pull request it reviews or fixes |
+| `task_type` | yes | `bug`, `feature`, `refactor`, `dependency`, `test`, `security`, `docs`, or `plan` for a planning task. `review` and `fix` are reserved: no caller may submit them, and review and fix are runs of their task |
+| `parent_task_id` | no | Reserved. No task has a parent today |
 | `priority` | yes | Higher runs first |
 | `title`, `description` | yes | The task text, treated as untrusted |
 | `acceptance_checks` | yes | Commands or check names that define success |
@@ -1546,12 +1615,12 @@ capacity by priority.
 |---|---|
 | `statement` | What the goal is, in prose. The planning task reads it |
 | `repos` | The registered repos the goal may change |
-| `label` | The GitHub issue label that queues an issue for this goal, in any of its repos |
+| `label` | The GitHub issue label that queues an issue for this goal, in any of its repos. Optional once a goal can also hold issues an operator picks by ref (#71) |
 | `modality` | `fix`, `feature` or `new-system`, which picks the goal's rules. The planner classifies it when it is unset |
 | `latitude` | 0 to 1: how far the planner may go beyond what the goal names. The modality's default when unset |
-| `success_criteria` | Checks the planner evaluates to decide the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a check name |
+| `success_criteria` | Checks the planner evaluates to decide the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a check name. A goal that names none is met when every issue it holds is closed and none of its tasks is queued, blocked or running |
 | `auto_merge` | Whether a pull request whose review comes back clean merges without an operator. The modality's default when unset |
-| `max_usd`, `priority` | One budget and one priority for all the goal's tasks, review and fix tasks included |
+| `max_usd`, `priority` | One budget and one priority for all the goal's tasks, review and fix runs included |
 | `status` | `planning`, `active`, `paused`, `met`, `stalled`, `budget_exhausted` or `canceled` |
 
 A `feature` or `new-system` goal starts in `planning`. For every active goal the planner runs a loop:
@@ -1566,8 +1635,28 @@ A `feature` or `new-system` goal starts in `planning`. For every active goal the
 4. When the goal's issues are closed, or a phase ends, the planner evaluates
    the success criteria.
 5. If they pass, the goal is `met`. If work is still queued, the loop goes on.
-   If nothing is queued, a `fix` goal waits for issues, and a `feature` or
-   `new-system` goal gets a planning task for its next step.
+   If nothing is queued and the criteria fail, a `fix` goal waits for
+   issues, and a `feature` or `new-system` goal gets a planning task for its
+   next step.
+
+A goal's statuses move this way. `planning` becomes `active` when its plan
+is approved. `active` becomes `paused` and back by an operator, `met` when
+its criteria pass or an operator completes it, `stalled` when every open
+issue is blocked by a failed issue or waits on an operator, and
+`budget_exhausted` when its `max_usd` is spent. `stalled` and
+`budget_exhausted` return to `active` once an operator unblocks the goal or
+raises its budget. Any open goal can be canceled. A `met` or `canceled`
+goal takes no more issues until an operator reopens it, which makes it
+`active` again, so a `fix` goal over a label that keeps receiving issues is
+reopened, or given a criterion that never passes. A goal can also be saved
+without starting: it is created `paused` and takes no issue until its first
+resume (#95).
+
+As built, every goal is a `fix` goal with a label, is created `active`, and
+stays `active` until an operator pauses or cancels it. Nothing sets `met`
+or `stalled` yet, and completing and reopening are planned (#111).
+`planning`, `success_criteria`, the modality classifier and latitude are
+planned with the planning task (#72, #73).
 
 The planner classifies a goal statement's modality with the ai-api-unified classifier's `classify_choice`,
 the call the router uses to pick a tier, reading each modality's
@@ -1641,6 +1730,11 @@ the repo-area locks. The planner refuses a dependency cycle and shows its
 issues. A task that waited on another repo's change uses that repo's merged
 commit.
 
+The sweep, the dependency order and the `blocked` state are built. The
+`type:` label is read; the `complexity:` and `max-tier:` labels, the
+cycle check, operator issues and the `meta-harness:failed` label are
+planned.
+
 Operators publish releases and deploy. An issue labeled `meta-harness:operator`
 belongs to its goal, but the meta-harness never runs it: the operator console lists it
 as needing an operator, and closing it unblocks the issues that depend on it.
@@ -1709,6 +1803,11 @@ tracker, through one adapter interface:
 | `webhook(payload)` | Turn a tracker's webhook into `issue_opened`, `issue_edited`, `issue_labeled`, `issue_closed` events, so the Inputs view and the goal loop never poll |
 | `sweep(repo, label, since)` | Issues changed since a time, for the reconciliation that catches a missed webhook |
 
+As built, the GitHub adapter has `list_open` and `read`, with an app token
+that only reads issues, and a sweep every `MH_PLANNER_SWEEP_SECONDS` stands
+in for the webhook. The writing operations and the Jira and Linear
+adapters are planned.
+
 The adapter syncs both ways. The planner pulls in work people write: an issue
 labeled in GitHub, Jira or Linear joins its goal, and an edit to its body,
 labels or dependencies updates the task before it runs. It writes back what it
@@ -1746,12 +1845,12 @@ the same approval.
 | Owner | Entity | Fields |
 |---|---|---|
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over) |
-| Planner | goal | id, caller, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, closed_at |
+| Planner | goal | id, created_by, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, closed_at |
 | Planner | plan | goal_id, phase, drafted_issues, refused_drafts, approved_by, approved_at, created_refs |
 | Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, last_webhook_at |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |
-| Meta-harness run service | operator_review | review_task_id, operator, claimed_at, verdict, findings, submitted_at, released_at |
+| Meta-harness run service | operator_review | task_id, round, operator, claimed_at, verdict, findings, submitted_at, released_at |
 | Configuration | config_version | kind (tiers, profiles, repos; task_policy, modalities and access planned), version, document, edited_by, note, origin (seed, edit, rollback), rolled_back_from, created_at |
 | Configuration | active | kind, version, changed_at |
 | Pool manager | sandbox | id, image, executor, executor_ref, state (provisioning, warm, leased, kept, draining, unhealthy, destroyed), created_at, destroyed_at, destroy_reason |
@@ -1798,15 +1897,15 @@ Meta-harness services append through the event service client library:
 
 | Producer | Events |
 |---|---|
-| Task service | `task_created`, meta-harness task status changes, received code-host pull request webhooks |
-| Planner | `goal_created`, `goal_classified`, `modality_changed`, `latitude_changed`, `auto_merge_changed`, `plan_drafted`, `plan_approved`, `issues_created`, `issue_joined`, `task_blocked`, `task_unblocked`, `criteria_evaluated`, `planning_task_created` and `goal_closed`, and the tracker webhooks it received |
-| Meta-harness scheduler | Admission decisions, with the reason the meta-harness scheduler holds a meta-harness task |
+| Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
+| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's settings or status, `goal_drafted`, `issue_joined`, `issue_refused`, `issue_closed` and `task_unblocked`. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, `goal_met`, and the tracker webhooks it received |
+| Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason the meta-harness scheduler holds a meta-harness task. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
-| Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
-| Meta-harness run service: RunTask Temporal workflow | Run state transitions, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, `check_completed` from the pull request signals the RunTask workflow receives, `review_submitted` from each meta-harness review task's run (verdict, findings, reviewed head SHA), `review_started`, `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor, `review_task_created` and `fix_task_created`, `pr_merged`, and `task_closed`. Operator actions the RunTask workflow receives (cancel, kill switch), as audit events with the actor |
+| Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
+| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) and `pull_request_merged`. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed`, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
-| Meta-harness run service and planner | `config_changed` for every configuration version an operator saves, approves or rolls back, with the actor |
+| Configuration, in the planner process | `config_changed` for every configuration version an operator saves, approves or rolls back, with the actor |
 
 ai-api-unified records its own decisions in one `ai_api_request_cost` record
 per request. The record lists every provider call the request made, failed
@@ -1835,8 +1934,8 @@ reaches the event service.
 | A goal's modality and latitude | The planner, through the ai-api-unified classifier | `goal_classified` |
 | Which drafted issues a plan keeps | The planner | `plan_drafted` |
 | A turn's model, its fallbacks, guardrail blocks and cache hits | ai-api-unified in the HTTP Gateway | `gateway_request` |
-| A review verdict | A meta-harness review run, or an operator | `review_submitted`, `operator_review_submitted` |
-| A merge | The meta-harness run service | `pr_merged` |
+| A review verdict | A meta-harness review run, or an operator | `pull_request_reviewed`, `operator_review_submitted` |
+| A merge | The meta-harness run service | `pull_request_merged` |
 | Approvals, takeovers, cancels and configuration changes | An operator | Audit events with the operator as actor, `config_changed` |
 
 The client library buffers events in its own outbox and retries, which is safe
@@ -1888,19 +1987,22 @@ than deleting rows. The event service keeps run, routing, attempt,
 ### Console
 
 Operators run and configure the meta-harness from the operator console, a
-cloud web app. Operators sign in with GitHub, and the access list names who
-may. The operator console owns no store and calls only the REST API, as the signed-in
+cloud web app. Operators sign in with Google at the edge, and the access
+list names who may (see REST API). The operator console owns no store and calls only the REST API, as the signed-in
 operator.
 
 Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
+Built today: the Overview, Goals and New goal, the Goal page, Tasks with
+its terminal tiles, the Task page with its live run, and Configuration.
+The rest of the table is planned.
 
 | View | Shows | Actions |
 |---|---|---|
 | Overview | Every active goal with its modality, progress against its success criteria, spend against budget and tasks in flight. A "needs you" list: plans and phases to approve, operator issues (releases, deploys) only an operator can close, unresolved reviews, alerts. Run capacity, HTTP Gateway health and the kill switch | Create goal, kill switch |
 | Inputs | The queued GitHub issues across every registered repo, by repo and by goal: each one's state (queued, blocked and on what, running, pull request open, in review, merged, failed), issues no goal has picked up, and which repos each goal is working in now | Add an issue to a goal, drop one |
 | Goal | The goal's statement, its modality (with the classifier's confidence, or "set by operator") and latitude dial, its issue dependency graph across repos, the plan or the phase timeline with each phase's criteria, every success criterion's live state, spend over time, and its tasks. Each planner-drafted issue shows its `latitude_reason` | Approve plan or phase, set latitude, turn auto-merge on or off, pause, resume, cancel |
-| Tasks | One task: its issue, every ai-api-unified router routing decision, every run including fallbacks, every check result, the diff, the pull request, each review round's verdict and findings and the fix task it created, the merge, and cost per run | Take over, hand back, cancel |
+| Tasks | One task: its issue, every ai-api-unified router routing decision, every run including fallbacks, every check result, the diff, the pull request, each review round's verdict and findings and the fix run it led to, the merge, and cost per run | Take over, hand back, cancel |
 | Run | Live timeline of the run's events: each turn's model call (model, thinking, tokens, cost, latency) and its ai-api-unified decisions (the model that served it, fallbacks, guardrail blocks, cache hits), tool calls, file changes, test runs, compactions and guardrail blocks, the OpenTelemetry trace, and the per-run sandbox | Take over, cancel |
 | Live runs | Every run in flight across every goal: task, repo, model, turn, spend as it accrues, time since its last event | Take over, cancel |
 | Routing | Tier picked versus the candidate whose run finished, classifier confidence, floors and ceilings by modality, moves between candidates and escalations | |
@@ -1910,7 +2012,7 @@ repo, time, harness profile, model, routing tier, task type and state.
 | Audit | Every recorded decision, by a meta-harness component, ai-api-unified or an operator, filtered by who made it | Export a time range |
 
 A task's runs, fallbacks and retries included, run one after another, and the
-Tasks view lists them in order with the task's review and fix tasks under
+Tasks view lists them in order with the task's review and fix runs under
 them.
 
 The operator console reads runs from the event service: `read` for a run's history,
@@ -1969,7 +2071,7 @@ profile and model whose cache hit rate falls below its configured floor.
   credential or Google Cloud permission. The harness server is
   the only process in the per-run sandbox that talks to the meta-harness
   control plane, over mutual TLS.
-- Every meta-harness task launch, review or fix task created, operator
+- Every meta-harness task launch, review or fix run, operator
   review claim and verdict, takeover, merge, cancel and configuration change is a meta-harness domain event in the event service,
   recorded by the meta-harness service that received it, with its actor.
 
@@ -2057,11 +2159,11 @@ stacks with state in a Cloud Storage bucket.
 
 | Component | Runs on | Notes |
 |---|---|---|
-| Edge: the console web app and `/v1` routing | Cloud Run, behind Firebase Hosting at `https://meta-harness.web.app` | `deploy/edge.Dockerfile`. The edge signs operators in with Google itself (see below), checks the access list, then reaches the VM's private address over Direct VPC egress |
+| Edge: the console web app and `/v1` routing | Cloud Run, behind Firebase Hosting at `https://meta-harness.web.app` | `deploy/edge.Dockerfile`. The edge signs operators in with Google itself (see REST API), checks the access list, then reaches the VM's private address over Direct VPC egress |
 | Task service, planner, event service, meta-harness scheduler | The VM, as systemd units under the `mh` user | `deploy/vm/units`. Each listens on a private port that only the edge's subnet reaches |
 | Postgres | The VM, in a Docker container, its data on the data disk (`/var/lib/meta-harness/postgres`) | `mh-postgres.service`. One copy on one disk; Cloud SQL replaces it |
 | Temporal | The VM, the Temporal dev server with its history in one file | `mh-temporal.service`. A development server, one process, no replication. Temporal Cloud replaces it before runs that matter |
-| Redis | The VM, the distribution package | The HTTP Gateway's run grants and per-run spend counters |
+| Redis | The VM, the distribution package | The HTTP Gateway's run grants and per-run spend counters. The scheduler's locks and kill switch are Postgres rows |
 | HTTP Gateway | The VM, from a checkout of ai-api-unified-http, reading its own `config/models.json`. Its guardrails are off, as that file ships | `mh-gateway.service`. Bound to every interface so the egress proxy container reaches it; no firewall rule admits its port from outside the VM. The meta-harness `models.json`, whose router names `harness` candidates, reaches the worker alone: the gateway's completions factory refuses a `harness` engine |
 | Meta-harness run service worker, egress proxy, per-run sandboxes | The VM, with the Docker executor backend | `mh-worker.service`, `mh-egress.service`. Per-run sandboxes are containers on the VM, `MH_MAX_RUNNING` caps them, and each run's workspace and git directory live under `/var/lib/meta-harness/runs` |
 | Secrets | Secret Manager, read at boot into `/etc/meta-harness/env` | Provider keys, the service key, the gateway key, the repo registry and each GitHub App's private key. 
@@ -2104,6 +2206,13 @@ retries a request whose connection is refused for up to 20 seconds, so a
 service's few seconds down don't reach the console. Old and new code run
 side by side for those seconds, so migrations only add, and anything removed
 goes in a later pull request.
+
+The restarted worker also replays every running RunTask workflow's history
+against the new workflow code. A change to which activities, timers or
+signals a workflow runs, or their order, no longer matches a history
+recorded before it, and Temporal retries that workflow task without end:
+the task neither finishes nor fails. Nothing guards against this yet; the
+rule and its replay check are planned (#113).
 
 A failed update rolls back. When any step of an update fails (a service that
 does not answer `/health` within 60 seconds, a migration, a dependency
@@ -2271,9 +2380,10 @@ end-to-end check, so it runs on every later pull request without model calls.
    created in the cloud console runs its issues to pull requests.
 
 With `auto_merge` off, each pull request waits for an operator to merge it,
-so the point of entry needs no review loop. After it, in this order:
-`feat/code-host-webhooks`, `feat/review-loop`, `feat/merge`, `feat/takeover`,
-`feat/planner-sync` and `feat/console-web-app-inputs`.
+so the point of entry needs no review loop. After it, `feat/review-loop`
+(#85) and `feat/merge` (#86) merged, built by the meta-harness. Still to
+come: `feat/code-host-webhooks`, `feat/takeover`, `feat/planner-sync` and
+`feat/console-web-app-inputs`.
 
 | Pull request | Builds | Check |
 |---|---|---|
@@ -2291,8 +2401,8 @@ so the point of entry needs no review loop. After it, in this order:
 | `feat/terraform-deploy` | The cloud in Terraform: a platform stack an operator applies and a release stack CI applies on every merge to main through workload identity federation; the VM replaced per commit with its state on a data disk; `make platform`, `make deploy`, `make deploy-status` | A merge to main deploys, and `make deploy-status` names the merged commit as what the VM booted |
 | `feat/deploy-managed` | Cloud SQL for the control plane's tables, and Temporal Cloud for the run service namespace | `make deploy`, then the same goal check |
 | `feat/code-host-webhooks` | The webhook endpoint: signature check, and check, merge and close deliveries as RunTask workflow signals | `make webhook-replay` |
-| `feat/review-loop` | The review task with `submit_review`, the posted review, the fix task, and the round and budget limits. The VM's disk keeps pi session directories under `harness_session_id` until the pool manager exists | `make e2e-review`: `changes`, a fix, then `clean` |
-| `feat/merge` | The merge at the reviewed head SHA, `auto_merge`, the `ready` and `review_unresolved` ends, and merge conflicts as fix tasks | `make e2e-review` ends merged |
+| `feat/review-loop` | The review run with `submit_review`, the posted review, the fix run, and the round and budget limits (merged, #85) | `make e2e-review`: `changes`, a fix, then `clean` |
+| `feat/merge` | The merge at the reviewed head SHA, `auto_merge`, the `ready` and `review_unresolved` ends, and merge conflicts as fix runs (merged, #86) | `make e2e-review` ends merged |
 | `feat/takeover` | Take over, hand back and close, as audit events | `mh task take-over`, then `mh task hand-back` |
 | `feat/planner-sync` | Issue webhooks, state labels and comments, blocked tasks, refused issues, the goal's status | A test issue gets `meta-harness:running`, then `meta-harness:pr-open` |
 | `feat/console-web-app-inputs` | The Inputs page: queued issues by repo and by goal, with their states | A test issue moves from queued to merged in Inputs |
@@ -2309,22 +2419,46 @@ An operator sets up what the meta-harness cannot:
 
 ### Built by the meta-harness
 
-Once `feat/deploy-cloud` merges, an operator creates a `fix` goal over the
-three repos with the label `meta-harness:bootstrap` and `auto_merge` off, and
-files the rest of this design as issues with that label. The operator turns
-`auto_merge` on after watching the first review rounds in the operator
-console.
+Since `feat/deploy-cloud` merged, the rest of this design is filed as GitHub
+issues, and `fix` goals turn them into pull requests. A goal takes one
+label, so each issue carries exactly one theme label, and a theme's issues
+make sense as one goal:
+
+| Label | Theme |
+|---|---|
+| `meta-harness:parallel` | A repo's tasks run side by side: the parallel limit, the merge queue, `Paths:` in issues, and code laid out so tasks edit different files |
+| `meta-harness:operations` | Running the deployment: deploys, workflow changes under running tasks, recovery. A failed deploy files its issue here |
+| `meta-harness:console` | The console's admin and user menus: roles, the configuration editors, repositories, logs, user settings, trackers |
+| `meta-harness:goal-lifecycle` | A goal from saved to met: save and start, picking issues, each task's pull request, the goal's board, completing and reopening |
+| `meta-harness:goal-planning` | A `feature` goal plans its own issues: the planning profile, the plan, and its approval |
+| `meta-harness:console-ux` | The console as the place to follow and steer a task: the run timeline, diffs, reviews, steering, attempts, cost, the inbox |
+
+An issue that two goals' labels match joins the first goal that sweeps it
+and stays there, which is why an issue has one theme label. A `Depends on:`
+line may name an issue under another label; the task then waits `blocked`
+until that issue closes, so a goal on its label never finishes before the
+other theme's goal has run. Such lines are kept few, and the themes run in
+the order above. `meta-harness:merge` holds the closed issues of the review
+loop and the merge, and `meta-harness:planner-check` and
+`meta-harness:deploy-check` hold the issues the checks run.
+
+Each issue states its `## Acceptance checks`, the commands its run and its
+review run, and names the design sections its change makes untrue, which its
+pull request updates.
+
+Design work no issue covers yet:
 
 | Issue | Repo |
 |---|---|
-| The `feature` and `new-system` modalities: the planning task, plan and phase approval in the operator console, goal success criteria, and the modality classifier | meta-harness |
+| The `new-system` modality with its phases, goal success criteria as commands and checks, the modality classifier and latitude. The `feature` modality's planning task and plan approval are filed (#72, #73, #75) | meta-harness |
 | The `task_policy`, `modalities` and `access` configuration kinds, beside the built tiers, profiles and repo registry | meta-harness |
 | ai-api-unified decisions in the operator console: the Cloud Logging log sink, the Pub/Sub topic and push subscription, and `gateway_request` events | meta-harness |
 | The metering service and the Spend view | meta-harness |
 | The harness analyzer, its proposals, and the Routing view | meta-harness |
-| Operator review | meta-harness |
+| Operator review and takeover | meta-harness |
+| Code-host and tracker webhooks, and the planner's write-back to issues: state labels, comments, `meta-harness:failed`, operator issues | meta-harness |
 | The pool manager, GKE, and the meta-harness scheduler as its own service | meta-harness |
-| Meta-harness owned pi tools, the `bash` command allowlist, the pi compaction handler and `guardrail_blocked` events | meta-harness |
+| The owned `run_tests` tool, plan-first and `test_before_pr`, the pi compaction handler with a `trivial` tier, and `guardrail_blocked` events | meta-harness |
 | `route` in the conversation request body, so on a run grant that pins a model one call can run on a tier range capped at the pinned model's tier | ai-api-unified-http |
 | Streaming: a `send_conversation` form that yields typed events and commits to one model at its first delta, and a server-sent-events form of the HTTP Gateway conversation endpoint | ai-api-unified, ai-api-unified-http |
 
