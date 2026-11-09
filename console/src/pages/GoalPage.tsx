@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Group, Loader, Stack, Table, Text } from "@mantine/core";
-import { IconDownload, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { IconArrowBackUp, IconCircleCheck, IconDownload, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
 import { api, type Goal, type IssueLink as Issue, type Task } from "../api";
 import { useInfinite } from "../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, SectionTitle, StatusBadge, when } from "../components/ui";
@@ -64,6 +64,12 @@ export function GoalPage() {
             {["paused", "stalled", "budget_exhausted"].includes(goal.status) && (
               <Button leftSection={<IconPlayerPlay size={16} />} onClick={() => act(() => api.goalAction(goal.id, "resume"))}>Resume</Button>
             )}
+            {["active", "paused", "stalled"].includes(goal.status) && (
+              <Button color="teal" variant="light" leftSection={<IconCircleCheck size={16} />} onClick={() => act(() => api.goalAction(goal.id, "complete"))}>Complete goal</Button>
+            )}
+            {!open && (
+              <Button leftSection={<IconArrowBackUp size={16} />} onClick={() => act(() => api.goalAction(goal.id, "reopen"))}>Reopen goal</Button>
+            )}
             {open && (
               <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={() => act(() => api.goalAction(goal.id, "cancel"))}>Cancel goal</Button>
             )}
@@ -88,6 +94,7 @@ export function GoalPage() {
           )],
           ["Budget", <Text size="sm">{goal.max_usd ? `$${goal.max_usd}` : "None"}</Text>],
           ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
+          ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),
         ]}
       />
 
