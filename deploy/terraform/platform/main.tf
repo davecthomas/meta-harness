@@ -1,5 +1,6 @@
-# The platform: what the meta-harness deployment stands on, and what changes rarely. An operator applies
-# it (make platform). The release stack, which CI applies on every merge to main, builds on its outputs.
+# The platform: what the meta-harness deployment stands on, and what changes rarely. CI applies it on
+# every merge to main, before the release stack, which builds on its outputs. make platform applies it by
+# hand, for a new project and for a change deploy/platform_guard.py refuses.
 #
 # Network: one VPC with one subnet; the VM has no public address and reaches out through Cloud NAT. SSH
 # comes only through Identity-Aware Proxy, and only the subnet (the edge's Direct VPC egress) reaches
@@ -193,13 +194,20 @@ resource "google_service_account_iam_member" "deploy_from_github" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
 
-# What a deploy may do: update or replace the VM, deploy the edge, push its image, and read and write the
-# release stack's state. It cannot change IAM, secrets or the network: those are this stack's, applied by hand.
-# The last two let it update the running VM over IAP SSH, with sudo, through OS Login.
+# What a deploy may do. It applies the release stack: update or replace the VM, deploy the edge, push its
+# image. The two after those let it update the running VM over IAP SSH, with sudo, through OS Login.
+# It also applies this stack, so a merged change to the network, an identity, a role or a secret's
+# container takes effect with no person running Terraform. That needs the roles on the second and third
+# lines, and with them the deploy account can grant itself anything in the project: what stands between
+# a pull request and those roles is that only main's merged commits sign in as this account, and
+# deploy/platform_guard.py, which refuses a plan that destroys what the deployment cannot lose.
 resource "google_project_iam_member" "deploy" {
   for_each = toset([
     "roles/compute.instanceAdmin.v1", "roles/run.admin", "roles/firebasehosting.admin",
     "roles/iap.tunnelResourceAccessor", "roles/compute.osAdminLogin",
+    "roles/compute.networkAdmin", "roles/compute.securityAdmin", "roles/iam.serviceAccountAdmin",
+    "roles/iam.workloadIdentityPoolAdmin", "roles/resourcemanager.projectIamAdmin", "roles/secretmanager.admin",
+    "roles/artifactregistry.admin", "roles/serviceusage.serviceUsageAdmin", "roles/firebase.admin",
   ])
   project = var.project
   role    = each.value
@@ -220,9 +228,9 @@ resource "google_artifact_registry_repository_iam_member" "deploy_pushes" {
   member     = "serviceAccount:${local.deploy_sa}"
 }
 
-# The release stack's state, and the platform stack's outputs it reads.
+# Both stacks' state, and the bucket's own grants, which this stack holds.
 resource "google_storage_bucket_iam_member" "deploy_state" {
-  for_each = toset(["roles/storage.objectAdmin", "roles/storage.legacyBucketReader"])
+  for_each = toset(["roles/storage.objectAdmin", "roles/storage.legacyBucketReader", "roles/storage.admin"])
   bucket   = var.state_bucket
   role     = each.value
   member   = "serviceAccount:${local.deploy_sa}"

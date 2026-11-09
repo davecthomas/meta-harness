@@ -16,7 +16,7 @@
 # The zero-cost end-to-end check still lives in samples/temporal-run-task (make e2e there).
 #
 # Google Cloud (deploy/README.md). Every merge to main deploys itself (.github/workflows/deploy.yml).
-#   make platform       apply the platform Terraform stack: network, identity, secrets' containers, disk
+#   make platform       apply the platform Terraform stack by hand: a new project, or a plan the deploy's guard refuses
 #   make deploy         deploy main by hand: runs the deploy workflow and follows it
 #   make deploy-status  the commit the VM last booted, and the console's URL
 

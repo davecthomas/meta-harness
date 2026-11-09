@@ -2168,22 +2168,51 @@ stacks with state in a Cloud Storage bucket.
 | Meta-harness run service worker, egress proxy, per-run sandboxes | The VM, with the Docker executor backend | `mh-worker.service`, `mh-egress.service`. Per-run sandboxes are containers on the VM, `MH_MAX_RUNNING` caps them, and each run's workspace and git directory live under `/var/lib/meta-harness/runs` |
 | Secrets | Secret Manager, read at boot into `/etc/meta-harness/env` | Provider keys, the service key, the gateway key, the repo registry and each GitHub App's private key. 
 
-The **platform** stack is what changes rarely, and an operator applies it
-(`make platform`): the network, Cloud NAT, the firewall rules, the VM's
-fixed address and its data disk, the service accounts and every role they
-hold, the GitHub sign-in, the secrets' containers, Artifact Registry and the
-console's access list. The **release** stack is a commit: the VM at that
-commit, and the edge on Cloud Run from the image built from it.
+The **platform** stack is what changes rarely: the network, Cloud NAT, the
+firewall rules, the VM's fixed address and its data disk, the service
+accounts and every role they hold, the GitHub sign-in, the secrets'
+containers, Artifact Registry and the console's access list. The
+**release** stack is a commit: the VM at that commit, and the edge on Cloud
+Run from the image built from it.
 
-Every merge to main deploys itself. `.github/workflows/deploy.yml` waits
-for main's four checks to pass at the merged commit, builds the edge image
-and pushes it to Artifact Registry tagged with the commit, and applies the
-release stack with the commit and the image. It signs in as `mh-deploy-sa`
-through workload identity federation, whose provider accepts only this
-repository's main branch, so GitHub holds no Google Cloud key. The account
-may replace the VM, deploy the edge, push its image and write the release
-state; it cannot change IAM, secrets or the network, which are the platform
-stack's.
+Every merge to main deploys itself, infrastructure included, so a task's
+merged pull request is all it takes to change either stack.
+`.github/workflows/deploy.yml` waits for main's four checks to pass at the
+merged commit, then:
+
+1. It plans the platform stack. No change applies nothing. A change is
+   applied, unless `deploy/platform_guard.py` refuses the plan.
+2. It builds the edge image and pushes it to Artifact Registry tagged with
+   the commit.
+3. It applies the release stack with the commit and the image. The release
+   stack reads the platform stack's outputs, which is why the platform goes
+   first: a pull request can add a platform output and use it in the release
+   stack at once.
+
+The guard refuses a plan that deletes or replaces what the deployment cannot
+lose: the data disk, the network, a service account, the sign-in from
+GitHub Actions, a secret, the image repository, the console's site, an
+enabled API, or the deploy account's own way in (its sign-in and its access
+to the Terraform state). New resources, changes in place, and removed
+grants and firewall rules apply. A refused plan fails the deploy before
+anything changes, and its issue names the resources.
+
+The workflow signs in as `mh-deploy-sa` through workload identity
+federation, whose provider accepts only this repository's main branch, so
+GitHub holds no Google Cloud key and a pull request's code never runs with
+cloud access. Applying the platform stack takes roles that let the account
+change IAM, secrets and the network, so the account can grant itself
+anything in the project. What guards it is the path to main: the checks, the
+review loop's review on another model, and the guard on the plan. No pull
+request sees its plan before it merges, because planning needs cloud access
+that a pull request must not have.
+
+Three things stay outside a deploy. A secret's value is added by hand
+(`gcloud secrets versions add`), since Terraform never sees one; a secret
+the system can generate itself, as it does the session key, belongs in the
+stack. A new project is set up once by hand (`make platform`), which is also
+how a plan the guard refuses is applied. And a failed platform apply has no
+rollback: the fix is the next merge.
 
 A deploy updates the running VM in place. The release apply changes only
 the VM's metadata (the commit, the startup script), so the VM keeps running.
@@ -2398,7 +2427,7 @@ come: `feat/code-host-webhooks`, `feat/takeover`, `feat/planner-sync` and
 | `feat/console-web-app-runs` | The console web app in React and TypeScript (`console/`), and the local edge that serves it and routes `/v1` as the signed-in operator. Lists read ahead as you scroll; the Tasks page shows running tasks as a list or as terminal tiles 4, 16 or 32 up, where only the tiles on screen stream, over one server-sent-event stream; the Task page shows the live run and loads older events as you scroll up; cancel and the kill switch, which the meta-harness scheduler carries out | The tiles of running tasks stream their events as they happen, and scrolling moves the stream to the tiles in view |
 | `feat/deploy-cloud` | One VM running every control-plane service, Postgres, the Temporal dev server, Redis, the HTTP Gateway on its own configuration, the worker and its per-run sandboxes, as systemd units booted from Secret Manager; the edge on Cloud Run behind Identity-Aware Proxy with the IAP header check; the clone's git directory outside the sandbox mount (see Deployment without GKE) | `deploy/gcp.sh infra && deploy/gcp.sh edge`, then a goal created in the cloud console runs a labeled issue to a pull request, and a request without IAP credentials gets 401 |
 | `feat/real-runs` | Python 3.12, uv and Poetry in the per-run sandbox image; harness profiles sized for these repos, with resources and a bash allowlist; the run activity's timeout from the profile; router tiers on Sonnet 5 and Opus 5.5, with each tier's thinking level sent on every turn; a $10.00 default task limit; an e2-standard-8 VM | `uv run pytest -q`, `npm test` in `images/harness-pi`, and `make e2e` in CI |
-| `feat/terraform-deploy` | The cloud in Terraform: a platform stack an operator applies and a release stack CI applies on every merge to main through workload identity federation; the VM replaced per commit with its state on a data disk; `make platform`, `make deploy`, `make deploy-status` | A merge to main deploys, and `make deploy-status` names the merged commit as what the VM booted |
+| `feat/terraform-deploy` | The cloud in Terraform: a platform stack and a release stack, which CI applies on every merge to main through workload identity federation; the VM replaced per commit with its state on a data disk; `make platform`, `make deploy`, `make deploy-status` | A merge to main deploys, and `make deploy-status` names the merged commit as what the VM booted |
 | `feat/deploy-managed` | Cloud SQL for the control plane's tables, and Temporal Cloud for the run service namespace | `make deploy`, then the same goal check |
 | `feat/code-host-webhooks` | The webhook endpoint: signature check, and check, merge and close deliveries as RunTask workflow signals | `make webhook-replay` |
 | `feat/review-loop` | The review run with `submit_review`, the posted review, the fix run, and the round and budget limits (merged, #85) | `make e2e-review`: `changes`, a fix, then `clean` |
