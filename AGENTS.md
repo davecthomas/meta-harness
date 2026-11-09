@@ -24,9 +24,9 @@ and what is planned.
 
 - Never call a model provider, the real HTTP Gateway, GitHub or Google Cloud
   from a test.
-- Do not apply Terraform or change anything in a Google Cloud project. A
-  merge to main deploys itself (`.github/workflows/deploy.yml`); an operator
-  applies the platform stack (deploy/README.md).
+- A merge to main deploys itself (`.github/workflows/deploy.yml`). A change to
+  the platform stack takes effect when it is applied, with `make platform`
+  (deploy/README.md).
 - Code names no model and no harness profile: they live in `config/`.
 - Every new or changed setting is checked at service startup, so a bad one
   stops the service with its name.
