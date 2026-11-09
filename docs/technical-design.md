@@ -2428,7 +2428,7 @@ make sense as one goal:
 |---|---|
 | `meta-harness:parallel` | A repo's tasks run side by side: the parallel limit, the merge queue, `Paths:` in issues, and code laid out so tasks edit different files |
 | `meta-harness:operations` | Running the deployment: deploys, workflow changes under running tasks, recovery. A failed deploy files its issue here |
-| `meta-harness:console` | The console's admin and user menus: roles, the configuration editors, repositories, logs, user settings, trackers |
+| `meta-harness:console` | The console's admin and user menus: roles, the configuration editors, repositories, logs, user settings |
 | `meta-harness:goal-lifecycle` | A goal from saved to met: save and start, picking issues, each task's pull request, the goal's board, completing and reopening |
 | `meta-harness:goal-planning` | A `feature` goal plans its own issues: the planning profile, the plan, and its approval |
 | `meta-harness:console-ux` | The console as the place to follow and steer a task: the run timeline, diffs, reviews, steering, attempts, cost, the inbox |
