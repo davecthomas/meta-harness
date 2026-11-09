@@ -567,10 +567,10 @@ candidates, in order.
 "router": {
   "tiers": [
     {"name": "standard", "description": "A feature or fix inside one module, with clear acceptance checks, or anything smaller: config, copy, a one-file edit.",
-     "models": ["harness:pi-lean/claude:claude-sonnet-5", "harness:pi-lean/openai:gpt-5.6-luna"],
+     "models": ["harness:pi-lean/claude:claude-sonnet-5", "harness:pi-lean/openai-responses:gpt-5.6-luna"],
      "thinking": "medium"},
     {"name": "complex", "description": "Cross-module changes, migrations, concurrency, security-sensitive code, or vague requirements.",
-     "models": ["harness:pi-careful/claude:claude-opus-5-5", "harness:pi-careful/openai:gpt-6-sol"],
+     "models": ["harness:pi-careful/claude:claude-opus-5-5", "harness:pi-careful/openai-responses:gpt-6-sol"],
      "thinking": "high"}
   ],
   "classifier": {"engine": "openai-decisions", "min_confidence": 0.7},
@@ -586,6 +586,15 @@ of that name exists, a `trivial` floor is no floor, and a `route: trivial`
 call runs on the run's pinned model, as any unknown route does.
 
 A tier candidate takes the form `harness:<harness profile>/<provider>:<model>`.
+An OpenAI model is named with the `openai-responses` engine. Every harness
+turn sends tools with a reasoning level, and the `openai` engine sends them
+through Chat Completions, which OpenAI refuses for its reasoning models. A
+save naming `openai` in a tier is refused, and at startup the planner moves
+the active tiers' `openai` candidates to `openai-responses` as a new
+version, origin `shipped`. A reviewer pair naming `openai` runs on
+`openai-responses`. The review loop compares a reviewer with the pull
+request's author by model, so one model reached through two engines never
+reviews its own work.
 The ai-api-unified router reads `harness` as its provider and returns the
 string unchanged. In classify-only mode (`AiRouteClassifier`) the router never
 builds or probes a candidate, so the meta-harness run service validates each
@@ -661,7 +670,7 @@ are planned.
   "exploration": {"share": 0.05, "eligible_tiers": ["trivial", "standard"],
                   "challengers": ["harness:pi-careful/openai-compatible:qwen3-coder-next"]},
   "review": {"reviewers": ["harness:pi-review/claude:claude-opus-5-5",
-                           "harness:pi-review/openai:gpt-5.6-luna"],
+                           "harness:pi-review/openai-responses:gpt-5.6-luna"],
              "max_rounds": 3, "operator_alert_minutes": 240},
   "max_run_minutes": 240
 }

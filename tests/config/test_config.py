@@ -229,3 +229,35 @@ def test_the_planner_adds_shipped_profiles_at_startup_and_records_it(monkeypatch
     assert [(t, p["kind"], p["origin"], f["actor"]) for t, p, f in events.events] == [
         ("config_changed", "profiles", "shipped", "meta-harness")
     ]
+
+
+def test_a_tier_candidate_on_the_openai_engine_is_refused_with_the_engine_to_use(client):
+    tiers = copy.deepcopy(TIERS)
+    tiers["tiers"][1]["models"][1] = "harness:pi-careful/openai:gpt-6-sol"
+
+    response = client.put("/v1/config/tiers", json={"document": tiers, "note": "chat completions"})
+
+    assert response.status_code == 422
+    assert any("name openai-responses" in reason for reason in response.json()["detail"]["reasons"])
+
+
+def test_the_active_tiers_move_off_the_openai_engine_once_and_keep_everything_else(monkeypatch):
+    old = copy.deepcopy(TIERS)
+    old["tiers"][1]["models"][1] = "harness:pi-careful/openai:gpt-6-sol"
+    monkeypatch.setitem(
+        kinds.KINDS, "tiers", dataclasses.replace(kinds.KINDS["tiers"], seed=lambda: copy.deepcopy(old))
+    )
+    with db.connect(autocommit=True) as conn:
+        first = store.active(conn, "tiers")
+
+        saved = store.replace_engines(conn)
+
+        assert [(s["origin"], s["edited_by"]) for s in saved] == [("shipped", "meta-harness")]
+        assert (
+            "harness:pi-careful/openai:gpt-6-sol to harness:pi-careful/openai-responses:gpt-6-sol" in saved[0]["note"]
+        )
+        now = store.active(conn, "tiers")
+        assert now["version"] == first["version"] + 1
+        assert now["document"]["tiers"][1]["models"][1] == "harness:pi-careful/openai-responses:gpt-6-sol"
+        assert now["document"]["tiers"][0] == old["tiers"][0]
+        assert store.replace_engines(conn) == [], "a second start changes nothing"
