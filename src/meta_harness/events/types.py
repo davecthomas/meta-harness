@@ -135,6 +135,12 @@ REGISTRY: list[EventType] = [
             ["pr_url", "head_sha"],
         ),
     ),
+    # A task's pull request closed without merging, as the planner's sweep found it.
+    EventType(
+        "pull_request_closed",
+        1,
+        _object({"pr_url": {"type": "string"}, "head_sha": {"type": "string"}}, ["pr_url"]),
+    ),
     # Planner
     EventType(
         "goal_created",
