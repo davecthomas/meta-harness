@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 import pytest
@@ -191,6 +192,56 @@ async def test_a_paused_goal_is_not_swept_now(api):
     assert api.post(f"/v1/goals/{goal['id']}/pause", headers=OPERATOR).json()["status"] == "paused"
     assert api.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).status_code == 409
     assert api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR).json()["status"] == "active"
+
+
+async def test_a_created_goal_starts_at_once_by_default(api, parts):
+    events, _, _ = parts
+    goal = api.post(
+        "/v1/goals",
+        json={"statement": "Fix bugs", "repos": ["davecthomas/meta-harness"], "label": _label()},
+        headers=OPERATOR,
+    ).json()
+    assert goal["status"] == "active"
+    assert goal["started_at"] is not None
+    [created] = [p for t, p in events.events if t == "goal_created"]
+    assert created["start"] is True
+
+
+async def test_a_goal_saved_without_starting_takes_in_nothing_until_it_starts(api, parts):
+    events, tracker, tasks = parts
+    label = _label()
+    goal = api.post(
+        "/v1/goals",
+        json={"statement": "Fix bugs", "repos": ["davecthomas/meta-harness"], "label": label, "start": False},
+        headers=OPERATOR,
+    ).json()
+    assert goal["status"] == "paused"
+    assert goal["started_at"] is None
+    [created] = [p for t, p in events.events if t == "goal_created"]
+    assert created["start"] is False
+    tracker.add("davecthomas/meta-harness", _number(), body="Broken.", labels=[label])
+    assert api.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).status_code == 409
+    shown = api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+    assert shown["started_at"] is None
+    assert shown["issues"] == []
+    assert tasks.tasks == {}
+
+    started = api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR).json()
+    assert started["status"] == "active"
+    assert started["started_at"] is not None
+    [changed] = [p for t, p in events.events if t == "goal_changed"]
+    assert changed["changes"]["status"] == {"from": "paused", "to": "active"}
+    assert "started_at" in changed["changes"]
+    # The first start sweeps at once, as creating an active goal does.
+    for _ in range(50):
+        if tasks.tasks:
+            break
+        await asyncio.sleep(0.05)
+    assert len(tasks.tasks) == 1
+
+    api.post(f"/v1/goals/{goal['id']}/pause", headers=OPERATOR)
+    again = api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR).json()
+    assert again["started_at"] == started["started_at"]
 
 
 # --- A goal's end: met on its own, completed by hand, reopened ---------------------------------------
