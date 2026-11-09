@@ -1,7 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Group, Loader, SegmentedControl, Stack, Table, Text, TextInput } from "@mantine/core";
-import { IconArrowBackUp, IconCheck, IconCircleCheck, IconDownload, IconPencil, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { IconArrowBackUp, IconCheck, IconCircleCheck, IconDownload, IconListCheck, IconPencil, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { IssuesPicker } from "../components/IssuesPicker";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../api";
 import { GoalBoard, GoalGraph, GoalProgress } from "../components/GoalBoard";
 import { useEventStream, useInfinite } from "../hooks";
@@ -22,6 +23,7 @@ export function GoalPage() {
   const [spend, setSpend] = useState<Record<string, number>>({});
   const [from, setFrom] = useState<number | null>(null);
   const [view, setView] = useState<"board" | "graph" | "table" | null>(null);
+  const [picking, setPicking] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -29,9 +31,9 @@ export function GoalPage() {
       setGoal(g);
       const page = await api.tasks({ goalId }, 0, 1000);
       setTasks(Object.fromEntries(page.items.map((t) => [t.id, t])));
-      if (goalStatus(g) === "not_started") {
+      if (goalStatus(g) === "not_started" && g.label) {
         const found = await Promise.all(
-          g.repos.map(async (repo) => (await api.labelIssues(repo, g.label)).map((issue) => ({ ...issue, repo }))),
+          g.repos.map(async (repo) => (await api.labelIssues(repo, g.label!)).map((issue) => ({ ...issue, repo }))),
         );
         setWaiting(found.flat());
       } else {
@@ -146,12 +148,30 @@ export function GoalPage() {
               <Button leftSection={<IconArrowBackUp size={16} />} onClick={() => act(() => api.goalAction(goal.id, "reopen"))}>Reopen goal</Button>
             )}
             {open && (
+              <Button variant="default" leftSection={<IconListCheck size={16} />} onClick={() => setPicking(true)}>Add issues</Button>
+            )}
+            {open && (
               <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={() => act(() => api.goalAction(goal.id, "cancel"))}>Cancel goal</Button>
             )}
           </>
         }
       />
       <ErrorAlert error={error} />
+      <IssuesPicker
+        opened={picking}
+        onClose={() => setPicking(false)}
+        repos={goal.repos}
+        chosen={issues.map((i) => i.ref)}
+        goalId={goal.id}
+        action="Add to goal"
+        onPick={async (refs) => {
+          const held = new Set(issues.map((i) => i.ref));
+          const added = refs.filter((r) => !held.has(r));
+          if (added.length) await api.addIssues(goal.id, added);
+          await load();
+          await loadProgress();
+        }}
+      />
       {editing !== null && (
         <form
           onSubmit={(e) => {
@@ -169,7 +189,7 @@ export function GoalPage() {
       <Facts
         items={[
           ["Modality", <Text size="sm">{goal.modality}</Text>],
-          ["Label", <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge>],
+          ["Label", goal.label ? <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> : <Text size="sm" c="dimmed">None: the goal takes the issues picked for it</Text>],
           ["Repos", <Stack gap={2}>{goal.repos.map((r) => <Text ff="monospace" size="sm" key={r}>{r}</Text>)}</Stack>],
           ["Auto-merge", (
             <Group gap="sm">
@@ -282,8 +302,7 @@ export function GoalPage() {
         <Empty>No tasks yet: the goal takes in its issues when it starts.</Empty>
       ) : (
         <Empty>
-          No issues yet. Label an open issue <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> in one of the goal's
-          repos. The planner takes it in within a minute, or now with Take in issues now.
+          No issues yet. {goal.label ? <>Label an open issue <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> in one of the goal's repos, or pick issues with Add issues.</> : "Pick issues with Add issues."} The planner takes them in within a minute, or now with Take in issues now.
         </Empty>
       )}
       <div ref={shown.sentinel} />

@@ -87,7 +87,8 @@ export interface Goal {
   // The goal's description: what it is, which the planner reads.
   statement: string;
   repos: string[];
-  label: string;
+  // The label that queues an issue for the goal; null for a goal that takes only issues picked by ref.
+  label: string | null;
   modality: string;
   status: string;
   auto_merge: boolean;
@@ -196,6 +197,11 @@ export const api = {
   createGoal: (body: Record<string, unknown>) => call<Goal>("/v1/goals", { method: "POST", body: JSON.stringify(body) }),
   // Goals from labels: every label on the registered repos' open issues, a label's issues, and a drafted goal.
   labels: (repo?: string) => call<{ repos: string[]; labels: LabelCount[] }>("/v1/labels" + query({ repo })),
+  // A registered repo's open issues, newest first, with the label and title text given, if any.
+  repoIssues: (repo: string, params: { label?: string; q?: string; cursor?: number; limit?: number }) =>
+    call<{ issues: LabelIssue[]; total: number; next_cursor: number | null }>(`/v1/repos/${repo}/issues` + query(params)),
+  addIssues: (goalId: string, refs: string[]) =>
+    call<{ added: string[] }>(`/v1/goals/${goalId}/issues`, { method: "POST", body: JSON.stringify({ refs }) }),
   labelIssues: (repo: string, label: string) =>
     call<{ issues: LabelIssue[] }>(`/v1/repos/${repo}/issues` + query({ label })).then((r) => r.issues),
   draftGoal: (body: { label: string; repos: string[]; refs: string[] }) =>

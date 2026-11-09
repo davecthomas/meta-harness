@@ -35,7 +35,7 @@ from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
 from meta_harness.planner import drafting, progress, repos, store
 from meta_harness.planner.sweep import CodeHost, Events, SweepResult, active_goals, sweep_goal
-from meta_harness.planner.tracker import Tracker
+from meta_harness.planner.tracker import Tracker, parse_ref
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
 log = logging.getLogger("meta_harness.planner")
@@ -49,13 +49,20 @@ class GoalIn(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=80)
     statement: str = Field(min_length=1, max_length=4000)
     repos: list[str] = Field(min_length=1)
-    label: str = Field(min_length=1, max_length=100)
+    # The label that queues an issue for the goal. None: the goal takes only the refs given.
+    label: str | None = Field(default=None, min_length=1, max_length=100)
+    # Issues the goal holds from the start, by ref (github:owner/repo#n), besides its label's.
+    refs: list[str] = Field(default_factory=list, max_length=500)
     modality: str = "fix"
     auto_merge: bool = False
     max_usd: Decimal | None = Field(default=None, gt=0)
     priority: int = 0
     # False: save the goal paused and never started; resume starts it.
     start: bool = True
+
+
+class RefsIn(BaseModel):
+    refs: list[str] = Field(min_length=1, max_length=500)
 
 
 class DraftIn(BaseModel):
@@ -229,6 +236,36 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"not in the repo registry: {', '.join(unknown)}")
         return [repos.get(name).name for name in names]
 
+    def checked_refs(refs: list[str], goal_repos: list[str]) -> list[tuple[str, str]]:
+        """Each ref with its repo's registry name. 422 for a malformed ref or one outside the goal's repos."""
+        allowed = {name.lower(): name for name in goal_repos}
+        pairs, wrong = [], []
+        for ref in dict.fromkeys(refs):
+            try:
+                repo, number = parse_ref(ref)
+            except ValueError:
+                wrong.append(f"{ref} is not github:<owner>/<repo>#<number>")
+                continue
+            if repo.lower() not in allowed:
+                wrong.append(f"{ref} is in {repo}, which is not one of the goal's repos")
+                continue
+            pairs.append((f"github:{allowed[repo.lower()]}#{number}", allowed[repo.lower()]))
+        if wrong:
+            raise HTTPException(status_code=422, detail="; ".join(wrong))
+        return pairs
+
+    def add(goal: dict, who: str, refs: list[str]) -> list[str]:
+        """Hold refs for the goal, and record each one held as issue_added. 409 for a ref another goal holds."""
+        pairs = checked_refs(refs, goal["repos"])
+        try:
+            with app.state.pool.connection() as conn:
+                added = store.add_refs(conn, goal["id"], pairs)
+        except store.GoalError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        for ref in added:
+            events.emit("issue_added", {"ref": ref, "goal_id": goal["id"]}, actor=who, tags={"goal_id": goal["id"]})
+        return added
+
     async def open_issues(names: list[str], label: str | None) -> dict[str, list]:
         found = await asyncio.gather(*(tracker.list_open(name, label) for name in names))
         return dict(zip(names, found, strict=True))
@@ -257,15 +294,31 @@ def create_app(
         return {"repos": names, "labels": drafting.count_labels(issues, held)}
 
     @app.get("/v1/repos/{owner}/{name}/issues")
-    async def label_issues(owner: str, name: str, label: str = Query(min_length=1), who: str = Depends(operator)):
-        """A registered repo's open issues with the label, each with the open goal that holds it, if any."""
+    async def repo_issues(
+        owner: str,
+        name: str,
+        label: str | None = Query(default=None, min_length=1),
+        q: str | None = None,
+        cursor: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=500),
+        who: str = Depends(operator),
+    ):
+        """A registered repo's open issues, with the label if given and the text q in their titles if given,
+        newest first, a page at a time from cursor. Each names the open goal that holds it, if any."""
         [repo] = registered([f"{owner}/{name}"])
         issues = (await open_issues([repo], label))[repo]
+        if q:
+            issues = [i for i in issues if q.lower() in i.title.lower()]
+        issues = sorted(issues, key=lambda i: i.number, reverse=True)
+        total = len(issues)
+        issues = issues[cursor : cursor + limit]
         with app.state.pool.connection() as conn:
             held = store.holders(conn, [i.ref for i in issues])
         return {
             "repo": repo,
             "label": label,
+            "total": total,
+            "next_cursor": cursor + limit if cursor + limit < total else None,
             "issues": [
                 {
                     "ref": i.ref,
@@ -310,9 +363,14 @@ def create_app(
         if unknown:
             raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
         names = [repos.get(name).name for name in body.repos]
+        if not body.label and not body.refs:
+            raise HTTPException(status_code=422, detail="a goal needs a label, or issues picked by ref, or both")
+        pairs = checked_refs(body.refs, names)
+        fields = body.model_dump(exclude={"refs"})
         try:
             with app.state.pool.connection() as conn:
-                goal = store.create(conn, who, store.NewGoal(**{**body.model_dump(), "repos": names}))
+                goal = store.create(conn, who, store.NewGoal(**{**fields, "repos": names}))
+                held = store.add_refs(conn, goal["id"], pairs)
         except store.GoalError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
         events.emit(
@@ -329,6 +387,8 @@ def create_app(
             },
             actor=who,
         )
+        for ref in held:
+            events.emit("issue_added", {"ref": ref, "goal_id": goal["id"]}, actor=who, tags={"goal_id": goal["id"]})
         if goal["status"] == "active":
             asyncio.create_task(sweep_one(goal))
         if not goal["title"]:
@@ -377,6 +437,31 @@ def create_app(
         except Exception as err:  # noqa: BLE001 - an unreachable event service is the caller's 502
             raise HTTPException(status_code=502, detail=f"could not read the tasks' events: {err}") from err
         return {"goal_id": goal_id, "issues": progress.issues_progress(links, found, recorded)}
+
+    @app.post("/v1/goals/{goal_id}/issues")
+    async def add_issues(goal_id: str, body: RefsIn, who: str = Depends(operator)) -> dict:
+        """Hold issues for the goal by ref. An active goal takes them in at once."""
+        goal = await asyncio.to_thread(load, goal_id)
+        if goal["status"] in ("met", "canceled"):
+            raise HTTPException(status_code=409, detail=f"the goal is {goal['status']}: reopen it first")
+        added = await asyncio.to_thread(add, goal, who, body.refs)
+        if added and goal["status"] == "active":
+            asyncio.create_task(sweep_one(goal))
+        return {"goal_id": goal_id, "added": added}
+
+    @app.delete("/v1/goals/{goal_id}/issues/{ref:path}")
+    def drop_issue(goal_id: str, ref: str, who: str = Depends(operator)) -> dict:
+        """Let go of an issue the goal holds and has made no task for."""
+        load(goal_id)
+        try:
+            with app.state.pool.connection() as conn:
+                store.drop_ref(conn, goal_id, ref)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail=f"the goal does not hold {ref}") from err
+        except store.GoalError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        events.emit("issue_dropped", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
+        return {"goal_id": goal_id, "dropped": ref}
 
     @app.patch("/v1/goals/{goal_id}")
     def patch(goal_id: str, body: GoalPatch, who: str = Depends(operator)) -> dict:

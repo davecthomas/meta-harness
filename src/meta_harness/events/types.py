@@ -213,6 +213,16 @@ REGISTRY: list[EventType] = [
         "issue_refused", 1, _object({"ref": {"type": "string"}, "reason": {"type": "string"}}, ["ref", "reason"])
     ),
     EventType("issue_closed", 1, _object({"ref": {"type": "string"}}, ["ref"])),
+    EventType(
+        "issue_added",
+        1,
+        _object({"ref": {"type": "string"}, "goal_id": {"type": "string"}}, ["ref", "goal_id"]),
+    ),
+    EventType(
+        "issue_dropped",
+        1,
+        _object({"ref": {"type": "string"}, "goal_id": {"type": "string"}}, ["ref", "goal_id"]),
+    ),
     EventType("task_unblocked", 1, _object({"ref": {"type": "string"}}, ["ref"])),
     # Meta-harness scheduler
     EventType(

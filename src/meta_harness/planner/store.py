@@ -40,7 +40,8 @@ class NotFound(LookupError):
 class NewGoal:
     statement: str
     repos: list[str]
-    label: str
+    # None: the goal takes only the issues an operator adds by ref.
+    label: str | None
     modality: str = "fix"
     auto_merge: bool = False
     max_usd: Decimal | None = None
@@ -215,6 +216,42 @@ def save_link(
             "depends_on = EXCLUDED.depends_on, refused_reason = EXCLUDED.refused_reason, last_seen_at = now()",
             (ref, goal_id, repo, task_id, state, depends_on, refused_reason),
         )
+
+
+def add_refs(conn: psycopg.Connection, goal_id: str, refs: list[tuple[str, str]]) -> list[str]:
+    """Hold these (ref, repo) pairs for the goal, for its sweep to take in. Returns the refs it now holds that
+    it did not. A ref another goal holds, in any status, is refused, naming that goal."""
+    added = []
+    with conn.transaction():
+        for ref, repo in refs:
+            row = conn.execute(
+                "SELECT l.goal_id, g.status FROM planner.issue_link l JOIN planner.goal g ON g.id = l.goal_id "
+                "WHERE l.ref = %s FOR UPDATE OF l",
+                (ref,),
+            ).fetchone()
+            if row and row[0] != goal_id:
+                raise GoalError(f"{ref} is held by goal {row[0]}, which is {row[1]}")
+            if row:
+                continue
+            conn.execute(
+                "INSERT INTO planner.issue_link (ref, goal_id, repo, state, depends_on) VALUES (%s, %s, %s, 'open', '{}')",
+                (ref, goal_id, repo),
+            )
+            added.append(ref)
+    return added
+
+
+def drop_ref(conn: psycopg.Connection, goal_id: str, ref: str) -> None:
+    """Let go of an issue the goal holds and has made no task for yet."""
+    with conn.transaction():
+        row = conn.execute(
+            "SELECT task_id FROM planner.issue_link WHERE ref = %s AND goal_id = %s FOR UPDATE", (ref, goal_id)
+        ).fetchone()
+        if row is None:
+            raise NotFound(ref)
+        if row[0]:
+            raise GoalError(f"{ref} already has task {row[0]}: cancel the task instead")
+        conn.execute("DELETE FROM planner.issue_link WHERE ref = %s", (ref,))
 
 
 def set_link_state(conn: psycopg.Connection, ref: str, state: str) -> None:

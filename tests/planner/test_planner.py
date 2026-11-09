@@ -622,3 +622,97 @@ async def test_at_startup_the_planner_titles_every_goal_that_has_none(parts, con
     assert store.get(conn, first["id"])["title"] and store.get(conn, second["id"])["title"]
     assert store.untitled(conn) == []
     assert read[untitled.index(first["id"])] == "First goal."
+
+
+# --- Issues picked by ref -------------------------------------------------------------------------------
+
+
+def test_a_goal_made_from_picked_issues_with_no_label_takes_in_only_those(api, parts):
+    events, tracker, tasks = parts
+    picked = tracker.add(REPO, _number(), title="Picked one")
+    other = tracker.add(REPO, _number(), labels=[], title="Not picked")
+    created = api.post(
+        "/v1/goals",
+        json={"statement": "Fix the picked issue.", "repos": [REPO], "refs": [picked], "start": False},
+        headers=OPERATOR,
+    )
+    assert created.status_code == 201, created.text
+    goal = created.json()
+    assert goal["label"] is None
+    assert [p for t, p in events.events if t == "issue_added"] == [{"ref": picked, "goal_id": goal["id"]}]
+
+    api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR)
+    _sweep(api, goal)
+
+    assert [p["ref"] for t, p in events.events if t == "issue_joined" and p["goal_id"] == goal["id"]] == [picked]
+    assert {t["external_ref"] for t in tasks.tasks.values() if t["goal_id"] == goal["id"]} == {picked}
+    assert other not in {t["external_ref"] for t in tasks.tasks.values()}
+
+
+def test_a_goal_needs_a_label_or_picked_issues(api):
+    refused = api.post("/v1/goals", json={"statement": "Nothing.", "repos": [REPO]}, headers=OPERATOR)
+    assert refused.status_code == 422 and "label" in refused.text
+
+
+def test_issues_are_added_by_ref_and_one_another_goal_holds_is_refused_naming_it(api, parts):
+    _, tracker, _ = parts
+    first = api.post(
+        "/v1/goals", json={"statement": "A.", "repos": [REPO], "label": _label(), "start": False}, headers=OPERATOR
+    ).json()
+    second = api.post(
+        "/v1/goals", json={"statement": "B.", "repos": [REPO], "label": _label(), "start": False}, headers=OPERATOR
+    ).json()
+    ref = tracker.add(REPO, _number())
+
+    added = api.post(f"/v1/goals/{first['id']}/issues", json={"refs": [ref, ref]}, headers=OPERATOR)
+    assert added.json()["added"] == [ref]
+    assert api.post(f"/v1/goals/{first['id']}/issues", json={"refs": [ref]}, headers=OPERATOR).json()["added"] == []
+
+    taken = api.post(f"/v1/goals/{second['id']}/issues", json={"refs": [ref]}, headers=OPERATOR)
+    assert taken.status_code == 409 and first["id"] in taken.json()["detail"]
+    outside = api.post(f"/v1/goals/{second['id']}/issues", json={"refs": ["github:o/elsewhere#1"]}, headers=OPERATOR)
+    assert outside.status_code == 422 and "not one of the goal's repos" in outside.json()["detail"]
+    malformed = api.post(f"/v1/goals/{second['id']}/issues", json={"refs": ["#12"]}, headers=OPERATOR)
+    assert malformed.status_code == 422
+
+
+def test_an_added_issue_with_no_task_can_be_dropped_and_one_with_a_task_cannot(api, parts):
+    _, tracker, _ = parts
+    goal = api.post(
+        "/v1/goals", json={"statement": "A.", "repos": [REPO], "label": _label(), "start": False}, headers=OPERATOR
+    ).json()
+    waiting = tracker.add(REPO, _number(), labels=[])
+    api.post(f"/v1/goals/{goal['id']}/issues", json={"refs": [waiting]}, headers=OPERATOR)
+
+    dropped = api.delete(f"/v1/goals/{goal['id']}/issues/{waiting.replace('#', '%23')}", headers=OPERATOR)
+    assert dropped.status_code == 200, dropped.text
+    assert waiting not in {i["ref"] for i in api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["issues"]}
+
+    started = tracker.add(REPO, _number(), labels=[])
+    api.post(f"/v1/goals/{goal['id']}/issues", json={"refs": [started]}, headers=OPERATOR)
+    api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR)
+    _sweep(api, goal)
+    kept = api.delete(f"/v1/goals/{goal['id']}/issues/{started.replace('#', '%23')}", headers=OPERATOR)
+    assert kept.status_code == 409 and "cancel the task" in kept.json()["detail"]
+
+
+def test_a_repos_open_issues_are_browsed_by_label_text_and_page(api, parts):
+    _, tracker, _ = parts
+    label = _label()
+    numbers = sorted(_number() for _ in range(3))
+    for n in numbers:
+        tracker.add(REPO, n, labels=[label], title=f"Crash number {n}")
+    tracker.add(REPO, _number(), labels=[label], title="Something else")
+
+    first = api.get(
+        f"/v1/repos/{REPO}/issues", params={"label": label, "q": "crash", "limit": 2}, headers=OPERATOR
+    ).json()
+    assert first["total"] == 3 and first["next_cursor"] == 2
+    assert [i["number"] for i in first["issues"]] == [numbers[2], numbers[1]]
+    rest = api.get(
+        f"/v1/repos/{REPO}/issues", params={"label": label, "q": "crash", "limit": 2, "cursor": 2}, headers=OPERATOR
+    ).json()
+    assert [i["number"] for i in rest["issues"]] == [numbers[0]] and rest["next_cursor"] is None
+    unlabeled = api.get(f"/v1/repos/{REPO}/issues", params={"q": "something else"}, headers=OPERATOR).json()
+    assert unlabeled["total"] >= 1
+    assert api.get("/v1/repos/o/unknown/issues", headers=OPERATOR).status_code == 404
