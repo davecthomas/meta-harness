@@ -48,6 +48,9 @@ READ_ISSUES = {"issues": "read"}
 OPEN_PULL_REQUEST = {"pull_requests": "write", "issues": "write"}
 READ_CHECKS = {"checks": "read", "statuses": "read"}
 REVIEW = {"pull_requests": "write"}
+READ_PULL_REQUEST = {"pull_requests": "read"}
+# A check run that ends with one of these did not fail.
+PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
 PR_URL_PATTERN = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)$")
 # A check run's summary, in a fix prompt, is cut to this many characters.
 CHECK_SUMMARY_CHARS = 2000
@@ -301,6 +304,53 @@ async def check_runs(repo: str, sha: str) -> list[CheckRun]:
             )
         )
     return found
+
+
+@dataclass
+class ChecksState:
+    # pending (a check has not completed), passed, failed, or none (the commit has no checks yet).
+    state: str
+    failed: list[str]
+
+
+def checks_state(runs: list[CheckRun]) -> ChecksState:
+    """How a commit's checks stand: pending until every one completes, then passed or failed."""
+    if not runs:
+        return ChecksState("none", [])
+    if any(r.status != "completed" for r in runs):
+        return ChecksState("pending", [])
+    failed = [r.name for r in runs if r.conclusion not in PASSING_CONCLUSIONS]
+    return ChecksState("failed" if failed else "passed", failed)
+
+
+@dataclass
+class PullRequest:
+    repo: str
+    number: int
+    url: str
+    # open, draft, merged or closed (closed without merging).
+    state: str
+    head_sha: str
+    merge_sha: str
+
+
+async def read_pull_request(repo: str, number: int) -> PullRequest:
+    """A pull request's state and head commit. Reads only, with `pull_requests: read`."""
+    pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}")
+    if pull.get("merged") or pull.get("merged_at"):
+        state = "merged"
+    elif pull.get("state") == "closed":
+        state = "closed"
+    else:
+        state = "draft" if pull.get("draft") else "open"
+    return PullRequest(
+        repo=repo,
+        number=number,
+        url=str(pull.get("html_url") or f"https://github.com/{repo}/pull/{number}"),
+        state=state,
+        head_sha=str((pull.get("head") or {}).get("sha") or ""),
+        merge_sha=str(pull.get("merge_commit_sha") or "") if state == "merged" else "",
+    )
 
 
 def _check_summary(output: dict) -> str:

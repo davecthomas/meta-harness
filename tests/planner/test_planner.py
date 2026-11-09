@@ -26,10 +26,23 @@ def migrated():
 class Events:
     def __init__(self):
         self.events = []
+        self.stored: dict[str, dict] = {}
 
     def emit(self, event_type, payload=None, **fields):
         self.events.append((event_type, payload or {}))
-        return "id"
+        event_id = fields.get("event_id") or uuid.uuid4().hex
+        if event_id not in self.stored:
+            position = len(self.stored) + 1
+            event = {"position": position, "event_type": event_type, "payload": payload or {}, **fields}
+            self.stored[event_id] = event
+        return event_id
+
+    def read(self, from_position=0, limit=500, before_position=None, **filters):
+        def wanted(event):
+            return all(str(event.get(k)) in v.split(",") for k, v in filters.items())
+
+        found = [e for e in self.stored.values() if e["position"] > from_position and wanted(e)][:limit]
+        return {"events": found, "next_position": found[-1]["position"] if found else from_position}
 
     def types(self):
         return [t for t, _ in self.events]
@@ -392,6 +405,41 @@ async def test_a_labels_issues_show_which_open_goal_holds_each(api, parts):
     api.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
     again = api.get(f"/v1/repos/{REPO}/issues", params={"label": label}, headers=OPERATOR).json()
     assert {i["ref"]: i["held_by"] for i in again["issues"]}[held] is None, "a canceled goal holds nothing"
+
+
+class MergedHost:
+    """GitHub, where every pull request has merged."""
+
+    async def read_pull_request(self, repo, number):
+        from meta_harness.run_service.code_host import PullRequest
+
+        return PullRequest(repo, number, f"https://github.com/{repo}/pull/{number}", "merged", "h1", "m1")
+
+    async def check_runs(self, repo, sha):
+        return []
+
+
+async def test_a_ready_tasks_merged_pull_request_closes_it_and_shows_on_the_goals_issues(parts):
+    events, tracker, tasks = parts
+    app = create_app(
+        events, tracker, tasks, operator_keys={"op-key": "dave"}, service_keys={}, sweep_seconds=0, host=MergedHost()
+    )
+    with TestClient(app) as client:
+        label = _label()
+        goal = _goal(client, label)
+        ref = tracker.add(REPO, _number(), labels=[label])
+        _sweep(client, goal)
+        [task] = [t for t in tasks.tasks.values() if t["external_ref"] == ref]
+        task.update(status="ready", pr_url=f"https://github.com/{REPO}/pull/7", head_sha="h1")
+
+        assert _sweep(client, goal)["merged"] == [task["id"]]
+        shown = client.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR)
+
+    assert task["status"] == "closed"
+    assert shown.status_code == 200, shown.text
+    [issue] = shown.json()["issues"]
+    assert issue["ref"] == ref and issue["task_status"] == "closed"
+    assert issue["pr_url"] == f"https://github.com/{REPO}/pull/7" and issue["pr_state"] == "merged"
 
 
 def _drafting_api(parts, drafter):

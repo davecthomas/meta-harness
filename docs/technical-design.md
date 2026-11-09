@@ -20,7 +20,7 @@ rest. A section that describes a planned component says so.
 |---|---|---|---|
 | **Meta-harness control plane** | | | `src/meta_harness/` |
 | Task service | Accepts and tracks tasks and serves the Task API. Code-host webhooks are planned. | built | `tasks/` |
-| Planner | Turns a goal's labeled GitHub issues into tasks with their dependencies, by a periodic sweep, and drafts a goal from a label's issues. Planning tasks, the `feature` and `new-system` modalities, issue write-back and Jira and Linear adapters are planned. | partly built | `planner/` |
+| Planner | Turns a goal's labeled GitHub issues into tasks with their dependencies, by a periodic sweep, records what becomes of the pull requests of tasks that ended `ready` or `review_unresolved`, and drafts a goal from a label's issues. Planning tasks, the `feature` and `new-system` modalities, issue write-back and Jira and Linear adapters are planned. | partly built | `planner/` |
 | Meta-harness scheduler | Admits queued tasks by priority, global concurrency, repo-area locks, closed dependencies and the goal's budget, and carries out cancels and the kill switch, which it owns. Caller quotas and daily caps are planned. | built | `scheduler/` |
 | Meta-harness run service | Runs each task as a Temporal workflow, the RunTask workflow: routes it, runs its candidates, opens its pull request, runs the review loop on it and merges it. Takeover, operator review, exploration and an HTTP API of its own are planned. The only caller of the ai-api-unified router. | partly built | `run_service/` |
 | Pool manager | Leases per-run sandboxes by run id, keeps a warm pool, and replaces unhealthy sandboxes. Until it exists, the run activity starts each sandbox itself. | planned | |
@@ -133,7 +133,7 @@ flowchart TB
     CON -->|kill switch| SCHED
     CON -->|spend| MET
     CH -->|issue, PR, check webhooks| PL & TS
-    PL -->|issues: read, create, update, close| CH
+    PL -->|issues: read, create, update, close; pull requests and checks: read| CH
     PL -->|classify goal| RT
     PL -->|create tasks| TS
     SCHED -->|queued tasks| TS
@@ -911,13 +911,21 @@ request ends the task `closed`, and GitHub closes the issue from the pull
 request's `Closes` line.
 
 A task that ends `ready` or `review_unresolved` leaves its pull request open
-with no workflow watching it, and its repo-area lock is released. When the
-pull request later merges, the task becomes `closed`; when it closes
-unmerged, the task becomes `canceled` with that reason. The task service
-will make that move from the code-host webhook. Until webhooks exist nothing
-makes it, so such a task stays `ready` after an operator merges its pull
-request; the planner's sweep is planned to read those pull requests and
-report the merge or the close to the task service (#74).
+with no workflow watching it, and its repo-area lock is released. The
+planner's sweep watches it instead (#74). For each such task of a goal with a
+pull request, the sweep reads the pull request from GitHub with an app token
+that reads pull requests, checks and statuses: open, draft, merged or closed,
+its head SHA, and its head commit's checks (pending, passed, or failed with
+the failed check names). It records each change as an event on the task,
+tagged with the goal: `pull_request_checks` once a new head commit's checks
+settle, `pull_request_merged`, and `pull_request_closed` for a close without
+merging. Each event's id is the one the RunTask workflow uses for the same
+fact, so a repeated sweep, or a sweep after the workflow, records it once.
+The sweep then reports the end to the task service: a merged pull request
+moves the task to `closed`, and one closed unmerged moves it to `canceled`
+with that reason. Pending checks are recorded when they settle; a head with
+no checks at all is not recorded. The code-host webhook will make the sweep
+immediate later.
 
 ### Operator review
 
@@ -1571,6 +1579,7 @@ credential.
 | POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
+| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its task's status, pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | The goal's pending plan with its drafts, or an edited plan saved as a new version | planned (#73) |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve the pending plan or phase, or run a new planning task with a note | planned (#73) |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet | planned (#71) |
@@ -1829,7 +1838,10 @@ tracker, through one adapter interface:
 As built, the GitHub adapter has `list_open` and `read`, with an app token
 that only reads issues, and a sweep every `MH_PLANNER_SWEEP_SECONDS` stands
 in for the webhook. The writing operations and the Jira and Linear
-adapters are planned.
+adapters are planned. The sweep also reads the pull requests of `ready` and
+`review_unresolved` tasks and their checks (Review loop), through the run
+service's code-host functions, with a token that has `pull_requests: read`,
+`checks: read` and `statuses: read`.
 
 The adapter syncs both ways. The planner pulls in work people write: an issue
 labeled in GitHub, Jira or Linear joins its goal, and an edit to its body,
@@ -1921,11 +1933,11 @@ Meta-harness services append through the event service client library:
 | Producer | Events |
 |---|---|
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
-| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's settings or status, `goal_drafted`, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
+| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's settings or status, `goal_drafted`, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason the meta-harness scheduler holds a meta-harness task. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
-| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) and `pull_request_merged`. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed`, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
+| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) and `pull_request_merged`. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
 | Configuration, in the planner process | `config_changed` for every configuration version an operator saves, approves or rolls back, with the actor |
@@ -1958,7 +1970,7 @@ reaches the event service.
 | Which drafted issues a plan keeps | The planner | `plan_drafted` |
 | A turn's model, its fallbacks, guardrail blocks and cache hits | ai-api-unified in the HTTP Gateway | `gateway_request` |
 | A review verdict | A meta-harness review run, or an operator | `pull_request_reviewed`, `operator_review_submitted` |
-| A merge | The meta-harness run service | `pull_request_merged` |
+| A merge | The meta-harness run service, or an operator on the code host, which the planner's sweep records | `pull_request_merged` |
 | Approvals, takeovers, cancels and configuration changes | An operator | Audit events with the operator as actor, `config_changed` |
 
 The client library buffers events in its own outbox and retries, which is safe

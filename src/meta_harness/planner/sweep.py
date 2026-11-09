@@ -9,6 +9,15 @@ with open dependencies in `blocked`. A sweep also records issues that closed,
 and moves a blocked task to `queued` once every issue it depends on is
 closed. An issue already in another goal stays there.
 
+A sweep also watches the pull request of each of the goal's tasks that ended
+`ready` or `review_unresolved`, which no RunTask workflow watches any more. It
+reads the pull request and its head commit's checks from GitHub, records each
+change as an event (`pull_request_checks` once a new head commit's checks
+settle, `pull_request_merged`, `pull_request_closed`) with the event id the
+workflow uses for the same fact, so the fact is recorded once whoever sees it,
+and reports a merge to the task service as `closed` and a close without
+merging as `canceled`.
+
 Last, a sweep checks whether the goal is met: it has held at least one issue,
 every issue it holds is closed, its label has no open issue it could take in,
 and none of its tasks is queued, blocked, running or waiting on an operator.
@@ -30,15 +39,29 @@ from meta_harness.events.client import stable_event_id
 from meta_harness.github_app import GitHubAppError
 from meta_harness.planner import repos, store
 from meta_harness.planner.tracker import Issue, Tracker
+from meta_harness.run_service import code_host
+from meta_harness.run_service.code_host import CheckRun, CodeHostError, PullRequest
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
 TASK_TYPES = {"bug", "feature", "refactor", "dependency", "test", "security", "docs"}
 # A goal's task in one of these still has work to do, or waits for it: the goal is not met.
 UNFINISHED_TASK_STATUSES = ["queued", "blocked", "running", "taken_over", "ready", "review_unresolved"]
+# A task in one of these left its pull request open with no workflow watching it: the sweep watches it.
+PR_WATCHED_STATUSES = ["ready", "review_unresolved"]
+# The most tasks one sweep watches per goal: the Task API's page limit.
+PR_WATCH_LIMIT = 1000
 
 
 class Events(Protocol):
     def emit(self, event_type: str, payload: dict[str, Any] | None = None, **fields: Any) -> str: ...
+
+
+class CodeHost(Protocol):
+    """The pull request reads a sweep makes. The code_host module is one."""
+
+    async def read_pull_request(self, repo: str, number: int) -> PullRequest: ...
+
+    async def check_runs(self, repo: str, sha: str) -> list[CheckRun]: ...
 
 
 @dataclass
@@ -48,6 +71,9 @@ class SweepResult:
     refused: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
     unblocked: list[str] = field(default_factory=list)
+    # Task ids whose pull request the sweep found merged, or closed without merging.
+    merged: list[str] = field(default_factory=list)
+    canceled: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     met: bool = False
 
@@ -60,7 +86,9 @@ def task_type_for(issue: Issue) -> str:
     return "bug"
 
 
-async def sweep_goal(goal: dict, tracker: Tracker, tasks: TaskClient, events: Events) -> SweepResult:
+async def sweep_goal(
+    goal: dict, tracker: Tracker, tasks: TaskClient, events: Events, host: CodeHost | None = None
+) -> SweepResult:
     result = SweepResult(goal["id"])
     seen: set[str] = set()
     for repo in goal["repos"]:
@@ -72,6 +100,7 @@ async def sweep_goal(goal: dict, tracker: Tracker, tasks: TaskClient, events: Ev
         for issue in issues:
             seen.add(issue.ref)
             await _take_in(goal, issue, tracker, tasks, events, result)
+    await _watch_pull_requests(goal, tasks, events, host or code_host, result)
     await _record_closed(goal, seen, tracker, events, result)
     await _release_unblocked(goal, tracker, tasks, events, result)
     if not result.errors:
@@ -217,6 +246,71 @@ async def _release_unblocked(goal: dict, tracker: Tracker, tasks: TaskClient, ev
         result.unblocked.append(link["ref"])
 
 
+async def _watch_pull_requests(goal: dict, tasks: TaskClient, events: Events, host: CodeHost, result: SweepResult):
+    """Record what became of each open pull request no workflow watches, and report its merge or close."""
+    try:
+        waiting = await asyncio.to_thread(tasks.list, PR_WATCHED_STATUSES, goal["id"], PR_WATCH_LIMIT)
+    except TaskApiError as err:
+        result.errors.append(f"{goal['id']}: {err}")
+        return
+    for task in waiting:
+        if not task.get("pr_url"):
+            continue
+        try:
+            repo, number = code_host.pr_number(task["pr_url"])
+        except CodeHostError:
+            # A local repo's pull request is a file, with no code host to read it from.
+            continue
+        try:
+            pull = await host.read_pull_request(repo, number)
+            if pull.state in ("open", "draft"):
+                await _record_checks(goal, task, pull, host, events)
+            else:
+                await _record_end(goal, task, pull, tasks, events, result)
+        except (CodeHostError, TaskApiError) as err:
+            result.errors.append(f"{task['id']}: {err}")
+
+
+async def _record_checks(goal: dict, task: dict, pull: PullRequest, host: CodeHost, events: Events) -> None:
+    """Record the head commit's checks once they settle: pending checks are recorded when they end."""
+    if not pull.head_sha:
+        return
+    checks = code_host.checks_state(await host.check_runs(pull.repo, pull.head_sha))
+    if checks.state not in ("passed", "failed"):
+        return
+    events.emit(
+        "pull_request_checks",
+        {"head_sha": pull.head_sha, "state": checks.state, "failed": checks.failed},
+        task_id=task["id"],
+        actor="planner",
+        tags={"goal_id": goal["id"]},
+        # The workflow's event id for the same fact, so the event service keeps one, whoever saw it first.
+        event_id=stable_event_id(task["id"], "pull_request_checks", pull.head_sha),
+    )
+
+
+async def _record_end(
+    goal: dict, task: dict, pull: PullRequest, tasks: TaskClient, events: Events, result: SweepResult
+) -> None:
+    """A merged pull request closes its task; one closed without merging cancels it."""
+    if pull.state == "merged":
+        event_type, status, reason = "pull_request_merged", "closed", "its pull request merged"
+        payload = {"pr_url": task["pr_url"], "head_sha": pull.head_sha, "merge_sha": pull.merge_sha}
+    else:
+        event_type, status, reason = "pull_request_closed", "canceled", "its pull request was closed without merging"
+        payload = {"pr_url": task["pr_url"], "head_sha": pull.head_sha}
+    events.emit(
+        event_type,
+        payload,
+        task_id=task["id"],
+        actor="planner",
+        tags={"goal_id": goal["id"]},
+        event_id=stable_event_id(task["id"], event_type),
+    )
+    await asyncio.to_thread(tasks.set_status, task["id"], status, reason)
+    (result.merged if status == "closed" else result.canceled).append(task["id"])
+
+
 async def _is_open(ref: str, tracker: Tracker) -> bool:
     known = await asyncio.to_thread(_link, ref)
     if known and known["state"] == "closed":
@@ -258,6 +352,8 @@ def active_goals() -> list[dict]:
         return store.list_goals(conn, ["active"])
 
 
-async def sweep_active(tracker: Tracker, tasks: TaskClient, events: Events) -> list[SweepResult]:
+async def sweep_active(
+    tracker: Tracker, tasks: TaskClient, events: Events, host: CodeHost | None = None
+) -> list[SweepResult]:
     goals = await asyncio.to_thread(active_goals)
-    return [await sweep_goal(goal, tracker, tasks, events) for goal in goals]
+    return [await sweep_goal(goal, tracker, tasks, events, host) for goal in goals]
