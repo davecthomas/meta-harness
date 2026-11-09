@@ -1,7 +1,7 @@
 """The planner service and its part of the REST API: goals.
 
     GET, POST  /v1/goals                      list goals, or create one
-    GET, PATCH /v1/goals/{id}                 a goal with its issues, or change auto_merge, priority or budget
+    GET, PATCH /v1/goals/{id}                 a goal with its issues, or change its title, auto_merge, priority or budget
     GET        /v1/goals/{id}/issues          each issue with its task status, pull request, PR state and checks
     POST       /v1/goals/{id}/pause, /resume, /cancel   resume also starts a goal saved without starting
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
@@ -20,6 +20,7 @@ tasks are done, and reports the merge or close of a `ready` or
 
 import asyncio
 import contextlib
+import logging
 import os
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -37,11 +38,15 @@ from meta_harness.planner.sweep import CodeHost, Events, SweepResult, active_goa
 from meta_harness.planner.tracker import Tracker
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
+log = logging.getLogger("meta_harness.planner")
+
 # The most tasks the issues view reads in one Task API page.
 TASKS_PAGE = 1000
 
 
 class GoalIn(BaseModel):
+    # The goal's short name, for lists. Left out: the planner's model writes one from the statement.
+    title: str | None = Field(default=None, min_length=1, max_length=80)
     statement: str = Field(min_length=1, max_length=4000)
     repos: list[str] = Field(min_length=1)
     label: str = Field(min_length=1, max_length=100)
@@ -62,6 +67,7 @@ class DraftIn(BaseModel):
 
 
 class GoalPatch(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=80)
     auto_merge: bool | None = None
     priority: int | None = None
     max_usd: Decimal | None = Field(default=None, gt=0)
@@ -95,6 +101,7 @@ def create_app(
     sweep_seconds: float | None = None,
     drafter=None,
     host: CodeHost | None = None,
+    titler=None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -109,6 +116,33 @@ def create_app(
         async with locks.setdefault(goal["id"], asyncio.Lock()):
             return await sweep_goal(goal, tracker, tasks, events, host)
 
+    name = titler or drafting.title_goal
+
+    async def title_one(goal: dict) -> None:
+        """Give a goal with no title one its model writes. A failure leaves it untitled, and the console shows
+        the start of its statement instead."""
+        try:
+            titled = await name(goal["statement"])
+        except Exception as err:  # noqa: BLE001 - a title is a convenience: log it and go on
+            log.warning("could not title goal %s: %s", goal["id"], err)
+            return
+        with app.state.pool.connection() as conn:
+            if not store.set_title(conn, goal["id"], titled.title):
+                return
+        events.emit(
+            "goal_titled",
+            {"goal_id": goal["id"], "title": titled.title, "model": titled.model, "usd_cost": titled.usd_cost},
+            actor="planner",
+            tags={"goal_id": goal["id"]},
+        )
+
+    async def title_untitled() -> None:
+        """At startup: title each goal that has none yet, one at a time."""
+        with app.state.pool.connection() as conn:
+            goals = store.untitled(conn)
+        for goal in goals:
+            await title_one(goal)
+
     async def sweep_forever() -> None:
         while True:
             with contextlib.suppress(Exception):
@@ -122,14 +156,18 @@ def create_app(
         if config_store.from_database():
             await asyncio.to_thread(add_shipped_configuration, app.state.pool, events)
         loop = asyncio.create_task(sweep_forever()) if interval > 0 else None
+        titling = asyncio.create_task(title_untitled()) if interval > 0 else None
         try:
             yield
         finally:
             if loop:
                 loop.cancel()
+            if titling:
+                titling.cancel()
             app.state.pool.close()
 
     app = FastAPI(title="meta-harness planner", lifespan=lifespan)
+    app.state.title_untitled = title_untitled
 
     def operator(key: str = Depends(auth.bearer), actor: str | None = Header(default=None, alias="X-MH-Actor")) -> str:
         """Who is acting: the operator key's label, or for a service key (the console) the operator it names."""
@@ -281,6 +319,7 @@ def create_app(
             "goal_created",
             {
                 "goal_id": goal["id"],
+                "title": goal["title"],
                 "statement": goal["statement"],
                 "repos": names,
                 "label": goal["label"],
@@ -292,6 +331,8 @@ def create_app(
         )
         if goal["status"] == "active":
             asyncio.create_task(sweep_one(goal))
+        if not goal["title"]:
+            asyncio.create_task(title_one(goal))
         return goal
 
     @app.get("/v1/goals")

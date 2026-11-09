@@ -113,10 +113,19 @@ def parts():
     return Events(), FakeTracker(), FakeTasks()
 
 
+async def _no_title(statement: str):
+    """A titler that fails, as with no HTTP Gateway: a test never calls a model."""
+    from meta_harness.planner.drafting import DraftError
+
+    raise DraftError("no model in tests")
+
+
 @pytest.fixture
 def api(parts):
     events, tracker, tasks = parts
-    app = create_app(events, tracker, tasks, operator_keys={"op-key": "dave"}, service_keys={}, sweep_seconds=0)
+    app = create_app(
+        events, tracker, tasks, operator_keys={"op-key": "dave"}, service_keys={}, sweep_seconds=0, titler=_no_title
+    )
     with TestClient(app) as client:
         yield client
 
@@ -445,7 +454,14 @@ async def test_a_ready_tasks_merged_pull_request_closes_it_and_shows_on_the_goal
 def _drafting_api(parts, drafter):
     events, tracker, tasks = parts
     app = create_app(
-        events, tracker, tasks, operator_keys={"op-key": "dave"}, service_keys={}, sweep_seconds=0, drafter=drafter
+        events,
+        tracker,
+        tasks,
+        operator_keys={"op-key": "dave"},
+        service_keys={},
+        sweep_seconds=0,
+        drafter=drafter,
+        titler=_no_title,
     )
     return TestClient(app)
 
@@ -495,3 +511,114 @@ def test_a_draft_the_gateway_could_not_make_is_a_502_with_the_reason(parts):
         refused = client.post("/v1/goals/draft", json={"label": _label(), "repos": [REPO]}, headers=OPERATOR)
 
     assert refused.status_code == 502 and "did not finish" in refused.json()["detail"]
+
+
+# --- A goal's title -----------------------------------------------------------------------------------
+
+
+def _titled_api(parts, titles: list[str]):
+    """The planner with a titler that names each goal from titles, in order, and records what it read."""
+    from meta_harness.planner.drafting import Title
+
+    read: list[str] = []
+
+    async def titler(statement: str) -> Title:
+        read.append(statement)
+        return Title(title=titles.pop(0), model="claude:claude-haiku-4-5", usd_cost="0.0001")
+
+    events, tracker, tasks = parts
+    app = create_app(
+        events, tracker, tasks, operator_keys={"op-key": "dave"}, service_keys={}, sweep_seconds=0, titler=titler
+    )
+    return app, read
+
+
+async def _until(check, tries: int = 50):
+    for _ in range(tries):
+        if check():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("timed out")
+
+
+async def test_a_goal_created_with_a_title_keeps_it_and_no_model_names_it(parts):
+    events, _, _ = parts
+    app, read = _titled_api(parts, ["Unused"])
+    with TestClient(app) as client:
+        goal = client.post(
+            "/v1/goals",
+            json={"title": "Save bugs", "statement": "Fix the save bugs.", "repos": [REPO], "label": _label()},
+            headers=OPERATOR,
+        ).json()
+        await asyncio.sleep(0.05)
+
+    assert goal["title"] == "Save bugs"
+    assert [p["title"] for t, p in events.events if t == "goal_created"] == ["Save bugs"]
+    assert read == [] and not [p for t, p in events.events if t == "goal_titled"]
+
+
+async def test_a_goal_created_without_a_title_gets_one_from_the_model(parts):
+    events, _, _ = parts
+    app, read = _titled_api(parts, ["Fix the save bugs"])
+    with TestClient(app) as client:
+        goal = client.post(
+            "/v1/goals",
+            json={"statement": "Every save loses the last edit. Fix it.", "repos": [REPO], "label": _label()},
+            headers=OPERATOR,
+        ).json()
+        assert goal["title"] is None, "creating the goal never waits on the model"
+        await _until(lambda: [p for t, p in events.events if t == "goal_titled"])
+        shown = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+
+    assert read == ["Every save loses the last edit. Fix it."]
+    assert shown["title"] == "Fix the save bugs"
+    [titled] = [p for t, p in events.events if t == "goal_titled"]
+    assert titled == {
+        "goal_id": goal["id"],
+        "title": "Fix the save bugs",
+        "model": "claude:claude-haiku-4-5",
+        "usd_cost": "0.0001",
+    }
+
+
+async def test_a_model_that_fails_leaves_the_goal_untitled(api, parts):
+    events, _, _ = parts
+    goal = api.post(
+        "/v1/goals", json={"statement": "Fix it.", "repos": [REPO], "label": _label()}, headers=OPERATOR
+    ).json()
+    await asyncio.sleep(0.05)
+
+    assert api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["title"] is None
+    assert not [p for t, p in events.events if t == "goal_titled"]
+
+
+def test_an_operator_changes_a_goals_title(api, parts):
+    events, _, _ = parts
+    goal = api.post(
+        "/v1/goals",
+        json={"title": "Old", "statement": "Fix it.", "repos": [REPO], "label": _label()},
+        headers=OPERATOR,
+    ).json()
+
+    changed = api.patch(f"/v1/goals/{goal['id']}", json={"title": "New name"}, headers=OPERATOR).json()
+
+    assert changed["title"] == "New name" and changed["statement"] == "Fix it."
+    moves = [p["changes"] for t, p in events.events if t == "goal_changed" and p["goal_id"] == goal["id"]]
+    assert moves == [{"title": {"from": "Old", "to": "New name"}}]
+    too_long = api.patch(f"/v1/goals/{goal['id']}", json={"title": "x" * 81}, headers=OPERATOR)
+    assert too_long.status_code == 422
+
+
+async def test_at_startup_the_planner_titles_every_goal_that_has_none(parts, conn):
+    from meta_harness.planner import store
+
+    first = store.create(conn, "dave", store.NewGoal(statement="First goal.", repos=[REPO], label=_label()))
+    second = store.create(conn, "dave", store.NewGoal(statement="Second goal.", repos=[REPO], label=_label()))
+    untitled = [g["id"] for g in store.untitled(conn)]
+    app, read = _titled_api(parts, [f"Title {n}" for n in range(len(untitled))])
+    with TestClient(app):
+        await app.state.title_untitled()
+
+    assert store.get(conn, first["id"])["title"] and store.get(conn, second["id"])["title"]
+    assert store.untitled(conn) == []
+    assert read[untitled.index(first["id"])] == "First goal."

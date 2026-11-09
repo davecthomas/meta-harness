@@ -2,7 +2,7 @@ import { useSearchParams } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { Badge, Button, Group, SegmentedControl, Table, Text } from "@mantine/core";
 import { IconPlus } from "@tabler/icons-react";
-import { api, goalStatus } from "../api";
+import { goalTitle, api, goalStatus } from "../api";
 import { useInfinite } from "../hooks";
 import { DataTable, Empty, ErrorAlert, PageHeader, StatusBadge, TitleLink, when } from "../components/ui";
 
@@ -38,7 +38,7 @@ export function GoalsPage() {
         <DataTable head={["Goal", "Status", "Modality", "Label", "Repos", "Budget", "Created"]}>
           {goals.items.map((g) => (
             <Table.Tr key={g.id}>
-              <Table.Td maw={420}><TitleLink to={`/goals/${g.id}`} title={g.statement} id={g.id} /></Table.Td>
+              <Table.Td maw={420}><TitleLink to={`/goals/${g.id}`} title={goalTitle(g)} id={g.id} /></Table.Td>
               <Table.Td><StatusBadge status={goalStatus(g)} /></Table.Td>
               <Table.Td><Text size="sm">{g.modality}</Text></Table.Td>
               <Table.Td><Badge variant="outline" tt="none" radius="sm">{g.label}</Badge></Table.Td>
