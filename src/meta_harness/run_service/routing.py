@@ -42,6 +42,29 @@ from meta_harness.run_service.shared import Candidate
 PROFILES_PATH = Path(os.environ.get("HARNESS_PROFILES") or REPO_ROOT / "config" / "harness_profiles.json")
 DEFAULT_IMAGE = os.environ.get("HARNESS_IMAGE", "harness-pi:dev")
 HARNESS_ENGINE = "harness"
+# Engines a harness pair may not name, each with the engine that replaces it. Every harness turn sends
+# tools with a reasoning level, and OpenAI's Chat Completions (the `openai` engine) refuses that pair for
+# its reasoning models; its Responses API (`openai-responses`) takes it, over the same models.
+REPLACED_ENGINES = {"openai": "openai-responses"}
+
+
+def replaced_engine_reason(label: str, engine: str) -> str | None:
+    """Why a harness pair naming this engine cannot run, or None when it can."""
+    if engine not in REPLACED_ENGINES:
+        return None
+    return (
+        f"{label} names engine {engine}, which sends a harness's tool calls with a reasoning level through "
+        f"Chat Completions, and OpenAI refuses them there: name {REPLACED_ENGINES[engine]}"
+    )
+
+
+def replace_engine(pair: str) -> str:
+    """A harness pair with a replaced engine swapped for its replacement; any other pair as it is."""
+    head, slash, inner = pair.partition("/")
+    engine, colon, model = inner.partition(":")
+    if not (slash and colon) or engine not in REPLACED_ENGINES:
+        return pair
+    return f"{head}/{REPLACED_ENGINES[engine]}:{model}"
 
 
 class CandidateError(ValueError):

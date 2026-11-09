@@ -104,7 +104,7 @@ umask 077
   done
   echo "MH_GITHUB_APPS=$apps"
   echo "MH_REPOS_CONFIG=$ETC/repos.json"
-  echo "MH_MAX_RUNNING=2"
+  echo "MH_MAX_RUNNING=8"
   echo "ANTHROPIC_API_KEY=$(secret ANTHROPIC_API_KEY)"
   echo "OPENAI_API_KEY=$(secret OPENAI_API_KEY)"
   echo "GOOGLE_GEMINI_API_KEY=$(secret GOOGLE_GEMINI_API_KEY)"

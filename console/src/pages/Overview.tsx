@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Table, Text, TextInput } from "@mantine/core";
 import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons-react";
-import { api, type KillSwitch } from "../api";
+import { api, goalStatus, type KillSwitch } from "../api";
 import { useInfinite } from "../hooks";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, SectionTitle, StatusBadge, TitleLink, when } from "../components/ui";
 
@@ -53,7 +53,7 @@ export function Overview() {
           {goals.items.map((g) => (
             <Table.Tr key={g.id}>
               <Table.Td maw={420}><TitleLink to={`/goals/${g.id}`} title={g.statement} id={g.id} /></Table.Td>
-              <Table.Td><StatusBadge status={g.status} /></Table.Td>
+              <Table.Td><StatusBadge status={goalStatus(g)} /></Table.Td>
               <Table.Td><Badge variant="outline" tt="none" radius="sm">{g.label}</Badge></Table.Td>
               <Table.Td>{g.repos.map((r) => <Text ff="monospace" size="xs" key={r}>{r}</Text>)}</Table.Td>
               <Table.Td><Text size="sm">{g.auto_merge ? "On" : "Off"}</Text></Table.Td>

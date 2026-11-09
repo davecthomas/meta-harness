@@ -3,7 +3,7 @@
   "review": {
     "reviewers": [
       "harness:pi-review/claude:claude-opus-5-5",
-      "harness:pi-review/openai:gpt-6-sol"
+      "harness:pi-review/openai-responses:gpt-6-sol"
     ],
     "max_rounds": 3
   }
