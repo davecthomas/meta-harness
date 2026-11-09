@@ -2105,6 +2105,22 @@ service's few seconds down don't reach the console. Old and new code run
 side by side for those seconds, so migrations only add, and anything removed
 goes in a later pull request.
 
+A failed update rolls back. When any step of an update fails (a service that
+does not answer `/health` within 60 seconds, a migration, a dependency
+install), `rollback` in `deploy/vm/services.sh` checks out the commit the
+update replaced, reinstalls its dependencies and units, and restarts every
+service the update had restarted, one at a time with the same health checks.
+The services after the failed one never ran the new commit. Because
+migrations only add, the previous code runs against the new schema. The
+guest attribute reads `failed <commit>: rolled back to <previous>`, or
+`failed <commit>: rollback failed, a service is down` when the previous
+commit doesn't come back healthy either. The deploy fails, and opens an issue
+labeled `meta-harness:operations` that names the commit, so a goal can fix
+the change. CI checks a change before it merges; the rollback covers what
+only shows on the VM, such as a migration against production data, a
+setting checked at startup, or a missing secret. Without it, a merge that
+broke the worker would leave nothing to run the fix.
+
 Terraform replaces the VM only when its definition changes (machine type,
 boot image, disks). The new VM's startup script mounts the data disk, which
 carries Postgres data, Temporal's history and run workspaces, checks the
@@ -2118,7 +2134,9 @@ What this shape lacks against the design above: the Temporal dev server and
 the Postgres container are single copies on one disk; the sandbox host is the
 control-plane host; the VM's size bounds concurrent runs; and a deploy that
 replaces the VM (a change to its definition) stops the tasks running on it
-and takes the control plane down while the new VM boots (#99). Cloud SQL and Temporal Cloud
+and takes the control plane down while the new VM boots (#99). After a
+rollback, the VM's metadata still names the failed commit, so a reboot before
+the fix deploys boots that commit, with no rollback. Cloud SQL and Temporal Cloud
 are their own pull request after the point of entry, as Terraform resources
 replacing the two containers.
 
