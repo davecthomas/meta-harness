@@ -141,12 +141,15 @@ def test_a_deploy_updates_the_running_vm_in_place_unless_terraform_replaced_it()
 
 def test_an_update_keeps_the_databases_running_and_restarts_services_one_at_a_time():
     boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
-    update = boot[boot.index('if [ "$MODE" = boot ]; then') :]
-    update = update[update.index("else") : update.index("\nfi\nlog")]
-    assert "systemctl restart mh-postgres" not in update and "systemctl restart mh-temporal" not in update
+    branch = boot[boot.index('if [ "$MODE" = boot ]; then') :]
+    assert branch[branch.index("else") : branch.index("\nfi\n")] == "else\n  update_services"
+    services = (ROOT / "deploy" / "vm" / "services.sh").read_text()
+    start = services.index("update_services() {")
+    update = services[start : services.index("\n}\n", start)]
+    assert "mh-postgres" not in update.replace("systemctl start mh-postgres mh-temporal", "")
     assert "systemctl start mh-postgres mh-temporal" in update
-    assert 'systemctl restart "$unit"' in update and 'healthy "$unit"' in update
-    assert "for pair in mh-events:8301 mh-tasks:8302 mh-planner:8303 mh-scheduler:8304 mh-worker:" in update
+    assert "for unit in mh-events mh-tasks mh-planner mh-scheduler mh-worker; do" in update
+    assert 'restart "$unit"' in update
     # A gateway or egress restart drops a running sandbox's model calls, so each restarts only when it changed.
     assert "if changed samples/temporal-run-task/egress-proxy" in update
     assert 'GW_PREVIOUS" ] || changed deploy/vm/units/mh-gateway.service' in update

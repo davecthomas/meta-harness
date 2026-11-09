@@ -22,6 +22,7 @@ permissions:
   contents: read
   checks: read
   id-token: write
+  issues: write
 
 env:
   PROJECT: meta-harness-prod
@@ -92,9 +93,23 @@ jobs:
               --query-path mh/boot --format='value(value)' 2>/dev/null || true)
             case "$result" in
               "ok ${{ github.sha }}") echo "the VM runs ${{ github.sha }}"; exit 0 ;;
-              "failed ${{ github.sha }}") echo "the VM's boot failed; read /var/log/mh-boot.log over IAP SSH"; exit 1 ;;
+              "failed ${{ github.sha }}"*) echo "the VM's boot failed ($result); read /var/log/mh-boot.log over IAP SSH"; exit 1 ;;
             esac
             sleep 15
           done
           echo "the VM did not report in 30 minutes (last: ${result:-nothing})"
           exit 1
+      - name: open an issue for the failed deploy
+        # A failed deploy is work: the issue's label lets a goal pick it up and fix it.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          result=$(gcloud compute instances get-guest-attributes mh-vm --zone "$REGION-a" --project "$PROJECT" \
+            --query-path mh/boot --format='value(value)' 2>/dev/null || true)
+          gh issue create --repo "${{ github.repository }}" --label meta-harness:operations \
+            --title "Deploy of ${GITHUB_SHA::7} failed" \
+            --body "The deploy of ${{ github.sha }} failed: $RUN_URL
+
+          The VM reported: \`${result:-nothing}\`. A result ending in \"rolled back to <commit>\" means the VM runs that commit again and every service is healthy; the change in ${GITHUB_SHA::7} needs fixing before it can deploy. Its boot log is /var/log/mh-boot.log on mh-vm."

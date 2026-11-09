@@ -3,7 +3,8 @@
 # again for every deploy that updates the running VM in place (MH_DEPLOY_MODE=update, started by the
 # deploy workflow over IAP SSH): mount the data disk, get the meta-harness at the commit in the mh-ref
 # metadata, and run its boot script. Output goes to /var/log/mh-boot.log, and the result to the guest
-# attribute mh/boot, which the deploy waits for: "running", "ok <commit>" or "failed <commit>".
+# attribute mh/boot, which the deploy waits for: "running", "ok <commit>", or "failed <commit>" with
+# what happened after it (": rolled back to <commit>" when an update went back to the commit it replaced).
 exec >>/var/log/mh-boot.log 2>&1
 echo "[startup] $(date -u +%FT%TZ)"
 MD=http://metadata.google.internal/computeMetadata/v1/instance
@@ -40,10 +41,23 @@ if ! git -C /opt/meta-harness fetch -q origin "$REF"; then
   exit 1
 fi
 git -C /opt/meta-harness checkout -q -f FETCH_HEAD
-if bash /opt/meta-harness/deploy/vm/boot.sh "$REF"; then
-  report "ok $REF"
-else
-  echo "[startup] boot.sh failed"
-  report "failed $REF"
-  exit 1
-fi
+bash /opt/meta-harness/deploy/vm/boot.sh "$REF"
+status=$?
+case $status in
+  0) report "ok $REF" ;;
+  3)
+    echo "[startup] boot.sh failed and rolled back to $MH_PREVIOUS_COMMIT"
+    report "failed $REF: rolled back to $MH_PREVIOUS_COMMIT"
+    exit 1
+    ;;
+  4)
+    echo "[startup] boot.sh failed and could not roll back to ${MH_PREVIOUS_COMMIT:-a previous commit}"
+    report "failed $REF: rollback failed, a service is down"
+    exit 1
+    ;;
+  *)
+    echo "[startup] boot.sh failed"
+    report "failed $REF"
+    exit 1
+    ;;
+esac
