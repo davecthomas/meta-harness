@@ -1,9 +1,10 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Anchor, Badge, Button, Center, Group, Loader, Stack, Table, Text, TextInput } from "@mantine/core";
+import { Anchor, Badge, Button, Center, Group, Loader, SegmentedControl, Stack, Table, Text, TextInput } from "@mantine/core";
 import { IconArrowBackUp, IconCheck, IconCircleCheck, IconDownload, IconPencil, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
-import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type LabelIssue, type Task } from "../api";
-import { useInfinite } from "../hooks";
+import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../api";
+import { GoalBoard, GoalGraph, GoalProgress } from "../components/GoalBoard";
+import { useEventStream, useInfinite } from "../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, SectionTitle, StatusBadge, when } from "../components/ui";
 
 export function GoalPage() {
@@ -16,6 +17,11 @@ export function GoalPage() {
   const [error, setError] = useState<string | null>(null);
   // The title being edited, or null while it is not.
   const [editing, setEditing] = useState<string | null>(null);
+  // Each issue's progress and what each task spent, for the board, and the position the live stream starts from.
+  const [progress, setProgress] = useState<IssueProgress[] | null>(null);
+  const [spend, setSpend] = useState<Record<string, number>>({});
+  const [from, setFrom] = useState<number | null>(null);
+  const [view, setView] = useState<"board" | "graph" | "table" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -39,6 +45,38 @@ export function GoalPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadProgress = useCallback(async () => {
+    try {
+      const issues = await api.goalIssues(goalId);
+      const ids = issues.flatMap((i) => (i.task_id ? [i.task_id] : []));
+      const attempts = ids.length ? await api.taskEvents(ids, ["attempt_finished"]) : [];
+      const spent: Record<string, number> = {};
+      for (const e of attempts) if (e.task_id) spent[e.task_id] = (spent[e.task_id] ?? 0) + (Number(e.payload.spent_usd) || 0);
+      setProgress(issues);
+      setSpend(spent);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [goalId]);
+
+  useEffect(() => {
+    void loadProgress();
+    api.latestPosition().then((r) => setFrom(Number.isFinite(r.latest_position) ? r.latest_position : null), () => setFrom(null));
+  }, [loadProgress]);
+
+  // Cards move as the goal's tasks record events: one reload of the progress per burst of events.
+  const pending = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const taskIds = useMemo(() => (progress ?? []).flatMap((i) => (i.task_id ? [i.task_id] : [])), [progress]);
+  useEventStream(taskIds, from, (e) => {
+    if (e.event_type === "turn_started" || e.event_type === "tool_call" || e.event_type === "tool_result") return;
+    clearTimeout(pending.current);
+    pending.current = setTimeout(() => {
+      void loadProgress();
+      void load();
+    }, 1000);
+  });
+  useEffect(() => () => clearTimeout(pending.current), []);
 
   useEffect(() => {
     if (goal) document.title = `${goalTitle(goal)} · meta-harness`;
@@ -65,6 +103,8 @@ export function GoalPage() {
   if (!goal) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const open = !["met", "canceled"].includes(goal.status);
   const status = goalStatus(goal);
+  // An active goal opens on its board; any other on the table, until the operator picks a view.
+  const shownView = view ?? (goal.status === "active" ? "board" : "table");
 
   return (
     <>
@@ -175,8 +215,26 @@ export function GoalPage() {
         </>
       )}
 
-      <SectionTitle>Issues and tasks</SectionTitle>
-      {issues.length ? (
+      <SectionTitle
+        right={
+          issues.length > 0 && (
+            <SegmentedControl
+              size="xs"
+              value={shownView}
+              onChange={(v) => setView(v as "board" | "graph" | "table")}
+              data={[{ value: "board", label: "Board" }, { value: "graph", label: "Graph" }, { value: "table", label: "Table" }]}
+            />
+          )
+        }
+      >
+        Issues and tasks
+      </SectionTitle>
+      {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} />}
+      {issues.length > 0 && progress && shownView === "board" ? (
+        <GoalBoard issues={progress} tasks={tasks} spend={spend} />
+      ) : issues.length > 0 && progress && shownView === "graph" ? (
+        <GoalGraph issues={progress} tasks={tasks} />
+      ) : issues.length ? (
         <DataTable head={["Task", "Issue state", "Task status", "Pull request", "Waits on"]}>
           {shown.items.map((i) => {
             const task = i.task_id ? tasks[i.task_id] : undefined;
