@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Group, Loader, Stack, Table, Text } from "@mantine/core";
 import { IconArrowBackUp, IconCircleCheck, IconDownload, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
 import { api, goalStatus, type Goal, type IssueLink as Issue, type LabelIssue, type Task } from "../api";
@@ -8,6 +8,7 @@ import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, SectionTitl
 
 export function GoalPage() {
   const { goalId = "" } = useParams();
+  const navigate = useNavigate();
   const [goal, setGoal] = useState<(Goal & { issues: Issue[] }) | null>(null);
   const [tasks, setTasks] = useState<Record<string, Task>>({});
   // For a goal not started yet: its label's open issues, read but not taken in, so the operator sees what Start runs.
@@ -142,19 +143,44 @@ export function GoalPage() {
 
       <SectionTitle>Issues and tasks</SectionTitle>
       {issues.length ? (
-        <DataTable head={["Issue", "Issue state", "Task", "Task status", "Pull request", "Waits on"]}>
+        <DataTable head={["Task", "Issue state", "Task status", "Pull request", "Waits on"]}>
           {shown.items.map((i) => {
             const task = i.task_id ? tasks[i.task_id] : undefined;
+            const to = i.task_id ? `/tasks/${i.task_id}` : null;
+            // A row with a task opens it: a click, Enter, or Ctrl- or Cmd-click for a new tab, as a link does.
+            const open = (newTab: boolean) => {
+              if (!to) return;
+              if (newTab) window.open(to, "_blank", "noopener");
+              else navigate(to);
+            };
+            const running = task?.status === "running" || task?.status === "taken_over";
             return (
-              <Table.Tr key={i.ref}>
-                <Table.Td><IssueLink issueRef={i.ref} /></Table.Td>
+              <Table.Tr
+                key={i.ref}
+                data-testid={`issue-row-${i.ref}`}
+                role={to ? "link" : undefined}
+                tabIndex={to ? 0 : undefined}
+                aria-label={to ? `Open task ${task?.title ?? i.task_id}` : undefined}
+                onClick={to ? (e) => open(e.ctrlKey || e.metaKey) : undefined}
+                onKeyDown={to ? (e) => e.key === "Enter" && open(e.ctrlKey || e.metaKey) : undefined}
+                style={{
+                  cursor: to ? "pointer" : "default",
+                  boxShadow: running ? "inset 3px 0 0 var(--mantine-color-teal-6)" : undefined,
+                }}
+              >
+                <Table.Td maw={420}>
+                  {task ? <Text fw={500} size="sm">{task.title}</Text> : <Text size="sm" c="dimmed">No task</Text>}
+                  {/* The issue link opens GitHub, not the task. */}
+                  <span onClick={(e) => e.stopPropagation()}><IssueLink issueRef={i.ref} /></span>
+                </Table.Td>
                 <Table.Td><Text size="sm">{i.state}</Text></Table.Td>
-                <Table.Td>{i.task_id && <Anchor component={Link} to={`/tasks/${i.task_id}`} ff="monospace" size="xs">{i.task_id}</Anchor>}</Table.Td>
                 <Table.Td>
                   {task ? <StatusBadge status={task.status} /> : i.refused_reason && <StatusBadge status="refused" />}
                   {i.refused_reason && <Text size="xs" c="dimmed" mt={4}>{i.refused_reason}</Text>}
                 </Table.Td>
-                <Table.Td>{task?.pr_url && <Anchor href={task.pr_url} target="_blank" size="sm">Open</Anchor>}</Table.Td>
+                <Table.Td onClick={(e) => e.stopPropagation()}>
+                  {task?.pr_url && <Anchor href={task.pr_url} target="_blank" size="sm">Open</Anchor>}
+                </Table.Td>
                 <Table.Td>{i.depends_on.map((d) => <Text ff="monospace" size="xs" key={d}>{d}</Text>)}</Table.Td>
               </Table.Tr>
             );
