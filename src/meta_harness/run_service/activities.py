@@ -587,7 +587,7 @@ CHECKS_POLL_SECONDS = 30
 # A commit with no checks at all after this long belongs to a repo that runs none.
 NO_CHECKS_SECONDS = 300
 # A check run that ends with one of these did not fail.
-PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
+PASSING_CONCLUSIONS = code_host.PASSING_CONCLUSIONS
 
 
 @activity.defn
