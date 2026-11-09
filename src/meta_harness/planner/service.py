@@ -2,6 +2,7 @@
 
     GET, POST  /v1/goals                      list goals, or create one
     GET, PATCH /v1/goals/{id}                 a goal with its issues, or change auto_merge, priority or budget
+    GET        /v1/goals/{id}/issues          each issue with its task status, pull request, PR state and checks
     POST       /v1/goals/{id}/pause, /resume, /cancel
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
@@ -11,7 +12,9 @@
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
 services with a service key (MH_SERVICE_KEYS). The planner sweeps every
 active goal every MH_PLANNER_SWEEP_SECONDS, and a new or reopened goal at once.
-A sweep moves a goal to met once its issues are closed and its tasks are done.
+A sweep moves a goal to met once its issues are closed and its tasks are done,
+and reports the merge or close of a `ready` or `review_unresolved` task's pull
+request to the task service.
 """
 
 import asyncio
@@ -28,10 +31,13 @@ from pydantic import BaseModel, Field
 from meta_harness import auth, db
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
-from meta_harness.planner import drafting, repos, store
-from meta_harness.planner.sweep import Events, SweepResult, active_goals, sweep_goal
+from meta_harness.planner import drafting, progress, repos, store
+from meta_harness.planner.sweep import CodeHost, Events, SweepResult, active_goals, sweep_goal
 from meta_harness.planner.tracker import Tracker
-from meta_harness.tasks.client import TaskClient
+from meta_harness.tasks.client import TaskApiError, TaskClient
+
+# The most tasks the issues view reads in one Task API page.
+TASKS_PAGE = 1000
 
 
 class GoalIn(BaseModel):
@@ -85,6 +91,7 @@ def create_app(
     service_keys: dict[str, str] | None = None,
     sweep_seconds: float | None = None,
     drafter=None,
+    host: CodeHost | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -97,7 +104,7 @@ def create_app(
 
     async def sweep_one(goal: dict) -> SweepResult:
         async with locks.setdefault(goal["id"], asyncio.Lock()):
-            return await sweep_goal(goal, tracker, tasks, events)
+            return await sweep_goal(goal, tracker, tasks, events, host)
 
     async def sweep_forever() -> None:
         while True:
@@ -289,6 +296,31 @@ def create_app(
         with app.state.pool.connection() as conn:
             goal["issues"] = store.links(conn, goal_id)
         return goal
+
+    @app.get("/v1/goals/{goal_id}/issues")
+    def goal_issues(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Each of the goal's issues with its task's status, pull request URL, pull request state and checks.
+
+        The task's facts come from the Task API and the events recorded on it, never from the task
+        service's tables.
+        """
+        load(goal_id)
+        with app.state.pool.connection() as conn:
+            links = store.links(conn, goal_id)
+        task_ids = [link["task_id"] for link in links if link["task_id"]]
+        try:
+            found = tasks.list(None, goal_id, TASKS_PAGE) if task_ids else []
+            known = {task["id"] for task in found}
+            for task_id in task_ids:
+                if task_id not in known:
+                    found.append(tasks.get(task_id))
+        except TaskApiError as err:
+            raise HTTPException(status_code=502, detail=f"could not read the goal's tasks: {err}") from err
+        try:
+            recorded = progress.pull_request_events(events, task_ids) if task_ids else []
+        except Exception as err:  # noqa: BLE001 - an unreachable event service is the caller's 502
+            raise HTTPException(status_code=502, detail=f"could not read the tasks' events: {err}") from err
+        return {"goal_id": goal_id, "issues": progress.issues_progress(links, found, recorded)}
 
     @app.patch("/v1/goals/{goal_id}")
     def patch(goal_id: str, body: GoalPatch, who: str = Depends(operator)) -> dict:
