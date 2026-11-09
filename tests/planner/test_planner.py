@@ -86,6 +86,14 @@ class FakeTasks:
         self.tasks[task_id]["status"] = status
         return self.tasks[task_id]
 
+    def list(self, statuses=None, goal_id=None, limit=100):
+        found = [
+            t
+            for t in self.tasks.values()
+            if (not statuses or t["status"] in statuses) and (not goal_id or t.get("goal_id") == goal_id)
+        ]
+        return found[:limit]
+
 
 @pytest.fixture
 def parts():
@@ -234,6 +242,113 @@ async def test_a_goal_saved_without_starting_takes_in_nothing_until_it_starts(ap
     api.post(f"/v1/goals/{goal['id']}/pause", headers=OPERATOR)
     again = api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR).json()
     assert again["started_at"] == started["started_at"]
+
+
+# --- A goal's end: met on its own, completed by hand, reopened ---------------------------------------
+
+
+def _goal(api, label) -> dict:
+    response = api.post(
+        "/v1/goals",
+        json={"statement": "Fix bugs", "repos": ["davecthomas/meta-harness"], "label": label},
+        headers=OPERATOR,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def test_a_goal_is_met_when_its_last_issue_closes_and_its_tasks_are_done(api, parts):
+    events, tracker, tasks = parts
+    label = _label()
+    goal = _goal(api, label)
+    assert _sweep(api, goal)["met"] is False, "a goal that never held an issue waits for its first one"
+    ref = tracker.add("davecthomas/meta-harness", _number(), labels=[label])
+    _sweep(api, goal)
+    [task] = [t for t in tasks.tasks.values() if t["external_ref"] == ref]
+    tracker.issues[ref].state = "closed"
+    task["status"] = "running"
+    assert _sweep(api, goal)["met"] is False, "a running task keeps the goal open"
+    assert api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "active"
+    task["status"] = "closed"
+
+    assert _sweep(api, goal)["met"] is True
+
+    shown = api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+    assert shown["status"] == "met" and shown["closed_at"]
+    met = [p for t, p in events.events if t == "goal_met"]
+    assert met[-1]["goal_id"] == goal["id"]
+    changed = [p for t, p in events.events if t == "goal_changed" and p["goal_id"] == goal["id"]]
+    assert changed[-1]["changes"] == {"status": {"from": "active", "to": "met"}}
+
+
+async def test_a_goal_whose_label_picks_up_a_new_issue_stays_active(api, parts):
+    _, tracker, tasks = parts
+    label = _label()
+    goal = _goal(api, label)
+    first = tracker.add("davecthomas/meta-harness", _number(), labels=[label])
+    _sweep(api, goal)
+    tracker.issues[first].state = "closed"
+    for t in tasks.tasks.values():
+        t["status"] = "closed"
+    second = tracker.add("davecthomas/meta-harness", _number(), labels=[label])
+
+    result = _sweep(api, goal)
+
+    assert result["met"] is False and second in result["joined"]
+    assert api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "active"
+
+
+async def test_a_reopened_goal_takes_in_its_newly_opened_issue(api, parts):
+    events, tracker, tasks = parts
+    label = _label()
+    goal = _goal(api, label)
+    first = tracker.add("davecthomas/meta-harness", _number(), labels=[label])
+    _sweep(api, goal)
+    tracker.issues[first].state = "closed"
+    for t in tasks.tasks.values():
+        t["status"] = "closed"
+    assert _sweep(api, goal)["met"] is True
+    assert api.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).status_code == 409, "a met goal takes nothing"
+    second = tracker.add("davecthomas/meta-harness", _number(), labels=[label])
+    assert api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR).status_code == 409, "resume is not reopen"
+
+    reopened = api.post(f"/v1/goals/{goal['id']}/reopen", headers=OPERATOR)
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["status"] == "active" and reopened.json()["closed_at"] is None
+    _sweep(api, goal)
+
+    assert any(t["external_ref"] == second and t["goal_id"] == goal["id"] for t in tasks.tasks.values())
+    shown = api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+    assert shown["status"] == "active" and second in {i["ref"] for i in shown["issues"]}
+    moves = [p["changes"]["status"] for t, p in events.events if t == "goal_changed" and p["goal_id"] == goal["id"]]
+    assert moves == [{"from": "active", "to": "met"}, {"from": "met", "to": "active"}]
+
+
+def test_an_operator_completes_a_goal_and_reopens_a_canceled_one(api, parts):
+    events, _, _ = parts
+    goal = _goal(api, _label())
+    assert api.post(f"/v1/goals/{goal['id']}/pause", headers=OPERATOR).json()["status"] == "paused"
+
+    completed = api.post(f"/v1/goals/{goal['id']}/complete", headers=OPERATOR).json()
+
+    assert completed["status"] == "met" and completed["closed_at"]
+    assert [p for t, p in events.events if t == "goal_met"][-1] == {
+        "goal_id": goal["id"],
+        "reason": "completed by dave",
+    }
+    assert api.post(f"/v1/goals/{goal['id']}/reopen", headers=OPERATOR).json()["status"] == "active"
+    assert api.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR).json()["status"] == "canceled"
+    assert api.post(f"/v1/goals/{goal['id']}/complete", headers=OPERATOR).status_code == 409
+    assert api.post(f"/v1/goals/{goal['id']}/reopen", headers=OPERATOR).json()["status"] == "active"
+
+
+def test_a_goal_saved_without_starting_is_not_checked(api, parts, conn):
+    from meta_harness.planner import store
+
+    goal = _goal(api, _label())
+    store.update(conn, goal["id"], status="paused")
+    assert store.update(conn, goal["id"], only_if="active", status="met")[1] == {}
+    assert store.get(conn, goal["id"])["status"] == "paused"
 
 
 # --- Goals from labels --------------------------------------------------------------------------------

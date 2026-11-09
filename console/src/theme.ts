@@ -21,7 +21,7 @@ const STATUS_COLORS: Record<string, string> = {
   in_review: "violet",
   ready: "teal",
   closed: "gray",
-  met: "teal",
+  met: "green",
   queued: "yellow",
   blocked: "yellow",
   paused: "yellow",

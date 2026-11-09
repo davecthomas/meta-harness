@@ -9,6 +9,13 @@ with open dependencies in `blocked`. A sweep also records issues that closed,
 and moves a blocked task to `queued` once every issue it depends on is
 closed. An issue already in another goal stays there.
 
+Last, a sweep checks whether the goal is met: it has held at least one issue,
+every issue it holds is closed, its label has no open issue it could take in,
+and none of its tasks is queued, blocked, running or waiting on an operator.
+A met goal moves to `met` and the planner emits `goal_met`. Only an `active`
+goal is checked, so a paused goal, and one saved without starting, is left
+alone.
+
 The planner runs a sweep on every active goal every MH_PLANNER_SWEEP_SECONDS,
 and right after a goal first starts: when it is created, or on its first
 resume when it was saved without starting. Webhooks make it immediate later.
@@ -26,6 +33,8 @@ from meta_harness.planner.tracker import Issue, Tracker
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
 TASK_TYPES = {"bug", "feature", "refactor", "dependency", "test", "security", "docs"}
+# A goal's task in one of these still has work to do, or waits for it: the goal is not met.
+UNFINISHED_TASK_STATUSES = ["queued", "blocked", "running", "taken_over", "ready", "review_unresolved"]
 
 
 class Events(Protocol):
@@ -40,6 +49,7 @@ class SweepResult:
     closed: list[str] = field(default_factory=list)
     unblocked: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    met: bool = False
 
 
 def task_type_for(issue: Issue) -> str:
@@ -64,7 +74,56 @@ async def sweep_goal(goal: dict, tracker: Tracker, tasks: TaskClient, events: Ev
             await _take_in(goal, issue, tracker, tasks, events, result)
     await _record_closed(goal, seen, tracker, events, result)
     await _release_unblocked(goal, tracker, tasks, events, result)
+    if not result.errors:
+        await _complete_if_met(goal, tracker, tasks, events, result)
     return result
+
+
+def issues_done(links: list[dict]) -> bool:
+    """Whether a goal's issues are all closed. A goal that never held an issue waits for its first one."""
+    return bool(links) and all(link["state"] == "closed" for link in links)
+
+
+async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult):
+    """Move an active goal to met once every issue it holds is closed and none of its tasks has work left."""
+    if goal["status"] != "active" or not issues_done(await asyncio.to_thread(_links, goal["id"])):
+        return
+    try:
+        unfinished = await asyncio.to_thread(tasks.list, UNFINISHED_TASK_STATUSES, goal["id"], 1)
+    except TaskApiError as err:
+        result.errors.append(f"{goal['id']}: {err}")
+        return
+    if unfinished:
+        return
+    # The label may have picked up an issue since the sweep listed it: look once more before closing the goal.
+    for repo in goal["repos"]:
+        try:
+            issues = await tracker.list_open(repo, goal["label"])
+        except GitHubAppError as err:
+            result.errors.append(f"{repo}: {err}")
+            return
+        for issue in issues:
+            existing = await asyncio.to_thread(_link, issue.ref)
+            if existing is None or existing["goal_id"] == goal["id"]:
+                return
+    met, changed = await asyncio.to_thread(_complete, goal["id"])
+    if not changed:
+        return
+    events.emit(
+        "goal_changed",
+        {"goal_id": goal["id"], "changes": {"status": {"from": changed["status"], "to": met["status"]}}},
+        actor="planner",
+        tags={"goal_id": goal["id"]},
+    )
+    events.emit(
+        "goal_met",
+        {"goal_id": goal["id"], "reason": "every issue it holds is closed and none of its tasks has work left"},
+        actor="planner",
+        tags={"goal_id": goal["id"]},
+        event_id=stable_event_id("goal_met", goal["id"], met["closed_at"]),
+    )
+    goal["status"] = met["status"]
+    result.met = True
 
 
 async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult):
@@ -182,6 +241,11 @@ def _links(goal_id: str) -> list[dict]:
 def _save(ref, goal_id, repo, state, depends_on, task_id, refused_reason) -> None:
     with db.connect(autocommit=True) as conn:
         store.save_link(conn, ref, goal_id, repo, state, depends_on, task_id, refused_reason)
+
+
+def _complete(goal_id: str) -> tuple[dict, dict]:
+    with db.connect(autocommit=True) as conn:
+        return store.update(conn, goal_id, only_if="active", status="met")
 
 
 def _set_state(ref: str, state: str) -> None:
