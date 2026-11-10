@@ -7,6 +7,7 @@
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
+    GET, PUT   /v1/me/settings                the signed-in user's own settings
     GET        /v1/activity                   every pull request opened, by goal, repo or label, for the heat map
     GET        /health
 
@@ -35,7 +36,7 @@ from meta_harness import auth, db
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
 from meta_harness.github_app import GitHubApps
-from meta_harness.planner import activity, drafting, progress, repos, store
+from meta_harness.planner import activity, drafting, progress, repos, settings, store
 from meta_harness.planner.sweep import CodeHost, Events, SweepResult, active_goals, sweep_goal
 from meta_harness.planner.tracker import Tracker, parse_ref
 from meta_harness.tasks.client import TaskApiError, TaskClient
@@ -304,6 +305,21 @@ def create_app(
     def registered_repos(who: str = Depends(operator)) -> dict:
         """The repo registry: the repos a goal may name."""
         return {"repos": [{"name": r.name, "tracker": r.tracker} for r in repos.registry().values()]}
+
+    @app.get("/v1/me/settings")
+    def my_settings(who: str = Depends(operator)) -> dict:
+        """The signed-in user's own settings, or the defaults when they have saved none."""
+        with app.state.pool.connection() as conn:
+            return settings.read(conn, who).model_dump(mode="json")
+
+    @app.put("/v1/me/settings")
+    def save_my_settings(body: settings.UserSettings, who: str = Depends(operator)) -> dict:
+        """Save the signed-in user's own settings. Each user writes only their own row."""
+        unknown = [name for name in body.planner.repos if repos.get(name) is None]
+        if unknown:
+            raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
+        with app.state.pool.connection() as conn:
+            return settings.write(conn, who, body).model_dump(mode="json")
 
     @app.get("/v1/repos/available")
     async def available_repos(who: str = Depends(operator)) -> dict:

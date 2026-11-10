@@ -34,6 +34,7 @@ import {
   IconListCheck,
   IconMoon,
   IconPlus,
+  IconSettings,
   IconSun,
   IconTarget,
 } from "@tabler/icons-react";
@@ -49,6 +50,7 @@ import { TaskPage } from "./pages/TaskPage";
 import { AuditPage, CloudPage, DeploysPage, KillSwitchPage } from "./pages/AdminPages";
 import { LogsPage } from "./pages/LogsPage";
 import { ReposPage } from "./pages/ReposPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { ConfigPage } from "./pages/ConfigPage";
 
 const NAV = [
@@ -90,6 +92,13 @@ export function App() {
   const [signIn, setSignIn] = useState(false);
   const [opened, { toggle, close }] = useDisclosure();
   const location = useLocation();
+  const { setColorScheme } = useMantineColorScheme();
+
+  // A signed-in user's saved appearance applies wherever they sign in.
+  useEffect(() => {
+    if (!who) return;
+    api.settings().then((s) => setColorScheme(s.appearance === "system" ? "auto" : s.appearance), () => undefined);
+  }, [who, setColorScheme]);
 
   useEffect(() => {
     api.me().then(
@@ -185,6 +194,7 @@ export function App() {
             <Route path="/admin/deploys" element={<DeploysPage />} />
             <Route path="/admin/logs" element={<LogsPage />} />
             <Route path="/admin/repos" element={<ReposPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="/admin/audit" element={<AuditPage />} />
             <Route path="/admin/cloud" element={<CloudPage />} />
           </Routes>
@@ -218,6 +228,7 @@ function UserMenu({ who }: { who: string }) {
         <Menu.Label>Signed in with Google</Menu.Label>
         <Menu.Item disabled>{who}</Menu.Item>
         <Menu.Divider />
+        <Menu.Item component={RouterLink} to="/settings" leftSection={<IconSettings size={16} />}>Settings</Menu.Item>
         <Menu.Item onClick={() => void signOut()}>Sign out</Menu.Item>
       </Menu.Dropdown>
     </Menu>
