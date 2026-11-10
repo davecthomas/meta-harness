@@ -63,6 +63,13 @@ class TaskIn(BaseModel):
 CLEARABLE = ("ready", "review_unresolved")
 
 
+class MessageIn(BaseModel):
+    text: str = Field(default="", max_length=8000)
+    # next_turn: steer the agent at its next turn. after_stop: when it would otherwise stop. stop: end the run
+    # after the turn in progress, keeping its work.
+    when: str = "next_turn"
+
+
 class CancelIn(BaseModel):
     reason: str = "canceled through the Task API"
 
@@ -199,6 +206,40 @@ def create_app(
         else:
             events.emit("task_cancel_requested", {"reason": reason}, task_id=task_id, actor=who.actor)
         return task
+
+    @app.post("/v1/tasks/{task_id}/messages", status_code=202)
+    def message(task_id: str, body: MessageIn, who: Caller = Depends(caller)) -> dict:
+        """An operator's message to a running task, or stop after the current turn. The scheduler hands it to the
+        task's RunTask workflow, which gives it to the run in progress."""
+        if body.when != "stop" and not body.text.strip():
+            raise HTTPException(status_code=422, detail="a message needs text")
+        try:
+            with app.state.pool.connection() as conn:
+                visible(store.get(conn, task_id), who)
+                queued = store.add_message(conn, task_id, body.text.strip(), body.when, who.actor)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        events.emit(
+            "operator_message",
+            {"message_id": queued["id"], "text": queued["body"], "when": queued["deliver"]},
+            task_id=task_id,
+            actor=who.actor,
+        )
+        return {"message_id": queued["id"], "when": queued["deliver"]}
+
+    @app.get("/v1/messages/pending")
+    def pending(who: Caller = Depends(service_only)) -> dict:
+        """Operator messages the scheduler has yet to hand over. Services only."""
+        with app.state.pool.connection() as conn:
+            return {"messages": store.pending_messages(conn)}
+
+    @app.post("/v1/messages/{message_id}/delivered")
+    def delivered(message_id: int, who: Caller = Depends(service_only)) -> dict:
+        with app.state.pool.connection() as conn:
+            store.mark_delivered(conn, message_id)
+        return {"message_id": message_id}
 
     @app.get("/v1/tasks/{task_id}/reviews")
     def task_reviews(task_id: str, who: Caller = Depends(caller)) -> dict:

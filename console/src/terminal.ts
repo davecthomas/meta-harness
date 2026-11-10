@@ -43,6 +43,8 @@ export function describe(e: MhEvent): Line | null {
     case "attempt_finished": return line("status", `attempt ${p.attempt} on ${p.candidate}: ${p.decision}, $${p.spent_usd}`);
     case "pull_request_opened": return line("status", `pull request ${p.pr_url}`);
     case "task_cancel_requested": return line("warn", `cancel requested: ${p.reason}`);
+    case "operator_message": return line("warn", `${e.actor ?? "operator"}: ${p.when === "stop" ? "stop after this turn" : `${p.text} (${p.when === "after_stop" ? "after it stops" : "next turn"})`}`);
+    case "operator_message_delivered": return line("info", `operator message delivered (${p.when})`);
     default: return null;
   }
 }

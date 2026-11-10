@@ -7,6 +7,7 @@ import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../ap
 import { Reviews } from "../components/Reviews";
 import { Timeline } from "../components/Timeline";
 import { Plan } from "../components/Plan";
+import { SteerBox } from "../components/SteerBox";
 import { Changes } from "../components/Changes";
 import { SpendLine, spendOf } from "../components/Spend";
 import { useEventStream } from "../hooks";
@@ -166,6 +167,7 @@ export function TaskPage() {
           ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
         ]}
       />
+      {status === "running" && <SteerBox taskId={task.id} />}
       <Plan events={events} />
       <SegmentedControl
         mb="md"

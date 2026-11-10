@@ -54,6 +54,7 @@ from temporalio.exceptions import ApplicationError
 from meta_harness.events.types import HARNESS_EVENT_TYPES
 from meta_harness.run_service import code_host, events, harness_client, routing, run_grants, sandbox
 from meta_harness.run_service.shared import (
+    DeliverRequest,
     INLINE_TEMPLATE,
     ChecksRequest,
     ChecksResult,
@@ -785,3 +786,22 @@ async def merge_pr(request: MergeRequest) -> MergeResult:
         )
     activity.logger.info("merge_pr: %s at %s: %s %s", request.pr_url, request.head_sha[:12], state, detail)
     return MergeResult(state=state, merge_sha=sha, head_sha=head, detail=detail[:500])
+
+
+@activity.defn
+async def deliver_message(request: DeliverRequest) -> str:
+    """Hands an operator's message, or stop, to the harness server of the run in progress. Says what happened."""
+    from meta_harness.run_service import harness_client
+
+    box = await sandbox.find(request.run_id)
+    if box is None:
+        return f"no per-run sandbox for {request.run_id}: the run has ended"
+    message = request.message
+    async with harness_client.client(box) as http:
+        if message.when == "stop":
+            response = await http.post("/stop")
+        else:
+            response = await http.post("/messages", json={"text": message.text, "when": message.when})
+    if response.status_code >= 400:
+        return f"the harness server answered {response.status_code}: {response.text[:200]}"
+    return "delivered"
