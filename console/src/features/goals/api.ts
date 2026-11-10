@@ -32,6 +32,39 @@ export interface GoalDraft {
 }
 
 // An issue of a goal with its task's progress, from GET /v1/goals/{id}/issues.
+// One issue a planning task proposed. depends_on names other drafts by draft_id, or issues as owner/repo#12.
+export interface PlanDraft {
+  draft_id: string;
+  repo: string;
+  title: string;
+  body: string;
+  labels: string[];
+  depends_on: string[];
+}
+
+// A feature goal's plan as the planner shows it: its newest version, or none while the first is drafted.
+export interface GoalPlan {
+  goal_id: string;
+  status: string;
+  // The planning task still drafting, if one is.
+  planning_task_id: string | null;
+  approved_at: string | null;
+  // The label the plan's issues carry.
+  label: string;
+  plan: {
+    version: number;
+    drafts: PlanDraft[];
+    // Why the plan cannot be approved; empty when it can.
+    invalid: string[];
+    source: "planned" | "edited";
+    task_id: string | null;
+    note: string | null;
+    created: Record<string, string>;
+    created_by: string;
+    created_at: string;
+  } | null;
+}
+
 export interface IssueProgress {
   ref: string;
   // The issue's title, once a sweep has read it: what a card with no task yet shows.
@@ -76,6 +109,13 @@ export const goalsApi = {
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
   patchGoal: (id: string, fields: Record<string, unknown>) =>
     call<Goal>(`/v1/goals/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
+  // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
+  goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
+  savePlan: (id: string, drafts: PlanDraft[]) =>
+    call<GoalPlan>(`/v1/goals/${id}/plan`, { method: "PUT", body: JSON.stringify({ drafts }) }),
+  replan: (id: string, note: string) =>
+    call<GoalPlan>(`/v1/goals/${id}/replan`, { method: "POST", body: JSON.stringify({ note }) }),
+  approvePlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/approve`, { method: "POST" }),
   // Each of a goal's issues with its task's status and its pull request's state and checks.
   goalIssues: (id: string) => call<{ issues: IssueProgress[] }>(`/v1/goals/${id}/issues`).then((r) => r.issues),
 };

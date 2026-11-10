@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
+import { Button, Checkbox, Group, NumberInput, Paper, SegmentedControl, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
 import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
@@ -95,6 +95,9 @@ export function NewGoal() {
   }, [label, chosen]);
   const viaLabel = useMemo(() => (labeled ?? []).filter((i) => !i.held_by).map((i) => i.ref), [labeled]);
 
+  // Whether the goal plans its own issues from its description (a feature goal) or runs issues that exist.
+  const [plans, setPlans] = useState(false);
+
   function fromDraft(draft: GoalDraft) {
     setTitle(draft.title);
     setStatement(draft.statement);
@@ -112,7 +115,7 @@ export function NewGoal() {
       setError("Describe the goal.");
       return null;
     }
-    if (!label.trim() && !refs.length) {
+    if (!plans && !label.trim() && !refs.length) {
       setError("Give the goal a label, or pick its issues.");
       return null;
     }
@@ -130,6 +133,7 @@ export function NewGoal() {
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
         start: started,
+        modality: plans ? "feature" : "fix",
       });
       return goal.id;
     } catch (err) {
@@ -195,7 +199,30 @@ export function NewGoal() {
                 {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
               </Stack>
             </Checkbox.Group>
-            <LabelField value={label} onChange={setLabel} repos={chosen} required={!refs.length} />
+            <div>
+              <Text size="sm" fw={500} mb={4}>Where its issues come from</Text>
+              <SegmentedControl
+                aria-label="Where its issues come from"
+                value={plans ? "feature" : "fix"}
+                onChange={(v) => setPlans(v === "feature")}
+                data={[
+                  { value: "fix", label: "Issues that exist" },
+                  { value: "feature", label: "Plan them from the description" },
+                ]}
+              />
+              <Text size="xs" c="dimmed" mt={4}>
+                {plans
+                  ? "A planning task reads the repos and drafts the issues. You review, edit and approve the plan before anything is created or run."
+                  : "The goal runs the open issues with its label, and any you pick."}
+              </Text>
+            </div>
+            <LabelField
+              value={label}
+              onChange={setLabel}
+              repos={chosen}
+              required={!plans && !refs.length}
+              fieldProps={plans ? { description: "Optional. Left empty, the goal gets a label of its own for the issues it creates." } : undefined}
+            />
             <LabelIssues label={label} issues={labeled} />
             <Group gap="sm">
               <Button variant="default" leftSection={<IconListCheck size={16} />} disabled={!chosen.length} onClick={() => setPicking(true)}>
@@ -254,7 +281,7 @@ export function NewGoal() {
                 disabled={saving === false}
                 onClick={() => (start.current = true)}
               >
-                Save and start
+                {plans ? "Save and plan" : "Save and start"}
               </Button>
             </Group>
           </Stack>

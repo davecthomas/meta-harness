@@ -6,6 +6,7 @@ import { IssuesPicker } from "./IssuesPicker";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { GoalFailures } from "./GoalFailures";
+import { GoalPlan } from "./GoalPlan";
 import { AutoMergeEdit, BudgetEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
@@ -263,6 +264,8 @@ export function GoalPage() {
           )}
         </>
       )}
+
+      {goal.status === "planning" && <GoalPlan goal={goal} onApproved={() => void Promise.all([load(), loadProgress()])} />}
 
       <SectionTitle
         right={
