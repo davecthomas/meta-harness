@@ -1,7 +1,7 @@
 import { Anchor, Badge, Group, Paper, Progress, SimpleGrid, Stack, Text, Tooltip } from "@mantine/core";
 import { useNavigate } from "react-router-dom";
 import { issueUrl, type IssueProgress, type Task } from "../api";
-import { StatusBadge } from "./ui";
+import { PrLink, StatusBadge } from "./ui";
 
 // The board's columns, in order, each with its color in the board and the graph.
 export const COLUMNS = [
@@ -81,7 +81,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number }) {
         </Group>
         {issue.pr_url && (
           <Group gap={6} onClick={(e) => e.stopPropagation()}>
-            <Anchor href={issue.pr_url} target="_blank" size="xs">PR #{issue.pr_url.split("/").pop()}</Anchor>
+            <PrLink url={issue.pr_url} size="xs" />
             {checks && (
               <Tooltip label={issue.checks?.failed.length ? `Failing: ${issue.checks.failed.join(", ")}` : `Checks ${checks}`}>
                 <Badge size="xs" variant="light" color={checks === "passed" ? "teal" : checks === "failed" ? "red" : "yellow"}>checks {checks}</Badge>

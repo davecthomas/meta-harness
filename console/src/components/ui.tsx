@@ -97,3 +97,13 @@ export function Facts({ items }: { items: [string, ReactNode][] }) {
     </Table>
   );
 }
+
+// A pull request's link, named by its number, opening GitHub in a new tab. Every list that shows one uses it.
+export function PrLink({ url, size = "sm" }: { url: string; size?: "xs" | "sm" }) {
+  const number = url.replace(/\/$/, "").split("/").pop();
+  return (
+    <Anchor href={url} target="_blank" size={size} onClick={(e) => e.stopPropagation()}>
+      #{number}
+    </Anchor>
+  );
+}
