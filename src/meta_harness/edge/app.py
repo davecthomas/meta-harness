@@ -67,6 +67,7 @@ ROUTES: list[tuple[str, str, str]] = [
     ("/v1/repos", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/labels", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/activity", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
+    ("/v1/pulls", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     # The edge answers /v1/me itself; the planner keeps each user's settings under it.
     ("/v1/me", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/config", "MH_PLANNER_URL", "http://127.0.0.1:8303"),

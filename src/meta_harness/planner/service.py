@@ -36,6 +36,7 @@ from meta_harness import auth, db
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
 from meta_harness.github_app import GitHubApps
+from meta_harness.run_service import code_host
 from meta_harness.planner import activity, drafting, progress, repos, settings, store
 from meta_harness.planner.sweep import CodeHost, Events, SweepResult, active_goals, sweep_goal
 from meta_harness.planner.tracker import Tracker, parse_ref
@@ -62,6 +63,13 @@ class GoalIn(BaseModel):
     priority: int = 0
     # False: save the goal paused and never started; resume starts it.
     start: bool = True
+
+
+class LineCommentIn(BaseModel):
+    path: str = Field(min_length=1)
+    line: int = Field(ge=1)
+    start_line: int | None = Field(default=None, ge=1)
+    body: str = Field(min_length=1, max_length=8000)
 
 
 class RefsIn(BaseModel):
@@ -307,6 +315,47 @@ def create_app(
     def registered_repos(who: str = Depends(operator)) -> dict:
         """The repo registry: the repos a goal may name."""
         return {"repos": [{"name": r.name, "tracker": r.tracker} for r in repos.registry().values()]}
+
+    async def task_pull(task_id: str) -> tuple[dict, str, int]:
+        """A task with its pull request's repo and number. 404 when the task has none."""
+        try:
+            task = await asyncio.to_thread(tasks.get, task_id)
+        except TaskApiError as err:
+            raise HTTPException(status_code=404 if err.status == 404 else 502, detail=str(err)) from err
+        if not task.get("pr_url"):
+            raise HTTPException(status_code=404, detail="the task has no pull request")
+        try:
+            repo, number = code_host.pr_number(task["pr_url"])
+        except code_host.CodeHostError as err:
+            raise HTTPException(status_code=404, detail=str(err)) from err
+        return task, repo, number
+
+    @app.get("/v1/pulls/{task_id}/diff")
+    async def pull_diff(task_id: str, who: str = Depends(operator)) -> dict:
+        """The files the task's pull request changes against its base, with their patches, and its head commit.
+        Served here with run service code, as the configuration API is, until the run service has an HTTP API."""
+        _, repo, number = await task_pull(task_id)
+        try:
+            pull = await code_host.read_pull_request(repo, number)
+            files = await code_host.pull_request_files(repo, number)
+        except code_host.CodeHostError as err:
+            raise HTTPException(status_code=502, detail=str(err)) from err
+        return {"repo": repo, "number": number, "head_sha": pull.head_sha, "state": pull.state, "files": files}
+
+    @app.post("/v1/pulls/{task_id}/comments", status_code=201)
+    async def pull_comment(task_id: str, body: LineCommentIn, who: str = Depends(operator)) -> dict:
+        """A review comment on lines of the pull request, posted as the GitHub App, its text naming the operator."""
+        _, repo, number = await task_pull(task_id)
+        try:
+            pull = await code_host.read_pull_request(repo, number)
+            url = await code_host.comment_on_lines(
+                repo, number, pull.head_sha, body.path, body.line, f"**{who}** wrote:\n\n{body.body}", body.start_line
+            )
+        except code_host.CodeHostError as err:
+            raise HTTPException(status_code=422 if err.status == 422 else 502, detail=str(err)) from err
+        comment = {"path": body.path, "line": body.line, "start_line": body.start_line, "body": body.body, "url": url}
+        events.emit("pull_request_commented", comment, task_id=task_id, actor=who)
+        return comment
 
     @app.get("/v1/me/settings")
     def my_settings(who: str = Depends(operator)) -> dict:

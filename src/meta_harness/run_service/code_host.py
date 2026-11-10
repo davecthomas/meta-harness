@@ -378,6 +378,44 @@ async def post_review(repo: str, number: int, head_sha: str, body: str, comments
     return str(review.get("html_url", ""))
 
 
+async def pull_request_files(repo: str, number: int) -> list[dict]:
+    """Each file the pull request changes: its path, status, added and removed line counts, and patch."""
+    files: list[dict] = []
+    page = 1
+    while True:
+        batch = await _github(
+            repo,
+            READ_PULL_REQUEST,
+            "GET",
+            f"/repos/{repo}/pulls/{number}/files",
+            params={"per_page": 100, "page": page},
+        )
+        files += [
+            {
+                "path": f["filename"],
+                "status": f.get("status", "modified"),
+                "additions": f.get("additions", 0),
+                "deletions": f.get("deletions", 0),
+                "patch": f.get("patch"),
+            }
+            for f in batch or []
+        ]
+        if len(batch or []) < 100:
+            return files
+        page += 1
+
+
+async def comment_on_lines(
+    repo: str, number: int, head_sha: str, path: str, line: int, body: str, start_line: int | None = None
+) -> str:
+    """Posts a review comment on lines of the pull request's head commit (the new side), and returns its URL."""
+    payload: dict = {"commit_id": head_sha, "path": path, "line": line, "side": "RIGHT", "body": body}
+    if start_line is not None and start_line < line:
+        payload |= {"start_line": start_line, "start_side": "RIGHT"}
+    comment = await _github(repo, REVIEW, "POST", f"/repos/{repo}/pulls/{number}/comments", json=payload)
+    return str(comment.get("html_url", ""))
+
+
 MERGE = {"contents": "write", "pull_requests": "write"}
 
 

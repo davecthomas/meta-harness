@@ -377,6 +377,35 @@
     ],
     "type": "object"
   },
+  "pull_request_commented v1": {
+    "additionalProperties": true,
+    "properties": {
+      "body": {
+        "type": "string"
+      },
+      "line": {
+        "type": "integer"
+      },
+      "path": {
+        "type": "string"
+      },
+      "start_line": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "line",
+      "body"
+    ],
+    "type": "object"
+  },
   "pull_request_merged v1": {
     "additionalProperties": true,
     "properties": {
