@@ -21,6 +21,8 @@ export function columnOf(issue: IssueProgress, byRef: Map<string, IssueProgress>
   const status = issue.task_status;
   if (issue.state === "closed" || status === "closed" || issue.pr_state === "merged") return "done";
   if (issue.refused_reason || (status && FAILED.has(status)) || issue.checks?.state === "failed") return "attention";
+  // A running task held for budget waits on an operator.
+  if (issue.task_waiting_on) return "attention";
   // A cycle stops here: the planner refuses those, so an issue already on the path adds nothing.
   seen.add(issue.ref);
   const blocked = (ref: string) => byRef.has(ref) && !seen.has(ref) && columnOf(byRef.get(ref)!, byRef, seen) === "attention";

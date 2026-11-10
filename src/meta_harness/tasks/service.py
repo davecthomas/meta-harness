@@ -17,7 +17,7 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -89,6 +89,14 @@ class StatusIn(BaseModel):
     pr_url: str | None = None
     head_sha: str | None = None
     owner: str | None = None
+    # What the running task waits on an operator for: "budget", or "" once it no longer waits.
+    waiting_on: str | None = None
+
+
+class BudgetIn(BaseModel):
+    # raise: carry on, with max_usd as the task's new spend limit when given. end: end the task as it would have.
+    action: Literal["raise", "end"]
+    max_usd: Decimal | None = Field(default=None, gt=0)
 
 
 def create_app(
@@ -181,6 +189,7 @@ def create_app(
         goal_id: str | None = None,
         pr: bool | None = None,
         q: str | None = Query(default=None, max_length=200),
+        waiting: bool | None = None,
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         who: Caller = Depends(caller),
@@ -193,7 +202,7 @@ def create_app(
                 except store.NotFound as err:
                     raise HTTPException(status_code=404, detail="no such task") from err
             statuses = status.split(",") if status else None
-            tasks, total = store.list_tasks(conn, owner, statuses, goal_id, limit, offset, pr, q)
+            tasks, total = store.list_tasks(conn, owner, statuses, goal_id, limit, offset, pr, q, waiting)
             return {"tasks": tasks, "total": total, "offset": offset, "limit": limit}
 
     @app.get("/v1/tasks/{task_id}")
@@ -238,6 +247,8 @@ def create_app(
     def message(task_id: str, body: MessageIn, who: Caller = Depends(caller)) -> dict:
         """An operator's message to a running task, or stop after the current turn. The scheduler hands it to the
         task's RunTask workflow, which gives it to the run in progress."""
+        if body.when == "budget":
+            raise HTTPException(status_code=422, detail="answer a budget hold with POST /v1/tasks/{id}/budget")
         if body.when != "stop" and not body.text.strip():
             raise HTTPException(status_code=422, detail="a message needs text")
         if body.when == "choose" and not body.text.strip().isdigit():
@@ -265,6 +276,22 @@ def create_app(
                 actor=who.actor,
             )
         return {"message_id": queued["id"], "when": queued["deliver"]}
+
+    @app.post("/v1/tasks/{task_id}/budget", status_code=202)
+    def budget(task_id: str, body: BudgetIn, who: Caller = Depends(caller)) -> dict:
+        """An operator's answer to a task held for budget: raise its spend limit (or carry on, when its goal's
+        budget was raised) or end it. The scheduler hands the answer to the task's workflow."""
+        try:
+            with app.state.pool.connection() as conn:
+                visible(store.get(conn, task_id), who)
+                task = store.decide_budget(conn, task_id, body.action, body.max_usd, who.actor)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        decided = {"action": body.action, "max_usd": str(body.max_usd) if body.max_usd is not None else None}
+        events.emit("budget_decision", decided, task_id=task_id, actor=who.actor)
+        return task
 
     @app.get("/v1/messages/pending")
     def pending(who: Caller = Depends(service_only)) -> dict:
@@ -319,15 +346,20 @@ def create_app(
 
     @app.post("/v1/tasks/{task_id}/status")
     def set_status(task_id: str, body: StatusIn, who: Caller = Depends(service_only)) -> dict:
-        fields = {k: v for k, v in body.model_dump().items() if k in {"pr_url", "head_sha", "owner"} and v is not None}
+        settable = {"pr_url", "head_sha", "owner", "waiting_on"}
+        fields = {k: v for k, v in body.model_dump().items() if k in settable and v is not None}
         try:
             with app.state.pool.connection() as conn:
+                before = store.get(conn, task_id)
                 task, previous = store.set_status(conn, task_id, body.status, body.reason, **fields)
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such task") from err
         except store.TaskError as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
         emit_status(task, previous, who.actor)
+        if task["waiting_on"] == "budget" and before.get("waiting_on") != "budget":
+            log.warning("task %s is held for budget: %s", task_id, task["status_reason"])
+            events.emit("budget_hold", {"reason": task["status_reason"] or ""}, task_id=task_id, actor=who.actor)
         return task
 
     return app

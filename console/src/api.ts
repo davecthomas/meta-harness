@@ -78,6 +78,10 @@ export interface Task {
   updated_at: string;
   // Attempts the task's first run makes at once, for an operator to pick one.
   attempts?: number;
+  // The task's spend limit for all its runs, when it has its own.
+  max_usd?: string | null;
+  // What the running task waits on an operator for: "budget" while it is held for budget.
+  waiting_on?: string | null;
 }
 
 export interface MhEvent {

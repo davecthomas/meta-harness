@@ -26,6 +26,7 @@ from temporalio import activity
 from temporalio.client import WorkflowHistory
 from temporalio.worker import Replayer, Worker
 
+from meta_harness.run_service.budget_activities import BudgetHold, GoalBudget
 from meta_harness.run_service.prompt_activities import RunPromptRecord
 from meta_harness.run_service.shared import (
     AttemptRecord,
@@ -81,6 +82,8 @@ SCENARIOS = {
         "auto_merge": True,
         "merge_checks": ["silent"],
     },
+    # After the budget-hold patch: each run of a goal's task first reads the goal's budget.
+    "patched-budget-hold-merged": {"verdicts": [CLEAN], "goal_id": "g-1", "auto_merge": True},
 }
 
 
@@ -124,7 +127,24 @@ def _task_activities(review: bool, goal_id: str) -> list:
     async def record_prompt(record: RunPromptRecord) -> None:
         return None
 
-    return [load_task, set_task_status, record_route, record_attempt, record_published, record_prompt]
+    @activity.defn(name="goal_budget")
+    async def goal_budget(goal_id: str) -> GoalBudget:
+        return GoalBudget()
+
+    @activity.defn(name="budget_hold")
+    async def budget_hold(hold: BudgetHold) -> None:
+        return None
+
+    return [
+        load_task,
+        set_task_status,
+        record_route,
+        record_attempt,
+        record_published,
+        record_prompt,
+        goal_budget,
+        budget_hold,
+    ]
 
 
 def _histories() -> list[Path]:

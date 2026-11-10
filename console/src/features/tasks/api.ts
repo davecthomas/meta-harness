@@ -44,13 +44,14 @@ export interface AttemptsCompare {
 export const tasksApi = {
   tasks: async (
     // pr: true for tasks with a pull request, false for tasks without one.
-    params: { statuses?: string[]; goalId?: string; pr?: boolean },
+    // waiting: true for tasks waiting on an operator (held for budget).
+    params: { statuses?: string[]; goalId?: string; pr?: boolean; waiting?: boolean },
     offset: number,
     limit: number,
   ): Promise<Page<Task>> => {
     const pr = params.pr === undefined ? undefined : String(params.pr);
     const r = await call<{ tasks: Task[]; total: number }>(
-      "/v1/tasks" + query({ status: params.statuses?.join(","), goal_id: params.goalId, pr, offset, limit }),
+      "/v1/tasks" + query({ status: params.statuses?.join(","), goal_id: params.goalId, pr, waiting: params.waiting ? "true" : undefined, offset, limit }),
     );
     return { items: r.tasks, total: r.total };
   },
@@ -64,6 +65,9 @@ export const tasksApi = {
   setAttempts: (id: string, count: number) => call<Task>(`/v1/tasks/${id}/attempts`, { method: "POST", body: JSON.stringify({ count }) }),
   attempts: (taskId: string) => call<AttemptsCompare>(`/v1/pulls/${taskId}/attempts`),
   clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
+  // An operator's answer to a task held for budget: raise (with a new limit, or none to look again) or end.
+  decideBudget: (id: string, action: "raise" | "end", max_usd?: number) =>
+    call<Task>(`/v1/tasks/${id}/budget`, { method: "POST", body: JSON.stringify({ action, ...(max_usd ? { max_usd } : {}) }) }),
   cancelTask: (id: string) =>
     call<Task>(`/v1/tasks/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "canceled from the console" }) }),
 };

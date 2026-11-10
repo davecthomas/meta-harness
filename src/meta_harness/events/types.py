@@ -114,6 +114,16 @@ REGISTRY: list[EventType] = [
         ),
     ),
     # The review loop on a task's pull request
+    # A running task held for budget, and the operator's answer
+    EventType("budget_hold", 1, _object({"reason": {"type": "string"}}, ["reason"])),
+    EventType(
+        "budget_decision",
+        1,
+        _object(
+            {"action": {"type": "string", "enum": ["raise", "end"]}, "max_usd": {"type": ["string", "null"]}},
+            ["action"],
+        ),
+    ),
     EventType(
         "merge_checks",
         1,
