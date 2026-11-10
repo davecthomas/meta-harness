@@ -345,6 +345,37 @@
     ],
     "type": "object"
   },
+  "merge_checks v1": {
+    "additionalProperties": true,
+    "properties": {
+      "failed": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "merge_sha": {
+        "type": "string"
+      },
+      "round": {
+        "type": "integer"
+      },
+      "state": {
+        "enum": [
+          "passed",
+          "failed",
+          "none",
+          "pending"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "merge_sha",
+      "state"
+    ],
+    "type": "object"
+  },
   "model_call v1": {
     "additionalProperties": true,
     "properties": {},
