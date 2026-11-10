@@ -22,6 +22,8 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from meta_harness.run_service import events, routing
+from meta_harness import logs
+from meta_harness.logs import JournalFormatter
 from meta_harness.run_service.activities import (
     deliver_message,
     cleanup_run,
@@ -51,7 +53,7 @@ from meta_harness.run_service.workflows import RunTask
 LOG_TAGS = {"temporalio.workflow": "[workflow]", "temporalio.activity": "[activity]"}
 
 
-class _TagFormatter(logging.Formatter):
+class _TagFormatter(JournalFormatter):
     def format(self, record: logging.LogRecord) -> str:
         tag = LOG_TAGS.get(record.name, f"[{record.name}]")
         return f"{tag} {super().format(record)}"
@@ -63,12 +65,7 @@ def _configure_logging() -> None:
     The SDK appends the full workflow or activity info to every message by
     default. The sample's messages name the ids they need, so that is turned off.
     """
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(_TagFormatter("%(message)s"))
-    # force: importing ai-api-unified has already given the root logger a handler.
-    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
-    # httpx logs every request at INFO. The activity prints what each call did.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logs.configure(formatter=_TagFormatter("%(message)s"))
     workflow.logger.workflow_info_on_message = False
     activity.logger.activity_info_on_message = False
 
