@@ -120,6 +120,8 @@ umask 077
   echo "MH_REPOS_CONFIG=$ETC/repos.json"
   # The most per-run sandboxes the VM holds: the ceiling on the task policy's max_parallel.
   echo "MH_MAX_SANDBOXES=8"
+  # Every run gets a Postgres beside its sandbox, for its task's tests, unless its harness profile says otherwise.
+  echo "MH_SANDBOX_SERVICES=postgres"
   echo "ANTHROPIC_API_KEY=$(secret ANTHROPIC_API_KEY)"
   echo "OPENAI_API_KEY=$(secret OPENAI_API_KEY)"
   echo "GOOGLE_GEMINI_API_KEY=$(secret GOOGLE_GEMINI_API_KEY)"

@@ -469,9 +469,22 @@ them:
   any other program, and any command or process substitution, with a reason
   pi reads as the tool's result. It keeps a run to the tools its task needs;
   the per-run sandbox, not the list, is the security boundary.
+- `services` names what the run gets beside its sandbox: `["postgres"]`, or
+  `[]` for none. Left out, the machine's `MH_SANDBOX_SERVICES` decides, which
+  the VM sets to `postgres`, so every profile gets it without an operator
+  rewriting the profiles they keep. With `postgres`, the run service starts a
+  Postgres container (`postgres:16-alpine`, or `MH_SANDBOX_POSTGRES_IMAGE`)
+  on the run's own network before the sandbox, with its data in memory, one
+  CPU and 512 MB, and no port on the host, and waits until it takes
+  connections. The sandbox is given its URL as `DATABASE_URL` and
+  `MH_DATABASE_URL` (or the names in `MH_SANDBOX_DATABASE_ENV`), and reaches
+  it by name, not through the egress proxy. It is removed with the sandbox.
+  So a task's tests that need a database run in its sandbox (#200): before,
+  this repo's `db` tests could not, every review reported it, and one fix
+  run spent 75 turns trying to start a Postgres in `/tmp`.
 - The meta-harness run service checks every harness profile at startup: its
-  tools, limits, resources and allowlist, and every tier candidate's profile
-  name.
+  tools, limits, resources, services and allowlist, and every tier
+  candidate's profile name.
 
 Planned profile fields, not built: `prompts`, a versioned harness prompt set;
 `loop.plan_first` and `loop.test_before_pr`; `loop.compaction`, mapped to pi's
