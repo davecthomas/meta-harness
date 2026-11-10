@@ -48,6 +48,13 @@ and what is planned.
   field is removed in a later pull request, once no running code reads it.
   An event type's schema never changes once it has merged: register a new
   version beside it (`tests/events/registered_schemas.json` holds them).
+- A deploy replays every running workflow against the new code. A change to
+  which activities, timers, signals or child workflows a workflow runs, or
+  their order, goes behind `workflow.patched("<change-id>")`; a later pull
+  request removes the old branch with `workflow.deprecate_patch` once no
+  workflow from before the change is running. `tests/run_service/test_replay.py`
+  replays recorded histories and fails a change that skips this. Record a
+  history of the new path too (its docstring says how) and keep the old ones.
 
 ## Style
 

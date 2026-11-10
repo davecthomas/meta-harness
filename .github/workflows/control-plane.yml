@@ -44,7 +44,8 @@ jobs:
       - run: make lint
       - run: uv run mh migrate
       - name: make test, with every database test required to run
-        run: uv run pytest -q -rs | tee pytest.out && ! grep -q "SKIPPED" pytest.out
+        # The replay test's recording runs only when asked (MH_RECORD_HISTORIES); every other skip fails the job.
+        run: uv run pytest -q -rs | tee pytest.out && ! grep "SKIPPED" pytest.out | grep -v "records histories only when asked"
 
   console:
     name: console web app

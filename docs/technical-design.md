@@ -2312,8 +2312,13 @@ The restarted worker also replays every running RunTask workflow's history
 against the new workflow code. A change to which activities, timers or
 signals a workflow runs, or their order, no longer matches a history
 recorded before it, and Temporal retries that workflow task without end:
-the task neither finishes nor fails. Nothing guards against this yet; the
-rule and its replay check are planned (#113).
+the task neither finishes nor fails. So a change like that goes behind
+`workflow.patched("<change-id>")`, and a later pull request removes the old
+branch with `workflow.deprecate_patch` once no workflow started before the
+change is still running. `tests/run_service/test_replay.py` replays recorded
+RunTask histories (`tests/run_service/histories`, Task API tasks through the
+review loop) against the current code on every pull request, so a change
+that would break running workflows fails before it merges.
 
 A failed update rolls back. When any step of an update fails (a service that
 does not answer `/health` within 60 seconds, a migration, a dependency
