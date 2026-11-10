@@ -22,7 +22,11 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import {
   IconAdjustments,
+  IconCloud,
   IconHexagons,
+  IconHistory,
+  IconPlayerStop,
+  IconRocket,
   IconLayoutDashboard,
   IconGridDots,
   IconListCheck,
@@ -40,6 +44,7 @@ import { GoalsPage } from "./pages/GoalsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ActivityPage } from "./pages/ActivityPage";
 import { TaskPage } from "./pages/TaskPage";
+import { AuditPage, CloudPage, DeploysPage, KillSwitchPage } from "./pages/AdminPages";
 import { ConfigPage } from "./pages/ConfigPage";
 
 const NAV = [
@@ -52,8 +57,19 @@ const NAV = [
       { to: "/activity", label: "Activity", icon: IconGridDots },
     ],
   },
-  { section: "Configure", items: [{ to: "/config", label: "Configuration", icon: IconAdjustments }] },
 ];
+
+// Only admins see it: what changes how the meta-harness runs, and where it is deployed.
+const ADMIN_NAV = {
+  section: "Admin",
+  items: [
+    { to: "/config", label: "Configuration", icon: IconAdjustments },
+    { to: "/admin/kill-switch", label: "Kill switch", icon: IconPlayerStop },
+    { to: "/admin/deploys", label: "Deploys", icon: IconRocket },
+    { to: "/admin/audit", label: "Audit", icon: IconHistory },
+    { to: "/admin/cloud", label: "Google Cloud", icon: IconCloud },
+  ],
+};
 
 function isActive(path: string, to: string): boolean {
   if (to === "/") return path === "/";
@@ -63,6 +79,7 @@ function isActive(path: string, to: string): boolean {
 
 export function App() {
   const [who, setWho] = useState<string | null>(null);
+  const [admin, setAdmin] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const [signIn, setSignIn] = useState(false);
   const [opened, { toggle, close }] = useDisclosure();
@@ -70,7 +87,10 @@ export function App() {
 
   useEffect(() => {
     api.me().then(
-      (me) => setWho(me.identity),
+      (me) => {
+        setWho(me.identity);
+        setAdmin((me.roles ?? []).includes("admin"));
+      },
       (err) => {
         if (err instanceof ApiError && err.status === 401) setSignIn(true);
         else setRefused(err instanceof ApiError ? err.detail : String(err));
@@ -80,6 +100,7 @@ export function App() {
   const signedIn = useCallback((identity: string) => {
     setSignIn(false);
     setWho(identity);
+    api.me().then((me) => setAdmin((me.roles ?? []).includes("admin")), () => setAdmin(false));
   }, []);
 
 
@@ -106,7 +127,7 @@ export function App() {
 
       <AppShell.Navbar p="sm">
         <AppShell.Section grow component={ScrollArea}>
-          {NAV.map((group) => (
+          {(admin ? [...NAV, ADMIN_NAV] : NAV).map((group) => (
             <div key={group.section}>
               <Text size="xs" fw={600} c="dimmed" tt="uppercase" px="sm" mt="md" mb={6}>
                 {group.section}
@@ -154,6 +175,10 @@ export function App() {
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/tasks/:taskId" element={<TaskPage />} />
             <Route path="/config" element={<ConfigPage />} />
+            <Route path="/admin/kill-switch" element={<KillSwitchPage />} />
+            <Route path="/admin/deploys" element={<DeploysPage />} />
+            <Route path="/admin/audit" element={<AuditPage />} />
+            <Route path="/admin/cloud" element={<CloudPage />} />
           </Routes>
         )}
       </AppShell.Main>

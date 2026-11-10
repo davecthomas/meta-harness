@@ -153,6 +153,10 @@ resource "google_cloud_run_v2_service" "edge" {
           # The edge's own address, which the live event stream uses (Firebase Hosting ends requests at 60s).
           MH_STREAM_ORIGIN     = "https://${local.edge}-${local.platform.project_number}.${local.region}.run.app"
           MH_CONSOLE_OPERATORS = join(",", local.platform.operators)
+          # try(): a release applied against a platform state from before the output reads no admins.
+          MH_CONSOLE_ADMINS = join(",", try(local.platform.admins, []))
+          MH_COMMIT         = var.commit
+          MH_PROJECT        = local.project
         }
         content {
           name  = env.key

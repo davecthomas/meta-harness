@@ -84,7 +84,8 @@ function Stat(props: { label: string; value: number | null; to?: string; link?: 
   );
 }
 
-function KillSwitchPanel() {
+// The kill switch's state, and for an admin the control that flips it.
+export function KillSwitchPanel({ canChange = false }: { canChange?: boolean }) {
   const [state, setState] = useState<KillSwitch | null>(null);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +122,7 @@ function KillSwitchPanel() {
             </Text>
           </div>
         </Group>
-        <Group gap="sm" wrap="wrap" style={{ flex: "1 1 360px", justifyContent: "flex-end" }}>
+        {canChange && <Group gap="sm" wrap="wrap" style={{ flex: "1 1 360px", justifyContent: "flex-end" }}>
           <TextInput placeholder="Reason" value={reason} onChange={(e) => setReason(e.currentTarget.value)} style={{ flex: "1 1 200px", maxWidth: 360 }} />
           <Button
             color={state.engaged ? "teal" : "red"}
@@ -132,7 +133,7 @@ function KillSwitchPanel() {
           >
             {state.engaged ? "Lift the kill switch" : "Stop everything"}
           </Button>
-        </Group>
+        </Group>}
       </Group>
     </Paper>
   );
