@@ -239,3 +239,50 @@ async def test_each_operator_message_is_signaled_to_its_task_once_and_a_failed_o
         or ("t-a", {"message_id": 1, "text": "Use the helper.", "when": "next_turn"}) in signaled
     )
     assert ("t-b", {"message_id": 2, "text": "", "when": "stop"}) in signaled
+
+
+async def test_a_drain_admits_nothing_and_stops_nothing(repo):
+    from meta_harness.scheduler.admission import kill_switch, set_draining
+
+    tasks = Tasks()
+    tasks.add(repo, status="running")
+    queued = tasks.add(f"{repo}-2")
+    canceled = []
+
+    async def cancel(task_id):
+        canceled.append(task_id)
+
+    admission, started = _admission(tasks)
+    admission.cancel = cancel
+    set_draining(True, "deploy", "a deploy replaces the VM")
+    try:
+        assert kill_switch()["draining"] is True and kill_switch()["engaged"] is False
+        result = await admission.pass_once()
+    finally:
+        set_draining(False, "deploy", "the VM booted")
+    assert started == [] and canceled == [] and queued not in result.started
+    assert (await admission.pass_once()).started == [queued]
+
+
+def test_the_kill_switch_api_takes_a_mode(repo):
+    from fastapi.testclient import TestClient
+
+    from meta_harness.scheduler.admission import set_draining, set_kill_switch
+    from meta_harness.scheduler.service import create_app
+
+    events = Events()
+    admission, _ = _admission(Tasks(), events=events)
+    app = create_app(admission, interval=0, operator_keys={"op-key": "op@example.com"}, service_keys={})
+    headers = {"Authorization": "Bearer op-key"}
+    try:
+        with TestClient(app) as client:
+            drained = client.post("/v1/kill-switch", json={"mode": "drain", "reason": "deploy"}, headers=headers).json()
+            assert drained["draining"] is True and drained["engaged"] is False
+            off = client.post("/v1/kill-switch", json={"mode": "off"}, headers=headers).json()
+            assert off["draining"] is False and off["engaged"] is False
+            assert client.post("/v1/kill-switch", json={}, headers=headers).status_code == 422
+    finally:
+        set_draining(False, "test", "reset")
+        set_kill_switch(False, "test", "reset")
+    modes = [p["mode"] for t, p, _ in events.emitted if t == "kill_switch_changed"]
+    assert modes == ["drain", "off"]

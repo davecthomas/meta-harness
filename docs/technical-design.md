@@ -1626,7 +1626,7 @@ credential.
 | POST | `/v1/tasks/{id}/hand-back`, `/close` | Meta-harness run service | End a takeover: a follow-up run continues on the branch, or the task closes with the operator's outcome | planned |
 | GET | `/v1/runs/{id}` | Meta-harness run service | Run state, candidate, token usage and cost so far | planned |
 | GET | `/v1/routing` | Meta-harness run service | Routing decisions and the candidate each task finished on, by modality, tier and time | planned |
-| GET, POST | `/v1/kill-switch` | Meta-harness scheduler | Read the kill switch, or turn it on or off with a reason. While it is on, the scheduler stops every running task and admits none. Scopes smaller than everything (a run, a caller) are planned | built |
+| GET, POST | `/v1/kill-switch` | Meta-harness scheduler | Read the kill switch, or turn it on or off with a reason. While it is on, the scheduler stops every running task and admits none. `mode` sets it instead: `stop` is on, `drain` admits nothing new and lets running tasks finish (a deploy that replaces the VM drains), and `off` ends both. `kill_switch_changed` carries the mode. Scopes smaller than everything (a run, a caller) are planned | built |
 | POST | `/v1/reviews/{task_id}/claim`, `/verdict`, `/release` | Meta-harness run service | An operator review: claim the round, submit a verdict with findings, or release the claim | planned |
 | GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest. `start` (default `true`) creates it `active` and sweeps it at once; `start: false` saves it `paused`, not started (`started_at` null), and takes in no issue until its first `/resume` | built |
 | GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `auto_merge`, priority, budget and `max_parallel` (null to inherit), from the Goal page's Edit goal | partly built |
@@ -2403,8 +2403,13 @@ operator reaches it through IAP-tunneled SSH, only to read logs.
 What this shape lacks against the design above: the Temporal dev server and
 the Postgres container are single copies on one disk; the sandbox host is the
 control-plane host; the VM's size bounds concurrent runs; and a deploy that
-replaces the VM (a change to its definition) stops the tasks running on it
-and takes the control plane down while the new VM boots (#99). After a
+replaces or restarts the VM (a change to its definition or machine type)
+takes the control plane down while the new VM boots. It drains first: over
+IAP SSH, `deploy/vm/drain.sh on` sets the scheduler draining, so no new task
+starts, and the deploy waits until no task is `running`, up to the longest
+harness profile's `max_minutes` plus ten. Past that it applies anyway and
+names the tasks it interrupted in the run's summary. The new VM's boot ends
+the drain. After a
 rollback, the VM's metadata still names the failed commit, so a reboot before
 the fix deploys boots that commit, with no rollback. Cloud SQL and Temporal Cloud
 are their own pull request after the point of entry, as Terraform resources

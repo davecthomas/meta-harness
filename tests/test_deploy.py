@@ -129,7 +129,7 @@ def test_a_deploy_updates_the_running_vm_in_place_unless_terraform_replaced_it()
     deploy = (WORKFLOWS / "deploy.yml").read_text()
     release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
     platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
-    assert "if: steps.apply.outputs.replaced == 'false'" in deploy
+    assert "if: steps.release_plan.outputs.replaced == 'false'" in deploy
     # Whether the VM is replaced comes from Terraform's plan, so it is right on the first deploy too.
     assert 'select(.address == "google_compute_instance.vm")' in deploy and 'index("delete") != null' in deploy
     # A new machine type stops and starts the VM, which boots the commit: no update over SSH on top of it.
@@ -236,3 +236,18 @@ def test_a_deploy_blocked_by_a_failed_check_opens_an_issue_that_names_the_check(
 def test_the_e2e_judges_a_starter_crash_after_a_completed_workflow_by_its_result():
     stack = (ROOT / "samples" / "temporal-run-task" / "stack.sh").read_text()
     assert '[ "$status" -eq 139 ] && grep -q' in stack
+
+
+def test_a_deploy_that_replaces_the_vm_drains_running_tasks_first():
+    """#99: so no new task starts on a VM about to go, and running ones finish, up to a ceiling."""
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    drain, apply = (
+        deploy.index("name: drain running tasks before the VM is replaced"),
+        deploy.index("name: apply the release stack"),
+    )
+    assert deploy.index("name: plan the release stack") < drain < apply
+    assert "if: steps.release_plan.outputs.replaced == 'true'" in deploy[drain:apply]
+    assert "drain.sh on" in deploy[drain:apply] and "max_minutes" in deploy[drain:apply]
+    assert "$GITHUB_STEP_SUMMARY" in deploy[drain:apply], "tasks interrupted past the ceiling are named"
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    assert 'drain.sh" off' in boot, "the new VM's boot ends the drain"
