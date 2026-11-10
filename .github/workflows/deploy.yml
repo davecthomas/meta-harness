@@ -151,6 +151,16 @@ jobs:
       - name: update the running VM in place
         if: steps.release_plan.outputs.replaced == 'false'
         run: |
+          # First a login that does nothing, tried until it works: this job's SSH key is new each run, and the
+          # VM refuses it (Permission denied (publickey)) until the key has reached it, which can take a while.
+          # The update itself then runs once, so a retry never starts it twice.
+          for try in 1 2 3 4 5 6; do
+            timeout 120 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \
+              --command true && break
+            [ "$try" = 6 ] && { echo "could not log in to the VM in 6 tries"; exit 1; }
+            echo "the VM refused the login (try $try); trying again in 20 seconds"
+            sleep 20
+          done
           # The startup script, from the metadata the apply just set, run as its own unit so a dropped SSH
           # connection cannot stop it. It checks the commit out and restarts the services one at a time.
           timeout 1500 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \

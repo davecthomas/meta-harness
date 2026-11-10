@@ -690,18 +690,33 @@ async def wait_merge_checks(request: MergeChecksRequest) -> ChecksResult:
 
 
 async def _merge_runs(request: MergeChecksRequest) -> list[code_host.CheckRun]:
-    """The merge commit's checks, with each canceled one swapped for the same check on the base's newest commit
-    that holds the merge, when there is one."""
+    """The merge commit's checks, with each one that did not pass swapped for the same check on the base's newest
+    commit that holds the merge, when there is a newer one.
+
+    That commit's run covers this merge too, so it is the one that counts: a deploy that a later merge canceled,
+    or that failed for a reason outside the code (a refused login, a provider's outage) and passed on the next
+    commit, is not this merge's failure. A check that failed there too is. While the newer commit's run has not
+    appeared, a canceled check waits for it; a failed one waits only while that commit's checks are still
+    running, and stands as failed once they are done without it.
+    """
     runs = await code_host.check_runs(request.repo, request.merge_sha)
-    canceled = [r for r in runs if r.status == "completed" and r.conclusion == "cancelled"]
-    if not canceled:
+    unpassed = [r for r in runs if r.status == "completed" and r.conclusion not in PASSING_CONCLUSIONS]
+    if not unpassed:
         return runs
     newest = await code_host.newest_containing(request.repo, request.base, request.merge_sha)
     if not newest or newest == request.merge_sha:
         return runs
-    later = {r.name: r for r in await code_host.check_runs(request.repo, newest)}
-    waiting = code_host.CheckRun
-    return [(later.get(r.name) or waiting(r.name, "queued", None, "")) if r in canceled else r for r in runs]
+    later_runs = await code_host.check_runs(request.repo, newest)
+    later = {r.name: r for r in later_runs}
+    settled = bool(later_runs) and all(r.status == "completed" for r in later_runs)
+    judged = []
+    for run in runs:
+        if run in unpassed and run.name in later:
+            run = later[run.name]
+        elif run in unpassed and (run.conclusion == "cancelled" or not settled):
+            run = code_host.CheckRun(run.name, "queued", None, "")
+        judged.append(run)
+    return judged
 
 
 @activity.defn

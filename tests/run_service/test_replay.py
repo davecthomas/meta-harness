@@ -73,6 +73,14 @@ SCENARIOS = {
         "auto_merge": True,
         "merges": [("head_changed", "c9", "same"), "merged"],
     },
+    # After the merge-checks-judged patch: the task says it waits on the merge commit's checks, and a check
+    # that failed with no output starts no fix run.
+    "patched-merge-checks-judged-silent": {
+        "verdicts": [CLEAN],
+        "goal_id": "g-1",
+        "auto_merge": True,
+        "merge_checks": ["silent"],
+    },
 }
 
 

@@ -291,3 +291,45 @@ async def test_merge_pr_says_when_the_base_came_in_without_changing_the_diff(mon
     result = await ActivityEnvironment().run(activities.merge_pr, request)
 
     assert result.state == "head_changed" and result.head_sha == "new" and result.same_diff
+
+
+async def _judged(monkeypatch, merge: list, newer: list | None):
+    """The merge commit m1's checks as _merge_runs judges them, with the base's newest commit m2 (None: no newer)."""
+    from meta_harness.run_service.shared import MergeChecksRequest
+
+    async def check_runs(repo, sha):
+        return merge if sha == "m1" else newer
+
+    async def newest_containing(repo, base, sha):
+        return "m1" if newer is None else "m2"
+
+    monkeypatch.setattr(code_host, "check_runs", check_runs)
+    monkeypatch.setattr(code_host, "newest_containing", newest_containing)
+    request = MergeChecksRequest(repo="o/r", merge_sha="m1", base="main", task_id="t-1")
+    return [(r.name, r.status, r.conclusion) for r in await activities._merge_runs(request)]
+
+
+async def test_a_failed_merge_check_is_judged_by_the_same_check_on_a_newer_commit(monkeypatch):
+    from meta_harness.run_service.code_host import CheckRun
+
+    failed = [CheckRun("tests", "completed", "success", ""), CheckRun("deploy", "completed", "failure", "")]
+    # No newer commit: the failure stands.
+    assert await _judged(monkeypatch, failed, None) == [
+        ("tests", "completed", "success"),
+        ("deploy", "completed", "failure"),
+    ]
+    # The newer commit's deploy passed: so did this merge's.
+    newer = [CheckRun("deploy", "completed", "success", "")]
+    assert ("deploy", "completed", "success") in await _judged(monkeypatch, failed, newer)
+    # It failed there too: it failed.
+    newer = [CheckRun("deploy", "completed", "failure", "apply failed")]
+    assert ("deploy", "completed", "failure") in await _judged(monkeypatch, failed, newer)
+    # The newer commit's checks are still starting: wait for its deploy.
+    assert ("deploy", "queued", None) in await _judged(monkeypatch, failed, [])
+    assert ("deploy", "queued", None) in await _judged(
+        monkeypatch, failed, [CheckRun("tests", "in_progress", None, "")]
+    )
+    # They finished and never ran a deploy: the failure stands.
+    assert ("deploy", "completed", "failure") in await _judged(
+        monkeypatch, failed, [CheckRun("tests", "completed", "success", "")]
+    )

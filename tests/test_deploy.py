@@ -142,6 +142,15 @@ def test_a_deploy_updates_the_running_vm_in_place_unless_terraform_replaced_it()
     assert '"roles/iap.tunnelResourceAccessor"' in platform and '"roles/compute.osAdminLogin"' in platform
 
 
+def test_the_update_logs_in_until_the_vm_takes_the_jobs_key_and_starts_the_update_once():
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    update = deploy.split("- name: update the running VM in place")[1].split("- name:")[0]
+    login, start = update.index("--command true && break"), update.index("systemd-run --wait --collect")
+    assert login < start, "the login that does nothing comes first"
+    assert "for try in 1 2 3 4 5 6" in update and "could not log in to the VM in 6 tries" in update
+    assert update.count("systemd-run") == 1, "the update itself is not in the retry loop"
+
+
 def test_an_update_keeps_the_databases_running_and_restarts_services_one_at_a_time():
     boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
     branch = boot[boot.index('if [ "$MODE" = boot ]; then') :]
