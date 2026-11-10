@@ -53,6 +53,7 @@ from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
 from meta_harness.run_service import code_host, events, harness_client, routing, run_grants, sandbox
+from meta_harness.run_service.prompt_activities import loop_template
 from meta_harness.run_service.shared import (
     DeliverRequest,
     INLINE_TEMPLATE,
@@ -738,7 +739,7 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
         "requested": _requested(request),
         "paths": code_host.paths_rule(request.description, request.kind),
     }
-    name = "review-v1" if request.kind == "review" else "fix-v1"
+    name = loop_template(request.kind)
     template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
     return Template(template).safe_substitute(values).strip()
 

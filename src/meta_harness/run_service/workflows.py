@@ -48,6 +48,10 @@ pair returns a verdict. A merged pull request ends the task closed. A clean
 one that does not merge (auto_merge off, no goal, or GitHub refusing) ends it
 ready, with the reason.
 
+Before each run of a Task API task, record_prompt records the run's filled-in
+prompt as run_prompt (behind the run-prompt patch), so an operator can tell a
+bad prompt from a bad model.
+
 The task's spend limit covers all its runs: each run's grant gets what the
 earlier runs left. A run run_harness gave up on still counts, from what
 cleanup_run reads off its grant.
@@ -85,6 +89,7 @@ with workflow.unsafe.imports_passed_through():
         wait_checks,
         wait_merge_checks,
     )
+    from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
     from meta_harness.run_service.shared import (
         Attempt,
         DeliverRequest,
@@ -330,6 +335,8 @@ class RunTask:
                     left,
                     prepared.repo,
                     route_result.thinking if route_result is not None and not prepared.pinned else None,
+                    kind="task",
+                    template=prepared.template,
                 )
                 spent += run_spent
                 attempts.append(
@@ -435,6 +442,8 @@ class RunTask:
                     share,
                     prepared.repo,
                     route_result.thinking,
+                    kind="task",
+                    template=prepared.template,
                 )
                 for number, candidate in enumerate(picked, start=1)
             )
@@ -769,6 +778,8 @@ class RunTask:
             thinking,
             branch=loop.published.branch if branch is None else branch,
             merge_base=merge_base,
+            kind=kind,
+            template=loop_template(kind),
         )
         loop.spent += run_spent
         loop.attempts.append(
@@ -811,8 +822,16 @@ class RunTask:
         thinking: str | None,
         branch: str = "",
         merge_base: str = "",
+        kind: str = "task",
+        template: str = "",
     ) -> tuple[HarnessResult | None, str, str, Decimal]:
-        """One run on one candidate. Returns the result, the decision, why, and what the run spent."""
+        """One run on one candidate. Returns the result, the decision, why, and what the run spent.
+
+        A Task API task's run first records its prompt as run_prompt, so an operator sees what the run was given.
+        """
+        # Behind a patch: workflows started before it record no prompt, and replay as they ran.
+        if self._task_id and workflow.patched("run-prompt"):
+            await self._record(record_prompt, RunPromptRecord(self._task_id, run_id, kind, template, prompt))
         try:
             harness = await workflow.execute_activity(
                 run_harness,
