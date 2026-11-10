@@ -118,7 +118,8 @@ umask 077
   done
   echo "MH_GITHUB_APPS=$apps"
   echo "MH_REPOS_CONFIG=$ETC/repos.json"
-  echo "MH_MAX_RUNNING=8"
+  # The most per-run sandboxes the VM holds: the ceiling on the task policy's max_parallel.
+  echo "MH_MAX_SANDBOXES=8"
   echo "ANTHROPIC_API_KEY=$(secret ANTHROPIC_API_KEY)"
   echo "OPENAI_API_KEY=$(secret OPENAI_API_KEY)"
   echo "GOOGLE_GEMINI_API_KEY=$(secret GOOGLE_GEMINI_API_KEY)"

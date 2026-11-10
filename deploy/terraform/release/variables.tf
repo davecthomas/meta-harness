@@ -13,7 +13,7 @@ variable "edge_image" {
 }
 
 variable "machine_type" {
-  # 16 vCPU and 64 GB: MH_MAX_RUNNING (8, deploy/vm/boot.sh) per-run sandboxes at their profiles' cap of
+  # 16 vCPU and 64 GB: MH_MAX_SANDBOXES (8, deploy/vm/boot.sh) per-run sandboxes at their profiles' cap of
   # 6 GB each, 48 GB at most, and 16 GB for Postgres, Temporal, Redis, the HTTP Gateway, the egress proxy
   # and the services. A sandbox's 2 vCPU is a cap, not a reservation, and an agent spends most of a run
   # waiting on its model, so eight share 16 vCPU and slow down, not fail, when several test at once.

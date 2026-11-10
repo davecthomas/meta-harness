@@ -338,13 +338,21 @@ def _admission():
     from meta_harness.scheduler.service import cancel_run_task, signal_run_task, start_run_task
     from meta_harness.tasks.client import TaskClient
 
+    from meta_harness.config import store
+    from meta_harness.config.kinds import ConfigError
+
+    # A task policy the scheduler would refuse stops it here, with the setting's name.
+    try:
+        store.max_parallel()
+    except ConfigError as err:
+        raise click.ClickException(str(err)) from err
     service_key = os.environ.get("MH_SERVICE_KEY")
     return Admission(
         TaskClient(api_key=service_key),
         GoalsClient(api_key=service_key),
         EventClient(source="scheduler"),
         start_run_task,
-        max_running=int(os.environ.get("MH_MAX_RUNNING", "2")),
+        max_running=store.max_parallel,
         cancel=cancel_run_task,
         signal=signal_run_task,
     )

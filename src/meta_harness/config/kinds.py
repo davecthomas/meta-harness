@@ -4,11 +4,14 @@
   tier candidates are harness pairs, `harness:<profile>/<engine>:<model>`.
 - `profiles`: the harness profiles, as in config/harness_profiles.json.
 - `repos`: the repo registry, as in config/repos.example.json.
+- `task_policy`: the task policy, as in config/task_policy.json: how many tasks
+  run at once (`max_parallel`) and the review loop's reviewers and rounds.
 
 A kind's first version is seeded from the deployment's file. A new version is
 refused, with every reason, when the service that reads it would refuse it at
 startup: a malformed router, a candidate naming a profile that does not exist,
-a profile with no tools, a repo with no tracker.
+a profile with no tools, a repo with no tracker, more parallel tasks than the
+VM holds.
 """
 
 import json
@@ -65,6 +68,64 @@ def seed_repos() -> dict[str, Any]:
     from meta_harness.planner.repos import registry_path
 
     return json.loads(registry_path().read_text(encoding="utf-8"))
+
+
+def seed_task_policy() -> dict[str, Any]:
+    from meta_harness.run_service.routing import TASK_POLICY_PATH
+
+    return json.loads(TASK_POLICY_PATH.read_text(encoding="utf-8"))
+
+
+SANDBOXES_ENV = "MH_MAX_SANDBOXES"
+
+
+def sandbox_ceiling() -> int | None:
+    """The most per-run sandboxes this deployment's machine holds (MH_MAX_SANDBOXES), so the most tasks that can
+    run at once; None when the deployment sets no ceiling, as on a laptop.
+
+    Raises:
+        ConfigError: MH_MAX_SANDBOXES is set but is not a positive whole number.
+    """
+    raw = os.environ.get(SANDBOXES_ENV, "").strip()
+    if not raw:
+        return None
+    if not raw.isdigit() or int(raw) < 1:
+        raise ConfigError([f"{SANDBOXES_ENV} must be a positive whole number, not {raw!r}"])
+    return int(raw)
+
+
+def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]] | None = None) -> list[str]:
+    """Problems with a task policy. Reviewer pairs are checked against the profiles when others holds them."""
+    reasons = []
+    parallel = document.get("max_parallel")
+    if isinstance(parallel, bool) or not isinstance(parallel, int) or parallel < 1:
+        reasons.append("max_parallel must be a positive whole number: the most tasks that run at once")
+    else:
+        try:
+            ceiling = sandbox_ceiling()
+        except ConfigError as err:
+            ceiling = None
+            reasons += err.reasons
+        if ceiling is not None and parallel > ceiling:
+            reasons.append(f"max_parallel {parallel} is more than the {ceiling} sandboxes this deployment's VM holds")
+    review = document.get("review")
+    if not isinstance(review, dict):
+        return reasons + ["review must be an object with reviewers and max_rounds"]
+    reviewers, max_rounds = review.get("reviewers"), review.get("max_rounds")
+    if not (isinstance(reviewers, list) and reviewers and all(isinstance(r, str) for r in reviewers)):
+        reasons.append("review.reviewers must be a non-empty list of pairs")
+        reviewers = []
+    if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or max_rounds < 0:
+        reasons.append("review.max_rounds must be a whole number, 0 or more")
+    if others is not None:
+        profiles = (others.get("profiles") or {}).get("profiles", {})
+        for pair in reviewers:
+            profile, slash, inner = pair.removeprefix("harness:").partition("/")
+            if not pair.startswith("harness:") or not slash or ":" not in inner:
+                reasons.append(f"reviewer {pair} is not harness:<profile>/<engine>:<model>")
+            elif profile not in profiles:
+                reasons.append(f"reviewer {pair} names harness profile {profile}, which the profiles lack")
+    return reasons
 
 
 def check_tiers(document: dict[str, Any], others: dict[str, dict[str, Any]]) -> list[str]:
@@ -160,5 +221,12 @@ KINDS: dict[str, Kind] = {
         "The repos goals may change, with each one's tracker and default acceptance checks.",
         seed_repos,
         check_repos,
+    ),
+    "task_policy": Kind(
+        "task_policy",
+        "Task policy",
+        "How many tasks run at once across every goal, and the review loop's reviewer pairs and fix rounds.",
+        seed_task_policy,
+        check_task_policy,
     ),
 }

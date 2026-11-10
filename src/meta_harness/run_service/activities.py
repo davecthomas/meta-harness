@@ -40,7 +40,6 @@ calls cleanup_run, which revokes the grant and removes the per-run sandbox.
 """
 
 import asyncio
-import json
 import os
 import re
 from pathlib import Path
@@ -635,7 +634,7 @@ async def wait_checks(request: ChecksRequest) -> ChecksResult:
 async def review_policy(author_model: str) -> ReviewPolicy:
     """The task policy's reviewer pairs, resolved against the active harness profiles, without any pair
     whose model wrote the pull request, so a different model always reviews."""
-    policy = json.loads(routing.TASK_POLICY_PATH.read_text(encoding="utf-8"))["review"]
+    policy = routing.task_policy()["review"]
     reviewers, unresolved = [], []
     for pair in policy["reviewers"]:
         try:

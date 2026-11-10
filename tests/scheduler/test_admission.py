@@ -115,6 +115,19 @@ async def test_concurrency_limit(repo):
     assert (await admission.pass_once()).started == ids[:2]
 
 
+async def test_the_limit_is_read_each_pass_so_a_saved_change_applies_at_the_next(repo):
+    tasks = Tasks()
+    for area in ("a", "b", "c"):
+        tasks.add(repo, paths=[f"{area}/x.py"])
+    limit = {"value": 1}
+    admission, started = _admission(tasks, max_running=lambda: limit["value"])
+    await admission.pass_once()
+    assert len(started) == 1
+    limit["value"] = 3
+    await admission.pass_once()
+    assert len(started) == 3
+
+
 async def test_a_paused_or_spent_goal_holds_its_tasks(repo):
     tasks, goals = Tasks(), Goals()
     goals.goals["g-paused"] = {"status": "paused", "max_usd": None}

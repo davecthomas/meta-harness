@@ -230,3 +230,25 @@ def active_document(kind: str) -> tuple[int, dict[str, Any]]:
         current = active(conn, kind)
     _cache[kind] = (current["version"], current["document"])
     return _cache[kind]
+
+
+def current_document(kind: str) -> dict[str, Any]:
+    """The document a service uses for a kind: the active version when this deployment reads configuration
+    from the database, otherwise the deployment's file."""
+    if from_database():
+        return active_document(kind)[1]
+    _known(kind)
+    return KINDS[kind].seed()
+
+
+def max_parallel() -> int:
+    """The most tasks that run at once: the task policy's max_parallel.
+
+    Raises:
+        ConfigError: The task policy is one the save check would refuse, such as more than the VM holds.
+    """
+    policy = current_document("task_policy")
+    reasons = KINDS["task_policy"].check(policy, None)
+    if reasons:
+        raise ConfigError([f"task_policy: {r}" for r in reasons])
+    return int(policy["max_parallel"])
