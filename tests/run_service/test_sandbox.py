@@ -81,7 +81,10 @@ def test_a_run_with_a_database_is_given_its_url_and_reaches_it_without_the_proxy
     )
     env = _env(args)
     host = sandbox.database_name("task:run-1")
+    assert host != sandbox.database_name("task:run-2"), "each run has its own"
     assert url == f"postgresql://mh:mh@{host}:5432/mh"
+    # The sandbox keeps its own name and host name: the database's variables are environment, nothing more.
+    assert args[args.index("--name") + 1] == "mh-sandbox-x" == args[args.index("--hostname") + 1]
     assert env["DATABASE_URL"] == url and env["MH_DATABASE_URL"] == url
     assert env["NO_PROXY"] == f"localhost,127.0.0.1,{host}" == env["no_proxy"]
 
@@ -125,3 +128,10 @@ def test_a_profiles_services_are_checked():
     assert routing.profile_errors("p", {**ok, "services": ["redis"]}) == [
         "p: services must be a list of postgres, or left out"
     ]
+
+
+def test_a_runs_database_has_a_host_name_short_enough_whatever_the_task_is_called():
+    long_ref = "run-task-image-checks-20261110174947-with-a-very-long-name-indeed:run-12"
+    name = sandbox.database_name(long_ref)
+    assert len(name) <= 63 and name == sandbox.database_name(long_ref)
+    assert name.replace("-", "").isalnum()
