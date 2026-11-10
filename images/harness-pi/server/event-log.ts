@@ -17,6 +17,7 @@ export type RunEventType =
 	| "turn_finished"
 	| "review_submitted"
 	| "plan_updated"
+	| "issue_drafted"
 	| "operator_message_delivered"
 	| "heartbeat"
 	| "run_finished";

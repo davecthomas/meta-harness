@@ -40,6 +40,17 @@
         "npx", "tsc", "make", "jq"
       ]
     },
+    "pi-plan": {
+      "image": null,
+      "tools": ["read", "ls", "find", "grep", "bash", "create_issue"],
+      "max_turns": 60,
+      "max_minutes": 30,
+      "resources": {"cpu": 2, "memory_gb": 6},
+      "bash_allow": [
+        "cd", "pwd", "ls", "cat", "head", "tail", "wc", "grep", "rg", "fd", "fdfind", "find", "sort", "uniq",
+        "cut", "git"
+      ]
+    },
     "pi-missing-image": {
       "image": "harness-pi:no-such-image",
       "tools": ["read", "write", "edit", "ls"],

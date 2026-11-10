@@ -25,7 +25,7 @@ from meta_harness.run_service.routing import replaced_engine_reason
 
 from meta_harness.run_service.paths import REPO_ROOT
 
-KNOWN_TOOLS = {"read", "write", "edit", "ls", "find", "grep", "bash", "submit_review", "update_plan"}
+KNOWN_TOOLS = {"read", "write", "edit", "ls", "find", "grep", "bash", "submit_review", "update_plan", "create_issue"}
 THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "max"}
 TRACKERS = {"github"}
 

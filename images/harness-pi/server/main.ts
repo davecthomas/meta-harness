@@ -85,6 +85,8 @@ function summarize(event: RunEvent): string {
 			return `${d.tool} ${d.is_error ? "failed" : "done"}`;
 		case "file_changed":
 			return `${d.path}`;
+		case "issue_drafted":
+			return `${d.draft_id} in ${d.repo}: ${d.title}`;
 		case "review_submitted":
 			return `verdict ${d.verdict}, ${(d.findings as unknown[]).length} findings`;
 		case "run_finished":

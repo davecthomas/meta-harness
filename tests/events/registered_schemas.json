@@ -310,6 +310,12 @@
     ],
     "type": "object"
   },
+  "issue_drafted v1": {
+    "additionalProperties": true,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
   "issue_dropped v1": {
     "additionalProperties": true,
     "properties": {

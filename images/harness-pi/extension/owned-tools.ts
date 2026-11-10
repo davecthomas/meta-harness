@@ -7,12 +7,17 @@
  * nothing anywhere else: the meta-harness run service posts the review on the
  * code host after the run (technical design, principle 9). Its result asks pi
  * to stop, so the review run ends once the verdict is in.
+ *
+ * `create_issue` lets a planning run propose an issue. It records the draft,
+ * which the harness server reports in an `issue_drafted` event, and writes
+ * nothing to the code host: the planner creates the issues once an operator
+ * approves the plan. A second call with the same draft_id replaces the draft.
  */
 
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-export const OWNED_TOOLS = ["submit_review", "update_plan"] as const;
+export const OWNED_TOOLS = ["submit_review", "update_plan", "create_issue"] as const;
 
 export interface PlanStep {
 	step: string;
@@ -113,6 +118,80 @@ export function submitReviewTool(onReview: (review: Review) => void): ToolDefini
 				content: [{ type: "text", text: `Review submitted: ${params.verdict}. Stop now.` }],
 				details: undefined,
 				terminate: true,
+			};
+		},
+	});
+}
+
+export interface IssueDraft {
+	/** The agent's own short name for the draft, which other drafts' depends_on may name. */
+	draft_id: string;
+	repo: string;
+	title: string;
+	body: string;
+	labels: string[];
+	/** Other drafts' ids, or existing issues as owner/repo#number. */
+	depends_on: string[];
+}
+
+const DRAFT_ID = "^[a-z0-9][a-z0-9-]{0,39}$";
+
+const IssueDraftSchema = Type.Object({
+	draft_id: Type.String({
+		pattern: DRAFT_ID,
+		description: "Your own short name for this draft: lowercase letters, digits and hyphens. Other drafts name it in depends_on.",
+	}),
+	repo: Type.String({ minLength: 1, description: "The repository the issue belongs in, as owner/name." }),
+	title: Type.String({ minLength: 1, maxLength: 200, description: "The issue's title." }),
+	body: Type.String({
+		minLength: 1,
+		description: "The issue's body in Markdown. It states what to build and its acceptance checks, under '## Acceptance checks'.",
+	}),
+	labels: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Labels for the issue, besides the goal's own." })),
+	depends_on: Type.Optional(
+		Type.Array(Type.String({ minLength: 1 }), {
+			description: "What must be done first: other drafts' draft_id, or existing issues as owner/repo#number.",
+		}),
+	),
+});
+
+/**
+ * The create_issue tool, for a planning run. `onDraft` receives each draft as it is recorded. Nothing is
+ * created on the code host: a draft is a proposal, which the planner turns into an issue after approval.
+ */
+export function createIssueTool(onDraft: (draft: IssueDraft) => void): ToolDefinition {
+	const drafted = new Set<string>();
+	return defineTool({
+		name: "create_issue",
+		label: "Draft an issue",
+		description:
+			"Propose one issue for the plan. It is recorded as a draft: nothing is created on the code host until an " +
+			"operator approves the plan. Give each draft its own draft_id, state its acceptance checks in the body, " +
+			"and name what it depends on. Calling it again with the same draft_id replaces that draft.",
+		promptSnippet: "create_issue: propose an issue for the plan, with its acceptance checks and what it depends on",
+		parameters: IssueDraftSchema,
+		async execute(_toolCallId, params) {
+			const draft: IssueDraft = {
+				draft_id: params.draft_id,
+				repo: params.repo.trim(),
+				title: params.title.trim(),
+				body: params.body,
+				labels: [...new Set(params.labels ?? [])],
+				depends_on: [...new Set(params.depends_on ?? [])],
+			};
+			if (draft.depends_on.includes(draft.draft_id)) {
+				return {
+					content: [{ type: "text", text: `Draft ${draft.draft_id} cannot depend on itself. Call create_issue again.` }],
+					details: undefined,
+					isError: true,
+				};
+			}
+			const replaced = drafted.has(draft.draft_id);
+			drafted.add(draft.draft_id);
+			onDraft(draft);
+			return {
+				content: [{ type: "text", text: `${replaced ? "Replaced" : "Recorded"} draft ${draft.draft_id}: ${JSON.stringify(draft)}` }],
+				details: undefined,
 			};
 		},
 	});

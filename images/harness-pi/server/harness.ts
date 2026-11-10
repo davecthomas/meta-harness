@@ -31,7 +31,15 @@ import {
 	SPEND_LIMIT_ERROR,
 } from "../extension/model-client.ts";
 import { bashAllowlist } from "../extension/bash-allowlist.ts";
-import { OWNED_TOOLS, type PlanStep, type Review, submitReviewTool, updatePlanTool } from "../extension/owned-tools.ts";
+import {
+	createIssueTool,
+	type IssueDraft,
+	OWNED_TOOLS,
+	type PlanStep,
+	type Review,
+	submitReviewTool,
+	updatePlanTool,
+} from "../extension/owned-tools.ts";
 import { EventLog, type RunEventType } from "./event-log.ts";
 
 /** The Run API's status values, the contract with the harness engine. */
@@ -402,6 +410,7 @@ export class Harness {
 			customTools: [
 				...(profile.tools.includes("submit_review") ? [submitReviewTool((review) => this.onReview(review))] : []),
 				...(profile.tools.includes("write") || profile.tools.includes("update_plan") ? [updatePlanTool((steps) => this.onPlan(steps))] : []),
+				...(profile.tools.includes("create_issue") ? [createIssueTool((draft) => this.onDraft(draft))] : []),
 			],
 		});
 		session.subscribe((event) => this.onPiEvent(event));
@@ -484,6 +493,14 @@ export class Harness {
 		const run = this.current;
 		if (!run) return;
 		this.emit("plan_updated", run, { steps });
+	}
+
+	/** One draft from create_issue, for the run in progress. */
+	private onDraft(draft: IssueDraft): void {
+		const run = this.current;
+		if (!run) return;
+		this.emit("issue_drafted", run, { ...draft });
+		this.config.log(`run ${run.run_id}: issue drafted, ${draft.draft_id} in ${draft.repo}`);
 	}
 
 	/** submit_review's verdict, for the run in progress. */

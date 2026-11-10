@@ -172,6 +172,43 @@ def _ship_profiles(monkeypatch, document: dict) -> None:
     )
 
 
+def test_the_planning_profile_can_draft_issues_and_read_but_never_write():
+    profiles = json.loads((REPO_ROOT / "config" / "harness_profiles.json").read_text())
+    plan = profiles["profiles"]["pi-plan"]
+
+    assert "create_issue" in plan["tools"]
+    assert not {"write", "edit", "submit_review"} & set(plan["tools"])
+    # Its bash names only programs that read: nothing that writes a file, installs, or runs the repo's code.
+    writers = {
+        "sed",
+        "awk",
+        "tee",
+        "cp",
+        "mv",
+        "rm",
+        "mkdir",
+        "touch",
+        "chmod",
+        "python",
+        "python3",
+        "node",
+        "npm",
+        "uv",
+        "make",
+    }
+    assert not writers & set(plan["bash_allow"])
+    assert {"ls", "cat", "grep", "find", "git"} <= set(plan["bash_allow"])
+    assert kinds.check_profiles(profiles, {}) == []
+    assert "create_issue" in kinds.KNOWN_TOOLS
+
+
+def test_the_run_activity_forwards_a_planning_runs_drafts():
+    from meta_harness.events import types
+
+    assert "issue_drafted" in types.HARNESS_EVENT_TYPES
+    assert any(t.name == "issue_drafted" and t.schema_version == 1 for t in types.REGISTRY)
+
+
 def test_a_profile_shipped_after_the_first_seed_is_added_as_a_new_version(monkeypatch):
     _ship_profiles_without(monkeypatch, "pi-review")
     with db.connect(autocommit=True) as conn:
