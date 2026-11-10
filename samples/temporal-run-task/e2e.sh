@@ -16,7 +16,7 @@
 #   task-api      a repo task submitted through the Task API: the meta-harness run service runs it from
 #                 its task id, the task ends ready with its branch pushed, and the event service holds
 #                 its events from the task service and the run service
-#   admission     two tasks on one repo, submitted through the Task API: the meta-harness scheduler
+#   admission     two tasks on one repo area, submitted through the Task API: the meta-harness scheduler
 #                 starts them, the second only after the first's pull request is open
 #   egress      the per-run sandbox network rules (stack.sh egress-check)
 #   cleanup       no per-run sandbox container or network is left
@@ -128,7 +128,7 @@ else
 fi
 
 if step admission env REF="e2e-$STAMP-admission" DEMO=admission ./stack.sh run; then
-  pass "admission: the scheduler ran two tasks on one repo in turn, with no command starting either"
+  pass "admission: the scheduler ran two tasks on one repo area in turn, with no command starting either"
 else
   fail "admission: expected the scheduler to run both tasks, the second after the first was ready" admission
 fi
