@@ -68,13 +68,13 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number }) {
       radius="sm"
       role={to ? "link" : undefined}
       tabIndex={to ? 0 : undefined}
-      aria-label={to ? `Open task ${task?.title ?? issue.ref}` : undefined}
+      aria-label={to ? `Open task ${task?.title ?? issue.title ?? issue.ref}` : undefined}
       onClick={to ? () => navigate(to) : undefined}
       onKeyDown={to ? (e) => e.key === "Enter" && navigate(to) : undefined}
       style={{ cursor: to ? "pointer" : "default" }}
     >
       <Stack gap={4}>
-        <Text size="sm" fw={500} lineClamp={2}>{task?.title ?? shortRef(issue.ref)}</Text>
+        <Text size="sm" fw={500} lineClamp={2}>{task?.title ?? issue.title ?? shortRef(issue.ref)}</Text>
         <Group gap={6} onClick={(e) => e.stopPropagation()}>
           {url ? <Anchor href={url} target="_blank" size="xs" ff="monospace">{shortRef(issue.ref)}</Anchor> : <Text size="xs" ff="monospace">{issue.ref}</Text>}
         </Group>
@@ -190,7 +190,7 @@ export function GoalGraph(props: { issues: IssueProgress[]; tasks: Record<string
             <g key={i.ref} transform={`translate(${p.x},${p.y})`} style={{ cursor: i.task_id ? "pointer" : "default" }}
               onClick={() => i.task_id && navigate(`/tasks/${i.task_id}`)} data-testid={`node-${i.ref}`} data-column={column.get(i.ref)}>
               <rect width={NODE_W} height={NODE_H} rx={6} fill="var(--mantine-color-body)" stroke={COLORS[column.get(i.ref)!]} strokeWidth={2} />
-              <text x={8} y={18} fontSize={12} fill="var(--mantine-color-text)">{(task?.title ?? shortRef(i.ref)).slice(0, 26)}</text>
+              <text x={8} y={18} fontSize={12} fill="var(--mantine-color-text)">{(task?.title ?? i.title ?? shortRef(i.ref)).slice(0, 26)}</text>
               <text x={8} y={34} fontSize={11} fill="var(--mantine-color-dimmed)">{shortRef(i.ref)}</text>
             </g>
           );

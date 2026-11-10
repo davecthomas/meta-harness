@@ -181,13 +181,16 @@ async def _take_in_added(
 
 async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult):
     existing = await asyncio.to_thread(_link, issue.ref)
+    title = issue.title[:300]
+    if existing and existing["goal_id"] == goal["id"] and existing.get("title") != title:
+        await asyncio.to_thread(_set_title, issue.ref, title)
     if existing and (existing["goal_id"] != goal["id"] or existing["task_id"] or existing["refused_reason"]):
         return
     registered = repos.get(issue.repo)
     checks = issue.checks or (registered.default_checks if registered else [])
     if not checks:
         reason = "the issue has no ## Acceptance checks and the repo registry names no default checks"
-        await asyncio.to_thread(_save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, reason)
+        await asyncio.to_thread(_save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, reason, title)
         events.emit(
             "issue_refused",
             {"ref": issue.ref, "reason": reason},
@@ -215,7 +218,7 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
     except TaskApiError as err:
         result.errors.append(f"{issue.ref}: {err}")
         return
-    await asyncio.to_thread(_save, issue.ref, goal["id"], issue.repo, "open", open_deps, task["id"], None)
+    await asyncio.to_thread(_save, issue.ref, goal["id"], issue.repo, "open", open_deps, task["id"], None, title)
     events.emit(
         "issue_joined",
         {"ref": issue.ref, "goal_id": goal["id"], "depends_on": open_deps, "status": task["status"]},
@@ -357,9 +360,14 @@ def _links(goal_id: str) -> list[dict]:
         return store.links(conn, goal_id)
 
 
-def _save(ref, goal_id, repo, state, depends_on, task_id, refused_reason) -> None:
+def _save(ref, goal_id, repo, state, depends_on, task_id, refused_reason, title=None) -> None:
     with db.connect(autocommit=True) as conn:
-        store.save_link(conn, ref, goal_id, repo, state, depends_on, task_id, refused_reason)
+        store.save_link(conn, ref, goal_id, repo, state, depends_on, task_id, refused_reason, title)
+
+
+def _set_title(ref: str, title: str) -> None:
+    with db.connect(autocommit=True) as conn:
+        store.set_link_title(conn, ref, title)
 
 
 def _complete(goal_id: str) -> tuple[dict, dict]:

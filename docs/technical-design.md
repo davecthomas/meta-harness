@@ -1705,7 +1705,7 @@ credential.
 | POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
-| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its task's status, pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it | built |
+| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | The goal's pending plan with its drafts, or an edited plan saved as a new version | planned (#73) |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve the pending plan or phase, or run a new planning task with a note | planned (#73) |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet. A ref another goal holds is refused, naming that goal | built |
@@ -2256,6 +2256,16 @@ that run), and a link to its warnings and errors on the Logs page. Its
 goal's page shows an alert above the board listing each failed or
 unresolved task with its reason, linked to the task, and each issue the
 planner refused.
+The Goal page keeps itself current while it is open and the goal is not
+closed: it rereads the goal and its issues every 5 seconds (not while the
+browser tab is hidden, and at once when it shows again), besides listening
+to the live stream of the tasks it knows, whose list each reread renews. An
+issue with no task yet has nothing to listen to, so without the reread a
+started goal's cards stayed in Queued. Each of its buttons rereads the board
+at once, and the section's header says when it last refreshed, or why a
+reread failed, without clearing what it shows. A card with no task yet shows
+its issue's title, which the planner stores on the issue link when it takes
+the issue in and refreshes on each sweep.
 The Goal page shows an active goal's issues as a board, columns Queued,
 Running, In review, Done and Needs attention (a failed task, failing
 checks, a refused issue, or a failed dependency), each card with its task's

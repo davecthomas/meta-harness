@@ -26,7 +26,9 @@ GOAL_COLUMNS = (
     "status, created_at, updated_at, started_at, closed_at, title, max_parallel"
 )
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
-LINK_COLUMNS = "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at"
+LINK_COLUMNS = (
+    "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at, title"
+)
 
 
 class GoalError(ValueError):
@@ -253,15 +255,23 @@ def save_link(
     depends_on: list[str],
     task_id: str | None = None,
     refused_reason: str | None = None,
+    title: str | None = None,
 ) -> None:
     with conn.transaction():
         conn.execute(
-            "INSERT INTO planner.issue_link (ref, goal_id, repo, task_id, state, depends_on, refused_reason) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (ref) DO UPDATE SET "
+            "INSERT INTO planner.issue_link (ref, goal_id, repo, task_id, state, depends_on, refused_reason, title) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (ref) DO UPDATE SET "
             "task_id = COALESCE(EXCLUDED.task_id, planner.issue_link.task_id), state = EXCLUDED.state, "
-            "depends_on = EXCLUDED.depends_on, refused_reason = EXCLUDED.refused_reason, last_seen_at = now()",
-            (ref, goal_id, repo, task_id, state, depends_on, refused_reason),
+            "depends_on = EXCLUDED.depends_on, refused_reason = EXCLUDED.refused_reason, "
+            "title = COALESCE(EXCLUDED.title, planner.issue_link.title), last_seen_at = now()",
+            (ref, goal_id, repo, task_id, state, depends_on, refused_reason, title),
         )
+
+
+def set_link_title(conn: psycopg.Connection, ref: str, title: str) -> None:
+    """The issue's title as the tracker has it now, for the goal's board."""
+    with conn.transaction():
+        conn.execute("UPDATE planner.issue_link SET title = %s WHERE ref = %s", (title, ref))
 
 
 def add_refs(conn: psycopg.Connection, goal_id: str, refs: list[tuple[str, str]]) -> list[str]:

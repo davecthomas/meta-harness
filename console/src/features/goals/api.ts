@@ -34,6 +34,8 @@ export interface GoalDraft {
 // An issue of a goal with its task's progress, from GET /v1/goals/{id}/issues.
 export interface IssueProgress {
   ref: string;
+  // The issue's title, once a sweep has read it: what a card with no task yet shows.
+  title?: string | null;
   repo: string;
   state: string;
   depends_on: string[];
