@@ -93,6 +93,11 @@ class StatusIn(BaseModel):
     waiting_on: str | None = None
 
 
+class RetryIn(BaseModel):
+    # The task's new spend limit, for the runs of its next workflow. Left out: the limit it has.
+    max_usd: Decimal | None = Field(default=None, gt=0)
+
+
 class BudgetIn(BaseModel):
     # raise: carry on, with max_usd as the task's new spend limit when given. end: end the task as it would have.
     action: Literal["raise", "end"]
@@ -276,6 +281,33 @@ def create_app(
                 actor=who.actor,
             )
         return {"message_id": queued["id"], "when": queued["deliver"]}
+
+    def requeue(task_id: str, action: str, max_usd: Decimal | None, who: Caller) -> dict:
+        try:
+            with app.state.pool.connection() as conn:
+                visible(store.get(conn, task_id), who)
+                task, previous = store.requeue(conn, task_id, action, max_usd, who.actor)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        emit_status(task, previous, who.actor)
+        retried = {"action": action, "resume": task["resume"], "max_usd": task["max_usd"], "retries": task["retries"]}
+        events.emit("task_retried", retried, task_id=task_id, actor=who.actor)
+        return task
+
+    @app.post("/v1/tasks/{task_id}/retry", status_code=202)
+    def retry(task_id: str, body: RetryIn | None = None, who: Caller = Depends(caller)) -> dict:
+        """Send a review_unresolved, failed or canceled task back to the queue. With a pull request it resumes
+        at the review loop (or closes, when the pull request has merged); without one it starts a new first run.
+        Its runs start from nothing spent, against max_usd when given."""
+        return requeue(task_id, "retry", (body or RetryIn()).max_usd, who)
+
+    @app.post("/v1/tasks/{task_id}/merge", status_code=202)
+    def merge(task_id: str, who: Caller = Depends(caller)) -> dict:
+        """Ask for a ready or review_unresolved task's pull request to be merged: through the merge queue, as an
+        auto-merge would, whatever its goal's auto_merge says, then the wait for the merge commit's checks."""
+        return requeue(task_id, "merge", None, who)
 
     @app.post("/v1/tasks/{task_id}/budget", status_code=202)
     def budget(task_id: str, body: BudgetIn, who: Caller = Depends(caller)) -> dict:

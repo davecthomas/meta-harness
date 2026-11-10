@@ -14,23 +14,28 @@ TASK_TYPES = {"bug", "feature", "refactor", "dependency", "test", "security", "d
 INTERNAL_TASK_TYPES = {"review", "fix"}
 COMPLEXITIES = {"low", "medium", "high"}
 
-# Each status and the statuses it may move to. closed, failed and canceled are terminal.
+# Each status and the statuses it may move to. closed is the end. failed and canceled end the task's workflow,
+# and so do ready and review_unresolved; an operator may send any of those four back to queued (retry, merge).
 TRANSITIONS: dict[str, set[str]] = {
     "queued": {"running", "blocked", "canceled"},
     "blocked": {"queued", "canceled"},
     "running": {"queued", "taken_over", "ready", "review_unresolved", "closed", "failed", "canceled"},
     "taken_over": {"running", "closed", "canceled"},
-    "ready": {"closed", "canceled"},
-    "review_unresolved": {"closed", "canceled"},
+    "ready": {"closed", "canceled", "queued"},
+    "review_unresolved": {"closed", "canceled", "queued"},
     "closed": set(),
-    "failed": set(),
-    "canceled": set(),
+    "failed": {"queued"},
+    "canceled": {"queued"},
 }
-TERMINAL = {status for status, nexts in TRANSITIONS.items() if not nexts}
+# Statuses a task does not leave by itself, and a cancel has nothing to stop in.
+TERMINAL = {"closed", "failed", "canceled"}
+# The statuses an operator may retry a task from, and may ask for its pull request's merge from.
+RETRYABLE = ("review_unresolved", "failed", "canceled")
+MERGEABLE = ("ready", "review_unresolved")
 COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
-    "pr_url, head_sha, created_at, updated_at, attempts, waiting_on"
+    "pr_url, head_sha, created_at, updated_at, attempts, waiting_on, retries, resume"
 )
 
 
@@ -285,6 +290,37 @@ def add_message(conn: psycopg.Connection, task_id: str, body: str, deliver: str,
             (task_id, body, deliver, actor),
         )
         return dict(cur.fetchone())
+
+
+def requeue(
+    conn: psycopg.Connection, task_id: str, action: str, max_usd: Decimal | None, actor: str
+) -> tuple[dict, str]:
+    """Sends a task whose workflow ended back to the queue, for a new RunTask workflow.
+
+    action retry: from review_unresolved, failed or canceled. A task with a pull request resumes at its review
+    loop; one without starts with a new first run. action merge: from ready or review_unresolved, with a pull
+    request; the workflow merges it and waits for the merge commit's checks. max_usd, when given, is the task's
+    new spend limit; either way the new workflow's runs start from nothing spent.
+    """
+    allowed = RETRYABLE if action == "retry" else MERGEABLE
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT status, pr_url FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        if row["status"] not in allowed:
+            raise TaskError(f"a {row['status']} task cannot be {'retried' if action == 'retry' else 'merged'}")
+        if action == "merge" and not row["pr_url"]:
+            raise TaskError("the task has no pull request to merge")
+        resume = "merge" if action == "merge" else ("review" if row["pr_url"] else None)
+        what = "asked for its pull request's merge" if action == "merge" else "retried it"
+        cur.execute(
+            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
+            "cancel_requested = false, waiting_on = NULL, max_usd = coalesce(%s, max_usd), updated_at = now() "
+            f"WHERE id = %s RETURNING {COLUMNS}",
+            (f"{actor} {what}", resume, max_usd, task_id),
+        )
+        return _jsonable(cur.fetchone()), row["status"]
 
 
 def decide_budget(conn: psycopg.Connection, task_id: str, action: str, max_usd: Decimal | None, actor: str) -> dict:

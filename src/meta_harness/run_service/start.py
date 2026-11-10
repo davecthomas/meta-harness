@@ -1,7 +1,9 @@
 """Starts the RunTask workflow for a task from the task service.
 
-The workflow id is the task id, and Temporal refuses a second workflow for it,
-ever: a task runs in one RunTask workflow. Admission (the meta-harness
+The workflow id is the task id, and Temporal refuses a second workflow for it:
+a task runs in one RunTask workflow, unless an operator sent it back to the
+queue (retry, or a merge they asked for), which starts another once the
+earlier one has ended. Admission (the meta-harness
 scheduler) will call this; until then `mh run start` does.
 """
 
@@ -33,9 +35,14 @@ async def client() -> Client:
     return await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
 
 
-async def start(task_id: str) -> str:
-    """Starts the task's RunTask workflow and returns its workflow id."""
+async def start(task_id: str, again: bool = False) -> str:
+    """Starts the task's RunTask workflow and returns its workflow id.
+
+    again: the task was sent back to the queue by an operator, so its earlier workflow has ended and a new one
+    with the same id may follow it. Never two at once: one that is still running is refused either way.
+    """
     temporal = await client()
+    reuse = WorkflowIDReusePolicy.ALLOW_DUPLICATE if again else WorkflowIDReusePolicy.REJECT_DUPLICATE
     try:
         handle = await temporal.start_workflow(
             RunTask.run,
@@ -43,7 +50,7 @@ async def start(task_id: str) -> str:
             id=task_id,
             task_queue=TASK_QUEUE,
             execution_timeout=EXECUTION_TIMEOUT,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=reuse,
             id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
             memo={"ref": task_id, "workspace": str(sandbox.task_dir_for(task_id))},
         )

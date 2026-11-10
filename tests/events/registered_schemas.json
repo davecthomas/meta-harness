@@ -715,6 +715,38 @@
     ],
     "type": "object"
   },
+  "task_retried v1": {
+    "additionalProperties": true,
+    "properties": {
+      "action": {
+        "enum": [
+          "retry",
+          "merge"
+        ],
+        "type": "string"
+      },
+      "max_usd": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "resume": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "retries": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action",
+      "retries"
+    ],
+    "type": "object"
+  },
   "task_routed v1": {
     "additionalProperties": true,
     "properties": {

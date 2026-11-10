@@ -114,6 +114,20 @@ REGISTRY: list[EventType] = [
         ),
     ),
     # The review loop on a task's pull request
+    # An operator sent a task whose workflow had ended back to the queue: a retry, or a merge they asked for
+    EventType(
+        "task_retried",
+        1,
+        _object(
+            {
+                "action": {"type": "string", "enum": ["retry", "merge"]},
+                "resume": {"type": ["string", "null"]},
+                "max_usd": {"type": ["string", "null"]},
+                "retries": {"type": "integer"},
+            },
+            ["action", "retries"],
+        ),
+    ),
     # A running task held for budget, and the operator's answer
     EventType("budget_hold", 1, _object({"reason": {"type": "string"}}, ["reason"])),
     EventType(
