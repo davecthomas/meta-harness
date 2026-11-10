@@ -2224,6 +2224,11 @@ change stay read-only.
   it for a moment; there is no Save button. Saves run one at a time, each
   built on the settings the one before stored, so quick commits all persist.
 
+The Task page's tab is in its URL (`?tab=`), so a link can name one and Back
+returns to the one before; a link that names only a run (`?run=<run id>`)
+opens the Terminal on that run alone, with Show every run to bring the rest
+back. Each review round on the Reviews tab links to its own review run (Show
+review run) and, when it sent findings to a fix run, to that fix run.
 The Task page shows a run as a timeline by default: each turn's message, its
 model calls (model, tokens, cost), its tool calls opening to their arguments
 and output, and the files it changed, live; the terminal is a second tab.
