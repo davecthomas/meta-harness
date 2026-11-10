@@ -1,8 +1,9 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Anchor, Badge, Button, Center, Group, Loader, SegmentedControl, Stack, Table, Text, TextInput } from "@mantine/core";
-import { IconArrowBackUp, IconCheck, IconCircleCheck, IconDownload, IconListCheck, IconPencil, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { Anchor, Badge, Button, Center, Group, Loader, SegmentedControl, Stack, Table, Text } from "@mantine/core";
+import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPencil, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
 import { IssuesPicker } from "../components/IssuesPicker";
+import { GoalEditor } from "../components/GoalEditor";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../api";
 import { GoalBoard, GoalGraph, GoalProgress } from "../components/GoalBoard";
 import { useEventStream, useInfinite } from "../hooks";
@@ -17,7 +18,7 @@ export function GoalPage() {
   const [waiting, setWaiting] = useState<(LabelIssue & { repo: string })[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The title being edited, or null while it is not.
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   // Each issue's progress and what each task spent, for the board, and the position the live stream starts from.
   const [progress, setProgress] = useState<IssueProgress[] | null>(null);
   const [spend, setSpend] = useState<Record<string, number>>({});
@@ -111,16 +112,7 @@ export function GoalPage() {
   return (
     <>
       <PageHeader
-        title={
-          <Group gap="xs" wrap="nowrap" align="center">
-            <span>{goalTitle(goal)}</span>
-            {editing === null && (
-              <Button size="compact-xs" variant="subtle" leftSection={<IconPencil size={14} />} onClick={() => setEditing(goal.title ?? goalTitle(goal))}>
-                Edit title
-              </Button>
-            )}
-          </Group>
-        }
+        title={goalTitle(goal)}
         description={
           <Stack gap={6}>
             <Text size="sm">{goal.statement}</Text>
@@ -147,6 +139,7 @@ export function GoalPage() {
             {!open && (
               <Button leftSection={<IconArrowBackUp size={16} />} onClick={() => act(() => api.goalAction(goal.id, "reopen"))}>Reopen goal</Button>
             )}
+            <Button variant="default" leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>Edit goal</Button>
             {open && (
               <Button variant="default" leftSection={<IconListCheck size={16} />} onClick={() => setPicking(true)}>Add issues</Button>
             )}
@@ -172,20 +165,7 @@ export function GoalPage() {
           await loadProgress();
         }}
       />
-      {editing !== null && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(() => api.patchGoal(goal.id, { title: editing.trim() })).then(() => setEditing(null));
-          }}
-        >
-          <Group gap="xs" mb="md" maw={720}>
-            <TextInput aria-label="Title" value={editing} maxLength={80} required onChange={(e) => setEditing(e.currentTarget.value)} style={{ flex: 1 }} />
-            <Button type="submit" leftSection={<IconCheck size={16} />}>Save title</Button>
-            <Button variant="default" onClick={() => setEditing(null)}>Cancel</Button>
-          </Group>
-        </form>
-      )}
+      {editing && <GoalEditor goal={goal} onClose={() => setEditing(false)} onSaved={() => void load()} />}
       <Facts
         items={[
           ["Modality", <Text size="sm">{goal.modality}</Text>],

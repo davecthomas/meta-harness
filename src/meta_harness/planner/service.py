@@ -78,6 +78,8 @@ class DraftIn(BaseModel):
 
 class GoalPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=80)
+    # The goal's description. Its tasks already made keep the issues they came from; the next planning reads it.
+    statement: str | None = Field(default=None, min_length=1, max_length=4000)
     auto_merge: bool | None = None
     priority: int | None = None
     max_usd: Decimal | None = Field(default=None, gt=0)
