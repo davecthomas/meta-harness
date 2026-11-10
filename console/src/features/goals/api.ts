@@ -55,6 +55,8 @@ export const goalsApi = {
     return { items: r.goals, total: r.total };
   },
   goal: (id: string) => call<Goal & { issues: IssueLink[] }>(`/v1/goals/${id}`),
+  // The system's parallel limit, which a goal inherits and may lower.
+  limits: () => call<{ max_parallel: number | null; max_sandboxes: number | null }>("/v1/limits"),
   createGoal: (body: Record<string, unknown>) => call<Goal>("/v1/goals", { method: "POST", body: JSON.stringify(body) }),
   // Goals from labels: every label on the registered repos' open issues, a label's issues, and a drafted goal.
   labels: (repo?: string) => call<{ repos: string[]; labels: LabelCount[] }>("/v1/labels" + query({ repo })),

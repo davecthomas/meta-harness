@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Group, Modal, NumberInput, Stack, Switch, TextInput, Textarea } from "@mantine/core";
 import { IconDeviceFloppy } from "@tabler/icons-react";
 import { api, type Goal } from "../../api";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { ErrorAlert } from "../../components/ui";
+import { PARALLEL_HELP } from "./parallel";
 
-// What an operator changes on a goal after creating it: its title, description, budget, priority and auto-merge.
+// What an operator changes on a goal after creating it: its title, description, budget, priority, parallel tasks
+// and auto-merge.
 // Saving sends only what changed, so each change is one goal_changed record.
 export function GoalEditor(props: { goal: Goal; onClose: () => void; onSaved: () => void }) {
   const g = props.goal;
@@ -14,11 +16,16 @@ export function GoalEditor(props: { goal: Goal; onClose: () => void; onSaved: ()
     statement: g.statement,
     max_usd: g.max_usd ? Number(g.max_usd) : ("" as number | ""),
     priority: g.priority,
+    max_parallel: g.max_parallel ?? ("" as number | ""),
     auto_merge: g.auto_merge,
   };
   const [form, setForm] = useState(start);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [systemParallel, setSystemParallel] = useState<number | null>(null);
+  useEffect(() => {
+    api.limits().then((l) => setSystemParallel(l.max_parallel), () => setSystemParallel(null));
+  }, []);
 
   function changes(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
@@ -26,6 +33,8 @@ export function GoalEditor(props: { goal: Goal; onClose: () => void; onSaved: ()
     if (form.statement.trim() !== g.statement) out.statement = form.statement.trim();
     if (form.max_usd !== start.max_usd && form.max_usd !== "") out.max_usd = String(form.max_usd);
     if (form.priority !== g.priority) out.priority = form.priority;
+    // Emptied: back to the system setting.
+    if (form.max_parallel !== start.max_parallel) out.max_parallel = form.max_parallel === "" ? null : form.max_parallel;
     if (form.auto_merge !== g.auto_merge) out.auto_merge = form.auto_merge;
     return out;
   }
@@ -84,6 +93,16 @@ export function GoalEditor(props: { goal: Goal; onClose: () => void; onSaved: ()
           />
           <NumberInput label="Priority" description="Higher runs first." value={form.priority} onChange={(v) => setForm({ ...form, priority: Number(v) || 0 })} />
         </Group>
+        <NumberInput
+          label="Parallel tasks"
+          description={`${PARALLEL_HELP} It applies at the next admission pass.`}
+          placeholder={systemParallel ? `System setting: ${systemParallel}` : "System setting"}
+          min={1}
+          max={systemParallel ?? undefined}
+          allowDecimal={false}
+          value={form.max_parallel}
+          onChange={(v) => setForm({ ...form, max_parallel: v === "" ? "" : Number(v) })}
+        />
         <Switch label="Merge pull requests without me" checked={form.auto_merge} onChange={(e) => setForm({ ...form, auto_merge: e.currentTarget.checked })} />
         <Group justify="flex-end">
           <Button variant="default" onClick={() => unsaved.confirm(props.onClose)}>Cancel</Button>

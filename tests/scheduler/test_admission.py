@@ -84,13 +84,15 @@ def _admission(tasks, goals=None, events=None, max_running=5):
 
 def test_areas_and_conflicts():
     assert areas_for({"paths": ["src/a.py", "/src/b.py", "docs/x.md"]}) == ["docs", "src"]
-    assert areas_for({"paths": []}) == ["*"]
+    assert areas_for({"paths": []}) == []
     assert conflicts(["*"], ["docs"]) and conflicts(["src"], ["src", "docs"]) and not conflicts(["src"], ["docs"])
+    # A task with no area runs beside any other, even one holding a whole-repo lock from before.
+    assert not conflicts([], ["*"]) and not conflicts([], [""]) and not conflicts(["src"], [""])
 
 
 async def test_two_tasks_on_one_repo_area_run_in_turn(repo):
     tasks = Tasks()
-    first, second = tasks.add(repo, priority=1), tasks.add(repo)
+    first, second = tasks.add(repo, priority=1, paths=["src/a.py"]), tasks.add(repo, paths=["src/b.py"])
     admission, started = _admission(tasks)
     result = await admission.pass_once()
     assert result.started == [first]
@@ -106,6 +108,31 @@ async def test_tasks_on_separate_areas_run_together(repo):
     a, b = tasks.add(repo, paths=["src/x.py"]), tasks.add(repo, paths=["docs/y.md"])
     admission, started = _admission(tasks)
     assert sorted((await admission.pass_once()).started) == sorted([a, b])
+
+
+async def test_tasks_with_no_paths_run_side_by_side_and_still_count_toward_the_limit(repo):
+    tasks = Tasks()
+    ids = [tasks.add(repo) for _ in range(3)]
+    admission, started = _admission(tasks, max_running=2)
+    assert (await admission.pass_once()).started == ids[:2]
+    assert "held by" not in str((await admission.pass_once()).held)
+    assert started == ids[:2]
+
+
+async def test_a_goal_runs_no_more_of_its_tasks_than_its_own_limit(repo):
+    tasks, goals = Tasks(), Goals()
+    goals.goals["g-two"] = {"status": "active", "max_usd": None, "max_parallel": 2}
+    goals.goals["g-any"] = {"status": "active", "max_usd": None, "max_parallel": None}
+    mine = [tasks.add(repo, goal_id="g-two") for _ in range(3)]
+    other = tasks.add(repo, goal_id="g-any")
+    admission, started = _admission(tasks, goals, max_running=10)
+
+    result = await admission.pass_once()
+    assert sorted(result.started) == sorted([*mine[:2], other])
+    assert result.held[mine[2]] == "goal g-two already runs 2 tasks, its limit"
+
+    tasks.tasks[mine[0]]["status"] = "ready"
+    assert (await admission.pass_once()).started == [mine[2]]
 
 
 async def test_concurrency_limit(repo):

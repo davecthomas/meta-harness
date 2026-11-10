@@ -31,6 +31,8 @@ export interface Goal {
   status: string;
   auto_merge: boolean;
   max_usd: string | null;
+  // The most of its tasks that run at once; null: the system's, the task policy's max_parallel.
+  max_parallel?: number | null;
   priority: number;
   created_by: string;
   created_at: string;

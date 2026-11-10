@@ -1,6 +1,6 @@
 [project]
 name = "meta-harness"
-version = "0.35.0"
+version = "0.36.0"
 description = "The meta-harness control plane: task service, planner, run service, event service and operator console"
 requires-python = ">=3.12,<3.13"
 dependencies = [

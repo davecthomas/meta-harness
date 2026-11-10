@@ -10,9 +10,11 @@ Every MH_ADMISSION_SECONDS the meta-harness scheduler runs one admission pass:
    locks than the task policy's max_parallel, read each pass, so a saved
    change applies at the next one.
 3. It holds a task whose goal is not active, whose goal has spent its
-   `max_usd`, or whose repo area another task holds. A task names its area
-   with `paths` (their top-level directories); a task with none takes the
-   whole repo.
+   `max_usd`, whose goal already runs its `max_parallel` tasks, or whose repo
+   area another task holds. A task names its area with `paths` (their
+   top-level directories); a task with none takes no area and runs beside the
+   others, since each run has its own clone and branch and the merge step
+   turns a conflict into a fix run.
 4. It locks the task's areas and starts its RunTask workflow.
 
 Blocked tasks are not queued: the planner queues them once their
@@ -30,7 +32,11 @@ from meta_harness import db
 from meta_harness.events.client import stable_event_id
 
 log = logging.getLogger("meta_harness.scheduler")
+# An area no current task takes: a lock from before tasks with no paths took no area, which excludes every
+# other task on its repo until it is released.
 WHOLE_REPO = "*"
+# The lock row of a task that takes no area: it only counts the task as running.
+NO_AREA = ""
 LOCK_TTL = timedelta(hours=6)
 
 
@@ -43,11 +49,13 @@ class AdmissionResult:
 
 
 def areas_for(task: dict) -> list[str]:
-    tops = sorted({p.strip("/").split("/", 1)[0] for p in task.get("paths") or [] if p.strip("/")})
-    return tops or [WHOLE_REPO]
+    """The top-level directories of the task's paths; none for a task that names no paths."""
+    return sorted({p.strip("/").split("/", 1)[0] for p in task.get("paths") or [] if p.strip("/")})
 
 
 def conflicts(wanted: list[str], held: list[str]) -> bool:
+    wanted = [a for a in wanted if a != NO_AREA]
+    held = [a for a in held if a != NO_AREA]
     if not wanted or not held:
         return False
     return WHOLE_REPO in wanted or WHOLE_REPO in held or bool(set(wanted) & set(held))
@@ -72,6 +80,8 @@ class Admission:
         self.signal = signal
         self.max_running = max_running
         self._last_hold: dict[str, str] = {}
+        # Each task holding a lock, with its goal (None for a task with no goal), from the last release pass.
+        self._running_goal: dict[str, str | None] = {}
         self._canceling: set[str] = set()
 
     async def pass_once(self) -> AdmissionResult:
@@ -88,12 +98,18 @@ class Admission:
         queued = await asyncio.to_thread(self.tasks.list, ["queued"], None, 200)
         goals: dict[str, dict] = {}
         spend: dict[str, Decimal] = {}
+        per_goal: dict[str, int] = {}
+        for task_id in in_flight:
+            if goal_id := self._running_goal.get(task_id):
+                per_goal[goal_id] = per_goal.get(goal_id, 0) + 1
         for task in queued:
             if len(in_flight) >= limit:
                 break
             if task["id"] in in_flight:
                 continue
             reason = await self._goal_hold(task, goals, spend)
+            if reason is None:
+                reason = self._goal_parallel_hold(task, goals, per_goal)
             if reason is None:
                 reason = await asyncio.to_thread(_lock, task["id"], task["repo"], areas_for(task))
             if reason is not None:
@@ -106,6 +122,9 @@ class Admission:
                 self._hold(task, f"the RunTask workflow did not start: {err}", result)
                 continue
             in_flight.add(task["id"])
+            self._running_goal[task["id"]] = task.get("goal_id")
+            if task.get("goal_id"):
+                per_goal[task["goal_id"]] = per_goal.get(task["goal_id"], 0) + 1
             self._last_hold.pop(task["id"], None)
             self.events.emit(
                 "task_admitted",
@@ -152,16 +171,28 @@ class Admission:
             result.canceled.append(task["id"])
 
     async def _release_and_renew(self, result: AdmissionResult) -> None:
+        running: dict[str, str | None] = {}
         for task_id in {row["task_id"] for row in await asyncio.to_thread(_locks)}:
             try:
                 task = await asyncio.to_thread(self.tasks.get, task_id)
             except Exception:  # noqa: BLE001 - keep the lock until the task can be read; it expires on its own
+                running[task_id] = self._running_goal.get(task_id)
                 continue
             if task["status"] in ("queued", "running", "taken_over"):
                 await asyncio.to_thread(_renew, task_id)
+                running[task_id] = task.get("goal_id")
             else:
                 await asyncio.to_thread(_unlock, task_id)
                 result.released.append(task_id)
+        self._running_goal = running
+
+    def _goal_parallel_hold(self, task: dict, goals: dict, per_goal: dict[str, int]) -> str | None:
+        """Why the task waits for its goal's own parallel limit, when the goal sets one and runs that many."""
+        goal_id = task.get("goal_id")
+        limit = (goals.get(goal_id) or {}).get("max_parallel") if goal_id else None
+        if limit is not None and per_goal.get(goal_id, 0) >= int(limit):
+            return f"goal {goal_id} already runs {per_goal[goal_id]} tasks, its limit"
+        return None
 
     async def _goal_hold(self, task: dict, goals: dict, spend: dict) -> str | None:
         goal_id = task.get("goal_id")
@@ -239,7 +270,8 @@ def _lock(task_id: str, repo: str, areas: list[str]) -> str | None:
         for holder, holder_areas in held.items():
             if conflicts(areas, holder_areas):
                 return f"repo area {', '.join(areas)} of {repo} is held by {holder}"
-        for area in areas:
+        # A task with no area still holds one row, so it counts as running.
+        for area in areas or [NO_AREA]:
             conn.execute(
                 "INSERT INTO scheduler.repo_area_lock (task_id, repo, area, expires_at) VALUES (%s, %s, %s, now() + %s) "
                 "ON CONFLICT (task_id, area) DO UPDATE SET expires_at = EXCLUDED.expires_at",

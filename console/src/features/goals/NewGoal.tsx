@@ -8,6 +8,7 @@ import { api, type GoalDraft } from "../../api";
 import { LabelField } from "./LabelField";
 import { LabelStart } from "./LabelStart";
 import { ErrorAlert, PageHeader } from "../../components/ui";
+import { PARALLEL_HELP } from "./parallel";
 
 export function NewGoal() {
   const navigate = useNavigate();
@@ -20,6 +21,11 @@ export function NewGoal() {
   const [picking, setPicking] = useState(false);
   const [label, setLabel] = useState("");
   const [budget, setBudget] = useState<string | number>("");
+  const [parallel, setParallel] = useState<string | number>("");
+  const [systemParallel, setSystemParallel] = useState<number | null>(null);
+  useEffect(() => {
+    api.limits().then((l) => setSystemParallel(l.max_parallel), () => setSystemParallel(null));
+  }, []);
   const [priority, setPriority] = useState<string | number>(0);
   const [autoMerge, setAutoMerge] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +77,7 @@ export function NewGoal() {
         ...(label.trim() ? { label: label.trim() } : {}),
         refs,
         max_usd: budget === "" ? null : String(budget),
+        max_parallel: parallel === "" ? null : Number(parallel),
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
         start: started,
@@ -160,6 +167,16 @@ export function NewGoal() {
                 onChange={setBudget}
               />
               <NumberInput label="Priority" description="Higher runs first." value={priority} onChange={setPriority} />
+              <NumberInput
+                label="Parallel tasks"
+                description={PARALLEL_HELP}
+                placeholder={systemParallel ? `System setting: ${systemParallel}` : "System setting"}
+                min={1}
+                max={systemParallel ?? undefined}
+                allowDecimal={false}
+                value={parallel}
+                onChange={setParallel}
+              />
             </Group>
             <Switch
               label="Merge pull requests without me"

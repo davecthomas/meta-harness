@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from meta_harness import db, migrations
+from meta_harness.planner import service as planner_service
 from meta_harness.planner import tracker as tracker_module
 from meta_harness.planner.service import create_app
 from meta_harness.planner.tracker import Issue, depends_on
@@ -994,3 +995,19 @@ def test_attempts_compare_each_finished_attempts_changes_and_say_when_a_pick_is_
 
     assert shown["waiting"] is True
     assert [(a["attempt"], a["candidate"], len(a["files"])) for a in shown["attempts"]] == [(1, "a", 1), (2, "b", 0)]
+
+
+def test_a_goal_may_lower_the_systems_parallel_limit_but_not_raise_it(api, monkeypatch):
+    monkeypatch.setattr(planner_service, "system_max_parallel", lambda: 4)
+    assert api.get("/v1/limits", headers=OPERATOR).json()["max_parallel"] == 4
+    body = {"statement": "Some.", "repos": [REPO], "label": _label(), "start": False}
+
+    refused = api.post("/v1/goals", json={**body, "max_parallel": 5}, headers=OPERATOR)
+    assert refused.status_code == 422 and "more than the system's 4" in refused.json()["detail"]
+
+    goal = api.post("/v1/goals", json={**body, "max_parallel": 2}, headers=OPERATOR).json()
+    assert goal["max_parallel"] == 2
+    assert api.patch(f"/v1/goals/{goal['id']}", json={"max_parallel": 9}, headers=OPERATOR).status_code == 422
+    inherited = api.patch(f"/v1/goals/{goal['id']}", json={"max_parallel": None}, headers=OPERATOR).json()
+    assert inherited["max_parallel"] is None
+    assert api.patch(f"/v1/goals/{goal['id']}", json={"priority": 3}, headers=OPERATOR).json()["max_parallel"] is None

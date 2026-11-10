@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from meta_harness import auth, db
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
+from meta_harness.config.kinds import ConfigError, sandbox_ceiling
 from meta_harness.github_app import GitHubApps
 from meta_harness.run_service import code_host
 from meta_harness.planner import activity, drafting, progress, repos, settings, store
@@ -60,6 +61,8 @@ class GoalIn(BaseModel):
     modality: str = "fix"
     auto_merge: bool = False
     max_usd: Decimal | None = Field(default=None, gt=0)
+    # The most of its tasks that run at once, no more than the system's. None: the system's.
+    max_parallel: int | None = Field(default=None, ge=1)
     priority: int = 0
     # False: save the goal paused and never started; resume starts it.
     start: bool = True
@@ -91,6 +94,25 @@ class GoalPatch(BaseModel):
     auto_merge: bool | None = None
     priority: int | None = None
     max_usd: Decimal | None = Field(default=None, gt=0)
+    # Sent as null: the goal goes back to the system's limit.
+    max_parallel: int | None = Field(default=None, ge=1)
+
+
+def system_max_parallel() -> int | None:
+    """The task policy's max_parallel, the most tasks that run at once; None when the policy cannot be read,
+    so a goal's own limit is not checked against it."""
+    try:
+        return config_store.max_parallel()
+    except Exception:  # noqa: BLE001 - the scheduler refuses a bad policy at its own startup
+        return None
+
+
+def parallel_reason(max_parallel: int | None) -> str | None:
+    """Why a goal cannot take this parallel limit: one above the system's."""
+    system = system_max_parallel()
+    if max_parallel is not None and system is not None and max_parallel > system:
+        return f"max_parallel {max_parallel} is more than the system's {system}; a goal may only lower it"
+    return None
 
 
 def add_shipped_configuration(pool, events: Events) -> None:
@@ -529,6 +551,8 @@ def create_app(
         names = [repos.get(name).name for name in body.repos]
         if not body.label and not body.refs:
             raise HTTPException(status_code=422, detail="a goal needs a label, or issues picked by ref, or both")
+        if why := parallel_reason(body.max_parallel):
+            raise HTTPException(status_code=422, detail=why)
         pairs = checked_refs(body.refs, names)
         fields = body.model_dump(exclude={"refs"})
         try:
@@ -645,7 +669,20 @@ def create_app(
     @app.patch("/v1/goals/{goal_id}")
     def patch(goal_id: str, body: GoalPatch, who: str = Depends(operator)) -> dict:
         fields = {k: v for k, v in body.model_dump().items() if v is not None}
+        if "max_parallel" in body.model_fields_set:
+            if why := parallel_reason(body.max_parallel):
+                raise HTTPException(status_code=422, detail=why)
+            fields["max_parallel"] = body.max_parallel
         return change(goal_id, who, **fields)
+
+    @app.get("/v1/limits")
+    def limits(who: str = Depends(operator)) -> dict:
+        """The system's parallel limit, which a goal's own inherits and may lower, and the VM's ceiling on it."""
+        try:
+            ceiling = sandbox_ceiling()
+        except ConfigError:
+            ceiling = None
+        return {"max_parallel": system_max_parallel(), "max_sandboxes": ceiling}
 
     @app.post("/v1/goals/{goal_id}/pause")
     def pause(goal_id: str, who: str = Depends(operator)) -> dict:
