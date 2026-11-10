@@ -33,8 +33,20 @@ class RollbackIn(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
-def router(pool: Callable[[], ConnectionPool], operator: Callable[..., str], events: Any) -> APIRouter:
+def router(
+    pool: Callable[[], ConnectionPool],
+    operator: Callable[..., str],
+    events: Any,
+    extra_check: Callable[[str, dict[str, Any]], list[str]] | None = None,
+) -> APIRouter:
+    """The configuration API. extra_check adds the owning service's own reasons to refuse a document, such as
+    the planner's: a repo an open goal names cannot leave the registry."""
     api = APIRouter()
+
+    def refuse_extra(kind: str, document: dict[str, Any]) -> None:
+        reasons = extra_check(kind, document) if extra_check else []
+        if reasons:
+            raise HTTPException(status_code=422, detail={"reasons": reasons})
 
     def kind_or_404(kind: str) -> str:
         if kind not in KINDS:
@@ -92,6 +104,7 @@ def router(pool: Callable[[], ConnectionPool], operator: Callable[..., str], eve
 
     @api.put("/v1/config/{kind}")
     def save(kind: str, body: SaveIn, who: str = Depends(operator)) -> dict:
+        refuse_extra(kind_or_404(kind), body.document)
         try:
             with pool().connection() as conn:
                 saved = store.save(conn, kind_or_404(kind), body.document, who, body.note)

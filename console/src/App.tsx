@@ -22,6 +22,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import {
   IconAdjustments,
+  IconBrandGithub,
   IconCloud,
   IconFileText,
   IconHexagons,
@@ -47,6 +48,7 @@ import { ActivityPage } from "./pages/ActivityPage";
 import { TaskPage } from "./pages/TaskPage";
 import { AuditPage, CloudPage, DeploysPage, KillSwitchPage } from "./pages/AdminPages";
 import { LogsPage } from "./pages/LogsPage";
+import { ReposPage } from "./pages/ReposPage";
 import { ConfigPage } from "./pages/ConfigPage";
 
 const NAV = [
@@ -66,6 +68,7 @@ const ADMIN_NAV = {
   section: "Admin",
   items: [
     { to: "/config", label: "Configuration", icon: IconAdjustments },
+    { to: "/admin/repos", label: "Repositories", icon: IconBrandGithub },
     { to: "/admin/kill-switch", label: "Kill switch", icon: IconPlayerStop },
     { to: "/admin/deploys", label: "Deploys", icon: IconRocket },
     { to: "/admin/logs", label: "Logs", icon: IconFileText },
@@ -181,6 +184,7 @@ export function App() {
             <Route path="/admin/kill-switch" element={<KillSwitchPage />} />
             <Route path="/admin/deploys" element={<DeploysPage />} />
             <Route path="/admin/logs" element={<LogsPage />} />
+            <Route path="/admin/repos" element={<ReposPage />} />
             <Route path="/admin/audit" element={<AuditPage />} />
             <Route path="/admin/cloud" element={<CloudPage />} />
           </Routes>

@@ -79,3 +79,25 @@ def test_git_auth_env_carries_the_token_only_in_the_environment():
     header = env["GIT_CONFIG_VALUE_0"].removeprefix("AUTHORIZATION: basic ")
     assert base64.b64decode(header).decode() == "x-access-token:secret-token"
     assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+
+
+async def test_installed_lists_every_repo_each_app_is_installed_on_with_its_install_page(key_file):
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/app":
+            return httpx.Response(200, json={"html_url": "https://github.com/apps/mh"})
+        if path == "/app/installations":
+            return httpx.Response(200, json=[{"id": 42}])
+        if path == "/app/installations/42/access_tokens":
+            assert json.loads(request.content) == {"permissions": {"metadata": "read"}}
+            return httpx.Response(201, json={"token": "tok", "expires_at": "2099-01-01T00:00:00Z"})
+        if path == "/installation/repositories":
+            assert request.headers["authorization"] == "token tok"
+            return httpx.Response(200, json={"repositories": [{"full_name": "octo/repo", "private": True}]})
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    apps = GitHubApps({"octo": AppConfig("octo", "1", key_file)}, transport=httpx.MockTransport(handler))
+
+    assert await apps.installed() == [
+        {"name": "octo/repo", "private": True, "install_url": "https://github.com/apps/mh/installations/new"}
+    ]

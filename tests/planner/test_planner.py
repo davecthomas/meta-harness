@@ -1,4 +1,6 @@
 import asyncio
+import copy
+import dataclasses
 import uuid
 
 import pytest
@@ -772,3 +774,60 @@ def test_activity_groups_each_tasks_pull_request_with_its_state_cost_and_latest_
     assert [(p["task_id"], p["usd"]) for p in row["spent_without_pr"]] == [("t-c", 0.25)]
     assert shown["cost_scale"]["low"] <= shown["cost_scale"]["high"]
     assert api.get("/v1/activity", params={"group_by": "day"}, headers=OPERATOR).status_code == 422
+
+
+# --- The repo registry from the console -----------------------------------------------------------------
+
+
+class FakeApps:
+    async def installed(self):
+        return [
+            {"name": REPO, "private": False, "install_url": "https://github.com/apps/mh/installations/new"},
+            {
+                "name": "davecthomas/new-thing",
+                "private": True,
+                "install_url": "https://github.com/apps/mh/installations/new",
+            },
+        ]
+
+
+def test_available_repos_are_the_installed_ones_the_registry_lacks(parts):
+    events, tracker, tasks = parts
+    app = create_app(
+        events,
+        tracker,
+        tasks,
+        operator_keys={"op-key": "dave"},
+        service_keys={},
+        sweep_seconds=0,
+        titler=_no_title,
+        apps=FakeApps(),
+    )
+    with TestClient(app) as client:
+        shown = client.get("/v1/repos/available", headers=OPERATOR).json()
+    assert shown == {
+        "repos": [{"name": "davecthomas/new-thing", "private": True}],
+        "install_urls": ["https://github.com/apps/mh/installations/new"],
+    }
+
+
+def test_a_repo_an_open_goal_names_cannot_leave_the_registry(api, monkeypatch):
+    from meta_harness.config import kinds
+
+    registry = {"repos": {REPO: {"tracker": "github", "default_checks": ["true"]}, "o/spare": {"tracker": "github"}}}
+    monkeypatch.setitem(
+        kinds.KINDS, "repos", dataclasses.replace(kinds.KINDS["repos"], seed=lambda: copy.deepcopy(registry))
+    )
+    goal = api.post(
+        "/v1/goals",
+        json={"title": "Busy", "statement": "A.", "repos": [REPO], "label": _label(), "start": False},
+        headers=OPERATOR,
+    ).json()
+
+    refused = api.put(
+        "/v1/config/repos", json={"document": {"repos": {"o/spare": {"tracker": "github"}}}}, headers=OPERATOR
+    )
+
+    assert refused.status_code == 422
+    assert any(goal["id"] in reason and REPO in reason for reason in refused.json()["detail"]["reasons"])
+    api.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
