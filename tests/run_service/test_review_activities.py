@@ -107,6 +107,13 @@ async def test_each_prompt_names_the_issues_paths_and_the_review_flags_a_change_
     assert "The task names no paths" in unnamed and "$" not in unnamed
 
 
+async def test_a_conflict_fix_prompt_resolves_a_version_conflict_by_the_agents_rule():
+    prompt = await ActivityEnvironment().run(activities.loop_prompt, _prompt_request(kind="fix", conflict=True))
+    assert "conflict markers" in prompt
+    assert "take the base's version and apply this pull request's bump on top of it" in prompt
+    assert "Never keep the branch's older number" in prompt and "uv lock" in prompt
+
+
 async def test_a_fix_prompt_lists_each_finding_with_its_place():
     findings = [
         {"path": "app.py", "line": 3, "body": "Off by one."},
