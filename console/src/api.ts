@@ -300,6 +300,8 @@ export const api = {
   latestPosition: () => call<{ latest_position: number }>("/v1/events" + query({ limit: 1, from_position: 0 })),
 
   configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file" }>("/v1/config"),
+  configModels: () =>
+    call<{ models: { name: string; engine: string; model: string; status: string }[] }>("/v1/config/models").then((r) => r.models),
   config: (kind: ConfigKind) => call<ConfigVersion>(`/v1/config/${kind}`),
   configVersions: (kind: ConfigKind) =>
     call<{ versions: ConfigVersion[] }>(`/v1/config/${kind}/versions`).then((r) => r.versions),

@@ -177,7 +177,9 @@ events: no query joins two components' schemas, though today they share one
 Postgres.
 
 Configuration is a set of versioned JSON documents, edited in the operator
-console's Configuration view. The built kinds are `tiers` (the ai-api-unified
+console's Configuration view: router tiers and harness profiles through a
+form, with the JSON as Advanced, and every save reviewed as a diff against
+the active version, with its note, before it is checked and stored. The built kinds are `tiers` (the ai-api-unified
 router's `router` section), `profiles` (the harness profiles) and `repos` (the
 repo registry). The `config` component, `src/meta_harness/config/`, keeps
 every version of each in its `config.config_version` table and the active one
@@ -1590,6 +1592,7 @@ credential.
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days`, grouped by goal, repo or label: each one's state (in review, waiting, blocked, merged, closed), cost, fix rounds and latest run, the tasks that spent without opening one, and the cost scale. From the Task API, the planner's goals and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
+| GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. The tier form offers them | built |
 | GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles` or `repos`; `task_policy`, `modalities` and `access` are planned | built |
 | GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history | built |
 | PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused | built |
