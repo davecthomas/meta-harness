@@ -1517,27 +1517,31 @@ every task event:
    is under its concurrency quota and daily spend cap, the pool manager has
    sandbox capacity, and no other run holds the task's repo area.
 3. A repo-area lock covers the repo plus the top-level directories the task
-   names, or the whole repo for a task that names none. Locks live in Redis
+   names. A task that names none takes no area and runs beside the others:
+   each run has its own clone and branch, and the merge step turns a conflict
+   into a fix run. Locks live in Redis
    with a TTL, so a meta-harness scheduler leader that dies holding them
    cannot strand a repo.
 4. It admits a goal's task once every issue the task depends on is closed,
-   while the goal is active, has budget left, and is within its modality's
-   parallelism.
+   while the goal is active, has budget left, and runs fewer of its tasks than
+   its `max_parallel`.
 
 As built, the global limit is the task policy's `max_parallel`, 8 as shipped, which the scheduler reads
 each pass and checks at startup against `MH_MAX_SANDBOXES`; the locks are expiring
 Postgres rows the scheduler renews while a task is `queued`, `running` or
 `taken_over`, which covers the task's review loop. An area is a top-level
 directory, so two tasks naming `console/src/a` and `console/src/b` exclude
-each other, and a task made from an issue names no `paths` and takes its
-whole repo: one task per repo at a time. The planner, not the scheduler,
-holds a task `blocked` until its dependencies close. Caller quotas, spend
-caps, sandbox capacity and the modality's parallelism are planned.
+each other. A task made from an issue names no `paths`, so it takes no area
+and a repo's tasks run side by side; its lock row only counts it as running.
+A goal's `max_parallel`, when set, holds the goal to that many running
+tasks; null inherits the task policy's, and the planner refuses one above
+it. The planner, not the scheduler, holds a task `blocked` until its
+dependencies close. Caller quotas, spend caps, sandbox capacity and the
+modality's default parallelism are planned.
 
-Planned, to run a repo's tasks side by side (#96, #98): a parallel limit on
-the goal, lower than the task policy's; a task with no `paths` taking no
-area; areas matched by path prefix, from a `Paths:` line in the issue; and
-one merge at a time per repo, each on a head that holds the current base.
+Planned, to keep parallel tasks safe (#96, #98): areas matched by path
+prefix, from a `Paths:` line in the issue; and one merge at a time per repo,
+each on a head that holds the current base.
 
 ### Throughput
 
@@ -1609,7 +1613,7 @@ credential.
 | GET, POST | `/v1/kill-switch` | Meta-harness scheduler | Read the kill switch, or turn it on or off with a reason. While it is on, the scheduler stops every running task and admits none. Scopes smaller than everything (a run, a caller) are planned | built |
 | POST | `/v1/reviews/{task_id}/claim`, `/verdict`, `/release` | Meta-harness run service | An operator review: claim the round, submit a verdict with findings, or release the claim | planned |
 | GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest. `start` (default `true`) creates it `active` and sweeps it at once; `start: false` saves it `paused`, not started (`started_at` null), and takes in no issue until its first `/resume` | built |
-| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `auto_merge`, priority and budget, from the Goal page's Edit goal | partly built |
+| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `auto_merge`, priority, budget and `max_parallel` (null to inherit), from the Goal page's Edit goal | partly built |
 | GET | `/v1/repos` | Planner | The repo registry: the repos a goal may name | built |
 | GET | `/v1/repos/available` | Planner | The repos the deployment's GitHub Apps are installed on that the registry does not list yet, and each app's page for installing it on more. The console's Repositories page adds from it | built |
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
@@ -1637,6 +1641,7 @@ credential.
 | GET | `/v1/spend` | Metering service | Spend and dollar-hours grouped by goal, modality, repo, model, harness profile or tier, over a time range | planned |
 | GET | `/v1/pool` | Pool manager | Per-run sandboxes by image and state, warm targets and lease latency | planned |
 | POST | `/v1/webhooks/code-host`, `/v1/webhooks/{tracker}` | Task service, planner | Code-host and issue-tracker webhooks, each checked by its signature | planned |
+| GET | `/v1/limits` | Planner | The task policy's `max_parallel`, which a goal inherits and may lower, and `max_sandboxes`, the VM's ceiling on it | built |
 | GET | `/v1/search` | Planner | Goals whose title, statement, label or id hold `q`, and tasks whose title, id or issue ref do, through the Task API's `q`. The console's command palette | built |
 | GET, PUT | `/v1/me/settings` | Planner | The signed-in user's own settings: planner defaults for New goal (repos, modality, latitude, budget, auto-merge), appearance and browser notifications. A user reads and writes only their own row, keyed by the identity the edge names | built |
 | GET | `/v1/version` | Edge | The version and the deployed commit (`MH_COMMIT`, which the release stack sets), shown in the console's header | built |
@@ -1686,6 +1691,7 @@ capacity by priority.
 | `success_criteria` | Checks the planner evaluates to decide the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a check name. A goal that names none is met when every issue it holds is closed and none of its tasks is queued, blocked or running |
 | `auto_merge` | Whether a pull request whose review comes back clean merges without an operator. The modality's default when unset |
 | `max_usd`, `priority` | One budget and one priority for all the goal's tasks, review and fix runs included |
+| `max_parallel` | The most of the goal's tasks that run at once. Null inherits the task policy's `max_parallel`; a goal may set it lower, never higher. The New goal form and Edit goal set it, and the Goal page shows the value in use, marked inherited or set. A change applies at the next admission pass |
 | `status` | `planning`, `active`, `paused`, `met`, `stalled`, `budget_exhausted` or `canceled` |
 
 A `feature` or `new-system` goal starts in `planning`. For every active goal the planner runs a loop:
@@ -1927,7 +1933,7 @@ the same approval.
 | Owner | Entity | Fields |
 |---|---|---|
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over) |
-| Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
+| Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, phase, drafted_issues, refused_drafts, approved_by, approved_at, created_refs |
 | Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, last_webhook_at |

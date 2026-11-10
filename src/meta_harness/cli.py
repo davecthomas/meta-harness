@@ -142,7 +142,8 @@ def _task_call(fn, *args, **kwargs):
 @click.option("--depends-on", multiple=True)
 @click.option("--max-usd", default=None)
 @click.option("--pin", default=None)
-def task_create(external_ref, repo, title, description, checks, task_type, priority, depends_on, max_usd, pin):
+@click.option("--path", "paths", multiple=True, help="A path the task changes; tasks on one area run in turn.")
+def task_create(external_ref, repo, title, description, checks, task_type, priority, depends_on, max_usd, pin, paths):
     """Submit a task. Submitting the same --ref again returns the existing task."""
     body = {
         "external_ref": external_ref,
@@ -155,6 +156,7 @@ def task_create(external_ref, repo, title, description, checks, task_type, prior
         "depends_on": list(depends_on) or None,
         "max_usd": max_usd,
         "pin": pin,
+        "paths": list(paths) or None,
     }
     click.echo(_task_line(_task_call(_client().create, **body)))
 

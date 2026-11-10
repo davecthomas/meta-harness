@@ -6,6 +6,7 @@ import { IssuesPicker } from "./IssuesPicker";
 import { GoalEditor } from "./GoalEditor";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
+import { parallelLabel } from "./parallel";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 
@@ -24,6 +25,10 @@ export function GoalPage() {
   const [spend, setSpend] = useState<Record<string, number>>({});
   const [from, setFrom] = useState<number | null>(null);
   const [view, setView] = useState<"board" | "graph" | "table" | null>(null);
+  const [systemParallel, setSystemParallel] = useState<number | null>(null);
+  useEffect(() => {
+    api.limits().then((l) => setSystemParallel(l.max_parallel), () => setSystemParallel(null));
+  }, []);
   const [picking, setPicking] = useState(false);
 
   const load = useCallback(async () => {
@@ -182,6 +187,7 @@ export function GoalPage() {
             </Group>
           )],
           ["Budget", <Text size="sm">{goal.max_usd ? `$${goal.max_usd}` : "None"}</Text>],
+          ["Parallel tasks", <Text size="sm">{parallelLabel(goal.max_parallel, systemParallel)}</Text>],
           ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
           ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
           ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),

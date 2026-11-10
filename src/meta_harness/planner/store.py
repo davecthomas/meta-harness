@@ -23,7 +23,7 @@ GOAL_MOVES = {
 }
 GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
-    "status, created_at, updated_at, started_at, closed_at, title"
+    "status, created_at, updated_at, started_at, closed_at, title, max_parallel"
 )
 LINK_COLUMNS = "ref, goal_id, repo, task_id, state, depends_on, refused_reason, first_seen_at, last_seen_at"
 
@@ -50,6 +50,8 @@ class NewGoal:
     start: bool = True
     # The goal's short name. None: the planner's model writes one.
     title: str | None = None
+    # The most of its tasks that run at once. None: the system's, the task policy's max_parallel.
+    max_parallel: int | None = None
 
 
 def new_goal_id() -> str:
@@ -64,8 +66,8 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             f"INSERT INTO planner.goal (id, created_by, statement, repos, label, modality, modality_source, "
-            f"auto_merge, max_usd, priority, status, started_at, title) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s) "
+            f"auto_merge, max_usd, priority, status, started_at, title, max_parallel) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, %s) "
             f"RETURNING {GOAL_COLUMNS}",
             (
                 new_goal_id(),
@@ -80,6 +82,7 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
                 "active" if goal.start else "paused",
                 goal.start,
                 goal.title,
+                goal.max_parallel,
             ),
         )
         return _goal(cur.fetchone())
@@ -124,14 +127,14 @@ def search_goals(conn: psycopg.Connection, q: str, limit: int = 10) -> list[dict
 
 
 def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, **fields: Any) -> tuple[dict, dict]:
-    """Change title, statement, auto_merge, priority, max_usd or status. Returns (goal, the fields that changed with their old values).
+    """Change title, statement, auto_merge, priority, max_usd, max_parallel or status. Returns (goal, the fields that changed with their old values).
 
     only_if: change nothing unless the goal's status is this one when its row is locked.
 
     A goal's first move to active sets started_at, and the changes then hold started_at too, so the caller
     can tell a goal's first start, which sweeps at once, from a resume.
     """
-    allowed = {"title", "statement", "auto_merge", "priority", "max_usd", "status"}
+    allowed = {"title", "statement", "auto_merge", "priority", "max_usd", "max_parallel", "status"}
     if set(fields) - allowed:
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
