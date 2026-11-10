@@ -491,6 +491,58 @@ test("the profile's bash allowlist refuses a program it does not name, and pi go
 	await gateway.close();
 });
 
+test("a planning profile drafts issues with create_issue, which records them and writes nothing", async () => {
+	const draft = (id: string, depends_on: string[]) => ({
+		draft_id: id,
+		repo: "owner/repo",
+		title: `Build ${id}`,
+		body: `Do ${id}.\n\n## Acceptance checks\n\n- make test`,
+		depends_on,
+	});
+	const call = (id: string, input: Record<string, unknown>) =>
+		turn({ finish_reason: "tool_use", tool_calls: [{ id: `toolu_${id}`, name: "create_issue", input }], token: `tok-${id}` });
+	const gateway = await startGateway((n) =>
+		n === 1
+			? { body: call("a", draft("store", [])) }
+			: n === 2
+				? { body: call("b", { ...draft("api", ["store", "owner/repo#12"]), labels: ["backend", "backend"] }) }
+				: n === 3
+					? { body: call("c", draft("loop", ["loop"])) }
+					: { body: DONE_TURN },
+	);
+	const server = await startServer(gateway.url);
+	const profile = { name: "pi-plan", tools: ["read", "create_issue"], max_turns: 8, max_minutes: 5 };
+	await api(server, "POST", "/run", runBody({ profile }));
+	const events = await eventsUntilFinished(server, "task-1:0");
+
+	assert.equal(events.at(-1)!.data.status, "FINISHED");
+	const drafted = events.filter((e) => e.type === "issue_drafted").map((e) => e.data);
+	assert.deepEqual(drafted, [
+		{ ...draft("store", []), labels: [] },
+		{ ...draft("api", ["store", "owner/repo#12"]), labels: ["backend"] },
+	]);
+	// A draft that depends on itself is refused, and the model is told.
+	const results = events.filter((e) => e.type === "tool_result" && e.data.tool === "create_issue");
+	assert.deepEqual(results.map((r) => r.data.is_error), [false, false, true]);
+	assert.match(JSON.stringify(results[2]!.data), /cannot depend on itself/);
+	// Nothing is written: the workspace is as empty as it started.
+	assert.deepEqual(readdirSync(server.workspace), []);
+	assert.equal(events.some((e) => e.type === "file_changed"), false);
+	await server.stop();
+	await gateway.close();
+});
+
+test("create_issue is offered only to a profile that names it", async () => {
+	const gateway = await startGateway(() => ({ body: DONE_TURN }));
+	const server = await startServer(gateway.url);
+	await api(server, "POST", "/run", runBody({ profile: { name: "pi-lean", tools: ["read"], max_turns: 5, max_minutes: 5 } }));
+	await eventsUntilFinished(server, "task-1:0");
+	const offered = (gateway.requests[0]!.body.tools as { name: string }[]).map((tool) => tool.name);
+	assert.equal(offered.includes("create_issue"), false);
+	await server.stop();
+	await gateway.close();
+});
+
 test("pi's bash tool runs with no NODE_ENV, so a repo's npm ci installs its devDependencies", async () => {
 	const gateway = await startGateway((n) =>
 		n === 1

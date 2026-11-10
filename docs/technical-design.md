@@ -34,7 +34,7 @@ rest. A section that describes a planned component says so.
 | **Per-run sandbox**, one container per run | | built | `images/harness-pi/` |
 | Harness server | Serves the harness server Run API and runs the harness in-process. | built | `server/` |
 | pi | The default harness: pi's coding agent, third-party (pi.dev), used unmodified. | built | `@earendil-works/pi-coding-agent` |
-| pi model client extension | Sends every pi model call to the HTTP Gateway, and holds the owned `submit_review` tool. The compaction handler and the owned `run_tests` and `create_issue` tools are planned. | partly built | `extension/` |
+| pi model client extension | Sends every pi model call to the HTTP Gateway, and holds the owned `submit_review`, `update_plan` and `create_issue` tools. The compaction handler and the owned `run_tests` tool are planned. | partly built | `extension/` |
 | **HTTP Gateway** | The only model endpoint a per-run sandbox can reach. Holds the provider API keys, pins each run's model, and enforces each run's spend limit. Its guardrail checks ship off. | built | the `ai-api-unified-http` repo |
 | **Outside the system** | | | |
 | Code host | Repositories, pull requests, checks, reviews and webhooks. | | |
@@ -353,7 +353,7 @@ no pi virtual models (`registerVirtualModel`).
 | `run_tests` | owned pi extension tool, planned | Runs the acceptance checks named in the task and emits `tests_run` harness server Run API events |
 | `submit_review` | owned pi extension tool, meta-harness review harness profiles only | Ends the review run with verdict `clean` or `changes` and its findings, as a `review_submitted` harness server Run API event. The meta-harness run service posts them as a code-host pull request review |
 | `update_plan` | owned pi extension tool, offered to every run whose profile has `write` | Records the agent's plan as a checklist (each step pending, in progress or done) in a `plan_updated` event, which the Task page shows as its plan. The task prompt asks for it on any task of more than a few steps |
-| `create_issue` | owned pi extension tool, planning harness profiles only, planned | Records one issue draft (repo, title, body, labels, `Depends on:` lines) as an `issue_drafted` harness server Run API event. The planner creates the issues after the run |
+| `create_issue` | owned pi extension tool, planning harness profiles only | Records one issue draft as an `issue_drafted` harness server Run API event: `draft_id` (the agent's own short name for it), `repo`, `title`, `body` (which states its acceptance checks), `labels` and `depends_on` (other drafts' ids, or existing issues as `owner/repo#number`). A second call with the same `draft_id` replaces the draft; a draft that depends on itself is refused. It writes nothing to the code host: the planner creates the issues once the plan is approved |
 
 A harness profile's `tools` list chooses from these tools. Until `run_tests`
 exists, a run runs its acceptance checks with `bash`. The protected-path
@@ -425,6 +425,7 @@ with run id, sequence number and timestamp: `turn_started`, `model_call`
 (model, thinking, model tokens, cost, latency, as the pi model client
 extension recorded them from the HTTP Gateway), `tool_call`, `tool_result`,
 `file_changed`, `tests_run`, `guardrail_blocked`, `compacted`,
+`review_submitted`, `plan_updated`, `issue_drafted`,
 `turn_finished`, `heartbeat`, `run_finished`. The `agent_settled` pi SDK
 event marks the end of a pi turn that will not continue on its own. The
 harness server then finishes the run or, in a follow-up, waits for the next
@@ -476,8 +477,11 @@ Planned profile fields, not built: `prompts`, a versioned harness prompt set;
 `loop.plan_first` and `loop.test_before_pr`; `loop.compaction`, mapped to pi's
 `compaction.reserveTokens` and `compaction.keepRecentTokens`; and
 `context_files`. The review harness profile, `pi-review`, has no `write` or
-`edit` tool and adds `submit_review`. A planning harness profile with
-`create_issue` is planned.
+`edit` tool and adds `submit_review`. The planning harness profile,
+`pi-plan`, has no `write` or `edit` tool either, adds `create_issue`, and its
+Bash allowlist names only programs that read (`ls`, `cat`, `grep`, `find`,
+`git` and the like; the allowlist names programs, not subcommands). No run
+pushes: only the control plane writes to the code host.
 
 ## Routing
 
@@ -2077,7 +2081,7 @@ Meta-harness services append through the event service client library:
 | Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status, `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason the meta-harness scheduler holds a meta-harness task. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v2`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
-| Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
+| Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
 | Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
