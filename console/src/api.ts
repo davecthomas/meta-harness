@@ -224,6 +224,7 @@ export interface KillSwitch {
 }
 
 export const api = {
+  version: () => call<{ version: string; commit: string | null }>("/v1/version"),
   me: () => call<{ identity: string; roles?: string[] }>("/v1/me"),
   logs: (params: { unit?: string; severity?: string; minutes?: number; q?: string }) =>
     call<{ entries: LogEntry[]; units: string[] }>("/v1/admin/logs" + query(params)),
