@@ -927,7 +927,13 @@ ends `ready` and unreviewed, with the reason, and never merges.
 The merge (#86) reads the goal's `auto_merge` from the planner when it is
 due, so a change made while the task runs applies. It squash-merges with
 `sha` set to the reviewed head commit. A commit that landed after the review
-goes back to the checks and a new review. A conflict with the base becomes a
+goes back to the checks and a new review. Merges are one at a time per repo:
+the run service's merge activity holds the repo's merge lock, a Postgres
+advisory lock, from checking the branch to merging it. A branch that lacks the
+base's newest commits, because another task's pull request merged while it
+was reviewed, is not merged: GitHub merges the base into it (`update-branch`),
+and the new head goes back to the checks and a new review. So no pull request
+merges against a base it was not checked on. A conflict with the base becomes a
 fix run: the host merges the base into the fix run's clone, the run resolves
 the conflict markers, and its publish commits the merge. Branch protection or
 any other refusal ends the task `ready` with GitHub's reason. A merged pull
@@ -1539,9 +1545,9 @@ it. The planner, not the scheduler, holds a task `blocked` until its
 dependencies close. Caller quotas, spend caps, sandbox capacity and the
 modality's default parallelism are planned.
 
-Planned, to keep parallel tasks safe (#96, #98): areas matched by path
-prefix, from a `Paths:` line in the issue; and one merge at a time per repo,
-each on a head that holds the current base.
+Parallel tasks merge one at a time per repo, each on a head that holds the
+current base (Review loop, the merge). Planned (#98): areas matched by path
+prefix, from a `Paths:` line in the issue.
 
 ### Throughput
 

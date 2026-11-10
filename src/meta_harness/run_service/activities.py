@@ -40,6 +40,7 @@ calls cleanup_run, which revokes the grant and removes the per-run sandbox.
 """
 
 import asyncio
+import contextlib
 import os
 import re
 from pathlib import Path
@@ -765,15 +766,54 @@ async def goal_auto_merge(goal_id: str) -> bool:
     return bool(goal.get("auto_merge"))
 
 
+# How long a merge waits for another merge on its repo before the activity tries again.
+MERGE_LOCK_WAIT_SECONDS = 40
+
+
+@contextlib.asynccontextmanager
+async def merge_lock(repo: str):
+    """Holds the repo's merge lock, a Postgres advisory lock on the connection, while the block runs.
+
+    Raises:
+        CodeHostError: Another merge held it for MERGE_LOCK_WAIT_SECONDS; retryable, so the activity waits again.
+    """
+    from meta_harness import db
+
+    conn = await asyncio.to_thread(db.connect, autocommit=True)
+    key = f"merge:{repo.lower()}"
+    try:
+        for _ in range(MERGE_LOCK_WAIT_SECONDS):
+            (taken,) = await asyncio.to_thread(
+                lambda: conn.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (key,)).fetchone()
+            )
+            if taken:
+                break
+            if activity.in_activity():
+                activity.heartbeat(f"waiting for another merge on {repo}")
+            await asyncio.sleep(1)
+        else:
+            raise code_host.CodeHostError(f"another merge on {repo} held its merge lock for {MERGE_LOCK_WAIT_SECONDS}s")
+        yield
+    finally:
+        # Closing the connection releases the lock.
+        await asyncio.to_thread(conn.close)
+
+
 @activity.defn
 async def merge_pr(request: MergeRequest) -> MergeResult:
-    """Merges the pull request at the reviewed head commit, so nothing pushed after the review merges unreviewed."""
+    """Merges the pull request at the reviewed head commit, so nothing pushed after the review merges unreviewed.
+
+    One merge at a time per repo: a task holds the repo's merge lock from checking that its branch holds the
+    base's newest commit to merging, so no other pull request merges between the two."""
     try:
-        if code_host.is_local(request.repo):
-            state, sha, head, detail = await code_host.merge_local(request.repo, request.base, request.head_sha)
-        else:
-            repo, number = code_host.pr_number(request.pr_url)
-            state, sha, head, detail = await code_host.merge_pull_request(repo, number, request.head_sha)
+        async with merge_lock(request.repo):
+            if code_host.is_local(request.repo):
+                state, sha, head, detail = await code_host.merge_local(request.repo, request.base, request.head_sha)
+            else:
+                repo, number = code_host.pr_number(request.pr_url)
+                state, sha, head, detail = await code_host.merge_pull_request(
+                    repo, number, request.head_sha, request.base
+                )
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     if state == "merged" and request.task_id:
