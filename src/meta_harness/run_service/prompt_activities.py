@@ -1,7 +1,7 @@
 """record_prompt: the filled-in prompt each run of a task is given, recorded before the run starts.
 
 The first run's prompt is repo-task-v1 (or the caller's own text) filled in by
-prepare; a review or fix run's is review-v1 or fix-v1, filled in by
+prepare; a review or fix run's is review-v2 or fix-v1, filled in by
 loop_prompt. Neither result is in an event, so when a run goes wrong an
 operator could not tell a bad prompt (a missing check, a wrong path, an issue
 body cut short) from a bad model. The RunTask workflow calls this activity
@@ -19,11 +19,11 @@ from temporalio.exceptions import ApplicationError
 from meta_harness.run_service import events
 
 # The template each review loop run's kind fills in, in prompts/.
-LOOP_TEMPLATES = {"review": "review-v1", "fix": "fix-v1"}
+LOOP_TEMPLATES = {"review": "review-v2", "fix": "fix-v1"}
 
 
 def loop_template(kind: str) -> str:
-    """The template a review loop run of this kind is given: review-v1 for a review, fix-v1 for any fix."""
+    """The template a review loop run of this kind is given: review-v2 for a review, fix-v1 for any fix."""
     return LOOP_TEMPLATES["review"] if kind == "review" else LOOP_TEMPLATES["fix"]
 
 

@@ -541,6 +541,11 @@ class RunTask:
             loop.max_rounds = policy.max_rounds
             fixes = 0
             reviews = 0
+            # A clean verdict that still stands at the new head: the base was brought in and the pull request's
+            # own diff is what the reviewer read. Its checks run again, and it merges with no new review.
+            standing = ""
+            # The round before's findings and summary, which the next review judges first.
+            previous: dict = {}
             while True:
                 checks = await workflow.execute_activity(
                     wait_checks,
@@ -551,13 +556,25 @@ class RunTask:
                 )
                 log.info("%s: checks at %s: %s", info.workflow_id, loop.head[:12], checks.state)
                 if checks.state == "failed":
+                    standing = ""
                     fix = loop.prompt_request("fix", failed_checks=checks.failed)
+                elif standing:
+                    clean, standing = f"{standing}, and its checks passed at {loop.head[:12]}", ""
+                    merged = await self._merge(loop, clean)
+                    if merged.state == "head_changed":
+                        loop.head = merged.head_sha
+                        standing = self._still_clean(merged, clean, loop)
+                        continue
+                    if merged.state != "conflict":
+                        loop.merge_sha = merged.merge_sha if merged.state == "merged" else ""
+                        return ("merged" if merged.state == "merged" else "clean"), merged.detail
+                    fix = loop.prompt_request("fix", conflict=True)
                 else:
                     if not policy.reviewers:
                         why = "; ".join(policy.unresolved) or "every reviewer pair is the model that wrote it"
                         return "unreviewed", f"the pull request has no reviewer: {why}"
                     reviews += 1
-                    review, reviewer, why = await self._review(loop, policy.reviewers, reviews)
+                    review, reviewer, why = await self._review(loop, policy.reviewers, reviews, previous)
                     if review is None:
                         return "review_unresolved", f"review round {reviews} got no verdict: {why}"
                     await workflow.execute_activity(
@@ -576,17 +593,20 @@ class RunTask:
                     )
                     log.info("%s: review round %d by %s: %s", info.workflow_id, reviews, reviewer, review["verdict"])
                     if review["verdict"] == "clean":
+                        previous = {}
                         clean = f"review round {reviews} by {reviewer} came back clean at {loop.head[:12]}"
                         merged = await self._merge(loop, clean)
                         if merged.state == "head_changed":
                             log.info("%s: a commit landed after the review: %s", info.workflow_id, merged.head_sha)
                             loop.head = merged.head_sha
+                            standing = self._still_clean(merged, clean, loop)
                             continue
                         if merged.state != "conflict":
                             loop.merge_sha = merged.merge_sha if merged.state == "merged" else ""
                             return ("merged" if merged.state == "merged" else "clean"), merged.detail
                         fix = loop.prompt_request("fix", conflict=True)
                     else:
+                        previous = review
                         fix = loop.prompt_request(
                             "fix",
                             findings=list(review.get("findings") or []),
@@ -688,9 +708,34 @@ class RunTask:
                     outcome = "merge_checks_failed"
                 return outcome, f"the fix for {names} after {merged_pr}: {reason}"
 
-    async def _review(self, loop: "_Loop", reviewers: list[Candidate], round_no: int) -> tuple[dict | None, str, str]:
-        """One review round: each reviewer pair in order until one returns a verdict."""
-        prompt = await self._loop_prompt(loop.prompt_request("review"))
+    def _still_clean(self, merged: MergeResult, clean: str, loop: "_Loop") -> str:
+        """The clean verdict to merge on at the new head with no new review, or "" when it must be reviewed again.
+
+        It stands when the head changed but the pull request's own diff did not: the base was brought in and
+        touched none of its files. Behind a patch: workflows from before it review every new head."""
+        if not merged.same_diff or not workflow.patched("same-diff-no-review"):
+            return ""
+        workflow.logger.info(
+            "%s: the head moved to %s with the same diff, so the clean review stands",
+            workflow.info().workflow_id,
+            merged.head_sha[:12],
+        )
+        return f"{clean}; {loop.published.base} was brought in without changing the pull request's diff"
+
+    async def _review(
+        self, loop: "_Loop", reviewers: list[Candidate], round_no: int, previous: dict | None = None
+    ) -> tuple[dict | None, str, str]:
+        """One review round: each reviewer pair in order until one returns a verdict. previous is the round
+        before's review, when it asked for changes: this round judges its findings first."""
+        before = previous or {}
+        prompt = await self._loop_prompt(
+            loop.prompt_request(
+                "review",
+                round_no=round_no,
+                previous_findings=list(before.get("findings") or []),
+                previous_summary=str(before.get("summary") or ""),
+            )
+        )
         why = ""
         for reviewer in reviewers:
             if loop.left() <= 0:

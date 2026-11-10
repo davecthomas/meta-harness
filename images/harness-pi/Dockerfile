@@ -50,7 +50,6 @@ ENV HOST=0.0.0.0 \
     WORKSPACE_DIR=/workspace \
     SESSION_DIR=/sessions \
     HARNESS_ALLOW_BASH=1 \
-    NODE_ENV=production \
     HOME=/tmp/home \
     XDG_CACHE_HOME=/tmp/home/.cache \
     UV_CACHE_DIR=/tmp/home/.cache/uv \

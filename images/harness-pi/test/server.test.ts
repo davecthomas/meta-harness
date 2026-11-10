@@ -491,6 +491,29 @@ test("the profile's bash allowlist refuses a program it does not name, and pi go
 	await gateway.close();
 });
 
+test("pi's bash tool runs with no NODE_ENV, so a repo's npm ci installs its devDependencies", async () => {
+	const gateway = await startGateway((n) =>
+		n === 1
+			? {
+					body: turn({
+						finish_reason: "tool_use",
+						tool_calls: [{ id: "toolu_env", name: "bash", input: { command: 'echo "NODE_ENV=[${NODE_ENV:-}]"' } }],
+						token: "tok-env",
+					}),
+				}
+			: { body: DONE_TURN },
+	);
+	const server = await startServer(gateway.url, { HARNESS_ALLOW_BASH: "1", NODE_ENV: "production" });
+	const profile = { name: "pi-lean", tools: ["bash"], max_turns: 5, max_minutes: 5 };
+	await api(server, "POST", "/run", runBody({ profile }));
+	const events = await eventsUntilFinished(server, "task-1:0");
+	const result = events.find((e) => e.type === "tool_result" && e.data.tool === "bash");
+	assert.equal(result?.data.is_error, false);
+	assert.match(JSON.stringify(result?.data), /NODE_ENV=\[\]/);
+	await server.stop();
+	await gateway.close();
+});
+
 test("a run with no thinking level sends none, so the gateway's default applies", async () => {
 	const gateway = await startGateway(() => ({ body: DONE_TURN }));
 	const server = await startServer(gateway.url);

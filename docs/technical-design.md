@@ -891,7 +891,13 @@ loop:
    profile, which has no edit tools. The review run reads the pull request
    diff, the task's spec and acceptance checks, and runs the tests. A changed
    file outside the issue's `Paths:` with no reason in the summary is a
-   finding. Its
+   finding, except the repo's version and lock files, which are always in
+   scope: a version bump by the repo's AGENTS.md rule is never a finding. A
+   review after the first is given the round before's findings and summary
+   (prompt `review-v2`): it judges first whether each is fixed, then the fix,
+   and raises a new finding only for a bug, a failing check or a part of the
+   task left undone, so rounds converge. Its summary begins with how many of
+   those findings are fixed, not fixed and new. Its
    `submit_review` tool ends the run with verdict `clean` or `changes` and
    its findings. The meta-harness run service posts them as a pull request
    review and records the verdict with the reviewed head SHA in a
@@ -938,8 +944,15 @@ the run service's merge activity holds the repo's merge lock, a Postgres
 advisory lock, from checking the branch to merging it. A branch that lacks the
 base's newest commits, because another task's pull request merged while it
 was reviewed, is not merged: GitHub merges the base into it (`update-branch`),
-and the new head goes back to the checks and a new review. So no pull request
-merges against a base it was not checked on. A conflict with the base becomes a
+and the new head goes back to the checks. So no pull request merges against a
+base it was not checked on. Whether it is also reviewed again depends on the
+pull request's own diff against the base, which the merge activity compares
+at the reviewed head and the new one (`same_diff` in its result). When the
+diff is the same, as when the base's changes touch none of its files, the
+clean review stands: the new head's checks run, and it merges with no new
+review (behind the `same-diff-no-review` patch). When the diff changed, or
+cannot be read whole (300 files or more, or a file with no patch), or the
+new head's checks fail, it is reviewed again. A conflict with the base becomes a
 fix run: the host merges the base into the fix run's clone, the run resolves
 the conflict markers, and its publish commits the merge. Its prompt says
 that a conflict in a version or lock file follows the repo's AGENTS.md
@@ -2022,7 +2035,7 @@ Meta-harness services append through the event service client library:
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
 | Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status, `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason the meta-harness scheduler holds a meta-harness task. `kill_switch_changed` with the operator as actor |
-| Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v1`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
+| Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v2`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
 | Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
