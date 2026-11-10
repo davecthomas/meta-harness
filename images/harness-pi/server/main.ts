@@ -49,6 +49,9 @@ if (!SERVER_TOKEN) {
 for (const name of Object.keys(process.env)) {
 	if (/(_API_KEY|_AUTH_TOKEN|_OAUTH_TOKEN|^AWS_|^GOOGLE_APPLICATION_CREDENTIALS$)/.test(name)) delete process.env[name];
 }
+// pi's bash tool inherits this environment, and NODE_ENV=production there makes the task's own `npm ci` skip
+// devDependencies, so a repo's typecheck and tests fail as written. The task's repo decides its own NODE_ENV.
+delete process.env.NODE_ENV;
 
 // harness.ts has loaded pi's SDK by now, so this replaces the dispatcher it installed.
 useEnvProxy(log);

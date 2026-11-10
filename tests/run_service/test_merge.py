@@ -233,3 +233,61 @@ async def test_a_check_a_later_merge_canceled_is_judged_by_the_same_check_on_the
     runs["m2"] = [CheckRun("deploy", "completed", "failure", "apply failed")]
     result = await ActivityEnvironment().run(activities.wait_merge_checks, request)
     assert result.state == "failed" and [f.name for f in result.failed] == ["deploy"]
+
+
+def _compares(monkeypatch, diffs: dict[str, list[dict] | None]):
+    """GitHub's compare of the base and each head: the files the pull request changes there."""
+
+    async def github(repo, permissions, method, path, **kwargs):
+        head = path.rsplit("...", 1)[-1]
+        return {} if diffs[head] is None else {"files": diffs[head]}
+
+    monkeypatch.setattr(code_host, "_github", github)
+
+
+APP = {"filename": "app.py", "status": "modified", "patch": "@@ -1 +1 @@\n-a\n+b"}
+
+
+async def test_a_head_that_only_gained_the_base_has_the_same_diff(monkeypatch):
+    _compares(monkeypatch, {"old": [APP], "new": [dict(APP)]})
+    assert await code_host.same_diff("o/r", "main", "old", "new")
+
+
+@pytest.mark.parametrize(
+    "new",
+    [
+        [{**APP, "patch": "@@ -1 +1 @@\n-a\n+c"}],  # a commit changed the pull request's own lines
+        [APP, {"filename": "new.py", "status": "added", "patch": "@@ -0,0 +1 @@\n+x"}],  # or added a file
+        [{**APP, "patch": "@@ -3 +3 @@\n-a\n+b"}],  # or the base moved the lines around its change
+    ],
+)
+async def test_a_head_whose_own_change_differs_is_not_the_same_diff(monkeypatch, new):
+    _compares(monkeypatch, {"old": [APP], "new": new})
+    assert not await code_host.same_diff("o/r", "main", "old", "new")
+
+
+@pytest.mark.parametrize(
+    "old",
+    [None, [{"filename": "logo.png", "status": "modified"}], [APP] * code_host.COMPARE_FILES],
+)
+async def test_a_diff_that_cannot_be_read_whole_is_never_called_the_same(monkeypatch, old):
+    _compares(monkeypatch, {"old": old, "new": old})
+    assert not await code_host.same_diff("o/r", "main", "old", "new")
+
+
+async def test_merge_pr_says_when_the_base_came_in_without_changing_the_diff(monkeypatch):
+    async def merge_pull_request(repo, number, head_sha, base):
+        return "head_changed", "", "new", "brought in 2 new commits from main"
+
+    async def same_diff(repo, base, before, after):
+        return (base, before, after) == ("main", "abc", "new")
+
+    monkeypatch.setattr(code_host, "merge_pull_request", merge_pull_request)
+    monkeypatch.setattr(code_host, "same_diff", same_diff)
+    request = MergeRequest(
+        task_id="t-1", repo="o/r", pr_url="https://github.com/o/r/pull/7", branch="mh/t-1", base="main", head_sha="abc"
+    )
+
+    result = await ActivityEnvironment().run(activities.merge_pr, request)
+
+    assert result.state == "head_changed" and result.head_sha == "new" and result.same_diff
