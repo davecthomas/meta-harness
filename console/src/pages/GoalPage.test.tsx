@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
@@ -196,8 +196,8 @@ test("a row with a task opens the task, and its links open GitHub instead", asyn
   expect(await screen.findByText("task page")).toBeTruthy();
 });
 
-test("a goal shows its title over its description, and Edit title saves a new one", async () => {
-  let current = { ...goal("active"), started_at: "2026-11-08T20:41:00Z", title: "Fix issue 55", statement: "Close #55: the save loses the last edit." };
+test("a goal shows its title over its description, and Edit goal saves only what changed", async () => {
+  let current = { ...goal("active"), started_at: "2026-11-08T20:41:00Z", title: "Fix issue 55", statement: "Close #55: the save loses the last edit.", max_usd: "10" };
   const patched: unknown[] = [];
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
     if (init?.method === "PATCH") {
@@ -211,14 +211,16 @@ test("a goal shows its title over its description, and Edit title saves a new on
   });
   renderAt("/goals/g-1", <GoalPage />);
 
-  expect(await screen.findByRole("heading", { name: /Fix issue 55/ })).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: "Fix issue 55" })).toBeTruthy();
   expect(screen.getByText("Close #55: the save loses the last edit.")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Edit title" }));
-  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Save keeps every edit" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save title" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit goal" }));
+  const dialog = await screen.findByRole("dialog", { name: "Edit goal" });
+  fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Save keeps every edit" } });
+  fireEvent.change(within(dialog).getByLabelText(/Budget/), { target: { value: "25" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save goal" }));
 
-  await waitFor(() => expect(patched).toEqual([{ title: "Save keeps every edit" }]));
-  expect(await screen.findByRole("heading", { name: /Save keeps every edit/ })).toBeTruthy();
+  await waitFor(() => expect(patched).toEqual([{ title: "Save keeps every edit", max_usd: "25" }]));
+  expect(await screen.findByRole("heading", { name: "Save keeps every edit" })).toBeTruthy();
 });
 
 test("the Goals list shows each goal's title, or the start of its description when it has none", async () => {

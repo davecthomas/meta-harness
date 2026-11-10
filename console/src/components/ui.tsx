@@ -6,15 +6,16 @@ import { statusColor } from "../theme";
 
 // Small pieces every page shares, so each page reads as layout and data.
 
+// A page's title with its actions beside it, and its description below both, across the page's width.
 export function PageHeader(props: { title: ReactNode; description?: ReactNode; actions?: ReactNode }) {
   return (
-    <Group justify="space-between" align="flex-start" mb="lg" wrap="wrap" gap="md">
-      <Stack gap={4} style={{ minWidth: 0, flex: "1 1 320px" }}>
-        <Title order={2} style={{ textWrap: "balance", overflowWrap: "anywhere" }}>{props.title}</Title>
-        {props.description && <Text c="dimmed" size="sm" component="div">{props.description}</Text>}
-      </Stack>
-      {props.actions && <Group gap="sm">{props.actions}</Group>}
-    </Group>
+    <Stack gap={6} mb="lg">
+      <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
+        <Title order={2} style={{ textWrap: "balance", overflowWrap: "anywhere", minWidth: 0, flex: "1 1 320px" }}>{props.title}</Title>
+        {props.actions && <Group gap="sm">{props.actions}</Group>}
+      </Group>
+      {props.description && <Text c="dimmed" size="sm" component="div">{props.description}</Text>}
+    </Stack>
   );
 }
 
