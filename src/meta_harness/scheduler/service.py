@@ -1,7 +1,9 @@
 """The meta-harness scheduler service: an admission pass every MH_ADMISSION_SECONDS, and its REST API part.
 
     GET  /v1/kill-switch     whether the kill switch is on, who changed it and why
-    POST /v1/kill-switch     turn it on or off: {"engaged": true, "reason": "..."}
+    POST /v1/kill-switch     turn it on or off: {"engaged": true, "reason": "..."}, or set a mode:
+                             {"mode": "drain"} admits nothing new and lets running tasks finish,
+                             "stop" is engaged, "off" ends both
     GET  /health
 
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
@@ -21,6 +23,8 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from typing import Literal
+
 from pydantic import BaseModel
 
 from meta_harness import auth
@@ -31,8 +35,10 @@ log = logging.getLogger("meta_harness.scheduler")
 
 
 class KillSwitchIn(BaseModel):
-    engaged: bool
+    engaged: bool | None = None
     reason: str | None = None
+    # stop: the kill switch on. drain: no new task starts, running ones finish. off: neither.
+    mode: Literal["stop", "drain", "off"] | None = None
 
 
 def create_app(
@@ -89,11 +95,28 @@ def create_app(
 
     @app.post("/v1/kill-switch")
     def change_kill_switch(body: KillSwitchIn, who: str = Depends(operator)) -> dict:
-        switch = admission_module.set_kill_switch(body.engaged, who, body.reason)
-        admission.events.emit("kill_switch_changed", {"engaged": body.engaged, "reason": body.reason}, actor=who)
+        if body.mode is None and body.engaged is None:
+            raise HTTPException(status_code=422, detail="give engaged, or a mode: stop, drain or off")
+        if body.mode == "drain":
+            switch = admission_module.set_draining(True, who, body.reason)
+        else:
+            engaged = body.mode == "stop" if body.mode else bool(body.engaged)
+            if body.mode == "off":
+                admission_module.set_draining(False, who, body.reason)
+            switch = admission_module.set_kill_switch(engaged, who, body.reason)
+        admission.events.emit(
+            "kill_switch_changed",
+            {"engaged": switch["engaged"], "reason": body.reason, "mode": mode_of(switch)},
+            actor=who,
+        )
         return switch
 
     return app
+
+
+def mode_of(switch: dict) -> str:
+    """The kill switch's mode: stop when it is on, drain while draining, otherwise off."""
+    return "stop" if switch["engaged"] else "drain" if switch.get("draining") else "off"
 
 
 async def start_run_task(task_id: str) -> None:

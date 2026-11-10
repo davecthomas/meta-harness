@@ -99,8 +99,8 @@ jobs:
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
           docker build -f deploy/edge.Dockerfile -t "$EDGE_IMAGE" .
           docker push "$EDGE_IMAGE"
-      - name: apply the release stack
-        id: apply
+      - name: plan the release stack
+        id: release_plan
         working-directory: deploy/terraform/release
         run: |
           # Init reads the state bucket; a passing Cloud Storage error is tried again, three times in all.
@@ -120,9 +120,36 @@ jobs:
           replaced=$([ "$deleted" = true ] || [ "$resized" = true ] && echo true || echo false)
           echo "replaced=$replaced" >> "$GITHUB_OUTPUT"
           echo "the VM is $([ "$deleted" = true ] && echo replaced || ([ "$resized" = true ] && echo "stopped, resized and started" || echo updated in place))"
-          terraform apply -input=false release.tfplan
+      - name: drain running tasks before the VM is replaced
+        # Replacing or restarting the VM stops every sandbox on it. So no new task starts, and the deploy waits
+        # for running ones to finish, up to the longest harness profile's max_minutes plus ten. Past that it
+        # applies anyway and names the tasks it interrupts. The new VM's boot ends the drain.
+        if: steps.release_plan.outputs.replaced == 'true'
+        run: |
+          ssh() { timeout 120 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet --command "$1"; }
+          ceiling=$(( $(jq '[.profiles[].max_minutes] | max' config/harness_profiles.json) + 10 ))
+          if ! ssh "sudo bash /opt/meta-harness/deploy/vm/drain.sh on"; then
+            echo "could not reach the VM to drain it; it may already be down, so the apply goes ahead"
+            exit 0
+          fi
+          deadline=$(( $(date +%s) + ceiling * 60 ))
+          while :; do
+            running=$(ssh "sudo bash /opt/meta-harness/deploy/vm/drain.sh running" || echo "(could not read the running tasks)")
+            [ -z "$running" ] && { echo "no task is running"; break; }
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "running tasks did not finish in $ceiling minutes; the apply interrupts them"
+              { echo "### Tasks the VM replacement interrupted"; echo; echo '```'; echo "$running"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+              break
+            fi
+            echo "waiting for $(echo "$running" | wc -l | tr -d ' ') running tasks"
+            sleep 60
+          done
+      - name: apply the release stack
+        id: apply
+        working-directory: deploy/terraform/release
+        run: terraform apply -input=false release.tfplan
       - name: update the running VM in place
-        if: steps.apply.outputs.replaced == 'false'
+        if: steps.release_plan.outputs.replaced == 'false'
         run: |
           # The startup script, from the metadata the apply just set, run as its own unit so a dropped SSH
           # connection cannot stop it. It checks the commit out and restarts the services one at a time.

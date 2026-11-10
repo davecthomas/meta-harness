@@ -375,6 +375,30 @@ def scheduler_serve(host: str, port: int) -> None:
     uvicorn.run(create_app(_admission()), host=host, port=port, log_level="warning")
 
 
+@scheduler.command("drain")
+@click.argument("state", type=click.Choice(["on", "off"]))
+@click.option("--reason", default=None, help="Why, for the kill switch's record.")
+def scheduler_drain(state: str, reason: str | None) -> None:
+    """Start or end a drain: no new task starts, and running tasks finish. A deploy that replaces the VM drains
+    first (deploy/vm/drain.sh), and the new VM's boot ends it."""
+    from meta_harness.events.client import EventClient
+    from meta_harness.scheduler.admission import set_draining
+    from meta_harness.scheduler.service import mode_of
+
+    draining = state == "on"
+    why = reason or ("a deploy replaces the VM" if draining else "the VM booted")
+    switch = set_draining(draining, "deploy", why)
+    try:
+        EventClient(source="scheduler").emit(
+            "kill_switch_changed",
+            {"engaged": switch["engaged"], "reason": why, "mode": mode_of(switch)},
+            actor="deploy",
+        )
+    except Exception as err:  # noqa: BLE001 - the drain holds whether or not the event service records it
+        click.echo(f"the event service did not record the change: {err}", err=True)
+    click.echo(f"draining: {switch['draining']}")
+
+
 @scheduler.command("admit")
 def scheduler_admit() -> None:
     """Run one admission pass and print what it started and held."""

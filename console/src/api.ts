@@ -99,6 +99,8 @@ export interface Page<T> {
 
 export interface KillSwitch {
   engaged: boolean;
+  // A deploy that replaces the VM drains: no new task starts, and running ones finish.
+  draining?: boolean;
   changed_by: string;
   reason: string | null;
   changed_at: string;

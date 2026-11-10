@@ -117,7 +117,13 @@ export function KillSwitchPanel({ canChange = false }: { canChange?: boolean }) 
         <Group gap="sm" wrap="nowrap">
           {state.engaged && <IconAlertTriangle color="var(--mantine-color-red-6)" />}
           <div>
-            <Text fw={600}>{state.engaged ? "Kill switch is on: nothing runs" : "Kill switch is off"}</Text>
+            <Text fw={600}>
+              {state.engaged
+                ? "Kill switch is on: nothing runs"
+                : state.draining
+                  ? "Draining for a deploy: no new task starts, and running ones finish"
+                  : "Kill switch is off"}
+            </Text>
             <Text size="xs" c="dimmed">
               {state.changed_by}, {when(state.changed_at)}{state.reason ? `: ${state.reason}` : ""}
             </Text>
