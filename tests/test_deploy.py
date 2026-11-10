@@ -209,3 +209,9 @@ def test_the_vm_holds_every_sandbox_the_running_limit_allows():
     assert machine in MACHINE_MEMORY_GB, f"add {machine}'s memory to MACHINE_MEMORY_GB"
     assert running * largest + CONTROL_PLANE_GB <= MACHINE_MEMORY_GB[machine], (machine, running, largest)
     assert running == 8, "the deployment runs up to eight tasks at once (#125)"
+
+
+def test_terraform_init_is_tried_again_after_a_passing_storage_error():
+    """A deploy failed once on 'Failed to get existing workspaces: querying Cloud Storage failed'."""
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    assert deploy.count("for try in 1 2 3; do terraform init -input=false && break;") == 2
