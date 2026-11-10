@@ -167,6 +167,15 @@ export interface Activity {
   cost_scale: { low: number; high: number };
 }
 
+// One log entry, as the Logs page shows it, with the whole Cloud Logging entry.
+export interface LogEntry {
+  time: string;
+  service: string;
+  severity: string;
+  message: string;
+  entry: Record<string, unknown>;
+}
+
 export interface Task {
   id: string;
   external_ref: string;
@@ -209,6 +218,8 @@ export interface KillSwitch {
 
 export const api = {
   me: () => call<{ identity: string; roles?: string[] }>("/v1/me"),
+  logs: (params: { unit?: string; severity?: string; minutes?: number; q?: string }) =>
+    call<{ entries: LogEntry[]; units: string[] }>("/v1/admin/logs" + query(params)),
   deploys: () => call<{ version: string; commit: string | null; revision: string | null; project?: string | null }>("/v1/admin/deploys"),
   // The newest `limit` events of these types, oldest first.
   recentEvents: (eventTypes: string[], limit: number) =>
