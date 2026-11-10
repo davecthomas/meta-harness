@@ -335,7 +335,7 @@ def _admission():
     from meta_harness.events.client import EventClient
     from meta_harness.planner.client import GoalsClient
     from meta_harness.scheduler.admission import Admission
-    from meta_harness.scheduler.service import cancel_run_task, start_run_task
+    from meta_harness.scheduler.service import cancel_run_task, signal_run_task, start_run_task
     from meta_harness.tasks.client import TaskClient
 
     service_key = os.environ.get("MH_SERVICE_KEY")
@@ -346,6 +346,7 @@ def _admission():
         start_run_task,
         max_running=int(os.environ.get("MH_MAX_RUNNING", "2")),
         cancel=cancel_run_task,
+        signal=signal_run_task,
     )
 
 

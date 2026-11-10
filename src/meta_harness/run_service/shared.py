@@ -364,3 +364,19 @@ class MergeResult:
     # The pull request's head now: a new commit when the state is head_changed.
     head_sha: str = ""
     detail: str = ""
+
+
+@dataclass
+class OperatorMessage:
+    """An operator's word to a running task: a message for its next turn, one for after it stops, or stop."""
+
+    message_id: int
+    text: str
+    # next_turn, after_stop, or stop (end the run after the turn in progress, keeping its work).
+    when: str
+
+
+@dataclass
+class DeliverRequest:
+    run_id: str
+    message: OperatorMessage

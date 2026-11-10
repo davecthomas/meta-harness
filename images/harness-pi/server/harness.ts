@@ -121,7 +121,7 @@ export class HttpError extends Error {
 	}
 }
 
-type StopReason = "canceled" | "max_turns" | "max_minutes" | "spend_limit" | "server_shutdown";
+type StopReason = "canceled" | "max_turns" | "max_minutes" | "spend_limit" | "server_shutdown" | "operator_stop";
 
 const ACTIVE: readonly RunStatus[] = ["CREATING", "RUNNING"];
 const PREVIEW_CHARS = 2000;
@@ -157,6 +157,8 @@ export class Harness {
 	private current?: RunState;
 	private context?: RunContext;
 	private stopReason?: StopReason;
+	// An operator asked to stop once the turn in progress ends.
+	private stopAfterThisTurn = false;
 	private lastAssistantError?: string;
 	// Args of tool calls still running, by tool call id. A list, because Gemini's tool calls carry no id
 	// and the library sets each id to the tool's name, so two parallel writes share one.
@@ -285,6 +287,27 @@ export class Harness {
 		return { created: true, run };
 	}
 
+	/**
+	 * POST /messages: an operator's message to the run in progress. next_turn steers pi, so it reads the
+	 * message at its next turn; after_stop queues it as a follow-up for when pi would otherwise stop.
+	 */
+	async message(text: string, when: "next_turn" | "after_stop"): Promise<RunState> {
+		const run = this.current;
+		if (!run || !ACTIVE.includes(run.status) || !this.session) throw new HttpError(409, "No run in progress to message.");
+		if (when === "after_stop") await this.session.followUp(text);
+		else await this.session.steer(text);
+		this.emit("operator_message_delivered", run, { when, chars: text.length });
+		return run;
+	}
+
+	/** POST /stop: ends the run at the end of the turn in progress, keeping its work. */
+	stopAfterTurn(): RunState {
+		const run = this.current;
+		if (!run || !ACTIVE.includes(run.status)) throw new HttpError(409, "No run in progress to stop.");
+		this.stopAfterThisTurn = true;
+		return run;
+	}
+
 	/** POST /cancel: stops pi and returns once the run has ended. */
 	async cancel(): Promise<RunState | undefined> {
 		const run = this.current;
@@ -390,6 +413,7 @@ export class Harness {
 		const session = this.session!;
 		const profile = this.sessionProfile!;
 		this.stopReason = undefined;
+		this.stopAfterThisTurn = false;
 		this.lastAssistantError = undefined;
 		run.status = "RUNNING";
 		const startedAt = Date.now();
@@ -420,6 +444,9 @@ export class Harness {
 				return this.end(run, "ERROR", "spend_limit", this.lastAssistantError ?? "The run reached its grant's spend limit.");
 			case "server_shutdown":
 				return this.end(run, "ERROR", "server_shutdown", "The harness server stopped during the run.");
+			case "operator_stop":
+				// Stopped after a turn on an operator's word: the work so far is the run's work, and it publishes.
+				return this.end(run, "FINISHED", "stopped_by_operator", null);
 		}
 		if (thrown) return this.end(run, "ERROR", "harness_error", thrown);
 		if (this.lastAssistantError) return this.end(run, "ERROR", "model_error", this.lastAssistantError);
@@ -553,6 +580,7 @@ export class Harness {
 					text: preview(text),
 					tool_calls: message.content.filter((block) => block.type === "toolCall").length,
 				});
+				if (this.stopAfterThisTurn) void this.stop("operator_stop");
 				return;
 			}
 			case "tool_execution_start": {

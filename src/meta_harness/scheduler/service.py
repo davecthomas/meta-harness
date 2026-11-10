@@ -108,3 +108,12 @@ async def cancel_run_task(task_id: str) -> None:
     from meta_harness.run_service import start
 
     await (await start.client()).get_workflow_handle(task_id).cancel()
+
+
+async def signal_run_task(task_id: str, message: dict) -> None:
+    """Hands an operator message to the task's RunTask workflow."""
+    from meta_harness.run_service import start
+    from meta_harness.run_service.shared import OperatorMessage
+
+    handle = (await start.client()).get_workflow_handle(task_id)
+    await handle.signal("operator_message", OperatorMessage(**message))

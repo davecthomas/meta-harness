@@ -83,6 +83,9 @@ export function entries(events: MhEvent[]): Entry[] {
       case "pull_request_opened":
         out.push({ kind: "status", position: e.position, text: `Pull request opened: ${p.pr_url}`, error: false });
         break;
+      case "operator_message":
+        out.push({ kind: "status", position: e.position, text: `${e.actor ?? "Operator"}: ${p.when === "stop" ? "stop after this turn" : `${p.text} (${p.when === "after_stop" ? "after it stops" : "next turn"})`}`, error: false });
+        break;
       case "task_status_changed":
         out.push({ kind: "status", position: e.position, text: `Status ${p.from} → ${p.to}${p.reason ? `: ${p.reason}` : ""}`, error: p.to === "failed" });
         break;

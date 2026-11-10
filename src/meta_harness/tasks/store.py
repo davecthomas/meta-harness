@@ -229,3 +229,41 @@ def _jsonable(row: dict) -> dict:
     if row["max_usd"] is not None:
         row["max_usd"] = str(row["max_usd"])
     return row
+
+
+# How an operator message reaches a running task: at its next turn, when it would stop, or stop it after this turn.
+MESSAGE_KINDS = ("next_turn", "after_stop", "stop")
+
+
+def add_message(conn: psycopg.Connection, task_id: str, body: str, deliver: str, actor: str) -> dict:
+    """Queue an operator's message for a running task. Refused unless the task is running."""
+    if deliver not in MESSAGE_KINDS:
+        raise TaskError(f"when is one of {', '.join(MESSAGE_KINDS)}")
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT status FROM tasks.task WHERE id = %s FOR SHARE", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        if row["status"] != "running":
+            raise TaskError(f"a {row['status']} task has no run to message")
+        cur.execute(
+            "INSERT INTO tasks.task_message (task_id, body, deliver, actor) VALUES (%s, %s, %s, %s) "
+            "RETURNING id, task_id, body, deliver, actor",
+            (task_id, body, deliver, actor),
+        )
+        return dict(cur.fetchone())
+
+
+def pending_messages(conn: psycopg.Connection, limit: int = 100) -> list[dict]:
+    """Messages not yet handed to their task's workflow, oldest first."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT id, task_id, body, deliver FROM tasks.task_message WHERE delivered_at IS NULL ORDER BY id LIMIT %s",
+            (limit,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def mark_delivered(conn: psycopg.Connection, message_id: int) -> None:
+    with conn.transaction():
+        conn.execute("UPDATE tasks.task_message SET delivered_at = now() WHERE id = %s", (message_id,))

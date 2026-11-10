@@ -47,6 +47,13 @@ class TaskClient:
     def list(self, statuses: list[str] | None = None, goal_id: str | None = None, limit: int = 100) -> list[dict]:
         return self.page(statuses, goal_id, limit, 0)["tasks"]
 
+    def pending_messages(self) -> list[dict]:
+        """Operator messages waiting to be handed to their task's workflow."""
+        return self._call("GET", "/v1/messages/pending")["messages"]
+
+    def mark_delivered(self, message_id: int) -> None:
+        self._call("POST", f"/v1/messages/{message_id}/delivered")
+
     def search(self, q: str, limit: int = 10) -> list[dict]:
         """Tasks whose title, id or issue ref holds the text."""
         return self._call("GET", "/v1/tasks", params={"q": q, "limit": limit})["tasks"]

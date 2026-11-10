@@ -556,3 +556,14 @@ test("update_plan comes with write and records the plan as a plan_updated event"
 	await server.stop();
 	await gateway.close();
 });
+
+test("a message or a stop with no run in progress is refused", async () => {
+	const gateway = await startGateway(() => ({ body: turn({ text: "Done.", finish_reason: "complete", token: "tok" }) }));
+	const server = await startServer(gateway.url);
+	const message = await api(server, "POST", "/messages", { text: "Use the helper.", when: "next_turn" });
+	assert.equal(message.status, 409);
+	const stop = await api(server, "POST", "/stop", {});
+	assert.equal(stop.status, 409);
+	await server.stop();
+	await gateway.close();
+});

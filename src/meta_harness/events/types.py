@@ -228,6 +228,18 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType(
+        "operator_message",
+        1,
+        _object(
+            {
+                "message_id": {"type": "integer"},
+                "text": {"type": "string"},
+                "when": {"type": "string", "enum": ["next_turn", "after_stop", "stop"]},
+            },
+            ["message_id", "text", "when"],
+        ),
+    ),
+    EventType(
         "issue_added",
         1,
         _object({"ref": {"type": "string"}, "goal_id": {"type": "string"}}, ["ref", "goal_id"]),
@@ -264,6 +276,7 @@ REGISTRY: list[EventType] = [
             ("guardrail_blocked", "long"),
             ("review_submitted", "long"),
             ("plan_updated", "short"),
+            ("operator_message_delivered", "long"),
             ("compacted", "short"),
             ("turn_finished", "short"),
             ("run_finished", "long"),
@@ -283,6 +296,7 @@ HARNESS_EVENT_TYPES = frozenset(
         "guardrail_blocked",
         "review_submitted",
         "plan_updated",
+        "operator_message_delivered",
         "compacted",
         "turn_finished",
         "run_finished",

@@ -224,6 +224,14 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 			if (!run) return send(response, 404, { error: "No run with that id." });
 			return send(response, 200, { ...run, last_event_id: harness.events.lastId });
 		}
+		case "POST /messages": {
+			const body = (await readJson(request)) as { text?: unknown; when?: unknown };
+			if (typeof body.text !== "string" || !body.text.trim()) throw new HttpError(400, "Send {text, when}.");
+			const when = body.when === "after_stop" ? "after_stop" : "next_turn";
+			return send(response, 202, await harness.message(body.text, when));
+		}
+		case "POST /stop":
+			return send(response, 202, harness.stopAfterTurn());
 		case "POST /cancel": {
 			const run = await harness.cancel();
 			if (!run) return send(response, 404, { error: "No run to cancel." });

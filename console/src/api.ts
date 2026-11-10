@@ -304,6 +304,8 @@ export const api = {
   pullDiff: (taskId: string) => call<PullDiff>(`/v1/pulls/${taskId}/diff`),
   commentOnLines: (taskId: string, body: { path: string; line: number; start_line: number | null; body: string }) =>
     call<{ url: string }>(`/v1/pulls/${taskId}/comments`, { method: "POST", body: JSON.stringify(body) }),
+  messageTask: (id: string, text: string, when: "next_turn" | "after_stop" | "stop") =>
+    call<{ message_id: number }>(`/v1/tasks/${id}/messages`, { method: "POST", body: JSON.stringify({ text, when }) }),
   clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
   cancelTask: (id: string) =>
     call<Task>(`/v1/tasks/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "canceled from the console" }) }),
