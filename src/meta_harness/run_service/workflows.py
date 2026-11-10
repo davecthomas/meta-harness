@@ -93,6 +93,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from meta_harness.run_service.budget_activities import BudgetHold, budget_hold, goal_budget
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
+    from meta_harness.run_service.resume_activities import resume_state
     from meta_harness.run_service.shared import (
         Attempt,
         DeliverRequest,
@@ -253,8 +254,10 @@ class RunTask:
             task_id=spec.task_id,
             goal_id=spec.goal_id,
             attempts=spec.attempts,
+            resume=spec.resume,
         )
-        await self._task_status("running", "the meta-harness run service started its RunTask workflow")
+        again = f" again (retry {spec.retries})" if spec.retries else ""
+        await self._task_status("running", f"the meta-harness run service started its RunTask workflow{again}")
         try:
             result = await self._run_loop(request)
         except asyncio.CancelledError:
@@ -404,6 +407,12 @@ class RunTask:
         limit = Decimal(request.spend_limit_usd)
         spent = Decimal(0)
         attempts: list[Attempt] = []
+        if request.resume and self._task_id:
+            # An operator sent the task back: pick up at its open pull request, or close it if that merged.
+            # Otherwise a new first run follows, its runs numbered after the earlier ones.
+            resumed, attempts = await self._resume(request, prepared, limit)
+            if resumed is not None:
+                return resumed
         route_result: RouteResult | None = None
         floor = request.floor
         # Behind a patch: only a task asked for several attempts takes this path, and only after the patch.
@@ -644,6 +653,62 @@ class RunTask:
         if published.pr_url:
             workflow.logger.info("%s: pull request %s", info.workflow_id, published.pr_url)
         return published
+
+    async def _resume(
+        self, request: RunTaskInput, prepared: PreparedRun, limit: Decimal
+    ) -> tuple[RunTaskResult | None, list[Attempt]]:
+        """Picks a retried task up at its pull request. Returns the result, or None with the earlier runs when
+        a new first run must be made: the task has no pull request, it was closed unmerged, or the pair that
+        wrote it can no longer be resolved.
+
+        An open pull request goes back through the review loop with the task's fix rounds counted afresh, or,
+        when an operator asked for the merge, is merged whatever its goal's auto_merge says. One that has
+        merged since ends the task merged.
+        """
+        info = workflow.info()
+        state = await workflow.execute_activity(
+            resume_state, self._task_id, start_to_close_timeout=CODE_HOST_TIMEOUT, retry_policy=CODE_HOST_RETRY
+        )
+        attempts = list(state.attempts)
+
+        def result(outcome: str, reason: str, published: PublishResult | None, spent: Decimal) -> RunTaskResult:
+            workflow.logger.info("%s: resumed (%s), %s: %s", info.workflow_id, request.resume, outcome, reason)
+            return RunTaskResult(
+                template=prepared.template,
+                prompt=prepared.prompt,
+                route=None,
+                attempts=attempts,
+                harness=None,
+                spent_usd=str(spent),
+                published=published,
+                outcome=outcome,
+                outcome_reason=reason,
+            )
+
+        if state.pr_state == "merged":
+            merged = f"its pull request {state.published.pr_url} had merged"
+            return result("merged", merged, state.published, Decimal(0)), attempts
+        if state.pr_state != "open" or state.published is None or state.author is None:
+            return None, attempts
+        loop = _Loop(request, prepared, state.author, state.published, limit, Decimal(0), attempts, None)
+        await self._task_status("running", "its pull request is open, back in the review loop", loop.published.pr_url)
+        if request.resume == "merge":
+            asked = f"an operator asked for the merge at {loop.head[:12]}"
+            merged = await self._merge(loop, asked, asked_for=True)
+            if merged.state == "merged":
+                loop.merge_sha = merged.merge_sha
+                outcome, reason = "merged", merged.detail
+            elif merged.state == "blocked":
+                outcome, reason = "clean", merged.detail
+            else:
+                # The head moved, or it conflicts with its base: checks, review and fixes come first.
+                loop.head = merged.head_sha or loop.head
+                outcome, reason = await self._review_loop(loop)
+        else:
+            outcome, reason = await self._review_loop(loop)
+        if outcome == "merged" and loop.merge_sha:
+            outcome, reason = await self._after_merge(loop, reason)
+        return result(outcome, reason, loop.published, loop.spent), attempts
 
     async def _review_loop(self, loop: "_Loop") -> tuple[str, str]:
         """The review loop on the task's pull request. Returns its outcome and why."""
@@ -898,11 +963,11 @@ class RunTask:
             why = f"{reviewer.label}: {detail}"
         return None, "", why
 
-    async def _merge(self, loop: "_Loop", clean: str):
-        """The merge after a clean review, when the goal allows it. Returns the merge's result, whose
-        detail is the reason the task ends with."""
-        auto = False
-        if loop.request.goal_id:
+    async def _merge(self, loop: "_Loop", clean: str, asked_for: bool = False):
+        """The merge after a clean review, when the goal allows it or an operator asked for it. Returns the
+        merge's result, whose detail is the reason the task ends with."""
+        auto = asked_for
+        if loop.request.goal_id and not asked_for:
             auto = await workflow.execute_activity(
                 goal_auto_merge,
                 loop.request.goal_id,

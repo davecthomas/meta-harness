@@ -408,6 +408,11 @@ async def read_pull_request(repo: str, number: int) -> PullRequest:
     )
 
 
+async def pull_request(repo: str, number: int) -> dict:
+    """The pull request as the code host returns it: its state, whether it merged, and its head and base."""
+    return await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
+
+
 def _check_summary(output: dict) -> str:
     text = "\n\n".join(part for part in (output.get("title"), output.get("summary"), output.get("text")) if part)
     return text[:CHECK_SUMMARY_CHARS]

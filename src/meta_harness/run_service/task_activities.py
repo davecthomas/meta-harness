@@ -73,6 +73,8 @@ async def load_task(task_id: str) -> TaskSpec:
         closes=f"{match['repo']}#{match['number']}" if match else "",
         goal_id=task.get("goal_id") or "",
         attempts=int(task.get("attempts") or 1),
+        resume=task.get("resume") or "",
+        retries=int(task.get("retries") or 0),
     )
 
 

@@ -72,6 +72,8 @@ class RunTaskInput:
     goal_id: str = ""
     # Attempts made at once on the first tier's candidates, for an operator to pick one. 1: the usual run loop.
     attempts: int = 1
+    # Where a task an operator sent back to the queue picks up: review, merge, or "" for a first run.
+    resume: str = ""
 
 
 @dataclass
@@ -223,7 +225,8 @@ class RunTaskResult:
     prompt: str
     route: RouteResult | None
     attempts: list[Attempt]
-    harness: HarnessResult
+    # The run whose work was published. None when the workflow resumed at an open pull request and made none.
+    harness: HarnessResult | None
     spent_usd: str
     published: PublishResult | None = None
     # How the review loop ended: clean, unreviewed or review_unresolved, and why. Empty when it did not run.
@@ -249,6 +252,11 @@ class TaskSpec:
     closes: str
     goal_id: str = ""
     attempts: int = 1
+    # Set when an operator sent the task back to the queue: review (its open pull request goes back through
+    # the review loop) or merge (the operator asked for the merge). Empty: a first run.
+    resume: str = ""
+    # How many times the task was sent back: its workflows after the first say so in what they record.
+    retries: int = 0
 
 
 @dataclass

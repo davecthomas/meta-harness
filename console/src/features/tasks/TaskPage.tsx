@@ -6,6 +6,7 @@ import { IconX } from "@tabler/icons-react";
 import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../../api";
 import { Reviews } from "./Reviews";
 import { BudgetHold } from "./BudgetHold";
+import { TaskActions } from "./TaskActions";
 import { TaskFailure } from "./TaskFailure";
 import { Timeline } from "./Timeline";
 import { Plan } from "./Plan";
@@ -144,17 +145,6 @@ export function TaskPage() {
   if (!task) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const status = facts.status ?? task.status;
   const cancellable = ["queued", "blocked", "running"].includes(status);
-  // A task waiting on someone, its pull request open with no workflow left, is cleared rather than canceled.
-  const clearable = ["ready", "review_unresolved"].includes(status);
-
-  async function clear() {
-    try {
-      setTask(await api.clearTask(task!.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   async function cancel() {
     try {
       setTask(await api.cancelTask(task!.id));
@@ -171,7 +161,13 @@ export function TaskPage() {
         actions={
           <>
             {cancellable && <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={cancel}>Cancel task</Button>}
-            {clearable && <Button variant="light" leftSection={<IconX size={16} />} onClick={clear}>Clear task</Button>}
+            <TaskActions
+              task={task}
+              status={status}
+              merged={events.some((e) => e.event_type === "pull_request_merged")}
+              onChanged={setTask}
+              onError={setError}
+            />
           </>
         }
       />

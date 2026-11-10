@@ -250,6 +250,53 @@ def test_a_budget_answer_needs_a_held_task_and_goes_through_its_own_endpoint(api
     assert refused.status_code == 409 and "not held for budget" in refused.json()["detail"]
 
 
+def test_a_retry_sends_an_ended_task_back_to_the_queue_to_resume_at_its_pull_request(api, events):
+    task = _ended(api, "review_unresolved")
+
+    retried = api.post(f"/v1/tasks/{task['id']}/retry", json={"max_usd": "20"}, headers=_as(CALLER_KEY))
+
+    assert retried.status_code == 202
+    body = retried.json()
+    assert (body["status"], body["resume"], body["retries"]) == ("queued", "review", 1)
+    assert Decimal(body["max_usd"]) == Decimal("20") and body["status_reason"] == "ops retried it"
+    kinds = [(e[0], e[1]) for e in events.events]
+    retried_event = next(payload for kind, payload in kinds if kind == "task_retried")
+    assert {**retried_event, "max_usd": Decimal(retried_event["max_usd"])} == {
+        "action": "retry",
+        "resume": "review",
+        "max_usd": Decimal("20"),
+        "retries": 1,
+    }
+    assert ("task_status_changed", {"from": "review_unresolved", "to": "queued", "reason": "ops retried it"}) in kinds
+
+
+def test_a_failed_task_with_no_pull_request_retries_from_a_new_first_run_and_a_canceled_one_is_uncanceled(api):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
+
+    retried = api.post(f"/v1/tasks/{task['id']}/retry", headers=_as(CALLER_KEY)).json()
+    assert (retried["status"], retried["resume"], retried["retries"]) == ("queued", None, 1)
+
+    api.post(f"/v1/tasks/{task['id']}/cancel", headers=_as(CALLER_KEY))
+    again = api.post(f"/v1/tasks/{task['id']}/retry", headers=_as(CALLER_KEY)).json()
+    assert (again["status"], again["cancel_requested"], again["retries"]) == ("queued", False, 2)
+
+
+def test_only_an_ended_task_is_retried_and_only_one_with_a_pull_request_is_merged(api):
+    running = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{running['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    refused = api.post(f"/v1/tasks/{running['id']}/retry", headers=_as(CALLER_KEY))
+    assert refused.status_code == 409 and "a running task cannot be retried" in refused.json()["detail"]
+
+    ready = _ended(api, "ready")
+    assert api.post(f"/v1/tasks/{ready['id']}/retry", headers=_as(CALLER_KEY)).status_code == 409
+    merge = api.post(f"/v1/tasks/{ready['id']}/merge", headers=_as(CALLER_KEY))
+    assert merge.status_code == 202
+    assert (merge.json()["status"], merge.json()["resume"]) == ("queued", "merge")
+    assert merge.json()["status_reason"] == "ops asked for its pull request's merge"
+
+
 def test_clearing_a_task_whose_pull_request_merged_closes_it(api, events):
     task = _ended(api, "review_unresolved")
     events.emit("pull_request_merged", {"pr_url": "https://github.com/o/r/pull/12"}, task_id=task["id"])

@@ -120,11 +120,14 @@ def mode_of(switch: dict) -> str:
 
 
 async def start_run_task(task_id: str) -> None:
-    """Starts the task's RunTask workflow. One that already exists counts as started."""
+    """Starts the task's RunTask workflow. One that already exists counts as started. A task an operator sent
+    back to the queue (retries above 0) may start another after its earlier one ended."""
     from meta_harness.run_service import start
+    from meta_harness.tasks.client import TaskClient
 
+    task = await asyncio.to_thread(lambda: TaskClient(api_key=os.environ.get("MH_SERVICE_KEY", "")).get(task_id))
     try:
-        await start.start(task_id)
+        await start.start(task_id, again=int(task.get("retries") or 0) > 0)
     except start.AlreadyStarted:
         pass
 

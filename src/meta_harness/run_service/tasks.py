@@ -109,6 +109,10 @@ async def _print_outcome(handle: WorkflowHandle[Any, RunTaskResult], ref: str) -
     for attempt in result.attempts:
         print(f"[status] run {attempt.attempt}: {attempt.candidate}  {attempt.decision}  {attempt.detail}")
     h = result.harness
+    if h is None:
+        # A task an operator sent back picked up at its open pull request and made no run of its own to publish.
+        print(f"[status] {ref}: resumed at its pull request: {result.outcome} ({result.outcome_reason})")
+        return 0
     print(
         f"[status] {ref}: {h.status} ({h.end_reason})  turns={h.turns}  failed calls={h.failed_calls}  "
         f"tokens in={h.tokens_in} out={h.tokens_out}  usd={h.usd:.6f}"

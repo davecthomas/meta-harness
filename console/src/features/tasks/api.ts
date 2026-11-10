@@ -65,6 +65,10 @@ export const tasksApi = {
   setAttempts: (id: string, count: number) => call<Task>(`/v1/tasks/${id}/attempts`, { method: "POST", body: JSON.stringify({ count }) }),
   attempts: (taskId: string) => call<AttemptsCompare>(`/v1/pulls/${taskId}/attempts`),
   clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
+  // Sends an ended task back to the queue, with a spend limit for the retry's runs.
+  retryTask: (id: string, max_usd: number) => call<Task>(`/v1/tasks/${id}/retry`, { method: "POST", body: JSON.stringify({ max_usd }) }),
+  // Asks for the task's pull request to be merged through the merge queue.
+  mergeTask: (id: string) => call<Task>(`/v1/tasks/${id}/merge`, { method: "POST" }),
   // An operator's answer to a task held for budget: raise (with a new limit, or none to look again) or end.
   decideBudget: (id: string, action: "raise" | "end", max_usd?: number) =>
     call<Task>(`/v1/tasks/${id}/budget`, { method: "POST", body: JSON.stringify({ action, ...(max_usd ? { max_usd } : {}) }) }),
