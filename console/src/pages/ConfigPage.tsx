@@ -14,6 +14,8 @@ import {
   Modal,
   Paper,
   Popover,
+  ScrollArea,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Table,
@@ -26,6 +28,7 @@ import { notifications } from "@mantine/notifications";
 import { IconArrowBackUp, IconCode, IconDeviceFloppy, IconEdit, IconInfoCircle } from "@tabler/icons-react";
 import { api, ApiError, type ConfigKind, type ConfigSummary, type ConfigVersion } from "../api";
 import { useUnsavedChanges } from "../components/UnsavedChanges";
+import { ProfilesForm, TiersForm, lineDiff } from "../components/ConfigForms";
 import { DataTable, ErrorAlert, Facts, PageHeader, SectionTitle, when } from "../components/ui";
 
 const ORIGIN_COLORS: Record<string, string> = { seed: "gray", edit: "indigo", rollback: "orange" };
@@ -213,6 +216,25 @@ function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () 
   const [saving, setSaving] = useState(false);
   const [reasons, setReasons] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Tiers and profiles have a form; the JSON stays as Advanced. Both edit the same text.
+  const hasForm = props.kind === "tiers" || props.kind === "profiles";
+  const [mode, setMode] = useState<"form" | "json">(hasForm ? "form" : "json");
+  const [reviewing, setReviewing] = useState(false);
+  const [profileNames, setProfileNames] = useState<string[]>([]);
+  const [models, setModels] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (props.kind !== "tiers") return;
+    api.config("profiles").then((p) => setProfileNames(Object.keys(p.document.profiles ?? {})), () => setProfileNames([]));
+    api.configModels().then((m) => setModels(m.map((x) => x.name)), () => setModels([]));
+  }, [props.kind]);
+
+  let parsed: Record<string, any> | null = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = null;
+  }
 
   // The checked save. Resolves true when the version is saved; a refusal stays in the editor with its reasons.
   async function save(): Promise<boolean> {
@@ -250,34 +272,87 @@ function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () 
     },
   });
 
+  // The reasons no form field names show at the top; the form shows the rest beside what they are about.
+  const placed = (r: string) =>
+    mode === "form" &&
+    ((props.kind === "tiers" && (parsed?.tiers ?? []).some((t: any) => r.startsWith(`tier ${t.name}`))) ||
+      (props.kind === "profiles" && Object.keys(parsed?.profiles ?? {}).some((n) => r.startsWith(`${n}:`))));
+  const loose = reasons.filter((r) => !placed(r));
+
   return (
     <Paper mb="lg">
       <Stack gap="md">
-        {reasons.length > 0 && (
+        {loose.length > 0 && (
           <Alert color="red" title="Not saved: the service would refuse this version">
-            <List size="sm" spacing={4}>{reasons.map((r) => <List.Item key={r}>{r}</List.Item>)}</List>
+            <List size="sm" spacing={4}>{loose.map((r) => <List.Item key={r}>{r}</List.Item>)}</List>
           </Alert>
         )}
         <ErrorAlert error={error} />
         {unsaved.element}
-        <JsonInput
-          label={`Edit version ${props.current.version}`}
-          description="Saving checks it the way the service that reads it checks its configuration at startup."
-          value={text}
-          onChange={setText}
-          validationError="Not valid JSON"
-          formatOnBlur
-          autosize
-          minRows={12}
-          maxRows={40}
-          styles={{ input: { fontFamily: "var(--mantine-font-family-monospace)", fontSize: 13 } }}
-        />
-        <TextInput label="Note" description="Why you changed it. It shows in the version history." value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+        {hasForm && (
+          <SegmentedControl
+            value={mode}
+            onChange={(v) => setMode(v as "form" | "json")}
+            data={[{ value: "form", label: "Form" }, { value: "json", label: "Advanced: JSON" }]}
+            w={260}
+          />
+        )}
+        {mode === "form" && parsed && props.kind === "tiers" && (
+          <TiersForm document={parsed} onChange={(d) => setText(JSON.stringify(d, null, 2))} profiles={profileNames} models={models} reasons={reasons} />
+        )}
+        {mode === "form" && parsed && props.kind === "profiles" && (
+          <ProfilesForm document={parsed} onChange={(d) => setText(JSON.stringify(d, null, 2))} reasons={reasons} />
+        )}
+        {mode === "form" && !parsed && <Alert color="yellow">The JSON is not valid, so the form can't show it. Fix it under Advanced.</Alert>}
+        {mode === "json" && (
+          <JsonInput
+            label={`Edit version ${props.current.version}`}
+            description="Saving checks it the way the service that reads it checks its configuration at startup."
+            value={text}
+            onChange={setText}
+            validationError="Not valid JSON"
+            formatOnBlur
+            autosize
+            minRows={12}
+            maxRows={40}
+            styles={{ input: { fontFamily: "var(--mantine-font-family-monospace)", fontSize: 13 } }}
+          />
+        )}
         <Group justify="flex-end">
           <Button variant="default" onClick={() => unsaved.confirm(props.onCancel)}>Cancel</Button>
-          <Button leftSection={<IconDeviceFloppy size={16} />} loading={saving} onClick={() => void save()}>Save as version {props.current.version + 1}</Button>
+          <Button leftSection={<IconDeviceFloppy size={16} />} disabled={text === original} onClick={() => setReviewing(true)}>
+            Review and save
+          </Button>
         </Group>
       </Stack>
+      <Modal opened={reviewing} onClose={() => setReviewing(false)} title={`Save version ${props.current.version + 1}`} size="xl">
+        <Stack gap="md">
+          <Text size="sm">The changes against version {props.current.version}, the active one:</Text>
+          <ScrollArea.Autosize mah="45vh">
+            <Code block>
+              {lineDiff(original, text)
+                .filter((l, i, all) => l.sign !== " " || all.slice(Math.max(0, i - 2), i + 3).some((x) => x.sign !== " "))
+                .map((l) => `${l.sign} ${l.text}`)
+                .join("\n")}
+            </Code>
+          </ScrollArea.Autosize>
+          <TextInput label="Note" description="Why you changed it. It shows in the version history." value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setReviewing(false)}>Back to editing</Button>
+            <Button
+              leftSection={<IconDeviceFloppy size={16} />}
+              loading={saving}
+              onClick={async () => {
+                const ok = await save();
+                setReviewing(false);
+                if (!ok) setMode((m) => m);
+              }}
+            >
+              Save as version {props.current.version + 1}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Paper>
   );
 }

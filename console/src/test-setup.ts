@@ -24,3 +24,5 @@ Object.defineProperty(document, "fonts", {
   value: { addEventListener: () => {}, removeEventListener: () => {}, ready: Promise.resolve() },
 });
 window.IntersectionObserver = Observer as unknown as typeof IntersectionObserver;
+// A combobox scrolls its selected option into view, which jsdom does not implement.
+Element.prototype.scrollIntoView = function scrollIntoView() {};
