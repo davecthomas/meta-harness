@@ -76,6 +76,9 @@ from colliding:
   `Paths: console/src/features/goals, src/meta_harness/planner`. Keep to them;
   a change outside them with no reason in the summary is a review finding.
   Two issues whose paths overlap run one at a time.
+- The version files and lock files the versioning rule names are always in
+  scope, whatever an issue's `Paths:` say: bumping the version is never a
+  change outside the paths, and a bump is never reverted to satisfy them.
 
 ## Style
 

@@ -152,24 +152,42 @@ def issue_paths(body: str) -> list[str]:
     return found
 
 
+# The version rule outranks the paths rule: a review that read the version files as outside the task's paths had
+# authors revert the bump the repository requires.
+VERSION_RULE = {
+    "review": (
+        "The repository's version files and lock files are always in scope: when its AGENTS.md has a versioning "
+        "rule, a version bump by that rule is never a finding, and a change that ships with no bump the rule "
+        "requires is one."
+    ),
+    "author": (
+        "The repository's version files and lock files are always in scope: when its AGENTS.md has a versioning "
+        "rule, bump the version by it, and never revert a bump it requires."
+    ),
+}
+
+
 def paths_rule(description: str, kind: str) -> str:
-    """The prompt's rule about the task's paths, from its description's `Paths:` lines. kind: task, review, fix."""
+    """The prompt's rule about the task's paths, from its description's `Paths:` lines, and the rule that the
+    version files are always in scope. kind: task, review, fix."""
     paths = issue_paths(description)
+    version = VERSION_RULE["review" if kind == "review" else "author"]
     if not paths:
-        return (
+        rule = (
             "The task names no paths, so the change should stay in the files the task is about."
             if kind == "review"
             else "Touch a file the task is not about only when the task cannot be done without it, and say so in your summary."
         )
+        return f"{rule} {version}"
     listed = ", ".join(paths)
     if kind == "review":
         return (
             f"The task names its paths: {listed}. A changed file outside them, with no reason for it in the pull "
-            "request's summary, is a finding."
+            f"request's summary, is a finding. {version}"
         )
     return (
         f"Keep to the task's paths: {listed}. Change a file outside them only when the task cannot be done "
-        "without it, and say why in your summary."
+        f"without it, and say why in your summary. {version}"
     )
 
 
@@ -538,6 +556,34 @@ async def _bring_base_in(repo: str, number: int, base: str, head_sha: str) -> tu
     raise CodeHostError(
         f"GitHub did not bring {base} into pull request {number} within {UPDATE_BRANCH_POLLS * UPDATE_BRANCH_POLL_SECONDS}s"
     )
+
+
+# GitHub's compare lists at most this many files; a diff that may be cut is never called the same.
+COMPARE_FILES = 300
+
+
+async def pull_request_diff(repo: str, base: str, head_sha: str) -> dict[str, str] | None:
+    """The pull request's own change at head_sha: each file it changes against where it left base, with its
+    patch. None when it cannot be read whole: too many files, or a file with no patch (binary, or too large)."""
+    compare = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/compare/{base}...{head_sha}") or {}
+    files = compare.get("files")
+    if files is None or len(files) >= COMPARE_FILES:
+        return None
+    diff: dict[str, str] = {}
+    for changed in files:
+        if changed.get("patch") is None:
+            return None
+        diff[str(changed["filename"])] = f"{changed.get('status')}\n{changed['patch']}"
+    return diff
+
+
+async def same_diff(repo: str, base: str, before: str, after: str) -> bool:
+    """Whether the pull request changes the same lines at after as at before, as it does when the base was
+    brought in and touched none of its files. So a review of before still holds for after."""
+    old = await pull_request_diff(repo, base, before)
+    if old is None:
+        return False
+    return old == await pull_request_diff(repo, base, after)
 
 
 async def merge_local(repo: str, base: str, head_sha: str) -> tuple[str, str, str, str]:

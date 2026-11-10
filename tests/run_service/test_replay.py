@@ -65,6 +65,14 @@ SCENARIOS = {
         "auto_merge": True,
         "merge_checks": ["failed", "passed"],
     },
+    # After the same-diff-no-review patch: the base came in without changing the diff, so the new head's checks
+    # ran and it merged on the clean review it had.
+    "patched-same-diff-merged": {
+        "verdicts": [CLEAN],
+        "goal_id": "g-1",
+        "auto_merge": True,
+        "merges": [("head_changed", "c9", "same"), "merged"],
+    },
 }
 
 

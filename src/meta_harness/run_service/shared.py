@@ -343,6 +343,9 @@ class LoopPromptRequest:
     conflict: bool = False
     # A fix after a merge: the merged pull request whose merge commit failed failed_checks.
     merged_pr: str = ""
+    # A review after the first: the round before's findings and summary, which this round judges first.
+    previous_findings: list[dict[str, Any]] = field(default_factory=list)
+    previous_summary: str = ""
 
 
 @dataclass
@@ -386,6 +389,9 @@ class MergeResult:
     # The pull request's head now: a new commit when the state is head_changed.
     head_sha: str = ""
     detail: str = ""
+    # With head_changed: the pull request's own diff against its base is what it was at the reviewed head,
+    # as when the base was brought in and touched none of its files. The clean review still stands.
+    same_diff: bool = False
 
 
 @dataclass

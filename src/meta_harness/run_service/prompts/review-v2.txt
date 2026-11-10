@@ -11,6 +11,8 @@ $description
 Acceptance checks:
 $checks
 
+$previous
+
 Review rules:
 - Read the whole change and the code around it. Run each acceptance check with the bash tool.
 - Judge whether the change does the task, correctly, with tests where the code has them, and changes nothing the task did not ask for.

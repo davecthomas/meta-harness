@@ -50,9 +50,9 @@ async def test_every_run_of_a_task_records_its_prompt_before_it_starts(env):  # 
     assert result.outcome == "clean"
     assert [(r.kind, r.template, r.prompt) for r in records] == [
         ("task", "repo-task-v1", "task"),
-        ("review", "review-v1", "review"),
+        ("review", "review-v2", "review"),
         ("fix", "fix-v1", "fix"),
-        ("review", "review-v1", "review"),
+        ("review", "review-v2", "review"),
     ]
     assert all(r.task_id == "t-prompt" for r in records)
     assert [r.run_id for r in records] == [a.run_id for a in result.attempts]
@@ -115,4 +115,4 @@ async def test_record_prompt_fails_when_the_event_service_does_not_store_it(monk
 
 
 def test_a_loop_runs_template_is_named_by_its_kind():
-    assert (loop_template("review"), loop_template("fix")) == ("review-v1", "fix-v1")
+    assert (loop_template("review"), loop_template("fix")) == ("review-v2", "fix-v1")

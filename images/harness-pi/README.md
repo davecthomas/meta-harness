@@ -72,6 +72,7 @@ step and no tsx.
 | `WORKSPACE_DIR` | a new temporary directory | pi's working directory. `/workspace` in the sandbox |
 | `SESSION_DIR` | a new temporary directory | Where pi writes the session file. It stays outside the workspace, so it never lands in the repo |
 | `HARNESS_ALLOW_BASH` | off | `1` lets a profile name the `bash` tool |
+| `NODE_ENV` | dropped | The server removes it from its environment at startup, and the image sets none: pi's bash tool inherits the server's environment, and `NODE_ENV=production` there makes a task's `npm ci` skip devDependencies, so its typecheck and tests fail |
 | `HEARTBEAT_SECONDS` | `5` | How often a `heartbeat` event goes out while a run is active |
 | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | unset | When set, the server's own calls to the HTTP Gateway go through the proxy (`server/proxy.ts`). In a per-run sandbox this is the egress proxy. Loading pi's SDK replaces Node's proxy-aware dispatcher, so the server installs one itself |
 

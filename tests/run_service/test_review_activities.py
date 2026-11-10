@@ -107,6 +107,39 @@ async def test_each_prompt_names_the_issues_paths_and_the_review_flags_a_change_
     assert "The task names no paths" in unnamed and "$" not in unnamed
 
 
+async def test_every_prompt_keeps_the_version_files_in_scope_whatever_the_paths():
+    named = "The bug is in app.py.\n\nPaths: src/app\n"
+    for description in (named, "The bug is in app.py."):
+        review = await ActivityEnvironment().run(
+            activities.loop_prompt, dataclasses.replace(_prompt_request(kind="review"), description=description)
+        )
+        fix = await ActivityEnvironment().run(
+            activities.loop_prompt, dataclasses.replace(_prompt_request(kind="fix"), description=description)
+        )
+        assert "a version bump by that rule is never a finding" in review
+        assert "never revert a bump it requires" in fix
+
+
+async def test_a_first_review_reads_the_whole_change_and_a_later_one_judges_the_round_befores_findings_first():
+    first = await ActivityEnvironment().run(activities.loop_prompt, _prompt_request(kind="review", round_no=1))
+    assert "This is the first review of this pull request" in first
+
+    later = await ActivityEnvironment().run(
+        activities.loop_prompt,
+        _prompt_request(
+            kind="review",
+            round_no=2,
+            previous_summary="One bug.",
+            previous_findings=[{"path": "app.py", "line": 3, "body": "Off by one."}],
+        ),
+    )
+    assert "This is review round 2." in later and "Its summary: One bug." in later
+    assert "1. app.py line 3: Off by one." in later
+    assert "Judge first whether each of those is fixed" in later
+    assert "Raise a new finding only for a bug, a failing check, or a part of the task left undone" in later
+    assert "$" not in later, "every placeholder is filled"
+
+
 async def test_a_conflict_fix_prompt_resolves_a_version_conflict_by_the_agents_rule():
     prompt = await ActivityEnvironment().run(activities.loop_prompt, _prompt_request(kind="fix", conflict=True))
     assert "conflict markers" in prompt

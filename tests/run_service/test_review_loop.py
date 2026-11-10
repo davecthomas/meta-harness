@@ -200,8 +200,15 @@ class Script:
         async def merge_pr(request: MergeRequest) -> MergeResult:
             self.merge_requests.append(request)
             answer = self.merges.pop(0) if self.merges else "merged"
-            state, head = answer if isinstance(answer, tuple) else (answer, request.head_sha)
-            return MergeResult(state=state, merge_sha="m1" if state == "merged" else "", head_sha=head, detail="x")
+            # A tuple is (state, new head), with "same" third when the pull request's own diff did not change.
+            state, head, *same = answer if isinstance(answer, tuple) else (answer, request.head_sha)
+            return MergeResult(
+                state=state,
+                merge_sha="m1" if state == "merged" else "",
+                head_sha=head,
+                detail="x",
+                same_diff=bool(same),
+            )
 
         return [
             goal_auto_merge,
@@ -451,6 +458,44 @@ async def test_a_commit_after_the_review_is_checked_and_reviewed_before_it_merge
     assert script.waited_on == ["c0", "c9"]
     assert [p.head_sha for p in script.posted] == ["c0", "c9"]
     assert [m.head_sha for m in script.merge_requests] == ["c0", "c9"]
+
+
+async def test_the_base_brought_in_without_changing_the_diff_reruns_the_checks_and_merges_with_no_new_review(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True, merges=[("head_changed", "c9", "same"), "merged"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert script.waited_on == ["c0", "c9"], "the new head's checks run"
+    assert [p.head_sha for p in script.posted] == ["c0"], "and it is not reviewed again"
+    assert [m.head_sha for m in script.merge_requests] == ["c0", "c9"]
+    assert "main was brought in without changing the pull request's diff" in result.outcome_reason
+
+
+async def test_a_standing_clean_review_is_dropped_when_the_new_heads_checks_fail(env):
+    script = Script(
+        verdicts=[CLEAN, CLEAN],
+        auto_merge=True,
+        merges=[("head_changed", "c9", "same"), "merged"],
+        checks={"c9": "failed"},
+        fix_commits=["c10"],
+    )
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert [p.head_sha for p in script.posted] == ["c0", "c10"], "the fix's commit is reviewed"
+
+
+async def test_a_review_after_the_first_is_given_the_round_befores_findings(env):
+    script = Script(verdicts=[CHANGES, CLEAN], fix_commits=["c1"])
+
+    await _run(env, script)
+
+    first, second = [p for p in script.prompts if p.kind == "review"]
+    assert first.previous_findings == [] and first.round_no == 1
+    assert second.round_no == 2 and second.previous_findings == CHANGES["findings"]
+    assert second.previous_summary == CHANGES["summary"]
 
 
 async def test_a_conflict_goes_to_a_fix_run_that_resolves_the_merge_then_merges(env):
