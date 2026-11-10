@@ -8,9 +8,9 @@ import { PrLink } from "./ui";
 import { describe, fold, taskOf, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "./Terminal";
 
-export type TileSize = 4 | 16 | 32;
+export type TileSize = 1 | 4 | 16 | 32;
 const KEEP = 300;
-const BACKLOG: Record<TileSize, number> = { 4: 80, 16: 40, 32: 30 };
+const BACKLOG: Record<TileSize, number> = { 1: 200, 4: 80, 16: 40, 32: 30 };
 const EMPTY: TileFacts = { turn: 0, usd: 0, model: "", status: null };
 
 // Terminal tiles for running tasks. Only tiles on screen stream: the grid keeps one event stream
@@ -109,7 +109,7 @@ export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?:
                 {t.pr_url && <PrLink url={t.pr_url} size="xs" />}
                 <Text size="xs" c="dimmed">turn {f.turn}</Text>
                 <Text size="xs" c="dimmed">${f.usd.toFixed(4)}</Text>
-                {props.size === 4 && f.model && <Text size="xs" c="dimmed" ff="monospace">{f.model}</Text>}
+                {props.size <= 4 && f.model && <Text size="xs" c="dimmed" ff="monospace">{f.model}</Text>}
               </Group>
             </header>
             <Terminal lines={lines[t.id] ?? []} />
