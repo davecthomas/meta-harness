@@ -154,7 +154,10 @@ def database_env() -> tuple[str, ...]:
 
 
 def database_name(run_id: str) -> str:
-    return f"{container_name(run_id)}-db"
+    """The run's database container, and the host name its sandbox reaches it by. Short and of a fixed length:
+    a host name may be 63 characters at most, and the sandbox's own name with a suffix passed that for a long
+    task ref, so the database, and with it the sandbox, would not start."""
+    return f"mh-db-{hashlib.sha256(run_id.encode()).hexdigest()[:24]}"
 
 
 def database_url(run_id: str) -> str:
@@ -203,8 +206,9 @@ def run_args(
     if database:
         # The database is on the run's own network: reached by name, never through the egress proxy.
         direct += f",{database.rsplit('@', 1)[1].split(':', 1)[0]}"
-        for name in database_env():
-            databases += ["--env", f"{name}={database}"]
+        # Not `name`: that is the container's, used below.
+        for variable in database_env():
+            databases += ["--env", f"{variable}={database}"]
     volumes = ["--volume", f"{workspace}:/workspace"]
     if git_dir.is_dir():
         volumes += ["--volume", f"{git_dir}:{git_dir}:ro"]
