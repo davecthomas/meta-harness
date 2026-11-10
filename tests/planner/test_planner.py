@@ -924,3 +924,21 @@ def test_a_tasks_diff_and_a_line_comment_that_names_the_operator(api, parts, mon
     assert posted == [("o/r", 7, "abc", "a.py", 2, 1, "**dave** wrote:\n\nName it.")]
     assert [p["path"] for t, p in events.events if t == "pull_request_commented"] == ["a.py"]
     assert api.get("/v1/pulls/t-none/diff", headers=OPERATOR).status_code == 404
+
+
+def test_search_finds_goals_by_text_and_asks_the_task_api_for_tasks(api, parts):
+    _, _, tasks = parts
+    word = f"zebra{uuid.uuid4().hex[:6]}"
+    api.post(
+        "/v1/goals",
+        json={"title": f"Fix {word} saves", "statement": "S.", "repos": [REPO], "label": _label(), "start": False},
+        headers=OPERATOR,
+    )
+    tasks.search = lambda q, limit=10: [
+        {"id": "t-9", "title": f"Crash in {q}", "status": "queued", "external_ref": "r"}
+    ]
+
+    found = api.get("/v1/search", params={"q": word}, headers=OPERATOR).json()
+
+    assert [g["title"] for g in found["goals"]] == [f"Fix {word} saves"]
+    assert found["tasks"][0]["id"] == "t-9"

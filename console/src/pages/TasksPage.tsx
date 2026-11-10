@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Alert, Badge, Button, Checkbox, Group, SegmentedControl, Table, Text } from "@mantine/core";
 import { api, type Task } from "../api";
 import { useInfinite } from "../hooks";
 import { TileGrid, type TileSize } from "../components/TileGrid";
 import { VerdictBadge } from "../components/Reviews";
+import { useRowKeys } from "../components/CommandPalette";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, StatusBadge, TitleLink, when } from "../components/ui";
 
 // Each tab: its key, its label, the statuses it shows, and whether the tasks have a pull request.
@@ -107,6 +108,10 @@ export function TasksPage() {
     });
   }
 
+  // j and k move through the list, Enter opens the task picked.
+  const navigate = useNavigate();
+  const row = useRowKeys(tiles ? 0 : tasks.items.length, (i) => navigate(`/tasks/${tasks.items[i].id}`));
+
   return (
     <>
       <PageHeader title="Tasks" description="Every task from every goal. Tiles stream the runs on screen live." />
@@ -150,8 +155,8 @@ export function TasksPage() {
       ) : (
         tasks.items.length > 0 && (
           <DataTable head={[...(clearable ? [""] : []), "Task", "Status", "Repo", "Issue", "Pull request", "Updated"]}>
-            {tasks.items.map((t) => (
-              <Table.Tr key={t.id}>
+            {tasks.items.map((t, i) => (
+              <Table.Tr key={t.id} data-picked={row === i || undefined} bg={row === i ? "var(--mantine-color-default-hover)" : undefined}>
                 {clearable && (
                   <Table.Td w={36}>
                     <Checkbox

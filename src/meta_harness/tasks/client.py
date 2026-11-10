@@ -47,6 +47,10 @@ class TaskClient:
     def list(self, statuses: list[str] | None = None, goal_id: str | None = None, limit: int = 100) -> list[dict]:
         return self.page(statuses, goal_id, limit, 0)["tasks"]
 
+    def search(self, q: str, limit: int = 10) -> list[dict]:
+        """Tasks whose title, id or issue ref holds the text."""
+        return self._call("GET", "/v1/tasks", params={"q": q, "limit": limit})["tasks"]
+
     def page(
         self, statuses: list[str] | None = None, goal_id: str | None = None, limit: int = 25, offset: int = 0
     ) -> dict:
