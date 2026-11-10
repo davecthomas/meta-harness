@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Table, Text, TextInput } from "@mantine/core";
+import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Table, Text, TextInput } from "@mantine/core";
 import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons-react";
-import { goalTitle, api, goalStatus, type Activity, type KillSwitch } from "../api";
+import { goalTitle, api, goalStatus, type Activity, type KillSwitch, type MhEvent } from "../api";
 import { ActivityMap } from "./ActivityPage";
 import { useInfinite } from "../hooks";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, TitleLink, when } from "../components/ui";
@@ -28,6 +28,7 @@ export function Overview() {
         <Stat label="Open goals" value={goals.total} to="/goals" link="All goals" />
       </SimpleGrid>
 
+      <TodaySpend />
       <PullRequestsRow />
 
       <SectionTitle>Needs you</SectionTitle>
@@ -157,5 +158,43 @@ function PullRequestsRow() {
         <ActivityMap activity={activity} view="state" compact />
       </Paper>
     </>
+  );
+}
+
+// Today's spend across every goal, and the five tasks that cost the most today, from today's attempts.
+export function TodaySpend() {
+  const [attempts, setAttempts] = useState<MhEvent[] | null>(null);
+  useEffect(() => {
+    api.recentEvents(["attempt_finished"], 2000).then(setAttempts, () => setAttempts(null));
+  }, []);
+  if (!attempts) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  const byTask: Record<string, number> = {};
+  for (const e of attempts) {
+    if (!e.time_utc.startsWith(today) || !e.task_id) continue;
+    byTask[e.task_id] = (byTask[e.task_id] ?? 0) + (Number(e.payload.spent_usd) || 0);
+  }
+  const total = Object.values(byTask).reduce((a, b) => a + b, 0);
+  const top = Object.entries(byTask).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  return (
+    <Paper p="md" mb="lg" withBorder data-testid="today-spend">
+      <Group justify="space-between" align="flex-start" wrap="wrap">
+        <div>
+          <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Spent today</Text>
+          <Text size="xl" fw={700}>${total.toFixed(2)}</Text>
+        </div>
+        {top.length > 0 && (
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed">Most expensive today</Text>
+            {top.map(([id, usd]) => (
+              <Group key={id} gap="xs">
+                <Anchor component={Link} to={`/tasks/${id}`} ff="monospace" size="xs">{id}</Anchor>
+                <Text size="xs">${usd.toFixed(2)}</Text>
+              </Group>
+            ))}
+          </Stack>
+        )}
+      </Group>
+    </Paper>
   );
 }
