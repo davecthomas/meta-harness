@@ -61,12 +61,14 @@ test("merging events keeps each once, in position order", () => {
   expect(merge(held, [b])).toBe(held);
 });
 
-test("the task page shows an older run's prompt the first page of events does not reach", async () => {
-  const TASK = {
-    id: "t", title: "Fix the bug", repo: "o/r", status: "running", pr_url: null, external_ref: "github:o/r#1", status_reason: null,
-    acceptance_checks: ["pytest -q"], created_at: "2026-11-10T09:00:00Z", updated_at: "2026-11-10T10:00:00Z",
-  };
-  // The newest events are run-2's alone; run-1's prompt is only found by asking for every run_prompt.
+const TASK = {
+  id: "t", title: "Fix the bug", repo: "o/r", status: "running", pr_url: null, external_ref: "github:o/r#1", status_reason: null,
+  acceptance_checks: ["pytest -q"], created_at: "2026-11-10T09:00:00Z", updated_at: "2026-11-10T10:00:00Z",
+};
+
+// Serves the task page with run-2's events alone as the first page; run-1's prompt is only found by
+// asking for every run_prompt. Returns the URLs asked for.
+function serveNewestOnly(): string[] {
   const newest = EVENTS.slice(4);
   const asked: string[] = [];
   vi.stubGlobal("EventSource", class { static CLOSED = 2; addEventListener() {} close() {} });
@@ -78,17 +80,47 @@ test("the task page shows an older run's prompt the first page of events does no
       : { base: "", ticket: null };
     return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
   });
+  return asked;
+}
+
+function renderTaskPage(path: string) {
   render(
     <MantineProvider theme={theme}>
-      <MemoryRouter initialEntries={["/tasks/t?run=t:run-1"]}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes><Route path="/tasks/:taskId" element={<TaskPage />} /></Routes>
       </MemoryRouter>
     </MantineProvider>,
   );
+}
+
+test("the task page shows an older run's prompt the first page of events does not reach", async () => {
+  const asked = serveNewestOnly();
+  renderTaskPage("/tasks/t?run=t:run-1");
 
   await waitFor(() => expect(screen.getAllByTestId("prompt")).toHaveLength(1));
   expect(screen.getByTestId("prompt").textContent).toContain("repo-task-v1");
   expect(asked.some((u) => u.includes("task_id=t") && u.includes("event_type=run_prompt"))).toBe(true);
+
+  // The run's Terminal opens on the same prompt, though none of its other lines were loaded.
+  fireEvent.click(screen.getByText("Terminal"));
+  const log = await screen.findByRole("log");
+  await waitFor(() => expect(log.textContent).toContain("prompt (repo-task-v1)"));
+  expect(log.querySelector("details pre")!.textContent).toBe(PROMPT);
+  expect(log.textContent).not.toContain("review-v1");
+});
+
+test("the task page's Terminal merges an older prompt in position order, each prompt once", async () => {
+  serveNewestOnly();
+  renderTaskPage("/tasks/t");
+
+  await screen.findAllByTestId("prompt");
+  fireEvent.click(screen.getByText("Terminal"));
+  const log = await screen.findByRole("log");
+  await waitFor(() => expect(log.textContent).toContain("prompt (repo-task-v1)"));
+  // run-1's prompt, read with every prompt, sits above run-2's, which came in both reads but shows once.
+  const summaries = [...log.querySelectorAll("summary")].map((s) => s.textContent);
+  expect(summaries).toEqual(["10:00:00 prompt (repo-task-v1)", "10:00:00 prompt (review-v1)"]);
+  expect([...log.children].map((c) => c.textContent).at(-1)).toContain("turn 1");
 });
 
 test("the terminal shows the prompt as one collapsed line that expands to the full text", () => {
