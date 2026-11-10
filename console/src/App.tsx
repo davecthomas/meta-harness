@@ -52,6 +52,7 @@ import { AuditPage, CloudPage, DeploysPage, KillSwitchPage } from "./pages/Admin
 import { LogsPage } from "./pages/LogsPage";
 import { ReposPage } from "./pages/ReposPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { Inbox } from "./components/Inbox";
 import { ConfigPage } from "./pages/ConfigPage";
 
 const NAV = [
@@ -136,6 +137,7 @@ export function App() {
             {who && <VersionTag />}
           </Group>
           <Group gap="xs" wrap="nowrap">
+            {who && <Inbox />}
             <ColorSchemeToggle />
             {who && <UserMenu who={who} />}
           </Group>
