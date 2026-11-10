@@ -5,6 +5,7 @@ import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlay
 import { IssuesPicker } from "./IssuesPicker";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
+import { GoalFailures } from "./GoalFailures";
 import { AutoMergeEdit, BudgetEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
@@ -233,6 +234,7 @@ export function GoalPage() {
       >
         Issues and tasks
       </SectionTitle>
+      {progress && <GoalFailures issues={progress} tasks={tasks} />}
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} />}
       {issues.length > 0 && progress && shownView === "board" ? (
         <GoalBoard issues={progress} tasks={tasks} spend={spend} />

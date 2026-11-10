@@ -5,6 +5,7 @@ import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, SegmentedCon
 import { IconX } from "@tabler/icons-react";
 import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../../api";
 import { Reviews } from "./Reviews";
+import { TaskFailure } from "./TaskFailure";
 import { Timeline } from "./Timeline";
 import { Plan } from "./Plan";
 import { SteerBox } from "./SteerBox";
@@ -110,7 +111,7 @@ export function TaskPage() {
     if (e.position <= newest.current) return;
     newest.current = e.position;
     setFacts((f) => fold(f, e));
-    if (e.event_type === "task_status_changed") setTask((t) => (t ? { ...t, status: e.payload.to } : t));
+    if (e.event_type === "task_status_changed") setTask((t) => (t ? { ...t, status: e.payload.to, status_reason: e.payload.reason ?? null } : t));
     if (e.event_type === "pull_request_opened") setTask((t) => (t ? { ...t, pr_url: e.payload.pr_url } : t));
     // A prompt read with every run's prompts may come again on the stream.
     setEvents((current) => merge(current, [e]));
@@ -172,6 +173,7 @@ export function TaskPage() {
         }
       />
       <ErrorAlert error={error} />
+      <TaskFailure task={task} status={status} events={events} />
       <Facts
         items={[
           ["Status", (
