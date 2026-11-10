@@ -1,7 +1,7 @@
 {
   "name": "meta-harness-console",
   "private": true,
-  "version": "0.42.2",
+  "version": "0.42.3",
   "type": "module",
   "description": "The meta-harness console web app: React and TypeScript over the REST API",
   "scripts": {
