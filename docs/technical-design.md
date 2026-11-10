@@ -200,14 +200,17 @@ A save is checked the way the service that reads the kind checks its
 configuration at startup: the router must parse and name a default tier, every
 tier candidate must be a harness pair naming a profile that exists, every
 profile needs known tools and positive limits, and a profile a tier still
-names cannot be removed. A refused save lists every reason. A saved version
+names cannot be removed. The task policy's `max_parallel` must be a positive
+whole number no larger than the sandboxes the VM holds (`MH_MAX_SANDBOXES`),
+and each reviewer pair must name a profile that exists. A refused save lists
+every reason. A saved version
 becomes active at once, is a `config_changed` event with the operator as
 actor, and applies to the next task routed; a running task keeps what it
 started with. Rolling back saves an earlier version's document again as a new
 version, after the same check. With `MH_CONFIG_SOURCE=db`, as the cloud
-deployment sets it, the worker and the planner read the active versions;
-otherwise they read the files, as the zero-cost end-to-end check does. The
-`task_policy`, `modalities` and `access` kinds are planned, and an approved
+deployment sets it, the worker, the planner and the scheduler read the active
+versions; otherwise they read the files, as the zero-cost end-to-end check
+does. The `modalities` and `access` kinds are planned, and an approved
 harness analyzer proposal will apply as a new version the same way.
 
 ## The harness
@@ -660,15 +663,17 @@ lease record for that run.
 
 ### Task policy
 
-The task policy holds the rules for task types, exploration, run budgets and
-review. Built today: `review.reviewers` and `review.max_rounds`, which the
-run service reads from `config/task_policy.json`. The other fields below,
-and `task_policy` as a configuration kind an operator edits in the console,
-are planned.
+The task policy holds the rules for task types, exploration, run budgets,
+parallelism and review. It is the `task_policy` configuration kind, seeded
+from `config/task_policy.json` and edited on the console's Configuration page.
+Built today: `max_parallel`, which the scheduler reads each admission pass,
+and `review.reviewers` and `review.max_rounds`, which the run service reads.
+The other fields below are planned.
 
 ```json
 {
   "version": "2026-11-03.1",
+  "max_parallel": 8,
   "floors_by_task_type": {"security": "complex", "dependency": "trivial"},
   "exploration": {"share": 0.05, "eligible_tiers": ["trivial", "standard"],
                   "challengers": ["harness:pi-careful/openai-compatible:qwen3-coder-next"]},
@@ -679,6 +684,9 @@ are planned.
 }
 ```
 
+- `max_parallel` is the most tasks that run at once across every goal. It
+  can be no more than `MH_MAX_SANDBOXES`, the sandboxes the deployment's VM
+  holds, and a saved change applies at the next admission pass.
 - `floors_by_task_type` sets `route_floor` on the router call.
 - The RunTask workflow pins a configured share of eligible
   tasks to a challenger harness-profile-and-model pair, so the harness analyzer keeps current data on every harness profile
@@ -1516,7 +1524,8 @@ every task event:
    while the goal is active, has budget left, and is within its modality's
    parallelism.
 
-As built, the global limit is `MH_MAX_RUNNING`, 8 on the deployment's VM, and the locks are expiring
+As built, the global limit is the task policy's `max_parallel`, 8 as shipped, which the scheduler reads
+each pass and checks at startup against `MH_MAX_SANDBOXES`; the locks are expiring
 Postgres rows the scheduler renews while a task is `queued`, `running` or
 `taken_over`, which covers the task's review loop. An area is a top-level
 directory, so two tasks naming `console/src/a` and `console/src/b` exclude
@@ -1525,8 +1534,8 @@ whole repo: one task per repo at a time. The planner, not the scheduler,
 holds a task `blocked` until its dependencies close. Caller quotas, spend
 caps, sandbox capacity and the modality's parallelism are planned.
 
-Planned, to run a repo's tasks side by side (#96, #98): a parallel limit in
-the task policy that a goal may lower; a task with no `paths` taking no
+Planned, to run a repo's tasks side by side (#96, #98): a parallel limit on
+the goal, lower than the task policy's; a task with no `paths` taking no
 area; areas matched by path prefix, from a `Paths:` line in the issue; and
 one merge at a time per repo, each on a head that holds the current base.
 
@@ -1617,7 +1626,7 @@ credential.
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. The tier form offers them | built |
-| GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles` or `repos`; `task_policy`, `modalities` and `access` are planned | built |
+| GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles`, `repos` or `task_policy`; `modalities` and `access` are planned | built |
 | GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history | built |
 | PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused. A `repos` version that drops a repo an open goal names is refused, naming the goal | built |
 | POST | `/v1/config/{kind}/rollback` | Configuration, in the planner process | Make an earlier version's document active again, as a new version | built |
@@ -1925,7 +1934,7 @@ the same approval.
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |
 | Meta-harness run service | operator_review | task_id, round, operator, claimed_at, verdict, findings, submitted_at, released_at |
-| Configuration | config_version | kind (tiers, profiles, repos; task_policy, modalities and access planned), version, document, edited_by, note, origin (seed, edit, rollback), rolled_back_from, created_at |
+| Configuration | config_version | kind (tiers, profiles, repos, task_policy; modalities and access planned), version, document, edited_by, note, origin (seed, edit, rollback), rolled_back_from, created_at |
 | Configuration | active | kind, version, changed_at |
 | Pool manager | sandbox | id, image, executor, executor_ref, state (provisioning, warm, leased, kept, draining, unhealthy, destroyed), created_at, destroyed_at, destroy_reason |
 | Pool manager | lease | run_id, sandbox_id, harness_session_id, session_state (new, kept, restored), granted_at, expires_at, released_at, release_reason |
@@ -2255,7 +2264,7 @@ stacks with state in a Cloud Storage bucket.
 | Temporal | The VM, the Temporal dev server with its history in one file | `mh-temporal.service`. A development server, one process, no replication. Temporal Cloud replaces it before runs that matter |
 | Redis | The VM, the distribution package | The HTTP Gateway's run grants and per-run spend counters. The scheduler's locks and kill switch are Postgres rows |
 | HTTP Gateway | The VM, from a checkout of ai-api-unified-http, reading its own `config/models.json`. Its guardrails are off, as that file ships | `mh-gateway.service`. Bound to every interface so the egress proxy container reaches it; no firewall rule admits its port from outside the VM. The meta-harness `models.json`, whose router names `harness` candidates, reaches the worker alone: the gateway's completions factory refuses a `harness` engine |
-| Meta-harness run service worker, egress proxy, per-run sandboxes | The VM, with the Docker executor backend | `mh-worker.service`, `mh-egress.service`. Per-run sandboxes are containers on the VM, and `MH_MAX_RUNNING` caps them at 8: the VM, an `e2-standard-16` (16 vCPU, 64 GB), holds eight sandboxes at their profiles' 6 GB cap and 16 GB for everything else. Each run's workspace and git directory live under `/var/lib/meta-harness/runs` |
+| Meta-harness run service worker, egress proxy, per-run sandboxes | The VM, with the Docker executor backend | `mh-worker.service`, `mh-egress.service`. Per-run sandboxes are containers on the VM, and `MH_MAX_SANDBOXES` caps them at 8, the ceiling on the task policy's `max_parallel`: the VM, an `e2-standard-16` (16 vCPU, 64 GB), holds eight sandboxes at their profiles' 6 GB cap and 16 GB for everything else. Each run's workspace and git directory live under `/var/lib/meta-harness/runs` |
 | Logs | The systemd journal, every `mh-*` unit's output, shipped to Cloud Logging as `mh_journald` by the Google Cloud Ops Agent (major version 2, `deploy/vm/ops-agent.yaml`), which the boot installs. A failed install leaves the logs in the journal and stops nothing | The console's Admin menu reads them through `GET /v1/admin/logs` |
 | Secrets | Secret Manager, read at boot into `/etc/meta-harness/env` | Provider keys, the service key, the gateway key, the repo registry and each GitHub App's private key. 
 
@@ -2576,7 +2585,7 @@ Design work no issue covers yet:
 | Issue | Repo |
 |---|---|
 | The `new-system` modality with its phases, goal success criteria as commands and checks, the modality classifier and latitude. The `feature` modality's planning task and plan approval are filed (#72, #73, #75) | meta-harness |
-| The `task_policy`, `modalities` and `access` configuration kinds, beside the built tiers, profiles and repo registry | meta-harness |
+| The `modalities` and `access` configuration kinds, beside the built tiers, profiles, repo registry and task policy | meta-harness |
 | ai-api-unified decisions in the operator console: the Cloud Logging log sink, the Pub/Sub topic and push subscription, and `gateway_request` events | meta-harness |
 | The metering service and the Spend view | meta-harness |
 | The harness analyzer, its proposals, and the Routing view | meta-harness |

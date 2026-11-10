@@ -7,7 +7,10 @@
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
 services with a service key, naming the operator in X-MH-Actor.
 
-Environment: MH_MAX_RUNNING (default 2), MH_ADMISSION_SECONDS (default 3),
+How many tasks run at once is the task policy's max_parallel (config/task_policy.json,
+or its active configuration version), no more than MH_MAX_SANDBOXES.
+
+Environment: MH_MAX_SANDBOXES, MH_ADMISSION_SECONDS (default 3),
 MH_TASKS_URL with MH_SERVICE_KEY, MH_PLANNER_URL, MH_EVENTS_URL, and the
 Temporal address the run service uses.
 """

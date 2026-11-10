@@ -67,7 +67,7 @@ def client():
 def test_every_kind_is_seeded_from_its_file_on_first_read(client):
     listed = client.get("/v1/config").json()["kinds"]
 
-    assert [k["kind"] for k in listed] == ["tiers", "profiles", "repos"]
+    assert [k["kind"] for k in listed] == ["tiers", "profiles", "repos", "task_policy"]
     assert all(k["version"] == 1 and k["edited_by"] == "seed" for k in listed)
     assert client.get("/v1/config/tiers").json()["document"] == TIERS
     assert client.get("/v1/config/profiles").json()["document"] == PROFILES
@@ -268,3 +268,40 @@ def test_the_model_catalog_offers_priced_chat_models_on_the_engines_a_harness_us
     assert "claude:claude-sonnet-5" in names and "openai-responses:gpt-6-sol" in names
     assert not any(n.startswith("openai:") for n in names), "OpenAI is reached through openai-responses"
     assert not any("embedding" in n or "/" in n.split(":", 1)[1] for n in names)
+
+
+def test_the_task_policy_is_a_kind_whose_parallel_limit_the_vm_caps(client, monkeypatch):
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
+    policy = client.get("/v1/config/task_policy").json()["document"]
+    assert policy["max_parallel"] == 8
+    assert client.get("/v1/config").json()["max_sandboxes"] == 8
+
+    too_many = {**policy, "max_parallel": 9}
+    refused = client.put("/v1/config/task_policy", json={"document": too_many})
+    assert refused.status_code == 422
+    assert refused.json()["detail"]["reasons"] == [
+        "max_parallel 9 is more than the 8 sandboxes this deployment's VM holds"
+    ]
+
+    gone = {**policy, "review": {**policy["review"], "reviewers": ["harness:pi-gone/claude:claude-opus-5-5"]}}
+    reasons = client.put("/v1/config/task_policy", json={"document": gone}).json()["detail"]["reasons"]
+    assert reasons == [
+        "reviewer harness:pi-gone/claude:claude-opus-5-5 names harness profile pi-gone, which the profiles lack"
+    ]
+
+    assert client.put("/v1/config/task_policy", json={"document": {**policy, "max_parallel": 3}}).status_code == 200
+
+
+def test_the_scheduler_reads_max_parallel_from_the_active_version(client, monkeypatch):
+    monkeypatch.setenv("MH_CONFIG_SOURCE", "db")
+    monkeypatch.delenv("MH_MAX_SANDBOXES", raising=False)
+    policy = client.get("/v1/config/task_policy").json()["document"]
+    client.put("/v1/config/task_policy", json={"document": {**policy, "max_parallel": 5}})
+
+    assert store.max_parallel() == 5
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "4")
+    with pytest.raises(kinds.ConfigError, match="task_policy: max_parallel 5 is more than the 4 sandboxes"):
+        store.max_parallel()
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "lots")
+    with pytest.raises(kinds.ConfigError, match="MH_MAX_SANDBOXES must be a positive whole number"):
+        store.max_parallel()

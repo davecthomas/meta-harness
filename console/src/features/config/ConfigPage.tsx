@@ -12,6 +12,7 @@ import {
   List,
   Loader,
   Modal,
+  NumberInput,
   Paper,
   Popover,
   ScrollArea,
@@ -33,13 +34,14 @@ import { DataTable, ErrorAlert, Facts, PageHeader, SectionTitle, when } from "..
 
 const ORIGIN_COLORS: Record<string, string> = { seed: "gray", edit: "indigo", rollback: "orange" };
 
-// Configuration: router tiers, harness profiles and the repo registry. Each kind shows its active
+// Configuration: router tiers, harness profiles, the repo registry and the task policy. Each kind shows its active
 // version laid out for reading, an editor that saves a new version (refused with every reason when
 // the service would refuse it), and the version history, where any version can be made active again.
 export function ConfigPage() {
   const [params, setParams] = useSearchParams();
   const [kinds, setKinds] = useState<ConfigSummary[] | null>(null);
   const [source, setSource] = useState<"db" | "file">("db");
+  const [maxSandboxes, setMaxSandboxes] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const kind = (params.get("kind") as ConfigKind) || "tiers";
 
@@ -48,6 +50,7 @@ export function ConfigPage() {
       (r) => {
         setKinds(r.kinds);
         setSource(r.source);
+        setMaxSandboxes(r.max_sandboxes ?? null);
       },
       (err) => setError(err instanceof Error ? err.message : String(err)),
     );
@@ -77,7 +80,7 @@ export function ConfigPage() {
         </Tabs.List>
         {kinds.map((k) => (
           <Tabs.Panel key={k.kind} value={k.kind}>
-            <KindPanel summary={k} onSaved={reload} />
+            <KindPanel summary={k} onSaved={reload} maxSandboxes={maxSandboxes} />
           </Tabs.Panel>
         ))}
       </Tabs>
@@ -85,7 +88,7 @@ export function ConfigPage() {
   );
 }
 
-function KindPanel({ summary, onSaved }: { summary: ConfigSummary; onSaved: () => void }) {
+function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary; onSaved: () => void; maxSandboxes: number | null }) {
   const [current, setCurrent] = useState<ConfigVersion | null>(null);
   const [versions, setVersions] = useState<ConfigVersion[]>([]);
   const [editing, setEditing] = useState(false);
@@ -149,9 +152,9 @@ function KindPanel({ summary, onSaved }: { summary: ConfigSummary; onSaved: () =
       </Paper>
 
       {editing ? (
-        <Editor kind={summary.kind} current={current} onCancel={() => setEditing(false)} onSaved={(saved) => changed(saved, "saved")} />
+        <Editor kind={summary.kind} current={current} maxSandboxes={maxSandboxes} onCancel={() => setEditing(false)} onSaved={(saved) => changed(saved, "saved")} />
       ) : (
-        <ActiveView kind={summary.kind} document={current.document} />
+        <ActiveView kind={summary.kind} document={current.document} maxSandboxes={maxSandboxes} />
       )}
 
       <SectionTitle>Version history</SectionTitle>
@@ -209,7 +212,21 @@ function RollbackButton({ version, onConfirm }: { version: number; onConfirm: ()
   );
 }
 
-function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () => void; onSaved: (v: ConfigVersion) => void }) {
+// What each kind is called in a sentence.
+const KIND_NAMES: Record<ConfigKind, string> = {
+  tiers: "router tiers",
+  profiles: "harness profiles",
+  repos: "repo registry",
+  task_policy: "task policy",
+};
+
+function Editor(props: {
+  kind: ConfigKind;
+  current: ConfigVersion;
+  maxSandboxes: number | null;
+  onCancel: () => void;
+  onSaved: (v: ConfigVersion) => void;
+}) {
   const original = JSON.stringify(props.current.document, null, 2);
   const [text, setText] = useState(original);
   const [note, setNote] = useState("");
@@ -217,7 +234,7 @@ function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () 
   const [reasons, setReasons] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Tiers and profiles have a form; the JSON stays as Advanced. Both edit the same text.
-  const hasForm = props.kind === "tiers" || props.kind === "profiles";
+  const hasForm = props.kind === "tiers" || props.kind === "profiles" || props.kind === "task_policy";
   const [mode, setMode] = useState<"form" | "json">(hasForm ? "form" : "json");
   const [reviewing, setReviewing] = useState(false);
   const [profileNames, setProfileNames] = useState<string[]>([]);
@@ -264,7 +281,7 @@ function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () 
 
   const unsaved = useUnsavedChanges({
     dirty: text !== original || note.trim() !== "",
-    describe: `the ${props.kind === "tiers" ? "router tiers" : props.kind === "profiles" ? "harness profiles" : "repo registry"}, edited from version ${props.current.version}`,
+    describe: `the ${KIND_NAMES[props.kind]}, edited from version ${props.current.version}`,
     save,
     discard: () => {
       setText(original);
@@ -302,6 +319,9 @@ function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () 
         )}
         {mode === "form" && parsed && props.kind === "profiles" && (
           <ProfilesForm document={parsed} onChange={(d) => setText(JSON.stringify(d, null, 2))} reasons={reasons} />
+        )}
+        {mode === "form" && parsed && props.kind === "task_policy" && (
+          <TaskPolicyForm document={parsed} onChange={(d) => setText(JSON.stringify(d, null, 2))} maxSandboxes={props.maxSandboxes} />
         )}
         {mode === "form" && !parsed && <Alert color="yellow">The JSON is not valid, so the form can't show it. Fix it under Advanced.</Alert>}
         {mode === "json" && (
@@ -357,10 +377,63 @@ function Editor(props: { kind: ConfigKind; current: ConfigVersion; onCancel: () 
   );
 }
 
-function ActiveView({ kind, document }: { kind: ConfigKind; document: Record<string, any> }) {
+function ActiveView({ kind, document, maxSandboxes }: { kind: ConfigKind; document: Record<string, any>; maxSandboxes: number | null }) {
   if (kind === "tiers") return <TiersView router={document} />;
   if (kind === "profiles") return <ProfilesView profiles={document.profiles ?? {}} />;
+  if (kind === "task_policy") return <TaskPolicyView policy={document} maxSandboxes={maxSandboxes} />;
   return <ReposView repos={document.repos ?? {}} />;
+}
+
+// The line under the parallel limit: the VM's ceiling, which a save above it is refused by.
+function ceilingLine(maxSandboxes: number | null): string {
+  return maxSandboxes
+    ? `At most ${maxSandboxes}: the deployment's VM holds ${maxSandboxes} sandboxes. A goal can hold itself to fewer.`
+    : "This deployment sets no ceiling (MH_MAX_SANDBOXES). A goal can hold itself to fewer.";
+}
+
+export function TaskPolicyView({ policy, maxSandboxes }: { policy: Record<string, any>; maxSandboxes: number | null }) {
+  return (
+    <Facts
+      items={[
+        ["Parallel tasks", <Stack gap={2}><Text size="sm" fw={600}>{policy.max_parallel}, across every goal</Text><Text size="xs" c="dimmed">{ceilingLine(maxSandboxes)}</Text></Stack>],
+        ["Fix rounds", <Text size="sm">Up to {policy.review?.max_rounds} before a pull request waits for an operator</Text>],
+        [
+          "Reviewers, in order",
+          <Stack gap={4}>
+            {(policy.review?.reviewers ?? []).map((pair: string) => (
+              <Code key={pair}>{pair}</Code>
+            ))}
+          </Stack>,
+        ],
+      ]}
+    />
+  );
+}
+
+function TaskPolicyForm(props: { document: Record<string, any>; onChange: (d: Record<string, any>) => void; maxSandboxes: number | null }) {
+  const { document } = props;
+  return (
+    <Stack gap="md" maw={420}>
+      <NumberInput
+        label="Parallel tasks"
+        description={ceilingLine(props.maxSandboxes)}
+        min={1}
+        max={props.maxSandboxes ?? undefined}
+        allowDecimal={false}
+        value={document.max_parallel ?? ""}
+        onChange={(v) => props.onChange({ ...document, max_parallel: typeof v === "number" ? v : Number(v) || 0 })}
+      />
+      <NumberInput
+        label="Fix rounds"
+        description="Review-and-fix rounds before a pull request waits for an operator."
+        min={0}
+        allowDecimal={false}
+        value={document.review?.max_rounds ?? ""}
+        onChange={(v) => props.onChange({ ...document, review: { ...document.review, max_rounds: typeof v === "number" ? v : Number(v) || 0 } })}
+      />
+      <Text size="xs" c="dimmed">Edit the reviewer pairs under Advanced: JSON.</Text>
+    </Stack>
+  );
 }
 
 function TiersView({ router }: { router: Record<string, any> }) {
