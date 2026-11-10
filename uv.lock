@@ -320,7 +320,7 @@ wheels = [
 
 [[package]]
 name = "meta-harness"
-version = "0.30.0"
+version = "0.30.1"
 source = { editable = "." }
 dependencies = [
     { name = "ai-api-unified", extra = ["openai"] },
