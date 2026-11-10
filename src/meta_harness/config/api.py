@@ -1,6 +1,7 @@
 """The configuration part of the REST API.
 
     GET  /v1/config                       every kind: its title, description and active version
+    GET  /v1/config/models                the models a tier candidate can name, for the tier form
     GET  /v1/config/{kind}                the active version, with its document
     GET  /v1/config/{kind}/versions       the version history, newest first
     PUT  /v1/config/{kind}                save a new version: {document, note}; 422 lists every reason it is refused
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness.config import store
 from meta_harness.config.kinds import KINDS, ConfigError
+from meta_harness.config.models import catalog
 
 
 class SaveIn(BaseModel):
@@ -71,6 +73,11 @@ def router(pool: Callable[[], ConnectionPool], operator: Callable[..., str], eve
                     }
                 )
         return {"kinds": items, "source": "db" if store.from_database() else "file"}
+
+    @api.get("/v1/config/models")
+    def models(who: str = Depends(operator)) -> dict:
+        """Every priced completions model a tier candidate can name, as <engine>:<model>."""
+        return {"models": catalog()}
 
     @api.get("/v1/config/{kind}")
     def read(kind: str, who: str = Depends(operator)) -> dict:

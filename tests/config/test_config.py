@@ -261,3 +261,10 @@ def test_the_active_tiers_move_off_the_openai_engine_once_and_keep_everything_el
         assert now["document"]["tiers"][1]["models"][1] == "harness:pi-careful/openai-responses:gpt-6-sol"
         assert now["document"]["tiers"][0] == old["tiers"][0]
         assert store.replace_engines(conn) == [], "a second start changes nothing"
+
+
+def test_the_model_catalog_offers_priced_chat_models_on_the_engines_a_harness_uses(client):
+    names = {m["name"] for m in client.get("/v1/config/models").json()["models"]}
+    assert "claude:claude-sonnet-5" in names and "openai-responses:gpt-6-sol" in names
+    assert not any(n.startswith("openai:") for n in names), "OpenAI is reached through openai-responses"
+    assert not any("embedding" in n or "/" in n.split(":", 1)[1] for n in names)
