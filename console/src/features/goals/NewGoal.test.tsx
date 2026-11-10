@@ -116,3 +116,33 @@ test("an empty New goal leaves without asking", async () => {
   await act(() => router.navigate("/goals"));
   expect(await screen.findByText("Goals list")).toBeTruthy();
 });
+
+test("a goal that plans its issues from the description needs no label and is created as a feature goal", async () => {
+  const created: any[] = [];
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
+    if (url === "/v1/goals" && init?.method === "POST") {
+      created.push(JSON.parse(String(init.body)));
+      return respond({ id: "g-9", status: "planning" }, 201);
+    }
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <NewGoal />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  fireEvent.change(await screen.findByLabelText(/Description/), { target: { value: "Let users export their data" } });
+  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  fireEvent.click(screen.getByText("Plan them from the description"));
+  expect(screen.getByText(/A planning task reads the repos and drafts the issues/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
+
+  await waitFor(() => expect(created).toHaveLength(1));
+  expect(created[0]).toMatchObject({ statement: "Let users export their data", modality: "feature", start: true });
+  expect(created[0].label).toBeUndefined();
+});
