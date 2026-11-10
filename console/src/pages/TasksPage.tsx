@@ -4,6 +4,7 @@ import { Alert, Badge, Button, Checkbox, Group, SegmentedControl, Table, Text } 
 import { api, type Task } from "../api";
 import { useInfinite } from "../hooks";
 import { TileGrid, type TileSize } from "../components/TileGrid";
+import { VerdictBadge } from "../components/Reviews";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, StatusBadge, TitleLink, when } from "../components/ui";
 
 // Each tab: its key, its label, the statuses it shows, and whether the tasks have a pull request.
@@ -41,6 +42,8 @@ export function TasksPage() {
   const [unclear, setUnclear] = useState<string[]>([]);
   const [reload, setReload] = useState(0);
   const clearable = filter[0] === "ready" && !tiles;
+  // On Pull request open and Ended, each task's latest review verdict, read for the tasks listed.
+  const [verdicts, setVerdicts] = useState<Record<string, string>>({});
 
   const tasks = useInfinite(
     (offset, limit) => api.tasks({ statuses: filter[2], pr: filter[3] }, offset, limit),
@@ -63,6 +66,22 @@ export function TasksPage() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [tiles, size, newestFirst.length]);
+
+  const showVerdicts = !tiles && (filter[0] === "ready" || filter[0] === "ended");
+  const reviewed = tasks.items.filter((t) => t.pr_url && verdicts[t.id] === undefined).map((t) => t.id);
+  useEffect(() => {
+    if (!showVerdicts || !reviewed.length) return;
+    let stale = false;
+    for (const id of reviewed) {
+      api.reviews(id).then(
+        (rounds) => !stale && setVerdicts((v) => ({ ...v, [id]: (rounds ?? []).at(-1)?.verdict ?? "" })),
+        () => !stale && setVerdicts((v) => ({ ...v, [id]: "" })),
+      );
+    }
+    return () => {
+      stale = true;
+    };
+  }, [showVerdicts, reviewed.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function clearPicked() {
     setClearing(true);
@@ -151,7 +170,12 @@ export function TasksPage() {
                   </Table.Td>
                 )}
                 <Table.Td maw={420}><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
-                <Table.Td><StatusBadge status={shownStatus(t)} /></Table.Td>
+                <Table.Td>
+                  <Group gap={4} wrap="nowrap">
+                    <StatusBadge status={shownStatus(t)} />
+                    {showVerdicts && verdicts[t.id] && <VerdictBadge verdict={verdicts[t.id]} />}
+                  </Group>
+                </Table.Td>
                 <Table.Td><Text ff="monospace" size="xs">{t.repo}</Text></Table.Td>
                 <Table.Td><IssueLink issueRef={t.external_ref} /></Table.Td>
                 <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>

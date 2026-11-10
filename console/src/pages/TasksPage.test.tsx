@@ -28,6 +28,7 @@ const UNRESOLVED = { ...IN_REVIEW, id: "t-2", title: "Fix the crash", status: "r
 function renderAt(path: string, asked: string[], posted: string[] = []) {
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
     asked.push(url);
+    if (url.endsWith("/reviews")) return respond({ rounds: [] });
     if (init?.method === "POST") {
       posted.push(url);
       return respond({ ...UNRESOLVED, status: "canceled" });
@@ -79,4 +80,19 @@ test("with one task running, the terminal view opens 1 up, shown as Auto", async
   renderAt("/tasks?show=running&view=tiles", asked);
   expect(await screen.findByText("Auto (1 up)")).toBeTruthy();
   expect(document.querySelector(".tiles.up-1")).toBeTruthy();
+});
+
+test("Pull request open shows each task's latest review verdict", async () => {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/tasks/t-2/reviews") return respond({ rounds: [{ round: 1, verdict: "changes" }, { round: 2, verdict: "clean" }] });
+    return respond({ tasks: url.includes("review_unresolved") ? [UNRESOLVED] : [], total: 1 });
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/tasks?show=ready&view=list"]}>
+        <TasksPage />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  expect(await screen.findByText("clean")).toBeTruthy();
 });

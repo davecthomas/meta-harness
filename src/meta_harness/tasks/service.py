@@ -22,7 +22,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
-from meta_harness.tasks import store
+from meta_harness.tasks import reviews, store
 
 
 class Events(Protocol):
@@ -198,6 +198,20 @@ def create_app(
         else:
             events.emit("task_cancel_requested", {"reason": reason}, task_id=task_id, actor=who.actor)
         return task
+
+    @app.get("/v1/tasks/{task_id}/reviews")
+    def task_reviews(task_id: str, who: Caller = Depends(caller)) -> dict:
+        """The task's review rounds on its pull request, oldest first, each with what came next."""
+        try:
+            with app.state.pool.connection() as conn:
+                task = visible(store.get(conn, task_id), who)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        try:
+            recorded = events.read(0, 5000, task_id=task_id, event_type=",".join(reviews.REVIEW_EVENT_TYPES))["events"]
+        except Exception as err:  # noqa: BLE001 - the event service is the caller's 502
+            raise HTTPException(status_code=502, detail=f"could not read the task's events: {err}") from err
+        return {"task_id": task_id, "rounds": reviews.rounds(task, recorded)}
 
     @app.post("/v1/tasks/{task_id}/clear")
     def clear(task_id: str, who: Caller = Depends(caller)) -> dict:

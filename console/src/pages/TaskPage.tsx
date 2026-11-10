@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useParams, useSearchParams } from "react-router-dom";
-import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, Stack, Text } from "@mantine/core";
+import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, SegmentedControl, Stack, Text } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
-import { api, goalTitle, type MhEvent, type Task } from "../api";
+import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../api";
+import { Reviews } from "../components/Reviews";
 import { useEventStream } from "../hooks";
 import { describe, fold, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "../components/Terminal";
@@ -32,6 +33,9 @@ export function TaskPage() {
   const [facts, setFacts] = useState<TileFacts>(EMPTY);
   const [from, setFrom] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The task's review rounds, for the Reviews tab, read once the task has a pull request.
+  const [tab, setTab] = useState<"run" | "reviews">("run");
+  const [rounds, setRounds] = useState<ReviewRound[] | null>(null);
   // The task's goal's name, for the link back to it. Null until read, or when the task has no goal.
   const [goalName, setGoalName] = useState<string | null>(null);
   const oldest = useRef<number | null>(null);
@@ -65,6 +69,13 @@ export function TaskPage() {
       stale = true;
     };
   }, [taskId]);
+
+  // Reviews come from events the workflow records; reread them when the pull request appears or a round ends.
+  const prUrl = task?.pr_url ?? null;
+  useEffect(() => {
+    if (!prUrl) return;
+    api.reviews(taskId).then(setRounds, () => setRounds([]));
+  }, [taskId, prUrl, facts.status]);
 
   const onEvent = useCallback((e: MhEvent) => {
     if (e.position <= newest.current) return;
@@ -145,6 +156,18 @@ export function TaskPage() {
           ["Turn and spend", <Text size="sm">Turn {facts.turn}, ${facts.usd.toFixed(4)} {facts.model && <Code>{facts.model}</Code>}</Text>],
         ]}
       />
+      {task.pr_url && (
+        <SegmentedControl
+          mb="md"
+          value={tab}
+          onChange={(v) => setTab(v as "run" | "reviews")}
+          data={[{ value: "run", label: "Run" }, { value: "reviews", label: `Reviews${rounds ? ` (${rounds.length})` : ""}` }]}
+        />
+      )}
+      {tab === "reviews" && task.pr_url ? (
+        rounds ? <Reviews task={task} rounds={rounds} /> : <Center h={120}><Loader /></Center>
+      ) : (
+      <>
       <SectionTitle right={<Badge variant="dot" color={STREAM_COLORS[state] ?? "gray"} tt="none">{state}</Badge>}>Run</SectionTitle>
       {onlyRun && (
         <Group gap="xs" mb="xs">
@@ -155,6 +178,8 @@ export function TaskPage() {
       <Paper p={0} style={{ overflow: "hidden" }}>
         <Terminal lines={onlyRun ? lines.filter((l) => l.run === onlyRun) : lines} className="tall" onScrollTop={loadOlder} />
       </Paper>
+      </>
+      )}
     </>
   );
 }

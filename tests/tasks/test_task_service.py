@@ -187,3 +187,54 @@ def test_clearing_a_task_whose_pull_request_did_not_merge_cancels_it_and_says_wh
     assert cleared["status_reason"] == "cleared by ops with pull request #12 not merged"
     again = api.post(f"/v1/tasks/{task['id']}/clear", headers=_as(CALLER_KEY))
     assert again.status_code == 409
+
+
+def test_reviews_pair_each_posted_round_with_its_findings_and_say_what_came_next(api, events):
+    task = _ended(api, "ready")
+    tid = task["id"]
+    log = [
+        (
+            "review_submitted",
+            {
+                "verdict": "changes",
+                "summary": "Two gaps.",
+                "findings": [{"path": "a.py", "line": 3, "body": "Test it."}],
+            },
+            "r-2",
+        ),
+        (
+            "pull_request_reviewed",
+            {
+                "round": 1,
+                "verdict": "changes",
+                "reviewer": "harness:pi-review/claude:claude-opus-5-5",
+                "head_sha": "abc",
+                "review_url": "u1",
+            },
+            None,
+        ),
+        ("attempt_finished", {"tier": "fix", "attempt": 3}, "r-3"),
+        ("review_submitted", {"verdict": "clean", "summary": "Good now.", "findings": []}, "r-4"),
+        (
+            "pull_request_reviewed",
+            {
+                "round": 2,
+                "verdict": "clean",
+                "reviewer": "harness:pi-review/claude:claude-opus-5-5",
+                "head_sha": "def",
+                "review_url": "u2",
+            },
+            None,
+        ),
+    ]
+    for kind, payload, run in log:
+        events.emit(kind, payload, task_id=tid, run_id=run)
+    for position, event in enumerate(events.events, start=1):
+        event[2]["position"] = position
+
+    shown = api.get(f"/v1/tasks/{tid}/reviews", headers=_as(CALLER_KEY)).json()["rounds"]
+
+    assert [(r["round"], r["verdict"], r["run_id"]) for r in shown] == [(1, "changes", "r-2"), (2, "clean", "r-4")]
+    assert shown[0]["findings"] == [{"path": "a.py", "line": 3, "body": "Test it."}]
+    assert shown[0]["next"] == {"kind": "fix", "run_id": "r-3", "attempt": 3}
+    assert shown[1]["next"]["kind"] == "waiting"
