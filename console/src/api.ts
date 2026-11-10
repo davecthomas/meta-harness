@@ -208,7 +208,11 @@ export interface KillSwitch {
 }
 
 export const api = {
-  me: () => call<{ identity: string }>("/v1/me"),
+  me: () => call<{ identity: string; roles?: string[] }>("/v1/me"),
+  deploys: () => call<{ version: string; commit: string | null; revision: string | null; project?: string | null }>("/v1/admin/deploys"),
+  // The newest `limit` events of these types, oldest first.
+  recentEvents: (eventTypes: string[], limit: number) =>
+    call<{ events: MhEvent[] }>("/v1/events" + query({ event_type: eventTypes.join(","), limit, before_position: Number.MAX_SAFE_INTEGER })).then((r) => r.events),
   authConfig: () => call<{ google_client_id: string | null }>("/auth/config"),
   signIn: (credential: string) =>
     call<{ identity: string }>("/auth/google", { method: "POST", body: JSON.stringify({ credential }) }),

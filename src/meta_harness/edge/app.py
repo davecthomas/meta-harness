@@ -34,7 +34,13 @@ here. The edge signs operators in itself, with Google:
 With MH_GOOGLE_CLIENT_ID unset (locally), MH_CONSOLE_DEV_IDENTITY names the
 operator and there is no sign-in.
 
-GET /v1/me answers who is signed in; GET /auth/config, the OAuth client id.
+GET /v1/me answers who is signed in and their roles; GET /auth/config, the OAuth client id.
+
+Roles: every identity on the access list is an operator. MH_CONSOLE_ADMINS
+names the admins, a subset of the operators; while it is empty every
+operator is an admin. A non-admin gets 403 on configuration writes, kill
+switch writes and every /v1/admin path, which the edge serves itself:
+GET /v1/admin/deploys says what is deployed.
 """
 
 import asyncio
@@ -73,6 +79,21 @@ DROPPED_RESPONSE_HEADERS = {"content-length", "transfer-encoding", "connection",
 
 def operators_from_env() -> set[str]:
     return {o.strip().lower() for o in os.environ.get("MH_CONSOLE_OPERATORS", "").split(",") if o.strip()}
+
+
+def admins_from_env() -> set[str]:
+    return {a.strip().lower() for a in os.environ.get("MH_CONSOLE_ADMINS", "").split(",") if a.strip()}
+
+
+# Writes only an admin may make, by path prefix. Every /v1/admin path is an admin's, whatever the method.
+ADMIN_WRITES = ("/v1/config", "/v1/kill-switch")
+
+
+def admin_only(method: str, path: str) -> bool:
+    """Whether a request needs the admin role."""
+    if path == "/v1/admin" or path.startswith("/v1/admin/"):
+        return True
+    return method in WRITE_METHODS and any(path == p or path.startswith(p + "/") for p in ADMIN_WRITES)
 
 
 def target_for(path: str) -> str | None:
@@ -160,9 +181,19 @@ def create_app(
     console_origin: str | None = None,
     verify_google: Callable[[str], str] | None = None,
     stream_origin: str | None = None,
+    admins: set[str] | None = None,
 ) -> FastAPI:
     app_dir = dist or REPO_ROOT / "console" / "dist"
     allowed = operators if operators is not None else operators_from_env()
+    admin_list = admins if admins is not None else admins_from_env()
+    strangers = sorted(admin_list - allowed) if allowed else []
+    if strangers:
+        raise RuntimeError(f"MH_CONSOLE_ADMINS names {', '.join(strangers)}, who MH_CONSOLE_OPERATORS does not")
+
+    def is_admin(who: str) -> bool:
+        # No admin list: every operator is an admin, so a deploy before the list is set changes nothing.
+        return not admin_list or who in admin_list
+
     local_identity = (identity if identity is not None else os.environ.get("MH_CONSOLE_DEV_IDENTITY", "")).lower()
     key = service_key if service_key is not None else os.environ.get("MH_SERVICE_KEY", "")
     client_id = google_client_id if google_client_id is not None else os.environ.get("MH_GOOGLE_CLIENT_ID", "")
@@ -258,7 +289,31 @@ def create_app(
     @app.get("/v1/me")
     def me(request: Request) -> Response:
         who, denied = signed_in(request)
-        return denied or private(JSONResponse({"identity": who}))
+        if denied:
+            return denied
+        roles = ["operator", "admin"] if is_admin(who) else ["operator"]
+        return private(JSONResponse({"identity": who, "roles": roles}))
+
+    @app.get("/v1/admin/deploys")
+    def deploys(request: Request) -> Response:
+        """What is deployed: the commit the release stack deployed to the VM and the edge, and the edge's revision."""
+        who, denied = signed_in(request)
+        if denied:
+            return denied
+        if not is_admin(who):
+            return private(JSONResponse({"detail": f"{who} is not an admin"}, status_code=403))
+        from meta_harness import __version__
+
+        return private(
+            JSONResponse(
+                {
+                    "version": __version__,
+                    "commit": os.environ.get("MH_COMMIT") or None,
+                    "revision": os.environ.get("K_REVISION") or None,
+                    "project": os.environ.get("MH_PROJECT") or None,
+                }
+            )
+        )
 
     @app.api_route("/v1/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def forward(request: Request, rest: str) -> Response:
@@ -268,6 +323,8 @@ def create_app(
         refused = foreign(request)
         if refused:
             return refused
+        if admin_only(request.method, request.url.path) and not is_admin(who):
+            return private(JSONResponse({"detail": f"{who} is not an admin"}, status_code=403))
         base = target_for(request.url.path)
         if base is None:
             return JSONResponse({"detail": f"no service owns {request.url.path}"}, status_code=404)

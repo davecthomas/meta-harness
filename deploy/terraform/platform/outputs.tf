@@ -12,6 +12,7 @@ output "edge_service_account" { value = local.edge_sa }
 output "deploy_service_account" { value = local.deploy_sa }
 output "image_repository" { value = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.images.repository_id}" }
 output "operators" { value = var.operators }
+output "admins" { value = var.admins }
 output "workload_identity_provider" { value = google_iam_workload_identity_pool_provider.github.name }
 output "console_site" { value = google_firebase_hosting_site.console.site_id }
 output "console_origin" { value = "https://${google_firebase_hosting_site.console.site_id}.web.app" }

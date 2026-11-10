@@ -86,3 +86,21 @@ test("without a session the console shows Google sign-in, and signing in opens t
   expect(await screen.findByRole("heading", { name: "Goals" })).toBeTruthy();
   expect(posted).toEqual([{ credential: "google-id-token" }]);
 });
+
+test.each([
+  [["operator", "admin"], true],
+  [["operator"], false],
+])("roles %j: the Admin menu shows only to an admin", async (roles, shown) => {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/me") return respond({ identity: "operator@example.com", roles });
+    if (url.startsWith("/v1/goals")) return respond({ goals: [], total: 0 });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+
+  renderAt("/goals");
+
+  expect(await screen.findByRole("heading", { name: "Goals" })).toBeTruthy();
+  for (const name of ["Configuration", "Kill switch", "Deploys", "Audit", "Google Cloud"]) {
+    expect(screen.queryAllByRole("link", { name }).length > 0).toBe(shown);
+  }
+});

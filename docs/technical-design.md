@@ -1537,8 +1537,12 @@ in with Google, admits the identities on the access list
 holds the session in a signed cookie. It forwards each `/v1` request to the
 service that owns the path's prefix, from its `ROUTES` table, with the
 service key and the operator's identity in `X-MH-Actor`, so a new path
-prefix needs a `ROUTES` entry. Every operator may call every path; roles
-are planned (#63). The rest of this section is the design for the GKE
+prefix needs a `ROUTES` entry. Every operator may read every path. The
+admins, `MH_CONSOLE_ADMINS` (the platform stack's `admins`, a subset of the
+operators), alone may write configuration, use the kill switch and open the
+`/v1/admin` paths, which the edge serves itself; while the list is empty,
+every operator is an admin. An admin who is not an operator stops the edge
+at startup. The rest of this section is the design for the GKE
 deployment.
 
 Identity-Aware Proxy authenticates every `/v1` path except the webhooks.
@@ -1597,7 +1601,8 @@ credential.
 | GET | `/v1/spend` | Metering service | Spend and dollar-hours grouped by goal, modality, repo, model, harness profile or tier, over a time range | planned |
 | GET | `/v1/pool` | Pool manager | Per-run sandboxes by image and state, warm targets and lease latency | planned |
 | POST | `/v1/webhooks/code-host`, `/v1/webhooks/{tracker}` | Task service, planner | Code-host and issue-tracker webhooks, each checked by its signature | planned |
-| GET | `/v1/me` | Edge | The signed-in operator's identity | built |
+| GET | `/v1/me` | Edge | The signed-in operator's identity and roles (`operator`, and `admin` for an admin) | built |
+| GET | `/v1/admin/deploys` | Edge | What is deployed: the version, the commit the VM and the edge run, and the edge's revision. Admins only | built |
 | GET | `/health` | Every service | Liveness and configuration identity | built |
 
 The run service has no HTTP API yet. Until it has one, a path it owns that

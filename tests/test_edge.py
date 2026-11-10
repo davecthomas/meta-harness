@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from meta_harness.edge.app import create_app
 
 
-def _edge(tmp_path, identity="dave@example.com", operators=("dave@example.com",)):
+def _edge(tmp_path, identity="dave@example.com", operators=("dave@example.com",), admins=()):
     seen: list[httpx.Request] = []
 
     def upstream(request: httpx.Request) -> httpx.Response:
@@ -20,6 +20,7 @@ def _edge(tmp_path, identity="dave@example.com", operators=("dave@example.com",)
         identity=identity,
         service_key="svc-key",
         transport=httpx.MockTransport(upstream),
+        admins=set(admins),
     )
     return TestClient(app), seen
 
@@ -43,9 +44,45 @@ def test_an_identity_outside_the_access_list_gets_403(tmp_path):
     assert seen == []
 
 
-def test_me_names_the_operator(tmp_path):
+def test_me_names_the_operator_and_with_no_admin_list_every_operator_is_an_admin(tmp_path):
     client, _ = _edge(tmp_path)
-    assert client.get("/v1/me").json() == {"identity": "dave@example.com"}
+    assert client.get("/v1/me").json() == {"identity": "dave@example.com", "roles": ["operator", "admin"]}
+
+
+OPERATORS = ("dave@example.com", "ann@example.com")
+
+
+def test_a_non_admin_cannot_change_configuration_use_the_kill_switch_or_open_admin_paths(tmp_path):
+    client, seen = _edge(tmp_path, identity="ann@example.com", operators=OPERATORS, admins=("dave@example.com",))
+
+    assert client.get("/v1/me").json()["roles"] == ["operator"]
+    assert client.put("/v1/config/tiers", json={}).status_code == 403
+    assert client.post("/v1/config/tiers/rollback", json={}).status_code == 403
+    assert client.post("/v1/kill-switch", json={"engaged": True}).status_code == 403
+    assert client.get("/v1/admin/deploys").status_code == 403
+    assert seen == []
+    assert client.get("/v1/config/tiers").status_code == 200, "reading stays open to every operator"
+    assert client.get("/v1/kill-switch").status_code == 200
+    assert client.post("/v1/tasks/t-1/cancel", json={}).status_code == 200
+
+
+def test_an_admin_changes_configuration_and_reads_what_is_deployed(tmp_path, monkeypatch):
+    monkeypatch.setenv("MH_COMMIT", "4a286e3")
+    monkeypatch.setenv("K_REVISION", "mh-edge-00042-abc")
+    client, seen = _edge(tmp_path, identity="dave@example.com", operators=OPERATORS, admins=("dave@example.com",))
+
+    assert client.get("/v1/me").json()["roles"] == ["operator", "admin"]
+    assert client.put("/v1/config/tiers", json={}).status_code == 200
+    deployed = client.get("/v1/admin/deploys").json()
+    assert (deployed["commit"], deployed["revision"]) == ("4a286e3", "mh-edge-00042-abc")
+    assert [r.url.path for r in seen] == ["/v1/config/tiers"]
+
+
+def test_an_admin_who_is_not_an_operator_stops_the_edge_naming_the_setting(tmp_path):
+    import pytest
+
+    with pytest.raises(RuntimeError, match="MH_CONSOLE_ADMINS names eve@example.com"):
+        _edge(tmp_path, operators=OPERATORS, admins=("eve@example.com",))
 
 
 def test_the_app_and_its_routes_load_from_dist(tmp_path):
@@ -136,7 +173,7 @@ def test_signing_in_sets_a_strict_secure_session_and_forwards_as_the_operator(tm
     assert cookie.startswith("__session=")
     for attribute in ("HttpOnly", "Secure", "SameSite=strict", "Path=/", "Max-Age=43200"):
         assert attribute.lower() in cookie.lower(), attribute
-    assert client.get("/v1/me").json() == {"identity": "dave@example.com"}
+    assert client.get("/v1/me").json()["identity"] == "dave@example.com"
     client.get("/v1/goals")
     assert seen[-1].headers["x-mh-actor"] == "dave@example.com"
 
