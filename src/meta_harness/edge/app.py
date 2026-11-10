@@ -40,7 +40,8 @@ Roles: every identity on the access list is an operator. MH_CONSOLE_ADMINS
 names the admins, a subset of the operators; while it is empty every
 operator is an admin. A non-admin gets 403 on configuration writes, kill
 switch writes and every /v1/admin path, which the edge serves itself:
-GET /v1/admin/deploys says what is deployed.
+GET /v1/admin/deploys says what is deployed, and GET /v1/admin/logs reads the
+VM's services' and the edge's logs from Cloud Logging (meta_harness.edge.logs).
 """
 
 import asyncio
@@ -51,10 +52,11 @@ from pathlib import Path
 
 import httpx
 import jwt
-from fastapi import Body, FastAPI, Request
+from fastapi import Body, FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
+from meta_harness.edge.logs import EDGE, UNITS, LogsError, read_logs
 from meta_harness.run_service.paths import REPO_ROOT
 
 # Path prefix to the env var holding the owning service's URL, and its local default.
@@ -182,6 +184,7 @@ def create_app(
     verify_google: Callable[[str], str] | None = None,
     stream_origin: str | None = None,
     admins: set[str] | None = None,
+    logs_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     app_dir = dist or REPO_ROOT / "console" / "dist"
     allowed = operators if operators is not None else operators_from_env()
@@ -293,6 +296,26 @@ def create_app(
             return denied
         roles = ["operator", "admin"] if is_admin(who) else ["operator"]
         return private(JSONResponse({"identity": who, "roles": roles}))
+
+    @app.get("/v1/admin/logs")
+    async def admin_logs(
+        request: Request,
+        unit: str | None = None,
+        severity: str | None = None,
+        minutes: int = Query(60, ge=1, le=7 * 24 * 60),
+        q: str | None = None,
+    ) -> Response:
+        """The newest log entries of one VM unit, or the edge, or all of them, for the Logs page."""
+        who, denied = signed_in(request)
+        if denied:
+            return denied
+        if not is_admin(who):
+            return private(JSONResponse({"detail": f"{who} is not an admin"}, status_code=403))
+        try:
+            rows = await read_logs(unit, severity, minutes, q, transport=logs_transport)
+        except LogsError as err:
+            return private(JSONResponse({"detail": str(err)}, status_code=502))
+        return private(JSONResponse({"entries": rows, "units": [*UNITS, EDGE]}))
 
     @app.get("/v1/admin/deploys")
     def deploys(request: Request) -> Response:

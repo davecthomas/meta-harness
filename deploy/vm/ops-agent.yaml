@@ -1,0 +1,11 @@
+# The Google Cloud Ops Agent's logging on the VM: the systemd journal, which holds every mh-* unit's
+# output, goes to Cloud Logging as the log mh_journald. The console's Logs page reads it back through the
+# edge (GET /v1/admin/logs), filtered by unit. deploy/vm/boot.sh installs the agent and this file.
+logging:
+  receivers:
+    mh_journald:
+      type: systemd_journald
+  service:
+    pipelines:
+      mh:
+        receivers: [mh_journald]

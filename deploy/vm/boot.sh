@@ -43,6 +43,20 @@ if [ ! -x /usr/local/bin/temporal ]; then
   ln -sf /usr/local/temporal/bin/temporal /usr/local/bin/temporal
 fi
 
+# The Ops Agent ships the journal, every mh-* unit's output, to Cloud Logging for the console's Logs page.
+# Pinned to major version 2. Logs are a convenience: a failure here is logged and never stops a boot or
+# an update. It runs near the end, once this commit is checked out.
+ops_agent() {
+  if ! systemctl list-unit-files google-cloud-ops-agent.service >/dev/null 2>&1; then
+    curl -fsSo /tmp/add-ops-agent-repo.sh https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+    bash /tmp/add-ops-agent-repo.sh --also-install --version=2.*.*
+  fi
+  if ! cmp -s "$MH/deploy/vm/ops-agent.yaml" /etc/google-cloud-ops-agent/config.yaml; then
+    install -m 0644 "$MH/deploy/vm/ops-agent.yaml" /etc/google-cloud-ops-agent/config.yaml
+    systemctl restart google-cloud-ops-agent
+  fi
+}
+
 log "the mh user"
 id mh >/dev/null 2>&1 || useradd --create-home --shell /bin/bash mh
 usermod -aG docker mh
@@ -145,4 +159,6 @@ if [ "$MODE" = boot ]; then
 else
   update_services
 fi
+# After the code is checked out, so the config is this commit's. In a || list, a failure stops nothing.
+ops_agent || log "ops agent: not installed or not configured; logs stay in the VM's journal"
 log "done: $(systemctl is-active mh-postgres mh-temporal mh-gateway mh-events mh-tasks mh-planner mh-scheduler mh-worker | tr '\n' ' ')"

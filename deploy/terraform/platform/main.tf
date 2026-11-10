@@ -254,6 +254,13 @@ resource "google_secret_manager_secret" "this" {
   }
 }
 
+# The edge reads the VM's and its own logs for the console's Logs page (GET /v1/admin/logs).
+resource "google_project_iam_member" "edge_reads_logs" {
+  project = var.project
+  role    = "roles/logging.viewer"
+  member  = "serviceAccount:${local.edge_sa}"
+}
+
 # The edge reads the service key to call the control plane, and the session key to sign sessions.
 resource "google_secret_manager_secret_iam_member" "edge_service_key" {
   secret_id = google_secret_manager_secret.this["MH_SERVICE_KEY"].id

@@ -365,3 +365,67 @@ def test_a_service_that_stays_down_is_a_503_saying_the_meta_harness_is_updating(
 
     assert response.status_code == 503
     assert "updating" in response.json()["detail"] and response.headers["retry-after"] == "5"
+
+
+def test_an_admin_reads_logs_from_cloud_logging_with_the_edges_own_token(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("MH_PROJECT", "meta-harness-prod")
+    asked: list[httpx.Request] = []
+
+    def google(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        if request.url.host == "metadata.google.internal":
+            return httpx.Response(200, json={"access_token": "tok"})
+        return httpx.Response(
+            200,
+            json={
+                "entries": [
+                    {
+                        "timestamp": "2026-11-09T10:00:00Z",
+                        "severity": "ERROR",
+                        "jsonPayload": {"_SYSTEMD_UNIT": "mh-worker.service", "MESSAGE": "run failed"},
+                    }
+                ]
+            },
+        )
+
+    (tmp_path / "index.html").write_text("<div id=root></div>")
+    app = create_app(
+        dist=tmp_path,
+        operators={"dave@example.com"},
+        identity="dave@example.com",
+        service_key="svc-key",
+        logs_transport=httpx.MockTransport(google),
+    )
+    client = TestClient(app)
+
+    shown = client.get("/v1/admin/logs", params={"unit": "mh-worker", "severity": "WARNING", "q": 'say "hi"'}).json()
+
+    assert shown["entries"][0] | {"entry": None} == {
+        "time": "2026-11-09T10:00:00Z",
+        "service": "mh-worker",
+        "severity": "ERROR",
+        "message": "run failed",
+        "entry": None,
+    }
+    sent = json.loads(asked[1].content)
+    assert asked[1].headers["authorization"] == "Bearer tok"
+    assert 'jsonPayload._SYSTEMD_UNIT="mh-worker.service"' in sent["filter"]
+    assert "severity>=WARNING" in sent["filter"] and 'SEARCH("say  hi ")' in sent["filter"]
+    assert sent["orderBy"] == "timestamp desc" and sent["pageSize"] == 500
+    assert client.get("/v1/admin/logs", params={"unit": "mh-nothing"}).status_code == 502
+
+
+def test_logs_without_google_credentials_say_why(tmp_path, monkeypatch):
+    monkeypatch.setenv("MH_PROJECT", "p")
+    (tmp_path / "index.html").write_text("")
+
+    def offline(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route", request=request)
+
+    app = create_app(
+        dist=tmp_path, operators={"d@x"}, identity="d@x", service_key="k", logs_transport=httpx.MockTransport(offline)
+    )
+    refused = TestClient(app).get("/v1/admin/logs")
+    assert refused.status_code == 502 and "no Google credentials" in refused.json()["detail"]
