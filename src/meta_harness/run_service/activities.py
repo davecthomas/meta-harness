@@ -684,7 +684,11 @@ def _requested(request: LoopPromptRequest) -> str:
             f"The branch conflicts with origin/{request.base}. The meta-harness has merged origin/{request.base} "
             "into it in /workspace and left the conflicts unresolved: every conflicted file holds conflict "
             "markers (<<<<<<<, =======, >>>>>>>). Resolve each one, keeping what both sides meant, so no marker "
-            "is left. The merge commit is made when you finish."
+            "is left. The merge commit is made when you finish.\n\n"
+            "A conflict in a version or lock file follows the versioning rule in the repository's AGENTS.md: "
+            "take the base's version and apply this pull request's bump on top of it (patch for a fix, minor for "
+            "a feature) in every file the rule names. Never keep the branch's older number. Regenerate each lock "
+            "file with its tool, such as uv lock or npm install --package-lock-only, instead of editing it by hand."
         )
     if request.failed_checks:
         parts = ["These checks failed on the branch's head commit. Make them pass."]
