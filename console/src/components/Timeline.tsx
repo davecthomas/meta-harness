@@ -5,7 +5,7 @@ import type { MhEvent } from "../api";
 
 // One entry on the timeline: a turn with what happened in it, or an event between turns.
 export type Entry =
-  | { kind: "turn"; turn: number; position: number; text: string; models: MhEvent[]; tools: Tool[]; files: string[]; compacted: boolean }
+  | { kind: "turn"; turn: number; position: number; text: string; models: MhEvent[]; tools: Tool[]; files: string[]; compacted: boolean; planned: boolean }
   | { kind: "status"; position: number; text: string; error: boolean };
 
 export interface Tool {
@@ -40,7 +40,7 @@ export function entries(events: MhEvent[]): Entry[] {
     const p = e.payload ?? {};
     switch (e.event_type) {
       case "turn_started":
-        turn = { kind: "turn", turn: Number(p.turn) || 0, position: e.position, text: "", models: [], tools: [], files: [], compacted: false };
+        turn = { kind: "turn", turn: Number(p.turn) || 0, position: e.position, text: "", models: [], tools: [], files: [], compacted: false, planned: false };
         out.push(turn);
         break;
       case "model_call":
@@ -62,6 +62,9 @@ export function entries(events: MhEvent[]): Entry[] {
         break;
       case "compacted":
         if (turn) turn.compacted = true;
+        break;
+      case "plan_updated":
+        if (turn) turn.planned = true;
         break;
       case "turn_finished":
         if (turn && p.text) turn.text = String(p.text);
@@ -155,7 +158,10 @@ export function Timeline({ events }: { events: MhEvent[] }) {
               <Stack gap={6}>
                 <Group justify="space-between">
                   <Text size="xs" fw={600} c="dimmed">Turn {entry.turn}</Text>
-                  {entry.compacted && <Badge size="xs" variant="light">context compacted</Badge>}
+                  <Group gap={4}>
+                    {entry.planned && <Badge size="xs" variant="light" color="grape">plan updated</Badge>}
+                    {entry.compacted && <Badge size="xs" variant="light">context compacted</Badge>}
+                  </Group>
                 </Group>
                 {entry.text && <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{entry.text}</Text>}
                 {entry.models.map((m) => <ModelLine key={m.position} e={m} />)}

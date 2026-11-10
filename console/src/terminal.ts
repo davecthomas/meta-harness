@@ -37,6 +37,7 @@ export function describe(e: MhEvent): Line | null {
     case "tests_run": return line(p.passed === false ? "error" : "result", `tests ${short(p, 200)}`);
     case "guardrail_blocked": return line("error", `guardrail blocked ${short(p, 200)}`);
     case "compacted": return line("info", "context compacted");
+    case "plan_updated": return line("info", `plan: ${(p.steps ?? []).map((s: { step: string; status: string }) => `${s.status === "done" ? "[x]" : s.status === "in_progress" ? "[>]" : "[ ]"} ${s.step}`).join("  ")}`);
     case "turn_finished": return p.text ? line("text", String(p.text)) : null;
     case "run_finished": return line(p.status === "FINISHED" ? "status" : "error", `run ${p.status} (${p.end_reason ?? ""})${p.error ? ": " + p.error : ""}`);
     case "attempt_finished": return line("status", `attempt ${p.attempt} on ${p.candidate}: ${p.decision}, $${p.spent_usd}`);

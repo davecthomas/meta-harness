@@ -348,6 +348,7 @@ no pi virtual models (`registerVirtualModel`).
 | `bash` | pi built-in tool | A timeout and output cap from the harness profile. The pi model client extension's tool-call hook refuses commands outside the harness profile's allowlist |
 | `run_tests` | owned pi extension tool, planned | Runs the acceptance checks named in the task and emits `tests_run` harness server Run API events |
 | `submit_review` | owned pi extension tool, meta-harness review harness profiles only | Ends the review run with verdict `clean` or `changes` and its findings, as a `review_submitted` harness server Run API event. The meta-harness run service posts them as a code-host pull request review |
+| `update_plan` | owned pi extension tool, offered to every run whose profile has `write` | Records the agent's plan as a checklist (each step pending, in progress or done) in a `plan_updated` event, which the Task page shows as its plan. The task prompt asks for it on any task of more than a few steps |
 | `create_issue` | owned pi extension tool, planning harness profiles only, planned | Records one issue draft (repo, title, body, labels, `Depends on:` lines) as an `issue_drafted` harness server Run API event. The planner creates the issues after the run |
 
 A harness profile's `tools` list chooses from these tools. Until `run_tests`

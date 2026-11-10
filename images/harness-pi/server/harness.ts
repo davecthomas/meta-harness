@@ -31,7 +31,7 @@ import {
 	SPEND_LIMIT_ERROR,
 } from "../extension/model-client.ts";
 import { bashAllowlist } from "../extension/bash-allowlist.ts";
-import { OWNED_TOOLS, type Review, submitReviewTool } from "../extension/owned-tools.ts";
+import { OWNED_TOOLS, type PlanStep, type Review, submitReviewTool, updatePlanTool } from "../extension/owned-tools.ts";
 import { EventLog, type RunEventType } from "./event-log.ts";
 
 /** The Run API's status values, the contract with the harness engine. */
@@ -373,8 +373,13 @@ export class Harness {
 			resourceLoader,
 			// The session file goes outside the workspace, so it never lands in the repo or the PR.
 			sessionManager: SessionManager.create(this.config.workspaceDir, this.config.sessionDir, { id: sessionId }),
-			tools: profile.tools,
-			customTools: profile.tools.includes("submit_review") ? [submitReviewTool((review) => this.onReview(review))] : [],
+			// A run that edits keeps a plan too: update_plan comes with write, without the profile naming it, since a
+			// deploy never rewrites the deployment's active profiles.
+			tools: profile.tools.includes("write") && !profile.tools.includes("update_plan") ? [...profile.tools, "update_plan"] : profile.tools,
+			customTools: [
+				...(profile.tools.includes("submit_review") ? [submitReviewTool((review) => this.onReview(review))] : []),
+				...(profile.tools.includes("write") || profile.tools.includes("update_plan") ? [updatePlanTool((steps) => this.onPlan(steps))] : []),
+			],
 		});
 		session.subscribe((event) => this.onPiEvent(event));
 		this.config.log(`session ${session.sessionId} created, tools ${session.getActiveToolNames().join(", ")}`);
@@ -445,6 +450,13 @@ export class Harness {
 		this.stopReason = reason;
 		this.config.log(`run ${run.run_id}: stopping pi (${reason})`);
 		await this.session?.abort();
+	}
+
+	/** update_plan's checklist, for the run in progress. */
+	private onPlan(steps: PlanStep[]): void {
+		const run = this.current;
+		if (!run) return;
+		this.emit("plan_updated", run, { steps });
 	}
 
 	/** submit_review's verdict, for the run in progress. */
