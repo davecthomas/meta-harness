@@ -18,6 +18,9 @@ Every MH_ADMISSION_SECONDS the meta-harness scheduler runs one admission pass:
    turns a conflict into a fix run.
 4. It locks the task's areas and starts its RunTask workflow.
 
+While the kill switch is draining, as a deploy that replaces the VM sets it,
+a pass admits nothing but stops nothing: running tasks finish.
+
 Blocked tasks are not queued: the planner queues them once their
 dependencies close.
 """
@@ -92,11 +95,11 @@ class Admission:
 
     async def pass_once(self) -> AdmissionResult:
         result = AdmissionResult()
-        engaged = await asyncio.to_thread(kill_switch_engaged)
+        engaged, draining = await asyncio.to_thread(kill_switch_state)
         await self._stop_running(engaged, result)
         await self._hand_over_messages()
         await self._release_and_renew(result)
-        if engaged:
+        if engaged or draining:
             return result
         limit = self.max_running if isinstance(self.max_running, int) else await asyncio.to_thread(self.max_running)
         locked = await asyncio.to_thread(_locks)
@@ -233,17 +236,39 @@ class Admission:
 
 
 def kill_switch_engaged() -> bool:
+    return kill_switch_state()[0]
+
+
+def kill_switch_state() -> tuple[bool, bool]:
+    """Whether the kill switch is on, and whether the scheduler is draining."""
     with db.connect(autocommit=True) as conn:
-        row = conn.execute("SELECT engaged FROM scheduler.kill_switch WHERE id = 1").fetchone()
-    return bool(row and row[0])
+        row = conn.execute("SELECT engaged, draining FROM scheduler.kill_switch WHERE id = 1").fetchone()
+    return (bool(row and row[0]), bool(row and row[1]))
 
 
 def kill_switch() -> dict:
     with db.connect(autocommit=True) as conn:
         row = conn.execute(
-            "SELECT engaged, changed_by, reason, changed_at FROM scheduler.kill_switch WHERE id = 1"
+            "SELECT engaged, changed_by, reason, changed_at, draining FROM scheduler.kill_switch WHERE id = 1"
         ).fetchone()
-    return {"engaged": row[0], "changed_by": row[1], "reason": row[2], "changed_at": row[3].isoformat()}
+    return {
+        "engaged": row[0],
+        "changed_by": row[1],
+        "reason": row[2],
+        "changed_at": row[3].isoformat(),
+        "draining": row[4],
+    }
+
+
+def set_draining(draining: bool, changed_by: str, reason: str | None) -> dict:
+    """Starts or ends a drain: no new task is admitted, and running ones finish. engaged is left as it is."""
+    with db.connect(autocommit=True) as conn:
+        conn.execute(
+            "UPDATE scheduler.kill_switch SET draining = %s, changed_by = %s, reason = %s, changed_at = now() "
+            "WHERE id = 1",
+            (draining, changed_by, reason),
+        )
+    return kill_switch()
 
 
 def set_kill_switch(engaged: bool, changed_by: str, reason: str | None) -> dict:

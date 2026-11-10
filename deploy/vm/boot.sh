@@ -157,6 +157,10 @@ if [ "$MODE" = boot ]; then
   systemctl restart mh-postgres mh-temporal
   systemctl restart mh-images mh-egress mh-migrate
   systemctl restart mh-gateway mh-events mh-tasks mh-planner mh-scheduler mh-worker
+  # A deploy that replaced the VM drained the scheduler first; this VM ends the drain once it is up.
+  drained=
+  for try in $(seq 1 30); do bash "$MH/deploy/vm/drain.sh" off && { drained=1; break; }; sleep 5; done
+  [ -n "$drained" ] || log "could not end the drain: run deploy/vm/drain.sh off once the scheduler is up"
 else
   update_services
 fi
