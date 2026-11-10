@@ -335,6 +335,12 @@
     "required": [],
     "type": "object"
   },
+  "plan_updated v1": {
+    "additionalProperties": true,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
   "pull_request_checks v1": {
     "additionalProperties": true,
     "properties": {

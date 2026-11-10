@@ -13,6 +13,7 @@ $checks
 
 Rules:
 - Change only what the task needs.
+- For a task of more than a few steps, keep your plan with the update_plan tool: record it before you start, and update it as each step starts and finishes.
 - Run each acceptance check with the bash tool before you finish, and fix what fails.
 - Do not commit, push or open a pull request. When you finish, the meta-harness commits your changes and opens the pull request.
 - Finish with a short summary for the pull request: what you changed, which checks you ran and how they ended, and any assumption you made. No person will answer questions, so decide and say what you decided.

@@ -12,7 +12,45 @@
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-export const OWNED_TOOLS = ["submit_review"] as const;
+export const OWNED_TOOLS = ["submit_review", "update_plan"] as const;
+
+export interface PlanStep {
+	step: string;
+	status: "pending" | "in_progress" | "done";
+}
+
+const PlanSchema = Type.Object({
+	steps: Type.Array(
+		Type.Object({
+			step: Type.String({ minLength: 1, description: "One step, in a few words." }),
+			status: Type.Union([Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("done")]),
+		}),
+		{ minItems: 1, description: "The whole plan, in order. Each call replaces the last." },
+	),
+});
+
+/**
+ * The update_plan tool: the agent keeps its plan as a checklist, the whole plan on each call. The
+ * harness server reports it in a `plan_updated` event, which the console shows as the task's plan.
+ * It changes nothing in the workspace.
+ */
+export function updatePlanTool(onPlan: (steps: PlanStep[]) => void): ToolDefinition {
+	return defineTool({
+		name: "update_plan",
+		label: "Update plan",
+		description:
+			"Record your plan as a checklist: the whole plan, every step with its status (pending, in_progress or " +
+			"done). Call it when you make the plan and whenever a step starts or finishes.",
+		promptSnippet: "update_plan: keep your plan as a checklist the operator can follow",
+		parameters: PlanSchema,
+		async execute(_toolCallId, params) {
+			const steps = params.steps.map((s) => ({ step: s.step, status: s.status }));
+			onPlan(steps);
+			const done = steps.filter((s) => s.status === "done").length;
+			return { content: [{ type: "text", text: `Plan recorded: ${done} of ${steps.length} steps done.` }], details: undefined };
+		},
+	});
+}
 
 export interface ReviewFinding {
 	path: string | null;
