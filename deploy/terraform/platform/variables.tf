@@ -48,6 +48,12 @@ variable "operators" {
   default     = ["davidcthomas@gmail.com"]
 }
 
+variable "admins" {
+  description = "Who of the operators may change configuration, use the kill switch and open the Admin menu. Empty: every operator."
+  type        = list(string)
+  default     = []
+}
+
 variable "secrets" {
   description = "The Secret Manager secrets the VM and the edge read. Values are added out of band."
   type        = list(string)
