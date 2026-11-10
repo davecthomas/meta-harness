@@ -21,66 +21,20 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import {
-  IconAdjustments,
-  IconBrandGithub,
-  IconCloud,
-  IconFileText,
-  IconHexagons,
-  IconHistory,
-  IconPlayerStop,
-  IconRocket,
-  IconLayoutDashboard,
-  IconGridDots,
-  IconListCheck,
-  IconMoon,
-  IconPlus,
-  IconSettings,
-  IconSun,
-  IconTarget,
-} from "@tabler/icons-react";
+import { IconHexagons, IconMoon, IconPlus, IconSettings, IconSun } from "@tabler/icons-react";
 import { api, ApiError } from "./api";
-import { SignIn, signOut } from "./components/SignIn";
-import { Overview } from "./pages/Overview";
-import { NewGoal } from "./pages/NewGoal";
-import { GoalPage } from "./pages/GoalPage";
-import { GoalsPage } from "./pages/GoalsPage";
-import { TasksPage } from "./pages/TasksPage";
-import { ActivityPage } from "./pages/ActivityPage";
-import { TaskPage } from "./pages/TaskPage";
-import { AuditPage, CloudPage, DeploysPage, KillSwitchPage } from "./pages/AdminPages";
-import { LogsPage } from "./pages/LogsPage";
-import { ReposPage } from "./pages/ReposPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { SignIn, signOut } from "./features/auth/SignIn";
 import { Inbox } from "./components/Inbox";
+import { FEATURES } from "./features";
 import { CommandPalette } from "./components/CommandPalette";
-import { ConfigPage } from "./pages/ConfigPage";
 
-const NAV = [
-  {
-    section: "Operate",
-    items: [
-      { to: "/", label: "Overview", icon: IconLayoutDashboard },
-      { to: "/goals", label: "Goals", icon: IconTarget },
-      { to: "/tasks", label: "Tasks", icon: IconListCheck },
-      { to: "/activity", label: "Activity", icon: IconGridDots },
-    ],
-  },
-];
-
-// Only admins see it: what changes how the meta-harness runs, and where it is deployed.
-const ADMIN_NAV = {
-  section: "Admin",
-  items: [
-    { to: "/config", label: "Configuration", icon: IconAdjustments },
-    { to: "/admin/repos", label: "Repositories", icon: IconBrandGithub },
-    { to: "/admin/kill-switch", label: "Kill switch", icon: IconPlayerStop },
-    { to: "/admin/deploys", label: "Deploys", icon: IconRocket },
-    { to: "/admin/logs", label: "Logs", icon: IconFileText },
-    { to: "/admin/audit", label: "Audit", icon: IconHistory },
-    { to: "/admin/cloud", label: "Google Cloud", icon: IconCloud },
-  ],
-};
+// The navigation's groups, from the features, in order; admin entries only for an admin.
+function navGroups(admin: boolean) {
+  const items = FEATURES.flatMap((f) => f.nav).filter((n) => admin || !n.admin);
+  return (["Operate", "Admin"] as const)
+    .map((section) => ({ section, items: items.filter((n) => n.section === section) }))
+    .filter((g) => g.items.length);
+}
 
 function isActive(path: string, to: string): boolean {
   if (to === "/") return path === "/";
@@ -148,7 +102,7 @@ export function App() {
 
       <AppShell.Navbar p="sm">
         <AppShell.Section grow component={ScrollArea}>
-          {(admin ? [...NAV, ADMIN_NAV] : NAV).map((group) => (
+          {navGroups(admin).map((group) => (
             <div key={group.section}>
               <Text size="xs" fw={600} c="dimmed" tt="uppercase" px="sm" mt="md" mb={6}>
                 {group.section}
@@ -188,21 +142,9 @@ export function App() {
           <Center h={240}><Loader /></Center>
         ) : (
           <Routes>
-            <Route path="/" element={<Overview />} />
-            <Route path="/goals" element={<GoalsPage />} />
-            <Route path="/goals/new" element={<NewGoal />} />
-            <Route path="/goals/:goalId" element={<GoalPage />} />
-            <Route path="/tasks" element={<TasksPage />} />
-            <Route path="/activity" element={<ActivityPage />} />
-            <Route path="/tasks/:taskId" element={<TaskPage />} />
-            <Route path="/config" element={<ConfigPage />} />
-            <Route path="/admin/kill-switch" element={<KillSwitchPage />} />
-            <Route path="/admin/deploys" element={<DeploysPage />} />
-            <Route path="/admin/logs" element={<LogsPage />} />
-            <Route path="/admin/repos" element={<ReposPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/admin/audit" element={<AuditPage />} />
-            <Route path="/admin/cloud" element={<CloudPage />} />
+            {FEATURES.flatMap((f) => f.routes).map((r) => (
+              <Route key={r.path} path={r.path} element={r.element} />
+            ))}
           </Routes>
         )}
       </AppShell.Main>
