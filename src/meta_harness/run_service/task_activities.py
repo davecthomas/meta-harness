@@ -75,6 +75,7 @@ async def load_task(task_id: str) -> TaskSpec:
         attempts=int(task.get("attempts") or 1),
         resume=task.get("resume") or "",
         retries=int(task.get("retries") or 0),
+        task_type=task.get("task_type") or "",
     )
 
 

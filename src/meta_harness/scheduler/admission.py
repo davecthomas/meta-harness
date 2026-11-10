@@ -210,7 +210,9 @@ class Admission:
         if goal_id not in goals:
             goals[goal_id] = await asyncio.to_thread(self.goals.get, goal_id)
         goal = goals[goal_id]
-        if goal["status"] != "active":
+        # A goal in planning runs one kind of task: the planning task that drafts its issues.
+        planning = goal["status"] == "planning" and task.get("task_type") == "plan"
+        if goal["status"] != "active" and not planning:
             return f"goal {goal_id} is {goal['status']}"
         if goal.get("max_usd") is None:
             return None

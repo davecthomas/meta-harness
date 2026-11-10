@@ -9,12 +9,16 @@ import psycopg
 from psycopg.rows import dict_row
 
 MODALITIES = {"fix", "feature", "new-system"}
-# The modalities the planner runs today. feature and new-system need the planning task.
-BUILT_MODALITIES = {"fix"}
-GOAL_STATUSES = {"active", "paused", "met", "stalled", "budget_exhausted", "canceled"}
+# The modalities the planner runs today. new-system needs phases, which are not built.
+BUILT_MODALITIES = {"fix", "feature"}
+# The modalities whose goal starts with a plan an operator approves before any work (planning.py).
+PLANNED_MODALITIES = {"feature"}
+GOAL_STATUSES = {"planning", "active", "paused", "met", "stalled", "budget_exhausted", "canceled"}
 GOAL_MOVES = {
+    # A feature goal plans first: its planning task drafts issues, and an operator approves the plan.
+    "planning": {"active", "canceled"},
     "active": {"paused", "met", "stalled", "budget_exhausted", "canceled"},
-    "paused": {"active", "met", "canceled"},
+    "paused": {"active", "planning", "met", "canceled"},
     "stalled": {"active", "met", "canceled"},
     "budget_exhausted": {"active", "canceled"},
     # An operator reopens a met or canceled goal, and the planner takes in its label's open issues again.
@@ -23,7 +27,7 @@ GOAL_MOVES = {
 }
 GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
-    "status, created_at, updated_at, started_at, closed_at, title, max_parallel"
+    "status, created_at, updated_at, started_at, closed_at, title, max_parallel, plan_task_id, plan_approved_at"
 )
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
@@ -65,7 +69,7 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
     if goal.modality not in MODALITIES:
         raise GoalError(f"modality {goal.modality!r} is not one of {sorted(MODALITIES)}")
     if goal.modality not in BUILT_MODALITIES:
-        raise GoalError(f"the {goal.modality} modality needs the planning task, which is not built yet; use fix")
+        raise GoalError(f"the {goal.modality} modality needs phases, which are not built yet; use fix or feature")
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             f"INSERT INTO planner.goal (id, created_by, statement, repos, label, modality, modality_source, "
@@ -82,8 +86,8 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
                 goal.auto_merge,
                 goal.max_usd,
                 goal.priority,
-                "active" if goal.start else "paused",
-                goal.start,
+                ("planning" if goal.modality in PLANNED_MODALITIES else "active") if goal.start else "paused",
+                goal.start and goal.modality not in PLANNED_MODALITIES,
                 goal.title,
                 goal.max_parallel,
             ),
@@ -223,7 +227,7 @@ def link(conn: psycopg.Connection, ref: str) -> dict | None:
 
 
 # A goal in one of these still holds its issues: an issue it holds is not offered to another goal.
-OPEN_GOAL_STATUSES = ("active", "paused", "stalled", "budget_exhausted")
+OPEN_GOAL_STATUSES = ("planning", "active", "paused", "stalled", "budget_exhausted")
 
 
 def holders(conn: psycopg.Connection, refs: list[str]) -> dict[str, str]:
@@ -319,7 +323,7 @@ def set_link_state(conn: psycopg.Connection, ref: str, state: str) -> None:
 
 
 def _goal(row: dict) -> dict:
-    for key in ("created_at", "updated_at", "started_at", "closed_at"):
+    for key in ("created_at", "updated_at", "started_at", "closed_at", "plan_approved_at"):
         row[key] = row[key].isoformat() if row[key] else None
     row["latitude"] = float(row["latitude"])
     row["max_usd"] = str(row["max_usd"]) if row["max_usd"] is not None else None
