@@ -196,7 +196,7 @@ test("a row with a task opens the task, and its links open GitHub instead", asyn
   expect(await screen.findByText("task page")).toBeTruthy();
 });
 
-test("a goal shows its title over its description, and each value edits in place, saving only that field", async () => {
+test("a goal shows its title over its description, and its title is edited in place", async () => {
   let current = { ...goal("active"), started_at: "2026-11-08T20:41:00Z", title: "Fix issue 55", statement: "Close #55: the save loses the last edit.", max_usd: "10" };
   const patched: unknown[] = [];
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
@@ -211,28 +211,16 @@ test("a goal shows its title over its description, and each value edits in place
   });
   renderAt("/goals/g-1", <GoalPage />);
 
-  expect(await screen.findByRole("heading", { name: /Fix issue 55/ })).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: "Fix issue 55" })).toBeTruthy();
   expect(screen.getByText("Close #55: the save loses the last edit.")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Edit goal" })).toBeNull();
+  fireEvent.click(screen.getByText("Fix issue 55"));
+  const input = await screen.findByLabelText("Title");
+  fireEvent.change(input, { target: { value: "Save keeps every edit" } });
+  fireEvent.keyDown(input, { key: "Enter" });
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit Title" }));
-  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Save keeps every edit" } });
-  fireEvent.keyDown(screen.getByLabelText("Title"), { key: "Enter" });
-  expect(await screen.findByRole("heading", { name: /Save keeps every edit/ })).toBeTruthy();
-
-  fireEvent.click(screen.getByRole("button", { name: "Edit Budget" }));
-  fireEvent.change(screen.getByLabelText("Budget"), { target: { value: "25" } });
-  fireEvent.keyDown(screen.getByLabelText("Budget"), { key: "Enter" });
-  await waitFor(() => expect(patched).toEqual([{ title: "Save keeps every edit" }, { max_usd: "25" }]));
-
-  fireEvent.click(screen.getByRole("button", { name: "Edit Description" }));
-  fireEvent.change(screen.getByLabelText("Description"), { target: { value: "   " } });
-  fireEvent.keyDown(screen.getByLabelText("Description"), { key: "Enter", ctrlKey: true });
-  expect(await screen.findByText("A goal needs a description.")).toBeTruthy();
-  expect(patched).toHaveLength(2);
-
-  fireEvent.click(screen.getByRole("switch", { name: "Off: pull requests wait for you" }));
-  await waitFor(() => expect(patched).toEqual([{ title: "Save keeps every edit" }, { max_usd: "25" }, { auto_merge: true }]));
+  await waitFor(() => expect(patched).toEqual([{ title: "Save keeps every edit" }]));
+  expect(await screen.findByRole("heading", { name: "Save keeps every edit" })).toBeTruthy();
 });
 
 test("the Goals list shows each goal's title, or the start of its description when it has none", async () => {

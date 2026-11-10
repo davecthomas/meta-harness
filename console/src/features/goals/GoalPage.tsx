@@ -5,8 +5,7 @@ import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlay
 import { IssuesPicker } from "./IssuesPicker";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
-import { parallelLabel } from "./parallel";
-import { InlineField } from "../../components/InlineField";
+import { AutoMergeEdit, BudgetEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 
@@ -98,16 +97,14 @@ export function GoalPage() {
     }
   }
 
-  // One value edited in place: a PATCH of that field alone, so each change is one goal_changed record.
-  // A refusal keeps the field open with the reason.
-  async function patch(fields: Record<string, unknown>): Promise<string | null> {
-    try {
-      await api.patchGoal(goalId, fields);
-      await load();
-      return null;
-    } catch (err) {
-      return err instanceof Error ? err.message : String(err);
-    }
+  // Save one field the operator edited in place, and show the saved goal. A refusal throws, for the field to show.
+  async function saveField(fields: Partial<Goal>) {
+    const saved = await api.patchGoal(goalId, fields);
+    setGoal((now) => (now ? { ...now, ...saved, issues: now.issues } : now));
+    // A new label or repos changes which open issues a goal not started yet would take in.
+    if ("label" in fields || "repos" in fields) void load();
+    // New repos let go of the issues with no task yet in the repos dropped.
+    if ("repos" in fields) void loadProgress();
   }
 
   // A goal's issues are all in one response; the table reads ahead through them 50 at a time.
@@ -123,28 +120,15 @@ export function GoalPage() {
   const status = goalStatus(goal);
   // An active goal opens on its board; any other on the table, until the operator picks a view.
   const shownView = view ?? (goal.status === "active" ? "board" : "table");
+  const editable = { goal, readOnly: !open, save: saveField };
 
   return (
     <>
       <PageHeader
-        title={
-          <InlineField
-            kind="text"
-            label="Title"
-            value={goal.title ?? ""}
-            display={goalTitle(goal)}
-            onCommit={(title) => (title ? patch({ title }) : "A goal's title cannot be emptied")}
-          />
-        }
+        title={<TitleField {...editable} />}
         description={
           <Stack gap={6}>
-            <InlineField
-              kind="textarea"
-              label="Description"
-              value={goal.statement}
-              display={<Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{goal.statement}</Text>}
-              onCommit={(text) => (text.trim() ? patch({ statement: text.trim() }) : "A goal needs a description.")}
-            />
+            <DescriptionField {...editable} />
             <Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>
           </Stack>
         }
@@ -196,49 +180,12 @@ export function GoalPage() {
       <Facts
         items={[
           ["Modality", <Text size="sm">{goal.modality}</Text>],
-          ["Label", goal.label ? <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> : <Text size="sm" c="dimmed">None: the goal takes the issues picked for it</Text>],
-          ["Repos", <Stack gap={2}>{goal.repos.map((r) => <Text ff="monospace" size="sm" key={r}>{r}</Text>)}</Stack>],
-          ["Auto-merge", (
-            <InlineField
-              kind="switch"
-              label="Auto-merge"
-              switchLabel={goal.auto_merge ? "On" : "Off: pull requests wait for you"}
-              value={goal.auto_merge}
-              readOnly={!open}
-              onCommit={(auto_merge) => patch({ auto_merge })}
-            />
-          )],
-          ["Budget", (
-            <InlineField
-              kind="number"
-              label="Budget"
-              value={goal.max_usd ? Number(goal.max_usd) : null}
-              min={0}
-              decimalScale={2}
-              prefix="$"
-              allowEmpty
-              empty="None"
-              onCommit={(v) => (v === null ? "A budget can be changed, not removed" : patch({ max_usd: String(v) }))}
-            />
-          )],
-          ["Priority", (
-            <InlineField kind="number" label="Priority" value={goal.priority} step={1} decimalScale={0} onCommit={(priority) => patch({ priority })} />
-          )],
-          ["Parallel tasks", (
-            <InlineField
-              kind="number"
-              label="Parallel tasks"
-              value={goal.max_parallel ?? null}
-              display={<Text size="sm">{parallelLabel(goal.max_parallel, systemParallel)}</Text>}
-              min={1}
-              max={systemParallel ?? undefined}
-              decimalScale={0}
-              allowEmpty
-              placeholder={systemParallel ? `System setting: ${systemParallel}` : "System setting"}
-              // Emptied: back to the system setting.
-              onCommit={(max_parallel) => patch({ max_parallel })}
-            />
-          )],
+          ["Label", <LabelEdit {...editable} />],
+          ["Repos", <ReposEdit {...editable} />],
+          ["Auto-merge", <AutoMergeEdit {...editable} />],
+          ["Budget", <BudgetEdit {...editable} />],
+          ["Priority", <PriorityEdit {...editable} />],
+          ["Parallel tasks", <ParallelEdit {...editable} system={systemParallel} />],
           ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
           ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
           ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),
