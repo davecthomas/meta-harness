@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
@@ -196,7 +196,7 @@ test("a row with a task opens the task, and its links open GitHub instead", asyn
   expect(await screen.findByText("task page")).toBeTruthy();
 });
 
-test("a goal shows its title over its description, and Edit goal saves only what changed", async () => {
+test("a goal shows its title over its description, and its title is edited in place", async () => {
   let current = { ...goal("active"), started_at: "2026-11-08T20:41:00Z", title: "Fix issue 55", statement: "Close #55: the save loses the last edit.", max_usd: "10" };
   const patched: unknown[] = [];
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
@@ -213,13 +213,13 @@ test("a goal shows its title over its description, and Edit goal saves only what
 
   expect(await screen.findByRole("heading", { name: "Fix issue 55" })).toBeTruthy();
   expect(screen.getByText("Close #55: the save loses the last edit.")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Edit goal" }));
-  const dialog = await screen.findByRole("dialog", { name: "Edit goal" });
-  fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Save keeps every edit" } });
-  fireEvent.change(within(dialog).getByLabelText(/Budget/), { target: { value: "25" } });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Save goal" }));
+  expect(screen.queryByRole("button", { name: "Edit goal" })).toBeNull();
+  fireEvent.click(screen.getByText("Fix issue 55"));
+  const input = await screen.findByLabelText("Title");
+  fireEvent.change(input, { target: { value: "Save keeps every edit" } });
+  fireEvent.keyDown(input, { key: "Enter" });
 
-  await waitFor(() => expect(patched).toEqual([{ title: "Save keeps every edit", max_usd: "25" }]));
+  await waitFor(() => expect(patched).toEqual([{ title: "Save keeps every edit" }]));
   expect(await screen.findByRole("heading", { name: "Save keeps every edit" })).toBeTruthy();
 });
 

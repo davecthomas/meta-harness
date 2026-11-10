@@ -1,12 +1,11 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Group, Loader, SegmentedControl, Stack, Table, Text } from "@mantine/core";
-import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPencil, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
-import { GoalEditor } from "./GoalEditor";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
-import { parallelLabel } from "./parallel";
+import { AutoMergeEdit, BudgetEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 
@@ -18,8 +17,6 @@ export function GoalPage() {
   // For a goal not started yet: its label's open issues, read but not taken in, so the operator sees what Start runs.
   const [waiting, setWaiting] = useState<(LabelIssue & { repo: string })[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // The title being edited, or null while it is not.
-  const [editing, setEditing] = useState(false);
   // Each issue's progress and what each task spent, for the board, and the position the live stream starts from.
   const [progress, setProgress] = useState<IssueProgress[] | null>(null);
   const [spend, setSpend] = useState<Record<string, number>>({});
@@ -100,6 +97,16 @@ export function GoalPage() {
     }
   }
 
+  // Save one field the operator edited in place, and show the saved goal. A refusal throws, for the field to show.
+  async function saveField(fields: Partial<Goal>) {
+    const saved = await api.patchGoal(goalId, fields);
+    setGoal((now) => (now ? { ...now, ...saved, issues: now.issues } : now));
+    // A new label or repos changes which open issues a goal not started yet would take in.
+    if ("label" in fields || "repos" in fields) void load();
+    // New repos let go of the issues with no task yet in the repos dropped.
+    if ("repos" in fields) void loadProgress();
+  }
+
   // A goal's issues are all in one response; the table reads ahead through them 50 at a time.
   const issues = useMemo(() => goal?.issues ?? [], [goal]);
   const shown = useInfinite(
@@ -113,14 +120,15 @@ export function GoalPage() {
   const status = goalStatus(goal);
   // An active goal opens on its board; any other on the table, until the operator picks a view.
   const shownView = view ?? (goal.status === "active" ? "board" : "table");
+  const editable = { goal, readOnly: !open, save: saveField };
 
   return (
     <>
       <PageHeader
-        title={goalTitle(goal)}
+        title={<TitleField {...editable} />}
         description={
           <Stack gap={6}>
-            <Text size="sm">{goal.statement}</Text>
+            <DescriptionField {...editable} />
             <Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>
           </Stack>
         }
@@ -144,7 +152,6 @@ export function GoalPage() {
             {!open && (
               <Button leftSection={<IconArrowBackUp size={16} />} onClick={() => act(() => api.goalAction(goal.id, "reopen"))}>Reopen goal</Button>
             )}
-            <Button variant="default" leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>Edit goal</Button>
             {open && (
               <Button variant="default" leftSection={<IconListCheck size={16} />} onClick={() => setPicking(true)}>Add issues</Button>
             )}
@@ -170,24 +177,15 @@ export function GoalPage() {
           await loadProgress();
         }}
       />
-      {editing && <GoalEditor goal={goal} onClose={() => setEditing(false)} onSaved={() => void load()} />}
       <Facts
         items={[
           ["Modality", <Text size="sm">{goal.modality}</Text>],
-          ["Label", goal.label ? <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> : <Text size="sm" c="dimmed">None: the goal takes the issues picked for it</Text>],
-          ["Repos", <Stack gap={2}>{goal.repos.map((r) => <Text ff="monospace" size="sm" key={r}>{r}</Text>)}</Stack>],
-          ["Auto-merge", (
-            <Group gap="sm">
-              <Text size="sm">{goal.auto_merge ? "On" : "Off: pull requests wait for you"}</Text>
-              {open && (
-                <Button size="compact-xs" variant="light" onClick={() => act(() => api.patchGoal(goal.id, { auto_merge: !goal.auto_merge }))}>
-                  Turn {goal.auto_merge ? "off" : "on"}
-                </Button>
-              )}
-            </Group>
-          )],
-          ["Budget", <Text size="sm">{goal.max_usd ? `$${goal.max_usd}` : "None"}</Text>],
-          ["Parallel tasks", <Text size="sm">{parallelLabel(goal.max_parallel, systemParallel)}</Text>],
+          ["Label", <LabelEdit {...editable} />],
+          ["Repos", <ReposEdit {...editable} />],
+          ["Auto-merge", <AutoMergeEdit {...editable} />],
+          ["Budget", <BudgetEdit {...editable} />],
+          ["Priority", <PriorityEdit {...editable} />],
+          ["Parallel tasks", <ParallelEdit {...editable} system={systemParallel} />],
           ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
           ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
           ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),
