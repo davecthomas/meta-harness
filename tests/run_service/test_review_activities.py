@@ -4,6 +4,7 @@ The workflow tests stand these in; here each one runs for real, against a
 local bare repo for git and a fake code host for GitHub's API.
 """
 
+import dataclasses
 import json
 import subprocess
 from pathlib import Path
@@ -90,6 +91,20 @@ async def test_the_review_prompt_names_the_branch_the_base_and_the_checks():
     assert "Fix the bug" in prompt and "The bug is in app.py." in prompt and "- pytest -q" in prompt
     assert "submit_review" in prompt
     assert "$" not in prompt, "every placeholder is filled"
+
+
+async def test_each_prompt_names_the_issues_paths_and_the_review_flags_a_change_outside_them():
+    named = "The bug is in app.py.\n\nPaths: src/app, docs\n"
+    review = await ActivityEnvironment().run(
+        activities.loop_prompt, dataclasses.replace(_prompt_request(kind="review"), description=named)
+    )
+    fix = await ActivityEnvironment().run(
+        activities.loop_prompt, dataclasses.replace(_prompt_request(kind="fix"), description=named)
+    )
+    assert "The task names its paths: src/app, docs. A changed file outside them" in review
+    assert "Keep to the task's paths: src/app, docs." in fix
+    unnamed = await ActivityEnvironment().run(activities.loop_prompt, _prompt_request(kind="review"))
+    assert "The task names no paths" in unnamed and "$" not in unnamed
 
 
 async def test_a_fix_prompt_lists_each_finding_with_its_place():
