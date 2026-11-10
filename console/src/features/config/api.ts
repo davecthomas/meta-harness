@@ -1,6 +1,6 @@
 import { call } from "../../client";
 
-export type ConfigKind = "tiers" | "profiles" | "repos";
+export type ConfigKind = "tiers" | "profiles" | "repos" | "task_policy";
 
 export interface ConfigSummary {
   kind: ConfigKind;
@@ -24,7 +24,8 @@ export interface ConfigVersion {
 
 // The config feature's calls; src/api.ts spreads them into `api`.
 export const configApi = {
-  configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file" }>("/v1/config"),
+  // max_sandboxes: the most sandboxes the deployment's VM holds, the ceiling on max_parallel; null when unset.
+  configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file"; max_sandboxes?: number | null }>("/v1/config"),
   configModels: () =>
     call<{ models: { name: string; engine: string; model: string; status: string }[] }>("/v1/config/models").then((r) => r.models),
   config: (kind: ConfigKind) => call<ConfigVersion>(`/v1/config/${kind}`),

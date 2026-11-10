@@ -25,7 +25,7 @@ def _git(*args: str, cwd: Path) -> str:
 
 def _policy(tmp_path: Path, monkeypatch, reviewers: list[str], max_rounds=3) -> None:
     path = tmp_path / "task_policy.json"
-    path.write_text(json.dumps({"review": {"reviewers": reviewers, "max_rounds": max_rounds}}))
+    path.write_text(json.dumps({"max_parallel": 2, "review": {"reviewers": reviewers, "max_rounds": max_rounds}}))
     monkeypatch.setattr(routing, "TASK_POLICY_PATH", path)
 
 
@@ -64,8 +64,8 @@ def test_a_malformed_task_policy_stops_the_worker_and_a_missing_profile_only_war
         routing.review_policy_lines()
     _policy(tmp_path, monkeypatch, ["harness:pi-gone/claude:x"], max_rounds=2)
     lines = routing.review_policy_lines()
-    assert lines[0] == "review: up to 2 fix rounds"
-    assert "cannot run, so the review loop skips it" in lines[1]
+    assert lines[:2] == ["tasks: up to 2 at once", "review: up to 2 fix rounds"]
+    assert "cannot run, so the review loop skips it" in lines[2]
 
 
 # --- Prompts ------------------------------------------------------------------------------------------

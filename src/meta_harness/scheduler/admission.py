@@ -6,8 +6,9 @@ Every MH_ADMISSION_SECONDS the meta-harness scheduler runs one admission pass:
    running (a task whose pull request is open, `ready`, releases its lock;
    until the meta-harness sees merges, holding the lock to merge would stop
    every other task on the repo), and renews the rest.
-2. It takes queued tasks by priority, then age, while fewer than
-   MH_MAX_RUNNING tasks hold locks.
+2. It takes queued tasks by priority, then age, while fewer tasks hold
+   locks than the task policy's max_parallel, read each pass, so a saved
+   change applies at the next one.
 3. It holds a task whose goal is not active, whose goal has spent its
    `max_usd`, or whose repo area another task holds. A task names its area
    with `paths` (their top-level directories); a task with none takes the
@@ -59,7 +60,7 @@ class Admission:
         goals: Any,
         events: Any,
         start: Callable[[str], Awaitable[None]],
-        max_running: int = 2,
+        max_running: int | Callable[[], int] = 2,
         cancel: Callable[[str], Awaitable[None]] | None = None,
         signal: Callable[[str, dict], Awaitable[None]] | None = None,
     ) -> None:
@@ -81,13 +82,14 @@ class Admission:
         await self._release_and_renew(result)
         if engaged:
             return result
+        limit = self.max_running if isinstance(self.max_running, int) else await asyncio.to_thread(self.max_running)
         locked = await asyncio.to_thread(_locks)
         in_flight = {row["task_id"] for row in locked}
         queued = await asyncio.to_thread(self.tasks.list, ["queued"], None, 200)
         goals: dict[str, dict] = {}
         spend: dict[str, Decimal] = {}
         for task in queued:
-            if len(in_flight) >= self.max_running:
+            if len(in_flight) >= limit:
                 break
             if task["id"] in in_flight:
                 continue
