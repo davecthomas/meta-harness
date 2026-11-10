@@ -238,3 +238,10 @@ def test_reviews_pair_each_posted_round_with_its_findings_and_say_what_came_next
     assert shown[0]["findings"] == [{"path": "a.py", "line": 3, "body": "Test it."}]
     assert shown[0]["next"] == {"kind": "fix", "run_id": "r-3", "attempt": 3}
     assert shown[1]["next"]["kind"] == "waiting"
+
+
+def test_tasks_are_found_by_text_in_their_title_id_or_ref(api):
+    word = f"walrus{uuid.uuid4().hex[:6]}"
+    task = api.post("/v1/tasks", json=_task(title=f"Fix the {word} crash"), headers=_as(CALLER_KEY)).json()
+    found = api.get("/v1/tasks", params={"q": word.upper()}, headers=_as(CALLER_KEY)).json()["tasks"]
+    assert [t["id"] for t in found] == [task["id"]]

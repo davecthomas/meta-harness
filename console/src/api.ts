@@ -336,6 +336,10 @@ export const api = {
   latestPosition: () => call<{ latest_position: number }>("/v1/events" + query({ limit: 1, from_position: 0 })),
 
   configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file" }>("/v1/config"),
+  search: (q: string) =>
+    call<{ goals: { id: string; title: string; status: string }[]; tasks: { id: string; title: string; status: string; ref: string | null }[] }>(
+      "/v1/search" + query({ q }),
+    ),
   settings: () => call<UserSettings>("/v1/me/settings"),
   saveSettings: (settings: UserSettings) => call<UserSettings>("/v1/me/settings", { method: "PUT", body: JSON.stringify(settings) }),
   reposAvailable: () => call<{ repos: { name: string; private: boolean }[]; install_urls: string[] }>("/v1/repos/available"),
