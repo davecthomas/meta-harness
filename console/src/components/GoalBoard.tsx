@@ -2,6 +2,7 @@ import { Anchor, Badge, Group, Paper, Progress, SimpleGrid, Stack, Text, Tooltip
 import { useNavigate } from "react-router-dom";
 import { issueUrl, type IssueProgress, type Task } from "../api";
 import { PrLink, StatusBadge } from "./ui";
+import { projection } from "./Spend";
 
 // The board's columns, in order, each with its color in the board and the graph.
 export const COLUMNS = [
@@ -101,6 +102,7 @@ export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<str
   const done = props.issues.filter((i) => column.get(i.ref) === "done").length;
   const spent = Object.values(props.spend).reduce((a, b) => a + b, 0);
   const budget = props.budget ? Number(props.budget) : null;
+  const projected = projection(spent, done, props.issues.length);
   return (
     <Group gap="xl" mb="md" data-testid="goal-progress">
       <Stack gap={2} w={220}>
@@ -108,7 +110,10 @@ export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<str
         <Progress value={(100 * done) / props.issues.length} color="teal" />
       </Stack>
       <Stack gap={2} w={220}>
-        <Text size="xs" c="dimmed">${spent.toFixed(2)} spent{budget ? ` of $${budget.toFixed(2)}` : ""}</Text>
+        <Text size="xs" c="dimmed">
+          ${spent.toFixed(2)} spent{budget ? ` of $${budget.toFixed(2)}` : ""}
+          {projected !== null && done < props.issues.length && ` · about $${projected.toFixed(2)} to finish`}
+        </Text>
         {budget !== null && (
           <Progress value={Math.min(100, (100 * spent) / budget)} color={spent >= budget ? "red" : spent >= 0.8 * budget ? "yellow" : "blue"} />
         )}

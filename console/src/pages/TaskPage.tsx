@@ -7,6 +7,7 @@ import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../ap
 import { Reviews } from "../components/Reviews";
 import { Timeline } from "../components/Timeline";
 import { Changes } from "../components/Changes";
+import { SpendLine, spendOf } from "../components/Spend";
 import { useEventStream } from "../hooks";
 import { describe, fold, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "../components/Terminal";
@@ -161,7 +162,7 @@ export function TaskPage() {
           ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
           ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
           ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
-          ["Turn and spend", <Text size="sm">Turn {facts.turn}, ${facts.usd.toFixed(4)} {facts.model && <Code>{facts.model}</Code>}</Text>],
+          ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
         ]}
       />
       <SegmentedControl

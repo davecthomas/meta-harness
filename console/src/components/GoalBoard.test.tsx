@@ -90,5 +90,5 @@ test("the graph colors each issue by its column", () => {
 test("progress counts done issues and spend against the budget", () => {
   renderIn(<GoalProgress issues={ISSUES} spend={{ "t-3": 1.25, "t-5": 2.5 }} budget="10" />);
   expect(screen.getByText("1 of 8 issues done")).toBeTruthy();
-  expect(screen.getByText("$3.75 spent of $10.00")).toBeTruthy();
+  expect(screen.getByText(/\$3.75 spent of \$10.00 · about \$30.00 to finish/)).toBeTruthy();
 });
