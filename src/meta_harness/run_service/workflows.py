@@ -629,7 +629,13 @@ class RunTask:
         within the task policy's fix rounds and the task's spend limit. Returns the outcome and why."""
         info = workflow.info()
         rounds = 0
+        # Behind a patch: workflows from before it say nothing while they wait, and fix any failure.
+        told = workflow.patched("merge-checks-judged")
+        rechecked = False
         while True:
+            if told and self._task_id:
+                waiting = f"{reason}; waiting for the checks on the merge commit {loop.merge_sha[:12]}"
+                await self._task_status("running", waiting, loop.published.pr_url)
             checks = await workflow.execute_activity(
                 wait_merge_checks,
                 MergeChecksRequest(
@@ -654,6 +660,18 @@ class RunTask:
                     f"{reason}; the merge commit's checks did not finish in 120 minutes: {names}",
                 )
             merged_pr = loop.published.pr_url
+            if rechecked:
+                return (
+                    "merge_checks_failed",
+                    f"{reason}; {names} failed on the merge commit, and its fix changed nothing",
+                )
+            if told and not any(f.summary.strip() for f in checks.failed):
+                # A fix run changes code, and a check that says nothing gives it nothing to change: a deploy
+                # that failed with no output is for an operator, with the check's run on the code host.
+                return "merge_checks_failed", (
+                    f"{reason}; {names} failed on the merge commit {loop.merge_sha[:12]} with no output a fix run "
+                    "could act on, so no fix run started: see the check's run on the code host"
+                )
             if rounds >= loop.max_rounds:
                 return "merge_checks_failed", (
                     f"{reason}; {names} failed on the merge commit, and the {loop.max_rounds} fix rounds are used up"
@@ -666,6 +684,9 @@ class RunTask:
             rounds += 1
             fix = loop.prompt_request("fix", failed_checks=checks.failed, merged_pr=merged_pr, round_no=rounds)
             fix.branch = loop.published.base
+            if told and self._task_id:
+                fixing = f"{reason}; fixing {names}, which failed on the merge commit {loop.merge_sha[:12]}"
+                await self._task_status("running", fixing, merged_pr)
             prompt = await self._loop_prompt(fix)
             harness, detail = await self._loop_run(loop, prompt, loop.author, "fix", loop.thinking, branch="")
             if harness is None or harness.status != "FINISHED":
@@ -693,6 +714,11 @@ class RunTask:
                 retry_policy=PUBLISH_RETRY,
             )
             if not published.pr_url:
+                if told:
+                    # Nothing to change may mean nothing was wrong with the code: look once more, since a newer
+                    # commit's passing run of the same check settles it.
+                    rechecked = True
+                    continue
                 return (
                     "merge_checks_failed",
                     f"{reason}; {names} failed on the merge commit, and its fix changed nothing",
