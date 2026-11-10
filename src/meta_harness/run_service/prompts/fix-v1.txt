@@ -19,6 +19,7 @@ $checks
 
 Rules:
 - Make what is requested, and nothing else. Keep the earlier work unless a request says to change it.
+- $paths
 - Run each acceptance check with the bash tool before you finish, and fix what fails.
 - Do not commit, push or open a pull request. When you finish, the meta-harness commits your changes to the branch.
 - Finish with a short summary: what you changed for each request, and which checks you ran and how they ended.

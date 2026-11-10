@@ -56,6 +56,21 @@ and what is planned.
   replays recorded histories and fails a change that skips this. Record a
   history of the new path too (its docstring says how) and keep the old ones.
 
+## Parallel tasks
+
+Several tasks change this repo at once, each on its own branch. Keep them
+from colliding:
+
+- A new feature is new files. Add to a central list (a route table, an event
+  registry, an API module, `console/src/features/index.ts`) only to register
+  the new files, never to put logic there.
+- Touch a file the task is not about only when the task cannot be done
+  without it, and say so in the pull request's summary.
+- An issue's `Paths:` line names the paths its task changes, such as
+  `Paths: console/src/features/goals, src/meta_harness/planner`. Keep to them;
+  a change outside them with no reason in the summary is a review finding.
+  Two issues whose paths overlap run one at a time.
+
 ## Style
 
 - US English in code, comments and docs.

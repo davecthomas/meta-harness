@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from meta_harness.github_app import GitHubApps
-from meta_harness.run_service.code_host import acceptance_checks
+from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 
 READ_ISSUES = {"issues": "read"}
 REF = re.compile(r"^github:(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$")
@@ -30,6 +30,8 @@ class Issue:
     depends_on: list[str] = field(default_factory=list)
     checks: list[str] = field(default_factory=list)
     updated_at: str = ""
+    # The body's `Paths:` lines: the areas the task locks, so issues naming one area run in turn.
+    paths: list[str] = field(default_factory=list)
 
 
 class Tracker(Protocol):
@@ -74,6 +76,7 @@ def _issue(repo: str, data: dict) -> Issue:
         depends_on=depends_on(repo, body),
         checks=acceptance_checks(body),
         updated_at=data.get("updated_at") or "",
+        paths=issue_paths(body),
     )
 
 

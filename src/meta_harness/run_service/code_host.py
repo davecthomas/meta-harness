@@ -136,6 +136,43 @@ async def read_ticket(ref: str) -> Ticket:
     return Ticket(ref=ref, repo=repo, title=issue["title"], body=body, checks=acceptance_checks(body))
 
 
+# "Paths: console/src/features/goals, src/meta_harness/planner" lines in an issue body.
+PATHS_LINE = re.compile(r"^\s*paths:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+
+
+def issue_paths(body: str) -> list[str]:
+    """The paths a body's `Paths:` lines name, comma-separated, without backticks or leading and trailing
+    slashes, in order and once each."""
+    found: list[str] = []
+    for line in PATHS_LINE.findall(body or ""):
+        for item in line.split(","):
+            path = item.strip().strip("`").strip().removeprefix("./").strip("/")
+            if path and path not in found:
+                found.append(path)
+    return found
+
+
+def paths_rule(description: str, kind: str) -> str:
+    """The prompt's rule about the task's paths, from its description's `Paths:` lines. kind: task, review, fix."""
+    paths = issue_paths(description)
+    if not paths:
+        return (
+            "The task names no paths, so the change should stay in the files the task is about."
+            if kind == "review"
+            else "Touch a file the task is not about only when the task cannot be done without it, and say so in your summary."
+        )
+    listed = ", ".join(paths)
+    if kind == "review":
+        return (
+            f"The task names its paths: {listed}. A changed file outside them, with no reason for it in the pull "
+            "request's summary, is a finding."
+        )
+    return (
+        f"Keep to the task's paths: {listed}. Change a file outside them only when the task cannot be done "
+        "without it, and say why in your summary."
+    )
+
+
 def acceptance_checks(body: str) -> list[str]:
     """The list items under a `## Acceptance checks` heading, with backticks removed."""
     checks: list[str] = []

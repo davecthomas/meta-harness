@@ -12,7 +12,8 @@ Acceptance checks:
 $checks
 
 Rules:
-- Change only what the task needs.
+- Change only what the task needs. A new feature is new files: add to a central list, such as a route table, an event registry or an API module, only to register them, never to put logic there.
+- $paths
 - For a task of more than a few steps, keep your plan with the update_plan tool: record it before you start, and update it as each step starts and finishes.
 - Run each acceptance check with the bash tool before you finish, and fix what fails.
 - Do not commit, push or open a pull request. When you finish, the meta-harness commits your changes and opens the pull request.
