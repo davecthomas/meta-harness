@@ -357,6 +357,25 @@ def create_app(
         events.emit("pull_request_commented", comment, task_id=task_id, actor=who)
         return comment
 
+    @app.get("/v1/search")
+    def search(q: str = Query(min_length=1, max_length=200), who: str = Depends(operator)) -> dict:
+        """Goals and tasks whose text holds q, for the console's command palette. Issues come in as their tasks:
+        a task's title is its issue's. The planner reads its own goals and asks the Task API for tasks."""
+        with app.state.pool.connection() as conn:
+            goals = store.search_goals(conn, q)
+        try:
+            found = tasks.search(q)
+        except (TaskApiError, AttributeError):
+            found = []
+        return {
+            "goals": [
+                {"id": g["id"], "title": g.get("title") or g["statement"][:80], "status": g["status"]} for g in goals
+            ],
+            "tasks": [
+                {"id": t["id"], "title": t["title"], "status": t["status"], "ref": t.get("external_ref")} for t in found
+            ],
+        }
+
     @app.get("/v1/me/settings")
     def my_settings(who: str = Depends(operator)) -> dict:
         """The signed-in user's own settings, or the defaults when they have saved none."""

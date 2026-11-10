@@ -1,9 +1,10 @@
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { Badge, Button, Group, SegmentedControl, Table, Text } from "@mantine/core";
 import { IconPlus } from "@tabler/icons-react";
 import { goalTitle, api, goalStatus } from "../api";
 import { useInfinite } from "../hooks";
+import { useRowKeys } from "../components/CommandPalette";
 import { DataTable, Empty, ErrorAlert, PageHeader, StatusBadge, TitleLink, when } from "../components/ui";
 
 const FILTERS: Record<string, { label: string; statuses: string[] }> = {
@@ -17,6 +18,10 @@ export function GoalsPage() {
   const [params, setParams] = useSearchParams();
   const show = FILTERS[params.get("show") ?? "open"] ? (params.get("show") ?? "open") : "open";
   const goals = useInfinite((offset, limit) => api.goals(FILTERS[show].statuses, offset, limit), 50, `goals:${show}`);
+
+  // j and k move through the goals, Enter opens the one picked.
+  const navigate = useNavigate();
+  const picked = useRowKeys(goals.items.length, (i) => navigate(`/goals/${goals.items[i].id}`));
 
   return (
     <>
@@ -36,8 +41,8 @@ export function GoalsPage() {
       <ErrorAlert error={goals.error} />
       {goals.items.length ? (
         <DataTable head={["Goal", "Status", "Modality", "Label", "Repos", "Budget", "Created"]}>
-          {goals.items.map((g) => (
-            <Table.Tr key={g.id}>
+          {goals.items.map((g, i) => (
+            <Table.Tr key={g.id} data-picked={picked === i || undefined} bg={picked === i ? "var(--mantine-color-default-hover)" : undefined}>
               <Table.Td maw={420}><TitleLink to={`/goals/${g.id}`} title={goalTitle(g)} id={g.id} /></Table.Td>
               <Table.Td><StatusBadge status={goalStatus(g)} /></Table.Td>
               <Table.Td><Text size="sm">{g.modality}</Text></Table.Td>

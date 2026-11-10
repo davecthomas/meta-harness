@@ -111,6 +111,18 @@ def page_goals(conn: psycopg.Connection, statuses: list[str] | None, limit: int,
         return rows, cur.fetchone()["n"]
 
 
+def search_goals(conn: psycopg.Connection, q: str, limit: int = 10) -> list[dict]:
+    """Goals whose title, statement, label or id holds the text, newest first."""
+    like = f"%{q}%"
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"SELECT {GOAL_COLUMNS} FROM planner.goal WHERE title ILIKE %s OR statement ILIKE %s OR label ILIKE %s "
+            "OR id ILIKE %s ORDER BY created_at DESC LIMIT %s",
+            (like, like, like, like, limit),
+        )
+        return [_goal(row) for row in cur.fetchall()]
+
+
 def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, **fields: Any) -> tuple[dict, dict]:
     """Change title, statement, auto_merge, priority, max_usd or status. Returns (goal, the fields that changed with their old values).
 
