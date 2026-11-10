@@ -12,7 +12,9 @@ console shows at the top of that run.
 
 from dataclasses import dataclass
 
+import httpx
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from meta_harness.run_service import events
 
@@ -39,11 +41,24 @@ class RunPromptRecord:
 
 @activity.defn
 async def record_prompt(record: RunPromptRecord) -> None:
-    """Appends run_prompt for the run. Its event id makes a Temporal retry a no-op."""
-    events.emit(
-        "run_prompt",
-        {"run_id": record.run_id, "kind": record.kind, "template": record.template, "prompt": record.prompt},
-        task_id=record.task_id,
-        run_id=record.run_id,
-        event_id=events.stable_id(record.run_id, "run_prompt"),
-    )
+    """Appends run_prompt for the run, and returns only once the event service has stored it.
+
+    It appends at once rather than through the outbox, so the prompt is stored, and holds an earlier
+    position than any of the run's own events, before run_harness starts, on this worker or another.
+    An unreachable event service raises, so Temporal retries; the stable event id makes a retry that
+    follows a stored append a no-op. A rejected event (422) is a bug a retry cannot fix.
+    """
+    try:
+        events.append(
+            "run_prompt",
+            {"run_id": record.run_id, "kind": record.kind, "template": record.template, "prompt": record.prompt},
+            task_id=record.task_id,
+            run_id=record.run_id,
+            event_id=events.stable_id(record.run_id, "run_prompt"),
+        )
+    except httpx.HTTPStatusError as err:
+        if err.response.status_code == 422:
+            raise ApplicationError(
+                f"the event service refused run_prompt: {err.response.text}", non_retryable=True
+            ) from err
+        raise
