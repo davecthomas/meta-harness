@@ -1,42 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Center,
-  Code,
-  Group,
-  JsonInput,
-  List,
-  Loader,
-  Modal,
-  NumberInput,
-  Paper,
-  Popover,
-  ScrollArea,
-  SegmentedControl,
-  SimpleGrid,
-  Stack,
-  Table,
-  Tabs,
-  Text,
-  TextInput,
-  Tooltip,
-} from "@mantine/core";
+import { Alert, Badge, Button, Center, Code, Group, List, Loader, Modal, Paper, Popover, Stack, Table, Tabs, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconArrowBackUp, IconCode, IconDeviceFloppy, IconEdit, IconInfoCircle } from "@tabler/icons-react";
+import { IconArrowBackUp, IconCode, IconInfoCircle } from "@tabler/icons-react";
 import { api, ApiError, type ConfigKind, type ConfigSummary, type ConfigVersion } from "../../api";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
-import { ProfilesForm, TiersForm, lineDiff } from "./ConfigForms";
-import { DataTable, ErrorAlert, Facts, PageHeader, SectionTitle, when } from "../../components/ui";
+import { DataTable, ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
+import { ReposView, TaskPolicyView, type Staging } from "./ConfigViews";
+import { ProfilesView } from "./ProfilesView";
+import { JsonDialog, ReviewDialog, StagedBar } from "./StagedChanges";
+import { TiersView } from "./TiersView";
+import { countChanges, reasonTarget, setIn, shapeProblems } from "./staging";
 
 const ORIGIN_COLORS: Record<string, string> = { seed: "gray", edit: "indigo", rollback: "orange" };
 
 // Configuration: router tiers, harness profiles, the repo registry and the task policy. Each kind shows its active
-// version laid out for reading, an editor that saves a new version (refused with every reason when
-// the service would refuse it), and the version history, where any version can be made active again.
+// version laid out for reading, with every value edited in place. An edit stages; the staged changes are
+// reviewed as a diff and saved together as one version (refused with every reason, each beside its value,
+// when the service would refuse it). The version history makes any version active again.
 export function ConfigPage() {
   const [params, setParams] = useSearchParams();
   const [kinds, setKinds] = useState<ConfigSummary[] | null>(null);
@@ -91,9 +72,17 @@ export function ConfigPage() {
 function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary; onSaved: () => void; maxSandboxes: number | null }) {
   const [current, setCurrent] = useState<ConfigVersion | null>(null);
   const [versions, setVersions] = useState<ConfigVersion[]>([]);
-  const [editing, setEditing] = useState(false);
+  // The document with the staged changes, or null while nothing is staged.
+  const [staged, setStaged] = useState<Record<string, any> | null>(null);
+  const [reasons, setReasons] = useState<string[]>([]);
+  const [reviewing, setReviewing] = useState(false);
+  // When the review was opened by the unsaved-changes prompt: answers it once the review saves or closes.
+  const reviewDone = useRef<((saved: boolean) => void) | null>(null);
+  const [editingJson, setEditingJson] = useState(false);
   const [viewing, setViewing] = useState<ConfigVersion | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [profileNames, setProfileNames] = useState<string[]>([]);
+  const [models, setModels] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -109,30 +98,108 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
     void load();
   }, [load]);
 
+  // A tier candidate names a harness profile and a model: the selects offer the active profiles and the priced models.
+  useEffect(() => {
+    if (summary.kind !== "tiers") return;
+    api.config("profiles").then((p) => setProfileNames(Object.keys(p.document.profiles ?? {})), () => setProfileNames([]));
+    api.configModels().then((m) => setModels(m.map((x) => x.name)), () => setModels([]));
+  }, [summary.kind]);
+
+  const original = current?.document ?? {};
+  const document = staged ?? original;
+  const count = current ? countChanges(original, document) : 0;
+
+  // Stages a whole document; one that matches the active version leaves nothing staged.
+  const replace = (next: Record<string, any>) => setStaged(countChanges(original, next) ? next : null);
+
   async function changed(saved: ConfigVersion, verb: string) {
     notifications.show({ color: "teal", title: `${summary.title} ${verb}`, message: `Version ${saved.version} is active.` });
-    setEditing(false);
     await load();
     onSaved();
   }
 
-  async function rollback(version: number) {
+  // The checked save of every staged change, as one version. A refusal keeps the changes staged and shows
+  // each reason beside the value it is about.
+  async function save(note: string): Promise<boolean> {
+    if (!current || !staged) return false;
+    setReasons([]);
+    setError(null);
+    try {
+      const saved = await api.saveConfig(summary.kind, staged, note);
+      unsaved.release();
+      setStaged(null);
+      await changed(saved, "saved");
+      return true;
+    } catch (err) {
+      if (err instanceof ApiError && err.reasons.length) setReasons(err.reasons);
+      else setError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }
+
+  function discard() {
+    setStaged(null);
+    setReasons([]);
+  }
+
+  // Opens the review; resolves true once a reviewed save succeeds, false when it is refused or closed.
+  function review(): Promise<boolean> {
+    reviewDone.current?.(false);
+    return new Promise<boolean>((resolve) => {
+      reviewDone.current = resolve;
+      setReviewing(true);
+    });
+  }
+
+  function closeReview(saved: boolean) {
+    setReviewing(false);
+    const done = reviewDone.current;
+    reviewDone.current = null;
+    done?.(saved);
+  }
+
+  // Saving from the prompt (leaving the page, or before a rollback) goes through the same review and note as
+  // Review and save; the leave goes ahead only once that save succeeds.
+  const unsaved = useUnsavedChanges({
+    dirty: count > 0,
+    describe: `the ${KIND_NAMES[summary.kind]}, staged on version ${current?.version ?? ""}`,
+    save: review,
+    saveOpensDialog: true,
+    discard,
+  });
+
+  // Making another version active replaces the one the staged changes are based on, so staged changes are
+  // saved or discarded first, through the same prompt as leaving the page.
+  function rollback(version: number) {
+    unsaved.confirm(() => void makeActive(version));
+  }
+
+  async function makeActive(version: number) {
     try {
       await changed(await api.rollbackConfig(summary.kind, version), `rolled back to version ${version}`);
     } catch (err) {
-      const reasons = err instanceof ApiError && err.reasons.length ? err.reasons : null;
+      const why = err instanceof ApiError && err.reasons.length ? err.reasons : null;
       notifications.show({
         color: "red",
         title: `Version ${version} no longer fits`,
-        message: reasons ? reasons.join("; ") : err instanceof Error ? err.message : String(err),
+        message: why ? why.join("; ") : err instanceof Error ? err.message : String(err),
         autoClose: false,
       });
     }
   }
 
   if (!current) return error ? <ErrorAlert error={error} /> : <Center h={160}><Loader /></Center>;
+  const staging: Staging = {
+    document,
+    original,
+    stage: (path, value) => replace(setIn(document, path, value)),
+    reasons: (target) => reasons.filter((r) => reasonTarget(summary.kind, document, r) === target),
+  };
+  const loose = reasons.filter((r) => reasonTarget(summary.kind, document, r) === null);
+
   return (
     <>
+      {unsaved.element}
       <Paper mb="lg" p="md">
         <Group justify="space-between" wrap="wrap" gap="md">
           <Stack gap={2} style={{ flex: "1 1 360px" }}>
@@ -142,20 +209,24 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
               {when(current.created_at)}{current.note ? `: ${current.note}` : ""}
             </Text>
           </Stack>
-          {!editing && (
-            <Group gap="sm">
-              <Button variant="default" leftSection={<IconCode size={16} />} onClick={() => setViewing(current)}>JSON</Button>
-              <Button leftSection={<IconEdit size={16} />} onClick={() => setEditing(true)}>Edit</Button>
-            </Group>
-          )}
+          <Button variant="default" leftSection={<IconCode size={16} />} onClick={() => setEditingJson(true)}>Advanced: JSON</Button>
         </Group>
       </Paper>
 
-      {editing ? (
-        <Editor kind={summary.kind} current={current} maxSandboxes={maxSandboxes} onCancel={() => setEditing(false)} onSaved={(saved) => changed(saved, "saved")} />
-      ) : (
-        <ActiveView kind={summary.kind} document={current.document} maxSandboxes={maxSandboxes} />
+      {count > 0 && (
+        <StagedBar count={count} version={current.version} onDiscard={discard} onReview={() => setReviewing(true)} />
       )}
+      {loose.length > 0 && (
+        <Alert color="red" mb="md" title="Not saved: the service would refuse this version">
+          <List size="sm" spacing={4}>{loose.map((r) => <List.Item key={r}>{r}</List.Item>)}</List>
+        </Alert>
+      )}
+      <ErrorAlert error={error} />
+
+      {summary.kind === "tiers" && <TiersView staging={staging} profiles={profileNames} models={models} />}
+      {summary.kind === "profiles" && <ProfilesView staging={staging} />}
+      {summary.kind === "repos" && <ReposView staging={staging} />}
+      {summary.kind === "task_policy" && <TaskPolicyView policy={document} maxSandboxes={maxSandboxes} staging={staging} />}
 
       <SectionTitle>Version history</SectionTitle>
       <DataTable head={["Version", "Change", "By", "When", "Note", ""]} minWidth={760}>
@@ -188,6 +259,22 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
       <Modal opened={viewing !== null} onClose={() => setViewing(null)} size="xl" title={viewing ? `${summary.title}, version ${viewing.version}` : ""}>
         {viewing && <Code block style={{ maxHeight: "70vh", overflow: "auto" }}>{JSON.stringify(viewing.document, null, 2)}</Code>}
       </Modal>
+      {reviewing && (
+        <ReviewDialog
+          version={current.version}
+          before={original}
+          after={document}
+          onClose={() => closeReview(false)}
+          onSave={async (note) => {
+            const ok = await save(note);
+            closeReview(ok);
+            return ok;
+          }}
+        />
+      )}
+      {editingJson && (
+        <JsonDialog title={`${summary.title}: version ${current.version}${count ? ` with ${count} staged ${count === 1 ? "change" : "changes"}` : ""}`} document={document} check={(d) => shapeProblems(summary.kind, d)} onClose={() => setEditingJson(false)} onApply={replace} />
+      )}
     </>
   );
 }
@@ -220,301 +307,3 @@ const KIND_NAMES: Record<ConfigKind, string> = {
   task_policy: "task policy",
 };
 
-function Editor(props: {
-  kind: ConfigKind;
-  current: ConfigVersion;
-  maxSandboxes: number | null;
-  onCancel: () => void;
-  onSaved: (v: ConfigVersion) => void;
-}) {
-  const original = JSON.stringify(props.current.document, null, 2);
-  const [text, setText] = useState(original);
-  const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [reasons, setReasons] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  // Tiers and profiles have a form; the JSON stays as Advanced. Both edit the same text.
-  const hasForm = props.kind === "tiers" || props.kind === "profiles" || props.kind === "task_policy";
-  const [mode, setMode] = useState<"form" | "json">(hasForm ? "form" : "json");
-  const [reviewing, setReviewing] = useState(false);
-  const [profileNames, setProfileNames] = useState<string[]>([]);
-  const [models, setModels] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (props.kind !== "tiers") return;
-    api.config("profiles").then((p) => setProfileNames(Object.keys(p.document.profiles ?? {})), () => setProfileNames([]));
-    api.configModels().then((m) => setModels(m.map((x) => x.name)), () => setModels([]));
-  }, [props.kind]);
-
-  let parsed: Record<string, any> | null = null;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = null;
-  }
-
-  // The checked save. Resolves true when the version is saved; a refusal stays in the editor with its reasons.
-  async function save(): Promise<boolean> {
-    let document: unknown;
-    try {
-      document = JSON.parse(text);
-    } catch (err) {
-      setError(`The document is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
-      return false;
-    }
-    setSaving(true);
-    setReasons([]);
-    setError(null);
-    try {
-      const saved = await api.saveConfig(props.kind, document, note);
-      unsaved.release();
-      props.onSaved(saved);
-      return true;
-    } catch (err) {
-      if (err instanceof ApiError && err.reasons.length) setReasons(err.reasons);
-      else setError(err instanceof Error ? err.message : String(err));
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const unsaved = useUnsavedChanges({
-    dirty: text !== original || note.trim() !== "",
-    describe: `the ${KIND_NAMES[props.kind]}, edited from version ${props.current.version}`,
-    save,
-    discard: () => {
-      setText(original);
-      setNote("");
-    },
-  });
-
-  // The reasons no form field names show at the top; the form shows the rest beside what they are about.
-  const placed = (r: string) =>
-    mode === "form" &&
-    ((props.kind === "tiers" && (parsed?.tiers ?? []).some((t: any) => r.startsWith(`tier ${t.name}`))) ||
-      (props.kind === "profiles" && Object.keys(parsed?.profiles ?? {}).some((n) => r.startsWith(`${n}:`))));
-  const loose = reasons.filter((r) => !placed(r));
-
-  return (
-    <Paper mb="lg">
-      <Stack gap="md">
-        {loose.length > 0 && (
-          <Alert color="red" title="Not saved: the service would refuse this version">
-            <List size="sm" spacing={4}>{loose.map((r) => <List.Item key={r}>{r}</List.Item>)}</List>
-          </Alert>
-        )}
-        <ErrorAlert error={error} />
-        {unsaved.element}
-        {hasForm && (
-          <SegmentedControl
-            value={mode}
-            onChange={(v) => setMode(v as "form" | "json")}
-            data={[{ value: "form", label: "Form" }, { value: "json", label: "Advanced: JSON" }]}
-            w={260}
-          />
-        )}
-        {mode === "form" && parsed && props.kind === "tiers" && (
-          <TiersForm document={parsed} onChange={(d) => setText(JSON.stringify(d, null, 2))} profiles={profileNames} models={models} reasons={reasons} />
-        )}
-        {mode === "form" && parsed && props.kind === "profiles" && (
-          <ProfilesForm document={parsed} onChange={(d) => setText(JSON.stringify(d, null, 2))} reasons={reasons} />
-        )}
-        {mode === "form" && parsed && props.kind === "task_policy" && (
-          <TaskPolicyForm document={parsed} onChange={(d) => setText(JSON.stringify(d, null, 2))} maxSandboxes={props.maxSandboxes} />
-        )}
-        {mode === "form" && !parsed && <Alert color="yellow">The JSON is not valid, so the form can't show it. Fix it under Advanced.</Alert>}
-        {mode === "json" && (
-          <JsonInput
-            label={`Edit version ${props.current.version}`}
-            description="Saving checks it the way the service that reads it checks its configuration at startup."
-            value={text}
-            onChange={setText}
-            validationError="Not valid JSON"
-            formatOnBlur
-            autosize
-            minRows={12}
-            maxRows={40}
-            styles={{ input: { fontFamily: "var(--mantine-font-family-monospace)", fontSize: 13 } }}
-          />
-        )}
-        <Group justify="flex-end">
-          <Button variant="default" onClick={() => unsaved.confirm(props.onCancel)}>Cancel</Button>
-          <Button leftSection={<IconDeviceFloppy size={16} />} disabled={text === original} onClick={() => setReviewing(true)}>
-            Review and save
-          </Button>
-        </Group>
-      </Stack>
-      <Modal opened={reviewing} onClose={() => setReviewing(false)} title={`Save version ${props.current.version + 1}`} size="xl">
-        <Stack gap="md">
-          <Text size="sm">The changes against version {props.current.version}, the active one:</Text>
-          <ScrollArea.Autosize mah="45vh">
-            <Code block>
-              {lineDiff(original, text)
-                .filter((l, i, all) => l.sign !== " " || all.slice(Math.max(0, i - 2), i + 3).some((x) => x.sign !== " "))
-                .map((l) => `${l.sign} ${l.text}`)
-                .join("\n")}
-            </Code>
-          </ScrollArea.Autosize>
-          <TextInput label="Note" description="Why you changed it. It shows in the version history." value={note} onChange={(e) => setNote(e.currentTarget.value)} />
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setReviewing(false)}>Back to editing</Button>
-            <Button
-              leftSection={<IconDeviceFloppy size={16} />}
-              loading={saving}
-              onClick={async () => {
-                const ok = await save();
-                setReviewing(false);
-                if (!ok) setMode((m) => m);
-              }}
-            >
-              Save as version {props.current.version + 1}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-    </Paper>
-  );
-}
-
-function ActiveView({ kind, document, maxSandboxes }: { kind: ConfigKind; document: Record<string, any>; maxSandboxes: number | null }) {
-  if (kind === "tiers") return <TiersView router={document} />;
-  if (kind === "profiles") return <ProfilesView profiles={document.profiles ?? {}} />;
-  if (kind === "task_policy") return <TaskPolicyView policy={document} maxSandboxes={maxSandboxes} />;
-  return <ReposView repos={document.repos ?? {}} />;
-}
-
-// The line under the parallel limit: the VM's ceiling, which a save above it is refused by.
-function ceilingLine(maxSandboxes: number | null): string {
-  return maxSandboxes
-    ? `At most ${maxSandboxes}: the deployment's VM holds ${maxSandboxes} sandboxes. A goal can hold itself to fewer.`
-    : "This deployment sets no ceiling (MH_MAX_SANDBOXES). A goal can hold itself to fewer.";
-}
-
-export function TaskPolicyView({ policy, maxSandboxes }: { policy: Record<string, any>; maxSandboxes: number | null }) {
-  return (
-    <Facts
-      items={[
-        ["Parallel tasks", <Stack gap={2}><Text size="sm" fw={600}>{policy.max_parallel}, across every goal</Text><Text size="xs" c="dimmed">{ceilingLine(maxSandboxes)}</Text></Stack>],
-        ["Fix rounds", <Text size="sm">Up to {policy.review?.max_rounds} before a pull request waits for an operator</Text>],
-        [
-          "Reviewers, in order",
-          <Stack gap={4}>
-            {(policy.review?.reviewers ?? []).map((pair: string) => (
-              <Code key={pair}>{pair}</Code>
-            ))}
-          </Stack>,
-        ],
-      ]}
-    />
-  );
-}
-
-function TaskPolicyForm(props: { document: Record<string, any>; onChange: (d: Record<string, any>) => void; maxSandboxes: number | null }) {
-  const { document } = props;
-  return (
-    <Stack gap="md" maw={420}>
-      <NumberInput
-        label="Parallel tasks"
-        description={ceilingLine(props.maxSandboxes)}
-        min={1}
-        max={props.maxSandboxes ?? undefined}
-        allowDecimal={false}
-        value={document.max_parallel ?? ""}
-        onChange={(v) => props.onChange({ ...document, max_parallel: typeof v === "number" ? v : Number(v) || 0 })}
-      />
-      <NumberInput
-        label="Fix rounds"
-        description="Review-and-fix rounds before a pull request waits for an operator."
-        min={0}
-        allowDecimal={false}
-        value={document.review?.max_rounds ?? ""}
-        onChange={(v) => props.onChange({ ...document, review: { ...document.review, max_rounds: typeof v === "number" ? v : Number(v) || 0 } })}
-      />
-      <Text size="xs" c="dimmed">Edit the reviewer pairs under Advanced: JSON.</Text>
-    </Stack>
-  );
-}
-
-function TiersView({ router }: { router: Record<string, any> }) {
-  const tiers: any[] = router.tiers ?? [];
-  return (
-    <>
-      <Facts
-        items={[
-          ["Classifier", <Text size="sm">{router.classifier?.engine ?? "the library's default"}{router.classifier?.model ? `, ${router.classifier.model}` : ""}{router.classifier?.min_confidence !== undefined ? `, confidence at least ${router.classifier.min_confidence}` : ""}</Text>],
-          ["Default tier", <Text size="sm">{router.default_tier ?? "none"}</Text>],
-          ["When a tier is used up", <Text size="sm">{router.on_exhausted === "escalate" ? "Escalate one tier up" : router.on_exhausted ?? "fail"}</Text>],
-        ]}
-      />
-      <SimpleGrid cols={{ base: 1, md: 2 }} mt="lg">
-        {tiers.map((tier, index) => (
-          <Card key={tier.name} withBorder padding="lg">
-            <Group justify="space-between" mb="xs">
-              <Group gap="xs">
-                <Badge variant="light" radius="sm">Tier {index + 1}</Badge>
-                <Text fw={650}>{tier.name}</Text>
-              </Group>
-              {tier.thinking && <Badge variant="outline" tt="none">thinking {tier.thinking}</Badge>}
-            </Group>
-            <Text size="sm" c="dimmed" mb="md">{tier.description}</Text>
-            <Text size="xs" fw={600} c="dimmed" tt="uppercase" mb={6}>Candidates, in order</Text>
-            <Stack gap={6}>
-              {(tier.models ?? []).map((m: string, i: number) => {
-                const [profile, model] = String(m).replace(/^harness:/, "").split("/");
-                return (
-                  <Group key={m} gap="xs" wrap="nowrap">
-                    <Text size="sm" c="dimmed" w={18}>{i + 1}.</Text>
-                    <Badge variant="dot" tt="none">{profile}</Badge>
-                    <Code>{model}</Code>
-                  </Group>
-                );
-              })}
-            </Stack>
-          </Card>
-        ))}
-      </SimpleGrid>
-    </>
-  );
-}
-
-function ProfilesView({ profiles }: { profiles: Record<string, any> }) {
-  return (
-    <DataTable head={["Profile", "Tools", "Limits", "Resources", "Bash allowlist", "Image"]} minWidth={860}>
-      {Object.entries(profiles).map(([name, p]) => (
-        <Table.Tr key={name}>
-          <Table.Td><Text fw={600} size="sm">{name}</Text></Table.Td>
-          <Table.Td maw={260}>
-            <Group gap={4}>{(p.tools ?? []).map((t: string) => <Badge key={t} size="sm" variant="light" tt="none">{t}</Badge>)}</Group>
-          </Table.Td>
-          <Table.Td><Text size="sm">{p.max_turns} turns, {p.max_minutes} min</Text></Table.Td>
-          <Table.Td><Text size="sm">{p.resources ? `${p.resources.cpu} vCPU, ${p.resources.memory_gb} GB` : "default"}</Text></Table.Td>
-          <Table.Td>
-            {p.bash_allow ? (
-              <Tooltip multiline w={320} label={p.bash_allow.join(", ")}>
-                <Badge variant="outline" tt="none">{p.bash_allow.length} programs</Badge>
-              </Tooltip>
-            ) : (
-              <Text size="sm" c="dimmed">any program</Text>
-            )}
-          </Table.Td>
-          <Table.Td><Code>{p.image ?? "default"}</Code></Table.Td>
-        </Table.Tr>
-      ))}
-    </DataTable>
-  );
-}
-
-function ReposView({ repos }: { repos: Record<string, any> }) {
-  return (
-    <DataTable head={["Repo", "Tracker", "Default acceptance checks"]}>
-      {Object.entries(repos).map(([name, r]) => (
-        <Table.Tr key={name}>
-          <Table.Td><Text ff="monospace" size="sm">{name}</Text></Table.Td>
-          <Table.Td><Badge variant="light" tt="none">{r.tracker ?? "github"}</Badge></Table.Td>
-          <Table.Td><Stack gap={2}>{(r.default_checks ?? []).map((c: string) => <Code key={c}>{c}</Code>)}</Stack></Table.Td>
-        </Table.Tr>
-      ))}
-    </DataTable>
-  );
-}

@@ -21,7 +21,7 @@ function respond(body: unknown, status = 200) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function stub(onPut: () => Promise<Response>) {
+function stub(onPut: (body: any, url: string) => Promise<Response>) {
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
     if (url === "/v1/config") {
       return respond({
@@ -32,9 +32,10 @@ function stub(onPut: () => Promise<Response>) {
         ],
       });
     }
-    if (url === "/v1/config/tiers" && init?.method === "PUT") return onPut();
+    if (init?.method === "PUT") return onPut(JSON.parse(String(init.body)), url);
     if (url === "/v1/config/tiers") return respond(VERSION);
     if (url === "/v1/config/tiers/versions") return respond({ versions: [VERSION] });
+    if (url === "/v1/config/profiles/versions") return respond({ versions: [] });
     if (url === "/v1/config/profiles") return respond({ ...VERSION, kind: "profiles", document: { profiles: { "pi-lean": {}, "pi-careful": {} } } });
     if (url === "/v1/config/models") return respond({ models: [{ name: "claude:claude-sonnet-5" }, { name: "openai-responses:gpt-6-sol" }] });
     return respond({ detail: "not stubbed" }, 404);
@@ -51,7 +52,7 @@ function renderPage() {
   );
 }
 
-test("the tiers tab lays out each tier with its thinking level and its candidates in order", async () => {
+test("the tiers tab lays out each tier with its thinking level and its candidates in order, with no Edit button", async () => {
   stub(() => respond({}));
   renderPage();
 
@@ -61,46 +62,233 @@ test("the tiers tab lays out each tier with its thinking level and its candidate
   expect(screen.getByText("pi-lean")).toBeTruthy();
   expect(screen.getByText("claude:claude-sonnet-5")).toBeTruthy();
   expect(screen.getByRole("tab", { name: /Harness profiles/ })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
 });
 
-test("a save the service refuses shows each reason beside the tier it names, and the rest on top", async () => {
-  stub(() => respond({ detail: { reasons: ["tier standard has no candidates", "default_tier is required"] } }, 422));
-  renderPage();
-
-  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-  fireEvent.change(await screen.findByLabelText("Description"), { target: { value: "One module, clear checks." } });
-  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Save as version 2" }));
-
-  expect(await screen.findByText("Not saved: the service would refuse this version")).toBeTruthy();
-  expect(screen.getByText("default_tier is required")).toBeTruthy();
-  const tier = screen.getByTestId("tier-standard");
-  expect(within(tier).getByText("tier standard has no candidates")).toBeTruthy();
-});
-
-test("the tier form changes a candidate's model, and the review shows the change before it saves with its note", async () => {
-  const saved: unknown[] = [];
-  stub(() => {
+test("an edit in place is staged and marked, and Review and save saves every change as the next version with its note", async () => {
+  const saved: any[] = [];
+  stub((body) => {
+    saved.push(body);
     return respond({ ...VERSION, version: 2 });
   });
-  const realFetch = globalThis.fetch;
-  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
-    if (init?.method === "PUT") saved.push(JSON.parse(String(init.body)));
-    return realFetch(url, init);
-  });
   renderPage();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-  const [model] = await screen.findAllByLabelText("Model of candidate 1 in standard", { selector: "input" });
-  fireEvent.focus(model);
-  fireEvent.change(model, { target: { value: "gpt-6" } });
-  fireEvent.click(await screen.findByText("openai-responses:gpt-6-sol"));
-  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit Description of standard" }));
+  const description = screen.getByLabelText("Description of standard");
+  fireEvent.change(description, { target: { value: "One module, clear checks." } });
+  fireEvent.keyDown(description, { key: "Enter", ctrlKey: true });
 
+  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+  expect(screen.getByText("changed")).toBeTruthy();
+  expect(saved).toHaveLength(0);
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit Model of candidate 1 in standard" }));
+  fireEvent.click(await screen.findByText("openai-responses:gpt-6-sol"));
+  expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
   expect(await screen.findByText(/\+ .*harness:pi-lean\/openai-responses:gpt-6-sol/)).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Sol first" } });
   fireEvent.click(screen.getByRole("button", { name: "Save as version 2" }));
 
   await waitFor(() => expect(saved).toHaveLength(1));
-  expect(saved[0]).toMatchObject({ note: "Sol first", document: { tiers: [{ models: ["harness:pi-lean/openai-responses:gpt-6-sol"] }] } });
+  expect(saved[0]).toMatchObject({
+    note: "Sol first",
+    document: { tiers: [{ description: "One module, clear checks.", models: ["harness:pi-lean/openai-responses:gpt-6-sol"] }] },
+  });
+});
+
+test("a refused save shows each reason beside the value it is about, the rest on top, and the changes stay staged", async () => {
+  stub(() => respond({ detail: { reasons: ["tier standard has no candidates", "default_tier is required: the router needs a tier", "the router does not parse: x"] } }, 422));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Remove candidate 1 in standard" }));
+  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save as version 2" }));
+
+  expect(await screen.findByText("Not saved: the service would refuse this version")).toBeTruthy();
+  expect(screen.getByText("the router does not parse: x")).toBeTruthy();
+  expect(within(screen.getByTestId("tier-standard")).getByText("tier standard has no candidates")).toBeTruthy();
+  expect(screen.getByText("default_tier is required: the router needs a tier")).toBeTruthy();
+  expect(screen.getByText("1 change to version 1")).toBeTruthy();
+});
+
+test("Discard drops the staged changes, and Advanced: JSON opens the document with them", async () => {
+  stub(() => respond({}));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit When a tier is used up" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Fail", hidden: true }));
+  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Advanced: JSON" }));
+  const json = (await screen.findByLabelText(/JSON/, { selector: "textarea" })) as HTMLTextAreaElement;
+  expect(json.value).toContain('"on_exhausted": "fail"');
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+  await waitFor(() => expect(screen.queryByText("1 change to version 1")).toBeNull());
+  expect(screen.getByText("Escalate one tier up")).toBeTruthy();
+});
+
+test("making another version active with changes staged asks first, and Discard drops them before the rollback", async () => {
+  const rolledBack: any[] = [];
+  let active = { ...VERSION, version: 2, origin: "edit", edited_by: "dave" };
+  const older = VERSION;
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/config") {
+      return respond({
+        source: "db",
+        kinds: [{ kind: "tiers", title: "Router tiers", description: "The router's tiers.", version: active.version, edited_by: "dave", created_at: VERSION.created_at }],
+      });
+    }
+    if (url === "/v1/config/tiers/rollback") {
+      rolledBack.push(JSON.parse(String(init?.body)));
+      active = { ...VERSION, version: 3, origin: "rollback", rolled_back_from: 1 } as any;
+      return respond(active);
+    }
+    if (url === "/v1/config/tiers") return respond(active);
+    if (url === "/v1/config/tiers/versions") return respond({ versions: [active, older] });
+    if (url === "/v1/config/profiles") return respond({ ...VERSION, kind: "profiles", document: { profiles: { "pi-lean": {} } } });
+    if (url === "/v1/config/models") return respond({ models: [] });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit When a tier is used up" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Fail", hidden: true }));
+  expect(await screen.findByText("1 change to version 2")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Make active" }));
+  const ask = (await screen.findByText(/Make version 1 active again/)).parentElement as HTMLElement;
+  fireEvent.click(within(ask).getByRole("button", { name: "Make active", hidden: true }));
+  const prompt = await screen.findByRole("dialog", { name: "Save your changes?" });
+  expect(rolledBack).toHaveLength(0);
+  fireEvent.click(within(prompt).getByRole("button", { name: "Discard" }));
+
+  await waitFor(() => expect(rolledBack).toEqual([{ version: 1 }]));
+  await waitFor(() => expect(screen.queryByText(/changes? to version/)).toBeNull());
+  expect(screen.getByText("Escalate one tier up")).toBeTruthy();
+});
+
+test("Save in the prompt before a rollback opens the review, and the rollback goes ahead only after the reviewed save", async () => {
+  const saved: any[] = [];
+  const rolledBack: any[] = [];
+  let active: any = { ...VERSION, version: 2, origin: "edit", edited_by: "dave" };
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/config") {
+      return respond({
+        source: "db",
+        kinds: [{ kind: "tiers", title: "Router tiers", description: "The router's tiers.", version: active.version, edited_by: "dave", created_at: VERSION.created_at }],
+      });
+    }
+    if (url === "/v1/config/tiers" && init?.method === "PUT") {
+      const body = JSON.parse(String(init.body));
+      saved.push(body);
+      active = { ...VERSION, version: 3, origin: "edit", document: body.document, note: body.note };
+      return respond(active);
+    }
+    if (url === "/v1/config/tiers/rollback") {
+      rolledBack.push(JSON.parse(String(init?.body)));
+      active = { ...VERSION, version: 4, origin: "rollback", rolled_back_from: 1 };
+      return respond(active);
+    }
+    if (url === "/v1/config/tiers") return respond(active);
+    if (url === "/v1/config/tiers/versions") return respond({ versions: [active, VERSION] });
+    if (url === "/v1/config/profiles") return respond({ ...VERSION, kind: "profiles", document: { profiles: { "pi-lean": {} } } });
+    if (url === "/v1/config/models") return respond({ models: [] });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit When a tier is used up" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Fail", hidden: true }));
+  expect(await screen.findByText("1 change to version 2")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Make active" }));
+  const ask = (await screen.findByText(/Make version 1 active again/)).parentElement as HTMLElement;
+  fireEvent.click(within(ask).getByRole("button", { name: "Make active", hidden: true }));
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Save your changes?" })).getByRole("button", { name: "Save" }));
+
+  // Closing the review saves nothing and rolls nothing back: the prompt comes back, the changes stay staged.
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Save version 3" })).getByRole("button", { name: "Back to editing" }));
+  const prompt = await screen.findByRole("dialog", { name: "Save your changes?" });
+  expect(saved).toHaveLength(0);
+  expect(rolledBack).toHaveLength(0);
+  expect(screen.getByText("1 change to version 2")).toBeTruthy();
+
+  fireEvent.click(within(prompt).getByRole("button", { name: "Save" }));
+  const review = await screen.findByRole("dialog", { name: "Save version 3" });
+  fireEvent.change(within(review).getByLabelText("Note"), { target: { value: "fail, not escalate" } });
+  fireEvent.click(within(review).getByRole("button", { name: "Save as version 3" }));
+
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toMatchObject({ note: "fail, not escalate", document: { on_exhausted: "fail" } });
+  await waitFor(() => expect(rolledBack).toEqual([{ version: 1 }]));
+});
+
+test("a refused save shows a profile field's reason beside that field, not under the profile name", async () => {
+  stub(() => respond({ detail: { reasons: ["pi-lean: resources.memory_gb must be a positive number", "pi-lean: a reason about the whole profile"] } }, 422));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("tab", { name: /Harness profiles/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit vCPU of pi-lean" }));
+  const cpu = screen.getByLabelText("vCPU of pi-lean");
+  fireEvent.change(cpu, { target: { value: "2" } });
+  fireEvent.keyDown(cpu, { key: "Enter" });
+  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save as version 2" }));
+
+  const reason = await screen.findByText("pi-lean: resources.memory_gb must be a positive number");
+  const cells = within(screen.getByTestId("profile-pi-lean")).getAllByRole("cell");
+  expect(cells[3].contains(reason)).toBe(true);
+  expect(cells[0].contains(reason)).toBe(false);
+  expect(within(cells[0]).getByText("pi-lean: a reason about the whole profile")).toBeTruthy();
+  expect(screen.getByText("1 change to version 1")).toBeTruthy();
+});
+
+test("a profile is added and removed from the table, each staged", async () => {
+  stub(() => respond({}));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("tab", { name: /Harness profiles/ }));
+  fireEvent.change(await screen.findByLabelText("New profile name"), { target: { value: "pi-fast" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add profile" }));
+  expect(await screen.findByTestId("profile-pi-fast")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Remove profile pi-careful" }));
+
+  expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
+  expect(screen.queryByTestId("profile-pi-careful")).toBeNull();
+});
+
+test("a tier's name edits in place, and a rename carries the default tier with it as one change", async () => {
+  stub(() => respond({}));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit Name of tier 1" }));
+  const name = screen.getByLabelText("Name of tier 1");
+  fireEvent.change(name, { target: { value: "small" } });
+  fireEvent.keyDown(name, { key: "Enter" });
+
+  expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Advanced: JSON" }));
+  const json = (await screen.findByLabelText(/JSON/, { selector: "textarea" })) as HTMLTextAreaElement;
+  expect(JSON.parse(json.value)).toMatchObject({ default_tier: "small", tiers: [{ name: "small" }] });
+});
+
+test("Advanced: JSON refuses a document whose shape the view can't show, and stages nothing", async () => {
+  stub(() => respond({}));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Advanced: JSON" }));
+  const json = await screen.findByLabelText(/JSON/, { selector: "textarea" });
+  fireEvent.change(json, { target: { value: '{"tiers": "standard", "default_tier": "standard"}' } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+  expect(await screen.findByText(/Not applied: tiers is a list/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByText(/changes? to version 1/)).toBeNull();
+  expect(screen.getByText("Tier 1")).toBeTruthy();
 });
