@@ -24,6 +24,17 @@ function withRun(e: MhEvent): Line | null {
   return line ? { ...line, run: e.run_id } : null;
 }
 const OLDER = 200;
+
+// Events (or their terminal lines) added to the ones held, each once, in position order.
+export function merge<T extends { position: number }>(current: T[], more: T[]): T[] {
+  const held = new Set(current.map((e) => e.position));
+  const added = more.filter((e) => !held.has(e.position)).sort((a, b) => a.position - b.position);
+  if (!added.length) return current;
+  const last = current.at(-1)?.position ?? 0;
+  // A live event comes after every one held, so it needs no sort.
+  if (added.every((e) => e.position > last)) return [...current, ...added];
+  return [...current, ...added].sort((a, b) => a.position - b.position);
+}
 const EMPTY: TileFacts = { turn: 0, usd: 0, model: "", status: null };
 const STREAM_COLORS: Record<string, string> = { live: "teal", connecting: "yellow", reconnecting: "orange", idle: "gray" };
 
@@ -71,6 +82,14 @@ export function TaskPage() {
         exhausted.current = page.events.length < FIRST;
         newest.current = Math.max(page.events.at(-1)?.position ?? 0, page.latest_position);
         setFrom(newest.current);
+        // Every run's prompt, older runs' too: the first page holds only the newest events, and the
+        // timeline (or a ?run= link to an older run) would otherwise show no prompt for those runs.
+        // The terminal gets them too, so an older run's Terminal opens on its prompt.
+        api.taskEvents([taskId], ["run_prompt"]).then((prompts) => {
+          if (stale) return;
+          setEvents((current) => merge(current, prompts));
+          setLines((current) => merge(current, prompts.map(withRun).filter((l): l is Line => l !== null)));
+        }, () => undefined);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -93,9 +112,10 @@ export function TaskPage() {
     setFacts((f) => fold(f, e));
     if (e.event_type === "task_status_changed") setTask((t) => (t ? { ...t, status: e.payload.to } : t));
     if (e.event_type === "pull_request_opened") setTask((t) => (t ? { ...t, pr_url: e.payload.pr_url } : t));
-    setEvents((current) => [...current, e]);
+    // A prompt read with every run's prompts may come again on the stream.
+    setEvents((current) => merge(current, [e]));
     const line = withRun(e);
-    if (line) setLines((current) => [...current, line]);
+    if (line) setLines((current) => merge(current, [line]));
   }, []);
 
   const state = useEventStream(from === null ? [] : [taskId], from, onEvent);
@@ -109,8 +129,8 @@ export function TaskPage() {
       if (page.events.length) {
         oldest.current = page.events[0].position;
         const older = page.events.map(withRun).filter((l): l is Line => l !== null);
-        setLines((current) => [...older, ...current]);
-        setEvents((current) => [...page.events, ...current]);
+        setLines((current) => merge(current, older));
+        setEvents((current) => merge(current, page.events));
       }
     } finally {
       loadingOlder.current = false;

@@ -91,6 +91,20 @@ REGISTRY: list[EventType] = [
             ["attempt", "candidate", "decision", "detail", "spent_usd"],
         ),
     ),
+    # The filled-in prompt a run was given, recorded on the task before the run starts.
+    EventType(
+        "run_prompt",
+        1,
+        _object(
+            {
+                "run_id": {"type": "string"},
+                "kind": {"type": "string", "enum": ["task", "review", "fix"]},
+                "template": {"type": "string"},
+                "prompt": {"type": "string"},
+            },
+            ["run_id", "kind", "template", "prompt"],
+        ),
+    ),
     EventType(
         "pull_request_opened",
         1,

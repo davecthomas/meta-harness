@@ -26,6 +26,7 @@ from temporalio import activity
 from temporalio.client import WorkflowHistory
 from temporalio.worker import Replayer, Worker
 
+from meta_harness.run_service.prompt_activities import RunPromptRecord
 from meta_harness.run_service.shared import (
     AttemptRecord,
     PublishedRecord,
@@ -50,6 +51,15 @@ SCENARIOS = {
     "patched-operator-messages-merged": {"verdicts": [CLEAN], "goal_id": "g-1", "auto_merge": True},
     # Recorded after the merge-checks patch: a failed check on the merge commit, fixed by a new pull request.
     "patched-merge-checks-fixed": {
+        "verdicts": [CLEAN, CLEAN],
+        "goal_id": "g-1",
+        "auto_merge": True,
+        "merge_checks": ["failed", "passed"],
+    },
+    # After the run-prompt patch: each run's prompt recorded before it starts, the fix run's after the merge too.
+    # Built from patched-merge-checks-fixed, the same scenario, with the patch marker and the record_prompt
+    # activities the new code schedules put in place; it replays only against code with the patch.
+    "patched-run-prompt-merge-checks-fixed": {
         "verdicts": [CLEAN, CLEAN],
         "goal_id": "g-1",
         "auto_merge": True,
@@ -94,7 +104,11 @@ def _task_activities(review: bool, goal_id: str) -> list:
     async def record_published(record: PublishedRecord) -> None:
         return None
 
-    return [load_task, set_task_status, record_route, record_attempt, record_published]
+    @activity.defn(name="record_prompt")
+    async def record_prompt(record: RunPromptRecord) -> None:
+        return None
+
+    return [load_task, set_task_status, record_route, record_attempt, record_published, record_prompt]
 
 
 def _histories() -> list[Path]:
