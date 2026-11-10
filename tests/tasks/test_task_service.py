@@ -245,3 +245,38 @@ def test_tasks_are_found_by_text_in_their_title_id_or_ref(api):
     task = api.post("/v1/tasks", json=_task(title=f"Fix the {word} crash"), headers=_as(CALLER_KEY)).json()
     found = api.get("/v1/tasks", params={"q": word.upper()}, headers=_as(CALLER_KEY)).json()["tasks"]
     assert [t["id"] for t in found] == [task["id"]]
+
+
+def test_a_running_task_takes_an_operator_message_and_the_scheduler_reads_it_once(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    assert api.post(f"/v1/tasks/{task['id']}/messages", json={"text": "Hi"}, headers=_as(CALLER_KEY)).status_code == 409
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+
+    sent = api.post(
+        f"/v1/tasks/{task['id']}/messages",
+        json={"text": "Use the helper.", "when": "after_stop"},
+        headers=_as(CALLER_KEY),
+    )
+    stop = api.post(f"/v1/tasks/{task['id']}/messages", json={"when": "stop"}, headers=_as(CALLER_KEY))
+
+    assert sent.status_code == 202 and stop.status_code == 202
+    assert [p["when"] for t, p, f in events.events if t == "operator_message" and f.get("task_id") == task["id"]] == [
+        "after_stop",
+        "stop",
+    ]
+    assert api.get("/v1/messages/pending", headers=_as(CALLER_KEY)).status_code == 403
+    pending = [
+        m
+        for m in api.get("/v1/messages/pending", headers=_as(SERVICE_KEY)).json()["messages"]
+        if m["task_id"] == task["id"]
+    ]
+    assert [(m["body"], m["deliver"]) for m in pending] == [("Use the helper.", "after_stop"), ("", "stop")]
+    for m in pending:
+        api.post(f"/v1/messages/{m['id']}/delivered", headers=_as(SERVICE_KEY))
+    left = [
+        m
+        for m in api.get("/v1/messages/pending", headers=_as(SERVICE_KEY)).json()["messages"]
+        if m["task_id"] == task["id"]
+    ]
+    assert left == []
+    assert api.post(f"/v1/tasks/{task['id']}/messages", json={"text": " "}, headers=_as(CALLER_KEY)).status_code == 422

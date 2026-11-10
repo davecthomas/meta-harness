@@ -13,8 +13,8 @@ to be recorded (behind its patch), run:
 
     MH_RECORD_HISTORIES=1 uv run pytest -q tests/run_service/test_replay.py
 
-which writes the scenarios below into histories/ beside the ones there. Keep
-the old files: they are the workflows a deploy would find running.
+which records each scenario below that has no file yet. Recorded files are
+never rewritten: they are the workflows a deploy would find running.
 """
 
 import json
@@ -46,6 +46,8 @@ SCENARIOS = {
     "clean-review-merged": {"verdicts": [CLEAN], "goal_id": "g-1", "auto_merge": True},
     "changes-fix-clean-waiting": {"verdicts": [CHANGES, CLEAN], "fix_commits": ["c1"], "goal_id": "g-1"},
     "no-verdict-unresolved": {"verdicts": []},
+    # Recorded after the operator-messages patch, so the patched path replays too.
+    "patched-operator-messages-merged": {"verdicts": [CLEAN], "goal_id": "g-1", "auto_merge": True},
 }
 
 
@@ -95,6 +97,8 @@ def _histories() -> list[Path]:
 @pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 async def test_record_a_history(env, name):  # noqa: F811 - env is the fixture imported above
+    if (HISTORIES / f"{name}.json").exists():
+        pytest.skip("recorded already: an old history is what a deploy finds running, so it stays as it is")
     scenario = dict(SCENARIOS[name])
     review = scenario.pop("review", True)
     goal_id = scenario.pop("goal_id", "")
@@ -127,3 +131,49 @@ async def test_a_recorded_history_replays_against_the_current_workflow(path):
 
 def test_there_are_histories_to_replay():
     assert _histories(), f"no recorded histories in {HISTORIES}: record them as the module docstring says"
+
+
+async def test_an_operator_message_reaches_the_run_in_progress(env):  # noqa: F811 - env is the fixture imported above
+    import asyncio
+
+    from temporalio.activity import _Definition
+
+    from meta_harness.run_service.shared import DeliverRequest, HarnessRequest, OperatorMessage
+
+    script = Script(verdicts=[CLEAN])
+    delivered: list[DeliverRequest] = []
+    reached = asyncio.Event()
+    activities = [*script.activities(), *_task_activities(True, "")]
+    original = next(a for a in activities if _Definition.from_callable(a).name == "run_harness")
+
+    @activity.defn(name="run_harness")
+    async def run_harness(request: HarnessRequest):
+        # The first run waits for the operator's message, so the message arrives while it is in progress.
+        if not delivered:
+            await asyncio.wait_for(reached.wait(), timeout=30)
+        return await original(request)
+
+    @activity.defn(name="deliver_message")
+    async def deliver_message(request: DeliverRequest) -> str:
+        delivered.append(request)
+        reached.set()
+        return "delivered"
+
+    activities = [a for a in activities if _Definition.from_callable(a).name != "run_harness"]
+    async with Worker(
+        env.client, task_queue=QUEUE, workflows=[RunTask], activities=[*activities, run_harness, deliver_message]
+    ):
+        handle = await env.client.start_workflow(
+            RunTask.run, RunTaskInput(task="", repo="", task_id="t-msg"), id="run-task-t-msg", task_queue=QUEUE
+        )
+        for _ in range(200):
+            if await handle.query(RunTask.current_run_id):
+                break
+            await asyncio.sleep(0.05)
+        await handle.signal(
+            RunTask.operator_message, OperatorMessage(message_id=7, text="Use the existing helper.", when="next_turn")
+        )
+        await handle.result()
+
+    assert [(d.message.message_id, d.message.text) for d in delivered] == [(7, "Use the existing helper.")]
+    assert delivered[0].run_id.endswith(":run-1")

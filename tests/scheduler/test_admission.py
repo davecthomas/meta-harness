@@ -165,3 +165,32 @@ async def test_a_cancel_request_stops_that_running_task(repo):
     await admission.pass_once()
     await admission.pass_once()
     assert canceled == [task_id]
+
+
+async def test_each_operator_message_is_signaled_to_its_task_once_and_a_failed_one_waits(repo):
+    tasks = Tasks()
+    tasks.messages = [
+        {"id": 1, "task_id": "t-a", "body": "Use the helper.", "deliver": "next_turn"},
+        {"id": 2, "task_id": "t-b", "body": "", "deliver": "stop"},
+    ]
+    tasks.delivered = []
+    tasks.pending_messages = lambda: [m for m in tasks.messages if m["id"] not in tasks.delivered]
+    tasks.mark_delivered = tasks.delivered.append
+    signaled = []
+
+    async def signal(task_id, message):
+        if task_id == "t-b" and not signaled:
+            signaled.append(("failed", task_id))
+            raise RuntimeError("no workflow yet")
+        signaled.append((task_id, message))
+
+    admission = Admission(tasks, None, Events(), lambda task_id: None, 5, signal=signal)
+    await admission.pass_once()
+    await admission.pass_once()
+
+    assert tasks.delivered == [1, 2]
+    assert (
+        signaled[1] == ("t-a", {"message_id": 1, "text": "Use the helper.", "when": "next_turn"})
+        or ("t-a", {"message_id": 1, "text": "Use the helper.", "when": "next_turn"}) in signaled
+    )
+    assert ("t-b", {"message_id": 2, "text": "", "when": "stop"}) in signaled

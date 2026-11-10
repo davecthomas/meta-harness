@@ -335,6 +335,37 @@
     "required": [],
     "type": "object"
   },
+  "operator_message v1": {
+    "additionalProperties": true,
+    "properties": {
+      "message_id": {
+        "type": "integer"
+      },
+      "text": {
+        "type": "string"
+      },
+      "when": {
+        "enum": [
+          "next_turn",
+          "after_stop",
+          "stop"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "message_id",
+      "text",
+      "when"
+    ],
+    "type": "object"
+  },
+  "operator_message_delivered v1": {
+    "additionalProperties": true,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
   "plan_updated v1": {
     "additionalProperties": true,
     "properties": {},

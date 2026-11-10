@@ -61,12 +61,14 @@ class Admission:
         start: Callable[[str], Awaitable[None]],
         max_running: int = 2,
         cancel: Callable[[str], Awaitable[None]] | None = None,
+        signal: Callable[[str, dict], Awaitable[None]] | None = None,
     ) -> None:
         self.tasks = tasks
         self.goals = goals
         self.events = events
         self.start = start
         self.cancel = cancel
+        self.signal = signal
         self.max_running = max_running
         self._last_hold: dict[str, str] = {}
         self._canceling: set[str] = set()
@@ -75,6 +77,7 @@ class Admission:
         result = AdmissionResult()
         engaged = await asyncio.to_thread(kill_switch_engaged)
         await self._stop_running(engaged, result)
+        await self._hand_over_messages()
         await self._release_and_renew(result)
         if engaged:
             return result
@@ -111,6 +114,22 @@ class Admission:
             )
             result.started.append(task["id"])
         return result
+
+    async def _hand_over_messages(self) -> None:
+        """Hands each operator message to its task's RunTask workflow as a signal, then marks it delivered. One
+        that cannot be sent waits for the next pass."""
+        if self.signal is None or not hasattr(self.tasks, "pending_messages"):
+            return
+        for message in await asyncio.to_thread(self.tasks.pending_messages):
+            try:
+                await self.signal(
+                    message["task_id"],
+                    {"message_id": message["id"], "text": message["body"], "when": message["deliver"]},
+                )
+            except Exception as err:  # noqa: BLE001 - try again next pass
+                log.warning("could not hand message %s to %s: %s", message["id"], message["task_id"], err)
+                continue
+            await asyncio.to_thread(self.tasks.mark_delivered, message["id"])
 
     async def _stop_running(self, engaged: bool, result: AdmissionResult) -> None:
         """Cancels the RunTask workflow of each running task that has a cancel request, or of every

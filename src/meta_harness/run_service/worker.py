@@ -23,6 +23,7 @@ from temporalio.worker import Worker
 
 from meta_harness.run_service import events, routing
 from meta_harness.run_service.activities import (
+    deliver_message,
     cleanup_run,
     goal_auto_merge,
     loop_prompt,
@@ -100,6 +101,7 @@ async def main() -> None:
             record_route,
             record_attempt,
             record_published,
+            deliver_message,
         ],
         # A cancel reaches an activity only in the reply to a heartbeat. The SDK holds
         # heartbeats back to 0.8 x the heartbeat timeout by default (8 s here); this

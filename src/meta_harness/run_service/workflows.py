@@ -70,6 +70,7 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 with workflow.unsafe.imports_passed_through():
     from meta_harness.run_service.activities import (
         cleanup_run,
+        deliver_message,
         goal_auto_merge,
         loop_prompt,
         merge_pr,
@@ -83,6 +84,8 @@ with workflow.unsafe.imports_passed_through():
     )
     from meta_harness.run_service.shared import (
         Attempt,
+        DeliverRequest,
+        OperatorMessage,
         ChecksRequest,
         LoopPromptRequest,
         MergeRequest,
@@ -153,6 +156,32 @@ class RunTask:
         self._current_run_id: str | None = None
         self._task_id = ""
         self._route_no = 0
+        # Operators' messages to the run in progress, in the order they came, until each is handed over.
+        self._messages: list[OperatorMessage] = []
+
+    @workflow.signal
+    def operator_message(self, message: OperatorMessage) -> None:
+        """An operator's message for the run in progress, or stop. The scheduler sends it from the task service."""
+        self._messages.append(message)
+
+    async def _deliver_messages(self) -> None:
+        """Hands each operator message to the run in progress, as it comes, for the life of the workflow."""
+        while True:
+            await workflow.wait_condition(lambda: bool(self._messages))
+            message = self._messages.pop(0)
+            if not self._current_run_id:
+                workflow.logger.info("operator message %s: no run in progress", message.message_id)
+                continue
+            try:
+                said = await workflow.execute_activity(
+                    deliver_message,
+                    DeliverRequest(run_id=self._current_run_id, message=message),
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
+                workflow.logger.info("operator message %s: %s", message.message_id, said)
+            except ActivityError as err:
+                workflow.logger.warning("operator message %s not delivered: %s", message.message_id, err.cause or err)
 
     @workflow.query
     def current_run_id(self) -> str | None:
@@ -170,6 +199,9 @@ class RunTask:
         if not request.task_id:
             return await self._run_loop(request)
         self._task_id = request.task_id
+        # Behind a patch: workflows started before it have no message delivery, and replay as they ran.
+        if workflow.patched("operator-messages"):
+            asyncio.ensure_future(self._deliver_messages())
         spec = await workflow.execute_activity(
             load_task, request.task_id, start_to_close_timeout=TASK_API_TIMEOUT, retry_policy=TASK_API_RETRY
         )
