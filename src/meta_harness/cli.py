@@ -8,6 +8,17 @@ import click
 from meta_harness import __version__, db, migrations
 
 
+def _serve_logs(tag: str) -> None:
+    """A service's logging: every logger's INFO and above on stdout, tagged, with its level where the journal
+    reads it, and uvicorn's own warnings and errors through the same handler."""
+    import logging
+
+    from meta_harness import logs
+
+    logs.configure(f"[{tag}] %(message)s")
+    logging.getLogger("uvicorn").setLevel(logging.WARNING)
+
+
 @click.group()
 @click.version_option(__version__, prog_name="mh")
 def main() -> None:
@@ -39,7 +50,8 @@ def events_serve(host: str, port: int) -> None:
 
     from meta_harness.events.service import create_app
 
-    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+    _serve_logs("events")
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning", log_config=None)
 
 
 @events.command("emit")
@@ -104,7 +116,8 @@ def tasks_serve(host: str, port: int) -> None:
     from meta_harness.events.client import EventClient
     from meta_harness.tasks.service import create_app
 
-    uvicorn.run(create_app(EventClient(source="task")), host=host, port=port, log_level="warning")
+    _serve_logs("tasks")
+    uvicorn.run(create_app(EventClient(source="task")), host=host, port=port, log_level="warning", log_config=None)
 
 
 @main.group()
@@ -213,7 +226,10 @@ def planner_serve(host: str, port: int) -> None:
     from meta_harness.planner.service import create_app
 
     events_client, tracker, tasks_client = _planner_parts()
-    uvicorn.run(create_app(events_client, tracker, tasks_client), host=host, port=port, log_level="warning")
+    _serve_logs("planner")
+    uvicorn.run(
+        create_app(events_client, tracker, tasks_client), host=host, port=port, log_level="warning", log_config=None
+    )
 
 
 @planner.command("sweep")
@@ -323,7 +339,8 @@ def edge_serve(host: str, port: int) -> None:
 
     from meta_harness.edge.app import create_app
 
-    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+    _serve_logs("console")
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning", log_config=None)
 
 
 @main.group()
@@ -365,14 +382,12 @@ def _admission():
 @click.option("--port", default=8304, show_default=True)
 def scheduler_serve(host: str, port: int) -> None:
     """Run the meta-harness scheduler: an admission pass every MH_ADMISSION_SECONDS."""
-    import logging
-
     import uvicorn
 
     from meta_harness.scheduler.service import create_app
 
-    logging.basicConfig(level=logging.INFO, format="[scheduler] %(message)s")
-    uvicorn.run(create_app(_admission()), host=host, port=port, log_level="warning")
+    _serve_logs("scheduler")
+    uvicorn.run(create_app(_admission()), host=host, port=port, log_level="warning", log_config=None)
 
 
 @scheduler.command("drain")

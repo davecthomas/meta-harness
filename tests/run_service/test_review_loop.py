@@ -434,6 +434,27 @@ async def test_a_fix_that_changed_nothing_looks_at_the_merge_checks_once_more(en
     assert _kinds(result).count("fix") == 1, "no second fix run"
 
 
+async def test_failures_are_logged_as_warnings_that_name_the_task_and_the_run(env, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="temporalio.workflow")
+    script = Script(verdicts=[None], auto_merge=True)
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "review_unresolved"
+    warned = [r.getMessage() for r in caplog.records if r.name == "temporalio.workflow" and r.levelname == "WARNING"]
+    assert any(
+        ":run-2: review run 2 on " in w and "ended with no verdict" in w and w.startswith("task ") for w in warned
+    )
+
+    caplog.clear()
+    script = Script(verdicts=[CLEAN], auto_merge=True, merge_checks=["silent"])
+    await _run(env, script, goal_id="g-1")
+    warned = [r.getMessage() for r in caplog.records if r.name == "temporalio.workflow" and r.levelname == "WARNING"]
+    assert any("checks on the merge commit m1 failed: deploy" in w for w in warned)
+
+
 async def test_a_merge_commit_with_no_checks_ends_merged(env):
     script = Script(verdicts=[CLEAN], auto_merge=True, merge_checks=["none"])
 

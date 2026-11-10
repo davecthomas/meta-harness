@@ -247,23 +247,35 @@ class RunTask:
             if isinstance(err.cause, CancelledError):
                 await self._task_status("canceled", "the RunTask workflow was canceled")
             else:
+                workflow.logger.error("%s failed: %s", self._where(), err.cause or err)
                 await self._task_status("failed", str(err.cause or err)[:500])
             raise
         except ApplicationError as err:
+            workflow.logger.error("%s failed: %s", self._where(), err)
             await self._task_status("failed", str(err)[:500])
             raise
         pr_url = result.published.pr_url if result.published else ""
         if result.outcome == "review_unresolved":
+            workflow.logger.warning("%s ended review_unresolved: %s", self._where(), result.outcome_reason)
             await self._task_status("review_unresolved", result.outcome_reason, pr_url)
         elif result.outcome == "merged":
             await self._task_status("closed", result.outcome_reason, pr_url)
         elif result.outcome == "merge_checks_failed":
+            workflow.logger.error("%s failed: %s", self._where(), result.outcome_reason)
             await self._task_status("failed", result.outcome_reason[:500], pr_url)
         elif pr_url:
+            if result.outcome == "unreviewed" or "GitHub would not merge it" in result.outcome_reason:
+                workflow.logger.warning("%s ended %s: %s", self._where(), result.outcome, result.outcome_reason)
             await self._task_status("ready", result.outcome_reason or "the run finished", pr_url)
         else:
             await self._task_status("closed", "the run finished")
         return result
+
+    def _where(self, run_id: str = "") -> str:
+        """How a warning or error names its task and run, so a search for either id finds every line about it."""
+        task = self._task_id or workflow.info().workflow_id
+        run = run_id or self._current_run_id
+        return f"task {task} run {run}" if run else f"task {task}"
 
     async def _task_status(self, status: str, reason: str, pr_url: str = "") -> None:
         await workflow.execute_activity(
@@ -362,6 +374,15 @@ class RunTask:
                     spent,
                     limit,
                 )
+                if decision != "finished":
+                    log.warning(
+                        "%s: run %d (%s tier) on %s did not finish: %s",
+                        self._where(run_id),
+                        attempt,
+                        tier,
+                        candidate.label,
+                        detail,
+                    )
                 if decision == "finished" and harness is not None:
                     return await self._finish(
                         request, prepared, route_result, candidate, harness, attempt, attempts, limit, spent
@@ -651,6 +672,14 @@ class RunTask:
             )
             names = ", ".join(f.name for f in checks.failed)
             workflow.logger.info("%s: checks on merge %s: %s", info.workflow_id, loop.merge_sha[:12], checks.state)
+            if checks.state in ("failed", "pending"):
+                workflow.logger.warning(
+                    "%s: checks on the merge commit %s %s: %s",
+                    self._where(),
+                    loop.merge_sha[:12],
+                    "failed" if checks.state == "failed" else "did not finish",
+                    names,
+                )
             if checks.state in ("passed", "none"):
                 found = "passed" if checks.state == "passed" else "none ran"
                 return "merged", f"{reason}; the merge commit's checks: {found}"
@@ -800,6 +829,15 @@ class RunTask:
             retry_policy=CODE_HOST_RETRY,
         )
         workflow.logger.info("%s: merge at %s: %s", workflow.info().workflow_id, loop.head[:12], merged.state)
+        if merged.state in ("blocked", "conflict"):
+            workflow.logger.warning(
+                "%s: the merge of %s at %s was %s: %s",
+                self._where(),
+                loop.published.pr_url,
+                loop.head[:12],
+                "refused" if merged.state == "blocked" else "a conflict",
+                merged.detail,
+            )
         if merged.state == "merged":
             merged.detail = f"{clean}; merged as {merged.merge_sha[:12]}"
         elif merged.state == "blocked":
@@ -876,6 +914,18 @@ class RunTask:
             loop.spent,
             loop.limit,
         )
+        if harness is None or harness.status != "FINISHED":
+            workflow.logger.warning(
+                "%s: %s run %d on %s did not finish: %s", self._where(run_id), kind, attempt, candidate.label, detail
+            )
+        elif kind == "review" and not harness.review:
+            workflow.logger.warning(
+                "%s: review run %d on %s ended with no verdict: %s",
+                self._where(run_id),
+                attempt,
+                candidate.label,
+                detail,
+            )
         return harness, detail
 
     async def _loop_prompt(self, request: LoopPromptRequest) -> str:

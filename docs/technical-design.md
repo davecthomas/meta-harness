@@ -2208,6 +2208,12 @@ the terminal, each opening to the full text. A run started before prompts
 were recorded shows none. The page reads every `run_prompt` on the task as
 it opens, besides its newest events, so an older run's prompt, or the one a
 `?run=` link opens on, is on the timeline before older events load.
+A task that ended `failed` or `review_unresolved` says so in an alert at
+the top of its page: its reason, each run that did not finish (linked to
+that run), and a link to its warnings and errors on the Logs page. Its
+goal's page shows an alert above the board listing each failed or
+unresolved task with its reason, linked to the task, and each issue the
+planner refused.
 The Goal page shows an active goal's issues as a board, columns Queued,
 Running, In review, Done and Needs attention (a failed task, failing
 checks, a refused issue, or a failed dependency), each card with its task's
@@ -2400,7 +2406,7 @@ stacks with state in a Cloud Storage bucket.
 | Redis | The VM, the distribution package | The HTTP Gateway's run grants and per-run spend counters. The scheduler's locks and kill switch are Postgres rows |
 | HTTP Gateway | The VM, from a checkout of ai-api-unified-http, reading its own `config/models.json`. Its guardrails are off, as that file ships | `mh-gateway.service`. Bound to every interface so the egress proxy container reaches it; no firewall rule admits its port from outside the VM. The meta-harness `models.json`, whose router names `harness` candidates, reaches the worker alone: the gateway's completions factory refuses a `harness` engine |
 | Meta-harness run service worker, egress proxy, per-run sandboxes | The VM, with the Docker executor backend | `mh-worker.service`, `mh-egress.service`. Per-run sandboxes are containers on the VM, and `MH_MAX_SANDBOXES` caps them at 8, the ceiling on the task policy's `max_parallel`: the VM, an `e2-standard-16` (16 vCPU, 64 GB), holds eight sandboxes at their profiles' 6 GB cap and 16 GB for everything else. Each run's workspace and git directory live under `/var/lib/meta-harness/runs` |
-| Logs | The systemd journal, every `mh-*` unit's output, shipped to Cloud Logging as `mh_journald` by the Google Cloud Ops Agent (major version 2, `deploy/vm/ops-agent.yaml`), which the boot installs. A failed install leaves the logs in the journal and stops nothing | The console's Admin menu reads them through `GET /v1/admin/logs` |
+| Logs | The systemd journal, every `mh-*` unit's output, shipped to Cloud Logging as `mh_journald` by the Google Cloud Ops Agent (major version 2, `deploy/vm/ops-agent.yaml`), which the boot installs. A failed install leaves the logs in the journal and stops nothing. Every service logs through `meta_harness/logs.py`, which under systemd starts each line with its journal priority (`<4>` warning, `<3>` error), so a record's level becomes its Cloud Logging severity; without the prefix every line arrives as INFO. Failures are logged at WARNING or ERROR, each line naming `task <id> run <run id>`: the RunTask workflow logs a run that did not finish, a review run with no verdict, a merge GitHub refused or a conflict, and failed checks on a merge commit as warnings, a task that ends `review_unresolved` or unreviewed as a warning, and one that ends `failed` as an error; the task service logs every move to `failed` (error), `review_unresolved` or `canceled` (warnings), whoever set it | The console's Admin menu reads them through `GET /v1/admin/logs`. The Logs page opens on warnings and above, and takes its search and range from its link (`?q=<task id>&minutes=1440`) |
 | Secrets | Secret Manager, read at boot into `/etc/meta-harness/env` | Provider keys, the service key, the gateway key, the repo registry and each GitHub App's private key. 
 
 The **platform** stack is what changes rarely: the network, Cloud NAT, the

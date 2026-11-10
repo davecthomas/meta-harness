@@ -169,6 +169,26 @@ def _ended(api, status: str) -> dict:
     return task
 
 
+def test_a_task_that_fails_or_ends_unresolved_is_logged_as_an_error_or_a_warning(api, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="meta_harness.tasks")
+    failed = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{failed['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    api.post(
+        f"/v1/tasks/{failed['id']}/status",
+        json={"status": "failed", "reason": "deploy failed on the merge commit"},
+        headers=_as(SERVICE_KEY),
+    )
+    unresolved = _ended(api, "review_unresolved")
+
+    logged = [(r.levelname, r.getMessage()) for r in caplog.records if r.name == "meta_harness.tasks"]
+    assert logged == [
+        ("ERROR", f"task {failed['id']} is failed (was running): deploy failed on the merge commit"),
+        ("WARNING", f"task {unresolved['id']} is review_unresolved (was running): None"),
+    ], "running is not logged; failed is an error; review_unresolved a warning"
+
+
 def test_clearing_a_task_whose_pull_request_merged_closes_it(api, events):
     task = _ended(api, "review_unresolved")
     events.emit("pull_request_merged", {"pr_url": "https://github.com/o/r/pull/12"}, task_id=task["id"])

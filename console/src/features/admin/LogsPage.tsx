@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Badge, Code, Group, Modal, ScrollArea, Select, Switch, Table, Text, TextInput } from "@mantine/core";
 import { api, type LogEntry } from "../../api";
 import { DataTable, Empty, ErrorAlert, PageHeader } from "../../components/ui";
@@ -17,9 +18,12 @@ const FOLLOW_MS = 5000;
 // The VM's services' logs and the edge's, from Cloud Logging, newest first.
 export function LogsPage() {
   const [unit, setUnit] = useState<string | null>(null);
-  const [severity, setSeverity] = useState<string | null>(null);
-  const [minutes, setMinutes] = useState("60");
-  const [q, setQ] = useState("");
+  // Opens on warnings and errors: what went wrong, without the routine lines around it. A link may name the
+  // search and the range, as a failed task's page does (?q=<task id>&minutes=1440).
+  const [params] = useSearchParams();
+  const [severity, setSeverity] = useState<string | null>("WARNING");
+  const [minutes, setMinutes] = useState(RANGES.some((r) => r.value === params.get("minutes")) ? params.get("minutes")! : "60");
+  const [q, setQ] = useState(params.get("q") ?? "");
   const [follow, setFollow] = useState(false);
   const [units, setUnits] = useState<string[]>([]);
   const [entries, setEntries] = useState<LogEntry[] | null>(null);

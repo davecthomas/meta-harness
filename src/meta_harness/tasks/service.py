@@ -13,6 +13,7 @@ services use a service key (MH_SERVICE_KEYS), which may also create review and
 fix tasks and set any task's status. Each change appends an event.
 """
 
+import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
@@ -61,6 +62,10 @@ class TaskIn(BaseModel):
 
 # A task left with its pull request open and no workflow watching it; an operator clears it.
 CLEARABLE = ("ready", "review_unresolved")
+# A move to one of these is logged, failed as an error and the rest as warnings, whoever set it.
+LOGGED_STATUSES = ("failed", "review_unresolved", "canceled")
+
+log = logging.getLogger("meta_harness.tasks")
 
 
 class AttemptsIn(BaseModel):
@@ -126,6 +131,11 @@ def create_app(
 
     def emit_status(task: dict, previous: str, actor: str) -> None:
         if task["status"] != previous:
+            if task["status"] in LOGGED_STATUSES:
+                level = logging.ERROR if task["status"] == "failed" else logging.WARNING
+                log.log(
+                    level, "task %s is %s (was %s): %s", task["id"], task["status"], previous, task["status_reason"]
+                )
             events.emit(
                 "task_status_changed",
                 {"from": previous, "to": task["status"], "reason": task["status_reason"]},
