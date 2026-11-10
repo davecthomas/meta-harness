@@ -197,6 +197,15 @@ export interface ReviewRound {
   next: { kind: "fix" | "merged" | "reviewed_again" | "waiting" | "ended" | "under_way"; run_id?: string | null; attempt?: number; reason?: string | null };
 }
 
+// A task's pull request: the files it changes with their patches, from GET /v1/pulls/{task_id}/diff.
+export interface PullDiff {
+  repo: string;
+  number: number;
+  head_sha: string;
+  state: string;
+  files: { path: string; status: string; additions: number; deletions: number; patch: string | null }[];
+}
+
 export interface Task {
   id: string;
   external_ref: string;
@@ -292,6 +301,9 @@ export const api = {
   },
   task: (id: string) => call<Task>(`/v1/tasks/${id}`),
   reviews: (id: string) => call<{ rounds: ReviewRound[] }>(`/v1/tasks/${id}/reviews`).then((r) => r.rounds),
+  pullDiff: (taskId: string) => call<PullDiff>(`/v1/pulls/${taskId}/diff`),
+  commentOnLines: (taskId: string, body: { path: string; line: number; start_line: number | null; body: string }) =>
+    call<{ url: string }>(`/v1/pulls/${taskId}/comments`, { method: "POST", body: JSON.stringify(body) }),
   clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
   cancelTask: (id: string) =>
     call<Task>(`/v1/tasks/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "canceled from the console" }) }),

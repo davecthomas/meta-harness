@@ -214,6 +214,20 @@ REGISTRY: list[EventType] = [
     ),
     EventType("issue_closed", 1, _object({"ref": {"type": "string"}}, ["ref"])),
     EventType(
+        "pull_request_commented",
+        1,
+        _object(
+            {
+                "path": {"type": "string"},
+                "line": {"type": "integer"},
+                "start_line": {"type": ["integer", "null"]},
+                "body": {"type": "string"},
+                "url": {"type": "string"},
+            },
+            ["path", "line", "body"],
+        ),
+    ),
+    EventType(
         "issue_added",
         1,
         _object({"ref": {"type": "string"}, "goal_id": {"type": "string"}}, ["ref", "goal_id"]),

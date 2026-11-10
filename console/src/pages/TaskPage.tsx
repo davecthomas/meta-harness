@@ -6,6 +6,7 @@ import { IconX } from "@tabler/icons-react";
 import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../api";
 import { Reviews } from "../components/Reviews";
 import { Timeline } from "../components/Timeline";
+import { Changes } from "../components/Changes";
 import { useEventStream } from "../hooks";
 import { describe, fold, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "../components/Terminal";
@@ -37,7 +38,7 @@ export function TaskPage() {
   const [from, setFrom] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The task's review rounds, for the Reviews tab, read once the task has a pull request.
-  const [tab, setTab] = useState<"timeline" | "terminal" | "reviews">("timeline");
+  const [tab, setTab] = useState<"timeline" | "terminal" | "changes" | "reviews">("timeline");
   const [rounds, setRounds] = useState<ReviewRound[] | null>(null);
   // The task's goal's name, for the link back to it. Null until read, or when the task has no goal.
   const [goalName, setGoalName] = useState<string | null>(null);
@@ -166,15 +167,17 @@ export function TaskPage() {
       <SegmentedControl
         mb="md"
         value={tab}
-        onChange={(v) => setTab(v as "timeline" | "terminal" | "reviews")}
+        onChange={(v) => setTab(v as "timeline" | "terminal" | "changes" | "reviews")}
         data={[
           { value: "timeline", label: "Timeline" },
           { value: "terminal", label: "Terminal" },
-          ...(task.pr_url ? [{ value: "reviews", label: `Reviews${rounds ? ` (${rounds.length})` : ""}` }] : []),
+          ...(task.pr_url ? [{ value: "changes", label: "Changes" }, { value: "reviews", label: `Reviews${rounds ? ` (${rounds.length})` : ""}` }] : []),
         ]}
       />
       {tab === "reviews" && task.pr_url ? (
         rounds ? <Reviews task={task} rounds={rounds} /> : <Center h={120}><Loader /></Center>
+      ) : tab === "changes" && task.pr_url ? (
+        <Changes taskId={task.id} />
       ) : tab === "timeline" ? (
         <Timeline events={onlyRun ? events.filter((e) => e.run_id === onlyRun || !e.run_id) : events} />
       ) : (
