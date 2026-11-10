@@ -4,6 +4,7 @@ import { Anchor, Badge, Group, Paper, Text } from "@mantine/core";
 import { api, type MhEvent, type Task } from "../api";
 import { statusColor } from "../theme";
 import { useEventStream, useSettled } from "../hooks";
+import { PrLink } from "./ui";
 import { describe, fold, taskOf, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "./Terminal";
 
@@ -105,6 +106,7 @@ export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?:
               <Group className="facts" gap={8} wrap="wrap">
                 <Badge size="xs" variant="light" color={statusColor(status)} tt="none">{status.replace(/_/g, " ")}</Badge>
                 {props.size !== 32 && <Text size="xs" c="dimmed" ff="monospace">{t.repo.split("/").pop()}</Text>}
+                {t.pr_url && <PrLink url={t.pr_url} size="xs" />}
                 <Text size="xs" c="dimmed">turn {f.turn}</Text>
                 <Text size="xs" c="dimmed">${f.usd.toFixed(4)}</Text>
                 {props.size === 4 && f.model && <Text size="xs" c="dimmed" ff="monospace">{f.model}</Text>}
