@@ -2049,6 +2049,11 @@ Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
+The header's inbox lists what waits on the operator: a pull request ready to
+merge, a review that ended unresolved, a recent failed task, a goal out of
+budget or stalled, and the kill switch. It refreshes every 30 seconds and,
+when the operator turned notifications on in Settings, raises a browser
+notification for each new item.
 The Task page shows a run as a timeline by default: each turn's message, its
 model calls (model, tokens, cost), its tool calls opening to their arguments
 and output, and the files it changed, live; the terminal is a second tab.
