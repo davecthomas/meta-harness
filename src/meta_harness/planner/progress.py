@@ -84,6 +84,8 @@ def issues_progress(links: list[dict], tasks: list[dict], events: list[dict]) ->
         shown.append(
             {
                 "ref": link["ref"],
+                # The issue's title, for a card with no task yet. None until a sweep has read the issue.
+                "title": link.get("title"),
                 "repo": link["repo"],
                 "state": link["state"],
                 "depends_on": link.get("depends_on") or [],

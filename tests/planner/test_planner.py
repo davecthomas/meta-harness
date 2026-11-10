@@ -165,6 +165,26 @@ def test_paths_lines_name_the_areas_an_issue_changes():
     assert tracker_module.issue_paths("No paths here.") == []
 
 
+def test_a_goals_issues_carry_their_titles_which_each_sweep_refreshes(api, parts):
+    events, tracker, tasks = parts
+    label = _label()
+    goal = api.post(
+        "/v1/goals",
+        json={"statement": "Fix bugs", "repos": ["davecthomas/meta-harness"], "label": label},
+        headers=OPERATOR,
+    ).json()
+    ref = tracker.add("davecthomas/meta-harness", _number(), body="Broken.", labels=[label], title="Crash on save")
+    _sweep(api, goal)
+
+    shown = api.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR).json()["issues"]
+    assert [(i["ref"], i["title"]) for i in shown] == [(ref, "Crash on save")]
+
+    tracker.issues[ref].title = "Crash on save, with a retry"
+    _sweep(api, goal)
+    shown = api.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR).json()["issues"]
+    assert shown[0]["title"] == "Crash on save, with a retry"
+
+
 async def test_a_task_gets_its_issues_paths(api, parts):
     events, tracker, tasks = parts
     label = _label()
