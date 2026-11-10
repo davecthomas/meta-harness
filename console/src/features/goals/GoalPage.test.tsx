@@ -239,3 +239,41 @@ test("the Goals list shows each goal's title, or the start of its description wh
   expect(await screen.findByText("Save bugs")).toBeTruthy();
   expect(screen.getByText(/^A description long enough .*…$/)).toBeTruthy();
 });
+
+test("the board refreshes by itself: a card with no task shows its issue's title, then moves once its task runs", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.stubGlobal("EventSource", class { static CLOSED = 2; addEventListener() {} close() {} });
+  const active = { ...SAVED, status: "active", started_at: "2026-11-08T20:45:00Z" };
+  const link = { ref: "github:o/a#1", repo: "o/a", state: "open", depends_on: [], refused_reason: null, picked: false };
+  const bare = { ...link, title: "Crash on save", task_id: null, task_status: null, task_status_reason: null, pr_url: null, pr_state: null, checks: null };
+  let started = false;
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    if (url === "/v1/goals/g-1") return respond({ ...active, issues: [{ ...link, task_id: started ? "t-1" : null }] });
+    if (url === "/v1/goals/g-1/issues") return respond({ issues: [started ? { ...bare, task_id: "t-1", task_status: "running" } : bare] });
+    if (url.startsWith("/v1/tasks")) return respond({ tasks: started ? [{ id: "t-1", title: "Crash on save", status: "running" }] : [], total: started ? 1 : 0 });
+    if (url.startsWith("/v1/events")) return respond({ events: [], latest_position: 0 });
+    if (url === "/v1/limits") return respond({ max_parallel: 8, max_sandboxes: 8 });
+    return respond({ base: "", ticket: null });
+  });
+
+  try {
+    renderAt("/goals/g-1", <GoalPage />);
+
+    const queued = await screen.findByTestId("column-queued");
+    await waitFor(() => expect(queued.textContent).toContain("Crash on save"));
+    expect(screen.getByTestId("column-running").textContent).not.toContain("Crash on save");
+    expect(screen.getByTestId("refreshed").textContent).toContain("updated");
+
+    // The planner makes the task and the scheduler starts it; nothing tells the page but its own reread.
+    started = true;
+    const before = asked.filter((u) => u === "/v1/goals/g-1/issues").length;
+    await vi.advanceTimersByTimeAsync(5100);
+    await waitFor(() => expect(screen.getByTestId("column-running").textContent).toContain("Crash on save"));
+    expect(asked.filter((u) => u === "/v1/goals/g-1/issues").length).toBeGreaterThan(before);
+    expect(asked.some((u) => u.includes("/v1/repos/"))).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});

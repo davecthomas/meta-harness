@@ -20,7 +20,7 @@ export function GoalFailures({ issues, tasks }: { issues: IssueProgress[]; tasks
     <Alert color="red" title={count} icon={<IconAlertTriangle size={18} />} mb="md" role="alert">
       <List size="sm" spacing={4}>
         {failed.map((i) => {
-          const name = (i.task_id && tasks[i.task_id]?.title) || i.ref.replace(/^github:/, "");
+          const name = (i.task_id && tasks[i.task_id]?.title) || i.title || i.ref.replace(/^github:/, "");
           const state = i.task_waiting_on === "budget" ? "out of budget" : i.task_status;
           const why = i.refused_reason ? `refused: ${i.refused_reason}` : `${state}: ${i.task_status_reason ?? "no reason was recorded"}`;
           return (

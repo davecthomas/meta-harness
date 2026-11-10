@@ -10,6 +10,22 @@ import { AutoMergeEdit, BudgetEdit, DescriptionField, LabelEdit, ParallelEdit, P
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 
+// How often an open goal's page rereads its issues.
+const REFRESH_MS = 5000;
+
+// When the board last refreshed, counted up each second, or why its latest refresh failed.
+function Refreshed({ at, error }: { at: number | null; error: string | null }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  if (error) return <Text size="xs" c="red" data-testid="refreshed">not refreshed: {error}</Text>;
+  if (at === null) return null;
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  return <Text size="xs" c="dimmed" data-testid="refreshed">updated {seconds < 2 ? "just now" : `${seconds} s ago`}</Text>;
+}
+
 export function GoalPage() {
   const { goalId = "" } = useParams();
   const navigate = useNavigate();
@@ -22,6 +38,9 @@ export function GoalPage() {
   const [progress, setProgress] = useState<IssueProgress[] | null>(null);
   const [spend, setSpend] = useState<Record<string, number>>({});
   const [from, setFrom] = useState<number | null>(null);
+  // When the board last reread its issues, and why its latest reread failed, if it did.
+  const [refreshed, setRefreshed] = useState<number | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [view, setView] = useState<"board" | "graph" | "table" | null>(null);
   const [systemParallel, setSystemParallel] = useState<number | null>(null);
   useEffect(() => {
@@ -29,12 +48,14 @@ export function GoalPage() {
   }, []);
   const [picking, setPicking] = useState(false);
 
-  const load = useCallback(async () => {
+  // quiet: a timed refresh, which rereads the goal and its tasks but not its label's issues on the code host.
+  const load = useCallback(async (quiet = false) => {
     try {
       const g = await api.goal(goalId);
       setGoal(g);
       const page = await api.tasks({ goalId }, 0, 1000);
       setTasks(Object.fromEntries(page.items.map((t) => [t.id, t])));
+      if (quiet) return;
       if (goalStatus(g) === "not_started" && g.label) {
         const found = await Promise.all(
           g.repos.map(async (repo) => (await api.labelIssues(repo, g.label!)).map((issue) => ({ ...issue, repo }))),
@@ -61,10 +82,32 @@ export function GoalPage() {
       for (const e of attempts) if (e.task_id) spent[e.task_id] = (spent[e.task_id] ?? 0) + (Number(e.payload.spent_usd) || 0);
       setProgress(issues);
       setSpend(spent);
+      setRefreshed(Date.now());
+      setRefreshError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // The board keeps what it shows; the header says the reload failed and why.
+      setRefreshError(err instanceof Error ? err.message : String(err));
     }
   }, [goalId]);
+
+  // The board stays current while it is open. It listens to the tasks it knows for changes within a second,
+  // and rereads the goal's issues every few seconds, because an issue with no task yet has nothing to listen
+  // to: without that, a started goal's cards sat in Queued until a reload. Not while the tab is hidden.
+  const closed = goal ? ["met", "canceled"].includes(goal.status) : true;
+  useEffect(() => {
+    if (closed) return;
+    const refresh = () => {
+      if (document.hidden) return;
+      void loadProgress();
+      void load(true);
+    };
+    const timer = setInterval(refresh, REFRESH_MS);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [closed, load, loadProgress]);
 
   useEffect(() => {
     void loadProgress();
@@ -92,7 +135,8 @@ export function GoalPage() {
     try {
       await action();
       setError(null);
-      await load();
+      // The action changed what the goal's issues are doing: the board rereads at once, with the goal.
+      await Promise.all([load(), loadProgress()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -223,12 +267,15 @@ export function GoalPage() {
       <SectionTitle
         right={
           issues.length > 0 && (
+            <Group gap="md">
+            <Refreshed at={refreshed} error={refreshError} />
             <SegmentedControl
               size="xs"
               value={shownView}
               onChange={(v) => setView(v as "board" | "graph" | "table")}
               data={[{ value: "board", label: "Board" }, { value: "graph", label: "Graph" }, { value: "table", label: "Table" }]}
             />
+            </Group>
           )
         }
       >
