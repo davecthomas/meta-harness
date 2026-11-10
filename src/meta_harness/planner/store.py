@@ -127,14 +127,18 @@ def search_goals(conn: psycopg.Connection, q: str, limit: int = 10) -> list[dict
 
 
 def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, **fields: Any) -> tuple[dict, dict]:
-    """Change title, statement, auto_merge, priority, max_usd, max_parallel or status. Returns (goal, the fields that changed with their old values).
+    """Change title, statement, label, repos, auto_merge, priority, max_usd, max_parallel or status. Returns
+    (goal, the fields that changed with their old values).
 
     only_if: change nothing unless the goal's status is this one when its row is locked.
+
+    A label goes to None only on a goal that holds picked issues, so the goal still has issues to take in.
+    Issues it already holds stay with it when its label or repos change; the next sweep lists by the new ones.
 
     A goal's first move to active sets started_at, and the changes then hold started_at too, so the caller
     can tell a goal's first start, which sweeps at once, from a resume.
     """
-    allowed = {"title", "statement", "auto_merge", "priority", "max_usd", "max_parallel", "status"}
+    allowed = {"title", "statement", "label", "repos", "auto_merge", "priority", "max_usd", "max_parallel", "status"}
     if set(fields) - allowed:
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
@@ -150,6 +154,10 @@ def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, *
         changed = {k: row[k] for k, v in fields.items() if row[k] != v}
         if not changed:
             return _goal(row), {}
+        if "label" in changed and fields["label"] is None:
+            cur.execute("SELECT 1 FROM planner.issue_link WHERE goal_id = %s LIMIT 1", (goal_id,))
+            if cur.fetchone() is None:
+                raise GoalError("a goal with no picked issues needs a label: pick its issues first")
         sets = [f"{k} = %s" for k in changed] + ["updated_at = now()"]
         values = [fields[k] for k in changed]
         if "status" in changed and fields["status"] == "active" and row["started_at"] is None:

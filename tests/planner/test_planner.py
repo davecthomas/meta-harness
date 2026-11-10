@@ -920,6 +920,67 @@ def test_an_operator_edits_a_goals_description_and_budget(api, parts):
     assert moves[-1]["statement"] == {"from": "Old words.", "to": "New words."}
 
 
+def test_a_budget_sent_as_null_is_cleared_and_other_fields_are_kept(api, parts):
+    events, _, _ = parts
+    goal = api.post(
+        "/v1/goals",
+        json={"statement": "Some.", "repos": [REPO], "label": _label(), "max_usd": "12", "start": False},
+        headers=OPERATOR,
+    ).json()
+
+    cleared = api.patch(f"/v1/goals/{goal['id']}", json={"max_usd": None}, headers=OPERATOR).json()
+
+    assert cleared["max_usd"] is None and cleared["label"] == goal["label"] and cleared["repos"] == [REPO]
+    moves = [p["changes"] for t, p in events.events if t == "goal_changed" and p["goal_id"] == goal["id"]]
+    assert moves == [{"max_usd": {"from": "12.0000", "to": "None"}}]
+    kept = api.patch(f"/v1/goals/{goal['id']}", json={"priority": 2}, headers=OPERATOR).json()
+    assert kept["max_usd"] is None and kept["priority"] == 2
+
+
+def test_a_goals_label_and_repos_change_and_its_next_sweep_takes_in_by_them(api, parts):
+    events, tracker, tasks = parts
+    old, new = _label(), _label()
+    goal = _goal(api, old)
+    before = tracker.add(REPO, _number(), labels=[old])
+    _sweep(api, goal)
+    other = "davecthomas/ai-api-unified"
+    after = tracker.add(other, _number(), labels=[new])
+    ignored = tracker.add(REPO, _number(), labels=[old])
+
+    changed = api.patch(f"/v1/goals/{goal['id']}", json={"label": new, "repos": [REPO, other]}, headers=OPERATOR).json()
+    _sweep(api, goal)
+
+    assert changed["label"] == new and changed["repos"] == [REPO, other]
+    made = {t["external_ref"] for t in tasks.tasks.values() if t["goal_id"] == goal["id"]}
+    assert made == {before, after} and ignored not in made
+    moves = [p["changes"] for t, p in events.events if t == "goal_changed" and p["goal_id"] == goal["id"]]
+    assert set(moves[-1]) == {"label", "repos"} and moves[-1]["label"] == {"from": old, "to": new}
+
+
+def test_a_goals_repos_must_be_registered_and_not_empty(api):
+    goal = _goal(api, _label())
+    unknown = api.patch(f"/v1/goals/{goal['id']}", json={"repos": [REPO, "o/unknown"]}, headers=OPERATOR)
+    assert unknown.status_code == 422 and "o/unknown" in unknown.json()["detail"]
+    assert api.patch(f"/v1/goals/{goal['id']}", json={"repos": []}, headers=OPERATOR).status_code == 422
+    assert api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["repos"] == [REPO]
+
+
+def test_a_goals_label_is_cleared_only_when_it_has_picked_issues(api, parts):
+    _, tracker, _ = parts
+    goal = api.post(
+        "/v1/goals", json={"statement": "A.", "repos": [REPO], "label": _label(), "start": False}, headers=OPERATOR
+    ).json()
+
+    refused = api.patch(f"/v1/goals/{goal['id']}", json={"label": None}, headers=OPERATOR)
+    assert refused.status_code == 409 and "picked issues" in refused.json()["detail"]
+    assert api.patch(f"/v1/goals/{goal['id']}", json={"label": ""}, headers=OPERATOR).status_code == 422
+
+    api.post(f"/v1/goals/{goal['id']}/issues", json={"refs": [tracker.add(REPO, _number())]}, headers=OPERATOR)
+    cleared = api.patch(f"/v1/goals/{goal['id']}", json={"label": None}, headers=OPERATOR)
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["label"] is None
+
+
 # --- A task's pull request: its diff and line comments -------------------------------------------------
 
 

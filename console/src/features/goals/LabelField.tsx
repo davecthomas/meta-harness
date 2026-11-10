@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Autocomplete, Group, Stack, Text } from "@mantine/core";
+import { Autocomplete, type AutocompleteProps, Group, Stack, Text } from "@mantine/core";
 import { api, type LabelCount } from "../../api";
 
 // A label for the goal, suggested from the labels on the open issues of the picked repos (every
 // registered repo when none is picked). Each suggestion shows its open-issue count, and is marked when
 // open goals already hold all its issues. A label with no open issue can still be typed, and the field
 // says so, so a typo shows. If the labels can't be read, the field is plain text and says why.
-export function LabelField({ value, onChange, repos, required = true }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean }) {
+// fieldProps: what the goal page's in-place edit changes on the input, such as no label of its own.
+export function LabelField({ value, onChange, repos, required = true, fieldProps }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean; fieldProps?: Partial<AutocompleteProps> }) {
   const [labels, setLabels] = useState<LabelCount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +37,7 @@ export function LabelField({ value, onChange, repos, required = true }: { value:
         onChange={onChange}
         data={options.map((o) => o.label)}
         maxDropdownHeight={280}
+        {...fieldProps}
         renderOption={({ option }) => {
           const row = byName.get(option.value);
           if (!row) return option.value;
