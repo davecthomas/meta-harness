@@ -177,3 +177,57 @@ async def test_an_operator_message_reaches_the_run_in_progress(env):  # noqa: F8
 
     assert [(d.message.message_id, d.message.text) for d in delivered] == [(7, "Use the existing helper.")]
     assert delivered[0].run_id.endswith(":run-1")
+
+
+async def test_parallel_attempts_wait_for_the_operators_pick_and_publish_it(env):  # noqa: F811 - the fixture
+    from temporalio.activity import _Definition
+
+    from meta_harness.run_service.shared import OperatorMessage, PublishRequest, RouteRequest, RouteResult
+
+    from .test_review_loop import AUTHOR, REVIEWER_B
+
+    script = Script(verdicts=[CLEAN])
+    published: list[PublishRequest] = []
+    statuses: list[str] = []
+    activities = [*script.activities(), *_task_activities(True, "")]
+    by_name = {_Definition.from_callable(a).name: a for a in activities}
+
+    @activity.defn(name="load_task")
+    async def load_task(task_id: str) -> TaskSpec:
+        spec = await by_name["load_task"](task_id)
+        spec.attempts = 2
+        return spec
+
+    @activity.defn(name="route")
+    async def route(request: RouteRequest) -> RouteResult:
+        result = await by_name["route"](request)
+        result.candidates = [AUTHOR, REVIEWER_B]
+        return result
+
+    @activity.defn(name="publish")
+    async def publish(request: PublishRequest):
+        published.append(request)
+        return await by_name["publish"](request)
+
+    @activity.defn(name="set_task_status")
+    async def set_task_status(request: TaskStatusRequest) -> str:
+        statuses.append(request.reason)
+        return request.status
+
+    replaced = {"load_task", "route", "publish", "set_task_status"}
+    workers = [a for a in activities if _Definition.from_callable(a).name not in replaced]
+    workers += [load_task, route, publish, set_task_status]
+    async with Worker(env.client, task_queue=QUEUE, workflows=[RunTask], activities=workers):
+        handle = await env.client.start_workflow(
+            RunTask.run, RunTaskInput(task="", repo="", task_id="t-par"), id="run-task-t-par", task_queue=QUEUE
+        )
+        await handle.signal(RunTask.operator_message, OperatorMessage(message_id=9, text="2", when="choose"))
+        result = await handle.result()
+        history = await handle.fetch_history()
+
+    assert [a.candidate for a in result.attempts[:2]] == [AUTHOR.label, REVIEWER_B.label]
+    assert published[0].run_id.endswith(":run-2") and published[0].candidate == REVIEWER_B.label
+    assert any("waiting for an operator to compare them" in s for s in statuses)
+    path = HISTORIES / "patched-parallel-attempts.json"
+    if os.environ.get("MH_RECORD_HISTORIES") and not path.exists():
+        path.write_text(json.dumps(json.loads(history.to_json()), indent=1) + "\n")

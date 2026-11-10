@@ -72,6 +72,7 @@ async def load_task(task_id: str) -> TaskSpec:
         spend_limit_usd=task["max_usd"] or DEFAULT_SPEND_LIMIT_USD,
         closes=f"{match['repo']}#{match['number']}" if match else "",
         goal_id=task.get("goal_id") or "",
+        attempts=int(task.get("attempts") or 1),
     )
 
 

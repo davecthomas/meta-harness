@@ -30,7 +30,7 @@ TERMINAL = {status for status, nexts in TRANSITIONS.items() if not nexts}
 COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
-    "pr_url, head_sha, created_at, updated_at"
+    "pr_url, head_sha, created_at, updated_at, attempts"
 )
 
 
@@ -232,7 +232,26 @@ def _jsonable(row: dict) -> dict:
 
 
 # How an operator message reaches a running task: at its next turn, when it would stop, or stop it after this turn.
-MESSAGE_KINDS = ("next_turn", "after_stop", "stop")
+MESSAGE_KINDS = ("next_turn", "after_stop", "stop", "choose")
+# The most attempts a task makes at once.
+MAX_ATTEMPTS = 4
+
+
+def set_attempts(conn: psycopg.Connection, task_id: str, count: int) -> dict:
+    """Ask a task that has not started to make `count` attempts at once. Refused once it runs."""
+    if not 1 <= count <= MAX_ATTEMPTS:
+        raise TaskError(f"attempts is 1 to {MAX_ATTEMPTS}")
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"UPDATE tasks.task SET attempts = %s, updated_at = now() WHERE id = %s AND status IN ('queued', 'blocked') "
+            f"RETURNING {COLUMNS}",
+            (count, task_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        get(conn, task_id)
+        raise TaskError("only a task that has not started can make several attempts")
+    return _jsonable(row)
 
 
 def add_message(conn: psycopg.Connection, task_id: str, body: str, deliver: str, actor: str) -> dict:
