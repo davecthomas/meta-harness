@@ -7,7 +7,8 @@ import { PARALLEL_HELP, parallelLabel } from "./parallel";
 
 // Each field an operator set on a goal, edited where the goal page shows it. A save sends only that field.
 export interface FieldProps {
-  goal: Goal & { issues?: unknown[] };
+  // picked: an operator picked the issue by ref, rather than the goal's label sweeping it in.
+  goal: Goal & { issues?: { ref: string; picked?: boolean }[] };
   // A met or canceled goal shows its fields read-only until it is reopened.
   readOnly: boolean;
   save: (fields: Partial<Goal>) => Promise<unknown>;
@@ -63,8 +64,9 @@ export function DescriptionField({ goal, readOnly, save }: FieldProps) {
 }
 
 export function LabelEdit({ goal, readOnly, save }: FieldProps) {
-  // The label may be cleared only when the goal holds issues picked for it, which it then takes alone.
-  const picked = (goal.issues?.length ?? 0) > 0;
+  // The label may be cleared only when the goal holds issues picked for it, which it then takes alone: an
+  // issue its label swept in does not count.
+  const picked = (goal.issues ?? []).some((i) => i.picked);
   const shown = goal.label ? (
     <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge>
   ) : (

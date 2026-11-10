@@ -25,7 +25,8 @@ GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
     "status, created_at, updated_at, started_at, closed_at, title, max_parallel"
 )
-LINK_COLUMNS = "ref, goal_id, repo, task_id, state, depends_on, refused_reason, first_seen_at, last_seen_at"
+# picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
+LINK_COLUMNS = "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at"
 
 
 class GoalError(ValueError):
@@ -126,14 +127,23 @@ def search_goals(conn: psycopg.Connection, q: str, limit: int = 10) -> list[dict
         return [_goal(row) for row in cur.fetchall()]
 
 
-def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, **fields: Any) -> tuple[dict, dict]:
+def update(
+    conn: psycopg.Connection,
+    goal_id: str,
+    only_if: str | None = None,
+    dropped: list[str] | None = None,
+    **fields: Any,
+) -> tuple[dict, dict]:
     """Change title, statement, label, repos, auto_merge, priority, max_usd, max_parallel or status. Returns
     (goal, the fields that changed with their old values).
 
     only_if: change nothing unless the goal's status is this one when its row is locked.
 
-    A label goes to None only on a goal that holds picked issues, so the goal still has issues to take in.
-    Issues it already holds stay with it when its label or repos change; the next sweep lists by the new ones.
+    A goal with no label needs picked issues, ones an operator added by ref, so it still has issues to take
+    in: a label goes to None, or a labelless goal's repos change, only when it holds one in its repos.
+    Issues it made tasks for stay with it when its label or repos change; the next sweep lists by the new
+    ones. An issue it holds with no task yet in a repo it no longer names is let go, so it never becomes a
+    task there: its ref is added to dropped, when given.
 
     A goal's first move to active sets started_at, and the changes then hold started_at too, so the caller
     can tell a goal's first start, which sweeps at once, from a resume.
@@ -154,10 +164,23 @@ def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, *
         changed = {k: row[k] for k, v in fields.items() if row[k] != v}
         if not changed:
             return _goal(row), {}
-        if "label" in changed and fields["label"] is None:
-            cur.execute("SELECT 1 FROM planner.issue_link WHERE goal_id = %s LIMIT 1", (goal_id,))
+        repos_now = [name.lower() for name in fields.get("repos", row["repos"])]
+        if ("label" in changed or "repos" in changed) and fields.get("label", row["label"]) is None:
+            cur.execute(
+                "SELECT 1 FROM planner.issue_link WHERE goal_id = %s AND picked "
+                "AND (task_id IS NOT NULL OR lower(repo) = ANY(%s)) LIMIT 1",
+                (goal_id, repos_now),
+            )
             if cur.fetchone() is None:
                 raise GoalError("a goal with no picked issues needs a label: pick its issues first")
+        if "repos" in changed:
+            cur.execute(
+                "DELETE FROM planner.issue_link WHERE goal_id = %s AND task_id IS NULL "
+                "AND NOT lower(repo) = ANY(%s) RETURNING ref",
+                (goal_id, repos_now),
+            )
+            if dropped is not None:
+                dropped.extend(r["ref"] for r in cur.fetchall())
         sets = [f"{k} = %s" for k in changed] + ["updated_at = now()"]
         values = [fields[k] for k in changed]
         if "status" in changed and fields["status"] == "active" and row["started_at"] is None:
@@ -255,9 +278,12 @@ def add_refs(conn: psycopg.Connection, goal_id: str, refs: list[tuple[str, str]]
             if row and row[0] != goal_id:
                 raise GoalError(f"{ref} is held by goal {row[0]}, which is {row[1]}")
             if row:
+                # Its label swept it in first; the operator has now picked it too.
+                conn.execute("UPDATE planner.issue_link SET picked = true WHERE ref = %s", (ref,))
                 continue
             conn.execute(
-                "INSERT INTO planner.issue_link (ref, goal_id, repo, state, depends_on) VALUES (%s, %s, %s, 'open', '{}')",
+                "INSERT INTO planner.issue_link (ref, goal_id, repo, state, depends_on, picked) "
+                "VALUES (%s, %s, %s, 'open', '{}', true)",
                 (ref, goal_id, repo),
             )
             added.append(ref)

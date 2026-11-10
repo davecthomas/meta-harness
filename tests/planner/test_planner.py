@@ -981,6 +981,64 @@ def test_a_goals_label_is_cleared_only_when_it_has_picked_issues(api, parts):
     assert cleared.json()["label"] is None
 
 
+def test_a_goal_whose_issues_its_label_swept_in_keeps_its_label(api, parts):
+    _, tracker, _ = parts
+    label = _label()
+    goal = _goal(api, label)
+    swept = tracker.add(REPO, _number(), labels=[label])
+    _sweep(api, goal)
+    held = api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["issues"]
+    assert [(i["ref"], i["picked"]) for i in held] == [(swept, False)]
+
+    refused = api.patch(f"/v1/goals/{goal['id']}", json={"label": None}, headers=OPERATOR)
+    assert refused.status_code == 409 and "picked issues" in refused.json()["detail"]
+    assert api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["label"] == label
+
+    # Picking the issue its label swept in makes it a picked one.
+    api.post(f"/v1/goals/{goal['id']}/issues", json={"refs": [swept]}, headers=OPERATOR)
+    assert api.patch(f"/v1/goals/{goal['id']}", json={"label": None}, headers=OPERATOR).status_code == 200
+
+
+def test_a_picked_issue_in_a_repo_the_goal_no_longer_names_becomes_no_task(api, parts):
+    events, tracker, tasks = parts
+    other = "davecthomas/ai-api-unified"
+    goal = api.post(
+        "/v1/goals",
+        json={"statement": "A.", "repos": [REPO, other], "label": _label(), "start": False},
+        headers=OPERATOR,
+    ).json()
+    gone, kept = tracker.add(other, _number()), tracker.add(REPO, _number())
+    api.post(f"/v1/goals/{goal['id']}/issues", json={"refs": [gone, kept]}, headers=OPERATOR)
+
+    changed = api.patch(f"/v1/goals/{goal['id']}", json={"repos": [REPO]}, headers=OPERATOR)
+    assert changed.status_code == 200, changed.text
+    api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR)
+    _sweep(api, goal)
+
+    made = {t["external_ref"] for t in tasks.tasks.values() if t["goal_id"] == goal["id"]}
+    assert made == {kept}
+    held = [i["ref"] for i in api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["issues"]]
+    assert held == [kept]
+    assert ("issue_dropped", {"ref": gone, "goal_id": goal["id"]}) in events.events
+
+
+def test_a_labelless_goal_keeps_a_repo_that_holds_its_only_picked_issues(api, parts):
+    _, tracker, _ = parts
+    other = "davecthomas/ai-api-unified"
+    picked = tracker.add(other, _number())
+    goal = api.post(
+        "/v1/goals",
+        json={"statement": "A.", "repos": [REPO, other], "label": None, "refs": [picked], "start": False},
+        headers=OPERATOR,
+    ).json()
+
+    refused = api.patch(f"/v1/goals/{goal['id']}", json={"repos": [REPO]}, headers=OPERATOR)
+
+    assert refused.status_code == 409 and "picked issues" in refused.json()["detail"]
+    held = api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+    assert held["repos"] == [REPO, other] and [i["ref"] for i in held["issues"]] == [picked]
+
+
 # --- A task's pull request: its diff and line comments -------------------------------------------------
 
 

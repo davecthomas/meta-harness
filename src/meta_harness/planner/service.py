@@ -92,7 +92,8 @@ class GoalPatch(BaseModel):
     # The goal's description. Its tasks already made keep the issues they came from; the next planning reads it.
     statement: str | None = Field(default=None, min_length=1, max_length=4000)
     # The label and repos the sweep lists issues by. Tasks the goal already made keep their issues; the next
-    # sweep takes in issues by the new ones. A label sent as null: the goal takes only its picked issues.
+    # sweep takes in issues by the new ones; an issue with no task yet in a repo dropped from repos is let go.
+    # A label sent as null: the goal takes only the issues an operator picked for it by ref.
     label: str | None = Field(default=None, min_length=1, max_length=100)
     repos: list[str] | None = Field(default=None, min_length=1)
     auto_merge: bool | None = None
@@ -239,10 +240,12 @@ def create_app(
         return goal
 
     def change_with(goal_id: str, who: str, **fields: Any) -> tuple[dict, dict]:
-        """Change a goal and record goal_changed. Returns (goal, the fields that changed with their old values)."""
+        """Change a goal and record goal_changed, and issue_dropped for each issue with no task that a change of
+        repos let go. Returns (goal, the fields that changed with their old values)."""
+        dropped: list[str] = []
         try:
             with app.state.pool.connection() as conn:
-                goal, changed = store.update(conn, goal_id, **fields)
+                goal, changed = store.update(conn, goal_id, dropped=dropped, **fields)
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such goal") from err
         except store.GoalError as err:
@@ -253,6 +256,8 @@ def create_app(
                 {"goal_id": goal_id, "changes": {k: {"from": str(v), "to": str(goal[k])} for k, v in changed.items()}},
                 actor=who,
             )
+        for ref in dropped:
+            events.emit("issue_dropped", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
         return goal, changed
 
     def move(goal_id: str, who: str, status: str, origins: set[str]) -> dict:

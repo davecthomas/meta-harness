@@ -103,6 +103,8 @@ export function GoalPage() {
     setGoal((now) => (now ? { ...now, ...saved, issues: now.issues } : now));
     // A new label or repos changes which open issues a goal not started yet would take in.
     if ("label" in fields || "repos" in fields) void load();
+    // New repos let go of the issues with no task yet in the repos dropped.
+    if ("repos" in fields) void loadProgress();
   }
 
   // A goal's issues are all in one response; the table reads ahead through them 50 at a time.
