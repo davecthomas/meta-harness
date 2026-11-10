@@ -67,7 +67,12 @@ export function Reviews({ task, rounds }: { task: Task; rounds: ReviewRound[] })
             )}
             <Group justify="space-between">
               {nextLine(r, task.id)}
-              {r.review_url && <Anchor href={r.review_url} target="_blank" size="xs">The review on GitHub</Anchor>}
+              <Group gap="md">
+                {r.run_id && (
+                  <Anchor component={Link} to={`/tasks/${task.id}?run=${encodeURIComponent(r.run_id)}`} size="xs">Show review run</Anchor>
+                )}
+                {r.review_url && <Anchor href={r.review_url} target="_blank" size="xs">The review on GitHub</Anchor>}
+              </Group>
             </Group>
           </Stack>
         </Card>
