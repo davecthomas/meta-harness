@@ -2,12 +2,13 @@
 
 import contextlib
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from meta_harness.planner import service as planner_service
-from meta_harness.planner import store
+from meta_harness.planner import store, sweep
 from meta_harness.planner.service import create_app
 
 OPERATOR = {"Authorization": "Bearer op-key"}
@@ -50,9 +51,12 @@ def patched(monkeypatch):
     sent: list[dict] = []
     goal = {"id": "g-1", "label": "bug", "repos": [REPO], "max_usd": Decimal("10"), "max_parallel": 2, "priority": 0}
 
-    def update(conn, goal_id, only_if=None, **fields):
+    def update(conn, goal_id, only_if=None, dropped=None, **fields):
         sent.append(fields)
         before = {k: goal.get(k) for k in fields}
+        if "repos" in fields and dropped is not None:
+            # An issue with no task yet, held in a repo the goal no longer names.
+            dropped.extend(f"github:{r}#1" for r in goal["repos"] if r not in fields["repos"])
         goal.update(fields)
         return dict(goal), before
 
@@ -87,6 +91,41 @@ def test_a_patch_takes_a_label_and_registered_repos_by_their_registry_names(patc
 
     assert changed.status_code == 200, changed.text
     assert sent == [{"label": "mh:next", "repos": [REPO, other]}]
+
+
+def test_a_change_of_repos_records_each_issue_it_let_go(patched):
+    client, _, events = patched
+    other = "davecthomas/ai-api-unified"
+
+    assert client.patch("/v1/goals/g-1", json={"repos": [other]}, headers=OPERATOR).status_code == 200
+
+    assert ("issue_dropped", {"ref": f"github:{REPO}#1", "goal_id": "g-1"}) in events.events
+
+
+async def test_a_sweep_makes_no_task_for_a_picked_issue_outside_the_goals_repos(monkeypatch):
+    other = "davecthomas/ai-api-unified"
+    links = [
+        {"ref": f"github:{other}#5", "repo": other, "task_id": None, "refused_reason": None, "state": "open"},
+        {"ref": f"github:{REPO}#6", "repo": REPO, "task_id": None, "refused_reason": None, "state": "open"},
+    ]
+    read: list[str] = []
+    taken: list[str] = []
+
+    class Tracker:
+        async def read(self, ref):
+            read.append(ref)
+            return SimpleNamespace(ref=ref, state="open")
+
+    async def take_in(goal, issue, *args):
+        taken.append(issue.ref)
+
+    monkeypatch.setattr(sweep, "_links", lambda goal_id: links)
+    monkeypatch.setattr(sweep, "_take_in", take_in)
+    goal = {"id": "g-1", "repos": [REPO.upper()]}
+
+    await sweep._take_in_added(goal, set(), Tracker(), None, None, sweep.SweepResult("g-1"))
+
+    assert read == taken == [f"github:{REPO}#6"]
 
 
 @pytest.mark.parametrize(

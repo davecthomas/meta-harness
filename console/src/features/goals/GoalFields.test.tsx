@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
@@ -133,6 +133,26 @@ test("a label is not cleared on a goal with no picked issues, and repos are pick
   fireEvent.keyDown(screen.getByRole("checkbox", { name: "o/s" }), { key: "Enter" });
 
   await waitFor(() => expect(patched).toEqual([{ repos: ["o/r", "o/s"] }]));
+});
+
+test("a label its sweep's issues came from is kept, and one with a picked issue is cleared", async () => {
+  const swept = { ref: "github:o/r#7", repo: "o/r", task_id: null, state: "open", depends_on: [], refused_reason: null, picked: false };
+  const patched = renderGoal(goal("active", { issues: [swept] }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit label" }));
+  let label = screen.getByRole("combobox", { name: "Label" });
+  fireEvent.change(label, { target: { value: "" } });
+  fireEvent.keyDown(label, { key: "Enter" });
+  expect((await screen.findByRole("alert")).textContent).toContain("needs a label");
+  expect(patched).toEqual([]);
+  cleanup();
+
+  const picked = renderGoal(goal("active", { issues: [{ ...swept, picked: true }] }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit label" }));
+  label = screen.getByRole("combobox", { name: "Label" });
+  fireEvent.change(label, { target: { value: "" } });
+  fireEvent.keyDown(label, { key: "Enter" });
+  await waitFor(() => expect(picked).toEqual([{ label: null }]));
 });
 
 test("auto-merge is a switch that saves when flipped", async () => {
