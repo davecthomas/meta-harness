@@ -158,10 +158,16 @@ class RunTask:
         self._route_no = 0
         # Operators' messages to the run in progress, in the order they came, until each is handed over.
         self._messages: list[OperatorMessage] = []
+        # The attempt an operator picked, when the task made several at once.
+        self._chosen: int | None = None
 
     @workflow.signal
     def operator_message(self, message: OperatorMessage) -> None:
-        """An operator's message for the run in progress, or stop. The scheduler sends it from the task service."""
+        """An operator's message for the run in progress, or stop, or the pick among parallel attempts. The scheduler
+        sends it from the task service."""
+        if message.when == "choose":
+            self._chosen = int(message.text)
+            return
         self._messages.append(message)
 
     async def _deliver_messages(self) -> None:
@@ -217,6 +223,7 @@ class RunTask:
             closes=spec.closes,
             task_id=spec.task_id,
             goal_id=spec.goal_id,
+            attempts=spec.attempts,
         )
         await self._task_status("running", "the meta-harness run service started its RunTask workflow")
         try:
@@ -285,6 +292,9 @@ class RunTask:
         attempts: list[Attempt] = []
         route_result: RouteResult | None = None
         floor = request.floor
+        # Behind a patch: only a task asked for several attempts takes this path, and only after the patch.
+        if request.attempts > 1 and not prepared.pinned and workflow.patched("parallel-attempts"):
+            return await self._parallel_attempts(request, prepared, limit)
         while True:
             if prepared.pinned:
                 tier: str | None = None
@@ -337,30 +347,8 @@ class RunTask:
                     limit,
                 )
                 if decision == "finished" and harness is not None:
-                    published = await self._publish(prepared, harness, candidate, spent) if prepared.repo else None
-                    if published is not None and not published.pr_url:
-                        raise _failed(f"run {attempt} finished, but pi changed nothing in {prepared.repo}", attempts)
-                    if self._task_id and published is not None:
-                        await self._record(record_published, PublishedRecord(self._task_id, published))
-                    outcome, reason = "", ""
-                    if published is not None and request.review:
-                        thinking = route_result.thinking if route_result is not None and not prepared.pinned else None
-                        loop = _Loop(request, prepared, candidate, published, limit, spent, attempts, thinking)
-                        outcome, reason = await self._review_loop(loop)
-                        spent = loop.spent
-                    log.info(
-                        "%s: completed%s", info.workflow_id, f", review loop {outcome}: {reason}" if outcome else ""
-                    )
-                    return RunTaskResult(
-                        template=prepared.template,
-                        prompt=prepared.prompt,
-                        route=route_result,
-                        attempts=attempts,
-                        harness=harness,
-                        spent_usd=str(spent),
-                        published=published,
-                        outcome=outcome,
-                        outcome_reason=reason,
+                    return await self._finish(
+                        request, prepared, route_result, candidate, harness, attempt, attempts, limit, spent
                     )
                 if decision == "final":
                     raise _failed(f"run {attempt} on {candidate.label} ended for good: {detail}", attempts)
@@ -371,6 +359,109 @@ class RunTask:
                 "%s: tier %s has no candidates left, so the task escalates to %s", info.workflow_id, tier, next_tier
             )
             floor = next_tier
+
+    async def _finish(
+        self,
+        request: RunTaskInput,
+        prepared: PreparedRun,
+        route_result: RouteResult | None,
+        candidate: Candidate,
+        harness: HarnessResult,
+        attempt: int,
+        attempts: list[Attempt],
+        limit: Decimal,
+        spent: Decimal,
+    ) -> RunTaskResult:
+        """A finished run's end: publish its changes, then the review loop on its pull request."""
+        info = workflow.info()
+        published = await self._publish(prepared, harness, candidate, spent) if prepared.repo else None
+        if published is not None and not published.pr_url:
+            raise _failed(f"run {attempt} finished, but pi changed nothing in {prepared.repo}", attempts)
+        if self._task_id and published is not None:
+            await self._record(record_published, PublishedRecord(self._task_id, published))
+        outcome, reason = "", ""
+        if published is not None and request.review:
+            thinking = route_result.thinking if route_result is not None and not prepared.pinned else None
+            loop = _Loop(request, prepared, candidate, published, limit, spent, attempts, thinking)
+            outcome, reason = await self._review_loop(loop)
+            spent = loop.spent
+        workflow.logger.info(
+            "%s: completed%s", info.workflow_id, f", review loop {outcome}: {reason}" if outcome else ""
+        )
+        return RunTaskResult(
+            template=prepared.template,
+            prompt=prepared.prompt,
+            route=route_result,
+            attempts=attempts,
+            harness=harness,
+            spent_usd=str(spent),
+            published=published,
+            outcome=outcome,
+            outcome_reason=reason,
+        )
+
+    async def _parallel_attempts(self, request: RunTaskInput, prepared: PreparedRun, limit: Decimal) -> RunTaskResult:
+        """Several attempts at once, each on one of the tier's candidates with an equal share of the spend limit,
+        each in its own sandbox and workspace. The finished ones wait for an operator to pick one, whose changes
+        publish as the pull request; the others are never pushed."""
+        info = workflow.info()
+        route_result = await self._route(prepared.prompt, request.floor, request.ceiling)
+        if self._task_id:
+            self._route_no += 1
+            await self._record(
+                record_route, RouteRecord(self._task_id, self._route_no, request.floor, request.ceiling, route_result)
+            )
+        picked = route_result.candidates[: request.attempts]
+        share = (limit / len(picked)).quantize(Decimal("0.0001"))
+        runs = await asyncio.gather(
+            *(
+                self._try(
+                    prepared.prompt,
+                    run_id_for(info.workflow_id, number),
+                    candidate,
+                    share,
+                    prepared.repo,
+                    route_result.thinking,
+                )
+                for number, candidate in enumerate(picked, start=1)
+            )
+        )
+        attempts: list[Attempt] = []
+        spent = Decimal(0)
+        finished: dict[int, tuple[Candidate, HarnessResult]] = {}
+        for number, (candidate, (harness, decision, detail, run_spent)) in enumerate(zip(picked, runs), start=1):
+            spent += run_spent
+            attempts.append(
+                Attempt(
+                    attempt=number,
+                    tier=route_result.tier,
+                    candidate=candidate.label,
+                    run_id=run_id_for(info.workflow_id, number),
+                    decision=decision,
+                    detail=detail,
+                    spent_usd=str(run_spent),
+                )
+            )
+            if self._task_id:
+                await self._record(record_attempt, AttemptRecord(self._task_id, attempts[-1], candidate, harness))
+            if decision == "finished" and harness is not None:
+                finished[number] = (candidate, harness)
+        if not finished:
+            raise _failed(f"none of the {len(picked)} attempts finished", attempts)
+        if len(finished) == 1:
+            number = next(iter(finished))
+        else:
+            if self._task_id:
+                await self._task_status(
+                    "running",
+                    f"{len(finished)} attempts finished: waiting for an operator to compare them and pick one",
+                )
+            await workflow.wait_condition(lambda: self._chosen in finished)
+            number = self._chosen
+        workflow.logger.info("%s: attempt %s picked of %s", info.workflow_id, number, sorted(finished))
+        candidate, harness = finished[number]
+        self._current_run_id = harness.run_id
+        return await self._finish(request, prepared, route_result, candidate, harness, number, attempts, limit, spent)
 
     async def _route(self, prompt: str, floor: str, ceiling: str) -> RouteResult:
         info = workflow.info()

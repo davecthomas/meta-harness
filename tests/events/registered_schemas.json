@@ -1,4 +1,20 @@
 {
+  "attempt_chosen v1": {
+    "additionalProperties": true,
+    "properties": {
+      "attempt": {
+        "type": "integer"
+      },
+      "message_id": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "message_id",
+      "attempt"
+    ],
+    "type": "object"
+  },
   "attempt_finished v1": {
     "additionalProperties": true,
     "properties": {

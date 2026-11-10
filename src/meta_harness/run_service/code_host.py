@@ -486,3 +486,31 @@ async def _run(*args: str, check: bool = True, env: dict[str, str] | None = None
     if check and process.returncode != 0:
         raise CodeHostError(f"{' '.join(args[:3])} failed: {err.decode(errors='replace').strip()}")
     return out.decode(errors="replace").strip()
+
+
+# A run's diff is cut here for the compare view: a page shows the start of a large one.
+DIFF_CHARS = 200_000
+
+
+async def workspace_diff(ref: str, run_id: str) -> dict:
+    """A run's changes in its workspace against the commit it cloned, new files included: per file counts and the
+    patch. Nothing is committed or pushed."""
+    from meta_harness.run_service import sandbox
+
+    workspace, git_dir = sandbox.workspace_for(ref, run_id), sandbox.git_dir_for(ref, run_id)
+    if not workspace.is_dir() or not git_dir.is_dir():
+        return {"files": [], "patch": "", "missing": True}
+    await _git(git_dir, workspace, "add", "--all", "--intent-to-add")
+    numstat = await _git(git_dir, workspace, "diff", "HEAD", "--numstat")
+    files = []
+    for line in numstat.splitlines():
+        added, removed, path = (line.split("\t", 2) + ["", "", ""])[:3]
+        files.append(
+            {
+                "path": path,
+                "additions": int(added) if added.isdigit() else 0,
+                "deletions": int(removed) if removed.isdigit() else 0,
+            }
+        )
+    patch = await _git(git_dir, workspace, "diff", "HEAD")
+    return {"files": files, "patch": patch[:DIFF_CHARS], "missing": False}
