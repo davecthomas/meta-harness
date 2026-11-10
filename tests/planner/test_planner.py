@@ -16,6 +16,19 @@ pytestmark = pytest.mark.db
 OPERATOR = {"Authorization": "Bearer op-key"}
 
 
+@pytest.fixture(autouse=True)
+def registry(monkeypatch):
+    """The example repo registry, whatever the machine has: CI has no config/repos.local.json."""
+    from meta_harness.planner import repos
+    from meta_harness.run_service.paths import REPO_ROOT
+
+    monkeypatch.setenv("MH_REPOS_CONFIG", str(REPO_ROOT / "config" / "repos.example.json"))
+    monkeypatch.delenv("MH_CONFIG_SOURCE", raising=False)
+    repos._file_registry.cache_clear()
+    yield
+    repos._file_registry.cache_clear()
+
+
 @pytest.fixture(scope="module", autouse=True)
 def migrated():
     try:
