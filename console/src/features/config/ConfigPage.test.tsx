@@ -21,7 +21,7 @@ function respond(body: unknown, status = 200) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function stub(onPut: () => Promise<Response>) {
+function stub(onPut: (body: any) => Promise<Response>) {
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
     if (url === "/v1/config") {
       return respond({
@@ -32,9 +32,10 @@ function stub(onPut: () => Promise<Response>) {
         ],
       });
     }
-    if (url === "/v1/config/tiers" && init?.method === "PUT") return onPut();
+    if (url === "/v1/config/tiers" && init?.method === "PUT") return onPut(JSON.parse(String(init.body)));
     if (url === "/v1/config/tiers") return respond(VERSION);
     if (url === "/v1/config/tiers/versions") return respond({ versions: [VERSION] });
+    if (url === "/v1/config/profiles/versions") return respond({ versions: [] });
     if (url === "/v1/config/profiles") return respond({ ...VERSION, kind: "profiles", document: { profiles: { "pi-lean": {}, "pi-careful": {} } } });
     if (url === "/v1/config/models") return respond({ models: [{ name: "claude:claude-sonnet-5" }, { name: "openai-responses:gpt-6-sol" }] });
     return respond({ detail: "not stubbed" }, 404);
@@ -51,7 +52,7 @@ function renderPage() {
   );
 }
 
-test("the tiers tab lays out each tier with its thinking level and its candidates in order", async () => {
+test("the tiers tab lays out each tier with its thinking level and its candidates in order, with no Edit button", async () => {
   stub(() => respond({}));
   renderPage();
 
@@ -61,46 +62,86 @@ test("the tiers tab lays out each tier with its thinking level and its candidate
   expect(screen.getByText("pi-lean")).toBeTruthy();
   expect(screen.getByText("claude:claude-sonnet-5")).toBeTruthy();
   expect(screen.getByRole("tab", { name: /Harness profiles/ })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
 });
 
-test("a save the service refuses shows each reason beside the tier it names, and the rest on top", async () => {
-  stub(() => respond({ detail: { reasons: ["tier standard has no candidates", "default_tier is required"] } }, 422));
-  renderPage();
-
-  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-  fireEvent.change(await screen.findByLabelText("Description"), { target: { value: "One module, clear checks." } });
-  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Save as version 2" }));
-
-  expect(await screen.findByText("Not saved: the service would refuse this version")).toBeTruthy();
-  expect(screen.getByText("default_tier is required")).toBeTruthy();
-  const tier = screen.getByTestId("tier-standard");
-  expect(within(tier).getByText("tier standard has no candidates")).toBeTruthy();
-});
-
-test("the tier form changes a candidate's model, and the review shows the change before it saves with its note", async () => {
-  const saved: unknown[] = [];
-  stub(() => {
+test("an edit in place is staged and marked, and Review and save saves every change as the next version with its note", async () => {
+  const saved: any[] = [];
+  stub((body) => {
+    saved.push(body);
     return respond({ ...VERSION, version: 2 });
   });
-  const realFetch = globalThis.fetch;
-  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
-    if (init?.method === "PUT") saved.push(JSON.parse(String(init.body)));
-    return realFetch(url, init);
-  });
   renderPage();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-  const [model] = await screen.findAllByLabelText("Model of candidate 1 in standard", { selector: "input" });
-  fireEvent.focus(model);
-  fireEvent.change(model, { target: { value: "gpt-6" } });
-  fireEvent.click(await screen.findByText("openai-responses:gpt-6-sol"));
-  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit Description of standard" }));
+  const description = screen.getByLabelText("Description of standard");
+  fireEvent.change(description, { target: { value: "One module, clear checks." } });
+  fireEvent.keyDown(description, { key: "Enter", ctrlKey: true });
 
+  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+  expect(screen.getByText("changed")).toBeTruthy();
+  expect(saved).toHaveLength(0);
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit Model of candidate 1 in standard" }));
+  fireEvent.click(await screen.findByText("openai-responses:gpt-6-sol"));
+  expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
   expect(await screen.findByText(/\+ .*harness:pi-lean\/openai-responses:gpt-6-sol/)).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Sol first" } });
   fireEvent.click(screen.getByRole("button", { name: "Save as version 2" }));
 
   await waitFor(() => expect(saved).toHaveLength(1));
-  expect(saved[0]).toMatchObject({ note: "Sol first", document: { tiers: [{ models: ["harness:pi-lean/openai-responses:gpt-6-sol"] }] } });
+  expect(saved[0]).toMatchObject({
+    note: "Sol first",
+    document: { tiers: [{ description: "One module, clear checks.", models: ["harness:pi-lean/openai-responses:gpt-6-sol"] }] },
+  });
+});
+
+test("a refused save shows each reason beside the value it is about, the rest on top, and the changes stay staged", async () => {
+  stub(() => respond({ detail: { reasons: ["tier standard has no candidates", "default_tier is required: the router needs a tier", "the router does not parse: x"] } }, 422));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Remove candidate 1 in standard" }));
+  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save as version 2" }));
+
+  expect(await screen.findByText("Not saved: the service would refuse this version")).toBeTruthy();
+  expect(screen.getByText("the router does not parse: x")).toBeTruthy();
+  expect(within(screen.getByTestId("tier-standard")).getByText("tier standard has no candidates")).toBeTruthy();
+  expect(screen.getByText("default_tier is required: the router needs a tier")).toBeTruthy();
+  expect(screen.getByText("1 change to version 1")).toBeTruthy();
+});
+
+test("Discard drops the staged changes, and Advanced: JSON opens the document with them", async () => {
+  stub(() => respond({}));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit When a tier is used up" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Fail", hidden: true }));
+  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Advanced: JSON" }));
+  const json = (await screen.findByLabelText(/JSON/, { selector: "textarea" })) as HTMLTextAreaElement;
+  expect(json.value).toContain('"on_exhausted": "fail"');
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+  await waitFor(() => expect(screen.queryByText("1 change to version 1")).toBeNull());
+  expect(screen.getByText("Escalate one tier up")).toBeTruthy();
+});
+
+test("a profile is added and removed from the table, each staged", async () => {
+  stub(() => respond({}));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("tab", { name: /Harness profiles/ }));
+  fireEvent.change(await screen.findByLabelText("New profile name"), { target: { value: "pi-fast" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add profile" }));
+  expect(await screen.findByTestId("profile-pi-fast")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Remove profile pi-careful" }));
+
+  expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
+  expect(screen.queryByTestId("profile-pi-careful")).toBeNull();
 });

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Anchor, Badge, Button, Code, Group, List, Modal, Select, Stack, Table, Text, Textarea } from "@mantine/core";
-import { IconEdit, IconPlus, IconTrash } from "@tabler/icons-react";
+import { Alert, Anchor, Badge, Button, Group, List, Modal, Select, Stack, Table, Text, Textarea } from "@mantine/core";
+import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { api, ApiError, type ConfigVersion } from "../../api";
+import { InlineField } from "../../components/InlineField";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { DataTable, ErrorAlert, PageHeader } from "../../components/ui";
 
@@ -11,41 +12,30 @@ function lines(text: string): string[] {
   return text.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
-// One repo's tracker and default checks, to add or to change. Leaving it with changes asks first.
-function RepoForm(props: {
-  title: string;
-  names: string[] | null;
-  repo?: { name: string; spec: Repo };
-  onClose: () => void;
-  onSave: (name: string, spec: Repo) => Promise<boolean>;
-}) {
-  const [name, setName] = useState<string | null>(props.repo?.name ?? null);
-  const [checks, setChecks] = useState((props.repo?.spec.default_checks ?? []).join("\n"));
-  const original = (props.repo?.spec.default_checks ?? []).join("\n");
-  const save = () => (name ? props.onSave(name, { ...(props.repo?.spec ?? {}), tracker: "github", default_checks: lines(checks) }) : Promise.resolve(false));
+// A repository to add, with its default checks. Leaving it with changes asks first.
+function AddRepoForm(props: { names: string[]; onClose: () => void; onSave: (name: string, spec: Repo) => Promise<boolean> }) {
+  const [name, setName] = useState<string | null>(null);
+  const [checks, setChecks] = useState("");
+  const save = () => (name ? props.onSave(name, { tracker: "github", default_checks: lines(checks) }) : Promise.resolve(false));
   const unsaved = useUnsavedChanges({
-    dirty: checks !== original || (!props.repo && name !== null),
+    dirty: checks !== "" || name !== null,
     describe: name ? `the repository ${name}` : "the new repository",
     save,
     discard: () => undefined,
   });
   return (
-    <Modal opened onClose={() => unsaved.confirm(props.onClose)} title={props.title} size="lg">
+    <Modal opened onClose={() => unsaved.confirm(props.onClose)} title="Add repository" size="lg">
       {unsaved.element}
       <Stack gap="md">
-        {props.names ? (
-          <Select
-            label="Repository"
-            description="A repo the deployment's GitHub App is installed on and the registry does not list yet."
-            searchable
-            data={props.names}
-            value={name}
-            onChange={setName}
-            nothingFoundMessage="No repo left: install the GitHub App on more"
-          />
-        ) : (
-          <Text ff="monospace">{name}</Text>
-        )}
+        <Select
+          label="Repository"
+          description="A repo the deployment's GitHub App is installed on and the registry does not list yet."
+          searchable
+          data={props.names}
+          value={name}
+          onChange={setName}
+          nothingFoundMessage="No repo left: install the GitHub App on more"
+        />
         <Text size="sm">Tracker: GitHub</Text>
         <Textarea
           label="Default acceptance checks"
@@ -75,11 +65,12 @@ function RepoForm(props: {
   );
 }
 
-// The repo registry: the repos goals may change. Each change saves a new version of the `repos` kind.
+// The repo registry: the repos goals may change. Each change saves a new version of the `repos` kind; a repo's
+// default acceptance checks edit in place, and each commit is its own version.
 export function ReposPage() {
   const [current, setCurrent] = useState<ConfigVersion | null>(null);
   const [available, setAvailable] = useState<{ repos: { name: string; private: boolean }[]; install_urls: string[] } | null>(null);
-  const [form, setForm] = useState<{ mode: "add" } | { mode: "edit"; name: string } | null>(null);
+  const [adding, setAdding] = useState(false);
   const [reasons, setReasons] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,18 +87,25 @@ export function ReposPage() {
     void load();
   }, [load]);
 
-  async function saveRegistry(repos: Record<string, Repo>, note: string): Promise<boolean> {
-    if (!current) return false;
-    setReasons([]);
+  // Saves the registry with these repos as a new version. Resolves to the reasons it was refused, or null once saved.
+  async function saveRegistry(repos: Record<string, Repo>, note: string): Promise<string[] | null> {
+    if (!current) return ["The registry has not loaded"];
     try {
       await api.saveConfig("repos", { ...current.document, repos }, note);
       await load();
-      return true;
+      return null;
     } catch (err) {
-      if (err instanceof ApiError && err.reasons.length) setReasons(err.reasons);
-      else setError(err instanceof Error ? err.message : String(err));
-      return false;
+      if (err instanceof ApiError && err.reasons.length) return err.reasons;
+      return [err instanceof Error ? err.message : String(err)];
     }
+  }
+
+  // A save from the page itself: a refusal shows above the table.
+  async function savePage(repos: Record<string, Repo>, note: string): Promise<boolean> {
+    setReasons([]);
+    const refused = await saveRegistry(repos, note);
+    if (refused) setReasons(refused);
+    return refused === null;
   }
 
   const repos: Record<string, Repo> = current?.document.repos ?? {};
@@ -116,7 +114,7 @@ export function ReposPage() {
       <PageHeader
         title="Repositories"
         description="The repos a goal may change. Each change is a new version of the repo registry, with its history and rollback under Configuration."
-        actions={<Button leftSection={<IconPlus size={16} />} onClick={() => setForm({ mode: "add" })}>Add repository</Button>}
+        actions={<Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>Add repository</Button>}
       />
       <ErrorAlert error={error} />
       {reasons.length > 0 && (
@@ -129,16 +127,25 @@ export function ReposPage() {
           <Table.Tr key={name}>
             <Table.Td><Anchor href={`https://github.com/${name}`} target="_blank" ff="monospace" size="sm">{name}</Anchor></Table.Td>
             <Table.Td><Badge variant="light" tt="none">{spec.tracker ?? "github"}</Badge></Table.Td>
-            <Table.Td><Stack gap={2}>{(spec.default_checks ?? []).map((c) => <Code key={c}>{c}</Code>)}</Stack></Table.Td>
+            <Table.Td>
+              <InlineField
+                kind="tags"
+                label={`Default acceptance checks of ${name}`}
+                value={spec.default_checks ?? []}
+                monospace
+                showSaved
+                placeholder="A command, Enter to add; Enter again to save"
+                onCommit={(checks) => saveRegistry({ ...repos, [name]: { ...spec, default_checks: checks } }, `changed ${name}`)}
+              />
+            </Table.Td>
             <Table.Td>
               <Group gap="xs" justify="flex-end" wrap="nowrap">
-                <Button size="compact-sm" variant="default" leftSection={<IconEdit size={14} />} onClick={() => setForm({ mode: "edit", name })}>Edit</Button>
                 <Button
                   size="compact-sm"
                   color="red"
                   variant="light"
                   leftSection={<IconTrash size={14} />}
-                  onClick={() => void saveRegistry(Object.fromEntries(Object.entries(repos).filter(([n]) => n !== name)), `removed ${name}`)}
+                  onClick={() => void savePage(Object.fromEntries(Object.entries(repos).filter(([n]) => n !== name)), `removed ${name}`)}
                 >
                   Remove
                 </Button>
@@ -153,21 +160,11 @@ export function ReposPage() {
           {available.install_urls.map((url) => <Anchor key={url} href={url} target="_blank">install the app</Anchor>)}.
         </Text>
       )}
-      {form?.mode === "add" && (
-        <RepoForm
-          title="Add repository"
+      {adding && (
+        <AddRepoForm
           names={(available?.repos ?? []).map((r) => r.name)}
-          onClose={() => setForm(null)}
-          onSave={(name, spec) => saveRegistry({ ...repos, [name]: spec }, `added ${name}`)}
-        />
-      )}
-      {form?.mode === "edit" && (
-        <RepoForm
-          title={`Edit ${form.name}`}
-          names={null}
-          repo={{ name: form.name, spec: repos[form.name] ?? {} }}
-          onClose={() => setForm(null)}
-          onSave={(name, spec) => saveRegistry({ ...repos, [name]: spec }, `changed ${name}`)}
+          onClose={() => setAdding(false)}
+          onSave={(name, spec) => savePage({ ...repos, [name]: spec }, `added ${name}`)}
         />
       )}
     </>

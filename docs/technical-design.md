@@ -177,9 +177,10 @@ events: no query joins two components' schemas, though today they share one
 Postgres.
 
 Configuration is a set of versioned JSON documents, edited in the operator
-console's Configuration view: router tiers and harness profiles through a
-form, with the JSON as Advanced, and every save reviewed as a diff against
-the active version, with its note, before it is checked and stored. The built kinds are `tiers` (the ai-api-unified
+console's Configuration view: every value a kind's view shows edits in place,
+each edit is staged rather than saved, and the staged changes are reviewed
+together as a diff against the active version, with a note, before they are
+checked and stored as one version. The JSON stays as Advanced. The built kinds are `tiers` (the ai-api-unified
 router's `router` section), `profiles` (the harness profiles) and `repos` (the
 repo registry). The `config` component, `src/meta_harness/config/`, keeps
 every version of each in its `config.config_version` table and the active one
@@ -1660,7 +1661,7 @@ credential.
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days`, grouped by goal, repo or label: each one's state (in review, waiting, blocked, merged, closed), cost, fix rounds and latest run, the tasks that spent without opening one, and the cost scale. From the Task API, the planner's goals and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
-| GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. The tier form offers them | built |
+| GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. A tier candidate's model select offers them | built |
 | GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles`, `repos` or `task_policy`; `modalities` and `access` are planned | built |
 | GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history | built |
 | PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused. A `repos` version that drops a repo an open goal names is refused, naming the goal | built |
@@ -2121,6 +2122,38 @@ merge, a review that ended unresolved, a recent failed task, a goal out of
 budget or stalled, and the kill switch. It refreshes every 30 seconds and,
 when the operator turned notifications on in Settings, raises a browser
 notification for each new item.
+
+A value the operator may change is edited where it is shown, one way
+everywhere (`console/src/components/InlineField.tsx`): hovering a value shows
+a pencil, and clicking the value or the pencil turns it into its input (text,
+number, a select, a switch, checkboxes, a tag list or a multi-line text area).
+Enter or leaving the field commits it, Escape cancels, a multi-line field
+commits with Ctrl/Cmd+Enter, and a switch or checkbox commits on change. A
+refused value keeps the input open with the reason under it. Ids, dates,
+versions, events, computed facts such as spend, and anything the API cannot
+change stay read-only.
+
+- Configuration: every value in a kind's view edits in place. Router tiers:
+  each tier's description, thinking and candidates (added, removed and
+  reordered), the classifier, the default tier and what happens when a tier
+  is used up. Harness profiles: each profile's tools, max turns, max minutes,
+  vCPU and memory, Bash allowlist and image, and a profile is added or
+  removed from the table. Repo registry: each repo's tracker and default
+  acceptance checks. Task policy: max parallel (with the VM's ceiling), fix
+  rounds and the reviewer pairs. An edit is staged, not saved, because a
+  version is checked as a whole and recorded with a note: a changed value is
+  marked, and a bar above the view says "N changes to version V" with Discard
+  and Review and save, which opens the diff and note and saves version V+1.
+  A refused save shows each reason beside the value it is about and keeps the
+  changes staged, and leaving the page with staged changes asks first.
+  Advanced: JSON opens the active document with the staged changes, and
+  applying it stages what it holds.
+- Repositories: each repo's default acceptance checks edit in place as a tag
+  list, and each commit saves a new registry version with the note
+  `changed <repo>`. Add repository and Remove stay.
+- Settings: each field saves when it is committed and shows "Saved" beside
+  it for a moment; there is no Save button.
+
 The Task page shows a run as a timeline by default: each turn's message, its
 model calls (model, tokens, cost), its tool calls opening to their arguments
 and output, and the files it changed, live; the terminal is a second tab.
@@ -2145,7 +2178,7 @@ planned.
 | Routing | Tier picked versus the candidate whose run finished, classifier confidence, floors and ceilings by modality, moves between candidates and escalations | |
 | Pool | Per-run sandboxes by image and state, warm targets versus actual, lease latency, health failures | |
 | Spend and performance | Cost by goal, modality, repo, model, harness profile and routing tier. Cost per merged pull request and time to merge, by modality. Dollar-hours per completed task over time. Cache hit rate | |
-| Configuration | The active routing tiers, harness profiles, modalities, task policy and repo registry, their version history, and the harness analyzer's pending proposals | Edit any of them, roll back a version, approve or reject a proposal |
+| Configuration | The active routing tiers, harness profiles, modalities, task policy and repo registry, their version history, and the harness analyzer's pending proposals | Edit any value in place, staged and saved as one reviewed version; roll back a version, approve or reject a proposal |
 | Audit | Every recorded decision, by a meta-harness component, ai-api-unified or an operator, filtered by who made it | Export a time range |
 
 A task's runs, fallbacks and retries included, run one after another, and the

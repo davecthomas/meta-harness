@@ -55,6 +55,36 @@ test("adding a repo saves the registry with it and its checks", async () => {
   expect(saved[0].note).toBe("added o/b");
 });
 
+test("a repo's default checks edit in place, and each commit saves a new registry version", async () => {
+  const saved: any[] = [];
+  stub((body) => {
+    saved.push(body);
+    return respond({ ...REGISTRY, version: 4 });
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Edit Default acceptance checks of o/a" }));
+  expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+  const [input] = screen.getAllByLabelText("Default acceptance checks of o/a", { selector: "input" });
+  fireEvent.change(input, { target: { value: "make lint" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].document.repos["o/a"]).toEqual({ tracker: "github", default_checks: ["make test", "make lint"] });
+  expect(saved[0].note).toBe("changed o/a");
+});
+
+test("a refused change to a repo's checks keeps the field open with the reason under it", async () => {
+  stub(() => respond({ detail: { reasons: ["o/a: default_checks must be a list of commands"] } }, 422));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit Default acceptance checks of o/a" }));
+  const [input] = screen.getAllByLabelText("Default acceptance checks of o/a", { selector: "input" });
+  fireEvent.change(input, { target: { value: "make lint" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  expect(await screen.findByText("o/a: default_checks must be a list of commands")).toBeTruthy();
+  expect(screen.getAllByLabelText("Default acceptance checks of o/a", { selector: "input" }).length).toBeGreaterThan(0);
+});
+
 test("removing a repo an open goal names shows the refusal", async () => {
   stub(() => respond({ detail: { reasons: ["o/a is named by open goal g-1 (Saves)"] } }, 422));
   fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
