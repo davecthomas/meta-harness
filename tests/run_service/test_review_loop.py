@@ -22,6 +22,7 @@ from meta_harness.run_service.shared import (
     HarnessRequest,
     HarnessResult,
     LoopPromptRequest,
+    MergeChecksRequest,
     MergeRequest,
     MergeResult,
     PostReviewRequest,
@@ -78,6 +79,8 @@ class Script:
     # The goal's auto_merge, and each merge's result in order (a state, or (state, new head)).
     auto_merge: bool = False
     merges: list = field(default_factory=list)
+    # Each merge commit's checks in order: passed, failed, none or pending. None left: passed.
+    merge_checks: list[str] = field(default_factory=list)
 
     runs: list[HarnessRequest] = field(default_factory=list)
     prompts: list[LoopPromptRequest] = field(default_factory=list)
@@ -86,6 +89,8 @@ class Script:
     publishes: int = 0
     policy_asked_for: list[str] = field(default_factory=list)
     merge_requests: list[MergeRequest] = field(default_factory=list)
+    merge_checked: list[MergeChecksRequest] = field(default_factory=list)
+    publish_requests: list[PublishRequest] = field(default_factory=list)
     goals_asked: list[str] = field(default_factory=list)
 
     def activities(self):
@@ -144,10 +149,11 @@ class Script:
 
         @activity.defn(name="publish")
         async def publish(request: PublishRequest) -> PublishResult:
-            commit = "c0" if self.publishes == 0 else self.fix_commits.pop(0)
+            self.publish_requests.append(request)
+            commit = "c0" if self.publishes == 0 else (self.fix_commits.pop(0) if self.fix_commits else "c-new")
             self.publishes += 1
             return PublishResult(
-                branch=BRANCH,
+                branch=request.branch or BRANCH,
                 base="main",
                 commit=commit,
                 files=["app.py"],
@@ -160,6 +166,13 @@ class Script:
             self.waited_on.append(request.head_sha)
             state = self.checks.get(request.head_sha, "passed")
             failed = [FailedCheck("tests", "1 failed: test_app")] if state == "failed" else []
+            return ChecksResult(state=state, failed=failed)
+
+        @activity.defn(name="wait_merge_checks")
+        async def wait_merge_checks(request: MergeChecksRequest) -> ChecksResult:
+            self.merge_checked.append(request)
+            state = self.merge_checks.pop(0) if self.merge_checks else "passed"
+            failed = [FailedCheck("deploy", "terraform apply failed")] if state in ("failed", "pending") else []
             return ChecksResult(state=state, failed=failed)
 
         @activity.defn(name="review_policy")
@@ -199,6 +212,7 @@ class Script:
             cleanup_run,
             publish,
             wait_checks,
+            wait_merge_checks,
             review_policy,
             loop_prompt,
             post_review,
@@ -359,6 +373,54 @@ async def test_a_clean_pull_request_merges_at_the_reviewed_commit_when_its_goal_
     merge = script.merge_requests[0]
     assert (merge.head_sha, merge.base, merge.branch) == ("c0", "main", BRANCH)
     assert "merged as m1" in result.outcome_reason
+
+
+async def test_a_failed_check_on_the_merge_commit_becomes_a_fix_pull_request_that_merges(env):
+    script = Script(verdicts=[CLEAN, CLEAN], auto_merge=True, merge_checks=["failed", "passed"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert [c.merge_sha for c in script.merge_checked] == ["m1", "m1"]
+    assert script.merge_checked[0].base == "main"
+    fix_run = script.runs[2]
+    assert fix_run.branch == "", "the fix after a merge starts from the base, not the merged branch"
+    fix_prompt = next(p for p in script.prompts if p.merged_pr)
+    assert fix_prompt.merged_pr == f"https://github.com/{REPO}/pull/7"
+    assert [f.name for f in fix_prompt.failed_checks] == ["deploy"]
+    fix_pr = script.publish_requests[1]
+    assert fix_pr.branch.endswith("-merge-1") and fix_pr.branch.startswith("mh/")
+    assert fix_pr.ticket == "", "the issue closed with the first merge, so the fix closes nothing"
+    assert "deploy failed on its merge commit" in fix_pr.note
+    assert len(script.merge_requests) == 2, "the fix pull request went through the review loop and merged"
+    assert "the merge commit's checks: passed" in result.outcome_reason
+
+
+async def test_a_merge_commit_with_no_checks_ends_merged(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True, merge_checks=["none"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged" and "the merge commit's checks: none ran" in result.outcome_reason
+    assert script.publishes == 1
+
+
+async def test_merge_checks_still_running_after_the_wait_fail_the_task(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True, merge_checks=["pending"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merge_checks_failed"
+    assert "did not finish in 120 minutes: deploy" in result.outcome_reason
+
+
+async def test_a_merge_commit_that_keeps_failing_uses_up_the_fix_rounds(env):
+    script = Script(verdicts=[CLEAN, CLEAN], auto_merge=True, merge_checks=["failed", "failed"], max_rounds=1)
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merge_checks_failed"
+    assert "the 1 fix rounds are used up" in result.outcome_reason
 
 
 async def test_with_auto_merge_off_a_clean_pull_request_waits_for_an_operator(env):

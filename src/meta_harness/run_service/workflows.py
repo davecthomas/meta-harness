@@ -83,6 +83,7 @@ with workflow.unsafe.imports_passed_through():
         route,
         run_harness,
         wait_checks,
+        wait_merge_checks,
     )
     from meta_harness.run_service.shared import (
         Attempt,
@@ -90,6 +91,8 @@ with workflow.unsafe.imports_passed_through():
         OperatorMessage,
         ChecksRequest,
         LoopPromptRequest,
+        MergeChecksRequest,
+        ref_for,
         MergeRequest,
         MergeResult,
         PostReviewRequest,
@@ -148,6 +151,8 @@ NEXT_CANDIDATE_ERROR_TYPES = frozenset({"SandboxUnavailable", "HarnessUnavailabl
 # The review loop's steps. A repo's checks may take a while; wait_checks heartbeats while it polls.
 CHECKS_TIMEOUT = timedelta(minutes=75)
 CHECKS_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
+# Longer than wait_merge_checks's own 120 minutes, which ends the wait with a result.
+MERGE_CHECKS_TIMEOUT = timedelta(minutes=125)
 CODE_HOST_TIMEOUT = timedelta(minutes=2)
 CODE_HOST_RETRY = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5)
 
@@ -247,6 +252,8 @@ class RunTask:
             await self._task_status("review_unresolved", result.outcome_reason, pr_url)
         elif result.outcome == "merged":
             await self._task_status("closed", result.outcome_reason, pr_url)
+        elif result.outcome == "merge_checks_failed":
+            await self._task_status("failed", result.outcome_reason[:500], pr_url)
         elif pr_url:
             await self._task_status("ready", result.outcome_reason or "the run finished", pr_url)
         else:
@@ -386,6 +393,10 @@ class RunTask:
             thinking = route_result.thinking if route_result is not None and not prepared.pinned else None
             loop = _Loop(request, prepared, candidate, published, limit, spent, attempts, thinking)
             outcome, reason = await self._review_loop(loop)
+            # Behind a patch: workflows started before it end closed at the merge, and replay as they ran.
+            if outcome == "merged" and loop.merge_sha and workflow.patched("merge-checks"):
+                outcome, reason = await self._after_merge(loop, reason)
+                published = loop.published
             spent = loop.spent
         workflow.logger.info(
             "%s: completed%s", info.workflow_id, f", review loop {outcome}: {reason}" if outcome else ""
@@ -518,6 +529,7 @@ class RunTask:
                 start_to_close_timeout=RECORD_TIMEOUT,
                 retry_policy=PREPARE_RETRY,
             )
+            loop.max_rounds = policy.max_rounds
             fixes = 0
             reviews = 0
             while True:
@@ -562,6 +574,7 @@ class RunTask:
                             loop.head = merged.head_sha
                             continue
                         if merged.state != "conflict":
+                            loop.merge_sha = merged.merge_sha if merged.state == "merged" else ""
                             return ("merged" if merged.state == "merged" else "clean"), merged.detail
                         fix = loop.prompt_request("fix", conflict=True)
                     else:
@@ -580,6 +593,91 @@ class RunTask:
             if isinstance(err.cause, CancelledError):
                 raise
             return "review_unresolved", f"the review loop stopped: {err.cause or err}"[:500]
+
+    async def _after_merge(self, loop: "_Loop", reason: str) -> tuple[str, str]:
+        """After a merge: wait for the merge commit's checks, deploys included. A failure becomes a fix run on a new
+        branch from the base, whose pull request goes through the review loop, the merge and this wait again,
+        within the task policy's fix rounds and the task's spend limit. Returns the outcome and why."""
+        info = workflow.info()
+        rounds = 0
+        while True:
+            checks = await workflow.execute_activity(
+                wait_merge_checks,
+                MergeChecksRequest(
+                    repo=loop.prepared.repo,
+                    merge_sha=loop.merge_sha,
+                    base=loop.published.base,
+                    task_id=self._task_id,
+                    round_no=rounds,
+                ),
+                start_to_close_timeout=MERGE_CHECKS_TIMEOUT,
+                heartbeat_timeout=CHECKS_HEARTBEAT_TIMEOUT,
+                retry_policy=CODE_HOST_RETRY,
+            )
+            names = ", ".join(f.name for f in checks.failed)
+            workflow.logger.info("%s: checks on merge %s: %s", info.workflow_id, loop.merge_sha[:12], checks.state)
+            if checks.state in ("passed", "none"):
+                found = "passed" if checks.state == "passed" else "none ran"
+                return "merged", f"{reason}; the merge commit's checks: {found}"
+            if checks.state == "pending":
+                return (
+                    "merge_checks_failed",
+                    f"{reason}; the merge commit's checks did not finish in 120 minutes: {names}",
+                )
+            merged_pr = loop.published.pr_url
+            if rounds >= loop.max_rounds:
+                return "merge_checks_failed", (
+                    f"{reason}; {names} failed on the merge commit, and the {loop.max_rounds} fix rounds are used up"
+                )
+            if loop.left() <= 0:
+                return (
+                    "merge_checks_failed",
+                    f"{reason}; {names} failed on the merge commit, and the spend limit is used up",
+                )
+            rounds += 1
+            fix = loop.prompt_request("fix", failed_checks=checks.failed, merged_pr=merged_pr, round_no=rounds)
+            fix.branch = loop.published.base
+            prompt = await self._loop_prompt(fix)
+            harness, detail = await self._loop_run(loop, prompt, loop.author, "fix", loop.thinking, branch="")
+            if harness is None or harness.status != "FINISHED":
+                return (
+                    "merge_checks_failed",
+                    f"{reason}; {names} failed on the merge commit, and its fix did not finish: {detail}",
+                )
+            published = await workflow.execute_activity(
+                publish,
+                PublishRequest(
+                    run_id=harness.run_id,
+                    repo=loop.prepared.repo,
+                    ticket="",
+                    title=f"Fix {names} after #{merged_pr.rsplit('/', 1)[-1]}",
+                    candidate=loop.author.label,
+                    summary=harness.answer,
+                    spent_usd=str(loop.spent),
+                    branch=f"mh/{ref_for(info.workflow_id)}-merge-{rounds}",
+                    note=(
+                        f"{merged_pr} merged, and then {names} failed on its merge commit {loop.merge_sha[:12]}. "
+                        "This pull request fixes that. It closes no issue: the merged one closed it."
+                    ),
+                ),
+                start_to_close_timeout=PUBLISH_TIMEOUT,
+                retry_policy=PUBLISH_RETRY,
+            )
+            if not published.pr_url:
+                return (
+                    "merge_checks_failed",
+                    f"{reason}; {names} failed on the merge commit, and its fix changed nothing",
+                )
+            if self._task_id:
+                await self._record(record_published, PublishedRecord(self._task_id, published))
+            loop.published = published
+            loop.head = published.commit
+            loop.merge_sha = ""
+            outcome, reason = await self._review_loop(loop)
+            if outcome != "merged" or not loop.merge_sha:
+                if outcome == "merged":
+                    outcome = "merge_checks_failed"
+                return outcome, f"the fix for {names} after {merged_pr}: {reason}"
 
     async def _review(self, loop: "_Loop", reviewers: list[Candidate], round_no: int) -> tuple[dict | None, str, str]:
         """One review round: each reviewer pair in order until one returns a verdict."""
@@ -654,8 +752,10 @@ class RunTask:
         kind: str,
         thinking: str | None,
         merge_base: str = "",
+        branch: str | None = None,
     ) -> tuple[HarnessResult | None, str]:
-        """A review or fix run on the pull request's branch, recorded as the task's next attempt."""
+        """A review or fix run on the pull request's branch, or on branch when given ("": the repo's default
+        branch), recorded as the task's next attempt."""
         info = workflow.info()
         attempt = len(loop.attempts) + 1
         run_id = run_id_for(info.workflow_id, attempt)
@@ -667,7 +767,7 @@ class RunTask:
             loop.left(),
             loop.prepared.repo,
             thinking,
-            branch=loop.published.branch,
+            branch=loop.published.branch if branch is None else branch,
             merge_base=merge_base,
         )
         loop.spent += run_spent
@@ -790,6 +890,9 @@ class _Loop:
         self.spent = spent
         self.attempts = attempts
         self.thinking = thinking
+        # The merge commit, once the review loop merges; the task policy's fix rounds, once the loop reads them.
+        self.merge_sha = ""
+        self.max_rounds = 0
 
     def left(self) -> Decimal:
         return self.limit - self.spent

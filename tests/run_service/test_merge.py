@@ -205,3 +205,31 @@ async def test_one_merge_at_a_time_per_repo():
     await asyncio.gather(first, merge("b", "o/r", 0), merge("c", "o/other", 0))
     assert order.index("a out") < order.index("b in"), order
     assert order.index("c in") < order.index("a out"), "another repo's merge does not wait"
+
+
+async def test_a_check_a_later_merge_canceled_is_judged_by_the_same_check_on_the_newer_base(monkeypatch):
+    from meta_harness.run_service.code_host import CheckRun
+    from meta_harness.run_service.shared import MergeChecksRequest
+
+    runs = {
+        "m1": [CheckRun("tests", "completed", "success", ""), CheckRun("deploy", "completed", "cancelled", "")],
+        "m2": [CheckRun("deploy", "completed", "success", "")],
+    }
+
+    async def check_runs(repo, sha):
+        return runs[sha]
+
+    async def newest_containing(repo, base, sha):
+        return "m2"
+
+    monkeypatch.setattr(code_host, "check_runs", check_runs)
+    monkeypatch.setattr(code_host, "newest_containing", newest_containing)
+    monkeypatch.setattr(activities.events, "emit", lambda *a, **k: None)
+    request = MergeChecksRequest(repo="o/r", merge_sha="m1", base="main", task_id="t-1")
+
+    result = await ActivityEnvironment().run(activities.wait_merge_checks, request)
+    assert result.state == "passed"
+
+    runs["m2"] = [CheckRun("deploy", "completed", "failure", "apply failed")]
+    result = await ActivityEnvironment().run(activities.wait_merge_checks, request)
+    assert result.state == "failed" and [f.name for f in result.failed] == ["deploy"]

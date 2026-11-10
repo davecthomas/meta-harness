@@ -461,6 +461,18 @@ UPDATE_BRANCH_POLL_SECONDS = 2
 UPDATE_BRANCH_POLLS = 20
 
 
+async def newest_containing(repo: str, base: str, sha: str) -> str | None:
+    """The newest commit on base, when it contains sha; None when base does not hold sha."""
+    head = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/commits/{base}") or {}
+    newest = str(head.get("sha", ""))
+    if not newest:
+        return None
+    if newest == sha:
+        return newest
+    compare = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/compare/{sha}...{newest}") or {}
+    return newest if compare.get("status") in ("ahead", "identical") else None
+
+
 async def merge_pull_request(
     repo: str, number: int, head_sha: str, base: str | None = None
 ) -> tuple[str, str, str, str]:
