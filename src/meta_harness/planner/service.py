@@ -1,7 +1,7 @@
 """The planner service and its part of the REST API: goals.
 
     GET, POST  /v1/goals                      list goals, or create one
-    GET, PATCH /v1/goals/{id}                 a goal with its issues, or change its title, auto_merge, priority or budget
+    GET, PATCH /v1/goals/{id}                 a goal with its issues, or change any field an operator set on it
     GET        /v1/goals/{id}/issues          each issue with its task status, pull request, PR state and checks
     POST       /v1/goals/{id}/pause, /resume, /cancel   resume also starts a goal saved without starting
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
@@ -91,8 +91,14 @@ class GoalPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=80)
     # The goal's description. Its tasks already made keep the issues they came from; the next planning reads it.
     statement: str | None = Field(default=None, min_length=1, max_length=4000)
+    # The label and repos the sweep lists issues by. Tasks the goal already made keep their issues; the next
+    # sweep takes in issues by the new ones; an issue with no task yet in a repo dropped from repos is let go.
+    # A label sent as null: the goal takes only the issues an operator picked for it by ref.
+    label: str | None = Field(default=None, min_length=1, max_length=100)
+    repos: list[str] | None = Field(default=None, min_length=1)
     auto_merge: bool | None = None
     priority: int | None = None
+    # Sent as null: the goal has no budget.
     max_usd: Decimal | None = Field(default=None, gt=0)
     # Sent as null: the goal goes back to the system's limit.
     max_parallel: int | None = Field(default=None, ge=1)
@@ -234,10 +240,12 @@ def create_app(
         return goal
 
     def change_with(goal_id: str, who: str, **fields: Any) -> tuple[dict, dict]:
-        """Change a goal and record goal_changed. Returns (goal, the fields that changed with their old values)."""
+        """Change a goal and record goal_changed, and issue_dropped for each issue with no task that a change of
+        repos let go. Returns (goal, the fields that changed with their old values)."""
+        dropped: list[str] = []
         try:
             with app.state.pool.connection() as conn:
-                goal, changed = store.update(conn, goal_id, **fields)
+                goal, changed = store.update(conn, goal_id, dropped=dropped, **fields)
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such goal") from err
         except store.GoalError as err:
@@ -248,6 +256,8 @@ def create_app(
                 {"goal_id": goal_id, "changes": {k: {"from": str(v), "to": str(goal[k])} for k, v in changed.items()}},
                 actor=who,
             )
+        for ref in dropped:
+            events.emit("issue_dropped", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
         return goal, changed
 
     def move(goal_id: str, who: str, status: str, origins: set[str]) -> dict:
@@ -668,11 +678,19 @@ def create_app(
 
     @app.patch("/v1/goals/{goal_id}")
     def patch(goal_id: str, body: GoalPatch, who: str = Depends(operator)) -> dict:
+        """Change only the fields sent. A field that may be empty (label, max_usd, max_parallel) is cleared
+        when sent as null; any other sent as null is left as it is."""
         fields = {k: v for k, v in body.model_dump().items() if v is not None}
-        if "max_parallel" in body.model_fields_set:
-            if why := parallel_reason(body.max_parallel):
-                raise HTTPException(status_code=422, detail=why)
-            fields["max_parallel"] = body.max_parallel
+        for clearable in ("label", "max_usd", "max_parallel"):
+            if clearable in body.model_fields_set:
+                fields[clearable] = getattr(body, clearable)
+        if "max_parallel" in fields and (why := parallel_reason(body.max_parallel)):
+            raise HTTPException(status_code=422, detail=why)
+        if "repos" in fields:
+            unknown = [name for name in fields["repos"] if repos.get(name) is None]
+            if unknown:
+                raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
+            fields["repos"] = list(dict.fromkeys(repos.get(name).name for name in fields["repos"]))
         return change(goal_id, who, **fields)
 
     @app.get("/v1/limits")
