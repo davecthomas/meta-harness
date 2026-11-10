@@ -5,7 +5,7 @@ import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons
 import { goalTitle, api, goalStatus, type Activity, type KillSwitch } from "../api";
 import { ActivityMap } from "./ActivityPage";
 import { useInfinite } from "../hooks";
-import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, SectionTitle, StatusBadge, TitleLink, when } from "../components/ui";
+import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, TitleLink, when } from "../components/ui";
 
 const OPEN_GOALS = ["active", "paused", "stalled", "budget_exhausted"];
 const NEEDS_YOU = ["ready", "failed", "review_unresolved"];
@@ -39,7 +39,7 @@ export function Overview() {
               <Table.Td><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
               <Table.Td><StatusBadge status={t.status} /></Table.Td>
               <Table.Td><IssueLink issueRef={t.external_ref} /></Table.Td>
-              <Table.Td>{t.pr_url && <Anchor href={t.pr_url} target="_blank" size="sm">Open</Anchor>}</Table.Td>
+              <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>
               <Table.Td><Text size="sm">{t.status === "ready" ? "Its pull request is open for you to merge" : t.status_reason ?? t.status}</Text></Table.Td>
             </Table.Tr>
           ))}

@@ -24,6 +24,14 @@ class RecordedEvents:
     def types(self, task_id: str) -> list[str]:
         return [t for t, _, f in self.events if f.get("task_id") == task_id]
 
+    def read(self, from_position=0, limit=500, before_position=None, **filters):
+        found = [
+            {"event_type": t, "payload": p, **f}
+            for t, p, f in self.events
+            if all(str(f.get(k, t if k == "event_type" else None)) in v.split(",") for k, v in filters.items())
+        ]
+        return {"events": found[:limit]}
+
 
 @pytest.fixture(scope="module", autouse=True)
 def migrated():
@@ -148,3 +156,34 @@ def test_a_running_task_keeps_its_pull_request_and_the_list_finds_it_by_pr(api, 
     without = api.get("/v1/tasks", params={"status": "running", "pr": "false", "limit": 1000}, headers=_as(SERVICE_KEY))
     assert task["id"] in {t["id"] for t in with_pr.json()["tasks"]}
     assert task["id"] not in {t["id"] for t in without.json()["tasks"]}
+
+
+def _ended(api, status: str) -> dict:
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    api.post(
+        f"/v1/tasks/{task['id']}/status",
+        json={"status": status, "pr_url": "https://github.com/o/r/pull/12"},
+        headers=_as(SERVICE_KEY),
+    )
+    return task
+
+
+def test_clearing_a_task_whose_pull_request_merged_closes_it(api, events):
+    task = _ended(api, "review_unresolved")
+    events.emit("pull_request_merged", {"pr_url": "https://github.com/o/r/pull/12"}, task_id=task["id"])
+
+    cleared = api.post(f"/v1/tasks/{task['id']}/clear", headers=_as(CALLER_KEY)).json()
+
+    assert (cleared["status"], cleared["status_reason"]) == ("closed", "its pull request #12 merged")
+
+
+def test_clearing_a_task_whose_pull_request_did_not_merge_cancels_it_and_says_who(api):
+    task = _ended(api, "ready")
+
+    cleared = api.post(f"/v1/tasks/{task['id']}/clear", headers=_as(CALLER_KEY)).json()
+
+    assert cleared["status"] == "canceled"
+    assert cleared["status_reason"] == "cleared by ops with pull request #12 not merged"
+    again = api.post(f"/v1/tasks/{task['id']}/clear", headers=_as(CALLER_KEY))
+    assert again.status_code == 409

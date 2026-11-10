@@ -74,7 +74,7 @@ test("the board shows each card in its column with its task, cost and pull reque
   const review = screen.getByTestId("column-review");
   expect(within(review).getByText("Fix the crash")).toBeTruthy();
   expect(within(review).getByText("$1.25")).toBeTruthy();
-  expect(within(review).getByText("PR #30").getAttribute("href")).toBe("https://github.com/o/r/pull/30");
+  expect(within(review).getByText("#30").getAttribute("href")).toBe("https://github.com/o/r/pull/30");
   expect(within(screen.getByTestId("column-attention")).getByText("no acceptance checks")).toBeTruthy();
 
   fireEvent.click(within(review).getByText("Fix the crash"));

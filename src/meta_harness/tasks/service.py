@@ -28,6 +28,10 @@ from meta_harness.tasks import store
 class Events(Protocol):
     def emit(self, event_type: str, payload: dict[str, Any] | None = None, **fields: Any) -> str: ...
 
+    def read(
+        self, from_position: int = 0, limit: int = 500, before_position: int | None = None, **filters: str
+    ) -> dict[str, Any]: ...
+
 
 @dataclass
 class Caller:
@@ -53,6 +57,10 @@ class TaskIn(BaseModel):
     max_tier: str | None = None
     max_usd: Decimal | None = Field(default=None, gt=0)
     pin: str | None = None
+
+
+# A task left with its pull request open and no workflow watching it; an operator clears it.
+CLEARABLE = ("ready", "review_unresolved")
 
 
 class CancelIn(BaseModel):
@@ -189,6 +197,31 @@ def create_app(
             emit_status(task, previous, who.actor)
         else:
             events.emit("task_cancel_requested", {"reason": reason}, task_id=task_id, actor=who.actor)
+        return task
+
+    @app.post("/v1/tasks/{task_id}/clear")
+    def clear(task_id: str, who: Caller = Depends(caller)) -> dict:
+        """Take a ready or review_unresolved task off the list: closed when its pull request merged, as the
+        merge's recorded event shows, else canceled. The pull request on GitHub is left as it is."""
+        try:
+            with app.state.pool.connection() as conn:
+                task = visible(store.get(conn, task_id), who)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        if task["status"] not in CLEARABLE:
+            raise HTTPException(status_code=409, detail=f"a {task['status']} task is not waiting to be cleared")
+        number = (task.get("pr_url") or "").rstrip("/").rsplit("/", 1)[-1] or "?"
+        try:
+            merged = bool(events.read(0, 1, task_id=task_id, event_type="pull_request_merged")["events"])
+        except Exception:  # noqa: BLE001 - an unreadable record clears as canceled, which the reason says
+            merged = False
+        if merged:
+            status, reason = "closed", f"its pull request #{number} merged"
+        else:
+            status, reason = "canceled", f"cleared by {who.actor} with pull request #{number} not merged"
+        with app.state.pool.connection() as conn:
+            task, previous = store.set_status(conn, task_id, status, reason)
+        emit_status(task, previous, who.actor)
         return task
 
     @app.post("/v1/tasks/{task_id}/status")

@@ -6,7 +6,7 @@ import { IssuesPicker } from "../components/IssuesPicker";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../api";
 import { GoalBoard, GoalGraph, GoalProgress } from "../components/GoalBoard";
 import { useEventStream, useInfinite } from "../hooks";
-import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, SectionTitle, StatusBadge, when } from "../components/ui";
+import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../components/ui";
 
 export function GoalPage() {
   const { goalId = "" } = useParams();
@@ -291,7 +291,7 @@ export function GoalPage() {
                   {i.refused_reason && <Text size="xs" c="dimmed" mt={4}>{i.refused_reason}</Text>}
                 </Table.Td>
                 <Table.Td onClick={(e) => e.stopPropagation()}>
-                  {task?.pr_url && <Anchor href={task.pr_url} target="_blank" size="sm">Open</Anchor>}
+                  {task?.pr_url && <PrLink url={task.pr_url} />}
                 </Table.Td>
                 <Table.Td>{i.depends_on.map((d) => <Text ff="monospace" size="xs" key={d}>{d}</Text>)}</Table.Td>
               </Table.Tr>

@@ -277,6 +277,7 @@ export const api = {
     return { items: r.tasks, total: r.total };
   },
   task: (id: string) => call<Task>(`/v1/tasks/${id}`),
+  clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
   cancelTask: (id: string) =>
     call<Task>(`/v1/tasks/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "canceled from the console" }) }),
 

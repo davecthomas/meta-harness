@@ -7,7 +7,7 @@ import { api, goalTitle, type MhEvent, type Task } from "../api";
 import { useEventStream } from "../hooks";
 import { describe, fold, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "../components/Terminal";
-import { ErrorAlert, Facts, IssueLink, PageHeader, SectionTitle, StatusBadge } from "../components/ui";
+import { ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge } from "../components/ui";
 
 const FIRST = 400;
 
@@ -96,7 +96,17 @@ export function TaskPage() {
 
   if (!task) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const status = facts.status ?? task.status;
-  const cancellable = ["queued", "blocked", "running", "ready", "review_unresolved"].includes(status);
+  const cancellable = ["queued", "blocked", "running"].includes(status);
+  // A task waiting on someone, its pull request open with no workflow left, is cleared rather than canceled.
+  const clearable = ["ready", "review_unresolved"].includes(status);
+
+  async function clear() {
+    try {
+      setTask(await api.clearTask(task!.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function cancel() {
     try {
@@ -111,9 +121,12 @@ export function TaskPage() {
       <PageHeader
         title={task.title}
         description={<Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{task.id}</Text></Group>}
-        actions={cancellable && (
-          <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={cancel}>Cancel task</Button>
-        )}
+        actions={
+          <>
+            {cancellable && <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={cancel}>Cancel task</Button>}
+            {clearable && <Button variant="light" leftSection={<IconX size={16} />} onClick={clear}>Clear task</Button>}
+          </>
+        }
       />
       <ErrorAlert error={error} />
       <Facts
@@ -127,7 +140,7 @@ export function TaskPage() {
           ["Repo", <Code>{task.repo}</Code>],
           ["Issue", <IssueLink issueRef={task.external_ref} />],
           ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
-          ["Pull request", task.pr_url ? <Anchor href={task.pr_url} target="_blank" size="sm">{task.pr_url}</Anchor> : <Text size="sm" c="dimmed">None yet</Text>],
+          ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
           ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
           ["Turn and spend", <Text size="sm">Turn {facts.turn}, ${facts.usd.toFixed(4)} {facts.model && <Code>{facts.model}</Code>}</Text>],
         ]}

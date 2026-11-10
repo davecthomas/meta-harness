@@ -1,18 +1,19 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Anchor, Badge, Group, SegmentedControl, Table, Text } from "@mantine/core";
+import { Alert, Badge, Button, Checkbox, Group, SegmentedControl, Table, Text } from "@mantine/core";
 import { api, type Task } from "../api";
 import { useInfinite } from "../hooks";
 import { TileGrid, type TileSize } from "../components/TileGrid";
-import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, StatusBadge, TitleLink, when } from "../components/ui";
+import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, StatusBadge, TitleLink, when } from "../components/ui";
 
 // Each tab: its key, its label, the statuses it shows, and whether the tasks have a pull request.
-// A task keeps running after it opens its pull request, through checks, review and fixes, so "Running"
-// is the tasks still on their first run and "Pull request open" is every unfinished task with one.
+// "Running" is every task whose workflow is working on it, first run or review loop (a running task with a
+// pull request shows as in review). "Pull request open" is the tasks waiting on someone: ready or
+// review_unresolved, with no workflow left. A task is under one tab, not both.
 const FILTERS: [string, string, string[], boolean | undefined][] = [
-  ["running", "Running", ["running"], false],
+  ["running", "Running", ["running", "taken_over"], undefined],
   ["waiting", "Queued and blocked", ["queued", "blocked"], undefined],
-  ["ready", "Pull request open", ["running", "ready", "review_unresolved"], true],
+  ["ready", "Pull request open", ["ready", "review_unresolved"], undefined],
   ["ended", "Ended", ["closed", "failed", "canceled"], undefined],
   ["all", "All", [], undefined],
 ];
@@ -31,12 +32,34 @@ export function TasksPage() {
   const size = ([4, 16, 32].find((s) => String(s) === params.get("size")) ?? 16) as TileSize;
   const filter = FILTERS.find(([key]) => key === (params.get("show") ?? "running")) ?? FILTERS[0];
   const [streamState, setStreamState] = useState("idle");
+  // On "Pull request open": the tasks checked to clear, and what clearing could not do.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [clearing, setClearing] = useState(false);
+  const [unclear, setUnclear] = useState<string[]>([]);
+  const [reload, setReload] = useState(0);
+  const clearable = filter[0] === "ready" && !tiles;
 
   const tasks = useInfinite(
     (offset, limit) => api.tasks({ statuses: filter[2], pr: filter[3] }, offset, limit),
     tiles ? size : 50,
-    `${filter[0]}:${tiles}:${size}`,
+    `${filter[0]}:${tiles}:${size}:${reload}`,
   );
+
+  async function clearPicked() {
+    setClearing(true);
+    const failed: string[] = [];
+    for (const id of picked) {
+      try {
+        await api.clearTask(id);
+      } catch (err) {
+        failed.push(`${id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    setUnclear(failed);
+    setPicked(new Set());
+    setClearing(false);
+    setReload((n) => n + 1);
+  }
 
   function set(next: { show?: string; view?: string }) {
     const view = next.view ?? (tiles ? String(size) : "list");
@@ -58,20 +81,48 @@ export function TasksPage() {
         </Group>
       </Group>
       <ErrorAlert error={tasks.error} />
+      {clearable && tasks.items.length > 0 && (
+        <Group mb="sm" gap="sm">
+          <Button size="xs" variant="light" disabled={!picked.size} loading={clearing} onClick={() => void clearPicked()}>
+            Clear selected ({picked.size})
+          </Button>
+          <Text size="xs" c="dimmed">A merged pull request closes its task; any other cancels it. The pull request stays on GitHub.</Text>
+        </Group>
+      )}
+      {unclear.length > 0 && (
+        <Alert color="red" mb="sm" title="Not cleared">{unclear.map((u) => <Text key={u} size="sm">{u}</Text>)}</Alert>
+      )}
       {tasks.total === 0 && <Empty>No {filter[1].toLowerCase()} tasks.</Empty>}
 
       {tiles ? (
         <TileGrid tasks={tasks.items} size={size} onStreamState={setStreamState} />
       ) : (
         tasks.items.length > 0 && (
-          <DataTable head={["Task", "Status", "Repo", "Issue", "Pull request", "Updated"]}>
+          <DataTable head={[...(clearable ? [""] : []), "Task", "Status", "Repo", "Issue", "Pull request", "Updated"]}>
             {tasks.items.map((t) => (
               <Table.Tr key={t.id}>
+                {clearable && (
+                  <Table.Td w={36}>
+                    <Checkbox
+                      aria-label={`Clear ${t.title}`}
+                      checked={picked.has(t.id)}
+                      onChange={(e) => {
+                        const on = e.currentTarget.checked;
+                        setPicked((now) => {
+                          const next = new Set(now);
+                          if (on) next.add(t.id);
+                          else next.delete(t.id);
+                          return next;
+                        });
+                      }}
+                    />
+                  </Table.Td>
+                )}
                 <Table.Td maw={420}><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
                 <Table.Td><StatusBadge status={shownStatus(t)} /></Table.Td>
                 <Table.Td><Text ff="monospace" size="xs">{t.repo}</Text></Table.Td>
                 <Table.Td><IssueLink issueRef={t.external_ref} /></Table.Td>
-                <Table.Td>{t.pr_url && <Anchor href={t.pr_url} target="_blank" size="sm">Open</Anchor>}</Table.Td>
+                <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>
                 <Table.Td><Text size="sm" c="dimmed">{when(t.updated_at)}</Text></Table.Td>
               </Table.Tr>
             ))}

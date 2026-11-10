@@ -188,7 +188,7 @@ test("a row with a task opens the task, and its links open GitHub instead", asyn
 
   expect(await screen.findByText("Fix the crash")).toBeTruthy();
   expect(screen.getByTestId("issue-row-github:o/r#8").getAttribute("role")).toBeNull();
-  fireEvent.click(screen.getByText("Open"));
+  fireEvent.click(screen.getByText("#9"));
   expect(screen.queryByText("task page")).toBeNull();
 
   fireEvent.keyDown(screen.getByRole("link", { name: "Open task Fix the crash" }), { key: "Enter" });
