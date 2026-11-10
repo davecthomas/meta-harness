@@ -6,6 +6,7 @@ import { IconX } from "@tabler/icons-react";
 import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../api";
 import { Reviews } from "../components/Reviews";
 import { Timeline } from "../components/Timeline";
+import { Plan } from "../components/Plan";
 import { Changes } from "../components/Changes";
 import { SpendLine, spendOf } from "../components/Spend";
 import { useEventStream } from "../hooks";
@@ -165,6 +166,7 @@ export function TaskPage() {
           ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
         ]}
       />
+      <Plan events={events} />
       <SegmentedControl
         mb="md"
         value={tab}
