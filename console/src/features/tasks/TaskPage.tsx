@@ -21,6 +21,16 @@ import { ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusB
 
 const FIRST = 400;
 
+const TABS = ["timeline", "terminal", "changes", "reviews", "attempts"] as const;
+export type Tab = (typeof TABS)[number];
+
+// The tab a task page URL shows: the one it names, else the Terminal when it names a run, else the Timeline.
+export function tabOf(params: URLSearchParams): Tab {
+  const named = params.get("tab");
+  if (named && (TABS as readonly string[]).includes(named)) return named as Tab;
+  return params.get("run") ? "terminal" : "timeline";
+}
+
 // An event as a terminal line, carrying its run so one run's lines can be shown alone.
 function withRun(e: MhEvent): Line | null {
   const line = describe(e);
@@ -56,7 +66,15 @@ export function TaskPage() {
   const [from, setFrom] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The task's review rounds, for the Reviews tab, read once the task has a pull request.
-  const [tab, setTab] = useState<"timeline" | "terminal" | "changes" | "reviews" | "attempts">("timeline");
+  // The tab is in the URL (?tab=), so a link can name it and Back returns to the one before. A link to one run
+  // (?run=) with no tab opens the Terminal on that run, which is what "Sent to fix run 3" means to show.
+  const tab = tabOf(params);
+  const setTab = (next: Tab) => {
+    const kept: Record<string, string> = { tab: next };
+    // One run's filter belongs to the views that show runs.
+    if (onlyRun && (next === "terminal" || next === "timeline")) kept.run = onlyRun;
+    setParams(kept);
+  };
   const [rounds, setRounds] = useState<ReviewRound[] | null>(null);
   // The task's goal's name, for the link back to it. Null until read, or when the task has no goal.
   const [goalName, setGoalName] = useState<string | null>(null);
@@ -198,7 +216,7 @@ export function TaskPage() {
       <SegmentedControl
         mb="md"
         value={tab}
-        onChange={(v) => setTab(v as "timeline" | "terminal" | "changes" | "reviews" | "attempts")}
+        onChange={(v) => setTab(v as Tab)}
         data={[
           { value: "timeline", label: "Timeline" },
           { value: "terminal", label: "Terminal" },
@@ -220,7 +238,7 @@ export function TaskPage() {
       {onlyRun && (
         <Group gap="xs" mb="xs">
           <Text size="sm">Showing run <Code>{onlyRun}</Code></Text>
-          <Button size="compact-xs" variant="subtle" onClick={() => setParams({})}>Show every run</Button>
+          <Button size="compact-xs" variant="subtle" onClick={() => setParams({ tab })}>Show every run</Button>
         </Group>
       )}
       <Paper p={0} style={{ overflow: "hidden" }}>

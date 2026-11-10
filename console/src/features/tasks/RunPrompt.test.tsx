@@ -95,7 +95,7 @@ function renderTaskPage(path: string) {
 
 test("the task page shows an older run's prompt the first page of events does not reach", async () => {
   const asked = serveNewestOnly();
-  renderTaskPage("/tasks/t?run=t:run-1");
+  renderTaskPage("/tasks/t?run=t:run-1&tab=timeline");
 
   await waitFor(() => expect(screen.getAllByTestId("prompt")).toHaveLength(1));
   expect(screen.getByTestId("prompt").textContent).toContain("repo-task-v1");
