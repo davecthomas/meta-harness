@@ -13,6 +13,8 @@ const NEEDS_YOU = ["ready", "failed", "review_unresolved"];
 export function Overview() {
   const goals = useInfinite((offset, limit) => api.goals(OPEN_GOALS, offset, limit), 25, "open-goals");
   const waiting = useInfinite((offset, limit) => api.tasks({ statuses: NEEDS_YOU }, offset, limit), 25, "needs-you");
+  // Running tasks held for budget wait on an operator too: they head the list.
+  const held = useInfinite((offset, limit) => api.tasks({ waiting: true }, offset, limit), 25, "held");
   const running = useInfinite((offset, limit) => api.tasks({ statuses: ["running"] }, offset, limit), 1, "running");
   const queued = useInfinite((offset, limit) => api.tasks({ statuses: ["queued", "blocked"] }, offset, limit), 1, "queued");
 
@@ -24,7 +26,7 @@ export function Overview() {
       <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} mb="lg">
         <Stat label="Running" value={running.total} to="/tasks?view=tiles" link="Watch them" />
         <Stat label="Queued or blocked" value={queued.total} to="/tasks?show=waiting" link="See them" />
-        <Stat label="Needs you" value={waiting.total} />
+        <Stat label="Needs you" value={waiting.total === null ? null : waiting.total + (held.total ?? 0)} />
         <Stat label="Open goals" value={goals.total} to="/goals" link="All goals" />
       </SimpleGrid>
 
@@ -33,12 +35,12 @@ export function Overview() {
 
       <SectionTitle>Needs you</SectionTitle>
       <ErrorAlert error={waiting.error} />
-      {waiting.items.length ? (
+      {waiting.items.length + held.items.length ? (
         <DataTable head={["Task", "Status", "Issue", "Pull request", "Why"]}>
-          {waiting.items.map((t) => (
+          {[...held.items, ...waiting.items].map((t) => (
             <Table.Tr key={t.id}>
               <Table.Td><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
-              <Table.Td><StatusBadge status={t.status} /></Table.Td>
+              <Table.Td>{t.waiting_on === "budget" ? <Badge color="orange" variant="light" tt="none">out of budget</Badge> : <StatusBadge status={t.status} />}</Table.Td>
               <Table.Td><IssueLink issueRef={t.external_ref} /></Table.Td>
               <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>
               <Table.Td><Text size="sm">{t.status === "ready" ? "Its pull request is open for you to merge" : t.status_reason ?? t.status}</Text></Table.Td>

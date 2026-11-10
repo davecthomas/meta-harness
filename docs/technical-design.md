@@ -921,6 +921,25 @@ leaves the pull request open, ends the task `review_unresolved`, and a
 meta-harness alert rule fires. A pull request closed on the code host ends
 the loop and the task.
 
+A task short of budget holds and asks before it ends (#188, behind the
+`budget-hold` patch). Before every run, the first included, the workflow
+works out what the run may spend: what the task has left of its `max_usd`,
+or, when that is less, the task's share of what its goal has left (the goal's
+`max_usd` less what its tasks' runs have spent, divided among its running
+tasks, so tasks running side by side cannot together pass the goal's budget).
+When that is under what the run needs, which is what the task's last run of
+that kind spent, and at least $0.10, the task holds: it stays `running`, with
+its repo-area lock and its place in the parallel limit, marked
+`waiting_on: budget`, its status reason saying what the next run needs and
+what is left. A run that stops at its spend limit holds the same way and,
+once there is budget, runs again. The operator answers through
+`POST /v1/tasks/{id}/budget`: `raise` with a new `max_usd` for the task, or
+`end`, which ends the task as it would have ended. A task held for its
+goal's budget looks again every five minutes, so raising the goal's budget
+on its page lets its tasks go on by themselves. A task no one answers in 24
+hours ends as if ended. The hold and the answer are recorded as `budget_hold`
+and `budget_decision`.
+
 Two parts are built differently (#85), each until what it waits on exists:
 
 - A fix run starts a new pi session on a fresh clone of the pull request's
@@ -1665,6 +1684,7 @@ credential.
 | GET | `/v1/pulls/{task_id}/attempts` | Meta-harness run service, served from the planner process | A task's attempts side by side: candidate, how each ended, cost, and the changes in each one's workspace, and whether the task waits for a pick | built |
 | POST | `/v1/tasks/{id}/messages` | Task service | An operator's message to a running task (`when`: `next_turn`, `after_stop`), or `stop` after the current turn, recorded as `operator_message`. The scheduler hands each to the task's RunTask workflow as an `operator_message` signal, and the workflow's `deliver_message` activity gives it to the harness server of the run in progress (behind the `operator-messages` patch) | built |
 | GET | `/v1/tasks/{id}/reviews` | Task service | The task's review rounds, oldest first: verdict, reviewer, reviewed commit, summary, findings and review URL, from the `review_submitted` and `pull_request_reviewed` events, each with what came next, read from the events before the next round: its own fix run, the merge, another review when the head changed before it could merge, waiting, or the loop's end. The Task page's Reviews tab | built |
+| POST | `/v1/tasks/{id}/budget` | Task service | An operator's answer to a running task held for budget (`waiting_on: budget`): `{"action": "raise", "max_usd": ...}` saves the task's new spend limit (above the old one; left out, the task only looks at its budget again) and `{"action": "end"}` ends it. The scheduler hands the answer to the task's workflow. `GET /v1/tasks?waiting=true` lists the tasks waiting on an operator | built |
 | POST | `/v1/tasks/{id}/clear` | Task service | Take a `ready` or `review_unresolved` task off the list: `closed` when its pull request's merge is recorded, else `canceled`, with the reason naming the pull request and who cleared it. The pull request stays on GitHub | built |
 | POST | `/v1/tasks/{id}/status` | Task service | Set a task's status. Services only: the RunTask workflow and the planner | built |
 | POST | `/v1/tasks/{id}/take-over` | Meta-harness run service | Stop the active run, publish its work so far, and hand the task to the calling operator | planned |
@@ -1909,7 +1929,10 @@ issues a planning task writes.
 A goal is `met` when its success criteria pass, and `stalled` when every open
 issue is blocked by a failed issue or waits on an operator issue, which raises
 an alert. Its `max_usd` covers every task it queued; once spent, the meta-harness scheduler
-admits no more of its tasks and the goal ends `budget_exhausted`.
+admits no more of its tasks and the goal ends `budget_exhausted`. Its running
+tasks share what it has left, run by run, and hold for an operator when that
+is too little (see the review loop's budget hold), so a goal's tasks started
+together no longer spend several times its budget.
 
 #### Latitude
 
@@ -2053,7 +2076,7 @@ Meta-harness services append through the event service client library:
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason the meta-harness scheduler holds a meta-harness task. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v2`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
-| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
+| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
 | Configuration, in the planner process | `config_changed` for every configuration version an operator saves, approves or rolls back, with the actor |
@@ -2208,6 +2231,12 @@ the terminal, each opening to the full text. A run started before prompts
 were recorded shows none. The page reads every `run_prompt` on the task as
 it opens, besides its newest events, so an older run's prompt, or the one a
 `?run=` link opens on, is on the timeline before older events load.
+A running task held for budget shows an alert at the top of its page with
+what the next run needs and what is left, a field for a new spend limit
+with Raise the limit and carry on, and End the task; one held for its goal's
+budget links to the goal instead, with Look again now. Held tasks head the
+Overview's Needs you list, and show under Needs attention on their goal's
+board and in its alert.
 A task that ended `failed` or `review_unresolved` says so in an alert at
 the top of its page: its reason, each run that did not finish (linked to
 that run), and a link to its warnings and errors on the Logs page. Its

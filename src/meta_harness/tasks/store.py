@@ -30,7 +30,7 @@ TERMINAL = {status for status, nexts in TRANSITIONS.items() if not nexts}
 COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
-    "pr_url, head_sha, created_at, updated_at, attempts"
+    "pr_url, head_sha, created_at, updated_at, attempts, waiting_on"
 )
 
 
@@ -150,13 +150,17 @@ def list_tasks(
     offset: int = 0,
     pr: bool | None = None,
     q: str | None = None,
+    waiting: bool | None = None,
 ) -> tuple[list[dict], int]:
     """One page of tasks, highest priority then oldest first, and how many match in all.
 
     pr True: only tasks with a pull request; False: only tasks without one; None: either.
     q: text in the title, the id or the issue ref, any case.
+    waiting True: only tasks waiting on an operator (waiting_on set); False: only those that are not.
     """
     clauses, params = [], []
+    if waiting is not None:
+        clauses.append("waiting_on IS NOT NULL" if waiting else "waiting_on IS NULL")
     if caller is not None:
         clauses.append("caller = %s")
         params.append(caller)
@@ -185,12 +189,19 @@ def list_tasks(
 def set_status(
     conn: psycopg.Connection, task_id: str, status: str, reason: str | None = None, **fields: Any
 ) -> tuple[dict, str]:
-    """Move a task to a new status, with any of pr_url, head_sha and owner. Returns (task, previous status)."""
+    """Move a task to a new status, with any of pr_url, head_sha, owner and waiting_on ("" clears it; a task
+    that leaves running stops waiting). Returns (task, previous status)."""
     if status not in TRANSITIONS:
         raise TaskError(f"unknown status {status!r}")
-    allowed = {"pr_url", "head_sha", "owner"}
+    allowed = {"pr_url", "head_sha", "owner", "waiting_on"}
     if set(fields) - allowed:
         raise TaskError(f"set_status takes only {sorted(allowed)}")
+    if fields.get("waiting_on") and fields["waiting_on"] not in WAITING_ON:
+        raise TaskError(f"waiting_on is one of {', '.join(WAITING_ON)}")
+    if "waiting_on" in fields:
+        fields["waiting_on"] = fields["waiting_on"] or None
+    elif status != "running":
+        fields["waiting_on"] = None
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT status FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
         row = cur.fetchone()
@@ -232,7 +243,10 @@ def _jsonable(row: dict) -> dict:
 
 
 # How an operator message reaches a running task: at its next turn, when it would stop, or stop it after this turn.
-MESSAGE_KINDS = ("next_turn", "after_stop", "stop", "choose")
+# budget is the operator's answer to a task held for budget: its own endpoint queues it, not the messages one.
+MESSAGE_KINDS = ("next_turn", "after_stop", "stop", "choose", "budget")
+# What a running task may be waiting on an operator for.
+WAITING_ON = ("budget",)
 # The most attempts a task makes at once.
 MAX_ATTEMPTS = 4
 
@@ -271,6 +285,30 @@ def add_message(conn: psycopg.Connection, task_id: str, body: str, deliver: str,
             (task_id, body, deliver, actor),
         )
         return dict(cur.fetchone())
+
+
+def decide_budget(conn: psycopg.Connection, task_id: str, action: str, max_usd: Decimal | None, actor: str) -> dict:
+    """An operator's answer to a task held for budget: raise (with a new spend limit for the task, or none when
+    its goal's budget was raised) or end. Queues it for the task's workflow. Returns the task."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT status, waiting_on, max_usd FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        if row["status"] != "running" or row["waiting_on"] != "budget":
+            raise TaskError("the task is not held for budget")
+        body = action
+        if action == "raise" and max_usd is not None:
+            if row["max_usd"] is not None and max_usd <= row["max_usd"]:
+                raise TaskError(f"the new limit must be above the task's ${row['max_usd']}")
+            cur.execute("UPDATE tasks.task SET max_usd = %s, updated_at = now() WHERE id = %s", (max_usd, task_id))
+            body = f"raise:{max_usd}"
+        cur.execute(
+            "INSERT INTO tasks.task_message (task_id, body, deliver, actor) VALUES (%s, %s, 'budget', %s)",
+            (task_id, body, actor),
+        )
+        cur.execute(f"SELECT {COLUMNS} FROM tasks.task WHERE id = %s", (task_id,))
+        return _jsonable(cur.fetchone())
 
 
 def pending_messages(conn: psycopg.Connection, limit: int = 100) -> list[dict]:
