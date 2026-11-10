@@ -22,7 +22,7 @@ export function Overview() {
       <KillSwitchPanel />
 
       <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} mb="lg">
-        <Stat label="Running" value={running.total} to="/tasks?view=tiles&size=16" link="Watch them" />
+        <Stat label="Running" value={running.total} to="/tasks?view=tiles" link="Watch them" />
         <Stat label="Queued or blocked" value={queued.total} to="/tasks?show=waiting" link="See them" />
         <Stat label="Needs you" value={waiting.total} />
         <Stat label="Open goals" value={goals.total} to="/goals" link="All goals" />

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Alert, Badge, Button, Checkbox, Group, SegmentedControl, Table, Text } from "@mantine/core";
 import { api, type Task } from "../api";
@@ -19,6 +19,7 @@ const FILTERS: [string, string, string[], boolean | undefined][] = [
 ];
 const VIEWS = [
   { value: "list", label: "List" },
+  { value: "1", label: "1 up" },
   { value: "4", label: "4 up" },
   { value: "16", label: "16 up" },
   { value: "32", label: "32 up" },
@@ -29,7 +30,9 @@ const STREAM_COLORS: Record<string, string> = { live: "teal", connecting: "yello
 export function TasksPage() {
   const [params, setParams] = useSearchParams();
   const tiles = params.get("view") === "tiles";
-  const size = ([4, 16, 32].find((s) => String(s) === params.get("size")) ?? 16) as TileSize;
+  // No size in the URL: Auto, which follows how many tasks the tab lists. A size the operator picks stays.
+  const picked_size = [1, 4, 16, 32].find((s) => String(s) === params.get("size")) as TileSize | undefined;
+  const auto = picked_size === undefined;
   const filter = FILTERS.find(([key]) => key === (params.get("show") ?? "running")) ?? FILTERS[0];
   const [streamState, setStreamState] = useState("idle");
   // On "Pull request open": the tasks checked to clear, and what clearing could not do.
@@ -41,9 +44,25 @@ export function TasksPage() {
 
   const tasks = useInfinite(
     (offset, limit) => api.tasks({ statuses: filter[2], pr: filter[3] }, offset, limit),
-    tiles ? size : 50,
-    `${filter[0]}:${tiles}:${size}:${reload}`,
+    tiles ? (picked_size ?? 32) : 50,
+    `${filter[0]}:${tiles}:${picked_size ?? "auto"}:${reload}`,
   );
+  const size: TileSize = picked_size ?? autoSize(tasks.total ?? 0);
+  // 1 up shows one task at a time, the newest first, with previous and next.
+  const newestFirst = [...tasks.items].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const [one, setOne] = useState(0);
+  useEffect(() => setOne(0), [tasks.total, filter[0]]);
+  const at = Math.min(one, Math.max(0, newestFirst.length - 1));
+  useEffect(() => {
+    if (!tiles || size !== 1) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === "[") setOne((i) => Math.max(0, i - 1));
+      if (e.key === "]") setOne((i) => Math.min(newestFirst.length - 1, i + 1));
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [tiles, size, newestFirst.length]);
 
   async function clearPicked() {
     setClearing(true);
@@ -62,10 +81,10 @@ export function TasksPage() {
   }
 
   function set(next: { show?: string; view?: string }) {
-    const view = next.view ?? (tiles ? String(size) : "list");
+    const view = next.view ?? (tiles ? (auto ? "auto" : String(size)) : "list");
     setParams({
       show: next.show ?? filter[0],
-      ...(view === "list" ? { view: "list" } : { view: "tiles", size: view }),
+      ...(view === "list" ? { view: "list" } : view === "auto" ? { view: "tiles" } : { view: "tiles", size: view }),
     });
   }
 
@@ -77,7 +96,11 @@ export function TasksPage() {
         <Group gap="sm">
           {tiles && <Badge variant="dot" color={STREAM_COLORS[streamState] ?? "gray"} tt="none">{streamState}</Badge>}
           {tasks.total !== null && <Text size="sm" c="dimmed">{tasks.items.length} of {tasks.total}</Text>}
-          <SegmentedControl value={tiles ? String(size) : "list"} onChange={(view) => set({ view })} data={VIEWS} />
+          <SegmentedControl
+            value={tiles ? (auto ? "auto" : String(size)) : "list"}
+            onChange={(view) => set({ view })}
+            data={[VIEWS[0], { value: "auto", label: `Auto (${size} up)` }, ...VIEWS.slice(1)]}
+          />
         </Group>
       </Group>
       <ErrorAlert error={tasks.error} />
@@ -95,7 +118,16 @@ export function TasksPage() {
       {tasks.total === 0 && <Empty>No {filter[1].toLowerCase()} tasks.</Empty>}
 
       {tiles ? (
-        <TileGrid tasks={tasks.items} size={size} onStreamState={setStreamState} />
+        <>
+          {size === 1 && newestFirst.length > 1 && (
+            <Group gap="xs" mb="xs">
+              <Button size="compact-sm" variant="default" disabled={at === 0} onClick={() => setOne(at - 1)}>Previous [</Button>
+              <Text size="sm" c="dimmed">{at + 1} of {newestFirst.length}</Text>
+              <Button size="compact-sm" variant="default" disabled={at >= newestFirst.length - 1} onClick={() => setOne(at + 1)}>Next ]</Button>
+            </Group>
+          )}
+          <TileGrid tasks={size === 1 ? newestFirst.slice(at, at + 1) : tasks.items} size={size} onStreamState={setStreamState} />
+        </>
       ) : (
         tasks.items.length > 0 && (
           <DataTable head={[...(clearable ? [""] : []), "Task", "Status", "Repo", "Issue", "Pull request", "Updated"]}>
@@ -139,4 +171,9 @@ export function TasksPage() {
 // A running task with a pull request is in its review loop: checks, review, fixes.
 export function shownStatus(task: Task): string {
   return task.status === "running" && task.pr_url ? "in_review" : task.status;
+}
+
+// The tile size Auto picks from how many tasks there are: one fills the page, a few share it.
+export function autoSize(count: number): TileSize {
+  return count <= 1 ? 1 : count <= 4 ? 4 : 16;
 }
