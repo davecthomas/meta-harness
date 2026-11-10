@@ -183,6 +183,20 @@ export interface UserSettings {
   notifications: boolean;
 }
 
+// One review round on a task's pull request, from GET /v1/tasks/{id}/reviews.
+export interface ReviewRound {
+  round: number;
+  verdict: "clean" | "changes";
+  reviewer: string | null;
+  head_sha: string | null;
+  summary: string;
+  findings: { path: string | null; line: number | null; body: string }[];
+  review_url: string | null;
+  reviewed_at: string | null;
+  run_id: string | null;
+  next: { kind: "fix" | "merged" | "reviewed_again" | "waiting" | "ended" | "under_way"; run_id?: string | null; attempt?: number; reason?: string | null };
+}
+
 export interface Task {
   id: string;
   external_ref: string;
@@ -277,6 +291,7 @@ export const api = {
     return { items: r.tasks, total: r.total };
   },
   task: (id: string) => call<Task>(`/v1/tasks/${id}`),
+  reviews: (id: string) => call<{ rounds: ReviewRound[] }>(`/v1/tasks/${id}/reviews`).then((r) => r.rounds),
   clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
   cancelTask: (id: string) =>
     call<Task>(`/v1/tasks/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "canceled from the console" }) }),
