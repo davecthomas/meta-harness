@@ -35,18 +35,18 @@ export function ProfilesView({ staging: s }: { staging: Staging }) {
               <Reasons reasons={s.reasons(`profile:${name}`)} />
             </Table.Td>
             <Table.Td maw={260}>
-              <InlineField kind="tags" label={`Tools of ${name}`} value={p.tools ?? []} data={TOOLS} changed={changed(s, at("tools"))} readOnly={s.readOnly} onCommit={(v) => s.stage(at("tools"), v)} />
+              <InlineField kind="tags" label={`Tools of ${name}`} value={p.tools ?? []} data={TOOLS} changed={changed(s, at("tools"))} reasons={s.reasons(`profile:${name}:tools`)} readOnly={s.readOnly} onCommit={(v) => s.stage(at("tools"), v)} />
             </Table.Td>
             <Table.Td>
               <Stack gap={2}>
-                <InlineField kind="number" label={`Max turns of ${name}`} value={p.max_turns ?? null} min={1} decimalScale={0} suffix=" turns" changed={changed(s, at("max_turns"))} readOnly={s.readOnly} onCommit={(v) => s.stage(at("max_turns"), v)} />
-                <InlineField kind="number" label={`Max minutes of ${name}`} value={p.max_minutes ?? null} min={1} suffix=" min" changed={changed(s, at("max_minutes"))} readOnly={s.readOnly} onCommit={(v) => s.stage(at("max_minutes"), v)} />
+                <InlineField kind="number" label={`Max turns of ${name}`} value={p.max_turns ?? null} min={1} decimalScale={0} suffix=" turns" changed={changed(s, at("max_turns"))} reasons={s.reasons(`profile:${name}:max_turns`)} readOnly={s.readOnly} onCommit={(v) => s.stage(at("max_turns"), v)} />
+                <InlineField kind="number" label={`Max minutes of ${name}`} value={p.max_minutes ?? null} min={1} suffix=" min" changed={changed(s, at("max_minutes"))} reasons={s.reasons(`profile:${name}:max_minutes`)} readOnly={s.readOnly} onCommit={(v) => s.stage(at("max_minutes"), v)} />
               </Stack>
             </Table.Td>
             <Table.Td>
               <Stack gap={2}>
-                <InlineField kind="number" label={`vCPU of ${name}`} value={p.resources?.cpu ?? null} min={0.5} step={0.5} decimalScale={1} allowEmpty suffix=" vCPU" empty="default vCPU" changed={changed(s, at("resources", "cpu"))} readOnly={s.readOnly} onCommit={(v) => stageResource(name, "cpu", v)} />
-                <InlineField kind="number" label={`Memory of ${name}`} value={p.resources?.memory_gb ?? null} min={1} allowEmpty suffix=" GB" empty="default memory" changed={changed(s, at("resources", "memory_gb"))} readOnly={s.readOnly} onCommit={(v) => stageResource(name, "memory_gb", v)} />
+                <InlineField kind="number" label={`vCPU of ${name}`} value={p.resources?.cpu ?? null} min={0.5} step={0.5} decimalScale={1} allowEmpty suffix=" vCPU" empty="default vCPU" changed={changed(s, at("resources", "cpu"))} reasons={s.reasons(`profile:${name}:resources.cpu`)} readOnly={s.readOnly} onCommit={(v) => stageResource(name, "cpu", v)} />
+                <InlineField kind="number" label={`Memory of ${name}`} value={p.resources?.memory_gb ?? null} min={1} allowEmpty suffix=" GB" empty="default memory" changed={changed(s, at("resources", "memory_gb"))} reasons={s.reasons(`profile:${name}:resources.memory_gb`)} readOnly={s.readOnly} onCommit={(v) => stageResource(name, "memory_gb", v)} />
               </Stack>
             </Table.Td>
             <Table.Td maw={260}>
@@ -64,6 +64,7 @@ export function ProfilesView({ staging: s }: { staging: Staging }) {
                   ) : undefined
                 }
                 changed={changed(s, at("bash_allow"))}
+                reasons={s.reasons(`profile:${name}:bash_allow`)}
                 readOnly={s.readOnly}
                 onCommit={(v) => stageOptional(s, at("bash_allow"), v)}
               />
@@ -76,6 +77,7 @@ export function ProfilesView({ staging: s }: { staging: Staging }) {
                 monospace
                 display={<Code>{p.image ?? "default"}</Code>}
                 changed={changed(s, at("image"))}
+                reasons={s.reasons(`profile:${name}:image`)}
                 readOnly={s.readOnly}
                 onCommit={(v) => s.stage(at("image"), v || null)}
               />

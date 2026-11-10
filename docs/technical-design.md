@@ -2149,10 +2149,13 @@ change stay read-only.
   version is checked as a whole and recorded with a note: a changed value is
   marked, and a bar above the view says "N changes to version V" with Discard
   and Review and save, which opens the diff and note and saves version V+1.
-  A refused save shows each reason beside the value it is about and keeps the
-  changes staged, and leaving the page with staged changes asks first, as
-  does making another version active from the history: the staged changes
-  are saved or discarded before the rollback.
+  A refused save shows each reason beside the value it is about (a profile's
+  memory, a repo's checks, a tier's thinking or candidate; a reason about no
+  one value shows above the view) and keeps the changes staged, and leaving
+  the page with staged changes asks first, as does making another version
+  active from the history: the staged changes are saved or discarded before
+  the rollback. Save there opens the same diff and note review, and the
+  leave or rollback goes ahead only once that reviewed save succeeds.
   Advanced: JSON opens the active document with the staged changes, and
   applying it stages what it holds.
 - Repositories: each repo's default acceptance checks edit in place as a tag

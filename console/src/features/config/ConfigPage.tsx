@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Alert, Badge, Button, Center, Code, Group, List, Loader, Modal, Paper, Popover, Stack, Table, Tabs, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -76,6 +76,8 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
   const [staged, setStaged] = useState<Record<string, any> | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
   const [reviewing, setReviewing] = useState(false);
+  // When the review was opened by the unsaved-changes prompt: answers it once the review saves or closes.
+  const reviewDone = useRef<((saved: boolean) => void) | null>(null);
   const [editingJson, setEditingJson] = useState(false);
   const [viewing, setViewing] = useState<ConfigVersion | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -140,10 +142,29 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
     setReasons([]);
   }
 
+  // Opens the review; resolves true once a reviewed save succeeds, false when it is refused or closed.
+  function review(): Promise<boolean> {
+    reviewDone.current?.(false);
+    return new Promise<boolean>((resolve) => {
+      reviewDone.current = resolve;
+      setReviewing(true);
+    });
+  }
+
+  function closeReview(saved: boolean) {
+    setReviewing(false);
+    const done = reviewDone.current;
+    reviewDone.current = null;
+    done?.(saved);
+  }
+
+  // Saving from the prompt (leaving the page, or before a rollback) goes through the same review and note as
+  // Review and save; the leave goes ahead only once that save succeeds.
   const unsaved = useUnsavedChanges({
     dirty: count > 0,
     describe: `the ${KIND_NAMES[summary.kind]}, staged on version ${current?.version ?? ""}`,
-    save: () => save(""),
+    save: review,
+    saveOpensDialog: true,
     discard,
   });
 
@@ -243,10 +264,10 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
           version={current.version}
           before={original}
           after={document}
-          onClose={() => setReviewing(false)}
+          onClose={() => closeReview(false)}
           onSave={async (note) => {
             const ok = await save(note);
-            setReviewing(false);
+            closeReview(ok);
             return ok;
           }}
         />

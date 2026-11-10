@@ -21,7 +21,7 @@ function respond(body: unknown, status = 200) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function stub(onPut: (body: any) => Promise<Response>) {
+function stub(onPut: (body: any, url: string) => Promise<Response>) {
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
     if (url === "/v1/config") {
       return respond({
@@ -32,7 +32,7 @@ function stub(onPut: (body: any) => Promise<Response>) {
         ],
       });
     }
-    if (url === "/v1/config/tiers" && init?.method === "PUT") return onPut(JSON.parse(String(init.body)));
+    if (init?.method === "PUT") return onPut(JSON.parse(String(init.body)), url);
     if (url === "/v1/config/tiers") return respond(VERSION);
     if (url === "/v1/config/tiers/versions") return respond({ versions: [VERSION] });
     if (url === "/v1/config/profiles/versions") return respond({ versions: [] });
@@ -170,6 +170,83 @@ test("making another version active with changes staged asks first, and Discard 
   await waitFor(() => expect(rolledBack).toEqual([{ version: 1 }]));
   await waitFor(() => expect(screen.queryByText(/changes? to version/)).toBeNull());
   expect(screen.getByText("Escalate one tier up")).toBeTruthy();
+});
+
+test("Save in the prompt before a rollback opens the review, and the rollback goes ahead only after the reviewed save", async () => {
+  const saved: any[] = [];
+  const rolledBack: any[] = [];
+  let active: any = { ...VERSION, version: 2, origin: "edit", edited_by: "dave" };
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/config") {
+      return respond({
+        source: "db",
+        kinds: [{ kind: "tiers", title: "Router tiers", description: "The router's tiers.", version: active.version, edited_by: "dave", created_at: VERSION.created_at }],
+      });
+    }
+    if (url === "/v1/config/tiers" && init?.method === "PUT") {
+      const body = JSON.parse(String(init.body));
+      saved.push(body);
+      active = { ...VERSION, version: 3, origin: "edit", document: body.document, note: body.note };
+      return respond(active);
+    }
+    if (url === "/v1/config/tiers/rollback") {
+      rolledBack.push(JSON.parse(String(init?.body)));
+      active = { ...VERSION, version: 4, origin: "rollback", rolled_back_from: 1 };
+      return respond(active);
+    }
+    if (url === "/v1/config/tiers") return respond(active);
+    if (url === "/v1/config/tiers/versions") return respond({ versions: [active, VERSION] });
+    if (url === "/v1/config/profiles") return respond({ ...VERSION, kind: "profiles", document: { profiles: { "pi-lean": {} } } });
+    if (url === "/v1/config/models") return respond({ models: [] });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit When a tier is used up" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Fail", hidden: true }));
+  expect(await screen.findByText("1 change to version 2")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Make active" }));
+  const ask = (await screen.findByText(/Make version 1 active again/)).parentElement as HTMLElement;
+  fireEvent.click(within(ask).getByRole("button", { name: "Make active", hidden: true }));
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Save your changes?" })).getByRole("button", { name: "Save" }));
+
+  // Closing the review saves nothing and rolls nothing back: the prompt comes back, the changes stay staged.
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Save version 3" })).getByRole("button", { name: "Back to editing" }));
+  const prompt = await screen.findByRole("dialog", { name: "Save your changes?" });
+  expect(saved).toHaveLength(0);
+  expect(rolledBack).toHaveLength(0);
+  expect(screen.getByText("1 change to version 2")).toBeTruthy();
+
+  fireEvent.click(within(prompt).getByRole("button", { name: "Save" }));
+  const review = await screen.findByRole("dialog", { name: "Save version 3" });
+  fireEvent.change(within(review).getByLabelText("Note"), { target: { value: "fail, not escalate" } });
+  fireEvent.click(within(review).getByRole("button", { name: "Save as version 3" }));
+
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toMatchObject({ note: "fail, not escalate", document: { on_exhausted: "fail" } });
+  await waitFor(() => expect(rolledBack).toEqual([{ version: 1 }]));
+});
+
+test("a refused save shows a profile field's reason beside that field, not under the profile name", async () => {
+  stub(() => respond({ detail: { reasons: ["pi-lean: resources.memory_gb must be a positive number", "pi-lean: a reason about the whole profile"] } }, 422));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("tab", { name: /Harness profiles/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit vCPU of pi-lean" }));
+  const cpu = screen.getByLabelText("vCPU of pi-lean");
+  fireEvent.change(cpu, { target: { value: "2" } });
+  fireEvent.keyDown(cpu, { key: "Enter" });
+  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save as version 2" }));
+
+  const reason = await screen.findByText("pi-lean: resources.memory_gb must be a positive number");
+  const cells = within(screen.getByTestId("profile-pi-lean")).getAllByRole("cell");
+  expect(cells[3].contains(reason)).toBe(true);
+  expect(cells[0].contains(reason)).toBe(false);
+  expect(within(cells[0]).getByText("pi-lean: a reason about the whole profile")).toBeTruthy();
+  expect(screen.getByText("1 change to version 1")).toBeTruthy();
 });
 
 test("a profile is added and removed from the table, each staged", async () => {

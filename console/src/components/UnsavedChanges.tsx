@@ -12,6 +12,9 @@ export interface UnsavedChangesOptions {
   save: () => Promise<boolean>;
   // Drops the changes.
   discard: () => void;
+  // Whether save opens the editor's own dialog (such as a review with a note): the prompt steps aside while
+  // it is open, and comes back if that dialog closes without saving.
+  saveOpensDialog?: boolean;
 }
 
 export interface UnsavedChanges {
@@ -92,7 +95,7 @@ export function useUnsavedChanges(options: UnsavedChangesOptions): UnsavedChange
   const element = (
     <>
       <RouteGuard shouldBlock={shouldBlock} ask={ask} />
-      <Modal opened={pending !== null} onClose={keepEditing} title="Save your changes?" centered>
+      <Modal opened={pending !== null && !(saving && options.saveOpensDialog)} onClose={keepEditing} title="Save your changes?" centered>
         <Text size="sm" mb="lg">You have unsaved changes to {options.describe}.</Text>
         <Group justify="flex-end" gap="sm">
           <Button variant="default" onClick={keepEditing}>Keep editing</Button>

@@ -62,13 +62,42 @@ export function isChanged(before: unknown, after: unknown, path: Path): boolean 
   return !same(getIn(before, path), getIn(after, path));
 }
 
-// Where a refused save's reason belongs in a kind's view: "tier:<name>", "profile:<name>", "repo:<name>",
-// or a field ("classifier", "default_tier", "on_exhausted", "max_parallel", "reviewers", "max_rounds").
-// null: no value in the view is about it, so it shows above the view.
+// The fields of a harness profile and of a repo that a refused save's reason can name, after "<name>: ".
+const PROFILE_FIELDS = ["tools", "max_turns", "max_minutes", "bash_allow", "resources.cpu", "resources.memory_gb", "image"];
+const REPO_FIELDS = ["tracker", "default_checks"];
+
+// The field a reason names after its "<name>: " prefix: "<name>: resources.memory_gb must be ..." is about
+// resources.memory_gb, "<name>: unknown tools x" about tools.
+function fieldOf(rest: string, fields: string[]): string | null {
+  const named = fields.find((f) => rest.startsWith(`${f} `) || rest.startsWith(`${f}:`) || rest.startsWith(`${f}.`));
+  if (named) return named;
+  if (fields.includes("tools") && rest.startsWith("unknown tools")) return "tools";
+  return null;
+}
+
+// Where a refused save's reason belongs in a kind's view. A reason about one value targets it:
+// "profile:<name>:<field>" (field as in PROFILE_FIELDS, such as "resources.memory_gb"), "repo:<name>:<field>",
+// "tier:<name>:thinking", "tier:<name>:candidates", "tier:<name>:candidate:<i>" with ":profile" or ":model"
+// when the reason is about that part, or a field ("classifier", "default_tier", "on_exhausted",
+// "max_parallel", "reviewers", "max_rounds"). A reason about a tier, profile or repo as a whole targets
+// "tier:<name>", "profile:<name>" or "repo:<name>". null: no value in the view is about it, so it shows above the view.
 export function reasonTarget(kind: ConfigKind, document: Record<string, any>, reason: string): string | null {
   if (kind === "tiers") {
     const tier = (document.tiers ?? []).find((t: any) => reason.startsWith(`tier ${t.name} `) || reason.startsWith(`tier ${t.name}:`));
-    if (tier) return `tier:${tier.name}`;
+    if (tier) {
+      const at = `tier:${tier.name}`;
+      const rest = reason.slice(`tier ${tier.name}`.length).replace(/^:?\s*/, "");
+      if (rest.startsWith("thinking ")) return `${at}:thinking`;
+      if (rest.startsWith("has no candidates")) return `${at}:candidates`;
+      const index = ((tier.models ?? []) as unknown[]).findIndex((m) => rest.startsWith(`${String(m)} `));
+      if (index >= 0) {
+        const after = rest.slice(String(tier.models[index]).length + 1);
+        if (after.startsWith("names harness profile")) return `${at}:candidate:${index}:profile`;
+        if (after.startsWith("names engine")) return `${at}:candidate:${index}:model`;
+        return `${at}:candidate:${index}`;
+      }
+      return at;
+    }
     if (reason.startsWith("default_tier")) return "default_tier";
     if (reason.startsWith("classifier")) return "classifier";
     if (reason.startsWith("on_exhausted")) return "on_exhausted";
@@ -76,11 +105,15 @@ export function reasonTarget(kind: ConfigKind, document: Record<string, any>, re
   }
   if (kind === "profiles") {
     const name = Object.keys(document.profiles ?? {}).find((n) => reason.startsWith(`${n}:`));
-    return name ? `profile:${name}` : null;
+    if (!name) return null;
+    const field = fieldOf(reason.slice(name.length + 1).trimStart(), PROFILE_FIELDS);
+    return field ? `profile:${name}:${field}` : `profile:${name}`;
   }
   if (kind === "repos") {
     const name = Object.keys(document.repos ?? {}).find((n) => reason.startsWith(`${n}:`));
-    return name ? `repo:${name}` : null;
+    if (!name) return null;
+    const field = fieldOf(reason.slice(name.length + 1).trimStart(), REPO_FIELDS);
+    return field ? `repo:${name}:${field}` : `repo:${name}`;
   }
   if (reason.startsWith("max_parallel")) return "max_parallel";
   if (reason.startsWith("review.reviewers") || reason.startsWith("reviewer ")) return "reviewers";

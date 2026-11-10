@@ -128,6 +128,7 @@ export function ReposView({ staging: s }: { staging: Staging }) {
               data={TRACKERS.includes(r.tracker ?? "github") ? TRACKERS : [r.tracker, ...TRACKERS]}
               display={<Badge variant="light" tt="none">{r.tracker ?? "github"}</Badge>}
               changed={changed(s, ["repos", name, "tracker"])}
+              reasons={s.reasons(`repo:${name}:tracker`)}
               readOnly={s.readOnly}
               onCommit={(v) => s.stage(["repos", name, "tracker"], v ?? "github")}
             />
@@ -139,6 +140,7 @@ export function ReposView({ staging: s }: { staging: Staging }) {
               value={r.default_checks ?? []}
               monospace
               changed={changed(s, ["repos", name, "default_checks"])}
+              reasons={s.reasons(`repo:${name}:default_checks`)}
               readOnly={s.readOnly}
               onCommit={(v) => s.stage(["repos", name, "default_checks"], v)}
             />

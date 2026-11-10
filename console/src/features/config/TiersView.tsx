@@ -99,6 +99,8 @@ function TierCard({ staging: s, tier, index, profiles, models }: { staging: Stag
   const path = ["tiers", index];
   const setCandidates = (next: string[]) => s.stage([...path, "models"], next);
   const original: string[] = getIn(s.original, [...path, "models"]) ?? [];
+  // Where this tier's refused-save reasons are targeted (see reasonTarget).
+  const at = `tier:${tier.name}`;
   return (
     <Card withBorder padding="lg" data-testid={`tier-${tier.name}`}>
       <Group justify="space-between" mb="xs" wrap="nowrap">
@@ -115,6 +117,7 @@ function TierCard({ staging: s, tier, index, profiles, models }: { staging: Stag
           display={tier.thinking ? <Badge variant="outline" tt="none">thinking {tier.thinking}</Badge> : undefined}
           empty="no thinking level"
           changed={changed(s, [...path, "thinking"])}
+          reasons={s.reasons(`${at}:thinking`)}
           readOnly={s.readOnly}
           onCommit={(v) => stageOptional(s, [...path, "thinking"], v)}
         />
@@ -137,41 +140,47 @@ function TierCard({ staging: s, tier, index, profiles, models }: { staging: Stag
           const replace = (next: string) => setCandidates(candidates.map((m, j) => (j === i ? next : m)));
           const where = `candidate ${i + 1} in ${tier.name}`;
           return (
-            <Group key={i} gap="xs" wrap="nowrap">
-              <Text size="sm" c="dimmed" w={18}>{i + 1}.</Text>
-              <InlineField
-                kind="select"
-                label={`Profile of ${where}`}
-                value={profile || null}
-                data={withValue(profiles, profile)}
-                display={profile ? <Badge variant="dot" tt="none">{profile}</Badge> : undefined}
-                empty="pick a profile"
-                changed={was?.profile !== profile}
-                readOnly={s.readOnly}
-                onCommit={(v) => replace(joinCandidate(v ?? "", model))}
-              />
-              <InlineField
-                kind="select"
-                searchable
-                label={`Model of ${where}`}
-                value={model || null}
-                data={withValue(models, model)}
-                display={model ? <Code>{model}</Code> : undefined}
-                empty="pick a model"
-                changed={was?.model !== model}
-                readOnly={s.readOnly}
-                onCommit={(v) => replace(joinCandidate(profile, v ?? ""))}
-              />
-              {!s.readOnly && (
-                <Group gap={0} wrap="nowrap" ml="auto">
-                  <ActionIcon variant="subtle" color="gray" aria-label={`Move ${where} up`} disabled={i === 0} onClick={() => setCandidates(move(candidates, i, i - 1))}><IconArrowUp size={16} /></ActionIcon>
-                  <ActionIcon variant="subtle" color="gray" aria-label={`Move ${where} down`} disabled={i === candidates.length - 1} onClick={() => setCandidates(move(candidates, i, i + 1))}><IconArrowDown size={16} /></ActionIcon>
-                  <ActionIcon variant="subtle" color="red" aria-label={`Remove ${where}`} onClick={() => setCandidates(candidates.filter((_, j) => j !== i))}><IconTrash size={16} /></ActionIcon>
-                </Group>
-              )}
-            </Group>
+            <Stack key={i} gap={2}>
+              <Group gap="xs" wrap="nowrap">
+                <Text size="sm" c="dimmed" w={18}>{i + 1}.</Text>
+                <InlineField
+                  kind="select"
+                  label={`Profile of ${where}`}
+                  value={profile || null}
+                  data={withValue(profiles, profile)}
+                  display={profile ? <Badge variant="dot" tt="none">{profile}</Badge> : undefined}
+                  empty="pick a profile"
+                  changed={was?.profile !== profile}
+                  reasons={s.reasons(`${at}:candidate:${i}:profile`)}
+                  readOnly={s.readOnly}
+                  onCommit={(v) => replace(joinCandidate(v ?? "", model))}
+                />
+                <InlineField
+                  kind="select"
+                  searchable
+                  label={`Model of ${where}`}
+                  value={model || null}
+                  data={withValue(models, model)}
+                  display={model ? <Code>{model}</Code> : undefined}
+                  empty="pick a model"
+                  changed={was?.model !== model}
+                  reasons={s.reasons(`${at}:candidate:${i}:model`)}
+                  readOnly={s.readOnly}
+                  onCommit={(v) => replace(joinCandidate(profile, v ?? ""))}
+                />
+                {!s.readOnly && (
+                  <Group gap={0} wrap="nowrap" ml="auto">
+                    <ActionIcon variant="subtle" color="gray" aria-label={`Move ${where} up`} disabled={i === 0} onClick={() => setCandidates(move(candidates, i, i - 1))}><IconArrowUp size={16} /></ActionIcon>
+                    <ActionIcon variant="subtle" color="gray" aria-label={`Move ${where} down`} disabled={i === candidates.length - 1} onClick={() => setCandidates(move(candidates, i, i + 1))}><IconArrowDown size={16} /></ActionIcon>
+                    <ActionIcon variant="subtle" color="red" aria-label={`Remove ${where}`} onClick={() => setCandidates(candidates.filter((_, j) => j !== i))}><IconTrash size={16} /></ActionIcon>
+                  </Group>
+                )}
+              </Group>
+              <Reasons reasons={s.reasons(`${at}:candidate:${i}`)} />
+            </Stack>
           );
         })}
+        <Reasons reasons={s.reasons(`${at}:candidates`)} />
         {original.length > candidates.length && <Badge size="xs" color="yellow" variant="light" tt="none">changed: {original.length - candidates.length} removed</Badge>}
       </Stack>
       {!s.readOnly && (
@@ -182,7 +191,7 @@ function TierCard({ staging: s, tier, index, profiles, models }: { staging: Stag
         </Group>
       )}
       <Stack mt="sm" gap={4}>
-        <Reasons reasons={s.reasons(`tier:${tier.name}`)} />
+        <Reasons reasons={s.reasons(at)} />
       </Stack>
     </Card>
   );
