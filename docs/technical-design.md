@@ -2387,6 +2387,10 @@ only shows on the VM, such as a migration against production data, a
 setting checked at startup, or a missing secret. Without it, a merge that
 broke the worker would leave nothing to run the fix.
 
+A deploy whose commit failed one of main's checks never starts. It opens an
+issue titled "blocked: a check failed on main" that names each failed check
+and links its run, and nothing on Google Cloud changes.
+
 Terraform replaces the VM only when its definition changes (boot image,
 disks), and stops, resizes and starts it for a new machine type. Either
 way the VM boots: its startup script mounts the data disk, which carries Postgres data, Temporal's history and run workspaces, checks the

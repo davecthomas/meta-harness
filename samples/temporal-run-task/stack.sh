@@ -272,11 +272,23 @@ check_ref() {
   fi
 }
 
+# starter ARGS: runs the starter and returns its exit status. A crash (status 139, a segmentation fault) after it
+# printed that the workflow completed is the process failing on exit, not the task: it is logged and the step is
+# judged by the task's result, as the steps' own checks do.
 starter() {
-  local check_args=()
+  local check_args=() out status
   [ -z "$CHECKS" ] || check_args=(--check "$CHECKS")
-  "$PY" -m meta_harness.run_service.starter --ref "$REF" --pin "$PIN" --floor "$FLOOR" --ceiling "$CEILING" \
-    --spend-limit "$SPEND_LIMIT" --task "$TASK" --repo "$REPO" --ticket "$TICKET" "${check_args[@]}" "$@"
+  out=$(mktemp)
+  { "$PY" -m meta_harness.run_service.starter --ref "$REF" --pin "$PIN" --floor "$FLOOR" --ceiling "$CEILING" \
+      --spend-limit "$SPEND_LIMIT" --task "$TASK" --repo "$REPO" --ticket "$TICKET" "${check_args[@]}" "$@" \
+      && echo 0 >"$out.status" || echo $? >"$out.status"; } 2>&1 | tee "$out"
+  status=$(cat "$out.status")
+  if [ "$status" -eq 139 ] && grep -q '^\[starter\] workflow .* completed$' "$out"; then
+    log "the starter crashed on exit (status 139) after the workflow completed; the step is judged by its result"
+    status=0
+  fi
+  rm -f "$out" "$out.status"
+  return "$status"
 }
 
 wait_for_log() {

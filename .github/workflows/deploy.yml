@@ -40,6 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: wait for main's checks to pass at this commit
+        id: checks
         env:
           GH_TOKEN: ${{ github.token }}
           CHECKS: "control plane tests|console web app|zero-cost end-to-end check|harness server tests"
@@ -48,12 +49,19 @@ jobs:
             runs=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs?per_page=100" \
               --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv')
             failed=$(echo "$runs" | awk -F'\t' -v c="$CHECKS" '$1 ~ "^("c")$" && $2=="completed" && $3!="success"')
-            [ -z "$failed" ] || { echo "a check did not pass: $failed"; exit 1; }
+            if [ -n "$failed" ]; then
+              echo "a check did not pass: $failed"
+              # The failure issue names each failed check and links its run.
+              gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs?per_page=100" \
+                --jq '.check_runs[] | select(.status == "completed" and .conclusion != "success") | "- \(.name): \(.conclusion), \(.html_url)"' \
+                | grep -E "^- (${CHECKS}):" >failed-checks.txt || true
+              exit 1
+            fi
             passed=$(echo "$runs" | awk -F'\t' -v c="$CHECKS" '$1 ~ "^("c")$" && $3=="success"' | cut -f1 | sort -u | wc -l)
             [ "$passed" -eq 4 ] && { echo "all four checks passed"; exit 0; }
             sleep 15
           done
-          echo "the checks did not finish in 30 minutes"
+          echo "the checks did not finish in 30 minutes" | tee failed-checks.txt
           exit 1
       - uses: google-github-actions/auth@v2
         with:
@@ -140,6 +148,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          if [ "${{ steps.checks.outcome }}" = "failure" ]; then
+            # Nothing was deployed: main's checks failed at this commit, so the issue names them.
+            gh issue create --repo "${{ github.repository }}" --label meta-harness:operations \
+              --title "Deploy of ${GITHUB_SHA::7} blocked: a check failed on main" \
+              --body "The deploy of ${{ github.sha }} did not start, because a check main must pass failed at that commit: $RUN_URL
+
+          $(cat failed-checks.txt 2>/dev/null || echo "The failed check could not be read; see the run.")
+
+          Nothing changed on Google Cloud. Fix the check on main, and the next merge deploys."
+            exit 0
+          fi
           result=$(gcloud compute instances get-guest-attributes mh-vm --zone "$REGION-a" --project "$PROJECT" \
             --query-path mh/boot --format='value(value)' 2>/dev/null || true)
           gh issue create --repo "${{ github.repository }}" --label meta-harness:operations \

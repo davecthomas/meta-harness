@@ -219,6 +219,19 @@ def _event_detail(event: HistoryEvent, activity_names: dict[int, str]) -> str:
     return ", ".join(part for part in parts if part)
 
 
+def exit_now(code: int) -> None:
+    """Ends the process with code once its output is flushed, without the interpreter's teardown.
+
+    The starter crashed now and then (a segmentation fault, about 1 run in 40 of the end-to-end check) after the
+    workflow had completed and its results were printed: while the interpreter tore down, after main returned.
+    The Temporal client's native runtime keeps its own threads, and tearing them down at interpreter exit is the
+    likely cause. The work is done by then, so nothing is lost by skipping the teardown.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--ref", default=uuid.uuid4().hex[:8], help="your name for the task (default: random)")
@@ -236,6 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--check", action="append", default=[], help="an acceptance check command (repeatable)")
     parser.add_argument("--follow", action="store_true", help="print the run's events while it runs")
     try:
-        sys.exit(asyncio.run(main(parser.parse_args())))
+        code = asyncio.run(main(parser.parse_args()))
     except KeyboardInterrupt:
-        sys.exit(130)
+        code = 130
+    exit_now(code)
