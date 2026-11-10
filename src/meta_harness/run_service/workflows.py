@@ -36,9 +36,11 @@ request, in this workflow:
 
 4. After a clean review, when the task's goal has auto_merge on, merge_pr
    merges the pull request at the reviewed head commit. A commit that landed
-   after the review goes back to step 1, so it is checked and reviewed too. A
-   conflict with the base goes to a fix run that resolves the merge the host
-   started, and back to step 1.
+   after the review goes back to step 1, so it is checked and reviewed too, and
+   so does a branch merge_pr brought the base's newest commits into: merges
+   are one at a time per repo, each on a head that holds the base. A conflict
+   with the base goes to a fix run that resolves the merge the host started,
+   and back to step 1.
 
 The loop ends review_unresolved after max_rounds fix runs, when the task's
 spend limit is used up, when a fix run changes nothing, or when no reviewer
