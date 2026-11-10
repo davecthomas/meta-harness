@@ -30,9 +30,17 @@ export function Terminal(props: { lines: Line[]; className?: string; onScrollTop
 
   return (
     <div ref={ref} className={`terminal ${props.className ?? ""}`} onScroll={onScroll} role="log" aria-live="off">
-      {props.lines.map((line) => (
-        <div key={line.position + line.kind} className={`t-${line.kind}`}>{line.text}</div>
-      ))}
+      {props.lines.map((line) =>
+        line.detail === undefined ? (
+          <div key={line.position + line.kind} className={`t-${line.kind}`}>{line.text}</div>
+        ) : (
+          // A line with more to it, such as a run's prompt, opens to the full text.
+          <details key={line.position + line.kind} className={`t-${line.kind}`}>
+            <summary style={{ cursor: "pointer" }}>{line.text}</summary>
+            <pre style={{ margin: "2px 0 6px 16px", whiteSpace: "pre-wrap", font: "inherit" }}>{line.detail}</pre>
+          </details>
+        ),
+      )}
     </div>
   );
 }

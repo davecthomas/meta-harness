@@ -9,6 +9,8 @@ export interface Line {
   text: string;
   // The run the event belongs to, if any.
   run?: string | null;
+  // Text the line opens to, shown collapsed under it: a run's full prompt.
+  detail?: string;
 }
 
 function short(value: unknown, n: number): string {
@@ -26,6 +28,7 @@ export function describe(e: MhEvent): Line | null {
     case "task_admitted": return line("info", "admitted by the scheduler");
     case "task_held": return line("warn", `held: ${p.reason}`);
     case "task_routed": return line("info", `routed to tier ${p.tier} (${p.method}): ${(p.candidates ?? []).join(", ")}`);
+    case "run_prompt": return { ...line("info", `prompt (${p.template})`), detail: String(p.prompt ?? "") };
     case "turn_started": return line("turn", `── turn ${p.turn} ──`);
     case "model_call":
       // A call that failed carries its error, and no model, tokens or cost.

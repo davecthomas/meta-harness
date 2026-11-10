@@ -574,6 +574,35 @@
     "required": [],
     "type": "object"
   },
+  "run_prompt v1": {
+    "additionalProperties": true,
+    "properties": {
+      "kind": {
+        "enum": [
+          "task",
+          "review",
+          "fix"
+        ],
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "run_id": {
+        "type": "string"
+      },
+      "template": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id",
+      "kind",
+      "template",
+      "prompt"
+    ],
+    "type": "object"
+  },
   "task_admitted v1": {
     "additionalProperties": true,
     "properties": {
