@@ -1,8 +1,13 @@
 """Each run's prompt is recorded as run_prompt before the run starts: the task run's, and each review and fix run's."""
 
+from types import SimpleNamespace
+
+import httpx
 import jsonschema
+import pytest
 from temporalio import activity
 from temporalio.activity import _Definition
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 from temporalio.worker import Worker
 
@@ -56,27 +61,57 @@ async def test_every_run_of_a_task_records_its_prompt_before_it_starts(env):  # 
 
 
 async def test_record_prompt_appends_run_prompt_on_the_task_with_the_run_id(monkeypatch):
-    emitted = []
-    monkeypatch.setattr(
-        prompt_activities.events, "emit", lambda kind, payload, **fields: emitted.append((kind, payload, fields))
-    )
+    sent: list[list[dict]] = []
+
+    class Client:
+        source = "run"
+
+        def append(self, batch):
+            sent.append(batch)
+            return [len(sent)]
+
+        def emit(self, *args, **kwargs):
+            raise AssertionError("run_prompt must be appended at once, not queued in the outbox")
+
+    monkeypatch.setattr(prompt_activities.events, "client", lambda: Client())
     record = RunPromptRecord("t-1", "run-task-t-1:run-2", "review", "review-v1", "Review the pull request.")
 
     await ActivityEnvironment().run(prompt_activities.record_prompt, record)
     await ActivityEnvironment().run(prompt_activities.record_prompt, record)
 
-    kind, payload, fields = emitted[0]
-    assert kind == "run_prompt"
+    [event] = sent[0]
+    assert (event["event_type"], event["source"]) == ("run_prompt", "run")
+    payload = event["payload"]
     assert payload == {
         "run_id": "run-task-t-1:run-2",
         "kind": "review",
         "template": "review-v1",
         "prompt": "Review the pull request.",
     }
-    assert (fields["task_id"], fields["run_id"]) == ("t-1", "run-task-t-1:run-2")
+    assert (event["task_id"], event["run_id"]) == ("t-1", "run-task-t-1:run-2")
     # A Temporal retry appends the same event id, which the event service ignores.
-    assert emitted[1][2]["event_id"] == fields["event_id"]
+    assert sent[1][0]["event_id"] == event["event_id"]
     jsonschema.validate(payload, types.by_key()[("run_prompt", 1)].json_schema)
+
+
+async def test_record_prompt_fails_when_the_event_service_does_not_store_it(monkeypatch):
+    def unreachable(batch):
+        raise httpx.ConnectError("refused")
+
+    def rejected(batch):
+        request = httpx.Request("POST", "http://events/v1/events")
+        raise httpx.HTTPStatusError("422", request=request, response=httpx.Response(422, request=request))
+
+    record = RunPromptRecord("t-1", "run-task-t-1:run-1", "task", "repo-task-v1", "Do the task.")
+    # Unreachable: the activity raises, so Temporal retries it before the run starts.
+    monkeypatch.setattr(prompt_activities.events, "client", lambda: SimpleNamespace(source="run", append=unreachable))
+    with pytest.raises(httpx.ConnectError):
+        await ActivityEnvironment().run(prompt_activities.record_prompt, record)
+    # Rejected: a retry cannot fix it.
+    monkeypatch.setattr(prompt_activities.events, "client", lambda: SimpleNamespace(source="run", append=rejected))
+    with pytest.raises(ApplicationError) as err:
+        await ActivityEnvironment().run(prompt_activities.record_prompt, record)
+    assert err.value.non_retryable
 
 
 def test_a_loop_runs_template_is_named_by_its_kind():
