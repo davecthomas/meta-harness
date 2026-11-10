@@ -6,5 +6,9 @@
     "max_response_tokens": 1200,
     "body_chars": 2000,
     "max_issues": 40
+  },
+  "planning": {
+    "candidate": "harness:pi-plan/claude:claude-opus-5-5",
+    "max_usd": "3.00"
   }
 }

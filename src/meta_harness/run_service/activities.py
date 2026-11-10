@@ -80,6 +80,8 @@ from meta_harness.run_service.shared import (
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 REPO_TEMPLATE = "repo-task-v1"
+# A goal's planning task: the planner wrote what it asks; this wraps it with where the run is and what it may do.
+PLAN_TEMPLATE = "plan-v1"
 
 # The grant outlives the run's own time limit by this much, so it never expires under a run still ending.
 GRANT_GRACE_SECONDS = 300
@@ -131,6 +133,18 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
             raise ApplicationError("a repo task needs TASK or TICKET", type="HarnessConfigError", non_retryable=True)
         description, checks = text, request.checks
         title = _title_from(text)
+    if request.task_type == "plan":
+        template = (PROMPTS_DIR / f"{PLAN_TEMPLATE}.txt").read_text(encoding="utf-8")
+        prompt = Template(template).safe_substitute(repo=repo, title=title, description=description)
+        activity.logger.info("prepare: a planning task in %s", repo)
+        return PreparedRun(
+            template=PLAN_TEMPLATE,
+            prompt=prompt.strip(),
+            pinned=pinned,
+            repo=repo,
+            title=title[:200],
+            description=description,
+        )
     listed = (
         "\n".join(f"- {check}" for check in checks) or "- None were given. Run the repository's tests, if it has them."
     )

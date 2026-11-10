@@ -255,6 +255,7 @@ class RunTask:
             goal_id=spec.goal_id,
             attempts=spec.attempts,
             resume=spec.resume,
+            task_type=spec.task_type,
         )
         again = f" again (retry {spec.retries})" if spec.retries else ""
         await self._task_status("running", f"the meta-harness run service started its RunTask workflow{again}")
@@ -278,7 +279,7 @@ class RunTask:
         if result.outcome == "review_unresolved":
             workflow.logger.warning("%s ended review_unresolved: %s", self._where(), result.outcome_reason)
             await self._task_status("review_unresolved", result.outcome_reason, pr_url)
-        elif result.outcome == "merged":
+        elif result.outcome in ("merged", "planned"):
             await self._task_status("closed", result.outcome_reason, pr_url)
         elif result.outcome == "merge_checks_failed":
             workflow.logger.error("%s failed: %s", self._where(), result.outcome_reason)
@@ -517,6 +518,20 @@ class RunTask:
     ) -> RunTaskResult:
         """A finished run's end: publish its changes, then the review loop on its pull request."""
         info = workflow.info()
+        # A planning task proposes issues and changes no file: nothing to publish, no pull request, no review.
+        # Behind a patch, as every change to what a workflow runs is.
+        if request.task_type == "plan" and workflow.patched("plan-task"):
+            workflow.logger.info("%s: the planning run finished; the planner reads its drafts", info.workflow_id)
+            return RunTaskResult(
+                template=prepared.template,
+                prompt=prepared.prompt,
+                route=route_result,
+                attempts=attempts,
+                harness=harness,
+                spent_usd=str(spent),
+                outcome="planned",
+                outcome_reason="the planning run finished, and the planner reads its drafts into the goal's plan",
+            )
         published = await self._publish(prepared, harness, candidate, spent) if prepared.repo else None
         if published is not None and not published.pr_url:
             raise _failed(f"run {attempt} finished, but pi changed nothing in {prepared.repo}", attempts)

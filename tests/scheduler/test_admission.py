@@ -174,6 +174,20 @@ async def test_a_paused_or_spent_goal_holds_its_tasks(repo):
     assert "spent $1.05" in result.held[spent]
 
 
+async def test_a_goal_in_planning_runs_its_planning_task_and_nothing_else(repo):
+    tasks, goals = Tasks(), Goals()
+    goals.goals["g-plan"] = {"status": "planning", "max_usd": None}
+    plan = tasks.add(f"{repo}-plan", goal_id="g-plan")
+    tasks.tasks[plan]["task_type"] = "plan"
+    other = tasks.add(f"{repo}-other", goal_id="g-plan")
+    admission, started = _admission(tasks, goals)
+
+    result = await admission.pass_once()
+
+    assert started == [plan]
+    assert result.held[other] == "goal g-plan is planning"
+
+
 async def test_the_kill_switch_admits_nothing_and_stops_running_tasks(repo):
     from meta_harness.scheduler.admission import set_kill_switch
 

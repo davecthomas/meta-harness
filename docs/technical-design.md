@@ -1710,8 +1710,8 @@ credential.
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
 | GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it | built |
-| GET, PUT | `/v1/goals/{id}/plan` | Planner | The goal's pending plan with its drafts, or an edited plan saved as a new version | planned (#73) |
-| POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve the pending plan or phase, or run a new planning task with a note | planned (#73) |
+| GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
+| POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet. A ref another goal holds is refused, naming that goal | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days`, grouped by goal, repo or label: each one's state (in review, waiting, blocked, merged, closed), cost, fix rounds and latest run, the tasks that spent without opening one, and the cost scale. From the Task API, the planner's goals and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
@@ -1827,8 +1827,7 @@ without starting, is not checked. An operator completes a goal with Complete
 goal and reopens a `met` or `canceled` one with Reopen goal; a reopened goal
 whose label has no open issue is met again on its next sweep. Every move is a
 `goal_changed` event, the goal's history. Nothing sets `stalled` yet.
-`planning`, `success_criteria`, the modality classifier and latitude are
-planned with the planning task (#72, #73).
+`success_criteria`, the modality classifier and latitude are planned.
 
 The planner classifies a goal statement's modality with the ai-api-unified classifier's `classify_choice`,
 the call the router uses to pick a tier, reading each modality's
@@ -2009,12 +2008,37 @@ A `feature` or `new-system` goal's issues come from a planning task,
 `task_type: plan`, which the planner creates with the goal statement, the
 modality and, for a later phase, what earlier phases built. The planning run
 reads the goal's repos and drafts issues with its `create_issue` tool, each
-in the repo it changes, labeled with the goal's label, with acceptance checks
-and `Depends on:` lines. After the run the planner checks each draft against
-the goal's repos and the modality's rules, refuses the rest with reasons, and
-stores the plan. The goal waits in `planning` until an operator approves the
-plan in the operator console, and then the planner creates the issues through the
-adapter. A `fix` goal never plans. When a `new-system` phase ends with its
+in the repo it changes, with acceptance checks and what it depends on. A
+`fix` goal never plans.
+
+Built for `feature` (#72, #73): a `feature` goal starts in `planning`; one
+created without a label gets its own, `meta-harness:goal-<the first 8
+characters of its id>`. The planner starts one task with `task_type: plan`,
+pinned to the candidate `config/planner.json`'s `planning` names, with that
+file's spend limit. Its prompt (`plan-v1`) is the goal's title and
+statement, its repos, and the rules for drafts: one issue is one pull
+request, each body states its `## Acceptance checks` and its `Paths:`, and
+`depends_on` names drafts and existing issues. The scheduler holds every
+other task of a goal that is not `active`, and admits the plan task of a
+goal in `planning`. The run changes no file, so the RunTask workflow ends a
+plan task `closed` after its run, with no publish, no pull request and no
+review loop (behind the `plan-task` patch). When the task ends, the planner
+reads its `issue_drafted` events: the last call for each `draft_id` is the
+draft, and together they are the goal's plan, version 1 (`plan_saved`). A
+plan is invalid, with each reason recorded, when it has no drafts, two
+drafts share an id, a draft has no title or no acceptance checks, names a
+repo outside the goal or a dependency that is no draft and no issue, or the
+drafts' dependencies make a cycle; a planning task that failed leaves an
+empty plan that says why. The goal waits in `planning` until an operator
+approves: they may edit the drafts (each save a new version), or ask for a
+new plan with a note, which starts another planning task. On approval the
+planner makes sure the label exists, creates the issues in dependency
+order, each body ending with a `Depends on:` line naming the issues its
+dependencies became, records each issue against the plan as soon as it
+exists, holds it for the goal, and makes the goal `active`, whose sweep
+then takes the issues in as it takes any labeled issue. Creating issues
+needs the GitHub App's `issues: write`. Not built: the modality's rules on
+a plan, and plans for a `new-system` phase. When a `new-system` phase ends with its
 criteria unmet, or a failed task leaves dependents blocked, the planner
 creates a planning task with the failure as input, and that plan goes through
 the same approval.
@@ -2026,7 +2050,7 @@ the same approval.
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over) |
 | Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
-| Planner | plan | goal_id, phase, drafted_issues, refused_drafts, approved_by, approved_at, created_refs |
+| Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
 | Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, last_webhook_at |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |
@@ -2078,7 +2102,7 @@ Meta-harness services append through the event service client library:
 | Producer | Events |
 |---|---|
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
-| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status, `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
+| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status, `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created), `plan_requested` when a planning task starts (with the operator's note on a replan), `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is) and `plan_approved` with the issues created, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason the meta-harness scheduler holds a meta-harness task. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v2`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
@@ -2805,7 +2829,7 @@ Design work no issue covers yet:
 
 | Issue | Repo |
 |---|---|
-| The `new-system` modality with its phases, goal success criteria as commands and checks, the modality classifier and latitude. The `feature` modality's planning task and plan approval are filed (#72, #73, #75) | meta-harness |
+| The `new-system` modality with its phases, goal success criteria as commands and checks, the modality classifier and latitude. The `feature` modality's planning task and plan approval are built (#72, #73); the console's plan review is filed (#75) | meta-harness |
 | The `modalities` and `access` configuration kinds, beside the built tiers, profiles, repo registry and task policy | meta-harness |
 | ai-api-unified decisions in the operator console: the Cloud Logging log sink, the Pub/Sub topic and push subscription, and `gateway_request` events | meta-harness |
 | The metering service and the Spend view | meta-harness |
