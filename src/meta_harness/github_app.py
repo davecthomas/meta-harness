@@ -125,6 +125,50 @@ class GitHubApps:
             self._tokens[key] = (minted["token"], expires)
             return minted["token"]
 
+    async def installed(self) -> list[dict[str, Any]]:
+        """Every repo each configured app is installed on, with the page that installs the app on more.
+
+        Each entry is {name, private, install_url}. An app that cannot be read is skipped, so one
+        broken key does not hide the other owners' repos.
+        """
+        found: list[dict[str, Any]] = []
+        for app in self.apps.values():
+            try:
+                async with self._client(f"Bearer {self._jwt(app)}") as http:
+                    install_url = ((await _call(http, "GET", "/app")) or {}).get("html_url", "") + "/installations/new"
+                    installations = await _call(http, "GET", "/app/installations", params={"per_page": 100})
+                    for installation in installations or []:
+                        minted = await _call(
+                            http,
+                            "POST",
+                            f"/app/installations/{installation['id']}/access_tokens",
+                            json={"permissions": {"metadata": "read"}},
+                        )
+                        async with self._client(f"token {minted['token']}") as repos_http:
+                            page = 1
+                            while True:
+                                listed = await _call(
+                                    repos_http,
+                                    "GET",
+                                    "/installation/repositories",
+                                    params={"per_page": 100, "page": page},
+                                )
+                                batch = listed.get("repositories", [])
+                                found += [
+                                    {
+                                        "name": r["full_name"],
+                                        "private": r.get("private", False),
+                                        "install_url": install_url,
+                                    }
+                                    for r in batch
+                                ]
+                                if len(batch) < 100:
+                                    break
+                                page += 1
+            except GitHubAppError:
+                continue
+        return found
+
     async def call(self, repo: str, permissions: dict[str, str], method: str, path: str, **kwargs: Any) -> Any:
         """A REST call on the repo's installation token."""
         token = await self.token(repo, permissions)

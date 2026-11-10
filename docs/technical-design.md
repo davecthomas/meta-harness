@@ -1579,6 +1579,7 @@ credential.
 | GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest. `start` (default `true`) creates it `active` and sweeps it at once; `start: false` saves it `paused`, not started (`started_at` null), and takes in no issue until its first `/resume` | built |
 | GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, `auto_merge`, priority and budget | partly built |
 | GET | `/v1/repos` | Planner | The repo registry: the repos a goal may name | built |
+| GET | `/v1/repos/available` | Planner | The repos the deployment's GitHub Apps are installed on that the registry does not list yet, and each app's page for installing it on more. The console's Repositories page adds from it | built |
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
 | GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues, newest first, with a `label` and text `q` in the title when given, a page at a time from `cursor`, each with the open goal that holds it, if any | built |
 | POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing | built |
@@ -1595,7 +1596,7 @@ credential.
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. The tier form offers them | built |
 | GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles` or `repos`; `task_policy`, `modalities` and `access` are planned | built |
 | GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history | built |
-| PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused | built |
+| PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused. A `repos` version that drops a repo an open goal names is refused, naming the goal | built |
 | POST | `/v1/config/{kind}/rollback` | Configuration, in the planner process | Make an earlier version's document active again, as a new version | built |
 | GET | `/v1/proposals` | Harness analyzer | Pending and decided proposals with their evidence | planned |
 | POST | `/v1/proposals/{id}/approve`, `/reject` | Harness analyzer | Decide a proposal; an approved one applies as a new configuration version | planned |
