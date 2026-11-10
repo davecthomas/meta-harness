@@ -112,14 +112,14 @@ def page_goals(conn: psycopg.Connection, statuses: list[str] | None, limit: int,
 
 
 def update(conn: psycopg.Connection, goal_id: str, only_if: str | None = None, **fields: Any) -> tuple[dict, dict]:
-    """Change title, auto_merge, priority, max_usd or status. Returns (goal, the fields that changed with their old values).
+    """Change title, statement, auto_merge, priority, max_usd or status. Returns (goal, the fields that changed with their old values).
 
     only_if: change nothing unless the goal's status is this one when its row is locked.
 
     A goal's first move to active sets started_at, and the changes then hold started_at too, so the caller
     can tell a goal's first start, which sweeps at once, from a resume.
     """
-    allowed = {"title", "auto_merge", "priority", "max_usd", "status"}
+    allowed = {"title", "statement", "auto_merge", "priority", "max_usd", "status"}
     if set(fields) - allowed:
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:

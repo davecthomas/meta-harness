@@ -864,3 +864,20 @@ def test_a_user_reads_defaults_then_saves_and_reads_back_their_own_settings(part
         )
         assert bad.status_code == 422
         assert client.put("/v1/me/settings", json={**wanted, "colour": "red"}, headers=as_me).status_code == 422
+
+
+def test_an_operator_edits_a_goals_description_and_budget(api, parts):
+    events, _, _ = parts
+    goal = api.post(
+        "/v1/goals",
+        json={"statement": "Old words.", "repos": [REPO], "label": _label(), "start": False},
+        headers=OPERATOR,
+    ).json()
+
+    changed = api.patch(
+        f"/v1/goals/{goal['id']}", json={"statement": "New words.", "max_usd": "40"}, headers=OPERATOR
+    ).json()
+
+    assert changed["statement"] == "New words." and changed["max_usd"] == "40.0000"
+    moves = [p["changes"] for t, p in events.events if t == "goal_changed" and p["goal_id"] == goal["id"]]
+    assert moves[-1]["statement"] == {"from": "Old words.", "to": "New words."}

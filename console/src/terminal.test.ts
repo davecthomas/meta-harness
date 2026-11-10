@@ -49,3 +49,13 @@ suite("terminal lines", () => {
     expect(facts.status).toBe("ready");
   });
 });
+
+it("a failed model call shows its error and leaves the model and spend as they were", async () => {
+  const ok = { position: 1, event_id: "a", event_type: "model_call", time_utc: "2026-11-10T10:00:00Z", source: "", actor: null, run_id: null, task_id: "t", payload: { engine: "claude", model: "claude-opus-5-5", usd: 2.13, input_tokens: 1, output_tokens: 1, latency_ms: 5 } };
+  const failed = { ...ok, position: 2, payload: { latency_ms: 40, error: "HTTP Gateway answered 400", error_code: null } };
+  const facts = [ok, failed].reduce(fold, { turn: 0, usd: 0, model: "", status: null });
+  expect(facts.model).toBe("claude:claude-opus-5-5");
+  expect(facts.usd).toBeCloseTo(2.13);
+  expect(describe(failed)?.text).toContain("model call failed after 40ms: HTTP Gateway answered 400");
+  expect(describe(failed)?.kind).toBe("error");
+});

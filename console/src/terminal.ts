@@ -27,7 +27,10 @@ export function describe(e: MhEvent): Line | null {
     case "task_held": return line("warn", `held: ${p.reason}`);
     case "task_routed": return line("info", `routed to tier ${p.tier} (${p.method}): ${(p.candidates ?? []).join(", ")}`);
     case "turn_started": return line("turn", `── turn ${p.turn} ──`);
-    case "model_call": return line("model", `model ${p.engine}:${p.model}  in ${p.input_tokens}  out ${p.output_tokens}  $${p.usd}  ${p.latency_ms}ms`);
+    case "model_call":
+      // A call that failed carries its error, and no model, tokens or cost.
+      if (!p.model) return line("error", `model call failed after ${p.latency_ms ?? "?"}ms: ${short(p.error ?? p.error_code ?? "no answer", 240)}`);
+      return line("model", `model ${modelName(p)}  in ${p.input_tokens}  out ${p.output_tokens}  $${p.usd}  ${p.latency_ms}ms`);
     case "tool_call": return line("tool", `$ ${p.tool} ${short(p.args ?? {}, 160)}`);
     case "tool_result": return line(p.is_error ? "error" : "result", `  ${short(p.output ?? "", 240)}`);
     case "file_changed": return line("file", `M ${p.path}`);
@@ -41,6 +44,11 @@ export function describe(e: MhEvent): Line | null {
     case "task_cancel_requested": return line("warn", `cancel requested: ${p.reason}`);
     default: return null;
   }
+}
+
+// A model call's model, as <engine>:<model> when the event names the engine.
+function modelName(p: Record<string, any>): string {
+  return p.engine ? `${p.engine}:${p.model}` : String(p.model);
 }
 
 // The task an event belongs to: its task_id, or the task part of its run id (<task id>:run-<n>).
@@ -62,7 +70,7 @@ export function fold(facts: TileFacts, e: MhEvent): TileFacts {
   const p = e.payload ?? {};
   switch (e.event_type) {
     case "turn_started": return { ...facts, turn: Number(p.turn) || facts.turn };
-    case "model_call": return { ...facts, usd: facts.usd + (Number(p.usd) || 0), model: `${p.engine}:${p.model}` };
+    case "model_call": return { ...facts, usd: facts.usd + (Number(p.usd) || 0), model: p.model ? modelName(p) : facts.model };
     case "task_status_changed": return { ...facts, status: p.to };
     default: return facts;
   }
