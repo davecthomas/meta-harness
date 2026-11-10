@@ -1,5 +1,6 @@
 """The merge's pieces, run for real: a conflict left for a fix run, a local merge, GitHub's answers, auto_merge."""
 
+import asyncio
 import subprocess
 from pathlib import Path
 
@@ -143,3 +144,64 @@ async def test_auto_merge_is_read_from_the_goal_as_the_planner_has_it(monkeypatc
 
     assert await ActivityEnvironment().run(activities.goal_auto_merge, "g-on") is True
     assert await ActivityEnvironment().run(activities.goal_auto_merge, "g-off") is False
+
+
+def _behind(monkeypatch, behind_by: int, update_status: int | None, heads: list[str]):
+    """A code host whose base is behind_by commits ahead of the branch; GETs of the pull request return heads
+    in turn."""
+    calls = []
+    monkeypatch.setattr(code_host, "UPDATE_BRANCH_POLL_SECONDS", 0)
+
+    async def github(repo, permissions, method, path, **kwargs):
+        calls.append((method, path, kwargs.get("json")))
+        if "/compare/" in path:
+            return {"behind_by": behind_by}
+        if path.endswith("/update-branch"):
+            if update_status:
+                raise CodeHostError("GitHub answered 422: merge conflict", retryable=False, status=update_status)
+            return {"message": "Updating pull request branch."}
+        if method == "PUT":
+            return {"sha": "m1", "merged": True}
+        return {"head": {"sha": heads.pop(0) if len(heads) > 1 else heads[0]}}
+
+    monkeypatch.setattr(code_host, "_github", github)
+    return calls
+
+
+async def test_a_branch_that_holds_the_base_merges_at_once(monkeypatch):
+    calls = _behind(monkeypatch, 0, None, ["abc"])
+    state, sha, head, _ = await code_host.merge_pull_request("o/r", 7, "abc", "main")
+    assert (state, sha, head) == ("merged", "m1", "abc")
+    assert calls[0] == ("GET", "/repos/o/r/compare/main...abc", None)
+
+
+async def test_a_branch_behind_its_base_gets_the_base_and_goes_back_to_checks_and_review(monkeypatch):
+    calls = _behind(monkeypatch, 2, None, ["abc", "abc", "with-base"])
+    state, sha, head, detail = await code_host.merge_pull_request("o/r", 7, "abc", "main")
+    assert (state, sha, head) == ("head_changed", "", "with-base")
+    assert "brought in 2 new commits from main" in detail
+    assert ("PUT", "/repos/o/r/pulls/7/update-branch", {"expected_head_sha": "abc"}) in calls
+    assert not any(path.endswith("/merge") for _, path, _ in calls), "it does not merge before the new head is checked"
+
+
+async def test_a_base_that_does_not_merge_in_cleanly_is_a_conflict_for_a_fix_run(monkeypatch):
+    _behind(monkeypatch, 1, 422, ["abc"])
+    state, _, head, _ = await code_host.merge_pull_request("o/r", 7, "abc", "main")
+    assert (state, head) == ("conflict", "abc")
+
+
+async def test_one_merge_at_a_time_per_repo():
+    order = []
+
+    async def merge(name: str, repo: str, hold: float) -> None:
+        async with activities.merge_lock(repo):
+            order.append(f"{name} in")
+            await asyncio.sleep(hold)
+            order.append(f"{name} out")
+
+    first = asyncio.create_task(merge("a", "o/r", 1.5))
+    while "a in" not in order:
+        await asyncio.sleep(0.01)
+    await asyncio.gather(first, merge("b", "o/r", 0), merge("c", "o/other", 0))
+    assert order.index("a out") < order.index("b in"), order
+    assert order.index("c in") < order.index("a out"), "another repo's merge does not wait"

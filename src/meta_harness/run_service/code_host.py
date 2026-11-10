@@ -419,13 +419,29 @@ async def comment_on_lines(
 MERGE = {"contents": "write", "pull_requests": "write"}
 
 
-async def merge_pull_request(repo: str, number: int, head_sha: str) -> tuple[str, str, str, str]:
+# How often, and how many times, merge_pull_request looks for GitHub to have brought the base into a branch.
+UPDATE_BRANCH_POLL_SECONDS = 2
+UPDATE_BRANCH_POLLS = 20
+
+
+async def merge_pull_request(
+    repo: str, number: int, head_sha: str, base: str | None = None
+) -> tuple[str, str, str, str]:
     """Squash-merges the pull request if its head is still head_sha. Returns (state, merge sha, head, detail).
 
-    state is merged, head_changed (a commit landed after head_sha; head is the new one), conflict (the
-    branch conflicts with its base), or blocked (GitHub refused for another reason, such as branch
-    protection or a required human review).
+    state is merged, head_changed (a commit landed after head_sha, or the base was brought in; head is the
+    new one), conflict (the branch conflicts with its base), or blocked (GitHub refused for another reason,
+    such as branch protection or a required human review).
+
+    With base, a branch that lacks the base's newest commits is not merged: GitHub merges the base into it
+    and the new head comes back as head_changed, so its checks and review run again before it merges. So no
+    pull request merges against a base it was not checked on, though other tasks' pull requests merged
+    while it was reviewed.
     """
+    if base:
+        brought = await _bring_base_in(repo, number, base, head_sha)
+        if brought is not None:
+            return brought
     try:
         merged = await _github(
             repo, MERGE, "PUT", f"/repos/{repo}/pulls/{number}/merge", json={"sha": head_sha, "merge_method": "squash"}
@@ -442,6 +458,37 @@ async def merge_pull_request(repo: str, number: int, head_sha: str) -> tuple[str
     if pull.get("mergeable_state") == "dirty" or pull.get("mergeable") is False:
         return "conflict", "", head_sha, refused
     return "blocked", "", head_sha, f"{refused} (mergeable_state {pull.get('mergeable_state')})"
+
+
+async def _bring_base_in(repo: str, number: int, base: str, head_sha: str) -> tuple[str, str, str, str] | None:
+    """None when head_sha holds the base's newest commit. Otherwise merges the base into the branch and returns
+    head_changed with the new head, or conflict when the base does not merge in cleanly."""
+    compare = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/compare/{base}...{head_sha}") or {}
+    behind = int(compare.get("behind_by") or 0)
+    if behind == 0:
+        return None
+    try:
+        await _github(
+            repo, MERGE, "PUT", f"/repos/{repo}/pulls/{number}/update-branch", json={"expected_head_sha": head_sha}
+        )
+    except CodeHostError as err:
+        if err.status != 422:
+            raise
+        pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
+        head = str(pull.get("head", {}).get("sha", ""))
+        if head and head != head_sha:
+            return "head_changed", "", head, str(err)
+        return "conflict", "", head_sha, f"{base} is {behind} commits ahead and does not merge in cleanly: {err}"
+    # GitHub updates the branch in the background: wait for its new head.
+    for _ in range(UPDATE_BRANCH_POLLS):
+        await asyncio.sleep(UPDATE_BRANCH_POLL_SECONDS)
+        pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
+        head = str(pull.get("head", {}).get("sha", ""))
+        if head and head != head_sha:
+            return "head_changed", "", head, f"brought in {behind} new commits from {base}"
+    raise CodeHostError(
+        f"GitHub did not bring {base} into pull request {number} within {UPDATE_BRANCH_POLLS * UPDATE_BRANCH_POLL_SECONDS}s"
+    )
 
 
 async def merge_local(repo: str, base: str, head_sha: str) -> tuple[str, str, str, str]:
