@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Anchor, Badge, Button, Group, List, Modal, Select, Stack, Table, Text, Textarea } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { api, ApiError, type ConfigVersion } from "../../api";
@@ -73,10 +73,16 @@ export function ReposPage() {
   const [adding, setAdding] = useState(false);
   const [reasons, setReasons] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // The registry as last read or saved, and the save in flight. Saves run one at a time, each built on the
+  // registry the one before it saved, so two quick edits to different repos can't undo each other.
+  const latest = useRef<ConfigVersion | null>(null);
+  const saving = useRef<Promise<unknown>>(Promise.resolve());
 
   const load = useCallback(async () => {
     try {
-      setCurrent(await api.config("repos"));
+      const read = await api.config("repos");
+      latest.current = read;
+      setCurrent(read);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -87,23 +93,29 @@ export function ReposPage() {
     void load();
   }, [load]);
 
-  // Saves the registry with these repos as a new version. Resolves to the reasons it was refused, or null once saved.
-  async function saveRegistry(repos: Record<string, Repo>, note: string): Promise<string[] | null> {
-    if (!current) return ["The registry has not loaded"];
-    try {
-      await api.saveConfig("repos", { ...current.document, repos }, note);
-      await load();
-      return null;
-    } catch (err) {
-      if (err instanceof ApiError && err.reasons.length) return err.reasons;
-      return [err instanceof Error ? err.message : String(err)];
-    }
+  // Saves the registry with change applied to its repos, as a new version, after any save before it, and on the
+  // registry that save left. Resolves to the reasons it was refused, or null once saved.
+  function saveRegistry(change: (repos: Record<string, Repo>) => Record<string, Repo>, note: string): Promise<string[] | null> {
+    const run = saving.current.then(async (): Promise<string[] | null> => {
+      const base = latest.current;
+      if (!base) return ["The registry has not loaded"];
+      try {
+        await api.saveConfig("repos", { ...base.document, repos: change(base.document.repos ?? {}) }, note);
+        await load();
+        return null;
+      } catch (err) {
+        if (err instanceof ApiError && err.reasons.length) return err.reasons;
+        return [err instanceof Error ? err.message : String(err)];
+      }
+    });
+    saving.current = run;
+    return run;
   }
 
   // A save from the page itself: a refusal shows above the table.
-  async function savePage(repos: Record<string, Repo>, note: string): Promise<boolean> {
+  async function savePage(change: (repos: Record<string, Repo>) => Record<string, Repo>, note: string): Promise<boolean> {
     setReasons([]);
-    const refused = await saveRegistry(repos, note);
+    const refused = await saveRegistry(change, note);
     if (refused) setReasons(refused);
     return refused === null;
   }
@@ -135,7 +147,7 @@ export function ReposPage() {
                 monospace
                 showSaved
                 placeholder="A command, Enter to add; Enter again to save"
-                onCommit={(checks) => saveRegistry({ ...repos, [name]: { ...spec, default_checks: checks } }, `changed ${name}`)}
+                onCommit={(checks) => saveRegistry((now) => ({ ...now, [name]: { ...(now[name] ?? spec), default_checks: checks } }), `changed ${name}`)}
               />
             </Table.Td>
             <Table.Td>
@@ -145,7 +157,7 @@ export function ReposPage() {
                   color="red"
                   variant="light"
                   leftSection={<IconTrash size={14} />}
-                  onClick={() => void savePage(Object.fromEntries(Object.entries(repos).filter(([n]) => n !== name)), `removed ${name}`)}
+                  onClick={() => void savePage((now) => Object.fromEntries(Object.entries(now).filter(([n]) => n !== name)), `removed ${name}`)}
                 >
                   Remove
                 </Button>
@@ -164,7 +176,7 @@ export function ReposPage() {
         <AddRepoForm
           names={(available?.repos ?? []).map((r) => r.name)}
           onClose={() => setAdding(false)}
-          onSave={(name, spec) => savePage({ ...repos, [name]: spec }, `added ${name}`)}
+          onSave={(name, spec) => savePage((now) => ({ ...now, [name]: spec }), `added ${name}`)}
         />
       )}
     </>

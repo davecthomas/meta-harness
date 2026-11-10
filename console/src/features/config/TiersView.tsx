@@ -3,7 +3,7 @@ import { IconArrowDown, IconArrowUp, IconPlus, IconTrash } from "@tabler/icons-r
 import { InlineField } from "../../components/InlineField";
 import { Facts } from "../../components/ui";
 import { changed, Reasons, stageOptional, type Staging } from "./ConfigViews";
-import { getIn, joinCandidate, move, splitCandidate } from "./staging";
+import { getIn, joinCandidate, move, setIn, splitCandidate } from "./staging";
 
 const THINKING = ["off", "minimal", "low", "medium", "high", "max"];
 const ON_EXHAUSTED = [
@@ -101,12 +101,32 @@ function TierCard({ staging: s, tier, index, profiles, models }: { staging: Stag
   const original: string[] = getIn(s.original, [...path, "models"]) ?? [];
   // Where this tier's refused-save reasons are targeted (see reasonTarget).
   const at = `tier:${tier.name}`;
+  // A rename is one staged change: the tier's name, and the default tier when it named this one.
+  const rename = (value: string) => {
+    const name = value.trim();
+    if (!name) return "A tier needs a name";
+    if (name === tier.name) return null;
+    const tiers: any[] = s.document.tiers ?? [];
+    if (tiers.some((t, i) => i !== index && t.name === name)) return `Another tier is named ${name}`;
+    let next = setIn(s.document, [...path, "name"], name);
+    if (s.document.default_tier === tier.name) next = setIn(next, ["default_tier"], name);
+    s.stage([], next);
+    return null;
+  };
   return (
     <Card withBorder padding="lg" data-testid={`tier-${tier.name}`}>
       <Group justify="space-between" mb="xs" wrap="nowrap">
         <Group gap="xs">
           <Badge variant="light" radius="sm">Tier {index + 1}</Badge>
-          <Text fw={650}>{tier.name}</Text>
+          <InlineField
+            kind="text"
+            label={`Name of tier ${index + 1}`}
+            value={tier.name ?? ""}
+            display={<Text fw={650}>{tier.name}</Text>}
+            changed={changed(s, [...path, "name"])}
+            readOnly={s.readOnly}
+            onCommit={rename}
+          />
         </Group>
         <InlineField
           kind="select"

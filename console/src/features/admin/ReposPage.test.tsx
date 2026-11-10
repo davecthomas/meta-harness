@@ -90,3 +90,49 @@ test("removing a repo an open goal names shows the refusal", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
   expect(await screen.findByText("o/a is named by open goal g-1 (Saves)")).toBeTruthy();
 });
+
+test("two quick edits to different repos save one after the other, the second on the registry the first saved", async () => {
+  let document: any = { repos: { "o/a": { tracker: "github", default_checks: ["make test"] }, "o/b": { tracker: "github", default_checks: [] } } };
+  const saved: any[] = [];
+  let release!: () => void;
+  const first = new Promise<void>((resolve) => (release = resolve));
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url === "/v1/config/repos" && init?.method === "PUT") {
+      const body = JSON.parse(String(init.body));
+      saved.push(body);
+      if (saved.length === 1) await first;
+      document = body.document;
+      return respond({ ...REGISTRY, version: 3 + saved.length, document });
+    }
+    if (url === "/v1/config/repos") return respond({ ...REGISTRY, document });
+    if (url === "/v1/repos/available") return respond({ repos: [], install_urls: [] });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <ReposPage />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  const commit = async (repo: string, check: string) => {
+    fireEvent.click(await screen.findByRole("button", { name: `Edit Default acceptance checks of ${repo}` }));
+    const [input] = screen.getAllByLabelText(`Default acceptance checks of ${repo}`, { selector: "input" });
+    fireEvent.change(input, { target: { value: check } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter" });
+  };
+
+  await commit("o/a", "make lint");
+  await waitFor(() => expect(saved).toHaveLength(1));
+  await commit("o/b", "npm test");
+  await new Promise((r) => setTimeout(r, 50));
+  expect(saved).toHaveLength(1);
+  release();
+
+  await waitFor(() => expect(saved).toHaveLength(2));
+  expect(saved[1].document.repos).toEqual({
+    "o/a": { tracker: "github", default_checks: ["make test", "make lint"] },
+    "o/b": { tracker: "github", default_checks: ["npm test"] },
+  });
+});

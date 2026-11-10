@@ -262,3 +262,33 @@ test("a profile is added and removed from the table, each staged", async () => {
   expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
   expect(screen.queryByTestId("profile-pi-careful")).toBeNull();
 });
+
+test("a tier's name edits in place, and a rename carries the default tier with it as one change", async () => {
+  stub(() => respond({}));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit Name of tier 1" }));
+  const name = screen.getByLabelText("Name of tier 1");
+  fireEvent.change(name, { target: { value: "small" } });
+  fireEvent.keyDown(name, { key: "Enter" });
+
+  expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Advanced: JSON" }));
+  const json = (await screen.findByLabelText(/JSON/, { selector: "textarea" })) as HTMLTextAreaElement;
+  expect(JSON.parse(json.value)).toMatchObject({ default_tier: "small", tiers: [{ name: "small" }] });
+});
+
+test("Advanced: JSON refuses a document whose shape the view can't show, and stages nothing", async () => {
+  stub(() => respond({}));
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Advanced: JSON" }));
+  const json = await screen.findByLabelText(/JSON/, { selector: "textarea" });
+  fireEvent.change(json, { target: { value: '{"tiers": "standard", "default_tier": "standard"}' } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+  expect(await screen.findByText(/Not applied: tiers is a list/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByText(/changes? to version 1/)).toBeNull();
+  expect(screen.getByText("Tier 1")).toBeTruthy();
+});

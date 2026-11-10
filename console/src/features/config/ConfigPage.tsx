@@ -10,7 +10,7 @@ import { ReposView, TaskPolicyView, type Staging } from "./ConfigViews";
 import { ProfilesView } from "./ProfilesView";
 import { JsonDialog, ReviewDialog, StagedBar } from "./StagedChanges";
 import { TiersView } from "./TiersView";
-import { countChanges, reasonTarget, setIn } from "./staging";
+import { countChanges, reasonTarget, setIn, shapeProblems } from "./staging";
 
 const ORIGIN_COLORS: Record<string, string> = { seed: "gray", edit: "indigo", rollback: "orange" };
 
@@ -273,7 +273,7 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
         />
       )}
       {editingJson && (
-        <JsonDialog title={`${summary.title}: version ${current.version}${count ? ` with ${count} staged ${count === 1 ? "change" : "changes"}` : ""}`} document={document} onClose={() => setEditingJson(false)} onApply={replace} />
+        <JsonDialog title={`${summary.title}: version ${current.version}${count ? ` with ${count} staged ${count === 1 ? "change" : "changes"}` : ""}`} document={document} check={(d) => shapeProblems(summary.kind, d)} onClose={() => setEditingJson(false)} onApply={replace} />
       )}
     </>
   );

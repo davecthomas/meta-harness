@@ -69,7 +69,14 @@ export function ReviewDialog(props: {
 }
 
 // Advanced: the JSON of the active document with the staged changes. Applying it stages what it holds.
-export function JsonDialog(props: { title: string; document: Record<string, any>; onClose: () => void; onApply: (document: Record<string, any>) => void }) {
+export function JsonDialog(props: {
+  title: string;
+  document: Record<string, any>;
+  // Why a parsed document can't be staged; empty when it can.
+  check: (document: Record<string, any>) => string[];
+  onClose: () => void;
+  onApply: (document: Record<string, any>) => void;
+}) {
   const [text, setText] = useState(JSON.stringify(props.document, null, 2));
   const [error, setError] = useState<string | null>(null);
   function apply() {
@@ -82,6 +89,11 @@ export function JsonDialog(props: { title: string; document: Record<string, any>
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       setError("The document is a JSON object");
+      return;
+    }
+    const problems = props.check(parsed as Record<string, any>);
+    if (problems.length) {
+      setError(`Not applied: ${problems.join("; ")}`);
       return;
     }
     props.onApply(parsed as Record<string, any>);

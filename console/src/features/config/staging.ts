@@ -162,3 +162,44 @@ export function lineDiff(before: string, after: string): { sign: "+" | "-" | " "
   while (j < m) out.push({ sign: "+", text: b[j++] });
   return out;
 }
+
+const isStrings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+
+// Why a document from Advanced: JSON can't be staged: the containers the kind's view reads are the wrong shape,
+// as a tiers field that is a string would be. Empty when the view can show it. The values themselves are left
+// to the service, whose refusal Review and save shows beside them.
+export function shapeProblems(kind: ConfigKind, document: Record<string, any>): string[] {
+  const problems: string[] = [];
+  const optional = (value: unknown, check: (v: unknown) => boolean, what: string) => {
+    if (value !== undefined && value !== null && !check(value)) problems.push(what);
+  };
+  const objectsOf = (value: unknown, field: string, each: (name: string, item: Record<string, any>) => void) => {
+    if (value === undefined) return;
+    if (!isObject(value)) return problems.push(`${field} is an object of named entries`);
+    for (const [name, item] of Object.entries(value)) {
+      if (!isObject(item)) problems.push(`${field}.${name} is an object`);
+      else each(name, item);
+    }
+  };
+  if (kind === "tiers") {
+    optional(document.classifier, isObject, "classifier is an object");
+    if (document.tiers !== undefined && !Array.isArray(document.tiers)) problems.push("tiers is a list");
+    (Array.isArray(document.tiers) ? document.tiers : []).forEach((tier: unknown, i: number) => {
+      if (!isObject(tier)) return problems.push(`tiers[${i}] is an object`);
+      if (typeof tier.name !== "string" || !tier.name.trim()) problems.push(`tiers[${i}] has a name`);
+      optional(tier.models, isStrings, `tiers[${i}].models is a list of candidates`);
+    });
+  } else if (kind === "profiles") {
+    objectsOf(document.profiles, "profiles", (name, p) => {
+      optional(p.tools, isStrings, `profiles.${name}.tools is a list of tool names`);
+      optional(p.bash_allow, isStrings, `profiles.${name}.bash_allow is a list of programs`);
+      optional(p.resources, isObject, `profiles.${name}.resources is an object`);
+    });
+  } else if (kind === "repos") {
+    objectsOf(document.repos, "repos", (name, r) => optional(r.default_checks, isStrings, `repos.${name}.default_checks is a list of commands`));
+  } else if (kind === "task_policy") {
+    optional(document.review, isObject, "review is an object");
+    if (isObject(document.review)) optional(document.review.reviewers, isStrings, "review.reviewers is a list of candidates");
+  }
+  return problems;
+}

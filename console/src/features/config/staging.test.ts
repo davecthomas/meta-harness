@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { countChanges, getIn, isChanged, joinCandidate, lineDiff, reasonTarget, setIn, splitCandidate } from "./staging";
+import { countChanges, getIn, isChanged, joinCandidate, lineDiff, reasonTarget, setIn, shapeProblems, splitCandidate } from "./staging";
 
 test("a candidate splits into its profile and model, and joins back", () => {
   expect(splitCandidate("harness:pi-lean/openai-responses:gpt-6-sol")).toEqual({ profile: "pi-lean", model: "openai-responses:gpt-6-sol" });
@@ -53,4 +53,16 @@ test("a refused save's reasons go to the tier, profile, repo or field they name"
   expect(reasonTarget("repos", { repos: { "o/a": {} } }, "o/a: a repo's entry is an object")).toBe("repo:o/a");
   expect(reasonTarget("task_policy", {}, "max_parallel 12 is more than the 8 sandboxes this deployment's VM holds")).toBe("max_parallel");
   expect(reasonTarget("task_policy", {}, "reviewer x names harness profile y, which the profiles lack")).toBe("reviewers");
+});
+
+test("shapeProblems names each container a kind's view can't read, and passes a document it can", () => {
+  expect(shapeProblems("tiers", { tiers: [{ name: "standard", models: ["harness:a/b:c"] }], classifier: {} })).toEqual([]);
+  expect(shapeProblems("tiers", { tiers: "standard" })).toEqual(["tiers is a list"]);
+  expect(shapeProblems("tiers", { tiers: [{ models: "x" }, 3] })).toEqual(["tiers[0] has a name", "tiers[0].models is a list of candidates", "tiers[1] is an object"]);
+  expect(shapeProblems("profiles", { profiles: { lean: { tools: "bash", resources: 2 } } })).toEqual([
+    "profiles.lean.tools is a list of tool names",
+    "profiles.lean.resources is an object",
+  ]);
+  expect(shapeProblems("repos", { repos: [] })).toEqual(["repos is an object of named entries"]);
+  expect(shapeProblems("task_policy", { review: { reviewers: "x" } })).toEqual(["review.reviewers is a list of candidates"]);
 });

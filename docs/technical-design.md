@@ -2139,7 +2139,8 @@ change stay read-only.
   dialog.
 
 - Configuration: every value in a kind's view edits in place. Router tiers:
-  each tier's description, thinking and candidates (added, removed and
+  each tier's name (a rename carries the default tier with it, as one
+  change), description, thinking and candidates (added, removed and
   reordered), the classifier, the default tier and what happens when a tier
   is used up. Harness profiles: each profile's tools, max turns, max minutes,
   vCPU and memory, Bash allowlist and image, and a profile is added or
@@ -2157,10 +2158,14 @@ change stay read-only.
   the rollback. Save there opens the same diff and note review, and the
   leave or rollback goes ahead only once that reviewed save succeeds.
   Advanced: JSON opens the active document with the staged changes, and
-  applying it stages what it holds.
+  applying it stages what it holds, once its shape is one the view can show
+  (a kind's lists are lists and its named entries objects); otherwise it says
+  what is wrong and stages nothing.
 - Repositories: each repo's default acceptance checks edit in place as a tag
   list, and each commit saves a new registry version with the note
-  `changed <repo>`. Add repository and Remove stay.
+  `changed <repo>`. Add repository and Remove stay. Saves run one at a time,
+  each built on the registry the one before saved, so quick edits to
+  different repos all persist.
 - Settings: each field saves when it is committed and shows "Saved" beside
   it for a moment; there is no Save button. Saves run one at a time, each
   built on the settings the one before stored, so quick commits all persist.
