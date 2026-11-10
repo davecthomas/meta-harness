@@ -831,3 +831,36 @@ def test_a_repo_an_open_goal_names_cannot_leave_the_registry(api, monkeypatch):
     assert refused.status_code == 422
     assert any(goal["id"] in reason and REPO in reason for reason in refused.json()["detail"]["reasons"])
     api.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
+
+
+# --- Each user's settings -------------------------------------------------------------------------------
+
+
+def test_a_user_reads_defaults_then_saves_and_reads_back_their_own_settings(parts):
+    events, tracker, tasks = parts
+    app = create_app(
+        events, tracker, tasks, operator_keys={}, service_keys={"svc": "console"}, sweep_seconds=0, titler=_no_title
+    )
+    me = f"user-{uuid.uuid4().hex[:6]}@example.com"
+    as_me = {"Authorization": "Bearer svc", "X-MH-Actor": me}
+    as_other = {"Authorization": "Bearer svc", "X-MH-Actor": f"other-{uuid.uuid4().hex[:6]}@example.com"}
+    with TestClient(app) as client:
+        assert client.get("/v1/me/settings", headers=as_me).json()["appearance"] == "system"
+        wanted = {
+            "planner": {"repos": [REPO], "modality": "fix", "latitude": None, "max_usd": "25", "auto_merge": True},
+            "appearance": "dark",
+            "notifications": True,
+        }
+        assert client.put("/v1/me/settings", json=wanted, headers=as_me).status_code == 200
+        shown = client.get("/v1/me/settings", headers=as_me).json()
+        assert (
+            shown["appearance"] == "dark"
+            and shown["planner"]["auto_merge"] is True
+            and shown["planner"]["repos"] == [REPO]
+        )
+        assert client.get("/v1/me/settings", headers=as_other).json()["appearance"] == "system"
+        bad = client.put(
+            "/v1/me/settings", json={**wanted, "planner": {**wanted["planner"], "repos": ["o/unknown"]}}, headers=as_me
+        )
+        assert bad.status_code == 422
+        assert client.put("/v1/me/settings", json={**wanted, "colour": "red"}, headers=as_me).status_code == 422

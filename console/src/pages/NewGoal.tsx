@@ -29,6 +29,15 @@ export function NewGoal() {
 
   useEffect(() => {
     api.repos().then((r) => setRepos(r.map((x) => x.name)), (err) => setError(String(err.message ?? err)));
+    // The form starts from the user's planner defaults, filling only what they haven't touched yet.
+    api.settings().then(
+      (s) => {
+        setChosen((now) => (now.length ? now : s.planner.repos));
+        setBudget((now) => (now === "" && s.planner.max_usd ? Number(s.planner.max_usd) : now));
+        setAutoMerge((now) => now || s.planner.auto_merge);
+      },
+      () => undefined,
+    );
   }, []);
 
   function fromDraft(draft: GoalDraft) {
