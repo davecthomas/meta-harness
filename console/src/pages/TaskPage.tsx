@@ -5,6 +5,7 @@ import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, SegmentedCon
 import { IconX } from "@tabler/icons-react";
 import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../api";
 import { Reviews } from "../components/Reviews";
+import { Timeline } from "../components/Timeline";
 import { useEventStream } from "../hooks";
 import { describe, fold, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "../components/Terminal";
@@ -27,6 +28,8 @@ export function TaskPage() {
   const { taskId = "" } = useParams();
   const [task, setTask] = useState<Task | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
+  // The raw events, for the timeline; the terminal shows them as lines.
+  const [events, setEvents] = useState<MhEvent[]>([]);
   // ?run=<run id> opens on one run's events, as a cell on the activity map links; null shows every run.
   const [params, setParams] = useSearchParams();
   const onlyRun = params.get("run");
@@ -34,7 +37,7 @@ export function TaskPage() {
   const [from, setFrom] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The task's review rounds, for the Reviews tab, read once the task has a pull request.
-  const [tab, setTab] = useState<"run" | "reviews">("run");
+  const [tab, setTab] = useState<"timeline" | "terminal" | "reviews">("timeline");
   const [rounds, setRounds] = useState<ReviewRound[] | null>(null);
   // The task's goal's name, for the link back to it. Null until read, or when the task has no goal.
   const [goalName, setGoalName] = useState<string | null>(null);
@@ -46,6 +49,7 @@ export function TaskPage() {
   useEffect(() => {
     let stale = false;
     setLines([]);
+    setEvents([]);
     setFacts(EMPTY);
     setFrom(null);
     exhausted.current = false;
@@ -56,6 +60,7 @@ export function TaskPage() {
         setTask(t);
         if (t.goal_id) api.goal(t.goal_id).then((g) => !stale && setGoalName(goalTitle(g)), () => undefined);
         setLines(page.events.map(withRun).filter((l): l is Line => l !== null));
+        setEvents(page.events);
         setFacts(page.events.reduce(fold, EMPTY));
         oldest.current = page.events[0]?.position ?? null;
         exhausted.current = page.events.length < FIRST;
@@ -83,6 +88,7 @@ export function TaskPage() {
     setFacts((f) => fold(f, e));
     if (e.event_type === "task_status_changed") setTask((t) => (t ? { ...t, status: e.payload.to } : t));
     if (e.event_type === "pull_request_opened") setTask((t) => (t ? { ...t, pr_url: e.payload.pr_url } : t));
+    setEvents((current) => [...current, e]);
     const line = withRun(e);
     if (line) setLines((current) => [...current, line]);
   }, []);
@@ -99,6 +105,7 @@ export function TaskPage() {
         oldest.current = page.events[0].position;
         const older = page.events.map(withRun).filter((l): l is Line => l !== null);
         setLines((current) => [...older, ...current]);
+        setEvents((current) => [...page.events, ...current]);
       }
     } finally {
       loadingOlder.current = false;
@@ -156,16 +163,20 @@ export function TaskPage() {
           ["Turn and spend", <Text size="sm">Turn {facts.turn}, ${facts.usd.toFixed(4)} {facts.model && <Code>{facts.model}</Code>}</Text>],
         ]}
       />
-      {task.pr_url && (
-        <SegmentedControl
-          mb="md"
-          value={tab}
-          onChange={(v) => setTab(v as "run" | "reviews")}
-          data={[{ value: "run", label: "Run" }, { value: "reviews", label: `Reviews${rounds ? ` (${rounds.length})` : ""}` }]}
-        />
-      )}
+      <SegmentedControl
+        mb="md"
+        value={tab}
+        onChange={(v) => setTab(v as "timeline" | "terminal" | "reviews")}
+        data={[
+          { value: "timeline", label: "Timeline" },
+          { value: "terminal", label: "Terminal" },
+          ...(task.pr_url ? [{ value: "reviews", label: `Reviews${rounds ? ` (${rounds.length})` : ""}` }] : []),
+        ]}
+      />
       {tab === "reviews" && task.pr_url ? (
         rounds ? <Reviews task={task} rounds={rounds} /> : <Center h={120}><Loader /></Center>
+      ) : tab === "timeline" ? (
+        <Timeline events={onlyRun ? events.filter((e) => e.run_id === onlyRun || !e.run_id) : events} />
       ) : (
       <>
       <SectionTitle right={<Badge variant="dot" color={STREAM_COLORS[state] ?? "gray"} tt="none">{state}</Badge>}>Run</SectionTitle>

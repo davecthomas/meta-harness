@@ -2047,6 +2047,9 @@ Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
+The Task page shows a run as a timeline by default: each turn's message, its
+model calls (model, tokens, cost), its tool calls opening to their arguments
+and output, and the files it changed, live; the terminal is a second tab.
 The Goal page shows an active goal's issues as a board, columns Queued,
 Running, In review, Done and Needs attention (a failed task, failing
 checks, a refused issue, or a failed dependency), each card with its task's
