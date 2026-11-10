@@ -11,9 +11,10 @@ Every MH_ADMISSION_SECONDS the meta-harness scheduler runs one admission pass:
    change applies at the next one.
 3. It holds a task whose goal is not active, whose goal has spent its
    `max_usd`, whose goal already runs its `max_parallel` tasks, or whose repo
-   area another task holds. A task names its area with `paths` (their
-   top-level directories); a task with none takes no area and runs beside the
-   others, since each run has its own clone and branch and the merge step
+   area another task holds. A task's areas are its `paths`, from its issue's
+   `Paths:` lines. Two areas conflict when they are the same path or one is a
+   directory above the other. A task with none takes no area and runs beside
+   the others, since each run has its own clone and branch and the merge step
    turns a conflict into a fix run.
 4. It locks the task's areas and starts its RunTask workflow.
 
@@ -49,8 +50,13 @@ class AdmissionResult:
 
 
 def areas_for(task: dict) -> list[str]:
-    """The top-level directories of the task's paths; none for a task that names no paths."""
-    return sorted({p.strip("/").split("/", 1)[0] for p in task.get("paths") or [] if p.strip("/")})
+    """The task's paths, without leading and trailing slashes; none for a task that names no paths."""
+    return sorted({p.strip().removeprefix("./").strip("/") for p in task.get("paths") or []} - {""})
+
+
+def _overlap(a: str, b: str) -> bool:
+    """The same path, or one a directory above the other."""
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
 
 
 def conflicts(wanted: list[str], held: list[str]) -> bool:
@@ -58,7 +64,7 @@ def conflicts(wanted: list[str], held: list[str]) -> bool:
     held = [a for a in held if a != NO_AREA]
     if not wanted or not held:
         return False
-    return WHOLE_REPO in wanted or WHOLE_REPO in held or bool(set(wanted) & set(held))
+    return WHOLE_REPO in wanted or WHOLE_REPO in held or any(_overlap(a, b) for a in wanted for b in held)
 
 
 class Admission:

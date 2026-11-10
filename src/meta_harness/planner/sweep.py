@@ -206,6 +206,7 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
             acceptance_checks=checks,
             goal_id=goal["id"],
             depends_on=open_deps or None,
+            paths=issue.paths or None,
         )
     except TaskApiError as err:
         result.errors.append(f"{issue.ref}: {err}")

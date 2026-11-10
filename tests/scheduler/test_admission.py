@@ -83,16 +83,21 @@ def _admission(tasks, goals=None, events=None, max_running=5):
 
 
 def test_areas_and_conflicts():
-    assert areas_for({"paths": ["src/a.py", "/src/b.py", "docs/x.md"]}) == ["docs", "src"]
+    assert areas_for({"paths": ["src/a.py", "/src/b.py", "docs/", "./docs"]}) == ["docs", "src/a.py", "src/b.py"]
     assert areas_for({"paths": []}) == []
     assert conflicts(["*"], ["docs"]) and conflicts(["src"], ["src", "docs"]) and not conflicts(["src"], ["docs"])
     # A task with no area runs beside any other, even one holding a whole-repo lock from before.
     assert not conflicts([], ["*"]) and not conflicts([], [""]) and not conflicts(["src"], [""])
+    # Areas are paths: one conflicts with another that is the same path or a directory above or below it.
+    goals, tasks = "console/src/features/goals", "console/src/features/tasks"
+    assert not conflicts([goals], [tasks])
+    assert conflicts(["console"], [goals]) and conflicts([goals + "/GoalPage.tsx"], [goals])
+    assert not conflicts(["src/a"], ["src/ab"])
 
 
 async def test_two_tasks_on_one_repo_area_run_in_turn(repo):
     tasks = Tasks()
-    first, second = tasks.add(repo, priority=1, paths=["src/a.py"]), tasks.add(repo, paths=["src/b.py"])
+    first, second = tasks.add(repo, priority=1, paths=["src"]), tasks.add(repo, paths=["src/b.py"])
     admission, started = _admission(tasks)
     result = await admission.pass_once()
     assert result.started == [first]

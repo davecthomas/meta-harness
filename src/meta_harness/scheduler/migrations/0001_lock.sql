@@ -1,5 +1,5 @@
 -- Repo-area locks: one row per running task, held until the task's pull request opens or the task ends.
--- area is a top-level directory the task names, or '*' for the whole repo. Redis replaces this table
+-- area is a path the task names, '' for a task that names none, or '*' (from before) for the whole repo. Redis replaces this table
 -- when the meta-harness scheduler moves to its own deployment.
 
 CREATE TABLE repo_area_lock (

@@ -885,7 +885,9 @@ loop:
 2. A review run: the first reviewer pair in the task policy whose model did
    not write the pull request, in a new pi session on the review harness
    profile, which has no edit tools. The review run reads the pull request
-   diff, the task's spec and acceptance checks, and runs the tests. Its
+   diff, the task's spec and acceptance checks, and runs the tests. A changed
+   file outside the issue's `Paths:` with no reason in the summary is a
+   finding. Its
    `submit_review` tool ends the run with verdict `clean` or `changes` and
    its findings. The meta-harness run service posts them as a pull request
    review and records the verdict with the reviewed head SHA in a
@@ -1535,10 +1537,12 @@ every task event:
 As built, the global limit is the task policy's `max_parallel`, 8 as shipped, which the scheduler reads
 each pass and checks at startup against `MH_MAX_SANDBOXES`; the locks are expiring
 Postgres rows the scheduler renews while a task is `queued`, `running` or
-`taken_over`, which covers the task's review loop. An area is a top-level
-directory, so two tasks naming `console/src/a` and `console/src/b` exclude
-each other. A task made from an issue names no `paths`, so it takes no area
-and a repo's tasks run side by side; its lock row only counts it as running.
+`taken_over`, which covers the task's review loop. An area is a path from
+the issue's `Paths:` lines, and two areas conflict when they are the same
+path or one is a directory above the other: `console/src/features/goals` and
+`console/src/features/tasks` run together, while `console` excludes both. A
+task whose issue has no `Paths:` line takes no area, so a repo's tasks run
+side by side; its lock row only counts it as running.
 A goal's `max_parallel`, when set, holds the goal to that many running
 tasks; null inherits the task policy's, and the planner refuses one above
 it. The planner, not the scheduler, holds a task `blocked` until its
@@ -1546,8 +1550,9 @@ dependencies close. Caller quotas, spend caps, sandbox capacity and the
 modality's default parallelism are planned.
 
 Parallel tasks merge one at a time per repo, each on a head that holds the
-current base (Review loop, the merge). Planned (#98): areas matched by path
-prefix, from a `Paths:` line in the issue.
+current base (Review loop, the merge). The repo's AGENTS.md asks each task to
+keep to its paths and to add new files rather than logic to a central list,
+and every run's prompt names the paths.
 
 ### Throughput
 
@@ -1808,6 +1813,7 @@ The planner fills a task's fields from its issue:
 | `acceptance_checks` | The body's `## Acceptance checks` list, else the registry's checks for the repo |
 | `task_type`, `complexity`, `max_tier` | The labels `type:<task type>`, `complexity:<low, medium or high>` and `max-tier:<tier>`, within the modality's floor and ceiling |
 | `depends_on` | `Depends on: <issue>` lines in the body, plus the tracker's blocked-by links |
+| `paths` | `Paths: <path>, <path>` lines in the body: the areas the task locks, and the paths its run, review and fix prompts tell it to keep to |
 | `goal_id` | The goal |
 
 The repo registry lists the repos the meta-harness may

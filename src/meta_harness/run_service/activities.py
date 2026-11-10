@@ -133,7 +133,13 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         "\n".join(f"- {check}" for check in checks) or "- None were given. Run the repository's tests, if it has them."
     )
     template = (PROMPTS_DIR / f"{REPO_TEMPLATE}.txt").read_text(encoding="utf-8")
-    prompt = Template(template).safe_substitute(repo=repo, title=title, description=description, checks=listed)
+    prompt = Template(template).safe_substitute(
+        repo=repo,
+        title=title,
+        description=description,
+        checks=listed,
+        paths=code_host.paths_rule(description, "task"),
+    )
     activity.logger.info(
         "prepare: a repo task in %s%s, %d acceptance checks",
         repo,
@@ -664,6 +670,7 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
         "branch": request.branch,
         "round_no": str(request.round_no),
         "requested": _requested(request),
+        "paths": code_host.paths_rule(request.description, request.kind),
     }
     name = "review-v1" if request.kind == "review" else "fix-v1"
     template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")

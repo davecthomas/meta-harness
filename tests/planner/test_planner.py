@@ -80,6 +80,7 @@ class FakeTracker:
             state=state,
             depends_on=depends_on(repo, body),
             checks=tracker_module.acceptance_checks(body),
+            paths=tracker_module.issue_paths(body),
         )
         return ref
 
@@ -156,6 +157,28 @@ def test_depends_on_reads_same_repo_and_other_repo_refs():
         "github:davecthomas/meta-harness#12",
         "github:davecthomas/ai-api-unified#7",
     ]
+
+
+def test_paths_lines_name_the_areas_an_issue_changes():
+    body = "Fix it.\n\nPaths: `console/src/features/goals/`, ./src/meta_harness/planner\npaths: docs, console/src/features/goals\n"
+    assert tracker_module.issue_paths(body) == ["console/src/features/goals", "src/meta_harness/planner", "docs"]
+    assert tracker_module.issue_paths("No paths here.") == []
+
+
+async def test_a_task_gets_its_issues_paths(api, parts):
+    events, tracker, tasks = parts
+    label = _label()
+    goal = api.post(
+        "/v1/goals",
+        json={"statement": "Fix bugs", "repos": ["davecthomas/meta-harness"], "label": label},
+        headers=OPERATOR,
+    ).json()
+    named = tracker.add("davecthomas/meta-harness", _number(), body="Broken.\n\nPaths: docs\n", labels=[label])
+    unnamed = tracker.add("davecthomas/meta-harness", _number(), body="Broken.", labels=[label])
+    _sweep(api, goal)
+    by_ref = {t["external_ref"]: t for t in tasks.tasks.values()}
+    assert by_ref[named]["paths"] == ["docs"]
+    assert by_ref[unnamed]["paths"] is None
 
 
 def test_a_goal_needs_registered_repos_and_a_built_modality(api):
