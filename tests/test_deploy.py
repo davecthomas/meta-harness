@@ -215,3 +215,9 @@ def test_terraform_init_is_tried_again_after_a_passing_storage_error():
     """A deploy failed once on 'Failed to get existing workspaces: querying Cloud Storage failed'."""
     deploy = (WORKFLOWS / "deploy.yml").read_text()
     assert deploy.count("for try in 1 2 3; do terraform init -input=false && break;") == 2
+
+
+def test_each_plan_is_tried_again_when_reading_the_state_fails():
+    """A deploy failed once on 'error loading state: Failed to open state file at gs://...'."""
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    assert deploy.count("for try in 1 2 3; do") == 4, "init and plan, in both stacks"

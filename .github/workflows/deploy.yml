@@ -71,8 +71,13 @@ jobs:
           # Init reads the state bucket; a passing Cloud Storage error is tried again, three times in all.
           for try in 1 2 3; do terraform init -input=false && break; [ "$try" = 3 ] && exit 1; sleep 20; done
           # Exit code 0: the cloud matches the stack. 2: the plan has changes. Anything else: the plan failed.
-          code=0
-          terraform plan -input=false -detailed-exitcode -out=platform.tfplan || code=$?
+          # The plan reads the state from Cloud Storage too, which fails now and then: an error is tried again.
+          for try in 1 2 3; do
+            code=0
+            terraform plan -input=false -detailed-exitcode -out=platform.tfplan || code=$?
+            [ "$code" != 1 ] && break
+            [ "$try" != 3 ] && sleep 20
+          done
           case "$code" in
             0) echo "the platform stack matches the cloud: nothing to apply" ;;
             2)
@@ -96,7 +101,11 @@ jobs:
           # replaces it only when its definition changed, and stops and starts it for a new machine type;
           # either way it boots the commit by itself. The plan says which: a VM change that deletes is a
           # replacement, and one that changes the machine type is a restart.
-          terraform plan -input=false -out=release.tfplan -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"
+          for try in 1 2 3; do
+            terraform plan -input=false -out=release.tfplan -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE" && break
+            [ "$try" = 3 ] && exit 1
+            sleep 20
+          done
           vm='[.resource_changes[] | select(.address == "google_compute_instance.vm")]'
           deleted=$(terraform show -json release.tfplan | jq -r "$vm"' | [.[].change.actions[]] | index("delete") != null')
           resized=$(terraform show -json release.tfplan | jq -r "$vm"' | any(.[]; .change.before != null and .change.before.machine_type != .change.after.machine_type)')
