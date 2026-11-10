@@ -48,6 +48,13 @@ SCENARIOS = {
     "no-verdict-unresolved": {"verdicts": []},
     # Recorded after the operator-messages patch, so the patched path replays too.
     "patched-operator-messages-merged": {"verdicts": [CLEAN], "goal_id": "g-1", "auto_merge": True},
+    # Recorded after the merge-checks patch: a failed check on the merge commit, fixed by a new pull request.
+    "patched-merge-checks-fixed": {
+        "verdicts": [CLEAN, CLEAN],
+        "goal_id": "g-1",
+        "auto_merge": True,
+        "merge_checks": ["failed", "passed"],
+    },
 }
 
 

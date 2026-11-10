@@ -154,6 +154,10 @@ class PublishRequest:
     candidate: str
     summary: str | None
     spent_usd: str
+    # The branch to push, for a fix after a merge. Empty: mh/<REF>.
+    branch: str = ""
+    # A paragraph that opens the pull request's description, such as which merge it fixes.
+    note: str = ""
 
 
 @dataclass
@@ -299,8 +303,21 @@ class FailedCheck:
 
 
 @dataclass
+class MergeChecksRequest:
+    """The checks on a merge commit to wait for. base: the branch it merged into, whose newer commits stand in for
+    a check a later merge canceled."""
+
+    repo: str
+    merge_sha: str
+    base: str
+    task_id: str = ""
+    round_no: int = 0
+
+
+@dataclass
 class ChecksResult:
-    """How the code host's checks on a commit ended: passed, failed, or none (the repo runs no checks)."""
+    """How the code host's checks on a commit ended: passed, failed, none (the repo runs no checks), or pending
+    (a merge commit's checks still running when the wait gave up)."""
 
     state: str
     failed: list[FailedCheck] = field(default_factory=list)
@@ -324,6 +341,8 @@ class LoopPromptRequest:
     failed_checks: list[FailedCheck] = field(default_factory=list)
     # The branch conflicts with its base: the fix run resolves the merge the host started.
     conflict: bool = False
+    # A fix after a merge: the merged pull request whose merge commit failed failed_checks.
+    merged_pr: str = ""
 
 
 @dataclass

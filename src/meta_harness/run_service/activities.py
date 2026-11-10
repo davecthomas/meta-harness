@@ -60,6 +60,7 @@ from meta_harness.run_service.shared import (
     ChecksResult,
     FailedCheck,
     LoopPromptRequest,
+    MergeChecksRequest,
     MergeRequest,
     MergeResult,
     PostReviewRequest,
@@ -327,7 +328,7 @@ async def publish(request: PublishRequest) -> PublishResult:
             repo=request.repo,
             workspace=workspace,
             git_dir=sandbox.git_dir_for(ref, request.run_id),
-            branch=f"mh/{ref}",
+            branch=request.branch or f"mh/{ref}",
             title=request.title,
             body=body,
             commit_message=message,
@@ -354,7 +355,7 @@ async def publish(request: PublishRequest) -> PublishResult:
 
 
 def _pr_body(request: PublishRequest) -> str:
-    lines = []
+    lines = [request.note, ""] if request.note else []
     if request.ticket:
         lines += [f"Closes {request.ticket}", ""]
     lines += ["## Summary from the run", "", request.summary or "(the run left no summary)", ""]
@@ -637,6 +638,71 @@ async def wait_checks(request: ChecksRequest) -> ChecksResult:
     return result
 
 
+# How long a task waits for its merge commit's checks, deploys included, before it ends failed.
+MERGE_CHECKS_SECONDS = 120 * 60
+
+
+@activity.defn
+async def wait_merge_checks(request: MergeChecksRequest) -> ChecksResult:
+    """Waits until every check on a merge commit has completed, and says how they ended.
+
+    A check canceled because a later merge replaced its run (a deploy that keeps only the newest waiting run)
+    is judged by the same check on the newest commit of the base that contains the merge commit, whose run
+    covers this merge too. Gives up after MERGE_CHECKS_SECONDS with state pending, naming what still runs.
+    """
+    details = activity.info().heartbeat_details
+    waited = int(details[0]) if details else 0
+    result = ChecksResult(state="none") if code_host.is_local(request.repo) else None
+    while result is None:
+        try:
+            runs = await _merge_runs(request)
+        except code_host.CodeHostError as err:
+            raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+        pending = [r.name for r in runs if r.status != "completed"]
+        if runs and not pending:
+            failed = [FailedCheck(r.name, r.summary) for r in runs if r.conclusion not in PASSING_CONCLUSIONS]
+            result = ChecksResult(state="failed" if failed else "passed", failed=failed)
+            break
+        if not runs and waited >= NO_CHECKS_SECONDS:
+            result = ChecksResult(state="none")
+            break
+        if waited >= MERGE_CHECKS_SECONDS:
+            result = ChecksResult(state="pending", failed=[FailedCheck(name, "still running") for name in pending])
+            break
+        activity.heartbeat(waited)
+        await asyncio.sleep(CHECKS_POLL_SECONDS)
+        waited += CHECKS_POLL_SECONDS
+    if request.task_id:
+        events.emit(
+            "merge_checks",
+            {
+                "merge_sha": request.merge_sha,
+                "state": result.state,
+                "failed": [f.name for f in result.failed],
+                "round": request.round_no,
+            },
+            task_id=request.task_id,
+            event_id=events.stable_id(request.task_id, "merge_checks", request.merge_sha),
+        )
+    activity.logger.info("wait_merge_checks: %s at %s: %s", request.repo, request.merge_sha[:12], result.state)
+    return result
+
+
+async def _merge_runs(request: MergeChecksRequest) -> list[code_host.CheckRun]:
+    """The merge commit's checks, with each canceled one swapped for the same check on the base's newest commit
+    that holds the merge, when there is one."""
+    runs = await code_host.check_runs(request.repo, request.merge_sha)
+    canceled = [r for r in runs if r.status == "completed" and r.conclusion == "cancelled"]
+    if not canceled:
+        return runs
+    newest = await code_host.newest_containing(request.repo, request.base, request.merge_sha)
+    if not newest or newest == request.merge_sha:
+        return runs
+    later = {r.name: r for r in await code_host.check_runs(request.repo, newest)}
+    waiting = code_host.CheckRun
+    return [(later.get(r.name) or waiting(r.name, "queued", None, "")) if r in canceled else r for r in runs]
+
+
 @activity.defn
 async def review_policy(author_model: str) -> ReviewPolicy:
     """The task policy's reviewer pairs, resolved against the active harness profiles, without any pair
@@ -679,6 +745,15 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
 
 def _requested(request: LoopPromptRequest) -> str:
     """What a fix run answers: a merge conflict, each failed check with its output, or each finding."""
+    if request.merged_pr:
+        parts = [
+            f"The pull request {request.merged_pr} merged into {request.base}, and these checks then failed on its "
+            f"merge commit. /workspace holds {request.base} at its newest commit. Make them pass; your changes "
+            "open a new pull request."
+        ]
+        for check in request.failed_checks:
+            parts.append(f"Check {check.name}:\n{check.summary or '(it gave no output)'}")
+        return "\n\n".join(parts)
     if request.conflict:
         return (
             f"The branch conflicts with origin/{request.base}. The meta-harness has merged origin/{request.base} "

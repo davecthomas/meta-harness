@@ -101,6 +101,19 @@ REGISTRY: list[EventType] = [
     ),
     # The review loop on a task's pull request
     EventType(
+        "merge_checks",
+        1,
+        _object(
+            {
+                "merge_sha": {"type": "string"},
+                "state": {"type": "string", "enum": ["passed", "failed", "none", "pending"]},
+                "failed": {"type": "array", "items": {"type": "string"}},
+                "round": {"type": "integer"},
+            },
+            ["merge_sha", "state"],
+        ),
+    ),
+    EventType(
         "pull_request_checks",
         1,
         _object(

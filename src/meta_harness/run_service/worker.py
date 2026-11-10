@@ -35,6 +35,7 @@ from meta_harness.run_service.activities import (
     route,
     run_harness,
     wait_checks,
+    wait_merge_checks,
 )
 from meta_harness.run_service.shared import TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE
 from meta_harness.run_service.task_activities import (
@@ -91,6 +92,7 @@ async def main() -> None:
             cleanup_run,
             publish,
             wait_checks,
+            wait_merge_checks,
             review_policy,
             loop_prompt,
             post_review,
