@@ -132,6 +132,46 @@ test("Discard drops the staged changes, and Advanced: JSON opens the document wi
   expect(screen.getByText("Escalate one tier up")).toBeTruthy();
 });
 
+test("making another version active with changes staged asks first, and Discard drops them before the rollback", async () => {
+  const rolledBack: any[] = [];
+  let active = { ...VERSION, version: 2, origin: "edit", edited_by: "dave" };
+  const older = VERSION;
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/config") {
+      return respond({
+        source: "db",
+        kinds: [{ kind: "tiers", title: "Router tiers", description: "The router's tiers.", version: active.version, edited_by: "dave", created_at: VERSION.created_at }],
+      });
+    }
+    if (url === "/v1/config/tiers/rollback") {
+      rolledBack.push(JSON.parse(String(init?.body)));
+      active = { ...VERSION, version: 3, origin: "rollback", rolled_back_from: 1 } as any;
+      return respond(active);
+    }
+    if (url === "/v1/config/tiers") return respond(active);
+    if (url === "/v1/config/tiers/versions") return respond({ versions: [active, older] });
+    if (url === "/v1/config/profiles") return respond({ ...VERSION, kind: "profiles", document: { profiles: { "pi-lean": {} } } });
+    if (url === "/v1/config/models") return respond({ models: [] });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  renderPage();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit When a tier is used up" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Fail", hidden: true }));
+  expect(await screen.findByText("1 change to version 2")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Make active" }));
+  const ask = (await screen.findByText(/Make version 1 active again/)).parentElement as HTMLElement;
+  fireEvent.click(within(ask).getByRole("button", { name: "Make active", hidden: true }));
+  const prompt = await screen.findByRole("dialog", { name: "Save your changes?" });
+  expect(rolledBack).toHaveLength(0);
+  fireEvent.click(within(prompt).getByRole("button", { name: "Discard" }));
+
+  await waitFor(() => expect(rolledBack).toEqual([{ version: 1 }]));
+  await waitFor(() => expect(screen.queryByText(/changes? to version/)).toBeNull());
+  expect(screen.getByText("Escalate one tier up")).toBeTruthy();
+});
+
 test("a profile is added and removed from the table, each staged", async () => {
   stub(() => respond({}));
   renderPage();

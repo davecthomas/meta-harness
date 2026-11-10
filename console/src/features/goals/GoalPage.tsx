@@ -1,12 +1,12 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Group, Loader, SegmentedControl, Stack, Table, Text } from "@mantine/core";
-import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPencil, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
-import { GoalEditor } from "./GoalEditor";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { parallelLabel } from "./parallel";
+import { InlineField } from "../../components/InlineField";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 
@@ -18,8 +18,6 @@ export function GoalPage() {
   // For a goal not started yet: its label's open issues, read but not taken in, so the operator sees what Start runs.
   const [waiting, setWaiting] = useState<(LabelIssue & { repo: string })[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // The title being edited, or null while it is not.
-  const [editing, setEditing] = useState(false);
   // Each issue's progress and what each task spent, for the board, and the position the live stream starts from.
   const [progress, setProgress] = useState<IssueProgress[] | null>(null);
   const [spend, setSpend] = useState<Record<string, number>>({});
@@ -100,6 +98,18 @@ export function GoalPage() {
     }
   }
 
+  // One value edited in place: a PATCH of that field alone, so each change is one goal_changed record.
+  // A refusal keeps the field open with the reason.
+  async function patch(fields: Record<string, unknown>): Promise<string | null> {
+    try {
+      await api.patchGoal(goalId, fields);
+      await load();
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
   // A goal's issues are all in one response; the table reads ahead through them 50 at a time.
   const issues = useMemo(() => goal?.issues ?? [], [goal]);
   const shown = useInfinite(
@@ -117,10 +127,24 @@ export function GoalPage() {
   return (
     <>
       <PageHeader
-        title={goalTitle(goal)}
+        title={
+          <InlineField
+            kind="text"
+            label="Title"
+            value={goal.title ?? ""}
+            display={goalTitle(goal)}
+            onCommit={(title) => (title ? patch({ title }) : "A goal's title cannot be emptied")}
+          />
+        }
         description={
           <Stack gap={6}>
-            <Text size="sm">{goal.statement}</Text>
+            <InlineField
+              kind="textarea"
+              label="Description"
+              value={goal.statement}
+              display={<Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{goal.statement}</Text>}
+              onCommit={(text) => (text.trim() ? patch({ statement: text.trim() }) : "A goal needs a description.")}
+            />
             <Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>
           </Stack>
         }
@@ -144,7 +168,6 @@ export function GoalPage() {
             {!open && (
               <Button leftSection={<IconArrowBackUp size={16} />} onClick={() => act(() => api.goalAction(goal.id, "reopen"))}>Reopen goal</Button>
             )}
-            <Button variant="default" leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>Edit goal</Button>
             {open && (
               <Button variant="default" leftSection={<IconListCheck size={16} />} onClick={() => setPicking(true)}>Add issues</Button>
             )}
@@ -170,24 +193,52 @@ export function GoalPage() {
           await loadProgress();
         }}
       />
-      {editing && <GoalEditor goal={goal} onClose={() => setEditing(false)} onSaved={() => void load()} />}
       <Facts
         items={[
           ["Modality", <Text size="sm">{goal.modality}</Text>],
           ["Label", goal.label ? <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> : <Text size="sm" c="dimmed">None: the goal takes the issues picked for it</Text>],
           ["Repos", <Stack gap={2}>{goal.repos.map((r) => <Text ff="monospace" size="sm" key={r}>{r}</Text>)}</Stack>],
           ["Auto-merge", (
-            <Group gap="sm">
-              <Text size="sm">{goal.auto_merge ? "On" : "Off: pull requests wait for you"}</Text>
-              {open && (
-                <Button size="compact-xs" variant="light" onClick={() => act(() => api.patchGoal(goal.id, { auto_merge: !goal.auto_merge }))}>
-                  Turn {goal.auto_merge ? "off" : "on"}
-                </Button>
-              )}
-            </Group>
+            <InlineField
+              kind="switch"
+              label="Auto-merge"
+              switchLabel={goal.auto_merge ? "On" : "Off: pull requests wait for you"}
+              value={goal.auto_merge}
+              readOnly={!open}
+              onCommit={(auto_merge) => patch({ auto_merge })}
+            />
           )],
-          ["Budget", <Text size="sm">{goal.max_usd ? `$${goal.max_usd}` : "None"}</Text>],
-          ["Parallel tasks", <Text size="sm">{parallelLabel(goal.max_parallel, systemParallel)}</Text>],
+          ["Budget", (
+            <InlineField
+              kind="number"
+              label="Budget"
+              value={goal.max_usd ? Number(goal.max_usd) : null}
+              min={0}
+              decimalScale={2}
+              prefix="$"
+              allowEmpty
+              empty="None"
+              onCommit={(v) => (v === null ? "A budget can be changed, not removed" : patch({ max_usd: String(v) }))}
+            />
+          )],
+          ["Priority", (
+            <InlineField kind="number" label="Priority" value={goal.priority} step={1} decimalScale={0} onCommit={(priority) => patch({ priority })} />
+          )],
+          ["Parallel tasks", (
+            <InlineField
+              kind="number"
+              label="Parallel tasks"
+              value={goal.max_parallel ?? null}
+              display={<Text size="sm">{parallelLabel(goal.max_parallel, systemParallel)}</Text>}
+              min={1}
+              max={systemParallel ?? undefined}
+              decimalScale={0}
+              allowEmpty
+              placeholder={systemParallel ? `System setting: ${systemParallel}` : "System setting"}
+              // Emptied: back to the system setting.
+              onCommit={(max_parallel) => patch({ max_parallel })}
+            />
+          )],
           ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
           ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
           ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),

@@ -147,7 +147,13 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
     discard,
   });
 
-  async function rollback(version: number) {
+  // Making another version active replaces the one the staged changes are based on, so staged changes are
+  // saved or discarded first, through the same prompt as leaving the page.
+  function rollback(version: number) {
+    unsaved.confirm(() => void makeActive(version));
+  }
+
+  async function makeActive(version: number) {
     try {
       await changed(await api.rollbackConfig(summary.kind, version), `rolled back to version ${version}`);
     } catch (err) {

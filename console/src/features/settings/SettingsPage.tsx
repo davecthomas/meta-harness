@@ -21,6 +21,9 @@ export function SettingsPage() {
   const [settings, setSettings] = useState<UserSettings | null>(null);
   // The settings as last stored, so two quick commits each build on the other.
   const latest = useRef<UserSettings | null>(null);
+  // Saves run one at a time, each after the one before it has stored, so a second commit made while the
+  // first is in flight builds on the first's result instead of the settings both started from.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
   const [repos, setRepos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const { setColorScheme } = useMantineColorScheme();
@@ -37,16 +40,21 @@ export function SettingsPage() {
   }, []);
 
   // Saves one field. A failure is the field's refusal: it stays open with the reason.
-  async function save(change: (s: UserSettings) => UserSettings): Promise<string | null> {
-    if (!latest.current) return "Your settings have not loaded";
-    try {
-      const stored = await api.saveSettings(change(latest.current));
-      latest.current = stored;
-      setSettings(stored);
-      return null;
-    } catch (err) {
-      return err instanceof Error ? err.message : String(err);
-    }
+  function save(change: (s: UserSettings) => UserSettings): Promise<string | null> {
+    const run = async (): Promise<string | null> => {
+      if (!latest.current) return "Your settings have not loaded";
+      try {
+        const stored = await api.saveSettings(change(latest.current));
+        latest.current = stored;
+        setSettings(stored);
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    };
+    const next = queue.current.then(run, run);
+    queue.current = next;
+    return next;
   }
   const savePlanner = (fields: Partial<UserSettings["planner"]>) => save((s) => ({ ...s, planner: { ...s.planner, ...fields } }));
 

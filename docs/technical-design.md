@@ -1645,7 +1645,7 @@ credential.
 | GET, POST | `/v1/kill-switch` | Meta-harness scheduler | Read the kill switch, or turn it on or off with a reason. While it is on, the scheduler stops every running task and admits none. `mode` sets it instead: `stop` is on, `drain` admits nothing new and lets running tasks finish (a deploy that replaces the VM drains), and `off` ends both. `kill_switch_changed` carries the mode. Scopes smaller than everything (a run, a caller) are planned | built |
 | POST | `/v1/reviews/{task_id}/claim`, `/verdict`, `/release` | Meta-harness run service | An operator review: claim the round, submit a verdict with findings, or release the claim | planned |
 | GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest. `start` (default `true`) creates it `active` and sweeps it at once; `start: false` saves it `paused`, not started (`started_at` null), and takes in no issue until its first `/resume` | built |
-| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `auto_merge`, priority, budget and `max_parallel` (null to inherit), from the Goal page's Edit goal | partly built |
+| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `auto_merge`, priority, budget and `max_parallel` (null to inherit), each edited in place on the Goal page | partly built |
 | GET | `/v1/repos` | Planner | The repo registry: the repos a goal may name | built |
 | GET | `/v1/repos/available` | Planner | The repos the deployment's GitHub Apps are installed on that the registry does not list yet, and each app's page for installing it on more. The console's Repositories page adds from it | built |
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
@@ -1723,7 +1723,7 @@ capacity by priority.
 | `success_criteria` | Checks the planner evaluates to decide the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a check name. A goal that names none is met when every issue it holds is closed and none of its tasks is queued, blocked or running |
 | `auto_merge` | Whether a pull request whose review comes back clean merges without an operator. The modality's default when unset |
 | `max_usd`, `priority` | One budget and one priority for all the goal's tasks, review and fix runs included |
-| `max_parallel` | The most of the goal's tasks that run at once. Null inherits the task policy's `max_parallel`; a goal may set it lower, never higher. The New goal form and Edit goal set it, and the Goal page shows the value in use, marked inherited or set. A change applies at the next admission pass |
+| `max_parallel` | The most of the goal's tasks that run at once. Null inherits the task policy's `max_parallel`; a goal may set it lower, never higher. The New goal form sets it, the Goal page edits it in place (emptied, it inherits again), and shows the value in use, marked inherited or set. A change applies at the next admission pass |
 | `status` | `planning`, `active`, `paused`, `met`, `stalled`, `budget_exhausted` or `canceled` |
 
 A `feature` or `new-system` goal starts in `planning`. For every active goal the planner runs a loop:
@@ -2133,6 +2133,11 @@ refused value keeps the input open with the reason under it. Ids, dates,
 versions, events, computed facts such as spend, and anything the API cannot
 change stay read-only.
 
+- Goal page: the title, description, budget, priority, parallel tasks and
+  auto-merge (while the goal is open) edit in place, and each commit sends a
+  PATCH of that field alone, one `goal_changed` record. There is no Edit goal
+  dialog.
+
 - Configuration: every value in a kind's view edits in place. Router tiers:
   each tier's description, thinking and candidates (added, removed and
   reordered), the classifier, the default tier and what happens when a tier
@@ -2145,14 +2150,17 @@ change stay read-only.
   marked, and a bar above the view says "N changes to version V" with Discard
   and Review and save, which opens the diff and note and saves version V+1.
   A refused save shows each reason beside the value it is about and keeps the
-  changes staged, and leaving the page with staged changes asks first.
+  changes staged, and leaving the page with staged changes asks first, as
+  does making another version active from the history: the staged changes
+  are saved or discarded before the rollback.
   Advanced: JSON opens the active document with the staged changes, and
   applying it stages what it holds.
 - Repositories: each repo's default acceptance checks edit in place as a tag
   list, and each commit saves a new registry version with the note
   `changed <repo>`. Add repository and Remove stay.
 - Settings: each field saves when it is committed and shows "Saved" beside
-  it for a moment; there is no Save button.
+  it for a moment; there is no Save button. Saves run one at a time, each
+  built on the settings the one before stored, so quick commits all persist.
 
 The Task page shows a run as a timeline by default: each turn's message, its
 model calls (model, tokens, cost), its tool calls opening to their arguments
