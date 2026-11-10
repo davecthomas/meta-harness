@@ -32,6 +32,12 @@ suite("terminal lines", () => {
     expect(describe(event("turn_finished", { text: "" }))).toBeNull();
   });
 
+  it("shows a run's prompt as one line, named by its template, that holds the full text", () => {
+    const line = describe(event("run_prompt", { run_id: "t-1:run-1", kind: "task", template: "repo-task-v1", prompt: "Fix the bug.\n\nChecks: pytest" }));
+    expect(line).toEqual({ position: 1, kind: "info", text: "20:00:01 prompt (repo-task-v1)", detail: "Fix the bug.\n\nChecks: pytest" });
+    expect(describe(event("tool_call", { tool: "read", args: {} }))?.detail).toBeUndefined();
+  });
+
   it("finds the task from a run id", () => {
     expect(taskOf(event("model_call", {}, { task_id: null, run_id: "t-9:run-2" }))).toBe("t-9");
   });

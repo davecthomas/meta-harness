@@ -6,7 +6,8 @@ import type { MhEvent } from "../../api";
 // One entry on the timeline: a turn with what happened in it, or an event between turns.
 export type Entry =
   | { kind: "turn"; turn: number; position: number; text: string; models: MhEvent[]; tools: Tool[]; files: string[]; compacted: boolean; planned: boolean }
-  | { kind: "status"; position: number; text: string; error: boolean };
+  | { kind: "status"; position: number; text: string; error: boolean }
+  | { kind: "prompt"; position: number; template: string; prompt: string; runKind: string };
 
 export interface Tool {
   id: string;
@@ -39,6 +40,11 @@ export function entries(events: MhEvent[]): Entry[] {
   for (const e of [...events].sort((a, b) => a.position - b.position)) {
     const p = e.payload ?? {};
     switch (e.event_type) {
+      case "run_prompt":
+        // Recorded before its run starts, so it heads that run's turns.
+        out.push({ kind: "prompt", position: e.position, template: String(p.template ?? ""), prompt: String(p.prompt ?? ""), runKind: String(p.kind ?? "") });
+        turn = null;
+        break;
       case "turn_started":
         turn = { kind: "turn", turn: Number(p.turn) || 0, position: e.position, text: "", models: [], tools: [], files: [], compacted: false, planned: false };
         out.push(turn);
@@ -117,6 +123,26 @@ function ToolRow({ tool }: { tool: Tool }) {
   );
 }
 
+// A run's prompt, collapsed to its template's name, opening to the full text the run was given.
+function PromptRow({ entry }: { entry: Extract<Entry, { kind: "prompt" }> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Paper p="sm" withBorder data-testid="prompt">
+      <UnstyledButton onClick={() => setOpen((o) => !o)} w="100%" aria-expanded={open}>
+        <Group gap={6} wrap="nowrap">
+          {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+          <Text size="xs" fw={600} c="dimmed">Prompt</Text>
+          <Code>{entry.template}</Code>
+          {entry.runKind && entry.runKind !== "task" && <Badge size="xs" variant="light">{entry.runKind} run</Badge>}
+        </Group>
+      </UnstyledButton>
+      <Collapse expanded={open}>
+        <Code block mt={6} style={{ whiteSpace: "pre-wrap" }}>{entry.prompt}</Code>
+      </Collapse>
+    </Paper>
+  );
+}
+
 function ModelLine({ e }: { e: MhEvent }) {
   const p = e.payload ?? {};
   if (!p.model) return <Text size="xs" c="red">Model call failed after {p.latency_ms ?? "?"}ms: {short(p.error ?? p.error_code, 200)}</Text>;
@@ -151,7 +177,9 @@ export function Timeline({ events }: { events: MhEvent[] }) {
       <Stack gap="sm">
         {list.length === 0 && <Text size="sm" c="dimmed">Nothing recorded yet.</Text>}
         {list.map((entry) =>
-          entry.kind === "status" ? (
+          entry.kind === "prompt" ? (
+            <PromptRow key={entry.position} entry={entry} />
+          ) : entry.kind === "status" ? (
             <Group key={entry.position} gap={6}>
               <IconSettings size={14} />
               <Text size="xs" c={entry.error ? "red" : "dimmed"}>{entry.text}</Text>
