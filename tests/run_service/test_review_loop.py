@@ -79,8 +79,11 @@ class Script:
     # The goal's auto_merge, and each merge's result in order (a state, or (state, new head)).
     auto_merge: bool = False
     merges: list = field(default_factory=list)
-    # Each merge commit's checks in order: passed, failed, none or pending. None left: passed.
+    # Each merge commit's checks in order: passed, failed, silent (failed with no output), none or pending.
+    # None left: passed.
     merge_checks: list[str] = field(default_factory=list)
+    # A fix run after a merge changes no file, so its publish opens no pull request.
+    fix_changes_nothing: bool = False
 
     runs: list[HarnessRequest] = field(default_factory=list)
     prompts: list[LoopPromptRequest] = field(default_factory=list)
@@ -152,6 +155,10 @@ class Script:
             self.publish_requests.append(request)
             commit = "c0" if self.publishes == 0 else (self.fix_commits.pop(0) if self.fix_commits else "c-new")
             self.publishes += 1
+            if self.fix_changes_nothing and self.publishes > 1:
+                return PublishResult(
+                    branch=request.branch or BRANCH, base="main", commit="", files=[], pr_url="", created=False
+                )
             return PublishResult(
                 branch=request.branch or BRANCH,
                 base="main",
@@ -173,6 +180,8 @@ class Script:
             self.merge_checked.append(request)
             state = self.merge_checks.pop(0) if self.merge_checks else "passed"
             failed = [FailedCheck("deploy", "terraform apply failed")] if state in ("failed", "pending") else []
+            if state == "silent":
+                state, failed = "failed", [FailedCheck("deploy", "")]
             return ChecksResult(state=state, failed=failed)
 
         @activity.defn(name="review_policy")
@@ -401,6 +410,28 @@ async def test_a_failed_check_on_the_merge_commit_becomes_a_fix_pull_request_tha
     assert "deploy failed on its merge commit" in fix_pr.note
     assert len(script.merge_requests) == 2, "the fix pull request went through the review loop and merged"
     assert "the merge commit's checks: passed" in result.outcome_reason
+
+
+async def test_a_merge_check_that_failed_with_no_output_starts_no_fix_run(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True, merge_checks=["silent"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merge_checks_failed"
+    assert "deploy failed on the merge commit m1 with no output a fix run could act on" in result.outcome_reason
+    assert _kinds(result) == ["standard", "review"], "no fix run"
+
+
+async def test_a_fix_that_changed_nothing_looks_at_the_merge_checks_once_more(env):
+    passed = Script(verdicts=[CLEAN], auto_merge=True, merge_checks=["failed", "passed"], fix_changes_nothing=True)
+    result = await _run(env, passed, goal_id="g-1")
+    assert result.outcome == "merged", "a newer commit's passing run settled it"
+    assert len(passed.merge_checked) == 2 and _kinds(result).count("fix") == 1
+
+    failed = Script(verdicts=[CLEAN], auto_merge=True, merge_checks=["failed", "failed"], fix_changes_nothing=True)
+    result = await _run(env, failed, goal_id="g-1")
+    assert result.outcome == "merge_checks_failed" and "its fix changed nothing" in result.outcome_reason
+    assert _kinds(result).count("fix") == 1, "no second fix run"
 
 
 async def test_a_merge_commit_with_no_checks_ends_merged(env):

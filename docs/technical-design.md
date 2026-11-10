@@ -963,18 +963,34 @@ back to the checks and a new review like any other. Branch protection or
 any other refusal ends the task `ready` with GitHub's reason. A merged pull
 request's `Closes` line closes the issue. The task then waits, still `running`
 and holding its repo-area lock, for every check on the merge commit,
-deploys included, recorded as `merge_checks`. A check canceled because a
-later merge replaced its run is judged by the same check on the base's
-newest commit that holds the merge. Passing checks, or none within five
-minutes, end the task `closed`. A failed check becomes a fix run from the
-base, with the checks' output as untrusted input; its publish opens a new
+deploys included, recorded as `merge_checks`, and its status reason says so
+("merged as ...; waiting for the checks on the merge commit"). A check that
+did not pass there, canceled because a later merge replaced its run or
+failed, is judged by the same check on the base's newest commit that holds
+the merge, when there is a newer one: that run covers this merge too, so a
+deploy that failed for a reason outside the code (a refused login, a
+provider's outage) and passed on the next commit is not this merge's
+failure. A canceled check waits for the newer commit's run; a failed one
+waits while that commit's checks still run, and stands as failed once they
+finish without it. Passing checks, or none within five minutes, end the
+task `closed`. A failed check that gave no output starts no fix run, since
+a fix run can only change code and has nothing to go on: the task ends
+`failed`, naming the check, for an operator. A failed check with output
+becomes a fix run from the
+base, with the checks' output as untrusted input; a fix run that changes
+nothing looks at the merge commit's checks once more, and ends the task
+`failed` only if they still fail. Its publish opens a new
 pull request on `mh/<task>-merge-<n>` that names the merged one and closes
 nothing, and that pull request goes through the review loop, the merge and
 this wait again. The rounds count toward `max_rounds` and the runs toward
 the task's `max_usd`; when either is used up, or the checks still run after
 120 minutes, the task ends `failed` with the checks named. (Behind
 `workflow.patched("merge-checks")`: a workflow started before it ends
-`closed` at the merge.)
+`closed` at the merge. The status reasons, the no-output rule and the second
+look are behind `workflow.patched("merge-checks-judged")`.) The deploy
+workflow's update step first logs in to the VM with a command that does
+nothing, up to six times, because its SSH key is new each run and the VM
+refuses it until the key arrives; the update then starts once.
 
 A task that ends `ready` or `review_unresolved` leaves its pull request open
 with no workflow watching it, and its repo-area lock is released. The
