@@ -39,6 +39,7 @@ from meta_harness.run_service.activities import (
     wait_checks,
     wait_merge_checks,
 )
+from meta_harness.run_service.budget_activities import budget_hold, goal_budget
 from meta_harness.run_service.prompt_activities import record_prompt
 from meta_harness.run_service.shared import TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE
 from meta_harness.run_service.task_activities import (
@@ -102,6 +103,8 @@ async def main() -> None:
             record_attempt,
             record_published,
             record_prompt,
+            goal_budget,
+            budget_hold,
             deliver_message,
         ],
         # A cancel reaches an activity only in the reply to a heartbeat. The SDK holds

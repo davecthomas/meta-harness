@@ -66,6 +66,40 @@
     ],
     "type": "object"
   },
+  "budget_decision v1": {
+    "additionalProperties": true,
+    "properties": {
+      "action": {
+        "enum": [
+          "raise",
+          "end"
+        ],
+        "type": "string"
+      },
+      "max_usd": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "action"
+    ],
+    "type": "object"
+  },
+  "budget_hold v1": {
+    "additionalProperties": true,
+    "properties": {
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "reason"
+    ],
+    "type": "object"
+  },
   "compacted v1": {
     "additionalProperties": true,
     "properties": {},

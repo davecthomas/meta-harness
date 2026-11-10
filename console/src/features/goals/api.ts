@@ -41,6 +41,7 @@ export interface IssueProgress {
   task_id: string | null;
   task_status: string | null;
   task_status_reason: string | null;
+  task_waiting_on?: string | null;
   pr_url: string | null;
   pr_state: "open" | "merged" | "closed" | null;
   checks: { head_sha: string | null; state: "passed" | "failed" | "pending" | "none"; failed: string[] } | null;

@@ -5,6 +5,7 @@ import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, SegmentedCon
 import { IconX } from "@tabler/icons-react";
 import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../../api";
 import { Reviews } from "./Reviews";
+import { BudgetHold } from "./BudgetHold";
 import { TaskFailure } from "./TaskFailure";
 import { Timeline } from "./Timeline";
 import { Plan } from "./Plan";
@@ -111,6 +112,8 @@ export function TaskPage() {
     if (e.position <= newest.current) return;
     newest.current = e.position;
     setFacts((f) => fold(f, e));
+    // A hold for budget, or its answer, changes what the task waits on: read the task again.
+    if (e.event_type === "budget_hold" || e.event_type === "budget_decision") void api.task(taskId).then(setTask, () => undefined);
     if (e.event_type === "task_status_changed") setTask((t) => (t ? { ...t, status: e.payload.to, status_reason: e.payload.reason ?? null } : t));
     if (e.event_type === "pull_request_opened") setTask((t) => (t ? { ...t, pr_url: e.payload.pr_url } : t));
     // A prompt read with every run's prompts may come again on the stream.
@@ -173,6 +176,7 @@ export function TaskPage() {
         }
       />
       <ErrorAlert error={error} />
+      <BudgetHold task={{ ...task, status }} onAnswered={setTask} />
       <TaskFailure task={task} status={status} events={events} />
       <Facts
         items={[

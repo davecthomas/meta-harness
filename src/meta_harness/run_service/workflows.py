@@ -53,7 +53,9 @@ prompt as run_prompt (behind the run-prompt patch), so an operator can tell a
 bad prompt from a bad model.
 
 The task's spend limit covers all its runs: each run's grant gets what the
-earlier runs left. A run run_harness gave up on still counts, from what
+earlier runs left, or the task's share of what its goal has left when that is
+less. A task with too little for its next run holds for an operator, who
+raises the limit or ends it (budget_activities.py). A run run_harness gave up on still counts, from what
 cleanup_run reads off its grant.
 
 Workflow code runs in the SDK's sandbox and must be deterministic: no I/O, no
@@ -89,6 +91,7 @@ with workflow.unsafe.imports_passed_through():
         wait_checks,
         wait_merge_checks,
     )
+    from meta_harness.run_service.budget_activities import BudgetHold, budget_hold, goal_budget
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
     from meta_harness.run_service.shared import (
         Attempt,
@@ -158,6 +161,13 @@ CHECKS_TIMEOUT = timedelta(minutes=75)
 CHECKS_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 # Longer than wait_merge_checks's own 120 minutes, which ends the wait with a result.
 MERGE_CHECKS_TIMEOUT = timedelta(minutes=125)
+# How long a task held for budget waits for an operator before it ends as it would have. It holds its repo-area
+# lock and its place in the parallel limit while it waits.
+BUDGET_HOLD = timedelta(hours=24)
+# How often a task held for its goal's budget looks again, so raising the goal's budget lets its tasks go on.
+BUDGET_RECHECK = timedelta(minutes=5)
+# The least a run is started with. A run given less ends on its spend limit before it can do anything.
+MIN_RUN_USD = Decimal("0.10")
 CODE_HOST_TIMEOUT = timedelta(minutes=2)
 CODE_HOST_RETRY = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5)
 
@@ -172,6 +182,10 @@ class RunTask:
         self._messages: list[OperatorMessage] = []
         # The attempt an operator picked, when the task made several at once.
         self._chosen: int | None = None
+        # An operator's answer to a budget hold: "raise", "raise:<new spend limit>" or "end".
+        self._budget_answer: str | None = None
+        # Set once a budget hold ended with no more budget: the task then ends, and never holds again.
+        self._budget_ended = False
 
     @workflow.signal
     def operator_message(self, message: OperatorMessage) -> None:
@@ -179,6 +193,9 @@ class RunTask:
         sends it from the task service."""
         if message.when == "choose":
             self._chosen = int(message.text)
+            return
+        if message.when == "budget":
+            self._budget_answer = message.text
             return
         self._messages.append(message)
 
@@ -271,6 +288,77 @@ class RunTask:
             await self._task_status("closed", "the run finished")
         return result
 
+    def _holds(self) -> bool:
+        """Whether this task holds for budget rather than ending when it runs out. Behind a patch: a workflow
+        from before it ends, as it always did."""
+        return bool(self._task_id) and not self._budget_ended and workflow.patched("budget-hold")
+
+    async def _grant(
+        self, goal_id: str, limit: Decimal, spent: Decimal, need: Decimal, what: str
+    ) -> tuple[Decimal | None, Decimal]:
+        """What the next run may spend, and the task's spend limit, which an operator may have raised.
+
+        The run gets what the task has left, or the task's share of what its goal has left when that is less.
+        When that is under what the run needs (need: what the last run of its kind cost), the task holds:
+        it stays running, marked as waiting on an operator for budget, until the operator raises the limit or
+        ends it, or BUDGET_HOLD passes. A task held for its goal's budget looks again every BUDGET_RECHECK,
+        so raising the goal's budget lets it go on. None: the task must end, out of budget.
+        """
+        if not self._holds():
+            left = limit - spent
+            return (left if left > 0 else None), limit
+        need = max(need, MIN_RUN_USD)
+        waited = timedelta(0)
+        held = False
+        while True:
+            left = limit - spent
+            why = "" if left >= need else f"the task has ${left} left of its ${limit} spend limit"
+            share = None
+            if goal_id:
+                goal = await workflow.execute_activity(
+                    goal_budget, goal_id, start_to_close_timeout=TASK_API_TIMEOUT, retry_policy=TASK_API_RETRY
+                )
+                share = goal.share()
+                if not why and share is not None and share < need:
+                    why = (
+                        f"goal {goal_id} has spent ${goal.spent_usd} of its ${goal.max_usd} budget, which leaves "
+                        f"${share} for each of its {goal.running} running tasks"
+                    )
+            if not why:
+                if held:
+                    await self._budget_hold(False, f"the budget was raised; carrying on with {what}")
+                return (left if share is None else min(left, share)), limit
+            for_goal = why.startswith("goal ")
+            if not held:
+                held = True
+                self._budget_answer = None
+                raise_what = "the goal's budget" if for_goal else "the task's spend limit"
+                await self._budget_hold(
+                    True, f"{what} needs about ${need}, and {why}. Raise {raise_what}, or end the task"
+                )
+                workflow.logger.warning("%s is held for budget before %s: %s", self._where(), what, why)
+            wait = min(BUDGET_RECHECK, BUDGET_HOLD - waited) if for_goal else BUDGET_HOLD - waited
+            try:
+                await workflow.wait_condition(lambda: self._budget_answer is not None, timeout=wait)
+            except asyncio.TimeoutError:
+                waited += wait
+            answer, self._budget_answer = self._budget_answer, None
+            if answer == "end" or (answer is None and waited >= BUDGET_HOLD):
+                ended = "an operator ended it" if answer else f"no one raised the budget in {BUDGET_HOLD}"
+                await self._budget_hold(False, f"{why}, and {ended}")
+                self._budget_ended = True
+                return None, limit
+            if answer and answer.startswith("raise:"):
+                limit = Decimal(answer.partition(":")[2])
+
+    async def _budget_hold(self, waiting: bool, reason: str) -> None:
+        await workflow.execute_activity(
+            budget_hold,
+            BudgetHold(task_id=self._task_id, waiting=waiting, reason=reason),
+            start_to_close_timeout=TASK_API_TIMEOUT,
+            retry_policy=TASK_API_RETRY,
+        )
+
     def _where(self, run_id: str = "") -> str:
         """How a warning or error names its task and run, so a search for either id finds every line about it."""
         task = self._task_id or workflow.info().workflow_id
@@ -333,9 +421,13 @@ class RunTask:
                     await self._record(
                         record_route, RouteRecord(self._task_id, self._route_no, floor, request.ceiling, route_result)
                     )
-            for candidate in candidates:
-                left = limit - spent
-                if left <= 0:
+            pending = list(candidates)
+            while pending:
+                candidate = pending.pop(0)
+                left, limit = await self._grant(
+                    request.goal_id, limit, spent, _need(attempts, "task"), f"run {len(attempts) + 1}"
+                )
+                if left is None:
                     raise _failed(f"the task spent its ${limit} spend limit after {len(attempts)} runs", attempts)
                 attempt = len(attempts) + 1
                 run_id = run_id_for(info.workflow_id, attempt)
@@ -387,6 +479,11 @@ class RunTask:
                     return await self._finish(
                         request, prepared, route_result, candidate, harness, attempt, attempts, limit, spent
                     )
+                if decision == "final" and _out_of_budget(harness) and self._holds():
+                    # The run stopped at its spend limit with its work unfinished: ask for more, on the same
+                    # candidate, before giving the task up.
+                    pending.insert(0, candidate)
+                    continue
                 if decision == "final":
                     raise _failed(f"run {attempt} on {candidate.label} ended for good: {detail}", attempts)
             next_tier = self._escalation(route_result, request) if not prepared.pinned else None
@@ -705,7 +802,7 @@ class RunTask:
                 return "merge_checks_failed", (
                     f"{reason}; {names} failed on the merge commit, and the {loop.max_rounds} fix rounds are used up"
                 )
-            if loop.left() <= 0:
+            if loop.left() <= 0 and not self._holds():
                 return (
                     "merge_checks_failed",
                     f"{reason}; {names} failed on the merge commit, and the spend limit is used up",
@@ -793,7 +890,7 @@ class RunTask:
         )
         why = ""
         for reviewer in reviewers:
-            if loop.left() <= 0:
+            if loop.left() <= 0 and not self._holds():
                 return None, "", f"the task spent its ${loop.limit} spend limit"
             harness, detail = await self._loop_run(loop, prompt, reviewer, "review", thinking=None)
             if harness is not None and harness.review:
@@ -846,7 +943,7 @@ class RunTask:
 
     async def _fix(self, loop: "_Loop", fix: LoopPromptRequest, round_no: int) -> str:
         """One fix run on the pull request's branch, published to it. Returns why the loop must stop, or ""."""
-        if loop.left() <= 0:
+        if loop.left() <= 0 and not self._holds():
             return f"the task spent its ${loop.limit} spend limit before fix round {round_no}"
         fix.round_no = round_no
         prompt = await self._loop_prompt(fix)
@@ -874,15 +971,37 @@ class RunTask:
     ) -> tuple[HarnessResult | None, str]:
         """A review or fix run on the pull request's branch, or on branch when given ("": the repo's default
         branch), recorded as the task's next attempt."""
+        while True:
+            harness, detail = await self._one_loop_run(loop, prompt, candidate, kind, thinking, merge_base, branch)
+            # A run that stopped at its spend limit left its work unfinished: ask for more and run it again.
+            if not (_out_of_budget(harness) and self._holds()):
+                return harness, detail
+
+    async def _one_loop_run(
+        self,
+        loop: "_Loop",
+        prompt: str,
+        candidate: Candidate,
+        kind: str,
+        thinking: str | None,
+        merge_base: str,
+        branch: str | None,
+    ) -> tuple[HarnessResult | None, str]:
+        """One review or fix run, once the task and its goal have the budget for it."""
         info = workflow.info()
         attempt = len(loop.attempts) + 1
+        grant, loop.limit = await self._grant(
+            loop.request.goal_id, loop.limit, loop.spent, _need(loop.attempts, kind), f"{kind} run {attempt}"
+        )
+        if grant is None:
+            return None, f"the task spent its ${loop.limit} spend limit"
         run_id = run_id_for(info.workflow_id, attempt)
         self._current_run_id = run_id
         harness, decision, detail, run_spent = await self._try(
             prompt,
             run_id,
             candidate,
-            loop.left(),
+            grant,
             loop.prepared.repo,
             thinking,
             branch=loop.published.branch if branch is None else branch,
@@ -1048,6 +1167,18 @@ class _Loop:
             branch=self.published.branch,
             **fields,
         )
+
+
+def _need(attempts: list[Attempt], kind: str) -> Decimal:
+    """What a run of this kind (task, review or fix) is likely to need: what the task's last run of that kind
+    spent, or nothing when it has made none."""
+    same = [a for a in attempts if (a.tier if a.tier in ("review", "fix") else "task") == kind]
+    return Decimal(same[-1].spent_usd) if same else Decimal(0)
+
+
+def _out_of_budget(harness: HarnessResult | None) -> bool:
+    """Whether the run stopped because its spend limit was reached."""
+    return harness is not None and harness.status != "FINISHED" and harness.end_reason == "spend_limit"
 
 
 def harness_timeout(candidate: Candidate) -> timedelta:

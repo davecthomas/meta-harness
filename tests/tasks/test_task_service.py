@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -187,6 +188,66 @@ def test_a_task_that_fails_or_ends_unresolved_is_logged_as_an_error_or_a_warning
         ("ERROR", f"task {failed['id']} is failed (was running): deploy failed on the merge commit"),
         ("WARNING", f"task {unresolved['id']} is review_unresolved (was running): None"),
     ], "running is not logged; failed is an error; review_unresolved a warning"
+
+
+def _held(api) -> dict:
+    task = api.post("/v1/tasks", json=_task(max_usd="10.00"), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    held = api.post(
+        f"/v1/tasks/{task['id']}/status",
+        json={"status": "running", "reason": "fix run 4 needs about $1.00", "waiting_on": "budget"},
+        headers=_as(SERVICE_KEY),
+    )
+    assert held.status_code == 200
+    return held.json()
+
+
+def test_a_task_held_for_budget_stays_running_is_listed_as_waiting_and_records_the_hold(api, events):
+    task = _held(api)
+
+    assert (task["status"], task["waiting_on"]) == ("running", "budget")
+    waiting = api.get("/v1/tasks", params={"waiting": "true"}, headers=_as(CALLER_KEY)).json()["tasks"]
+    assert task["id"] in [t["id"] for t in waiting]
+    assert ("budget_hold", {"reason": "fix run 4 needs about $1.00"}) in [(e[0], e[1]) for e in events.events]
+    # Setting it again records nothing more, and leaving running ends the wait.
+    api.post(
+        f"/v1/tasks/{task['id']}/status",
+        json={"status": "running", "reason": "still", "waiting_on": "budget"},
+        headers=_as(SERVICE_KEY),
+    )
+    assert [e[0] for e in events.events].count("budget_hold") == 1
+    ended = api.post(f"/v1/tasks/{task['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY)).json()
+    assert ended["waiting_on"] is None
+
+
+def test_raising_a_held_tasks_limit_saves_it_and_queues_the_answer_for_its_workflow(api, events):
+    task = _held(api)
+
+    low = api.post(f"/v1/tasks/{task['id']}/budget", json={"action": "raise", "max_usd": "8"}, headers=_as(CALLER_KEY))
+    assert low.status_code == 409 and "above the task's $10.00" in low.json()["detail"]
+    raised = api.post(
+        f"/v1/tasks/{task['id']}/budget", json={"action": "raise", "max_usd": "15"}, headers=_as(CALLER_KEY)
+    )
+
+    assert raised.status_code == 202 and Decimal(raised.json()["max_usd"]) == Decimal("15")
+    pending = api.get("/v1/messages/pending", headers=_as(SERVICE_KEY)).json()["messages"]
+    assert [(m["deliver"], m["body"]) for m in pending if m["task_id"] == task["id"]] == [("budget", "raise:15")]
+    assert ("budget_decision", {"action": "raise", "max_usd": "15"}) in [(e[0], e[1]) for e in events.events]
+
+
+def test_a_budget_answer_needs_a_held_task_and_goes_through_its_own_endpoint(api):
+    held = _held(api)
+    ended = api.post(f"/v1/tasks/{held['id']}/budget", json={"action": "end"}, headers=_as(CALLER_KEY))
+    assert ended.status_code == 202
+    through_messages = api.post(
+        f"/v1/tasks/{held['id']}/messages", json={"text": "raise:99", "when": "budget"}, headers=_as(CALLER_KEY)
+    )
+    assert through_messages.status_code == 422
+
+    running = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{running['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    refused = api.post(f"/v1/tasks/{running['id']}/budget", json={"action": "end"}, headers=_as(CALLER_KEY))
+    assert refused.status_code == 409 and "not held for budget" in refused.json()["detail"]
 
 
 def test_clearing_a_task_whose_pull_request_merged_closes_it(api, events):

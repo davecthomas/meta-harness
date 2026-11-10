@@ -91,6 +91,8 @@ def issues_progress(links: list[dict], tasks: list[dict], events: list[dict]) ->
                 "task_id": task_id,
                 "task_status": task["status"] if task else None,
                 "task_status_reason": task.get("status_reason") if task else None,
+                # "budget" while the running task is held for budget, waiting on an operator.
+                "task_waiting_on": task.get("waiting_on") if task else None,
                 **view,
             }
         )

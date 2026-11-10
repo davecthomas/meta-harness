@@ -5,9 +5,9 @@ import type { IssueProgress, Task } from "../../api";
 
 const FAILED = ["failed", "review_unresolved"];
 
-// The goal's issues whose task failed or ended unresolved, or that the planner refused.
+// The goal's issues whose task failed, ended unresolved or is held for budget, or that the planner refused.
 export function failures(issues: IssueProgress[]): IssueProgress[] {
-  return issues.filter((i) => i.refused_reason || (i.task_status !== null && FAILED.includes(i.task_status)));
+  return issues.filter((i) => i.refused_reason || i.task_waiting_on || (i.task_status !== null && FAILED.includes(i.task_status)));
 }
 
 // A goal with failed work says so above its board: each failed or unresolved task with why, linked to its page,
@@ -21,7 +21,8 @@ export function GoalFailures({ issues, tasks }: { issues: IssueProgress[]; tasks
       <List size="sm" spacing={4}>
         {failed.map((i) => {
           const name = (i.task_id && tasks[i.task_id]?.title) || i.ref.replace(/^github:/, "");
-          const why = i.refused_reason ? `refused: ${i.refused_reason}` : `${i.task_status}: ${i.task_status_reason ?? "no reason was recorded"}`;
+          const state = i.task_waiting_on === "budget" ? "out of budget" : i.task_status;
+          const why = i.refused_reason ? `refused: ${i.refused_reason}` : `${state}: ${i.task_status_reason ?? "no reason was recorded"}`;
           return (
             <List.Item key={i.ref}>
               {i.task_id ? <Anchor component={Link} to={`/tasks/${i.task_id}`} size="sm">{name}</Anchor> : <Text span size="sm">{name}</Text>}
