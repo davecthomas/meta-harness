@@ -161,9 +161,13 @@ async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, even
 async def _take_in_added(
     goal: dict, seen: set[str], tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult
 ):
-    """Take in the issues an operator added to the goal by ref, which its label did not list."""
+    """Take in the issues an operator added to the goal by ref, which its label did not list. One in a repo the
+    goal no longer names makes no task there."""
+    names = {name.lower() for name in goal["repos"]}
     for link in await asyncio.to_thread(_links, goal["id"]):
         if link["task_id"] or link["refused_reason"] or link["state"] != "open" or link["ref"] in seen:
+            continue
+        if link["repo"].lower() not in names:
             continue
         try:
             issue = await tracker.read(link["ref"])
