@@ -330,6 +330,42 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(err)) from err
         return task, repo, number
 
+    @app.get("/v1/pulls/{task_id}/attempts")
+    async def attempt_compare(task_id: str, who: str = Depends(operator)) -> dict:
+        """A task's attempts side by side: each one's candidate, how it ended, its cost, and its changes from its own
+        workspace. waiting says the task waits for an operator to pick one."""
+        try:
+            task = await asyncio.to_thread(tasks.get, task_id)
+        except TaskApiError as err:
+            raise HTTPException(status_code=404 if err.status == 404 else 502, detail=str(err)) from err
+        try:
+            page = await asyncio.to_thread(events.read, 0, 500, task_id=task_id, event_type="attempt_finished")
+        except Exception as err:  # noqa: BLE001 - the event service is the caller's 502
+            raise HTTPException(status_code=502, detail=f"could not read the task's attempts: {err}") from err
+        shown = []
+        for event in page["events"]:
+            p = event["payload"]
+            entry = {
+                "attempt": p.get("attempt"),
+                "run_id": event.get("run_id"),
+                "candidate": p.get("candidate"),
+                "decision": p.get("decision"),
+                "detail": p.get("detail"),
+                "spent_usd": p.get("spent_usd"),
+                "files": [],
+                "patch": "",
+            }
+            if p.get("decision") == "finished" and event.get("run_id"):
+                try:
+                    entry |= await code_host.workspace_diff(task_id, event["run_id"])
+                except Exception as err:  # noqa: BLE001 - one unreadable workspace says why and shows the rest
+                    entry["patch"] = f"could not read the workspace: {err}"
+            shown.append(entry)
+        waiting = (
+            task["status"] == "running" and not task.get("pr_url") and "pick one" in (task.get("status_reason") or "")
+        )
+        return {"task_id": task_id, "waiting": waiting, "attempts": shown}
+
     @app.get("/v1/pulls/{task_id}/diff")
     async def pull_diff(task_id: str, who: str = Depends(operator)) -> dict:
         """The files the task's pull request changes against its base, with their patches, and its head commit.

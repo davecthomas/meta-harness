@@ -70,6 +70,8 @@ class RunTaskInput:
     review: bool = True
     # The task's goal, whose auto_merge decides whether a clean pull request merges.
     goal_id: str = ""
+    # Attempts made at once on the first tier's candidates, for an operator to pick one. 1: the usual run loop.
+    attempts: int = 1
 
 
 @dataclass
@@ -242,6 +244,7 @@ class TaskSpec:
     # The issue the pull request closes, owner/name#number, from a github: external_ref.
     closes: str
     goal_id: str = ""
+    attempts: int = 1
 
 
 @dataclass

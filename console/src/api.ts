@@ -206,6 +206,22 @@ export interface PullDiff {
   files: { path: string; status: string; additions: number; deletions: number; patch: string | null }[];
 }
 
+// A task's attempts side by side, from GET /v1/pulls/{task_id}/attempts.
+export interface AttemptsCompare {
+  task_id: string;
+  waiting: boolean;
+  attempts: {
+    attempt: number;
+    run_id: string | null;
+    candidate: string | null;
+    decision: string;
+    detail: string | null;
+    spent_usd: string | null;
+    files: { path: string; additions: number; deletions: number }[];
+    patch: string;
+  }[];
+}
+
 export interface Task {
   id: string;
   external_ref: string;
@@ -220,6 +236,8 @@ export interface Task {
   acceptance_checks: string[];
   created_at: string;
   updated_at: string;
+  // Attempts the task's first run makes at once, for an operator to pick one.
+  attempts?: number;
 }
 
 export interface MhEvent {
@@ -304,8 +322,10 @@ export const api = {
   pullDiff: (taskId: string) => call<PullDiff>(`/v1/pulls/${taskId}/diff`),
   commentOnLines: (taskId: string, body: { path: string; line: number; start_line: number | null; body: string }) =>
     call<{ url: string }>(`/v1/pulls/${taskId}/comments`, { method: "POST", body: JSON.stringify(body) }),
-  messageTask: (id: string, text: string, when: "next_turn" | "after_stop" | "stop") =>
+  messageTask: (id: string, text: string, when: "next_turn" | "after_stop" | "stop" | "choose") =>
     call<{ message_id: number }>(`/v1/tasks/${id}/messages`, { method: "POST", body: JSON.stringify({ text, when }) }),
+  setAttempts: (id: string, count: number) => call<Task>(`/v1/tasks/${id}/attempts`, { method: "POST", body: JSON.stringify({ count }) }),
+  attempts: (taskId: string) => call<AttemptsCompare>(`/v1/pulls/${taskId}/attempts`),
   clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
   cancelTask: (id: string) =>
     call<Task>(`/v1/tasks/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "canceled from the console" }) }),

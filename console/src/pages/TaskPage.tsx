@@ -8,6 +8,7 @@ import { Reviews } from "../components/Reviews";
 import { Timeline } from "../components/Timeline";
 import { Plan } from "../components/Plan";
 import { SteerBox } from "../components/SteerBox";
+import { CompareAttempts, RunAttempts } from "../components/Attempts";
 import { Changes } from "../components/Changes";
 import { SpendLine, spendOf } from "../components/Spend";
 import { useEventStream } from "../hooks";
@@ -41,7 +42,7 @@ export function TaskPage() {
   const [from, setFrom] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The task's review rounds, for the Reviews tab, read once the task has a pull request.
-  const [tab, setTab] = useState<"timeline" | "terminal" | "changes" | "reviews">("timeline");
+  const [tab, setTab] = useState<"timeline" | "terminal" | "changes" | "reviews" | "attempts">("timeline");
   const [rounds, setRounds] = useState<ReviewRound[] | null>(null);
   // The task's goal's name, for the link back to it. Null until read, or when the task has no goal.
   const [goalName, setGoalName] = useState<string | null>(null);
@@ -168,19 +169,25 @@ export function TaskPage() {
         ]}
       />
       {status === "running" && <SteerBox taskId={task.id} />}
+      {["queued", "blocked"].includes(status) && (
+        <RunAttempts taskId={task.id} attempts={task.attempts ?? 1} onSet={() => void api.task(task.id).then(setTask)} />
+      )}
       <Plan events={events} />
       <SegmentedControl
         mb="md"
         value={tab}
-        onChange={(v) => setTab(v as "timeline" | "terminal" | "changes" | "reviews")}
+        onChange={(v) => setTab(v as "timeline" | "terminal" | "changes" | "reviews" | "attempts")}
         data={[
           { value: "timeline", label: "Timeline" },
           { value: "terminal", label: "Terminal" },
+          ...((task.attempts ?? 1) > 1 ? [{ value: "attempts", label: "Attempts" }] : []),
           ...(task.pr_url ? [{ value: "changes", label: "Changes" }, { value: "reviews", label: `Reviews${rounds ? ` (${rounds.length})` : ""}` }] : []),
         ]}
       />
       {tab === "reviews" && task.pr_url ? (
         rounds ? <Reviews task={task} rounds={rounds} /> : <Center h={120}><Loader /></Center>
+      ) : tab === "attempts" ? (
+        <CompareAttempts taskId={task.id} />
       ) : tab === "changes" && task.pr_url ? (
         <Changes taskId={task.id} />
       ) : tab === "timeline" ? (

@@ -280,3 +280,27 @@ def test_a_running_task_takes_an_operator_message_and_the_scheduler_reads_it_onc
     ]
     assert left == []
     assert api.post(f"/v1/tasks/{task['id']}/messages", json={"text": " "}, headers=_as(CALLER_KEY)).status_code == 422
+
+
+def test_a_task_that_has_not_started_takes_several_attempts_and_a_pick_is_its_own_event(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    assert task["attempts"] == 1
+    assert api.post(f"/v1/tasks/{task['id']}/attempts", json={"count": 5}, headers=_as(CALLER_KEY)).status_code == 422
+    assert (
+        api.post(f"/v1/tasks/{task['id']}/attempts", json={"count": 3}, headers=_as(CALLER_KEY)).json()["attempts"] == 3
+    )
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    assert api.post(f"/v1/tasks/{task['id']}/attempts", json={"count": 2}, headers=_as(CALLER_KEY)).status_code == 409
+
+    picked = api.post(f"/v1/tasks/{task['id']}/messages", json={"text": "2", "when": "choose"}, headers=_as(CALLER_KEY))
+
+    assert picked.status_code == 202
+    assert [p for t, p, f in events.events if t == "attempt_chosen" and f.get("task_id") == task["id"]][0][
+        "attempt"
+    ] == 2
+    assert (
+        api.post(
+            f"/v1/tasks/{task['id']}/messages", json={"text": "two", "when": "choose"}, headers=_as(CALLER_KEY)
+        ).status_code
+        == 422
+    )

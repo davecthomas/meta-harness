@@ -955,3 +955,42 @@ def test_search_finds_goals_by_text_and_asks_the_task_api_for_tasks(api, parts):
 
     assert [g["title"] for g in found["goals"]] == [f"Fix {word} saves"]
     assert found["tasks"][0]["id"] == "t-9"
+
+
+def test_attempts_compare_each_finished_attempts_changes_and_say_when_a_pick_is_awaited(api, parts, monkeypatch):
+    from meta_harness.run_service import code_host
+
+    events, _, tasks = parts
+    tasks.tasks["t-par"] = {
+        "id": "t-par",
+        "status": "running",
+        "pr_url": None,
+        "goal_id": None,
+        "status_reason": "2 attempts finished: waiting for an operator to compare them and pick one",
+    }
+    events.emit(
+        "attempt_finished",
+        {"attempt": 1, "candidate": "a", "decision": "finished", "spent_usd": "1"},
+        task_id="t-par",
+        run_id="t-par:run-1",
+    )
+    events.emit(
+        "attempt_finished",
+        {"attempt": 2, "candidate": "b", "decision": "final", "spent_usd": "2"},
+        task_id="t-par",
+        run_id="t-par:run-2",
+    )
+
+    async def workspace_diff(ref, run_id):
+        return {
+            "files": [{"path": "a.py", "additions": 3, "deletions": 1}],
+            "patch": "diff --git a/a.py",
+            "missing": False,
+        }
+
+    monkeypatch.setattr(code_host, "workspace_diff", workspace_diff)
+
+    shown = api.get("/v1/pulls/t-par/attempts", headers=OPERATOR).json()
+
+    assert shown["waiting"] is True
+    assert [(a["attempt"], a["candidate"], len(a["files"])) for a in shown["attempts"]] == [(1, "a", 1), (2, "b", 0)]

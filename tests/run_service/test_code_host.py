@@ -136,3 +136,29 @@ async def test_publish_again_finds_the_branch_and_the_record(origin: Path, run_d
     assert first is not None and first.created
     assert second is not None and not second.created
     assert second.commit == first.commit
+
+
+async def test_a_runs_workspace_diff_counts_changed_and_new_files_against_its_clone(tmp_path, monkeypatch):
+    import subprocess
+
+    from meta_harness.run_service import code_host, sandbox
+
+    monkeypatch.setattr(sandbox, "RUNS_DIR", tmp_path)
+    workspace, git_dir = sandbox.workspace_for("t-1", "t-1:run-2"), sandbox.git_dir_for("t-1", "t-1:run-2")
+    workspace.mkdir(parents=True)
+    git = ["git", f"--git-dir={git_dir}", f"--work-tree={workspace}", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", f"--separate-git-dir={git_dir}", str(workspace)], check=True)
+    (workspace / "app.py").write_text("a\nb\n")
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "base"], check=True)
+    (workspace / "app.py").write_text("a\nB\nc\n")
+    (workspace / "new.py").write_text("x\n")
+
+    diff = await code_host.workspace_diff("t-1", "t-1:run-2")
+
+    assert sorted((f["path"], f["additions"], f["deletions"]) for f in diff["files"]) == [
+        ("app.py", 2, 1),
+        ("new.py", 1, 0),
+    ]
+    assert "+B" in diff["patch"] and diff["missing"] is False
+    assert (await code_host.workspace_diff("t-1", "t-1:run-9"))["missing"] is True

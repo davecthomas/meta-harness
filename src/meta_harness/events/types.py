@@ -240,6 +240,11 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType(
+        "attempt_chosen",
+        1,
+        _object({"message_id": {"type": "integer"}, "attempt": {"type": "integer"}}, ["message_id", "attempt"]),
+    ),
+    EventType(
         "issue_added",
         1,
         _object({"ref": {"type": "string"}, "goal_id": {"type": "string"}}, ["ref", "goal_id"]),
