@@ -453,6 +453,85 @@
     "required": [],
     "type": "object"
   },
+  "plan_approved v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "issues": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "version": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "goal_id",
+      "version",
+      "issues"
+    ],
+    "type": "object"
+  },
+  "plan_requested v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "note": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "task_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "task_id"
+    ],
+    "type": "object"
+  },
+  "plan_saved v1": {
+    "additionalProperties": true,
+    "properties": {
+      "drafts": {
+        "type": "integer"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "invalid": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "source": {
+        "enum": [
+          "planned",
+          "edited"
+        ],
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "goal_id",
+      "version",
+      "source",
+      "drafts"
+    ],
+    "type": "object"
+  },
   "plan_updated v1": {
     "additionalProperties": true,
     "properties": {},

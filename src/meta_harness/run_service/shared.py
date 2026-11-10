@@ -74,6 +74,8 @@ class RunTaskInput:
     attempts: int = 1
     # Where a task an operator sent back to the queue picks up: review, merge, or "" for a first run.
     resume: str = ""
+    # The Task API task's type. plan: a goal's planning task, whose run drafts issues and changes no file.
+    task_type: str = ""
 
 
 @dataclass
@@ -257,6 +259,7 @@ class TaskSpec:
     resume: str = ""
     # How many times the task was sent back: its workflows after the first say so in what they record.
     retries: int = 0
+    task_type: str = ""
 
 
 @dataclass

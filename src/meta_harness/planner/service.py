@@ -38,7 +38,7 @@ from meta_harness.config import store as config_store
 from meta_harness.config.kinds import ConfigError, sandbox_ceiling
 from meta_harness.github_app import GitHubApps
 from meta_harness.run_service import code_host
-from meta_harness.planner import activity, drafting, progress, repos, settings, store
+from meta_harness.planner import activity, drafting, plan_api, planning, progress, repos, settings, store
 from meta_harness.planner.sweep import CodeHost, Events, SweepResult, active_goals, sweep_goal
 from meta_harness.planner.tracker import Tracker, parse_ref
 from meta_harness.tasks.client import TaskApiError, TaskClient
@@ -194,11 +194,26 @@ def create_app(
         for goal in goals:
             await title_one(goal)
 
+    async def plan_one(goal: dict, who: str) -> None:
+        """Start a planning goal's planning task. A failure is logged: Replan on its page starts it again."""
+        try:
+            await planning.start(goal, tasks, events, who)
+        except planning.PlanError as err:
+            log.error("goal %s: %s", goal["id"], err)
+
+    def planning_goals() -> list[dict]:
+        with app.state.pool.connection() as conn:
+            return store.list_goals(conn, ["planning"])
+
     async def sweep_forever() -> None:
         while True:
             with contextlib.suppress(Exception):
                 for goal in await asyncio.to_thread(active_goals):
                     await sweep_one(goal)
+            # A planning goal's ended planning task becomes its plan.
+            with contextlib.suppress(Exception):
+                for goal in await asyncio.to_thread(planning_goals):
+                    await planning.collect(goal, tasks, events)
             await asyncio.sleep(interval)
 
     @asynccontextmanager
@@ -273,6 +288,7 @@ def create_app(
         return change_with(goal_id, who, status=status)
 
     drafting.check_settings()
+    planning.check_settings()
     draft = drafter or drafting.draft_goal
 
     def registered(names: list[str]) -> list[str]:
@@ -559,7 +575,9 @@ def create_app(
         if unknown:
             raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
         names = [repos.get(name).name for name in body.repos]
-        if not body.label and not body.refs:
+        planned = body.modality in store.PLANNED_MODALITIES
+        # A goal that plans its own issues needs neither: its plan's issues get a label of the goal's own.
+        if not body.label and not body.refs and not planned:
             raise HTTPException(status_code=422, detail="a goal needs a label, or issues picked by ref, or both")
         if why := parallel_reason(body.max_parallel):
             raise HTTPException(status_code=422, detail=why)
@@ -569,6 +587,8 @@ def create_app(
             with app.state.pool.connection() as conn:
                 goal = store.create(conn, who, store.NewGoal(**{**fields, "repos": names}))
                 held = store.add_refs(conn, goal["id"], pairs)
+                if planned and not goal["label"]:
+                    goal, _ = store.update(conn, goal["id"], label=planning.goal_label(goal))
         except store.GoalError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
         events.emit(
@@ -589,6 +609,10 @@ def create_app(
             events.emit("issue_added", {"ref": ref, "goal_id": goal["id"]}, actor=who, tags={"goal_id": goal["id"]})
         if goal["status"] == "active":
             asyncio.create_task(sweep_one(goal))
+        if goal["status"] == "planning":
+            # Before the answer goes back, so the goal it shows already names its planning task.
+            await plan_one(goal, who)
+            goal = await asyncio.to_thread(load, goal["id"])
         if not goal["title"]:
             asyncio.create_task(title_one(goal))
         return goal
@@ -709,7 +733,17 @@ def create_app(
     @app.post("/v1/goals/{goal_id}/resume")
     async def resume(goal_id: str, who: str = Depends(operator)) -> dict:
         """Make the goal active, but not a met or canceled one: that is reopen. Its first start, for a goal
-        saved without starting, sweeps it at once."""
+        saved without starting, sweeps it at once. A goal that plans its own issues, with no approved plan
+        yet, goes to planning instead, and its planning task starts."""
+        current = load(goal_id)
+        if (
+            current["modality"] in store.PLANNED_MODALITIES
+            and current["status"] == "paused"
+            and not current["plan_approved_at"]
+        ):
+            goal, _ = await asyncio.to_thread(move_with, goal_id, who, "planning", {"paused"})
+            await plan_one(goal, who)
+            return await asyncio.to_thread(load, goal_id)
         goal, changed = await asyncio.to_thread(
             move_with, goal_id, who, "active", {"active", "paused", "stalled", "budget_exhausted"}
         )
@@ -748,5 +782,12 @@ def create_app(
         if goal["status"] != "active":
             raise HTTPException(status_code=409, detail=f"the goal is {goal['status']}")
         return asdict(await sweep_one(goal))
+
+    async def activate(goal_id: str, who: str) -> None:
+        """An approved plan's goal becomes active, and its first sweep takes the created issues in."""
+        goal, _ = await asyncio.to_thread(move_with, goal_id, who, "active", {"planning"})
+        asyncio.create_task(sweep_one(goal))
+
+    plan_api.register(app, operator, load, events, tracker, tasks, activate)
 
     return app

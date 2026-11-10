@@ -84,10 +84,12 @@ SCENARIOS = {
     },
     # After the budget-hold patch: each run of a goal's task first reads the goal's budget.
     "patched-budget-hold-merged": {"verdicts": [CLEAN], "goal_id": "g-1", "auto_merge": True},
+    # After the plan-task patch: a goal's planning task ends closed after its run, with no publish and no review.
+    "patched-plan-task": {"goal_id": "g-1", "task_type": "plan"},
 }
 
 
-def _task_activities(review: bool, goal_id: str) -> list:
+def _task_activities(review: bool, goal_id: str, task_type: str = "") -> list:
     """Stand-ins for the task service and the record activities, which a Task API task runs."""
 
     @activity.defn(name="load_task")
@@ -105,6 +107,7 @@ def _task_activities(review: bool, goal_id: str) -> list:
             spend_limit_usd="10.00",
             closes="owner/repo#1",
             goal_id=goal_id,
+            task_type=task_type,
         )
 
     @activity.defn(name="set_task_status")
@@ -160,10 +163,11 @@ async def test_record_a_history(env, name):  # noqa: F811 - env is the fixture i
     review = scenario.pop("review", True)
     goal_id = scenario.pop("goal_id", "")
     auto_merge = scenario.pop("auto_merge", False)
+    task_type = scenario.pop("task_type", "")
     script = Script(**scenario)
     script.auto_merge = auto_merge
     workflow_id = f"run-task-{name}"
-    activities = [*script.activities(), *_task_activities(review, goal_id)]
+    activities = [*script.activities(), *_task_activities(review, goal_id, task_type)]
     async with Worker(env.client, task_queue=QUEUE, workflows=[RunTask], activities=activities):
         handle = await env.client.start_workflow(
             RunTask.run,

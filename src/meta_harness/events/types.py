@@ -300,6 +300,41 @@ REGISTRY: list[EventType] = [
         1,
         _object({"ref": {"type": "string"}, "goal_id": {"type": "string"}}, ["ref", "goal_id"]),
     ),
+    # A feature goal's plan: a planning task asked for, a plan version saved, and the plan approved
+    EventType(
+        "plan_requested",
+        1,
+        _object(
+            {"goal_id": {"type": "string"}, "task_id": {"type": "string"}, "note": {"type": ["string", "null"]}},
+            ["goal_id", "task_id"],
+        ),
+    ),
+    EventType(
+        "plan_saved",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "version": {"type": "integer"},
+                "source": {"type": "string", "enum": ["planned", "edited"]},
+                "drafts": {"type": "integer"},
+                "invalid": {"type": "array", "items": {"type": "string"}},
+            },
+            ["goal_id", "version", "source", "drafts"],
+        ),
+    ),
+    EventType(
+        "plan_approved",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "version": {"type": "integer"},
+                "issues": {"type": "array", "items": {"type": "string"}},
+            },
+            ["goal_id", "version", "issues"],
+        ),
+    ),
     EventType(
         "issue_dropped",
         1,

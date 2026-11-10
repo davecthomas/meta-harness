@@ -204,8 +204,9 @@ async def test_a_task_gets_its_issues_paths(api, parts):
 def test_a_goal_needs_registered_repos_and_a_built_modality(api):
     base = {"statement": "Fix bugs", "label": _label()}
     assert api.post("/v1/goals", json={**base, "repos": ["someone/else"]}, headers=OPERATOR).status_code == 422
-    feature = {**base, "repos": ["davecthomas/meta-harness"], "modality": "feature"}
-    assert api.post("/v1/goals", json=feature, headers=OPERATOR).status_code == 422
+    unbuilt = {**base, "repos": ["davecthomas/meta-harness"], "modality": "new-system"}
+    refused = api.post("/v1/goals", json=unbuilt, headers=OPERATOR)
+    assert refused.status_code == 422 and "needs phases" in refused.json()["detail"]
     assert api.post("/v1/goals", json={**base, "repos": ["davecthomas/meta-harness"]}).status_code == 401
 
 

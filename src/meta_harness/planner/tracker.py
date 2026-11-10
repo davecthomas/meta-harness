@@ -8,10 +8,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from meta_harness.github_app import GitHubApps
+from meta_harness.github_app import GitHubAppError, GitHubApps
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 
 READ_ISSUES = {"issues": "read"}
+# Creating a plan's issues, and the goal's label for them, once an operator approves the plan.
+WRITE_ISSUES = {"issues": "write"}
 REF = re.compile(r"^github:(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$")
 # "Depends on: #12, owner/repo#13" lines in an issue body.
 DEPENDS_LINE = re.compile(r"^\s*depends on:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
@@ -103,3 +105,25 @@ class GitHubTracker:
     async def read(self, ref: str) -> Issue:
         repo, number = parse_ref(ref)
         return _issue(repo, await self.apps.call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}"))
+
+    async def ensure_label(self, repo: str, label: str) -> None:
+        """Makes sure the repo has the label, so an issue created with it carries it."""
+        try:
+            await self.apps.call(
+                repo,
+                WRITE_ISSUES,
+                "POST",
+                f"/repos/{repo}/labels",
+                json={"name": label, "color": "5319e7", "description": "A meta-harness goal's issues"},
+            )
+        except GitHubAppError as err:
+            # 422: the label is there already.
+            if err.status != 422:
+                raise
+
+    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
+        """Creates one issue. Only the planner calls it, and only for a plan an operator approved."""
+        created = await self.apps.call(
+            repo, WRITE_ISSUES, "POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": labels}
+        )
+        return _issue(repo, created)
