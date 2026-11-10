@@ -881,3 +881,46 @@ def test_an_operator_edits_a_goals_description_and_budget(api, parts):
     assert changed["statement"] == "New words." and changed["max_usd"] == "40.0000"
     moves = [p["changes"] for t, p in events.events if t == "goal_changed" and p["goal_id"] == goal["id"]]
     assert moves[-1]["statement"] == {"from": "Old words.", "to": "New words."}
+
+
+# --- A task's pull request: its diff and line comments -------------------------------------------------
+
+
+def test_a_tasks_diff_and_a_line_comment_that_names_the_operator(api, parts, monkeypatch):
+    from meta_harness.run_service import code_host
+    from meta_harness.run_service.code_host import PullRequest
+
+    events, _, tasks = parts
+    tasks.tasks["t-pr"] = {"id": "t-pr", "status": "ready", "pr_url": "https://github.com/o/r/pull/7", "goal_id": None}
+    tasks.tasks["t-none"] = {"id": "t-none", "status": "running", "pr_url": None, "goal_id": None}
+    posted = []
+
+    async def read_pull_request(repo, number):
+        return PullRequest(repo=repo, number=number, url="", state="open", head_sha="abc", merge_sha="")
+
+    async def pull_request_files(repo, number):
+        return [
+            {"path": "a.py", "status": "modified", "additions": 2, "deletions": 1, "patch": "@@ -1 +1,2 @@\n-x\n+y\n+z"}
+        ]
+
+    async def comment_on_lines(repo, number, head_sha, path, line, body, start_line=None):
+        posted.append((repo, number, head_sha, path, line, start_line, body))
+        return "https://github.com/o/r/pull/7#c1"
+
+    monkeypatch.setattr(code_host, "read_pull_request", read_pull_request)
+    monkeypatch.setattr(code_host, "pull_request_files", pull_request_files)
+    monkeypatch.setattr(code_host, "comment_on_lines", comment_on_lines)
+
+    diff = api.get("/v1/pulls/t-pr/diff", headers=OPERATOR).json()
+    assert (diff["repo"], diff["number"], diff["head_sha"]) == ("o/r", 7, "abc")
+    assert diff["files"][0]["additions"] == 2
+
+    made = api.post(
+        "/v1/pulls/t-pr/comments",
+        json={"path": "a.py", "line": 2, "start_line": 1, "body": "Name it."},
+        headers=OPERATOR,
+    )
+    assert made.status_code == 201 and made.json()["url"].endswith("#c1")
+    assert posted == [("o/r", 7, "abc", "a.py", 2, 1, "**dave** wrote:\n\nName it.")]
+    assert [p["path"] for t, p in events.events if t == "pull_request_commented"] == ["a.py"]
+    assert api.get("/v1/pulls/t-none/diff", headers=OPERATOR).status_code == 404
