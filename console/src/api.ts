@@ -1,84 +1,22 @@
 // The console's only way to the meta-harness: the /v1 REST API, through the edge (src/meta_harness/edge).
 // In the cloud the edge needs a Google sign-in session (/auth); locally it names the operator itself.
 
-export class ApiError extends Error {
-  // `reasons`: every reason a configuration save was refused, when the service listed them.
-  constructor(public status: number, public detail: string, public reasons: string[] = []) {
-    super(detail);
-  }
-}
+import { ApiError, call, query } from "./client";
+import { activityApi } from "./features/activity/api";
+import { adminApi } from "./features/admin/api";
+import { configApi } from "./features/config/api";
+import { goalsApi } from "./features/goals/api";
+import { settingsApi } from "./features/settings/api";
+import { tasksApi } from "./features/tasks/api";
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    const reasons: string[] = Array.isArray(body?.detail?.reasons) ? body.detail.reasons : [];
-    const detail = body && typeof body.detail === "string" ? body.detail : reasons.join("; ") || JSON.stringify(body?.detail ?? body);
-    throw new ApiError(response.status, detail || response.statusText, reasons);
-  }
-  return body as T;
-}
-
-export type ConfigKind = "tiers" | "profiles" | "repos";
-
-export interface ConfigSummary {
-  kind: ConfigKind;
-  title: string;
-  description: string;
-  version: number;
-  edited_by: string;
-  created_at: string;
-}
-
-export interface ConfigVersion {
-  kind: ConfigKind;
-  version: number;
-  document: Record<string, any>;
-  edited_by: string;
-  note: string | null;
-  origin: "seed" | "edit" | "rollback";
-  rolled_back_from: number | null;
-  created_at: string;
-}
-
-function query(params: Record<string, string | number | undefined | null>): string {
-  const pairs = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "");
-  return pairs.length ? "?" + new URLSearchParams(pairs.map(([k, v]) => [k, String(v)])).toString() : "";
-}
-
-export interface LabelCount {
-  label: string;
-  total: number;
-  repos: Record<string, number>;
-  // How many of the label's open issues an open goal holds, and those goals.
-  held: number;
-  held_by: string[];
-}
-
-export interface LabelIssue {
-  ref: string;
-  number: number;
-  title: string;
-  labels: string[];
-  updated_at: string;
-  held_by: string | null;
-}
-
-export interface GoalDraft {
-  title: string;
-  statement: string;
-  theme: string;
-  modality: string;
-  model: string;
-  usd_cost: string;
-  label: string;
-  repos: string[];
-  refs: string[];
-}
+export { ApiError, call, query };
+// Each feature's own types, so `import { ... } from "../api"` finds them too.
+export * from "./features/activity/api";
+export * from "./features/admin/api";
+export * from "./features/config/api";
+export * from "./features/goals/api";
+export * from "./features/settings/api";
+export * from "./features/tasks/api";
 
 export interface Goal {
   id: string;
@@ -120,106 +58,6 @@ export interface IssueLink {
   state: string;
   depends_on: string[];
   refused_reason: string | null;
-}
-
-// An issue of a goal with its task's progress, from GET /v1/goals/{id}/issues.
-export interface IssueProgress {
-  ref: string;
-  repo: string;
-  state: string;
-  depends_on: string[];
-  refused_reason: string | null;
-  task_id: string | null;
-  task_status: string | null;
-  task_status_reason: string | null;
-  pr_url: string | null;
-  pr_state: "open" | "merged" | "closed" | null;
-  checks: { head_sha: string | null; state: "passed" | "failed" | "pending" | "none"; failed: string[] } | null;
-}
-
-// A pull request on the activity map: the one a task opened, with its review and fix runs.
-export interface ActivityPr {
-  task_id: string;
-  latest_run_id: string | null;
-  title: string;
-  repo: string;
-  pr_url: string;
-  opened_at: string;
-  state: "in_review" | "waiting" | "blocked" | "merged" | "closed";
-  state_at: string;
-  fix_rounds: number;
-  usd: number;
-}
-
-// A task that spent without opening a pull request.
-export interface ActivitySpend {
-  task_id: string;
-  latest_run_id: string | null;
-  title: string;
-  started_at: string;
-  usd: number;
-}
-
-export interface Activity {
-  group_by: string;
-  days: number;
-  groups: { key: string; name: string; total: number; left_out: number; prs: ActivityPr[]; spent_without_pr: ActivitySpend[] }[];
-  cost_scale: { low: number; high: number };
-}
-
-// One log entry, as the Logs page shows it, with the whole Cloud Logging entry.
-export interface LogEntry {
-  time: string;
-  service: string;
-  severity: string;
-  message: string;
-  entry: Record<string, unknown>;
-}
-
-// The signed-in user's own settings, from GET /v1/me/settings.
-export interface UserSettings {
-  planner: { repos: string[]; modality: "fix" | "feature" | "new-system"; latitude: number | null; max_usd: string | null; auto_merge: boolean };
-  appearance: "light" | "dark" | "system";
-  notifications: boolean;
-}
-
-// One review round on a task's pull request, from GET /v1/tasks/{id}/reviews.
-export interface ReviewRound {
-  round: number;
-  verdict: "clean" | "changes";
-  reviewer: string | null;
-  head_sha: string | null;
-  summary: string;
-  findings: { path: string | null; line: number | null; body: string }[];
-  review_url: string | null;
-  reviewed_at: string | null;
-  run_id: string | null;
-  next: { kind: "fix" | "merged" | "reviewed_again" | "waiting" | "ended" | "under_way"; run_id?: string | null; attempt?: number; reason?: string | null };
-}
-
-// A task's pull request: the files it changes with their patches, from GET /v1/pulls/{task_id}/diff.
-export interface PullDiff {
-  repo: string;
-  number: number;
-  head_sha: string;
-  state: string;
-  files: { path: string; status: string; additions: number; deletions: number; patch: string | null }[];
-}
-
-// A task's attempts side by side, from GET /v1/pulls/{task_id}/attempts.
-export interface AttemptsCompare {
-  task_id: string;
-  waiting: boolean;
-  attempts: {
-    attempt: number;
-    run_id: string | null;
-    candidate: string | null;
-    decision: string;
-    detail: string | null;
-    spent_usd: string | null;
-    files: { path: string; additions: number; deletions: number }[];
-    patch: string;
-  }[];
 }
 
 export interface Task {
@@ -264,12 +102,10 @@ export interface KillSwitch {
   changed_at: string;
 }
 
+// The calls every feature shares; each feature's own calls are in features/<feature>/api.ts.
 export const api = {
   version: () => call<{ version: string; commit: string | null }>("/v1/version"),
   me: () => call<{ identity: string; roles?: string[] }>("/v1/me"),
-  logs: (params: { unit?: string; severity?: string; minutes?: number; q?: string }) =>
-    call<{ entries: LogEntry[]; units: string[] }>("/v1/admin/logs" + query(params)),
-  deploys: () => call<{ version: string; commit: string | null; revision: string | null; project?: string | null }>("/v1/admin/deploys"),
   // The newest `limit` events of these types, oldest first.
   recentEvents: (eventTypes: string[], limit: number) =>
     call<{ events: MhEvent[] }>("/v1/events" + query({ event_type: eventTypes.join(","), limit, before_position: Number.MAX_SAFE_INTEGER })).then((r) => r.events),
@@ -280,56 +116,6 @@ export const api = {
   // Where to open the live event stream, and the ticket that opens it (null locally).
   streamTicket: () => call<{ base: string; ticket: string | null }>("/auth/stream-ticket", { method: "POST" }),
   repos: () => call<{ repos: { name: string }[] }>("/v1/repos").then((r) => r.repos),
-
-  goals: async (statuses: string[], offset: number, limit: number): Promise<Page<Goal>> => {
-    const r = await call<{ goals: Goal[]; total: number }>(
-      "/v1/goals" + query({ status: statuses.join(","), offset, limit }),
-    );
-    return { items: r.goals, total: r.total };
-  },
-  goal: (id: string) => call<Goal & { issues: IssueLink[] }>(`/v1/goals/${id}`),
-  createGoal: (body: Record<string, unknown>) => call<Goal>("/v1/goals", { method: "POST", body: JSON.stringify(body) }),
-  // Goals from labels: every label on the registered repos' open issues, a label's issues, and a drafted goal.
-  labels: (repo?: string) => call<{ repos: string[]; labels: LabelCount[] }>("/v1/labels" + query({ repo })),
-  // A registered repo's open issues, newest first, with the label and title text given, if any.
-  repoIssues: (repo: string, params: { label?: string; q?: string; cursor?: number; limit?: number }) =>
-    call<{ issues: LabelIssue[]; total: number; next_cursor: number | null }>(`/v1/repos/${repo}/issues` + query(params)),
-  addIssues: (goalId: string, refs: string[]) =>
-    call<{ added: string[] }>(`/v1/goals/${goalId}/issues`, { method: "POST", body: JSON.stringify({ refs }) }),
-  labelIssues: (repo: string, label: string) =>
-    call<{ issues: LabelIssue[] }>(`/v1/repos/${repo}/issues` + query({ label })).then((r) => r.issues),
-  draftGoal: (body: { label: string; repos: string[]; refs: string[] }) =>
-    call<GoalDraft>("/v1/goals/draft", { method: "POST", body: JSON.stringify(body) }),
-  goalAction: (id: string, action: "pause" | "resume" | "cancel" | "complete" | "reopen" | "sweep") =>
-    call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
-  patchGoal: (id: string, fields: Record<string, unknown>) =>
-    call<Goal>(`/v1/goals/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
-
-  tasks: async (
-    // pr: true for tasks with a pull request, false for tasks without one.
-    params: { statuses?: string[]; goalId?: string; pr?: boolean },
-    offset: number,
-    limit: number,
-  ): Promise<Page<Task>> => {
-    const pr = params.pr === undefined ? undefined : String(params.pr);
-    const r = await call<{ tasks: Task[]; total: number }>(
-      "/v1/tasks" + query({ status: params.statuses?.join(","), goal_id: params.goalId, pr, offset, limit }),
-    );
-    return { items: r.tasks, total: r.total };
-  },
-  task: (id: string) => call<Task>(`/v1/tasks/${id}`),
-  reviews: (id: string) => call<{ rounds: ReviewRound[] }>(`/v1/tasks/${id}/reviews`).then((r) => r.rounds),
-  pullDiff: (taskId: string) => call<PullDiff>(`/v1/pulls/${taskId}/diff`),
-  commentOnLines: (taskId: string, body: { path: string; line: number; start_line: number | null; body: string }) =>
-    call<{ url: string }>(`/v1/pulls/${taskId}/comments`, { method: "POST", body: JSON.stringify(body) }),
-  messageTask: (id: string, text: string, when: "next_turn" | "after_stop" | "stop" | "choose") =>
-    call<{ message_id: number }>(`/v1/tasks/${id}/messages`, { method: "POST", body: JSON.stringify({ text, when }) }),
-  setAttempts: (id: string, count: number) => call<Task>(`/v1/tasks/${id}/attempts`, { method: "POST", body: JSON.stringify({ count }) }),
-  attempts: (taskId: string) => call<AttemptsCompare>(`/v1/pulls/${taskId}/attempts`),
-  clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
-  cancelTask: (id: string) =>
-    call<Task>(`/v1/tasks/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "canceled from the console" }) }),
-
   // The last `limit` events before `before`, or the newest `limit`, for one task or several.
   events: (taskIds: string[], limit: number, before?: number) =>
     call<{ events: MhEvent[]; latest_position: number }>(
@@ -352,32 +138,20 @@ export const api = {
     }
     return found.sort((a, b) => a.position - b.position);
   },
-  // Each of a goal's issues with its task's status and its pull request's state and checks.
-  goalIssues: (id: string) => call<{ issues: IssueProgress[] }>(`/v1/goals/${id}/issues`).then((r) => r.issues),
-  activity: (groupBy: "goal" | "repo" | "label", days = 91) => call<Activity>("/v1/activity" + query({ group_by: groupBy, days })),
   latestPosition: () => call<{ latest_position: number }>("/v1/events" + query({ limit: 1, from_position: 0 })),
-
-  configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file" }>("/v1/config"),
   search: (q: string) =>
     call<{ goals: { id: string; title: string; status: string }[]; tasks: { id: string; title: string; status: string; ref: string | null }[] }>(
       "/v1/search" + query({ q }),
     ),
-  settings: () => call<UserSettings>("/v1/me/settings"),
-  saveSettings: (settings: UserSettings) => call<UserSettings>("/v1/me/settings", { method: "PUT", body: JSON.stringify(settings) }),
-  reposAvailable: () => call<{ repos: { name: string; private: boolean }[]; install_urls: string[] }>("/v1/repos/available"),
-  configModels: () =>
-    call<{ models: { name: string; engine: string; model: string; status: string }[] }>("/v1/config/models").then((r) => r.models),
-  config: (kind: ConfigKind) => call<ConfigVersion>(`/v1/config/${kind}`),
-  configVersions: (kind: ConfigKind) =>
-    call<{ versions: ConfigVersion[] }>(`/v1/config/${kind}/versions`).then((r) => r.versions),
-  saveConfig: (kind: ConfigKind, document: unknown, note: string) =>
-    call<ConfigVersion>(`/v1/config/${kind}`, { method: "PUT", body: JSON.stringify({ document, note: note || null }) }),
-  rollbackConfig: (kind: ConfigKind, version: number) =>
-    call<ConfigVersion>(`/v1/config/${kind}/rollback`, { method: "POST", body: JSON.stringify({ version }) }),
-
   killSwitch: () => call<KillSwitch>("/v1/kill-switch"),
   setKillSwitch: (engaged: boolean, reason: string) =>
     call<KillSwitch>("/v1/kill-switch", { method: "POST", body: JSON.stringify({ engaged, reason }) }),
+  ...activityApi,
+  ...adminApi,
+  ...configApi,
+  ...goalsApi,
+  ...settingsApi,
+  ...tasksApi,
 };
 
 // One server-sent-event stream for many tasks: the event service's tail, filtered by task ids.
