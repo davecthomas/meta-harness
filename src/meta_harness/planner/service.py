@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from meta_harness import auth, db
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
+from meta_harness.github_app import GitHubApps
 from meta_harness.planner import activity, drafting, progress, repos, store
 from meta_harness.planner.sweep import CodeHost, Events, SweepResult, active_goals, sweep_goal
 from meta_harness.planner.tracker import Tracker, parse_ref
@@ -110,6 +111,7 @@ def create_app(
     drafter=None,
     host: CodeHost | None = None,
     titler=None,
+    apps: GitHubApps | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -125,6 +127,8 @@ def create_app(
             return await sweep_goal(goal, tracker, tasks, events, host)
 
     name = titler or drafting.title_goal
+    # The GitHub Apps, to list the repos they are installed on: the tracker's, else the environment's.
+    apps = apps or getattr(tracker, "apps", None) or GitHubApps()
 
     async def title_one(goal: dict) -> None:
         """Give a goal with no title one its model writes. A failure leaves it untitled, and the console shows
@@ -272,7 +276,23 @@ def create_app(
         return dict(zip(names, found, strict=True))
 
     # The configuration API, for every kind, until the run service has an HTTP API of its own.
-    app.include_router(config_api.router(lambda: app.state.pool, operator, events))
+    def repos_in_use(kind: str, document: dict[str, Any]) -> list[str]:
+        """A repo an open goal names stays in the registry: the refusal names the goals."""
+        if kind != "repos":
+            return []
+        kept = {name.lower() for name in (document.get("repos") or {})}
+        with app.state.pool.connection() as conn:
+            goals = store.list_goals(conn, list(store.OPEN_GOAL_STATUSES))
+        reasons = []
+        for goal in goals:
+            for repo in goal["repos"]:
+                if repo.lower() not in kept:
+                    reasons.append(
+                        f"{repo} is named by open goal {goal['id']} ({goal.get('title') or goal['statement'][:60]})"
+                    )
+        return reasons
+
+    app.include_router(config_api.router(lambda: app.state.pool, operator, events, repos_in_use))
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -284,6 +304,27 @@ def create_app(
     def registered_repos(who: str = Depends(operator)) -> dict:
         """The repo registry: the repos a goal may name."""
         return {"repos": [{"name": r.name, "tracker": r.tracker} for r in repos.registry().values()]}
+
+    @app.get("/v1/repos/available")
+    async def available_repos(who: str = Depends(operator)) -> dict:
+        """The repos the deployment's GitHub Apps are installed on and the registry does not list yet, and where
+        to install an app on more."""
+        try:
+            installed = await apps.installed()
+        except Exception as err:  # noqa: BLE001 - say why; the page still lists the registry
+            raise HTTPException(status_code=502, detail=f"could not list the GitHub Apps' repos: {err}") from err
+        registered = {name.lower() for name in repos.registry()}
+        return {
+            "repos": sorted(
+                (
+                    {"name": r["name"], "private": r["private"]}
+                    for r in installed
+                    if r["name"].lower() not in registered
+                ),
+                key=lambda r: r["name"].lower(),
+            ),
+            "install_urls": sorted({r["install_url"] for r in installed}),
+        }
 
     @app.get("/v1/labels")
     async def labels(repo: str | None = None, who: str = Depends(operator)) -> dict:
