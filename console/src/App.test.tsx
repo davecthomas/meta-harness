@@ -104,3 +104,17 @@ test.each([
     expect(screen.queryAllByRole("link", { name }).length > 0).toBe(shown);
   }
 });
+
+test("the header shows the version and the deployed commit, linked", async () => {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/me") return respond({ identity: "operator@example.com", roles: ["operator"] });
+    if (url === "/v1/version") return respond({ version: "0.21.1", commit: "4a286e3c0ffee" });
+    if (url.startsWith("/v1/goals")) return respond({ goals: [], total: 0 });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+
+  renderAt("/goals");
+
+  expect((await screen.findByTestId("version")).textContent).toBe("v0.21.1 · 4a286e3");
+  expect(screen.getByRole("link", { name: "4a286e3" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness/commit/4a286e3c0ffee");
+});

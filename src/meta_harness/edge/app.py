@@ -46,6 +46,7 @@ VM's services' and the edge's logs from Cloud Logging (meta_harness.edge.logs).
 
 import asyncio
 import os
+import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -56,6 +57,7 @@ from fastapi import Body, FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
+from meta_harness import __version__
 from meta_harness.edge.logs import EDGE, UNITS, LogsError, read_logs
 from meta_harness.run_service.paths import REPO_ROOT
 
@@ -83,6 +85,17 @@ DROPPED_RESPONSE_HEADERS = {"content-length", "transfer-encoding", "connection",
 
 def operators_from_env() -> set[str]:
     return {o.strip().lower() for o in os.environ.get("MH_CONSOLE_OPERATORS", "").split(",") if o.strip()}
+
+
+def deployed_commit() -> str | None:
+    """MH_COMMIT, which the release stack sets to the deployed commit, else the local checkout's HEAD."""
+    if commit := os.environ.get("MH_COMMIT"):
+        return commit
+    try:
+        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
 
 
 def admins_from_env() -> set[str]:
@@ -299,6 +312,15 @@ def create_app(
         roles = ["operator", "admin"] if is_admin(who) else ["operator"]
         return private(JSONResponse({"identity": who, "roles": roles}))
 
+    @app.get("/v1/version")
+    def version(request: Request) -> Response:
+        """What runs: the version every shipping pull request bumps, and the commit, which tells apart deployments
+        of one version. MH_COMMIT is the deployed commit; locally, the checkout's."""
+        _, denied = signed_in(request)
+        if denied:
+            return denied
+        return private(JSONResponse({"version": __version__, "commit": deployed_commit()}))
+
     @app.get("/v1/admin/logs")
     async def admin_logs(
         request: Request,
@@ -327,13 +349,11 @@ def create_app(
             return denied
         if not is_admin(who):
             return private(JSONResponse({"detail": f"{who} is not an admin"}, status_code=403))
-        from meta_harness import __version__
-
         return private(
             JSONResponse(
                 {
                     "version": __version__,
-                    "commit": os.environ.get("MH_COMMIT") or None,
+                    "commit": deployed_commit(),
                     "revision": os.environ.get("K_REVISION") or None,
                     "project": os.environ.get("MH_PROJECT") or None,
                 }

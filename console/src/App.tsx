@@ -3,6 +3,7 @@ import { NavLink as RouterLink, Route, Routes, useLocation } from "react-router-
 import {
   ActionIcon,
   Alert,
+  Anchor,
   AppShell,
   Avatar,
   Burger,
@@ -132,6 +133,7 @@ export function App() {
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Menu" />
             <IconHexagons size={26} stroke={1.6} color="var(--mantine-primary-color-filled)" />
             <Title order={4}>Meta-harness</Title>
+            {who && <VersionTag />}
           </Group>
           <Group gap="xs" wrap="nowrap">
             <ColorSchemeToggle />
@@ -232,5 +234,29 @@ function UserMenu({ who }: { who: string }) {
         <Menu.Item onClick={() => void signOut()}>Sign out</Menu.Item>
       </Menu.Dropdown>
     </Menu>
+  );
+}
+
+// The version and the deployed commit, small and dimmed after the title. The commit links to it on GitHub.
+function VersionTag() {
+  const [running, setRunning] = useState<{ version: string; commit: string | null } | null>(null);
+  useEffect(() => {
+    api.version().then(setRunning, () => setRunning(null));
+  }, []);
+  if (!running) return null;
+  return (
+    <Text size="xs" c="dimmed" visibleFrom="xs" data-testid="version">
+      v{running.version}
+      {running.commit && (
+        <>
+          {" · "}
+          <Tooltip label={running.commit}>
+            <Anchor href={`https://github.com/davecthomas/meta-harness/commit/${running.commit}`} target="_blank" c="dimmed" size="xs" ff="monospace">
+              {running.commit.slice(0, 7)}
+            </Anchor>
+          </Tooltip>
+        </>
+      )}
+    </Text>
   );
 }

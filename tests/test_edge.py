@@ -429,3 +429,12 @@ def test_logs_without_google_credentials_say_why(tmp_path, monkeypatch):
     )
     refused = TestClient(app).get("/v1/admin/logs")
     assert refused.status_code == 502 and "no Google credentials" in refused.json()["detail"]
+
+
+def test_version_names_the_version_and_the_deployed_commit(tmp_path, monkeypatch):
+    from meta_harness import __version__
+
+    monkeypatch.setenv("MH_COMMIT", "4a286e3c0ffee")
+    client, seen = _edge(tmp_path)
+    assert client.get("/v1/version").json() == {"version": __version__, "commit": "4a286e3c0ffee"}
+    assert seen == []
