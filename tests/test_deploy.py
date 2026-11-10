@@ -223,3 +223,16 @@ def test_each_plan_is_tried_again_when_reading_the_state_fails():
     """A deploy failed once on 'error loading state: Failed to open state file at gs://...'."""
     deploy = (WORKFLOWS / "deploy.yml").read_text()
     assert deploy.count("for try in 1 2 3; do") == 4, "init and plan, in both stacks"
+
+
+def test_a_deploy_blocked_by_a_failed_check_opens_an_issue_that_names_the_check():
+    """A failed check on main used to open an issue saying only "The VM reported: nothing" (#116)."""
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    assert "id: checks" in deploy
+    assert 'if [ "${{ steps.checks.outcome }}" = "failure" ]; then' in deploy
+    assert "blocked: a check failed on main" in deploy and "$(cat failed-checks.txt" in deploy
+
+
+def test_the_e2e_judges_a_starter_crash_after_a_completed_workflow_by_its_result():
+    stack = (ROOT / "samples" / "temporal-run-task" / "stack.sh").read_text()
+    assert '[ "$status" -eq 139 ] && grep -q' in stack
