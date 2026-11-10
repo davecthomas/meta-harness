@@ -7,24 +7,41 @@ import { api, type LabelCount } from "../../api";
 // open goals already hold all its issues. A label with no open issue can still be typed, and the field
 // says so, so a typo shows. If the labels can't be read, the field is plain text and says why.
 // fieldProps: what the goal page's in-place edit changes on the input, such as no label of its own.
-export function LabelField({ value, onChange, repos, required = true, fieldProps }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean; fieldProps?: Partial<AutocompleteProps> }) {
+// The labels to suggest for these repos, with each one's open-issue count, read once. Shared by the goal's
+// Label field and the issue picker's Label filter, so both suggest the same labels the same way.
+export function useLabelSuggestions(repos: string[]) {
   const [labels, setLabels] = useState<LabelCount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-
   useEffect(() => {
     api.labels().then(
       (r) => setLabels(r.labels),
       (err) => setError(err instanceof Error ? err.message : String(err)),
     );
   }, []);
-
   const options = useMemo(() => suggestions(labels ?? [], repos), [labels, repos]);
   const byName = useMemo(() => new Map(options.map((o) => [o.label, o])), [options]);
+  return { options, byName, error, loaded: labels !== null };
+}
+
+// One suggested label in the dropdown: its name, its open-issue count, and whether goals already hold them all.
+export function LabelOption({ row }: { row: LabelSuggestion }) {
+  return (
+    <Group justify="space-between" wrap="nowrap" gap="md" w="100%">
+      <Text size="sm" ff="monospace">{row.label}</Text>
+      <Text size="xs" c={row.allHeld ? "orange" : "dimmed"} ta="right">
+        {row.count} open{row.allHeld ? ` · all held by goal ${row.heldBy.join(", ")}` : ""} · {row.repos.join(", ")}
+      </Text>
+    </Group>
+  );
+}
+
+export function LabelField({ value, onChange, repos, required = true, fieldProps }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean; fieldProps?: Partial<AutocompleteProps> }) {
+  const { options, byName, error, loaded } = useLabelSuggestions(repos);
 
   const typed = value.trim();
   let hint: string | null = null;
   if (error) hint = `Labels could not be loaded, so type it exactly: ${error}`;
-  else if (labels && typed && !byName.has(typed)) hint = "No open issue has this label yet.";
+  else if (loaded && typed && !byName.has(typed)) hint = "No open issue has this label yet.";
 
   return (
     <Stack gap={4}>
@@ -40,15 +57,7 @@ export function LabelField({ value, onChange, repos, required = true, fieldProps
         {...fieldProps}
         renderOption={({ option }) => {
           const row = byName.get(option.value);
-          if (!row) return option.value;
-          return (
-            <Group justify="space-between" wrap="nowrap" gap="md" w="100%">
-              <Text size="sm" ff="monospace">{row.label}</Text>
-              <Text size="xs" c={row.allHeld ? "orange" : "dimmed"} ta="right">
-                {row.count} open{row.allHeld ? ` · all held by goal ${row.heldBy.join(", ")}` : ""} · {row.repos.join(", ")}
-              </Text>
-            </Group>
-          );
+          return row ? <LabelOption row={row} /> : option.value;
         }}
       />
       {/* Advice, not a validation error: the label is still allowed. */}

@@ -2256,6 +2256,18 @@ that run), and a link to its warnings and errors on the Logs page. Its
 goal's page shows an alert above the board listing each failed or
 unresolved task with its reason, linked to the task, and each issue the
 planner refused.
+New goal chooses a goal's issues in one place: its Label field and Pick
+issues. A label, typed or set by a draft, selects every open issue with it in
+the goal's repos that no other goal holds: the form lists them under the
+field, and Pick issues shows them checked and locked, marked "via label",
+since the label takes them whatever is unchecked; to leave one out, the
+operator clears the label and picks by hand. Issues picked by hand are sent
+as the goal's `refs`; the label's are not. The picker's Label filter suggests
+the labels of the repos it shows, with their open-issue counts, as the Label
+field does. Above the form, "Draft from a label (optional)", closed until
+asked for, lists a label's open issues read-only and has a model draft the
+title and description from those no other goal holds; it fills the form and
+saves nothing.
 The Goal page keeps itself current while it is open and the goal is not
 closed: it rereads the goal and its issues every 5 seconds (not while the
 browser tab is hidden, and at once when it shows again), besides listening
