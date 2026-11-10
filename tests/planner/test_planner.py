@@ -16,6 +16,19 @@ pytestmark = pytest.mark.db
 OPERATOR = {"Authorization": "Bearer op-key"}
 
 
+@pytest.fixture(autouse=True)
+def registry(monkeypatch):
+    """The example repo registry, whatever the machine has: CI has no config/repos.local.json."""
+    from meta_harness.planner import repos
+    from meta_harness.run_service.paths import REPO_ROOT
+
+    monkeypatch.setenv("MH_REPOS_CONFIG", str(REPO_ROOT / "config" / "repos.example.json"))
+    monkeypatch.delenv("MH_CONFIG_SOURCE", raising=False)
+    repos._file_registry.cache_clear()
+    yield
+    repos._file_registry.cache_clear()
+
+
 @pytest.fixture(scope="module", autouse=True)
 def migrated():
     try:
@@ -162,11 +175,11 @@ async def test_a_sweep_turns_labeled_issues_into_tasks_once(api, parts):
     ).json()
     with_checks = tracker.add(
         "davecthomas/meta-harness",
-        9001 + hash(label) % 1000,
+        _number(),
         body="Broken.\n\n## Acceptance checks\n- `make test`\n",
         labels=[label],
     )
-    defaults = tracker.add("davecthomas/meta-harness", 8001 + hash(label) % 1000, body="Also broken.", labels=[label])
+    defaults = tracker.add("davecthomas/meta-harness", _number(), body="Also broken.", labels=[label])
     _sweep(api, goal)
     again = _sweep(api, goal)
     assert again["joined"] == []
