@@ -542,7 +542,7 @@ test("update_plan comes with write and records the plan as a plan_updated event"
 		body:
 			n === 1
 				? turn({ finish_reason: "tool_use", tool_calls: [{ id: "toolu_plan", name: "update_plan", input: { steps } }], token: "tok-plan" })
-				: turn({ text: "Done.", token: "tok-done" }),
+				: turn({ text: "Done.", finish_reason: "complete", token: "tok-done" }),
 	}));
 	const server = await startServer(gateway.url);
 	const profile = { name: "pi-lean", tools: ["read", "write", "edit"], max_turns: 10, max_minutes: 5 };
@@ -551,7 +551,7 @@ test("update_plan comes with write and records the plan as a plan_updated event"
 	const plans = events.filter((e) => e.type === "plan_updated");
 	assert.equal(plans.length, 1);
 	assert.deepEqual(plans[0]!.data.steps, steps);
-	const offered = gateway.requests[0]!.body.tools.map((t: { name: string }) => t.name);
+	const offered = (gateway.requests[0]!.body.tools as { name: string }[]).map((t) => t.name);
 	assert.ok(offered.includes("update_plan"), `update_plan is offered: ${offered.join(", ")}`);
 	await server.stop();
 	await gateway.close();
