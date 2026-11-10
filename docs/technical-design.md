@@ -2296,6 +2296,21 @@ field does. Above the form, "Draft from a label (optional)", closed until
 asked for, lists a label's open issues read-only and has a model draft the
 title and description from those no other goal holds; it fills the form and
 saves nothing.
+New goal asks where the goal's issues come from: issues that exist (a `fix`
+goal, by label and by picking), or planned from the description (a `feature`
+goal, whose label is optional). On a goal in `planning`, the Goal page shows
+its plan (#75): while the planning task drafts, a notice with a link to its
+run, reread every 5 seconds; then each draft as a card, in the order the
+work can be done, with its repo, title, body and what it waits on, its
+acceptance checks set apart, and above them the order of work as a small
+graph of which draft follows which. The page says which version is shown and
+who made it, and links to the planning task's run. A draft is edited, added
+or removed in a dialog; edits are held on the page until Save as version
+N+1, and leaving with unsaved edits asks first. An invalid plan lists its
+reasons and cannot be approved. Approve the plan says how many issues it
+will create and with which label, then creates them and starts the goal.
+Replan takes a note and starts a new planning task. The body shows as text,
+not rendered Markdown.
 The Goal page keeps itself current while it is open and the goal is not
 closed: it rereads the goal and its issues every 5 seconds (not while the
 browser tab is hidden, and at once when it shows again), besides listening
@@ -2829,7 +2844,7 @@ Design work no issue covers yet:
 
 | Issue | Repo |
 |---|---|
-| The `new-system` modality with its phases, goal success criteria as commands and checks, the modality classifier and latitude. The `feature` modality's planning task and plan approval are built (#72, #73); the console's plan review is filed (#75) | meta-harness |
+| The `new-system` modality with its phases, goal success criteria as commands and checks, the modality classifier and latitude. The `feature` modality's planning task and plan approval are built (#72, #73); the console's plan review is built (#75) | meta-harness |
 | The `modalities` and `access` configuration kinds, beside the built tiers, profiles, repo registry and task policy | meta-harness |
 | ai-api-unified decisions in the operator console: the Cloud Logging log sink, the Pub/Sub topic and push subscription, and `gateway_request` events | meta-harness |
 | The metering service and the Spend view | meta-harness |

@@ -197,7 +197,7 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
             <Text size="sm">{draft.theme}</Text>
             <Text size="xs" c="dimmed" mt={4}>
               Drafted by {draft.model} for ${draft.usd_cost}. The issues read as {draft.modality}
-              {draft.modality === "feature" ? "; feature goals aren't built yet, so this one runs as fix" : ""}. The
+. The
               form below has the title, description, label and repos: edit them, then create the goal. The goal
               takes every open issue with that label, now and later; Pick issues adds others.
             </Text>
