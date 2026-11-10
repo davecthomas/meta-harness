@@ -23,7 +23,9 @@ def rounds(task: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str,
     for index, review in enumerate(posted):
         body = (submitted[index]["payload"] if index < len(submitted) else {}) or {}
         run_id = submitted[index].get("run_id") if index < len(submitted) else None
-        after = [e for e in ordered if e["position"] > review["position"]]
+        # What a round led to is what happened before the next round, not anything later in the task.
+        until = posted[index + 1]["position"] if index + 1 < len(posted) else None
+        after = [e for e in ordered if e["position"] > review["position"] and (until is None or e["position"] < until)]
         shown.append(
             {
                 "round": review["payload"]["round"],
@@ -54,6 +56,7 @@ def _next(task: dict, review: dict, after: list[dict], is_last: bool) -> dict[st
     if any(e["event_type"] == "pull_request_merged" for e in after):
         return {"kind": "merged"}
     if not is_last:
+        # A clean round is reviewed again when the pull request's head changed before it could merge.
         return {"kind": "reviewed_again"}
     if task["status"] == "ready":
         return {"kind": "waiting", "reason": task.get("status_reason")}

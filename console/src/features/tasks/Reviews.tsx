@@ -16,7 +16,7 @@ function nextLine(round: ReviewRound, taskId: string) {
   const n = round.next;
   if (n.kind === "fix") return <Text size="sm">Sent to <Anchor component={Link} to={`/tasks/${taskId}?run=${encodeURIComponent(n.run_id ?? "")}`}>fix run {n.attempt ?? ""}</Anchor></Text>;
   if (n.kind === "merged") return <Text size="sm">Merged</Text>;
-  if (n.kind === "reviewed_again") return <Text size="sm">Reviewed again</Text>;
+  if (n.kind === "reviewed_again") return <Text size="sm">Reviewed again: the pull request's head changed before the next step</Text>;
   if (n.kind === "waiting") return <Text size="sm">Waiting for an operator{n.reason ? `: ${n.reason}` : ""}</Text>;
   if (n.kind === "ended") return <Text size="sm">The loop stopped{n.reason ? `: ${n.reason}` : ""}</Text>;
   return <Text size="sm" c="dimmed">The loop goes on</Text>;

@@ -240,6 +240,43 @@ def test_reviews_pair_each_posted_round_with_its_findings_and_say_what_came_next
     assert shown[1]["next"]["kind"] == "waiting"
 
 
+def test_each_round_says_what_came_before_the_next_round_not_what_came_later(api, events):
+    """Two changes rounds each with its own fix run, a clean round reviewed again when the head changed, and a
+    clean round that merged: only the last says merged, and each fix link is its own round's."""
+    task = _ended(api, "closed")
+    tid = task["id"]
+
+    def round_of(n: int, verdict: str) -> list:
+        posted = {"round": n, "verdict": verdict, "reviewer": "harness:pi-review/x:y", "head_sha": f"h{n}"}
+        return [
+            ("review_submitted", {"verdict": verdict, "summary": "", "findings": []}, f"r-review-{n}"),
+            ("pull_request_reviewed", posted, None),
+        ]
+
+    log = [
+        *round_of(1, "changes"),
+        ("attempt_finished", {"tier": "fix", "attempt": 3}, "r-fix-1"),
+        *round_of(2, "changes"),
+        ("attempt_finished", {"tier": "fix", "attempt": 5}, "r-fix-2"),
+        *round_of(3, "clean"),
+        *round_of(4, "clean"),
+        ("pull_request_merged", {"pr_url": "https://github.com/o/r/pull/12"}, None),
+    ]
+    for kind, payload, run in log:
+        events.emit(kind, payload, task_id=tid, run_id=run)
+    for position, event in enumerate(events.events, start=1):
+        event[2]["position"] = position
+
+    shown = api.get(f"/v1/tasks/{tid}/reviews", headers=_as(CALLER_KEY)).json()["rounds"]
+
+    assert [r["next"] for r in shown] == [
+        {"kind": "fix", "run_id": "r-fix-1", "attempt": 3},
+        {"kind": "fix", "run_id": "r-fix-2", "attempt": 5},
+        {"kind": "reviewed_again"},
+        {"kind": "merged"},
+    ]
+
+
 def test_tasks_are_found_by_text_in_their_title_id_or_ref(api):
     word = f"walrus{uuid.uuid4().hex[:6]}"
     task = api.post("/v1/tasks", json=_task(title=f"Fix the {word} crash"), headers=_as(CALLER_KEY)).json()
