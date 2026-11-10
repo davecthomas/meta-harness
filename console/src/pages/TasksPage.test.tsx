@@ -68,3 +68,15 @@ test("Pull request open lists the tasks waiting on someone, and clears the ones 
 
   await waitFor(() => expect(posted).toEqual(["/v1/tasks/t-2/clear"]));
 });
+
+test("Auto picks 1 up for one running task, 4 up for a few and 16 up beyond", async () => {
+  const { autoSize } = await import("./TasksPage");
+  expect([0, 1, 2, 4, 5, 40].map(autoSize)).toEqual([1, 1, 4, 4, 16, 16]);
+});
+
+test("with one task running, the terminal view opens 1 up, shown as Auto", async () => {
+  const asked: string[] = [];
+  renderAt("/tasks?show=running&view=tiles", asked);
+  expect(await screen.findByText("Auto (1 up)")).toBeTruthy();
+  expect(document.querySelector(".tiles.up-1")).toBeTruthy();
+});

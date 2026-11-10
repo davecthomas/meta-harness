@@ -21,12 +21,14 @@
 
 /* Tiles: 4 up is 2 columns, 16 up is 4, 32 up is 8 */
 .tiles { display: grid; gap: var(--mantine-spacing-sm); }
+.tiles.up-1 { grid-template-columns: minmax(0, 1fr); }
 .tiles.up-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .tiles.up-16 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .tiles.up-32 { grid-template-columns: repeat(8, minmax(0, 1fr)); }
 .tile { min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .tile header { padding: 8px 10px; display: grid; gap: 4px; min-width: 0; }
 .tile .title { display: block; min-width: 0; }
+.tiles.up-1 .terminal { height: calc(100vh - 260px); min-height: 320px; font-size: 13px; }
 .tiles.up-4 .terminal { height: 36vh; }
 .tiles.up-16 .terminal { height: 20vh; font-size: 11px; }
 .tiles.up-32 .terminal { height: 17vh; font-size: 9.5px; line-height: 1.35; padding: 5px 6px; }
