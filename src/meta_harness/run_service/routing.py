@@ -144,6 +144,10 @@ def _versioned_router(version: int, document: str) -> AiRouteClassifier:
 THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "max"}
 
 
+# The services a harness profile may ask for beside its run's sandbox (sandbox.py starts them).
+SANDBOX_SERVICES = ("postgres",)
+
+
 def profile_errors(name: str, profile: dict[str, Any]) -> list[str]:
     """What is wrong with one harness profile, as the harness server would refuse it at its first run."""
     errors = []
@@ -163,6 +167,9 @@ def profile_errors(name: str, profile: dict[str, Any]) -> list[str]:
             value = resources.get(key) if isinstance(resources, dict) else None
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
                 errors.append(f"{name}: resources.{key} must be a positive number")
+    services = profile.get("services")
+    if services is not None and not (isinstance(services, list) and all(s in SANDBOX_SERVICES for s in services)):
+        errors.append(f"{name}: services must be a list of {', '.join(SANDBOX_SERVICES)}, or left out")
     return errors
 
 

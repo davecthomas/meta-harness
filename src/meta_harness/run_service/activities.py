@@ -252,7 +252,8 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
             request.branch,
             request.merge_base,
         )
-    box = await _lease(tag, run_id, ref, image, sandbox.Resources.from_profile(request.candidate.profile))
+    profile = request.candidate.profile
+    box = await _lease(tag, run_id, ref, image, sandbox.Resources.from_profile(profile), sandbox.services_for(profile))
     try:
         grant_key = await _issue_grant(tag, request, info.workflow_id)
         async with harness_client.client(box) as client:
@@ -418,17 +419,21 @@ async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path, branch: st
         print(f"{tag} cloned {repo} ({checked_out}) into {workspace}", flush=True)
 
 
-async def _lease(tag: str, run_id: str, ref: str, image: str, resources: sandbox.Resources) -> sandbox.Sandbox:
-    """The Lease step: the run's per-run sandbox, started now or found from an earlier attempt."""
+async def _lease(
+    tag: str, run_id: str, ref: str, image: str, resources: sandbox.Resources, services: tuple[str, ...] = ()
+) -> sandbox.Sandbox:
+    """The Lease step: the run's per-run sandbox, started now or found from an earlier attempt, with the
+    services its harness profile asks for beside it."""
     try:
-        box = await sandbox.ensure(run_id, ref, image, resources)
+        box = await sandbox.ensure(run_id, ref, image, resources, services)
     except sandbox.SandboxError as err:
         raise ApplicationError(str(err), type="SandboxUnavailable", non_retryable=True) from err
     if box.created:
         print(
             f"{tag} per-run sandbox {box.name} started from {image} on its own network "
             f"{sandbox.network_name(run_id)}, out only through the egress proxy. "
-            f"Workspace {sandbox.workspace_for(ref, run_id)} mounted at /workspace",
+            f"Workspace {sandbox.workspace_for(ref, run_id)} mounted at /workspace"
+            + (f". Its database is {sandbox.database_name(run_id)}" if "postgres" in services else ""),
             flush=True,
         )
     else:

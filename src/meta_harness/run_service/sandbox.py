@@ -125,6 +125,63 @@ class Resources:
 # Installing and testing a Python repo starts many processes; 512 stopped a pytest run with xdist.
 PIDS_LIMIT = 4096
 
+# A run's database: a Postgres container beside its sandbox, on the run's own network, for the task's tests.
+# Its data is in memory and goes with the run. The image is pulled when the machine does not have it.
+DATABASE_IMAGE = os.environ.get("MH_SANDBOX_POSTGRES_IMAGE", "postgres:16-alpine")
+DATABASE_USER = "mh"
+DATABASE_READY_SECONDS = float(os.environ.get("SANDBOX_DATABASE_READY_SECONDS", "60"))
+SERVICES = ("postgres",)
+
+
+def services_for(profile: dict) -> tuple[str, ...]:
+    """The services a run on this harness profile gets beside its sandbox.
+
+    The profile's `services` when it names them (an empty list: none). Otherwise the machine's
+    MH_SANDBOX_SERVICES, a comma-separated list, so a deployment turns a service on for every profile that
+    does not say, without rewriting the profiles an operator keeps.
+    """
+    named = profile.get("services")
+    if named is None:
+        named = [s.strip() for s in os.environ.get("MH_SANDBOX_SERVICES", "").split(",") if s.strip()]
+    return tuple(s for s in named if s in SERVICES)
+
+
+def database_env() -> tuple[str, ...]:
+    """The environment variables that name the run's database inside its sandbox: MH_SANDBOX_DATABASE_ENV, or
+    DATABASE_URL and MH_DATABASE_URL, which this repo's own tests read."""
+    names = os.environ.get("MH_SANDBOX_DATABASE_ENV", "DATABASE_URL,MH_DATABASE_URL")
+    return tuple(n.strip() for n in names.split(",") if n.strip())
+
+
+def database_name(run_id: str) -> str:
+    return f"{container_name(run_id)}-db"
+
+
+def database_url(run_id: str) -> str:
+    """The run's database as its sandbox reaches it: by the database container's name, on the run's network."""
+    return f"postgresql://{DATABASE_USER}:{DATABASE_USER}@{database_name(run_id)}:5432/{DATABASE_USER}"
+
+
+def database_args(*, name: str, network: str, run_id: str, ref: str) -> list[str]:
+    """The `docker run` arguments for a run's database container."""
+    return [
+        "run", "--detach", "--pull", "missing", "--name", name, "--hostname", name,
+        "--network", network,
+        "--label", f"{SAMPLE_LABEL}=1",
+        "--label", f"meta-harness.run_id={run_id}",
+        "--label", f"meta-harness.ref={ref}",
+        "--cap-drop", "ALL", "--cap-add", "CHOWN", "--cap-add", "SETUID", "--cap-add", "SETGID",
+        "--cap-add", "DAC_OVERRIDE", "--cap-add", "FOWNER",
+        "--security-opt", "no-new-privileges",
+        "--cpus", "1", "--memory", "512m",
+        # In memory: nothing of a run's database outlives it, and the tests are quicker.
+        "--tmpfs", "/var/lib/postgresql/data",
+        "--env", f"POSTGRES_USER={DATABASE_USER}",
+        "--env", f"POSTGRES_PASSWORD={DATABASE_USER}",
+        "--env", f"POSTGRES_DB={DATABASE_USER}",
+        DATABASE_IMAGE,
+    ]  # fmt: skip
+
 
 def run_args(
     *,
@@ -136,9 +193,18 @@ def run_args(
     git_dir: Path,
     image: str,
     resources: Resources = Resources(),
+    database: str = "",
 ) -> list[str]:
-    """The `docker run` arguments for a run's per-run sandbox."""
+    """The `docker run` arguments for a run's per-run sandbox. database: the run's database URL, when it has
+    one, given to the sandbox under each name database_env lists."""
     egress = f"http://{EGRESS_PROXY}:{EGRESS_PORT}"
+    direct = "localhost,127.0.0.1"
+    databases: list[str] = []
+    if database:
+        # The database is on the run's own network: reached by name, never through the egress proxy.
+        direct += f",{database.rsplit('@', 1)[1].split(':', 1)[0]}"
+        for name in database_env():
+            databases += ["--env", f"{name}={database}"]
     volumes = ["--volume", f"{workspace}:/workspace"]
     if git_dir.is_dir():
         volumes += ["--volume", f"{git_dir}:{git_dir}:ro"]
@@ -161,9 +227,10 @@ def run_args(
         # Everything leaves through the egress proxy. Node's fetch uses these only with NODE_USE_ENV_PROXY.
         "--env", f"HTTP_PROXY={egress}", "--env", f"HTTPS_PROXY={egress}",
         "--env", f"http_proxy={egress}", "--env", f"https_proxy={egress}",
-        "--env", "NO_PROXY=localhost,127.0.0.1", "--env", "no_proxy=localhost,127.0.0.1",
+        "--env", f"NO_PROXY={direct}", "--env", f"no_proxy={direct}",
         "--env", "NODE_USE_ENV_PROXY=1",
         "--env", "NODE_OPTIONS=--disable-warning=UNDICI-EHPA",
+        *databases,
         image,
     ]  # fmt: skip
 
@@ -201,11 +268,18 @@ async def find(run_id: str) -> Sandbox | None:
     )
 
 
-async def ensure(run_id: str, ref: str, image: str = IMAGE, resources: Resources = Resources()) -> Sandbox:
+async def ensure(
+    run_id: str,
+    ref: str,
+    image: str = IMAGE,
+    resources: Resources = Resources(),
+    services: tuple[str, ...] = (),
+) -> Sandbox:
     """Returns the run's running per-run sandbox, starting one when there is none.
 
     Waits until the harness server's /health is green, which includes reaching
-    the HTTP Gateway through the egress proxy.
+    the HTTP Gateway through the egress proxy. With the postgres service, the run's database starts
+    first, and the sandbox is given its URL.
     """
     existing = await find(run_id)
     if existing:
@@ -217,6 +291,10 @@ async def ensure(run_id: str, ref: str, image: str = IMAGE, resources: Resources
     workspace = workspace_for(ref, run_id)
     workspace.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(32)
+    database = ""
+    if "postgres" in services:
+        await _ensure_database(run_id, ref, network)
+        database = database_url(run_id)
     args = run_args(
         name=name,
         network=network,
@@ -226,6 +304,7 @@ async def ensure(run_id: str, ref: str, image: str = IMAGE, resources: Resources
         git_dir=git_dir_for(ref, run_id),
         image=image,
         resources=resources,
+        database=database,
     )
     code, _, err = await _docker(*args, env={"HARNESS_SERVER_TOKEN": token})
     if code != 0:
@@ -233,6 +312,7 @@ async def ensure(run_id: str, ref: str, image: str = IMAGE, resources: Resources
         existing = await find(run_id)
         if existing:
             return existing
+        await _docker("rm", "--force", database_name(run_id))
         await _remove_network(network)
         raise SandboxError(f"docker run {name} failed: {err.strip()}")
     sandbox = Sandbox(name=name, url=f"http://{name}:{CONTAINER_PORT}", token=token, proxy=proxy, created=True)
@@ -248,8 +328,36 @@ async def destroy(run_id: str, ref: str) -> bool:
     name = container_name(run_id)
     existed = await save_log(name, ref, run_id)
     await _docker("rm", "--force", name)
+    # Its database, when it had one: gone with the run.
+    await _docker("rm", "--force", database_name(run_id))
     await _remove_network(network_name(run_id))
     return existed
+
+
+async def _ensure_database(run_id: str, ref: str, network: str) -> None:
+    """Starts the run's database container, unless an earlier attempt did, and waits until it takes connections.
+
+    Raises:
+        SandboxError: The container did not start, or was not ready in DATABASE_READY_SECONDS.
+    """
+    name = database_name(run_id)
+    code, out, _ = await _docker("inspect", "--format", "{{.State.Running}}", name)
+    if code != 0 or out.strip() != "true":
+        await _docker("rm", "--force", name)
+        code, _, err = await _docker(*database_args(name=name, network=network, run_id=run_id, ref=ref))
+        if code != 0:
+            raise SandboxError(f"docker run {name} failed: {err.strip()}")
+    deadline = asyncio.get_running_loop().time() + DATABASE_READY_SECONDS
+    while asyncio.get_running_loop().time() < deadline:
+        # Twice in a row: the image starts Postgres once to set it up, stops it, then starts it for good.
+        ready, _, _ = await _docker("exec", name, "pg_isready", "--username", DATABASE_USER, "--host", "127.0.0.1")
+        if ready == 0:
+            await asyncio.sleep(1)
+            again, _, _ = await _docker("exec", name, "pg_isready", "--username", DATABASE_USER, "--host", "127.0.0.1")
+            if again == 0:
+                return
+        await asyncio.sleep(1)
+    raise SandboxError(f"the run's database {name} was not ready in {DATABASE_READY_SECONDS:g} seconds")
 
 
 async def save_log(name: str, ref: str, run_id: str) -> bool:
