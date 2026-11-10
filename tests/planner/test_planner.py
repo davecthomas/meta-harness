@@ -439,8 +439,10 @@ REPO = "davecthomas/meta-harness"
 
 
 def _number() -> int:
-    """An issue number no other test uses: the other tests take numbers under 11000, and links persist."""
-    return 100_000 + uuid.uuid4().int % 900_000
+    """An issue number no other test uses, in this run or an earlier one: the other tests take numbers under
+    11000, and links persist in a database that is kept between runs. The range is wide enough that thousands
+    of kept links do not collide with a new one; a narrower one made tests fail now and then."""
+    return 1_000_000 + uuid.uuid4().int % 10**15
 
 
 def test_labels_are_listed_with_their_open_issue_counts(api, parts):

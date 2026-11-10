@@ -41,3 +41,53 @@ test("the picker lists a repo's open issues, keeps held ones out, and picks the 
   fireEvent.change(screen.getByLabelText("Search"), { target: { value: "crash" } });
   await waitFor(() => expect(asked.some((u) => u.includes("q=crash"))).toBe(true));
 });
+
+test("the Label filter suggests the shown repos' labels with their counts, and choosing one filters", async () => {
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    if (url === "/v1/labels")
+      return respond({
+        repos: ["o/a", "o/b"],
+        labels: [
+          { label: "bug", total: 3, held: 0, held_by: [], repos: { "o/a": 2, "o/b": 1 } },
+          { label: "docs", total: 1, held: 0, held_by: [], repos: { "o/b": 1 } },
+        ],
+      });
+    return respond({ issues: ISSUES, total: 3, next_cursor: null });
+  });
+
+  render(
+    <MantineProvider theme={theme}>
+      <IssuesPicker opened onClose={() => undefined} repos={["o/a"]} action="Add to goal" onPick={() => undefined} />
+    </MantineProvider>,
+  );
+
+  const label = await screen.findByRole("combobox", { name: "Label" });
+  fireEvent.focus(label);
+  fireEvent.change(label, { target: { value: "bu" } });
+  // Only o/a is shown, so docs (o/b alone) is not suggested, and bug counts its o/a issues.
+  const option = await screen.findByRole("option", { name: /bug/, hidden: true });
+  expect(option.textContent).toContain("2 open");
+  expect(screen.queryByRole("option", { name: /docs/, hidden: true })).toBeNull();
+  fireEvent.click(option);
+  await waitFor(() => expect(asked.some((u) => u.startsWith("/v1/repos/o/a/issues") && u.includes("label=bug"))).toBe(true));
+});
+
+test("issues the goal's label takes show checked and locked, and are not among the picked", async () => {
+  vi.stubGlobal("fetch", () => respond({ issues: ISSUES, total: 3, next_cursor: null, labels: [], repos: [] }));
+  const picked: string[][] = [];
+
+  render(
+    <MantineProvider theme={theme}>
+      <IssuesPicker opened onClose={() => undefined} repos={["o/a"]} viaLabel={["github:o/a#1"]} action="Use these issues" onPick={(refs) => void picked.push(refs)} />
+    </MantineProvider>,
+  );
+
+  const locked = (await screen.findByRole("checkbox", { name: "github:o/a#1 is in the goal by its label" })) as HTMLInputElement;
+  expect(locked.checked && locked.disabled).toBe(true);
+  expect(screen.getByText("via label")).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select every issue on this page" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use these issues" }));
+  await waitFor(() => expect(picked).toEqual([["github:o/a#3"]]));
+});

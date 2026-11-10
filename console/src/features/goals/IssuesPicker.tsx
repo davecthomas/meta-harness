@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Anchor, Badge, Button, Checkbox, Group, Modal, Select, Stack, Table, Text, TextInput } from "@mantine/core";
+import { Anchor, Autocomplete, Badge, Button, Checkbox, Group, Modal, Select, Stack, Table, Text, TextInput, Tooltip } from "@mantine/core";
+import { LabelOption, useLabelSuggestions } from "./LabelField";
 import { IconPlus } from "@tabler/icons-react";
 import { api, issueUrl, type LabelIssue } from "../../api";
 import { ErrorAlert } from "../../components/ui";
@@ -18,6 +19,8 @@ export function IssuesPicker(props: {
   chosen?: string[];
   // The goal the picker adds to, so its own issues read as held by it.
   goalId?: string;
+  // Refs the goal's label already takes: shown checked and locked, since unchecking could not leave them out.
+  viaLabel?: string[];
   action: string;
   onPick: (refs: string[]) => Promise<void> | void;
 }) {
@@ -66,8 +69,12 @@ export function IssuesPicker(props: {
   }, [props.opened, available, repo, label, text]);
 
   const shown = useMemo(() => rows.slice(page * PAGE, page * PAGE + PAGE), [rows, page]);
+  const labeled = useMemo(() => new Set(props.viaLabel ?? []), [props.viaLabel]);
   const free = (row: Row) => !row.held_by || row.held_by === props.goalId;
-  const pickable = shown.filter(free);
+  const pickable = shown.filter((row) => free(row) && !labeled.has(row.ref));
+  // The picker's Label filter suggests the labels of the repo it shows, as the goal's Label field does.
+  const filterRepos = useMemo(() => (repo === "all" ? available : [repo]), [repo, available]);
+  const suggested = useLabelSuggestions(filterRepos);
   const allOnPage = pickable.length > 0 && pickable.every((r) => picked.has(r.ref));
 
   function toggle(ref: string, on: boolean) {
@@ -97,7 +104,18 @@ export function IssuesPicker(props: {
         <ErrorAlert error={error} />
         <Group grow align="flex-end">
           <Select label="Repo" value={repo} onChange={(v) => setRepo(v ?? "all")} data={[{ value: "all", label: "Every repo" }, ...available.map((r) => ({ value: r, label: r }))]} />
-          <TextInput label="Label" placeholder="Any label" value={label} onChange={(e) => setLabel(e.currentTarget.value)} />
+          <Autocomplete
+            label="Label"
+            placeholder="Any label"
+            value={label}
+            onChange={setLabel}
+            data={suggested.options.map((o) => o.label)}
+            maxDropdownHeight={280}
+            renderOption={({ option }) => {
+              const row = suggested.byName.get(option.value);
+              return row ? <LabelOption row={row} /> : option.value;
+            }}
+          />
           <TextInput label="Search" placeholder="Text in the title" value={text} onChange={(e) => setText(e.currentTarget.value)} />
         </Group>
         <Table striped highlightOnHover>
@@ -119,10 +137,19 @@ export function IssuesPicker(props: {
             {shown.map((row) => (
               <Table.Tr key={row.ref} opacity={free(row) ? 1 : 0.55}>
                 <Table.Td>
-                  <Checkbox aria-label={`Pick ${row.ref}`} disabled={!free(row)} checked={picked.has(row.ref)} onChange={(e) => toggle(row.ref, e.currentTarget.checked)} />
+                  {labeled.has(row.ref) && free(row) ? (
+                    <Tooltip label="The goal's label takes this issue. To leave it out, clear the label and pick issues by hand." multiline w={280}>
+                      <Checkbox aria-label={`${row.ref} is in the goal by its label`} checked disabled readOnly />
+                    </Tooltip>
+                  ) : (
+                    <Checkbox aria-label={`Pick ${row.ref}`} disabled={!free(row)} checked={picked.has(row.ref)} onChange={(e) => toggle(row.ref, e.currentTarget.checked)} />
+                  )}
                 </Table.Td>
                 <Table.Td>
-                  <Text size="sm">{row.title}</Text>
+                  <Group gap="xs">
+                    <Text size="sm">{row.title}</Text>
+                    {labeled.has(row.ref) && free(row) && <Badge size="xs" color="gray" variant="light" tt="none">via label</Badge>}
+                  </Group>
                   <Anchor href={issueUrl(row.ref) ?? undefined} target="_blank" size="xs" ff="monospace">{row.ref.replace(/^github:/, "")}</Anchor>
                 </Table.Td>
                 <Table.Td>

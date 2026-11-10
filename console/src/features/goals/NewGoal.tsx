@@ -1,14 +1,40 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Checkbox, Group, NumberInput, Paper, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
 import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
-import { api, type GoalDraft } from "../../api";
+import { api, type GoalDraft, type LabelIssue } from "../../api";
 import { LabelField } from "./LabelField";
 import { LabelStart } from "./LabelStart";
 import { ErrorAlert, PageHeader } from "../../components/ui";
 import { PARALLEL_HELP } from "./parallel";
+
+type LabeledIssue = LabelIssue & { repo: string };
+const SHOWN = 8;
+
+// What the goal's label brings in: its open issues in the goal's repos, by title. Issues another goal holds
+// are listed apart, since this goal will not get them.
+export function LabelIssues({ label, issues }: { label: string; issues: LabeledIssue[] | null }) {
+  if (!label.trim() || issues === null) return null;
+  const free = issues.filter((i) => !i.held_by);
+  const held = issues.length - free.length;
+  if (!issues.length) return <Text size="sm" c="dimmed">No open issue has this label in the goal's repos yet. The goal takes them in as they appear.</Text>;
+  return (
+    <Stack gap={4} data-testid="label-issues">
+      <Text size="sm" fw={600}>
+        {free.length} open {free.length === 1 ? "issue" : "issues"} with this label{held ? `, and ${held} more that another goal holds` : ""}
+      </Text>
+      {free.slice(0, SHOWN).map((i) => (
+        <Text key={i.ref} size="sm">
+          {i.title} <Text span size="xs" c="dimmed" ff="monospace">{i.repo}#{i.number}</Text>
+        </Text>
+      ))}
+      {free.length > SHOWN && <Text size="xs" c="dimmed">and {free.length - SHOWN} more</Text>}
+      <Text size="xs" c="dimmed">The goal takes every open issue with this label, now and later. Pick issues adds others.</Text>
+    </Stack>
+  );
+}
 
 export function NewGoal() {
   const navigate = useNavigate();
@@ -45,6 +71,29 @@ export function NewGoal() {
       () => undefined,
     );
   }, []);
+
+  // The open issues the goal's label takes, in its repos: read as the label and repos change, so the form
+  // shows what the goal will run and the picker shows them as already in.
+  const [labeled, setLabeled] = useState<LabeledIssue[] | null>(null);
+  useEffect(() => {
+    const name = label.trim();
+    if (!name || !chosen.length) {
+      setLabeled(null);
+      return;
+    }
+    let stale = false;
+    const wait = setTimeout(() => {
+      Promise.all(chosen.map(async (repo) => (await api.labelIssues(repo, name)).map((issue) => ({ ...issue, repo })))).then(
+        (found) => !stale && setLabeled(found.flat()),
+        () => !stale && setLabeled(null),
+      );
+    }, 300);
+    return () => {
+      stale = true;
+      clearTimeout(wait);
+    };
+  }, [label, chosen]);
+  const viaLabel = useMemo(() => (labeled ?? []).filter((i) => !i.held_by).map((i) => i.ref), [labeled]);
 
   function fromDraft(draft: GoalDraft) {
     setTitle(draft.title);
@@ -147,15 +196,16 @@ export function NewGoal() {
               </Stack>
             </Checkbox.Group>
             <LabelField value={label} onChange={setLabel} repos={chosen} required={!refs.length} />
+            <LabelIssues label={label} issues={labeled} />
             <Group gap="sm">
               <Button variant="default" leftSection={<IconListCheck size={16} />} disabled={!chosen.length} onClick={() => setPicking(true)}>
                 Pick issues
               </Button>
               <Text size="sm" c="dimmed">
-                {refs.length ? `${refs.length} picked: the goal takes these besides its label's, or instead of a label.` : "Optional: pick open issues for the goal by hand."}
+                {refs.length ? `${refs.length} picked by hand: the goal takes these besides its label's, or instead of a label.` : "Optional: pick more open issues for the goal by hand."}
               </Text>
             </Group>
-            <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} action="Use these issues" onPick={setRefs} />
+            <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} />
             <Group grow align="flex-start">
               <NumberInput
                 label="Budget"
