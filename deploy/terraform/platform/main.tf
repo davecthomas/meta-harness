@@ -58,7 +58,7 @@ locals {
     "compute.googleapis.com", "run.googleapis.com", "iap.googleapis.com", "secretmanager.googleapis.com",
     "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com",
     "sts.googleapis.com", "cloudresourcemanager.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com",
-    "firebase.googleapis.com", "firebasehosting.googleapis.com",
+    "firebase.googleapis.com", "firebasehosting.googleapis.com", "bigquery.googleapis.com",
   ]
 }
 
@@ -252,6 +252,29 @@ resource "google_secret_manager_secret" "this" {
   replication {
     auto {}
   }
+}
+
+# The Google Cloud bill, which the billing account's standard usage cost export writes here daily. Turning the
+# export on is the billing account's setting, made once in the console (Billing, Billing export); Google then
+# creates the table gcp_billing_export_v1_<billing account> in this dataset. The VM's cost service reads it
+# (src/meta_harness/costs/cloud_source.py): it lists the dataset's tables and runs queries.
+resource "google_bigquery_dataset" "billing_export" {
+  dataset_id  = "billing_export"
+  location    = "US"
+  description = "Google Cloud billing export, read by the meta-harness cost service"
+  depends_on  = [google_project_service.this]
+}
+
+resource "google_bigquery_dataset_iam_member" "vm_reads_billing" {
+  dataset_id = google_bigquery_dataset.billing_export.dataset_id
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${local.vm_sa}"
+}
+
+resource "google_project_iam_member" "vm_runs_queries" {
+  project = var.project
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${local.vm_sa}"
 }
 
 # The edge reads the VM's and its own logs for the console's Logs page (GET /v1/admin/logs).

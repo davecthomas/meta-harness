@@ -171,8 +171,31 @@ def test_cloud_cost_is_read_from_the_billing_export_and_restated_days_replace_wh
         assert store.total(conn, date(2026, 11, 1), date(2026, 11, 30), {"source": ["cloud"]}) == Decimal("4.65")
 
     monkeypatch.setenv(cloud_source.SETTING, "not a table")
-    with pytest.raises(RuntimeError, match="MH_BILLING_EXPORT_TABLE must be <project>.<dataset>.<table>"):
+    with pytest.raises(RuntimeError, match="MH_BILLING_EXPORT_TABLE must be <project>.<dataset> or"):
         costs_api.check_settings()
+
+
+def test_named_by_its_dataset_the_export_table_is_found_in_it(clean, monkeypatch):
+    tables: list[str] = []
+    asked: list[str] = []
+
+    def bigquery(request: httpx.Request) -> httpx.Response:
+        if "metadata" in request.url.host:
+            return httpx.Response(200, json={"access_token": "t"})
+        if request.method == "GET":
+            return httpx.Response(200, json={"tables": [{"tableReference": {"tableId": t}} for t in tables]})
+        asked.append(request.content.decode())
+        return httpx.Response(
+            200, json={"jobComplete": True, "rows": [{"f": [{"v": "2026-11-10"}, {"v": "Cloud Run"}, {"v": "0.3"}]}]}
+        )
+
+    monkeypatch.setenv(cloud_source.SETTING, "meta-harness-prod.billing_export")
+    with db.connect(autocommit=True) as conn:
+        with pytest.raises(cloud_source.CloudCostError, match="has no billing export table yet"):
+            cloud_source.harvest(conn, date(2026, 11, 11), httpx.MockTransport(bigquery))
+        tables[:] = ["gcp_billing_export_resource_v1_ABC", "gcp_billing_export_v1_ABC"]
+        assert cloud_source.harvest(conn, date(2026, 11, 11), httpx.MockTransport(bigquery)) == 1
+    assert "`meta-harness-prod.billing_export.gcp_billing_export_v1_ABC`" in asked[0]
 
 
 @pytest.fixture
