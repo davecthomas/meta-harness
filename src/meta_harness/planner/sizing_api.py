@@ -9,7 +9,9 @@ instead. Each one's body names its paths on a `Paths:` line. The held issue
 stays held, saying what it was split into, until it is closed: the planner
 never closes an issue a person wrote. The split is recorded on its link
 (split_into), so later sweeps keep that reason, and an issue split once is
-not split again (409); Run anyway still makes it a task.
+not split again (409); Run anyway still makes it a task. While a split is
+creating its issues (split_into is empty), Run anyway is refused (409) until
+the split ends.
 
 Registered by the planner service's create_app, which hands over what the routes share with the rest.
 """

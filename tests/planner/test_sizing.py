@@ -384,3 +384,31 @@ def test_only_a_held_issue_of_the_goal_is_run_anyway_or_split(world):
     stranger = f"github:{REPO}#{uuid.uuid4().int % 10**9 + 10**12}"
     missing = client.post(f"/v1/goals/{goal['id']}/issues/run-anyway", json={"ref": stranger}, headers=OPERATOR)
     assert missing.status_code == 404
+
+
+def test_run_anyway_waits_while_the_issue_is_being_split(world):
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Everything.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    sizer.answers[ref] = {"size": "large", "reasons": [], "missing": [], "split": ["Titles", "Labels"]}
+    _sweep(client, goal)
+    url = f"/v1/goals/{goal['id']}/issues/run-anyway"
+
+    # As the split route does before it asks GitHub for the smaller issues.
+    with db.connect(autocommit=True) as conn:
+        assert store.claim_split(conn, goal["id"], ref)
+    splitting = client.post(url, json={"ref": ref}, headers=OPERATOR)
+    assert splitting.status_code == 409 and "being split" in splitting.json()["detail"]
+    _sweep(client, goal)
+    assert _task(tasks, ref) is None, "the original does not start while it is split"
+
+    # The split ends with nothing created: its claim is let go, and Run anyway is open again.
+    with db.connect(autocommit=True) as conn:
+        store.record_split(conn, ref, [], None)
+    ran = client.post(url, json={"ref": ref}, headers=OPERATOR)
+    assert ran.status_code == 200, ran.text
+    _sweep(client, goal)
+    assert _task(tasks, ref) is not None
