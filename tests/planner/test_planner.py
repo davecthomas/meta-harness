@@ -863,6 +863,22 @@ def test_activity_lists_each_tasks_pull_request_with_its_state_and_latest_run(ap
         "pr_url": "https://github.com/o/r/pull/2",
     }
     tasks.tasks["t-c"] = {**base, "id": "t-c", "title": "Failed one", "status": "failed", "pr_url": None}
+    # Two canceled tasks: one left its pull request open, the other's was closed without merging.
+    tasks.tasks["t-d"] = {
+        **base,
+        "id": "t-d",
+        "title": "Canceled, PR open",
+        "status": "canceled",
+        "pr_url": "https://github.com/o/r/pull/4",
+    }
+    tasks.tasks["t-e"] = {
+        **base,
+        "id": "t-e",
+        "title": "Canceled, PR closed",
+        "status": "canceled",
+        "pr_url": "https://github.com/o/r/pull/5",
+    }
+    events.emit("pull_request_closed", {"pr_url": "https://github.com/o/r/pull/5"}, task_id="t-e")
     for task_id, run, tier, usd in (
         ("t-a", "r1", "standard", "1.00"),
         ("t-a", "r2", "fix", "0.50"),
@@ -882,6 +898,8 @@ def test_activity_lists_each_tasks_pull_request_with_its_state_and_latest_run(ap
         "r2",
     )
     assert by_task["t-b"]["state"] == "waiting"
+    assert by_task["t-d"]["state"] == "waiting", "canceled, but its pull request is still open"
+    assert by_task["t-e"]["state"] == "closed", "its pull request's end event says closed"
     assert "usd" not in by_task["t-a"], "what the work cost is the Performance page's"
     assert set(shown) == {"days", "total", "left_out", "prs"}
     assert api.get("/v1/activity", params={"days": 0}, headers=OPERATOR).status_code == 422

@@ -51,7 +51,9 @@ A goal no sweep covers any more, met, canceled, paused or stalled, is
 followed up every FOLLOW_UP_SECONDS instead (follow_up_goal): the title and
 labels of each issue it holds that has a task are refreshed, and its canceled
 tasks' pull requests watched for their end, so costs by label and by outcome
-stay true after the goal ends. It takes in nothing and changes no task.
+stay true after the goal ends. It takes in nothing and changes no task. The
+canceled tasks of no goal, which no goal's sweep lists, have their pull
+requests watched as often (follow_up_goalless).
 """
 
 import asyncio
@@ -418,16 +420,28 @@ async def _watch_pull_requests(goal: dict, tasks: TaskClient, events: Events, ho
             result.errors.append(f"{task['id']}: {err}")
 
 
+async def follow_up_goalless(tasks: TaskClient, events: Events, host: CodeHost | None = None) -> SweepResult:
+    """Record the end of each pull request a canceled task of no goal left open. A task can be made without a
+    goal, and no goal's sweep or follow-up lists it, so this watches those, as often as goals are followed up."""
+    result = SweepResult("")
+    await _watch_canceled_pull_requests(None, tasks, events, host or code_host, result)
+    return result
+
+
 async def _watch_canceled_pull_requests(
-    goal: dict, tasks: TaskClient, events: Events, host: CodeHost, result: SweepResult
+    goal: dict | None, tasks: TaskClient, events: Events, host: CodeHost, result: SweepResult
 ) -> None:
     """Record the end of each pull request a canceled task left open, which no workflow and no other watch
     reads: one merged or closed by hand after its task was canceled. The task stays canceled. Each is read
-    until its end is recorded, then never again."""
+    until its end is recorded, then never again. Without a goal, the canceled tasks of no goal are watched."""
     try:
-        canceled = await asyncio.to_thread(cost_facts.every_task, tasks, goal["id"], ["canceled"])
+        if goal:
+            canceled = await asyncio.to_thread(cost_facts.every_task, tasks, goal["id"], ["canceled"])
+        else:
+            every = await asyncio.to_thread(cost_facts.every_task, tasks, None, ["canceled"])
+            canceled = [task for task in every if not task.get("goal_id")]
     except TaskApiError as err:
-        result.errors.append(f"{goal['id']}: {err}")
+        result.errors.append(f"{goal['id'] if goal else 'tasks of no goal'}: {err}")
         return
     with_pull = [task for task in canceled if task.get("pr_url")]
     if not with_pull:
@@ -484,7 +498,7 @@ async def _record_end(
     (result.merged if status == "closed" else result.canceled).append(task["id"])
 
 
-def _emit_end(goal: dict, task: dict, pull: PullRequest, events: Events) -> None:
+def _emit_end(goal: dict | None, task: dict, pull: PullRequest, events: Events) -> None:
     """Record a pull request's end, merged or closed without merging, as the run workflow does."""
     if pull.state == "merged":
         event_type = "pull_request_merged"
@@ -497,7 +511,7 @@ def _emit_end(goal: dict, task: dict, pull: PullRequest, events: Events) -> None
         payload,
         task_id=task["id"],
         actor="planner",
-        tags={"goal_id": goal["id"]},
+        tags={"goal_id": goal["id"]} if goal else {},
         event_id=stable_event_id(task["id"], event_type),
     )
 
