@@ -10,6 +10,7 @@ import { GoalPlan } from "./GoalPlan";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
 import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
+import { HeldActions, StrictIssuesEdit } from "./sizing";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 
@@ -243,6 +244,7 @@ export function GoalPage() {
           ["Budget", <BudgetRow {...editable} />],
           ["Priority", <PriorityEdit {...editable} />],
           ["Parallel tasks", <ParallelEdit {...editable} system={systemParallel} />],
+          ["Strict issues", <StrictIssuesEdit goal={goal} readOnly={!open} save={(fields) => saveField(fields as Partial<Goal>)} />],
           ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
           ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
           ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),
@@ -299,7 +301,14 @@ export function GoalPage() {
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
       <GoalSpend goalId={goal.id} goalName={goalTitle(goal)} opened={spending} onClose={() => setSpending(false)} />
       {issues.length > 0 && progress && shownView === "board" ? (
-        <GoalBoard issues={progress} tasks={tasks} spend={spend} />
+        <GoalBoard
+          issues={progress}
+          tasks={tasks}
+          spend={spend}
+          actions={(i) => (
+            <HeldActions goalId={goal.id} label={goal.label} issue={i} readOnly={!open} onChanged={() => void Promise.all([load(), loadProgress()])} />
+          )}
+        />
       ) : issues.length > 0 && progress && shownView === "graph" ? (
         <GoalGraph issues={progress} tasks={tasks} />
       ) : issues.length ? (

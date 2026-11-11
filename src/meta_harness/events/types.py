@@ -319,6 +319,48 @@ REGISTRY: list[EventType] = [
         "issue_refused", 1, _object({"ref": {"type": "string"}, "reason": {"type": "string"}}, ["ref", "reason"])
     ),
     EventType("issue_closed", 1, _object({"ref": {"type": "string"}}, ["ref"])),
+    # An issue sized before it became a task, with the model and its cost; and an operator's answer to one the
+    # sweep held for its size or its gaps: run it anyway, or split it into the issues created
+    EventType(
+        "issue_sized",
+        1,
+        _object(
+            {
+                "ref": {"type": "string"},
+                "goal_id": {"type": "string"},
+                "size": {"type": "string", "enum": ["small", "medium", "large"]},
+                "reasons": {"type": "array", "items": {"type": "string"}},
+                "missing": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["acceptance_checks", "paths", "testable_outcome"]},
+                },
+                "split": {"type": "array", "items": {"type": "string"}},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["ref", "goal_id", "size", "model", "usd_cost"],
+        ),
+    ),
+    EventType(
+        "issue_released",
+        1,
+        _object(
+            {"ref": {"type": "string"}, "goal_id": {"type": "string"}, "held_reason": {"type": ["string", "null"]}},
+            ["ref", "goal_id"],
+        ),
+    ),
+    EventType(
+        "issue_split",
+        1,
+        _object(
+            {
+                "ref": {"type": "string"},
+                "goal_id": {"type": "string"},
+                "issues": {"type": "array", "items": {"type": "string"}},
+            },
+            ["ref", "goal_id", "issues"],
+        ),
+    ),
     EventType(
         "pull_request_commented",
         1,

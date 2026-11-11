@@ -193,7 +193,9 @@ the planner compares the shipped `config/harness_profiles.json` with the
 history of the `profiles` kind, and adds every profile whose name no version
 ever had, as a new version with origin `shipped` and a `config_changed` event.
 A profile an operator changed or removed is never touched, because its name is
-in the history. An addition the check would refuse is skipped. Tiers are not
+in the history. An addition the check would refuse is skipped. The task
+policy's `max_usd_by_size` reaches it the same way, one size at a time, so a
+size an operator changed or removed is never put back. Tiers are not
 added this way: they are an ordered routing list, and an added tier would
 change how tasks route.
 
@@ -685,7 +687,8 @@ The task policy holds the rules for task types, exploration, run budgets,
 parallelism and review. It is the `task_policy` configuration kind, seeded
 from `config/task_policy.json` and edited on the console's Configuration page.
 Built today: `max_parallel`, which the scheduler reads each admission pass,
-and `review.reviewers` and `review.max_rounds`, which the run service reads.
+`review.reviewers` and `review.max_rounds`, which the run service reads, and
+`max_usd_by_size`, which the planner reads when it makes an issue a task.
 The other fields below are planned.
 
 ```json
@@ -698,6 +701,7 @@ The other fields below are planned.
   "review": {"reviewers": ["harness:pi-review/claude:claude-opus-5-5",
                            "harness:pi-review/openai-responses:gpt-5.6-luna"],
              "max_rounds": 3, "operator_alert_minutes": 240},
+  "max_usd_by_size": {"small": "3.00", "medium": "8.00", "large": "20.00"},
   "max_run_minutes": 240
 }
 ```
@@ -715,6 +719,12 @@ The other fields below are planned.
   loop, a task's `max_usd` also caps the total of its meta-harness review and
   fix runs. `preview_route()` cannot estimate a harness run, because a run's
   turn count is unknown before it starts.
+- `max_usd_by_size` gives a task its `max_usd` from its issue's size (Issue
+  sizing), when the issue names no limit of its own on a `Spend limit: $N`
+  line: an object from `small`, `medium` and `large` to a dollar amount above
+  0. A size it leaves out, an issue not sized, or a policy without it gives
+  the task no limit, so the $10.00 default applies. A change applies to the
+  tasks made after it.
 - `reviewers` lists the review run's
   harness-profile-and-model pairs in order. The RunTask workflow skips any
   reviewer pair whose model wrote the pull request, so a different model
@@ -1821,7 +1831,7 @@ credential.
 | GET, POST | `/v1/kill-switch` | Meta-harness scheduler | Read the kill switch, or turn it on or off with a reason. While it is on, the scheduler stops every running task and admits none. `mode` sets it instead: `stop` is on, `drain` admits nothing new and lets running tasks finish (a deploy that replaces the VM drains), and `off` ends both. `kill_switch_changed` carries the mode. Scopes smaller than everything (a run, a caller) are planned | built |
 | POST | `/v1/tasks/{id}/review/claim`, `/verdict`, `/release` | Task service | An operator review: take the review of a running task's pull request over, give the verdict the round then waits for (`clean`, or `changes` with the agent's findings kept and the operator's own), or give the review back. 409 for a task with no review to take, a review another operator holds, or a verdict before the agent's review has finished | built |
 | GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest. `start` (default `true`) creates it `active` and sweeps it at once; `start: false` saves it `paused`, not started (`started_at` null), and takes in no issue until its first `/resume` | built |
-| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `label`, `repos`, `auto_merge`, priority, budget (`max_usd`, null for none), `budget_mode`, `budget_overage_percent` and `max_parallel` (null to inherit), each sent alone by the Goal page's in-place edits and recorded as `goal_changed` with the fields changed. A repo must be registered; `label` may be null only when the goal holds issues an operator picked by ref (`picked` on its issues; ones its label swept in do not count) in its repos, else 409. Tasks the goal already made keep their issues, and its next sweep takes in issues by the new label and repos; an issue it holds with no task yet in a repo it no longer names is let go, recorded as `issue_dropped`, and never becomes a task there | partly built |
+| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `label`, `repos`, `auto_merge`, priority, budget (`max_usd`, null for none), `budget_mode`, `budget_overage_percent`, `max_parallel` (null to inherit) and `strict_issues`, each sent alone by the Goal page's in-place edits and recorded as `goal_changed` with the fields changed. A repo must be registered; `label` may be null only when the goal holds issues an operator picked by ref (`picked` on its issues; ones its label swept in do not count) in its repos, else 409. Tasks the goal already made keep their issues, and its next sweep takes in issues by the new label and repos; an issue it holds with no task yet in a repo it no longer names is let go, recorded as `issue_dropped`, and never becomes a task there | partly built |
 | GET | `/v1/repos` | Planner | The repo registry: the repos a goal may name | built |
 | GET | `/v1/repos/available` | Planner | The repos the deployment's GitHub Apps are installed on that the registry does not list yet, and each app's page for installing it on more. The console's Repositories page adds from it | built |
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
@@ -1831,10 +1841,12 @@ credential.
 | POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on: by `add_usd`, or with no body by a worked-out amount (what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar). Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
-| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it | built |
+| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its sizing (`size`, `size_reasons`, `missing`, `split`, its `paths` and `checks_named`; null and empty for an issue not sized), why it is held (`held_reason`), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet. A ref another goal holds is refused, naming that goal | built |
+| POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps, at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold, 409 for one not held or a met or canceled goal. Records `issue_released` | built |
+| POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label; a goal with no label holds them by ref. Each body must name its paths on a `Paths:` line (422 names those that do not); a refusal by GitHub is a 502 naming the issues created before it. The held issue stays held, saying what it was split into. Records `issue_split` | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row: each one's state (in review, waiting, blocked, merged, closed; merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting, not closed), when it was opened and reached that state, its fix rounds and latest run; the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
@@ -1905,13 +1917,15 @@ capacity by priority.
 | `budget_mode` | What the budget does when the goal's runs have spent it: `block` (the default) stops the goal at its blocking line, and `warn` lets it keep going, with the budget reached recorded and shown and nothing held or refused. It has no effect on a goal with no budget |
 | `budget_overage_percent` | How far past its budget a `block` goal may go before it stops: a whole number, 0 or more, 10 by default. The goal blocks at `max_usd × (1 + overage / 100)`, and between the budget and that line it runs on, over budget. 0 blocks at the budget exactly. Ignored in `warn` mode |
 | `max_parallel` | The most of the goal's tasks that run at once. Null inherits the task policy's `max_parallel`; a goal may set it lower, never higher. The New goal form sets it, and the Goal page shows the value in use, marked inherited or set, and edits it in place. A change applies at the next admission pass |
+| `strict_issues` | Whether an issue missing acceptance checks, paths or a testable outcome is held instead of run (Issue sizing). False by default: such an issue runs, with the gap on its card. A change applies at the next sweep to the issues not yet made tasks |
 | `status` | `planning`, `active`, `paused`, `met`, `stalled`, `budget_exhausted` or `canceled` |
 
 A `feature` or `new-system` goal starts in `planning`. For every active goal the planner runs a loop:
 
-1. Each open issue with the goal's label in one of its repos becomes a task,
-   with `external_ref` `github:<owner>/<repo>#<number>`. The planner refuses
-   an issue in another repo and comments why.
+1. Each open issue with the goal's label in one of its repos is sized (Issue
+   sizing) and becomes a task, with `external_ref`
+   `github:<owner>/<repo>#<number>`, unless its size or its gaps hold it for
+   an operator. The planner refuses an issue in another repo and comments why.
 2. The RunTask workflow routes and runs each task within the modality's
    routing floor and ceiling.
 3. The review loop reviews each pull request to the modality's bar, merges it
@@ -1969,6 +1983,48 @@ records each classification as `goal_classified` with its confidence, so the
 harness analyzer can measure how often operators override it. An operator can
 change the modality or the latitude at any time; a new modality applies from
 the next planning task.
+
+#### Issue sizing
+
+An issue that is too big for one task spends its whole limit and ends
+unresolved: one issue became 2,100 changed lines across 22 files. So the
+sweep sizes each issue the first time it sees one, before it becomes a task
+(`planner/sizing.py`). One model call through the HTTP Gateway's
+`/v1/structured`, with the classifier's engine and the model
+`config/planner.json`'s `issue_sizing` names (`engine` `none` turns sizing
+off), reads the issue's title and body as data and answers its `size`
+(`small`, `medium` or `large`), its `reasons`, what it is `missing`
+(`acceptance_checks`, `paths`, `testable_outcome`) and, for a large one, the
+titles of the issues it would `split` into. What the planner sees without the
+model, no `## Acceptance checks` or no `Paths:` line, is added to `missing`.
+The answer is stored on the issue link (`size`, `sizing`) and recorded as
+`issue_sized` with the model and its cost. Then:
+
+- A `large` issue is held: it does not become a task, and its link's
+  `held_reason` says why, with the suggested split. The goal's board shows it
+  under Needs attention with two actions. Run anyway
+  (`POST /v1/goals/{id}/issues/run-anyway`, `issue_released`) makes it a task
+  at the next sweep, which an active goal runs at once. Split opens the
+  suggested issues as drafts to edit, drop or add to, each starting with the
+  held issue's paths on a `Paths:` line and its acceptance checks; creating
+  them (`POST /v1/goals/{id}/issues/split`, `issue_split`) opens each in the
+  held issue's repo with the goal's label, refuses a draft with no `Paths:`
+  line, and holds them by ref for a goal with no label. The goal takes them in
+  as it takes any issue. The held issue stays held, saying what it was split
+  into, until it is closed: the planner closes no issue a person wrote.
+- An issue missing something runs, with the gap on its card. A goal that sets
+  `strict_issues` holds it instead, as it holds a large one, until it is run
+  anyway.
+- A held issue edited since it was sized is sized again on the next sweep,
+  so adding what it lacked, or cutting it down, lets it go.
+- The size is stored on the task as its `complexity` (small `low`, medium
+  `medium`, large `high`, which also sets the router's `complex` floor), and
+  the task's `max_usd` is the issue's own `Spend limit: $N` line, else the
+  task policy's `max_usd_by_size` for its size.
+
+A sizing call that fails, or a gateway the planner has no address or key for,
+leaves the issue unsized, logged, and it runs as an issue did before sizing:
+sizing guides the planner and never stops a goal.
 
 #### Modalities
 
@@ -2241,12 +2297,12 @@ the same approval.
 |---|---|---|
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over) |
 | Meta-harness scheduler | task_hold | task_id, kind, reason, detail (what the reason names), since, last_checked. One row per queued task the scheduler holds |
-| Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), budget_mode, budget_overage_percent, spent_usd (at the last sweep), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
+| Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), strict_issues, budget_mode, budget_overage_percent, spent_usd (at the last sweep), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
 | Cost service | daily_cost, harvest | One row per day, source (`model`, `cloud`), item (the kind of run, or the billed service) and the dimensions the source has (goal, task, repo, model, engine, operator), with its dollars; and how far each source has been read |
 | Planner | console_user | email, role (admin, user), status (invited, active, deprovisioned), invited_by, invited_at, last_sign_in_at. Who may use the console, and as what |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
-| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, title and labels (the issue's, refreshed by each sweep, for an issue with a task whether the label still lists it or it has closed, and hourly once its goal is met or ended; labels give costs by label), last_webhook_at |
+| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, size and sizing (what the issue's sizing found: reasons, missing, split, and the issue's paths and checks, with the model and its cost), held_reason (why it waits for an operator; null when it does not), run_anyway, title and labels (the issue's, refreshed by each sweep, for an issue with a task whether the label still lists it or it has closed, and hourly once its goal is met or ended; labels give costs by label), last_webhook_at |
 | Planner | pull_request_end | task_id, outcome (`merged` or `closed`), recorded_at: the tasks whose pull request's end a sweep recorded, so a canceled task's pull request is read only until it ends |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |
@@ -2298,7 +2354,7 @@ Meta-harness services append through the event service client library:
 | Producer | Events |
 |---|---|
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
-| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume), `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line), `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created), `plan_requested` when a planning task starts (with the operator's note on a replan), `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is) and `plan_approved` with the issues created, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
+| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume), `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line), `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created), `plan_requested` when a planning task starts (with the operator's note on a replan), `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is) and `plan_approved` with the issues created, `issue_sized` when an issue is sized before it becomes a task (its size, reasons, what it is missing and the suggested split, with the model and its cost), `issue_released` when an operator runs a held issue anyway and `issue_split` with the issues a held one was split into, `issue_joined` (with the issue's size and the spend limit it set, for a sized issue), `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason and the kind of hold, recorded when a task's reason is new or has changed. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v3`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
@@ -2597,8 +2653,13 @@ its issue's title, which the planner stores on the issue link when it takes
 the issue in and refreshes on each sweep.
 The Goal page shows an active goal's issues as a board, columns Queued,
 Running, In review, Done and Needs attention (a failed task, failing
-checks, a refused issue, or a failed dependency), each card with its task's
-status and cost and its pull request with its checks. A Graph view lays the
+checks, a refused issue, an issue the planner held for its size or its gaps,
+or a failed dependency), each card with its task's
+status and cost, its issue's size (its reasons on hover) and what the issue
+is missing, and its pull request with its checks. A held card says why, with
+the suggested split, and offers Run anyway and Split, whose dialog lists
+the suggested issues as drafts to edit and create, each with the goal's label
+and a `Paths:` line (`console/src/features/goals/sizing.tsx`). A Graph view lays the
 same issues out by dependency, colored by column, and a Table view lists
 them. Issues done and spend against budget head the section, and the page
 reloads them as the goal's tasks record events. Past the budget the spend
@@ -2617,7 +2678,8 @@ holds picked issues), the repos (checkboxes of the registered repos, at
 least one), the budget (cleared to None), which shares its row with, for
 a goal with one, what happens when it is reached (Stop, or Warn and keep
 going) and for Stop the allowed overage in percent, the priority, the parallel tasks
-(empty for the system setting, no more than it) and auto-merge, a switch.
+(empty for the system setting, no more than it), auto-merge, a switch, and
+strict issues, a switch.
 A click on a field, or on its pencil icon on hover, turns it into its input,
 with New goal's limits; Enter or leaving it saves, Escape cancels, and the
 description saves with Ctrl/Cmd+Enter. A save sends only that field
