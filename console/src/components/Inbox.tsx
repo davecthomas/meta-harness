@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ActionIcon, Anchor, Indicator, Popover, Stack, Text, Tooltip } from "@mantine/core";
 import { IconInbox } from "@tabler/icons-react";
 import { api, goalTitle, type Goal, type KillSwitch, type Task } from "../api";
+import { reviewLink, reviewsInProgress, type ReviewRun } from "../features/tasks/reviewing";
 
 // One thing waiting on the operator, with where it is resolved.
 export interface InboxItem {
@@ -15,10 +16,21 @@ const POLL_MS = 30_000;
 // A failed task stays in the inbox this long: nothing resolves a failure, so it ages out.
 const FAILED_DAYS = 3;
 
-// What waits on the operator: a pull request ready to merge, a review that ended unresolved, a failed task,
+// What the operator should know of: an agent's review in progress, which they may join; a pull request ready to merge, a review that ended unresolved, a failed task,
 // a goal past its budget or stalled, and the kill switch. An item leaves when what it names is resolved.
-export function inboxItems(tasks: Task[], goals: Goal[], kill: KillSwitch | null, now = Date.now()): InboxItem[] {
+export function inboxItems(
+  tasks: Task[],
+  goals: Goal[],
+  kill: KillSwitch | null,
+  now = Date.now(),
+  reviews: { review: ReviewRun; task: Task }[] = [],
+): InboxItem[] {
   const items: InboxItem[] = [];
+  // An agent's review in progress: the operator may review the pull request too. Keyed by the run, so each
+  // review is announced once.
+  for (const { review, task } of reviews) {
+    items.push({ key: `review-${review.run_id}`, text: `An agent is reviewing: ${task.title}`, to: reviewLink(task.id) });
+  }
   if (kill?.engaged) items.push({ key: "kill", text: `The kill switch is on: ${kill.reason ?? "nothing runs"}`, to: "/admin/kill-switch" });
   for (const g of goals) {
     // A goal past its budget, once: its key is the same whether it is over or stopped.
@@ -45,12 +57,16 @@ export function Inbox() {
 
   const load = useCallback(async () => {
     try {
-      const [tasks, goals, kill] = await Promise.all([
+      const [tasks, goals, kill, events, running] = await Promise.all([
         api.tasks({ statuses: ["ready", "review_unresolved", "failed"] }, 0, 200),
         api.goals(["active", "budget_exhausted", "stalled"], 0, 100),
         api.killSwitch().catch(() => null),
+        api.recentEvents(["run_prompt", "attempt_finished"], 500).catch(() => []),
+        api.tasks({ statuses: ["running"] }, 0, 200).catch(() => ({ items: [] as Task[], total: 0 })),
       ]);
-      const found = inboxItems(tasks.items, goals.items, kill);
+      const byId = new Map(running.items.map((t) => [t.id, t]));
+      const reviews = reviewsInProgress(events).flatMap((review) => (byId.has(review.task_id) ? [{ review, task: byId.get(review.task_id)! }] : []));
+      const found = inboxItems(tasks.items, goals.items, kill, Date.now(), reviews);
       if (seen.current && notify.current && typeof Notification !== "undefined" && Notification.permission === "granted") {
         for (const item of found) if (!seen.current.has(item.key)) new Notification("Meta-harness", { body: item.text, tag: item.key });
       }
