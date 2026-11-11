@@ -744,3 +744,17 @@ def test_the_supervisor_drives_a_parked_task_a_bounded_number_of_times_with_its_
     # An operator's own action starts the count again, and from nothing spent.
     merged = api.post(f"/v1/tasks/{task['id']}/merge", headers=_as(CALLER_KEY)).json()
     assert merged["drives"] == 0 and Decimal(merged["spent_carried_usd"]) == 0
+
+
+def test_the_supervisor_retries_a_failed_task_and_only_a_failed_one(api):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    retry = {"action": "retry", "why": "the task failed on the system's side, not its own", "spent_usd": "1"}
+    assert api.post(f"/v1/tasks/{task['id']}/drive", json=retry, headers=_as(SERVICE_KEY)).status_code == 409
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
+
+    retried = api.post(f"/v1/tasks/{task['id']}/drive", json=retry, headers=_as(SERVICE_KEY)).json()
+
+    assert (retried["status"], retried["resume"], retried["drives"]) == ("queued", None, 1)
+    assert retried["status_reason"].endswith("so the supervisor retried it (try 1 of 3)")
+    assert Decimal(retried["spent_carried_usd"]) == Decimal("1")
