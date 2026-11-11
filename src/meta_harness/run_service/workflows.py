@@ -68,6 +68,7 @@ history prints one line saying it replayed.
 """
 
 import asyncio
+import json
 from datetime import timedelta
 from decimal import Decimal
 
@@ -197,6 +198,10 @@ class RunTask:
         self._task_type = ""
         # An operator's words on a review held for them, as they came: "dismiss:<round>:<n>:<why>", "proceed:<round>".
         self._review_words: list[str] = []
+        # The operator who took the review over ("" when no one has), and their verdict once they give it, as
+        # JSON: {"keep": [the agent's findings they keep, from 1], "findings": [their own]}.
+        self._review_claim = ""
+        self._operator_verdict: str | None = None
 
     @workflow.signal
     def operator_message(self, message: OperatorMessage) -> None:
@@ -209,7 +214,16 @@ class RunTask:
             self._budget_answer = message.text
             return
         if message.when == "review":
-            self._review_words.append(message.text)
+            # An operator review: "claim:<who>", "release", "verdict:<json>". Any other word is for a held review.
+            kind, _, rest = message.text.partition(":")
+            if kind == "claim":
+                self._review_claim = rest
+            elif kind == "release":
+                self._review_claim = ""
+            elif kind == "verdict":
+                self._operator_verdict = rest
+            else:
+                self._review_words.append(message.text)
             return
         self._messages.append(message)
 
@@ -831,7 +845,15 @@ class RunTask:
                     findings = list(review.get("findings") or [])
                     clean = f"review round {reviews} by {reviewer} came back clean at {loop.head[:12]}"
                     all_dismissed = False
-                    if review["verdict"] != "clean" and findings and policy.hold_minutes > 0:
+                    # An operator who took the review over decides the round: the fix run gets the agent's
+                    # findings they kept and their own, and with none the round is clean.
+                    theirs = await self._operator_review(loop, reviews, findings)
+                    if theirs is not None:
+                        who, findings = theirs
+                        all_dismissed = not findings
+                        clean = f"{who} reviewed round {reviews} and asked for no change at {loop.head[:12]}"
+                        review = {**review, "verdict": "changes" if findings else "clean"}
+                    elif review["verdict"] != "clean" and findings and policy.hold_minutes > 0:
                         findings = await self._review_hold(loop, reviews, findings, policy.hold_minutes)
                         all_dismissed = not findings
                         if all_dismissed:
@@ -1045,6 +1067,59 @@ class RunTask:
         )
         await self._hold(False, f"review round {round_no}: {after}", "review")
         return kept
+
+    async def _operator_review(
+        self, loop: "_Loop", round_no: int, findings: list[dict]
+    ) -> tuple[str, list[dict]] | None:
+        """Waits for the verdict of an operator who took this review over. Returns who, and the findings the
+        fix run is asked for: the agent's that they kept, then their own. None when no one holds the review,
+        or they released it: the round then decides on the agent's verdict, as it always did.
+
+        The agent's review has finished and is posted by now, so the operator starts from its findings. The
+        task waits, marked as waiting on the operator's review, for as long as they take: nothing releases a
+        claim but the operator. Their verdict is posted on the pull request under their name. Behind a patch:
+        a workflow from before it takes no claim.
+        """
+        if not self._task_id or not self._review_claim or not workflow.patched("operator-review"):
+            return None
+        who = self._review_claim
+        self._operator_verdict = None
+        count = f"{len(findings)} {'finding' if len(findings) == 1 else 'findings'}"
+        await self._hold(
+            True,
+            f"review round {round_no}: {who} took the review over. The agent's review found {count}; "
+            f"the round waits for {who}'s verdict",
+            "operator_review",
+        )
+        await workflow.wait_condition(lambda: self._operator_verdict is not None or not self._review_claim)
+        if self._operator_verdict is None:
+            await self._hold(
+                False,
+                f"review round {round_no}: {who} gave the review back, so the agent's verdict decides",
+                "operator_review",
+            )
+            return None
+        verdict, self._operator_verdict, self._review_claim = json.loads(self._operator_verdict), None, ""
+        keep = {int(n) for n in verdict.get("keep") or []}
+        kept = [f for n, f in enumerate(findings, 1) if n in keep]
+        own = [dict(f) for f in verdict.get("findings") or []]
+        asked = kept + own
+        lines = [f"**Review by {who}, round {round_no}**: {'changes needed' if asked else 'no change needed'}."]
+        if findings:
+            lines.append(f"Of the agent's {count}, {who} kept {len(kept)}.")
+        for finding in own:
+            where = finding.get("path") or "the change"
+            line = f":{finding['line']}" if finding.get("line") else ""
+            lines.append(f"- {where}{line}: {finding.get('body', '')}")
+        await workflow.execute_activity(
+            post_comment,
+            CommentRequest(repo=loop.prepared.repo, pr_url=loop.published.pr_url, body="\n".join(lines)),
+            start_to_close_timeout=CODE_HOST_TIMEOUT,
+            retry_policy=CODE_HOST_RETRY,
+        )
+        after = f"{len(asked)} findings go to the fix run" if asked else "no change is asked for, so the round is clean"
+        await self._hold(False, f"review round {round_no}: {who} reviewed it; {after}", "operator_review")
+        return who, asked
 
     async def _wait_for_base(self, loop: "_Loop", clean: str) -> str:
         """Waits until the base branch's newest commit's checks have passed, so nothing merges onto a broken

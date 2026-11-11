@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Group, Paper, Stack, Text } from "@mantine/core";
 import { IconEye } from "@tabler/icons-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, type MhEvent, type Task } from "../../api";
 import { PrLink, TitleLink } from "../../components/ui";
+import { TakeOverReview } from "./OperatorReview";
 
 // An agent's review of a pull request, while it runs. The operator stays in the loop: the console says a review
 // is under way wherever they are (the Overview, the task's page, the inbox), and one click opens the diff, where
@@ -75,6 +76,7 @@ export function useReviewsInProgress(): { review: ReviewRun; task: Task }[] {
 // On the Overview, above everything that waits: each pull request an agent is reviewing now.
 export function ReviewsInProgress() {
   const reviews = useReviewsInProgress();
+  const navigate = useNavigate();
   if (!reviews.length) return null;
   return (
     <Paper p="md" mb="lg" withBorder data-testid="reviews-in-progress" style={{ borderLeft: "4px solid var(--mantine-color-violet-6)" }}>
@@ -83,7 +85,8 @@ export function ReviewsInProgress() {
         <Text fw={650}>{reviews.length === 1 ? "An agent is reviewing a pull request now" : `Agents are reviewing ${reviews.length} pull requests now`}</Text>
       </Group>
       <Text size="sm" c="dimmed" mb="sm">
-        You can review any of them too: open the diff and comment on its lines, and your comments post to the pull request under your name.
+        You can take any of these reviews over: the agent's review still finishes, then the round waits for your verdict, and the fix run is asked for
+        exactly what you submit. Or open the diff and comment on its lines; your comments post to the pull request under your name.
       </Text>
       <Stack gap="xs">
         {reviews.map(({ review, task }) => (
@@ -93,9 +96,13 @@ export function ReviewsInProgress() {
               {task.pr_url && <PrLink url={task.pr_url} />}
               <Text size="xs" c="dimmed">review started {ago(review.since)}</Text>
             </Group>
-            <Button component={Link} to={reviewLink(task.id)} size="xs" color="violet" leftSection={<IconEye size={14} />}>
-              Review it yourself
-            </Button>
+            <Group gap="xs">
+              {task.review_claimed_by && <Text size="xs" c="violet">{task.review_claimed_by} took it over</Text>}
+              <TakeOverReview task={task} onChanged={() => navigate(`/tasks/${task.id}?tab=reviews`)} />
+              <Button component={Link} to={reviewLink(task.id)} size="xs" variant="light" color="violet" leftSection={<IconEye size={14} />}>
+                Open the diff
+              </Button>
+            </Group>
           </Group>
         ))}
       </Stack>
@@ -104,18 +111,21 @@ export function ReviewsInProgress() {
 }
 
 // At the top of a task's page while an agent reviews its pull request.
-export function ReviewBanner({ task, events }: { task: Task; events: MhEvent[] }) {
-  if (task.status !== "running") return null;
+export function ReviewBanner({ task, events, onChanged }: { task: Task; events: MhEvent[]; onChanged?: (task: Task) => void }) {
+  // Once an operator holds the review, the page's operator review panel says so instead.
+  if (task.status !== "running" || task.review_claimed_by) return null;
   const review = reviewsInProgress(events).find((r) => r.task_id === task.id);
   if (!review) return null;
   return (
     <Alert color="violet" title="An agent is reviewing this pull request now" icon={<IconEye size={18} />} mb="md" data-testid="review-banner">
       <Stack gap="sm" align="flex-start">
         <Text size="sm">
-          Its review started {ago(review.since)}. You can review it too: comment on the diff's lines, and your comments post to the pull request under your name.
+          Its review started {ago(review.since)}. Take it over and the round waits for your verdict once the agent's review finishes. Or comment on
+          the diff's lines; your comments post to the pull request under your name.
         </Text>
         <Group gap="sm">
-          <Button component={Link} to={reviewLink(task.id)} size="xs" color="violet" leftSection={<IconEye size={14} />}>Review it yourself</Button>
+          {onChanged && <TakeOverReview task={task} onChanged={onChanged} />}
+          <Button component={Link} to={reviewLink(task.id)} size="xs" variant="light" color="violet" leftSection={<IconEye size={14} />}>Open the diff</Button>
           {task.pr_url && <PrLink url={task.pr_url} />}
         </Group>
       </Stack>

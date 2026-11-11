@@ -43,7 +43,7 @@ MERGEABLE = ("ready", "review_unresolved")
 COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
-    "pr_url, head_sha, created_at, updated_at, attempts, waiting_on, retries, resume"
+    "pr_url, head_sha, created_at, updated_at, attempts, waiting_on, retries, resume, review_claimed_by"
 )
 
 
@@ -264,7 +264,7 @@ def _jsonable(row: dict) -> dict:
 # review is an operator's word on a review that waits for them: a finding dismissed, or go on to the fix now.
 MESSAGE_KINDS = ("next_turn", "after_stop", "stop", "choose", "budget", "review")
 # What a running task may be waiting on an operator for.
-WAITING_ON = ("budget", "review")
+WAITING_ON = ("budget", "review", "operator_review")
 # The most attempts a task makes at once.
 MAX_ATTEMPTS = 4
 
@@ -349,6 +349,58 @@ def review_word(conn: psycopg.Connection, task_id: str, body: str, actor: str) -
         cur.execute(
             "INSERT INTO tasks.task_message (task_id, body, deliver, actor) VALUES (%s, %s, 'review', %s)",
             (task_id, body, actor),
+        )
+        return _jsonable(row)
+
+
+def claim_review(conn: psycopg.Connection, task_id: str, actor: str) -> dict:
+    """An operator takes the review of a running task's pull request over: the round in flight, or the next,
+    waits for their verdict. The first claim wins. Queues the claim for the task's workflow. Returns the task."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT {COLUMNS} FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        if row["status"] != "running" or not row["pr_url"]:
+            raise TaskError("only a running task with a pull request has a review to take over")
+        if row["review_claimed_by"] and row["review_claimed_by"] != actor:
+            raise TaskError(f"{row['review_claimed_by']} already holds this review")
+        if row["review_claimed_by"] == actor:
+            return _jsonable(row)
+        cur.execute(
+            f"UPDATE tasks.task SET review_claimed_by = %s, updated_at = now() WHERE id = %s RETURNING {COLUMNS}",
+            (actor, task_id),
+        )
+        row = cur.fetchone()
+        cur.execute(
+            "INSERT INTO tasks.task_message (task_id, body, deliver, actor) VALUES (%s, %s, 'review', %s)",
+            (task_id, f"claim:{actor}", actor),
+        )
+        return _jsonable(row)
+
+
+def end_review_claim(conn: psycopg.Connection, task_id: str, actor: str, word: str) -> dict:
+    """The operator who holds a task's review gives it back (word "release") or gives their verdict (word
+    "verdict:<json>", once the round waits for it). Queues the word for the workflow. Returns the task."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT {COLUMNS} FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        if not row["review_claimed_by"]:
+            raise TaskError("no one holds this task's review")
+        if row["review_claimed_by"] != actor:
+            raise TaskError(f"{row['review_claimed_by']} holds this review, not {actor}")
+        if word.startswith("verdict:") and (row["status"] != "running" or row["waiting_on"] != "operator_review"):
+            raise TaskError("the agent's review has not finished: the round is not waiting for a verdict yet")
+        cur.execute(
+            f"UPDATE tasks.task SET review_claimed_by = NULL, updated_at = now() WHERE id = %s RETURNING {COLUMNS}",
+            (task_id,),
+        )
+        row = cur.fetchone()
+        cur.execute(
+            "INSERT INTO tasks.task_message (task_id, body, deliver, actor) VALUES (%s, %s, 'review', %s)",
+            (task_id, word, actor),
         )
         return _jsonable(row)
 

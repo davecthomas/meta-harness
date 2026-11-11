@@ -129,6 +129,21 @@ REGISTRY: list[EventType] = [
         ),
     ),
     # A review held for an operator before its fix run, a finding they dismissed, and their word to go on
+    # An operator took a task's review over, gave it back, or gave their verdict
+    EventType("operator_review_claimed", 1, _object({}, [])),
+    EventType("operator_review_released", 1, _object({}, [])),
+    EventType(
+        "operator_review_submitted",
+        1,
+        _object(
+            {
+                "verdict": {"type": "string", "enum": ["clean", "changes"]},
+                "kept": {"type": "integer"},
+                "findings": {"type": "integer"},
+            },
+            ["verdict"],
+        ),
+    ),
     EventType("review_hold", 1, _object({"reason": {"type": "string"}}, ["reason"])),
     EventType(
         "finding_dismissed",

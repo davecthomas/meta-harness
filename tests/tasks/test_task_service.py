@@ -595,3 +595,52 @@ def test_a_task_that_has_not_started_takes_several_attempts_and_a_pick_is_its_ow
         ).status_code
         == 422
     )
+
+
+def test_an_operator_takes_a_review_over_and_gives_a_verdict_once_the_round_waits(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    tid = task["id"]
+    early = api.post(f"/v1/tasks/{tid}/review/claim", headers=_as(CALLER_KEY))
+    assert early.status_code == 409 and "running task with a pull request" in early.json()["detail"]
+    running = {"status": "running", "pr_url": "https://github.com/o/r/pull/9"}
+    api.post(f"/v1/tasks/{tid}/status", json=running, headers=_as(SERVICE_KEY))
+
+    claimed = api.post(f"/v1/tasks/{tid}/review/claim", headers=_as(CALLER_KEY))
+    assert claimed.status_code == 202 and claimed.json()["review_claimed_by"] == "ops"
+    other = {**_as(SERVICE_KEY), "X-MH-Actor": "someone-else"}
+    taken = api.post(f"/v1/tasks/{tid}/review/claim", headers=other)
+    assert taken.status_code == 409 and "ops already holds this review" in taken.json()["detail"]
+
+    verdict = {"verdict": "changes", "keep": [2], "findings": [{"path": "app.py", "line": 3, "body": "Also this."}]}
+    too_soon = api.post(f"/v1/tasks/{tid}/review/verdict", json=verdict, headers=_as(CALLER_KEY))
+    assert too_soon.status_code == 409 and "not waiting for a verdict yet" in too_soon.json()["detail"]
+    waits = {"status": "running", "reason": "waits for ops", "waiting_on": "operator_review"}
+    api.post(f"/v1/tasks/{tid}/status", json=waits, headers=_as(SERVICE_KEY))
+    for bad in ({"verdict": "clean", "keep": [1]}, {"verdict": "changes"}):
+        assert api.post(f"/v1/tasks/{tid}/review/verdict", json=bad, headers=_as(CALLER_KEY)).status_code == 422
+
+    given = api.post(f"/v1/tasks/{tid}/review/verdict", json=verdict, headers=_as(CALLER_KEY))
+    assert given.status_code == 202 and given.json()["review_claimed_by"] is None
+    pending = api.get("/v1/messages/pending", headers=_as(SERVICE_KEY)).json()["messages"]
+    words = [m["body"] for m in pending if m["task_id"] == tid and m["deliver"] == "review"]
+    assert words[0] == "claim:ops" and words[1].startswith('verdict:{"keep": [2], "findings": [{"body": "Also this."')
+    recorded = [(t, p) for t, p, f in events.events if f.get("task_id") == tid and t.startswith("operator_review")]
+    assert recorded == [
+        ("operator_review_claimed", {}),
+        ("operator_review_submitted", {"verdict": "changes", "kept": 1, "findings": 1}),
+    ]
+
+
+def test_a_claimed_review_can_be_given_back_by_the_operator_who_holds_it(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    tid = task["id"]
+    running = {"status": "running", "pr_url": "https://github.com/o/r/pull/9"}
+    api.post(f"/v1/tasks/{tid}/status", json=running, headers=_as(SERVICE_KEY))
+    assert api.post(f"/v1/tasks/{tid}/review/release", headers=_as(CALLER_KEY)).status_code == 409
+    api.post(f"/v1/tasks/{tid}/review/claim", headers=_as(CALLER_KEY))
+
+    released = api.post(f"/v1/tasks/{tid}/review/release", headers=_as(CALLER_KEY))
+
+    assert released.status_code == 202 and released.json()["review_claimed_by"] is None
+    pending = api.get("/v1/messages/pending", headers=_as(SERVICE_KEY)).json()["messages"]
+    assert [m["body"] for m in pending if m["task_id"] == tid] == ["claim:ops", "release"]

@@ -94,6 +94,8 @@ export interface Task {
   max_usd?: string | null;
   // What the running task waits on an operator for: "budget" while it is held for budget.
   waiting_on?: string | null;
+  // The operator who took the task's review over; the round waits for their verdict. Null: no one has.
+  review_claimed_by?: string | null;
   // The issues a blocked task waits on, as refs.
   depends_on?: string[];
   // Why the scheduler holds a queued task; null for one it does not hold, and for a task in any other status.

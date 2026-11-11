@@ -69,6 +69,8 @@ export function Overview() {
               <Table.Td><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
               <Table.Td>{t.waiting_on === "budget" ? (
                   <Badge color="orange" variant="light" tt="none">out of budget</Badge>
+                ) : t.waiting_on === "operator_review" ? (
+                  <Badge color="violet" variant="light" tt="none">waits for {t.review_claimed_by ?? "an operator"}'s review</Badge>
                 ) : t.waiting_on === "review" ? (
                   <Badge color="orange" variant="light" tt="none">review waits</Badge>
                 ) : (
