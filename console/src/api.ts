@@ -4,6 +4,7 @@
 import { ApiError, call, query } from "./client";
 import { activityApi } from "./features/activity/api";
 import { adminApi } from "./features/admin/api";
+import { performanceApi } from "./features/performance/api";
 import { configApi } from "./features/config/api";
 import { goalsApi } from "./features/goals/api";
 import { settingsApi } from "./features/settings/api";
@@ -15,6 +16,7 @@ export * from "./features/activity/api";
 export * from "./features/admin/api";
 export * from "./features/config/api";
 export * from "./features/goals/api";
+export * from "./features/performance/api";
 export * from "./features/settings/api";
 export * from "./features/tasks/api";
 
@@ -184,6 +186,7 @@ export const api = {
     call<KillSwitch>("/v1/kill-switch", { method: "POST", body: JSON.stringify({ engaged, reason }) }),
   ...activityApi,
   ...adminApi,
+  ...performanceApi,
   ...configApi,
   ...goalsApi,
   ...settingsApi,

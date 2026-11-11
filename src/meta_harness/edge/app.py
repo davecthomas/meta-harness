@@ -75,6 +75,7 @@ ROUTES: list[tuple[str, str, str]] = [
     # The edge answers /v1/me itself; the planner keeps each user's settings under it.
     ("/v1/me", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/config", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
+    ("/v1/costs", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     # The console's users, for admins: every /v1/admin path is an admin's.
     ("/v1/admin/users", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/tasks", "MH_TASKS_URL", "http://127.0.0.1:8302"),
@@ -402,6 +403,8 @@ def create_app(
         params = [(k, v) for k, v in request.query_params.multi_items() if k != "ticket"]
         headers["Authorization"] = f"Bearer {key}"
         headers["X-MH-Actor"] = who
+        # The role too, for a service that answers an admin and a regular user differently (costs).
+        headers["X-MH-Role"] = "admin" if is_admin(who) else "user"
         content = await request.body()
         waited, pause = 0.0, 0.25
         while True:

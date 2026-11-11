@@ -1858,6 +1858,7 @@ credential.
 | GET | `/v1/admin/logs` | Edge | The VM's services' and the edge's log entries from Cloud Logging, newest first, at most 500, by unit, lowest severity, time and text. The VM's Ops Agent ships the journal as `mh_journald`; the edge reads with its own service account's `roles/logging.viewer`. Admins only | built |
 | GET | `/v1/admin/deploys` | Edge | What is deployed: the version, the commit the VM and the edge run, and the edge's revision. Admins only | built |
 | GET, POST | `/v1/admin/users` | Planner, through the edge | The console's users: list them, or invite an email with a role (`admin` or `user`). `PATCH /v1/admin/users/{email}` sets the role and `DELETE` deprovisions. The last admin can be neither deprovisioned nor made a regular user (409). Each change is recorded (`user_invited`, `user_role_changed`, `user_deprovisioned`) with the admin as actor and shows on the Audit page. Admins only | built |
+| GET | `/v1/costs` | Cost service, in the planner's process | Costs over time: `from`, `to`, `bucket` (`day`, `week`, `month`), `group_by` (`source`, `kind`, `goal`, `task`, `repo`, `model`, `engine`, `operator`) and a comma-separated filter on each. Answers the buckets, one series per value dearest first (the eighth and later folded into `other`), each bucket's total, the total, the daily average, the change against the same span before, the least-squares `trend` through the totals, a month projected at the trend, the ten costliest tasks, and what each source is. An admin sees every source and goal; anyone else, only the model cost of their own work (`scope: own`). `POST /v1/costs/harvest` reads every source now (admins) | built |
 | GET | `/health` | Every service | Liveness and configuration identity | built |
 
 The run service has no HTTP API yet. Until it has one, a path it owns that
@@ -2231,6 +2232,7 @@ the same approval.
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over) |
 | Meta-harness scheduler | task_hold | task_id, kind, reason, detail (what the reason names), since, last_checked. One row per queued task the scheduler holds |
 | Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), budget_mode, budget_overage_percent, spent_usd (at the last sweep), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
+| Cost service | daily_cost, harvest | One row per day, source (`model`, `cloud`), item (the kind of run, or the billed service) and the dimensions the source has (goal, task, repo, model, engine, operator), with its dollars; and how far each source has been read |
 | Planner | console_user | email, role (admin, user), status (invited, active, deprovisioned), invited_by, invited_at, last_sign_in_at. Who may use the console, and as what |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
@@ -2382,6 +2384,38 @@ Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
+The Performance page (`console/src/features/performance`) is what the
+meta-harness costs over time. Four figures head it for the chosen range: the
+total, the daily average, the change against the span before, and a month
+at the current trend. Under them, cost per day, week or month as stacked
+columns, one segment per value of the chosen breakdown (cost source, kind
+of work, goal, repository, model, operator), with the trend line through
+the totals and a tooltip listing every series of the hovered bucket. Beside
+it, where the money went as a ranked list with each share, and the ten
+costliest tasks, linked. The range (7, 30 or 90 days, or two dates), the
+bucket, the breakdown and the filters (source, kind of work, goal,
+repository, model) live in the URL. A series keeps its color whatever is
+filtered. An admin sees every source and is told what each is and when it
+was last read; a regular user sees the model cost of their own work, and
+the page says so.
+
+Costs are gathered into one place by the cost service
+(`src/meta_harness/costs`), whose routes and harvest loop run in the
+planner's process for now, as the configuration API does. Every
+`MH_COSTS_HARVEST_SECONDS` (300; 0 turns it off; checked at startup) it
+reads each source into `costs.daily_cost`. Model cost comes from the event
+service: each run's `attempt_finished`, and the planner's own model calls,
+read from the position the last harvest reached and saved with the new
+position in one transaction, so an event is counted once. Cloud cost comes
+from the Google Cloud billing export in BigQuery, by billed service, when
+`MH_BILLING_EXPORT_TABLE` names the table; the last 35 days are read again
+each time, since a bill is restated. Until the export is turned on for the
+billing account and the setting names it, the page says cloud cost is not
+connected. Temporal runs on the VM, so its cost is inside Compute Engine's.
+A source is a module with a `harvest` function. The edge names the caller's
+role to the services (`X-MH-Role`), and the cost API decides by it who sees
+what.
+
 The header's inbox lists what waits on the operator: a pull request ready to
 merge, a review that ended unresolved, a recent failed task, a goal over its
 budget or stopped by it, a stalled goal, and the kill switch. It refreshes every 30 seconds and,
