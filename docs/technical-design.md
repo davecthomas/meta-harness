@@ -2553,6 +2553,29 @@ budget or stopped by it, a stalled goal, and the kill switch. It refreshes every
 when the operator turned notifications on in Settings, raises a browser
 notification for each new item.
 
+Wherever the console shows failed work, it says what happened, why, and what
+to do, with the action that does it, and never a bare count or a raw error
+(`console/src/features/tasks/diagnosis.ts`). A failure's recorded reason is
+read into a diagnosis: a summary, a cause, a fix, and the actions that apply
+(Retry, Retry with a higher spend limit, open the task, edit the issue,
+Configuration). The recorded error, without the wrappers each layer adds, is
+shown when asked for. A reason no rule knows says what was recorded and what
+to do next. Tasks that failed the same way are one message with one action
+(`FailureGroups.tsx`): "Retry all 6", not six copies of an error. This is
+what a goal's alert above its board shows, what the Overview's Needs you
+section shows above its table, and what a failed task's own alert shows. Each
+inbox item carries a line saying what to do; a pull request ready to merge
+links to the pull request itself. The Overview's numbers are links, each with
+a line saying what the number is made of: Needs you says how many failed, how
+many are ready to merge and how many are held, and goes to the list.
+
+A goal's Graph view draws the order of work: an issue sits to the right of
+each issue it waits on, with an arrow from it, and says where it stands in
+words (Queued, Waits on 2 issues to its left, Running now, In review, Done,
+Needs you: failed, retry it). Color marks only what is done and what needs
+the operator. A goal whose issues do not depend on each other has no order to
+draw, and the view says so rather than stack boxes.
+
 A value the operator may change is edited where it is shown, one way
 everywhere (`console/src/components/InlineField.tsx`): hovering a value shows
 a pencil, and clicking the value or the pencil turns it into its input (text,

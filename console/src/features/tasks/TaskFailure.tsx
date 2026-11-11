@@ -2,7 +2,8 @@ import { Alert, Anchor, List, Stack, Text } from "@mantine/core";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import type { MhEvent, Task } from "../../api";
-import { moneyText } from "../../money";
+import { diagnose } from "./diagnosis";
+import { Remedies } from "./Remedies";
 
 const TITLES: Record<string, string> = {
   failed: "This task failed",
@@ -16,14 +17,23 @@ function unfinished(events: MhEvent[]): MhEvent[] {
 
 // A failed or unresolved task says so at the top of its page: why it ended, each run that did not finish, and
 // where its log lines are. Nothing for a task in any other status.
-export function TaskFailure({ task, status, events }: { task: Task; status: string; events: MhEvent[] }) {
+export function TaskFailure({ task, status, events, onChanged }: { task: Task; status: string; events: MhEvent[]; onChanged?: () => void }) {
   const title = TITLES[status];
   if (!title) return null;
   const runs = unfinished(events);
+  const diagnosis = diagnose({ status, reason: task.status_reason });
   return (
     <Alert color={status === "failed" ? "red" : "orange"} title={title} icon={<IconAlertTriangle size={18} />} mb="md" role="alert">
       <Stack gap="xs">
-        <Text size="sm">{moneyText(task.status_reason) ?? "No reason was recorded."}</Text>
+        {diagnosis && (
+          <>
+            <Text size="sm" fw={600}>{diagnosis.summary}</Text>
+            <Text size="sm">{diagnosis.cause}</Text>
+            <Text size="sm"><Text span fw={600}>What to do:</Text> {diagnosis.fix}</Text>
+            <Remedies diagnosis={{ ...diagnosis, remedies: diagnosis.remedies.filter((r) => r !== "task") }} tasks={[task]} issueRef={task.external_ref} onChanged={onChanged} />
+            {diagnosis.detail && <Text size="xs" c="dimmed" ff="monospace" style={{ wordBreak: "break-word" }}>{diagnosis.detail}</Text>}
+          </>
+        )}
         {runs.length > 0 && (
           <List size="sm" spacing={2}>
             {runs.map((e) => (

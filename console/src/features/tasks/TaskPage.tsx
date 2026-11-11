@@ -202,7 +202,7 @@ export function TaskPage() {
       <OperatorReview task={{ ...task, status }} rounds={rounds ?? []} onChanged={setTask} />
       <BudgetHold task={{ ...task, status }} onAnswered={setTask} />
       <WaitingToStart task={{ ...task, status }} onChanged={() => void api.task(taskId).then(setTask, () => undefined)} />
-      <TaskFailure task={task} status={status} events={events} />
+      <TaskFailure task={task} status={status} events={events} onChanged={() => void api.task(taskId).then(setTask, () => undefined)} />
       <Facts
         items={[
           ["Status", (
