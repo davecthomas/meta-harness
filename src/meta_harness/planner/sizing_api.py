@@ -7,7 +7,9 @@ A split creates each issue in the held issue's repo with the goal's label, so
 the goal's next sweep takes them in; a goal with no label holds them by ref
 instead. Each one's body names its paths on a `Paths:` line. The held issue
 stays held, saying what it was split into, until it is closed: the planner
-never closes an issue a person wrote.
+never closes an issue a person wrote. The split is recorded on its link
+(split_into), so later sweeps keep that reason, and an issue split once is
+not split again (409); Run anyway still makes it a task.
 
 Registered by the planner service's create_app, which hands over what the routes share with the rest.
 """
@@ -20,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import db
 from meta_harness.github_app import GitHubAppError
-from meta_harness.planner import store
+from meta_harness.planner import sizing, store
 from meta_harness.run_service.code_host import issue_paths
 
 MAX_SPLIT_ISSUES = 20
@@ -102,6 +104,23 @@ def register(
                 detail=f"each issue names its paths on a Paths: line; these do not: {'; '.join(pathless)}",
             )
         repo, label = link["repo"], goal["label"]
+
+        def claim() -> bool:
+            with db.connect(autocommit=True) as conn:
+                return store.claim_split(conn, goal_id, body.ref)
+
+        def record(created: list[str]) -> list[str]:
+            with db.connect(autocommit=True) as conn:
+                # A goal with no label takes the new issues by ref, as an operator's pick.
+                added = [] if label or not created else store.add_refs(conn, goal_id, [(ref, repo) for ref in created])
+                store.record_split(conn, body.ref, created, sizing.split_reason(created) if created else None)
+                return added
+
+        if link.get("split_into") is not None or not await asyncio.to_thread(claim):
+            done = ", ".join(link.get("split_into") or [])
+            raise HTTPException(
+                status_code=409, detail=f"{body.ref} was split already" + (f" into {done}" if done else "")
+            )
         created: list[str] = []
         try:
             if label:
@@ -110,18 +129,15 @@ def register(
                 made = await tracker.create_issue(repo, issue.title.strip(), issue.body, [label] if label else [])
                 created.append(made.ref)
         except GitHubAppError as err:
+            # What was created is recorded as the split, so a retry never creates it twice; none: it may be split again.
+            await asyncio.to_thread(record, created)
             done = f"; created before it refused: {', '.join(created)}" if created else ""
             raise HTTPException(status_code=502, detail=f"GitHub refused an issue: {err}{done}") from err
+        except Exception:
+            await asyncio.to_thread(record, created)
+            raise
 
-        def record() -> list[str]:
-            with db.connect(autocommit=True) as conn:
-                # A goal with no label takes the new issues by ref, as an operator's pick.
-                added = [] if label else store.add_refs(conn, goal_id, [(ref, repo) for ref in created])
-                numbers = ", ".join("#" + ref.rsplit("#", 1)[-1] for ref in created)
-                store.set_link_held(conn, body.ref, f"split into {numbers}: close it once they cover it")
-                return added
-
-        added = await asyncio.to_thread(record)
+        added = await asyncio.to_thread(record, created)
         for ref in added:
             events.emit("issue_added", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
         events.emit(

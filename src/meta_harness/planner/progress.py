@@ -116,6 +116,8 @@ def _sizing_view(link: dict) -> dict[str, Any]:
         "checks_named": list(sizing.get("checks") or []),
         # Why the issue waits for an operator instead of becoming a task: Run anyway or Split answers it.
         "held_reason": link.get("held_reason"),
+        # The issues an operator split it into; empty until it is split, and a split issue is not split again.
+        "split_into": list(link.get("split_into") or []),
     }
 
 

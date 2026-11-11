@@ -109,6 +109,8 @@ export interface IssueProgress {
   checks_named?: string[];
   // Why the issue waits for an operator instead of becoming a task: Run anyway or Split answers it.
   held_reason?: string | null;
+  // The issues an operator split it into: a split issue is not split again.
+  split_into?: string[];
 }
 
 export type IssueSize = "small" | "medium" | "large";

@@ -121,11 +121,15 @@ test("Split opens the suggested issues as drafts with a Paths: line, and creates
 });
 
 test("an issue split already offers only Run anyway, and a closed goal offers neither", () => {
-  const split = { ...LARGE, held_reason: "split into #10, #11: close it once they cover it" };
+  const split = { ...LARGE, held_reason: "split into #10, #11: close it once they cover it", split_into: ["github:o/r#10", "github:o/r#11"] };
   const { unmount } = renderIn(<HeldActions goalId="g-1" label={LABEL} issue={split} onChanged={() => {}} />);
   expect(screen.getByRole("button", { name: "Run anyway" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Split" })).toBeNull();
   unmount();
+  // Recorded as split, whatever its reason says.
+  const recorded = renderIn(<HeldActions goalId="g-1" label={LABEL} issue={{ ...LARGE, split_into: ["github:o/r#10"] }} onChanged={() => {}} />);
+  expect(screen.queryByRole("button", { name: "Split" })).toBeNull();
+  recorded.unmount();
   renderIn(<HeldActions goalId="g-1" label={LABEL} issue={LARGE} readOnly onChanged={() => {}} />);
   expect(screen.queryByRole("button", { name: "Run anyway" })).toBeNull();
 });

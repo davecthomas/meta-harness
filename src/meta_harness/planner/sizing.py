@@ -230,6 +230,12 @@ def hold_reason(size: str | None, sizing: dict[str, Any] | None, strict: bool) -
     return None
 
 
+def split_reason(created: list[str]) -> str:
+    """Why an issue split into these stays held: it waits to be closed once they cover it."""
+    numbers = ", ".join("#" + ref.rsplit("#", 1)[-1] for ref in created)
+    return f"split into {numbers}: close it once they cover it"
+
+
 def issue_limit(body: str) -> str | None:
     """The spend limit an issue names on a `Spend limit:` line, as a dollar string; None when it names none."""
     for amount in SPEND_LINE.findall(body or ""):
