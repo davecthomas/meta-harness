@@ -51,7 +51,10 @@ A goal no sweep covers any more, met, canceled, paused or stalled, is
 followed up every FOLLOW_UP_SECONDS instead (follow_up_goal): the title and
 labels of each issue it holds that has a task are refreshed, and its canceled
 tasks' pull requests watched for their end, so costs by label and by outcome
-stay true after the goal ends. It takes in nothing and changes no task. The
+stay true after the goal ends. It also records each issue the goal holds as
+open that has closed (refresh_states), which the planner does too when the
+goal's page is read, so the goal's record of its issues does not stop at its
+last sweep. It takes in nothing and changes no task. The
 canceled tasks of no goal, which no goal's sweep lists, have their pull
 requests watched as often (follow_up_goalless).
 """
@@ -154,8 +157,8 @@ async def follow_up_goal(
     goal: dict, tracker: Tracker, tasks: TaskClient, events: Events, host: CodeHost | None = None
 ) -> SweepResult:
     """For a goal no sweep covers any more: refresh the title and labels of each issue it holds that has a
-    task, and record the end of each pull request its canceled tasks left open. Nothing is taken in, and no
-    task or goal changes status."""
+    task, record each open one that has closed, and record the end of each pull request its canceled tasks
+    left open. Nothing is taken in, and no task or goal changes status."""
     result = SweepResult(goal["id"])
     for link in await asyncio.to_thread(_links, goal["id"]):
         if not link["task_id"]:
@@ -167,8 +170,75 @@ async def follow_up_goal(
             result.errors.append(f"{link['ref']}: {err}")
             continue
         await _refresh(link, issue)
+    result.errors.extend(await refresh_states(goal, tracker, events, result))
     await _watch_canceled_pull_requests(goal, tasks, events, host or code_host, result)
     return result
+
+
+async def refresh_states(goal: dict, tracker: Tracker, events: Events, result: SweepResult | None = None) -> list[str]:
+    """Record each issue the goal holds as open that has closed on the tracker, as a sweep would, for a goal
+    no sweep covers: without it the goal's record keeps the state its last sweep saw, and its page shows a
+    closed issue as open. Returns what could not be read; those keep the state they had."""
+    errors: list[str] = []
+    for link in await asyncio.to_thread(_links, goal["id"]):
+        if link["state"] != "open":
+            continue
+        try:
+            issue = await tracker.read(link["ref"])
+        except (GitHubAppError, ValueError) as err:
+            errors.append(f"{link['ref']}: {err}")
+            continue
+        if issue.state != "closed":
+            continue
+        await asyncio.to_thread(_set_state, link["ref"], "closed")
+        events.emit(
+            "issue_closed",
+            {"ref": link["ref"]},
+            task_id=link["task_id"],
+            actor="planner",
+            event_id=stable_event_id("issue_closed", link["ref"]),
+        )
+        if result is not None:
+            result.closed.append(link["ref"])
+    return errors
+
+
+# Why a task ended when its goal was canceled: each task's task_status_changed carries it.
+GOAL_CANCELED_REASON = "its goal was canceled"
+# A task in one of these has a pull request open that canceling its goal leaves for the operator.
+LEFT_WITH_PULL_REQUEST = ["running", "ready", "review_unresolved"]
+
+
+async def cancel_goal_tasks(goal: dict, tasks: TaskClient, who: str) -> dict[str, list[str]]:
+    """End what a canceled goal has not started: cancel each of its queued and blocked tasks, and ask each
+    running one with no pull request to stop, as a task cancel does. A task with a pull request open is left
+    for the operator, who decides what becomes of the pull request. Returns the task ids by what was done:
+    canceled, stopping, left (a pull request open), and errors for those the task service refused."""
+    done: dict[str, list[str]] = {"canceled": [], "stopping": [], "left": [], "errors": []}
+    try:
+        found = await asyncio.to_thread(
+            tasks.list, ["queued", "blocked", *LEFT_WITH_PULL_REQUEST], goal["id"], PR_WATCH_LIMIT
+        )
+    except TaskApiError as err:
+        done["errors"].append(f"{goal['id']}: {err}")
+        return done
+    for task in found:
+        if task.get("pr_url"):
+            done["left"].append(task["id"])
+            continue
+        if task["status"] not in UNSTARTED_OR_RUNNING:
+            # Finished work with no pull request on a code host (a local repo's): nothing to stop.
+            continue
+        if task.get("cancel_requested"):
+            done["stopping"].append(task["id"])
+            continue
+        try:
+            ended = await asyncio.to_thread(tasks.cancel, task["id"], GOAL_CANCELED_REASON, who)
+        except TaskApiError as err:
+            done["errors"].append(f"{task['id']}: {err}")
+            continue
+        done["canceled" if ended["status"] == "canceled" else "stopping"].append(task["id"])
+    return done
 
 
 def issues_done(links: list[dict]) -> bool:

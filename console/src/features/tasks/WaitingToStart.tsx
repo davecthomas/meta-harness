@@ -31,11 +31,31 @@ export function waitReason(task: Pick<Task, "status" | "held" | "depends_on">): 
 
 function Blocked({ task }: { task: Task }) {
   const [issues, setIssues] = useState<Record<string, IssueProgress>>({});
+  const [goalStatus, setGoalStatus] = useState<string | null>(null);
   useEffect(() => {
     if (!task.goal_id) return;
-    api.goalIssues(task.goal_id).then((found) => setIssues(Object.fromEntries(found.map((i) => [i.ref, i]))), () => setIssues({}));
+    api.goalIssuesChecked(task.goal_id).then(
+      (found) => {
+        setIssues(Object.fromEntries(found.issues.map((i) => [i.ref, i])));
+        setGoalStatus(found.goal_status ?? null);
+      },
+      () => setIssues({}),
+    );
   }, [task.goal_id]);
   const refs = task.depends_on ?? [];
+  // A goal that has ended starts none of its tasks, whatever they wait on: that comes first.
+  if (task.goal_id && (goalStatus === "canceled" || goalStatus === "met")) {
+    return (
+      <Stack gap={6} data-testid="goal-ended">
+        <Group gap="xs">
+          <Text size="sm">Its goal is</Text>
+          <StatusBadge status={goalStatus} />
+          <Text size="sm">so it will not start. Cancel the task, or reopen the goal.</Text>
+          <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm">Open the goal</Anchor>
+        </Group>
+      </Stack>
+    );
+  }
   return (
     <Stack gap={6}>
       <Text size="sm">It waits on {refs.length === 1 ? "another issue" : "other issues"}, and is queued once {refs.length === 1 ? "it is" : "each is"} closed.</Text>
