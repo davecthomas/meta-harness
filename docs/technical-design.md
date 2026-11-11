@@ -1762,8 +1762,21 @@ admins, `MH_CONSOLE_ADMINS` (the platform stack's `admins`, a subset of the
 operators), alone may write configuration, use the kill switch and open the
 `/v1/admin` paths, which the edge serves itself; while the list is empty,
 every operator is an admin. An admin who is not an operator stops the edge
-at startup. The rest of this section is the design for the GKE
-deployment.
+at startup.
+
+Those two lists are only the first access list. The users are records the
+planner keeps (`planner.console_user`, `planner/users.py`), and an admin
+changes them on the console's Users page: invite an email as an admin or a
+regular user, set a role, deprovision. The edge reads the users every ten
+seconds and decides each request by them (`edge/directory.py`), so a
+deprovisioned user's session ends at their next request and a new role
+applies at once. The first time the edge finds no users, it hands the
+planner its first access list (every operator an admin when
+`MH_CONSOLE_ADMINS` is empty), and from then on the users decide. A planner
+the edge cannot reach changes nothing: the users last read go on deciding.
+An invited user becomes active at their first sign-in. The console sends no
+email: an invitation is text the admin copies and sends. The rest of this
+section is the design for the GKE deployment.
 
 Identity-Aware Proxy authenticates every `/v1` path except the webhooks.
 Operators sign in through Identity Platform, and programs present
@@ -1844,6 +1857,7 @@ credential.
 | GET | `/v1/me` | Edge | The signed-in operator's identity and roles (`operator`, and `admin` for an admin) | built |
 | GET | `/v1/admin/logs` | Edge | The VM's services' and the edge's log entries from Cloud Logging, newest first, at most 500, by unit, lowest severity, time and text. The VM's Ops Agent ships the journal as `mh_journald`; the edge reads with its own service account's `roles/logging.viewer`. Admins only | built |
 | GET | `/v1/admin/deploys` | Edge | What is deployed: the version, the commit the VM and the edge run, and the edge's revision. Admins only | built |
+| GET, POST | `/v1/admin/users` | Planner, through the edge | The console's users: list them, or invite an email with a role (`admin` or `user`). `PATCH /v1/admin/users/{email}` sets the role and `DELETE` deprovisions. The last admin can be neither deprovisioned nor made a regular user (409). Each change is recorded (`user_invited`, `user_role_changed`, `user_deprovisioned`) with the admin as actor and shows on the Audit page. Admins only | built |
 | GET | `/health` | Every service | Liveness and configuration identity | built |
 
 The run service has no HTTP API yet. Until it has one, a path it owns that
@@ -2210,6 +2224,7 @@ the same approval.
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over) |
 | Meta-harness scheduler | task_hold | task_id, kind, reason, detail (what the reason names), since, last_checked. One row per queued task the scheduler holds |
 | Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), budget_mode, budget_overage_percent, spent_usd (at the last sweep), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
+| Planner | console_user | email, role (admin, user), status (invited, active, deprovisioned), invited_by, invited_at, last_sign_in_at. Who may use the console, and as what |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
 | Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, last_webhook_at |
