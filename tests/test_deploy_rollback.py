@@ -88,10 +88,21 @@ def test_a_healthy_update_restarts_each_service_once_on_the_new_commit(tmp_path)
 
     assert code == 0
     assert head == new
-    restarts = [c for c in calls if c.startswith("restart mh-") and "migrate" not in c]
+    restarts = [c for c in calls if c.startswith("restart mh-")]
     assert restarts == [
         f"restart {u} {new}" for u in ("mh-events", "mh-tasks", "mh-planner", "mh-scheduler", "mh-worker")
-    ]
+    ], "and never mh-migrate: restarting it stops every service that requires it, all at once"
+
+
+def test_an_update_applies_migrations_beside_the_running_services_and_a_stop_never_waits_long():
+    services = SERVICES.read_text()
+    update = services[services.index("update_services() {") :]
+    assert "apply_migrations" in update.split("local unit")[0] and "restart mh-migrate" not in services
+    for unit in ("events", "tasks", "planner", "scheduler"):
+        text = (ROOT / "deploy" / "vm" / "units" / f"mh-{unit}.service").read_text()
+        assert "TimeoutStopSec=15" in text, f"mh-{unit} could hold a deploy for systemd's 90 seconds"
+    cli = (ROOT / "src" / "meta_harness" / "cli.py").read_text()
+    assert cli.count("uvicorn.run(") == cli.count("**SERVE") == 5
 
 
 def test_a_service_that_fails_its_health_check_rolls_the_update_back(tmp_path):
