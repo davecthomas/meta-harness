@@ -17,27 +17,40 @@ const RANGES = [
   { value: "custom", label: "Custom" },
 ];
 const BUCKETS = [{ value: "day", label: "Daily" }, { value: "week", label: "Weekly" }, { value: "month", label: "Monthly" }];
-const BREAKDOWNS = [
-  { value: "source", label: "Cost source" },
-  // The Google Cloud bill by the service billed: Compute Engine, Cloud Run, Logging and the rest.
-  { value: "service", label: "Google Cloud service" },
-  { value: "kind", label: "Kind of work" },
-  { value: "goal", label: "Goal" },
-  { value: "repo", label: "Repository" },
-  { value: "model", label: "Model" },
-  { value: "operator", label: "Operator" },
-];
-const FILTERS: { name: CostFilter; label: string }[] = [
-  { name: "source", label: "Source" },
-  { name: "kind", label: "Kind of work" },
-  { name: "goal", label: "Goal" },
-  { name: "repo", label: "Repository" },
-  { name: "model", label: "Model" },
-];
+// Cost category first: AI (what model calls cost) or cloud (the Google Cloud bill), or both. Each category
+// has its own breakdowns and filters, since a model, a goal or a kind of run means nothing for the cloud bill,
+// and a billed service nothing for model calls. Each category's costs are the source of that name.
+type Category = "all" | "ai" | "cloud";
+const CATEGORIES = [{ value: "all", label: "All costs" }, { value: "ai", label: "AI" }, { value: "cloud", label: "Cloud" }];
+const SOURCE_OF: Record<Category, string | null> = { all: null, ai: "model", cloud: "cloud" };
+// Within a category, the dimension each breakdown is. In both kinds the source's item is "kind": for AI the
+// kind of run, for the cloud bill the service billed.
+const BREAKDOWNS: Record<Category, { value: string; label: string; group_by: string }[]> = {
+  all: [{ value: "category", label: "Cost category", group_by: "source" }],
+  ai: [
+    { value: "model", label: "Model", group_by: "model" },
+    { value: "run", label: "Run type", group_by: "kind" },
+    { value: "goal", label: "Goal", group_by: "goal" },
+    { value: "repo", label: "Repository", group_by: "repo" },
+    { value: "operator", label: "Operator", group_by: "operator" },
+  ],
+  cloud: [{ value: "service", label: "Cloud service", group_by: "kind" }],
+};
+const FILTERS: Record<Category, { name: CostFilter; label: string }[]> = {
+  all: [],
+  ai: [
+    { name: "model", label: "Model" },
+    { name: "kind", label: "Run type" },
+    { name: "goal", label: "Goal" },
+    { name: "repo", label: "Repository" },
+  ],
+  cloud: [{ name: "kind", label: "Cloud service" }],
+};
+const ALL_FILTERS: CostFilter[] = ["source", "kind", "goal", "repo", "model"];
 const NAMES: Record<string, string> = {
-  model: "Models",
-  cloud: "Google Cloud",
-  task: "Tasks' own runs",
+  model: "AI",
+  cloud: "Cloud",
+  task: "Task runs",
   review: "Reviews",
   fix: "Fixes",
   planning: "Planning",
@@ -54,10 +67,13 @@ export function rangeDays(n: number, today = new Date()): { from: string; to: st
   return { from: iso(first), to: iso(today) };
 }
 
-export function costLabel(key: string, costs: Pick<Costs, "labels" | "group_by">): string {
+// What a series or a filter's value is called. category: the cost category in view, since under Cloud a
+// "kind" value is a service's own name and is shown as it is.
+export function costLabel(key: string, costs: Pick<Costs, "labels" | "group_by">, category: Category = "all"): string {
   if (costs.labels[key]) return costs.labels[key];
+  if (key === "" || key === "other") return NAMES[key];
   // A model named "task" would be a model: only the dimensions with fixed values are renamed.
-  if (key === "" || key === "other" || costs.group_by === "source" || costs.group_by === "kind") return NAMES[key] ?? key;
+  if (costs.group_by === "source" || (costs.group_by === "kind" && category !== "cloud")) return NAMES[key] ?? key;
   return key;
 }
 
@@ -75,13 +91,23 @@ export function PerformancePage() {
   const [params, setParams] = useSearchParams();
   const range = params.get("range") ?? "30";
   const bucket = params.get("bucket") ?? "day";
-  const by = params.get("by") ?? "source";
+  // A regular user sees only their own AI costs: the category is AI, whatever the URL says.
+  const [own, setOwn] = useState(false);
+  const asked_category = (params.get("category") ?? "all") as Category;
+  const category: Category = own ? "ai" : CATEGORIES.some((c) => c.value === asked_category) ? asked_category : "all";
+  const breakdowns = BREAKDOWNS[category];
+  const breakdown = breakdowns.find((b) => b.value === params.get("by")) ?? breakdowns[0];
+  const by = breakdown.value;
   const custom = range === "custom";
   const span = useMemo(
     () => (custom ? { from: params.get("from") ?? rangeDays(30).from, to: params.get("to") ?? rangeDays(30).to } : rangeDays(Number(range) || 30)),
     [custom, range, params],
   );
-  const filters = useMemo(() => Object.fromEntries(FILTERS.flatMap((f) => (params.get(f.name) ? [[f.name, params.get(f.name)!]] : []))), [params]);
+  // Only the category's own filters apply: one left in the URL from another category would hide its costs.
+  const filters = useMemo(
+    () => Object.fromEntries(FILTERS[category].flatMap((f) => (params.get(f.name) ? [[f.name, params.get(f.name)!]] : []))),
+    [params, category],
+  );
   const [costs, setCosts] = useState<Costs | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,13 +120,12 @@ export function PerformancePage() {
     setParams(next, { replace: true });
   };
 
-  const asked = JSON.stringify({ ...span, bucket, by, filters });
+  const source = SOURCE_OF[category];
+  const asked = JSON.stringify({ ...span, bucket, group_by: breakdown.group_by, filters, source });
   useEffect(() => {
     let live = true;
-    // A cloud cost's item is the service billed, as a model cost's is the kind of work: the cloud source by item.
-    const asked = by === "service" ? { group_by: "kind", ...filters, source: "cloud" } : { group_by: by, ...filters };
-    api.costs({ ...span, bucket, ...asked }).then(
-      (found) => live && (setCosts(found), setError(null)),
+    api.costs({ ...span, bucket, group_by: breakdown.group_by, ...filters, ...(source ? { source } : {}) }).then(
+      (found) => live && (setCosts(found), setError(null), setOwn(found.scope === "own")),
       (err) => live && setError(err instanceof Error ? err.message : String(err)),
     );
     return () => {
@@ -110,11 +135,10 @@ export function PerformancePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asked]);
 
-  // Under the cloud breakdown a key is a service's own name, shown as it is.
-  const label = (key: string) => (costs ? (by === "service" ? key || NAMES[""] : costLabel(key, costs)) : key);
+  const label = (key: string) => (costs ? costLabel(key, costs, category) : key);
   // A series' color is its place among every value its dimension takes, so filtering never repaints the rest.
-  const order = costs ? (costs.choices[by]?.length ? costs.choices[by] : costs.series.map((s) => s.key).sort()) : [];
-  const own = costs?.scope === "own";
+  const dimension = breakdown.group_by === "kind" ? "kind" : breakdown.group_by;
+  const order = costs ? (costs.choices[dimension]?.length ? costs.choices[dimension] : costs.series.map((s) => s.key).sort()) : [];
   const trend = costs?.trend;
   const per = bucket === "day" ? "day" : bucket;
 
@@ -138,24 +162,48 @@ export function PerformancePage() {
               </>
             )}
             <SegmentedControl aria-label="Bucket" value={bucket} onChange={(v) => set({ bucket: v })} data={BUCKETS} />
-            <NativeSelect label="Break down by" data={own ? BREAKDOWNS.filter((b) => !["source", "service", "operator"].includes(b.value)) : BREAKDOWNS} value={by} onChange={(e) => set({ by: e.currentTarget.value })} />
           </Group>
-          {costs && (
-            <Group gap="md" align="flex-end" wrap="wrap">
-              {FILTERS.filter((f) => !((own || by === "service") && f.name === "source") && (costs.choices[f.name]?.length ?? 0) > 1).map((f) => (
-                <MultiSelect
-                  key={f.name}
-                  label={f.label}
-                  placeholder="All"
-                  clearable
-                  w={190}
-                  data={costs.choices[f.name].map((value) => ({ value, label: costs.labels[value] ?? (f.name === "source" || f.name === "kind" ? (NAMES[value] ?? value) : value) }))}
-                  value={(filters[f.name] ?? "").split(",").filter(Boolean)}
-                  onChange={(values) => set({ [f.name]: values.join(",") || null })}
+          <Group gap="md" align="flex-end" wrap="wrap">
+            {!own && (
+              <Stack gap={4}>
+                <Text size="sm" fw={500}>Cost category</Text>
+                <SegmentedControl
+                  aria-label="Cost category"
+                  value={category}
+                  data={CATEGORIES}
+                  // A new category starts from its own breakdown, with no filter of another category's.
+                  onChange={(v) => set({ category: v === "all" ? null : v, by: null, ...Object.fromEntries(ALL_FILTERS.map((f) => [f, null])) })}
                 />
-              ))}
-            </Group>
-          )}
+              </Stack>
+            )}
+            {breakdowns.length > 1 ? (
+              <NativeSelect label="Break down by" data={breakdowns} value={by} onChange={(e) => set({ by: e.currentTarget.value })} />
+            ) : (
+              <Stack gap={4}>
+                <Text size="sm" fw={500}>Broken down by</Text>
+                <Text size="sm" c="dimmed" h={36} style={{ display: "flex", alignItems: "center" }}>{breakdown.label}</Text>
+              </Stack>
+            )}
+            {costs &&
+              FILTERS[category]
+                // A filter with a value always shows, so it can be cleared; one with a single choice has nothing to pick.
+                .filter((f) => filters[f.name] || (costs.choices[f.name]?.length ?? 0) > 1)
+                .map((f) => (
+                  <MultiSelect
+                    key={f.name}
+                    label={f.label}
+                    placeholder="All"
+                    clearable
+                    w={190}
+                    data={[...new Set([...(costs.choices[f.name] ?? []), ...(filters[f.name] ?? "").split(",").filter(Boolean)])].map((value) => ({
+                      value,
+                      label: costs.labels[value] ?? (f.name === "kind" && category !== "cloud" ? (NAMES[value] ?? value) : value),
+                    }))}
+                    value={(filters[f.name] ?? "").split(",").filter(Boolean)}
+                    onChange={(values) => set({ [f.name]: values.join(",") || null })}
+                  />
+                ))}
+          </Group>
         </Stack>
       </Paper>
 
@@ -186,7 +234,10 @@ export function PerformancePage() {
 
           <Paper p="md" mb="lg" withBorder>
             <Group justify="space-between" mb="xs" wrap="wrap">
-              <Text fw={650}>Cost per {per}, by {BREAKDOWNS.find((b) => b.value === by)?.label.toLowerCase()}</Text>
+              <Text fw={650}>
+                {category === "all" ? "" : `${CATEGORIES.find((c) => c.value === category)?.label} cost`}
+                {category === "all" ? "Cost" : ""} per {per}, by {breakdown.label.toLowerCase()}
+              </Text>
               <Group gap="md" wrap="wrap" className="cost-viz" data-testid="cost-legend">
                 {costs.series.map((s) => (
                   <Group key={s.key} gap={6} wrap="nowrap">
@@ -212,7 +263,7 @@ export function PerformancePage() {
                 {costs.series.map((s) => (
                   <div key={s.key}>
                     <Group justify="space-between" gap="sm" wrap="nowrap">
-                      {by === "goal" && s.key.startsWith("g-") ? (
+                      {breakdown.group_by === "goal" && s.key.startsWith("g-") ? (
                         <Anchor component={Link} to={`/goals/${s.key}`} size="sm" lineClamp={1}>{label(s.key)}</Anchor>
                       ) : (
                         <Text size="sm" lineClamp={1}>{label(s.key)}</Text>
@@ -229,7 +280,8 @@ export function PerformancePage() {
                 {costs.series.length === 0 && <Text size="sm" c="dimmed">Nothing to break down.</Text>}
               </Stack>
             </div>
-            <div>
+            {/* The cloud bill is the deployment's, not any task's. */}
+            {category !== "cloud" && <div>
               <SectionTitle>Costliest tasks</SectionTitle>
               {costs.top_tasks.length ? (
                 <DataTable head={["Task", "Cost"]} minWidth={0}>
@@ -243,7 +295,7 @@ export function PerformancePage() {
               ) : (
                 <Text size="sm" c="dimmed">No task spent anything in this range.</Text>
               )}
-            </div>
+            </div>}
           </SimpleGrid>
 
           {!own && (

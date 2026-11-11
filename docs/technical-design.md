@@ -2387,9 +2387,15 @@ its terminal tiles, the Task page with its live run, and Configuration.
 The Performance page (`console/src/features/performance`) is what the
 meta-harness costs over time. Four figures head it for the chosen range: the
 total, the daily average, the change against the span before, and a month
-at the current trend. Under them, cost per day, week or month as stacked
-columns, one segment per value of the chosen breakdown (cost source, kind
-of work, goal, repository, model, operator), with the trend line through
+at the current trend. The controls start with the cost category: All costs,
+AI (what model calls cost) or Cloud (the Google Cloud bill). Each category
+has its own breakdowns and filters: All by category; AI by model, run type
+(task runs, reviews, fixes, planning), goal, repository or operator, with
+filters for model, run type, goal and repository; Cloud by the service
+billed, with a filter for it. A filter with a value always shows, so it can
+be cleared, and its choices are never narrowed by its own value. Under them,
+cost per day, week or month as stacked columns, one segment per value of the
+chosen breakdown, with the trend line through
 the totals and a tooltip listing every series of the hovered bucket. Beside
 it, where the money went as a ranked list with each share, and the ten
 costliest tasks, linked. The range (7, 30 or 90 days, or two dates), the
@@ -2410,8 +2416,7 @@ position in one transaction, so an event is counted once. Cloud cost comes
 from the Google Cloud billing export in BigQuery, by billed service; the
 last 35 days, and back to the first of the previous month, are read again
 each time, since a bill is restated and Google fills a new export from the
-previous month. The page's Google Cloud service breakdown shows the bill by
-service. The billing
+previous month. The page's Cloud category shows the bill by service. The billing
 account's standard usage cost export writes to the platform stack's
 `billing_export` dataset (turned on 2026-11-11), which the VM's service
 account may read and query. `MH_BILLING_EXPORT_TABLE` names the dataset, and
