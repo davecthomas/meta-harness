@@ -2014,7 +2014,10 @@ The answer is stored on the issue link (`size`, `sizing`) and recorded as
   into, until it is closed or run anyway: the planner closes no issue a person
   wrote. The split is recorded on its link (`split_into`), so later sweeps
   keep that reason and neither size nor split it again, and a second Split
-  is refused (409).
+  is refused (409). While a split is creating its issues, its claim
+  (`split_into` empty) refuses Run anyway (409), so the original never
+  starts beside its smaller issues; once the split ends, Run anyway is open
+  again.
 - An issue missing something runs, with the gap on its card. One with no
   acceptance checks, its own or the repo registry's defaults, runs with none,
   and its run asks the agent to run the repo's tests. A goal that sets
