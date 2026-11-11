@@ -325,6 +325,21 @@ def set_link_labels(conn: psycopg.Connection, ref: str, labels: list[str]) -> No
         conn.execute("UPDATE planner.issue_link SET labels = %s WHERE ref = %s", (labels, ref))
 
 
+def save_pull_request_end(conn: psycopg.Connection, task_id: str, outcome: str) -> None:
+    """Note that a sweep recorded the end of the task's pull request: merged, or closed without merging."""
+    with conn.transaction():
+        conn.execute(
+            "INSERT INTO planner.pull_request_end (task_id, outcome) VALUES (%s, %s) ON CONFLICT (task_id) DO NOTHING",
+            (task_id, outcome),
+        )
+
+
+def ended_pull_requests(conn: psycopg.Connection, task_ids: list[str]) -> set[str]:
+    """Which of these tasks' pull requests a sweep has recorded the end of."""
+    rows = conn.execute("SELECT task_id FROM planner.pull_request_end WHERE task_id = ANY(%s)", (task_ids,)).fetchall()
+    return {row[0] for row in rows}
+
+
 def task_labels(conn: psycopg.Connection) -> dict[str, list[str]]:
     """For each task made from an issue, that issue's labels. A link stored before the planner kept labels
     has its goal's label in their place, the one label it is sure the issue carried."""
