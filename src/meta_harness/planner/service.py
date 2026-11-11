@@ -11,7 +11,7 @@
     GET, POST  /v1/admin/users                the console's users: invite, set a role, deprovision (users.py)
     GET        /v1/costs                      costs over time, by source, goal, model and more (costs/api.py)
     GET, PUT   /v1/me/settings                the signed-in user's own settings
-    GET        /v1/activity                   every pull request opened, by goal, repo or label, for the heat map
+    GET        /v1/activity                   every pull request opened lately, by state, for the Overview's row
     GET        /health
 
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
@@ -45,6 +45,7 @@ from meta_harness.run_service import code_host
 from meta_harness.planner import (
     activity,
     budget_api,
+    cost_facts,
     drafting,
     plan_api,
     planning,
@@ -748,17 +749,11 @@ def create_app(
         return {"goal_id": goal_id, "dropped": ref}
 
     @app.get("/v1/activity")
-    def pull_request_activity(
-        group_by: str = Query("goal", pattern="^(goal|repo|label)$"),
-        days: int = Query(91, ge=1, le=366),
-        who: str = Depends(operator),
-    ) -> dict:
-        """Every pull request the meta-harness opened in the last days, grouped, for the console's heat map."""
-        with app.state.pool.connection() as conn:
-            goals = {goal["id"]: goal for goal in store.list_goals(conn)}
+    def pull_request_activity(days: int = Query(91, ge=1, le=366), who: str = Depends(operator)) -> dict:
+        """Every pull request the meta-harness opened in the last days, by state, for the Overview's row."""
         try:
             found = tasks.list(None, None, TASKS_PAGE)
-            return activity.activity(found, goals, events, group_by, days)
+            return activity.activity(found, events, days)
         except TaskApiError as err:
             raise HTTPException(status_code=502, detail=f"could not read the tasks: {err}") from err
 
@@ -875,6 +870,12 @@ def create_app(
         except store.NotFound:
             return None
 
-    app.state.harvest_costs = costs_api.register(app, operator, admin, events, tasks, goal_or_none)
+    def task_facts() -> dict[str, dict]:
+        """Each task's issue labels and pull request outcome, for costs by label and by outcome."""
+        found = tasks.list(None, None, TASKS_PAGE)
+        with app.state.pool.connection() as conn:
+            return cost_facts.task_facts(conn, found)
+
+    app.state.harvest_costs = costs_api.register(app, operator, admin, events, tasks, goal_or_none, task_facts)
 
     return app

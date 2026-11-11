@@ -830,10 +830,10 @@ def test_a_repos_open_issues_are_browsed_by_label_text_and_page(api, parts):
     assert api.get("/v1/repos/o/unknown/issues", headers=OPERATOR).status_code == 404
 
 
-# --- The pull request activity map ----------------------------------------------------------------------
+# --- The Overview's pull requests row --------------------------------------------------------------------
 
 
-def test_activity_groups_each_tasks_pull_request_with_its_state_cost_and_latest_run(api, parts):
+def test_activity_lists_each_tasks_pull_request_with_its_state_and_latest_run(api, parts):
     from datetime import datetime, timezone
 
     events, _, tasks = parts
@@ -868,21 +868,39 @@ def test_activity_groups_each_tasks_pull_request_with_its_state_cost_and_latest_
         events.emit("attempt_finished", {"tier": tier, "spent_usd": usd}, task_id=task_id, run_id=run)
     events.emit("pull_request_merged", {"pr_url": "https://github.com/o/r/pull/1"}, task_id="t-a")
 
-    shown = api.get("/v1/activity", params={"group_by": "goal"}, headers=OPERATOR).json()
+    shown = api.get("/v1/activity", headers=OPERATOR).json()
 
-    [row] = [g for g in shown["groups"] if g["key"] == goal["id"]]
-    assert row["name"] == "Saves" and row["total"] == 2 and row["left_out"] == 0
-    by_task = {p["task_id"]: p for p in row["prs"]}
-    assert (
-        by_task["t-a"]["state"],
-        by_task["t-a"]["usd"],
-        by_task["t-a"]["fix_rounds"],
-        by_task["t-a"]["latest_run_id"],
-    ) == ("merged", 1.5, 1, "r2")
+    by_task = {p["task_id"]: p for p in shown["prs"]}
+    assert {"t-a", "t-b"} <= set(by_task) and "t-c" not in by_task, "a task with no pull request is not a cell"
+    assert (by_task["t-a"]["state"], by_task["t-a"]["fix_rounds"], by_task["t-a"]["latest_run_id"]) == (
+        "merged",
+        1,
+        "r2",
+    )
     assert by_task["t-b"]["state"] == "waiting"
-    assert [(p["task_id"], p["usd"]) for p in row["spent_without_pr"]] == [("t-c", 0.25)]
-    assert shown["cost_scale"]["low"] <= shown["cost_scale"]["high"]
-    assert api.get("/v1/activity", params={"group_by": "day"}, headers=OPERATOR).status_code == 422
+    assert "usd" not in by_task["t-a"], "what the work cost is the Performance page's"
+    assert set(shown) == {"days", "total", "left_out", "prs"}
+    assert api.get("/v1/activity", params={"days": 0}, headers=OPERATOR).status_code == 422
+
+
+def test_a_tasks_cost_facts_are_its_issues_labels_as_each_sweep_sees_them_and_its_pull_requests_outcome(api, parts):
+    from meta_harness.planner import cost_facts
+
+    _, tracker, tasks = parts
+    label = _label()
+    goal = api.post("/v1/goals", json={"statement": "Fix saves.", "repos": [REPO], "label": label}, headers=OPERATOR)
+    ref = tracker.add(REPO, _number(), body="Broken.", labels=[label, "type:bug"])
+    _sweep(api, goal.json())
+    [task] = [t for t in tasks.tasks.values() if t["external_ref"] == ref]
+    with db.connect(autocommit=True) as conn:
+        assert cost_facts.task_facts(conn, [task])[task["id"]] == {"labels": [label, "type:bug"], "outcome": "none"}
+
+    tracker.issues[ref].labels = [label, "area:saves"]
+    _sweep(api, goal.json())
+    task.update(pr_url="https://github.com/o/r/pull/9", status="canceled")
+    with db.connect(autocommit=True) as conn:
+        assert cost_facts.task_facts(conn, [task])[task["id"]] == {"labels": [label, "area:saves"], "outcome": "closed"}
+    assert [cost_facts.outcome({"pr_url": "u", "status": s}) for s in ("closed", "ready")] == ["merged", "open"]
 
 
 # --- The repo registry from the console -----------------------------------------------------------------

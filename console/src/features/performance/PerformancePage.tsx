@@ -33,6 +33,9 @@ const BREAKDOWNS: Record<Category, { value: string; label: string; group_by: str
     { value: "goal", label: "Goal", group_by: "goal" },
     { value: "repo", label: "Repository", group_by: "repo" },
     { value: "operator", label: "Operator", group_by: "operator" },
+    // A task whose issue carries several labels counts an even share under each, so the bars still add up.
+    { value: "label", label: "Label", group_by: "label" },
+    { value: "outcome", label: "Pull request outcome", group_by: "outcome" },
   ],
   cloud: [{ value: "service", label: "Cloud service", group_by: "kind" }],
 };
@@ -43,10 +46,19 @@ const FILTERS: Record<Category, { name: CostFilter; label: string }[]> = {
     { name: "kind", label: "Run type" },
     { name: "goal", label: "Goal" },
     { name: "repo", label: "Repository" },
+    { name: "label", label: "Label" },
+    { name: "outcome", label: "Pull request" },
   ],
   cloud: [{ name: "kind", label: "Cloud service" }],
 };
-const ALL_FILTERS: CostFilter[] = ["source", "kind", "goal", "repo", "model"];
+const ALL_FILTERS: CostFilter[] = ["source", "kind", "goal", "repo", "model", "label", "outcome"];
+// What became of a task's pull request: what merged work cost, and what abandoned work cost, are one choice each.
+export const OUTCOME_NAMES: Record<string, string> = {
+  merged: "Merged",
+  closed: "Closed without merging",
+  open: "Still open",
+  none: "No pull request",
+};
 const NAMES: Record<string, string> = {
   model: "AI",
   cloud: "Cloud",
@@ -71,6 +83,8 @@ export function rangeDays(n: number, today = new Date()): { from: string; to: st
 // "kind" value is a service's own name and is shown as it is.
 export function costLabel(key: string, costs: Pick<Costs, "labels" | "group_by">, category: Category = "all"): string {
   if (costs.labels[key]) return costs.labels[key];
+  if (costs.group_by === "outcome" && OUTCOME_NAMES[key]) return OUTCOME_NAMES[key];
+  if (costs.group_by === "label" && key === "") return "No label";
   if (key === "" || key === "other") return NAMES[key];
   // A model named "task" would be a model: only the dimensions with fixed values are renamed.
   if (costs.group_by === "source" || (costs.group_by === "kind" && category !== "cloud")) return NAMES[key] ?? key;
@@ -197,7 +211,10 @@ export function PerformancePage() {
                     w={190}
                     data={[...new Set([...(costs.choices[f.name] ?? []), ...(filters[f.name] ?? "").split(",").filter(Boolean)])].map((value) => ({
                       value,
-                      label: costs.labels[value] ?? (f.name === "kind" && category !== "cloud" ? (NAMES[value] ?? value) : value),
+                      label:
+                        f.name === "outcome"
+                          ? (OUTCOME_NAMES[value] ?? value)
+                          : (costs.labels[value] ?? (f.name === "kind" && category !== "cloud" ? (NAMES[value] ?? value) : value)),
                     }))}
                     value={(filters[f.name] ?? "").split(",").filter(Boolean)}
                     onChange={(values) => set({ [f.name]: values.join(",") || null })}

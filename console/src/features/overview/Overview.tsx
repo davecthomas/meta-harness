@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Table, Text, TextInput } from "@mantine/core";
 import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons-react";
-import { goalTitle, api, goalStatus, type Activity, type Goal, type KillSwitch, type MhEvent } from "../../api";
-import { ActivityMap } from "../activity/ActivityPage";
+import { goalTitle, api, goalStatus, type Goal, type KillSwitch, type MhEvent } from "../../api";
+import { PullRequestsRow } from "./PullRequestsRow";
 import { ReviewsInProgress } from "../tasks/reviewing";
 import { BudgetMark, ResumeBudget, budgetStanding, budgetStops, budgetWords } from "../goals/budget";
 import { useInfinite } from "../../hooks";
@@ -187,27 +187,6 @@ export function KillSwitchPanel({ canChange = false }: { canChange?: boolean }) 
         </Group>}
       </Group>
     </Paper>
-  );
-}
-
-// Every pull request in one row, by state, and how many are blocked or waiting on an operator now.
-function PullRequestsRow() {
-  const [activity, setActivity] = useState<Activity | null>(null);
-  useEffect(() => {
-    api.activity("goal").then(setActivity, () => setActivity(null));
-  }, []);
-  if (!activity || !activity.groups.some((g) => g.prs.length)) return null;
-  const prs = activity.groups.flatMap((g) => g.prs);
-  const blocked = prs.filter((p) => p.state === "blocked").length;
-  const waiting = prs.filter((p) => p.state === "waiting").length;
-  return (
-    <>
-      <SectionTitle right={<Anchor component={Link} to="/activity" size="sm">Activity</Anchor>}>Pull requests</SectionTitle>
-      <Text size="sm" c="dimmed" mb="xs">{blocked} blocked · {waiting} waiting for you</Text>
-      <Paper p="sm" mb="lg" withBorder>
-        <ActivityMap activity={activity} view="state" compact />
-      </Paper>
-    </>
   );
 }
 
