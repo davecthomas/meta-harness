@@ -43,6 +43,8 @@ class BudgetHold:
     # Why the task waits, shown as its status reason; "" ends the wait, and reason says what happens next.
     waiting: bool
     reason: str
+    # What it waits on an operator for: budget, or review (a review held before its fix run).
+    on: str = "budget"
 
 
 def _goal_budget(goal_id: str) -> GoalBudget:
@@ -77,7 +79,7 @@ async def goal_budget(goal_id: str) -> GoalBudget:
 @activity.defn
 async def budget_hold(hold: BudgetHold) -> None:
     """Marks the running task as waiting on an operator for budget, or as waiting no longer, with why."""
-    waiting_on = "budget" if hold.waiting else ""
+    waiting_on = hold.on if hold.waiting else ""
     try:
         await asyncio.to_thread(
             lambda: _tasks().set_status(hold.task_id, "running", hold.reason, waiting_on=waiting_on)

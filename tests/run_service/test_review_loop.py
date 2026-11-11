@@ -18,6 +18,7 @@ from meta_harness.run_service.shared import (
     BaseHealthRequest,
     Candidate,
     ChecksRequest,
+    CommentRequest,
     ChecksResult,
     CleanupResult,
     FailedCheck,
@@ -89,6 +90,9 @@ class Script:
     # How long a merge waits for the base's own checks (0: it does not look), and how they stand each time it
     # looks: healthy, running or failed. None left: healthy.
     merge_wait_minutes: int = 0
+    # How long a review that asks for changes waits for an operator before its fix run; 0: no wait.
+    hold_minutes: int = 0
+    comments: list = field(default_factory=list)
     base: list[str] = field(default_factory=list)
     base_asked: list[BaseHealthRequest] = field(default_factory=list)
 
@@ -200,7 +204,13 @@ class Script:
                 max_rounds=self.max_rounds,
                 unresolved=self.unresolved,
                 merge_wait_minutes=self.merge_wait_minutes,
+                hold_minutes=self.hold_minutes,
             )
+
+        @activity.defn(name="post_comment")
+        async def post_comment(request: CommentRequest) -> str:
+            self.comments.append(request)
+            return "https://github.com/owner/repo/pull/7#comment"
 
         @activity.defn(name="base_health")
         async def base_health(request: BaseHealthRequest) -> BaseHealth:
@@ -248,6 +258,7 @@ class Script:
             wait_checks,
             wait_merge_checks,
             base_health,
+            post_comment,
             review_policy,
             loop_prompt,
             post_review,
