@@ -9,7 +9,10 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-TASK_TYPES = {"bug", "feature", "refactor", "dependency", "test", "security", "docs", "plan", "review", "fix"}
+TASK_TYPES = {"bug", "feature", "refactor", "dependency", "test", "security", "docs", "plan", "review", "fix", "smoke"}
+# A deploy's own check that tasks still run (smoke.py): only a service creates one, and the lists a person
+# reads leave them out unless asked.
+SERVICE_TASK_TYPES = {"smoke"}
 # Only the meta-harness creates these.
 INTERNAL_TASK_TYPES = {"review", "fix"}
 COMPLEXITIES = {"low", "medium", "high"}
@@ -73,7 +76,7 @@ def new_task_id() -> str:
 def check(task: NewTask, *, internal: bool) -> None:
     if task.task_type not in TASK_TYPES:
         raise TaskError(f"task_type {task.task_type!r} is not one of {sorted(TASK_TYPES)}")
-    if task.task_type in INTERNAL_TASK_TYPES and not internal:
+    if task.task_type in (INTERNAL_TASK_TYPES | SERVICE_TASK_TYPES) and not internal:
         raise TaskError(f"only the meta-harness creates {task.task_type} tasks")
     if task.task_type in INTERNAL_TASK_TYPES and not task.parent_task_id:
         raise TaskError(f"a {task.task_type} task needs parent_task_id")
@@ -156,14 +159,18 @@ def list_tasks(
     pr: bool | None = None,
     q: str | None = None,
     waiting: bool | None = None,
+    smoke: bool = False,
 ) -> tuple[list[dict], int]:
     """One page of tasks, highest priority then oldest first, and how many match in all.
 
     pr True: only tasks with a pull request; False: only tasks without one; None: either.
     q: text in the title, the id or the issue ref, any case.
     waiting True: only tasks waiting on an operator (waiting_on set); False: only those that are not.
+    smoke: also list deploys' smoke tasks, which a list for a person leaves out.
     """
     clauses, params = [], []
+    if not smoke:
+        clauses.append("task_type <> 'smoke'")
     if waiting is not None:
         clauses.append("waiting_on IS NOT NULL" if waiting else "waiting_on IS NULL")
     if caller is not None:

@@ -191,6 +191,7 @@ class RunTask:
         self._budget_answer: str | None = None
         # Set once a budget hold ended with no more budget: the task then ends, and never holds again.
         self._budget_ended = False
+        self._task_type = ""
 
     @workflow.signal
     def operator_message(self, message: OperatorMessage) -> None:
@@ -261,6 +262,7 @@ class RunTask:
             resume=spec.resume,
             task_type=spec.task_type,
         )
+        self._task_type = spec.task_type
         again = f" again (retry {spec.retries})" if spec.retries else ""
         await self._task_status("running", f"the meta-harness run service started its RunTask workflow{again}")
         try:
@@ -299,6 +301,9 @@ class RunTask:
     def _holds(self) -> bool:
         """Whether this task holds for budget rather than ending when it runs out. Behind a patch: a workflow
         from before it ends, as it always did."""
+        # A deploy's smoke task never holds: nobody is there to answer, and the deploy is waiting.
+        if self._task_type == "smoke":
+            return False
         return bool(self._task_id) and not self._budget_ended and workflow.patched("budget-hold")
 
     async def _grant(
@@ -524,6 +529,19 @@ class RunTask:
         info = workflow.info()
         # A planning task proposes issues and changes no file: nothing to publish, no pull request, no review.
         # Behind a patch, as every change to what a workflow runs is.
+        # A deploy's smoke task only shows that a task still runs: its run finished, and that is the result.
+        if request.task_type == "smoke" and workflow.patched("smoke-task"):
+            workflow.logger.info("%s: the smoke run finished", info.workflow_id)
+            return RunTaskResult(
+                template=prepared.template,
+                prompt=prepared.prompt,
+                route=route_result,
+                attempts=attempts,
+                harness=harness,
+                spent_usd=str(spent),
+                outcome="planned",
+                outcome_reason=f"the smoke run finished in {harness.turns} turns for ${spent}",
+            )
         if request.task_type == "plan" and workflow.patched("plan-task"):
             workflow.logger.info("%s: the planning run finished; the planner reads its drafts", info.workflow_id)
             return RunTaskResult(
