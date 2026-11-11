@@ -6,6 +6,7 @@ reads them with its own service account, which holds roles/logging.viewer,
 through the metadata server's token, so it needs no key and no new library.
 """
 
+import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -57,17 +58,64 @@ def log_filter(project: str, unit: str | None, severity: str | None, since: date
     return " AND ".join(parts)
 
 
+def _request_line(request: dict[str, Any]) -> str:
+    """A served request in a line: "GET /v1/tasks 200, 35 ms". Cloud Run logs each request this way, with no text."""
+    url = str(request.get("requestUrl") or "")
+    path = "/" + url.split("://", 1)[-1].partition("/")[2] if "://" in url else url
+    line = f"{request.get('requestMethod', 'request')} {path or '/'} {request.get('status', '')}".strip()
+    latency = str(request.get("latency") or "")
+    if latency.endswith("s") and latency[:-1].replace(".", "", 1).isdigit():
+        line += f", {round(float(latency[:-1]) * 1000)} ms"
+    return line
+
+
+def entry_message(entry: dict[str, Any]) -> str:
+    """What a log entry says, whatever shape it has. Never empty: an entry with no text of its own is described
+    by what it records, so no row of the Logs page is blank.
+
+    A service's line is its text. A request Cloud Run served has only its request, so the line is the method,
+    path, status and time. An audit entry has its method and status. Any other structured entry is its fields.
+    """
+    payload = entry.get("jsonPayload") or {}
+    text = payload.get("MESSAGE") or payload.get("message") or entry.get("textPayload") or ""
+    if isinstance(text, (dict, list)):
+        text = json.dumps(text, sort_keys=True)
+    if str(text).strip():
+        return str(text)
+    if entry.get("httpRequest"):
+        return _request_line(entry["httpRequest"])
+    proto = entry.get("protoPayload") or {}
+    if proto:
+        status = (proto.get("status") or {}).get("message")
+        return " ".join(str(part) for part in (proto.get("methodName"), proto.get("resourceName"), status) if part)
+    fields = {k: v for k, v in payload.items() if not k.startswith("_") and k not in ("MESSAGE", "message")}
+    if fields:
+        return json.dumps(fields, sort_keys=True, default=str)[:2000]
+    return f"(an entry with no text, in {str(entry.get('logName') or 'an unnamed log').rsplit('/', 1)[-1]})"
+
+
+def blank_line(entry: dict[str, Any]) -> bool:
+    """Whether the entry is an empty line a service printed, such as the gap in a traceback: the journal ships
+    each line as an entry, and an empty one says nothing."""
+    payload = entry.get("jsonPayload") or {}
+    return "_SYSTEMD_UNIT" in payload and not str(payload.get("MESSAGE") or "").strip()
+
+
 def entry_row(entry: dict[str, Any]) -> dict[str, Any]:
     """One log entry as the page shows it: time, service, severity and message, with the whole entry."""
     payload = entry.get("jsonPayload") or {}
     unit = payload.get("_SYSTEMD_UNIT", "")
     service = unit.removesuffix(".service") if unit else EDGE
-    message = payload.get("MESSAGE") or payload.get("message") or entry.get("textPayload") or ""
+    severity = entry.get("severity", "DEFAULT")
+    # Cloud Run gives a served request no severity of its own: one that failed is not a default line.
+    status = (entry.get("httpRequest") or {}).get("status")
+    if severity in ("DEFAULT", "INFO") and isinstance(status, int) and status >= 500:
+        severity = "ERROR"
     return {
         "time": entry.get("timestamp"),
         "service": service,
-        "severity": entry.get("severity", "DEFAULT"),
-        "message": str(message),
+        "severity": severity,
+        "message": entry_message(entry),
         "entry": entry,
     }
 
@@ -107,4 +155,4 @@ async def read_logs(
         )
     if response.status_code != 200:
         raise LogsError(f"Cloud Logging answered {response.status_code}: {response.text[:300]}")
-    return [entry_row(e) for e in response.json().get("entries", [])]
+    return [entry_row(e) for e in response.json().get("entries", []) if not blank_line(e)]
