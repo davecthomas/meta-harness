@@ -81,3 +81,12 @@ def test_the_ceiling_is_the_policys_or_the_default_and_never_opens_on_a_bad_read
 
     monkeypatch.setattr(config_store, "current_document", unreadable)
     assert config_store.task_spend_ceiling() == Decimal("100.00")
+
+    assert task_activities._spend_limit({"max_usd": "25.00"}) == UNBOUNDED_SPEND_LIMIT_USD
+
+
+def test_a_recovered_tasks_limit_is_what_it_has_left_of_its_own():
+    assert task_activities._less_carried("10.00", {"spent_carried_usd": "0"}) == "10.00"
+    assert task_activities._less_carried("10.00", {}) == "10.00"
+    assert task_activities._less_carried("10.00", {"spent_carried_usd": "3.2500"}) == "6.75"
+    assert task_activities._less_carried("10.00", {"spent_carried_usd": "12"}) == "0.00", "nothing left: it ends"

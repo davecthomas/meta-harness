@@ -75,6 +75,7 @@ from meta_harness.planner.sweep import (
     swept_goals,
 )
 from meta_harness.planner.tracker import Tracker, parse_ref
+from meta_harness.supervisor.loop import Supervisor, TemporalWorkflows, Workflows
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
 log = logging.getLogger("meta_harness.planner")
@@ -186,6 +187,19 @@ def add_shipped_configuration(pool, events: Events) -> None:
             )
 
 
+def supervisor_seconds() -> float:
+    """How often the supervisor looks at every open task, from MH_SUPERVISOR_SECONDS: 60 when it is not set,
+    0 to turn the supervisor off. Raises RuntimeError, naming the setting, for anything else."""
+    raw = os.environ.get("MH_SUPERVISOR_SECONDS", "60")
+    try:
+        seconds = float(raw)
+    except ValueError as err:
+        raise RuntimeError(f"MH_SUPERVISOR_SECONDS must be a number of seconds, 0 or more, not {raw!r}") from err
+    if seconds < 0 or seconds != seconds:
+        raise RuntimeError(f"MH_SUPERVISOR_SECONDS must be a number of seconds, 0 or more, not {raw!r}")
+    return seconds
+
+
 def create_app(
     events: Events,
     tracker: Tracker,
@@ -197,6 +211,7 @@ def create_app(
     drafter=None,
     host: CodeHost | None = None,
     titler=None,
+    workflows: Workflows | None = None,
     apps: GitHubApps | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
@@ -279,6 +294,30 @@ def create_app(
                     await planning.collect(goal, tasks, events)
             await asyncio.sleep(interval)
 
+    supervisor = Supervisor(tasks, events, workflows or TemporalWorkflows(), host)
+    supervise_seconds = supervisor_seconds()
+
+    async def supervise_forever() -> None:
+        """Every MH_SUPERVISOR_SECONDS: look at every open task, and move the ones no one has. What a pass
+        found is kept for GET /v1/supervisor, and a pass that fails is logged and said there, never dropped:
+        the supervisor is what notices the rest, so its own trouble has to show."""
+        while True:
+            started = datetime.now(UTC)
+            try:
+                found = await supervisor.pass_once()
+                app.state.supervised = {"at": started.isoformat(), "error": None, **asdict(found)}
+                for error in found.errors:
+                    log.warning("supervisor: %s", error)
+            except Exception as err:  # noqa: BLE001 - the next pass tries again; this one is on the record
+                log.error("supervisor: the pass failed: %s: %s", type(err).__name__, err)
+                last = getattr(app.state, "supervised", None) or {}
+                app.state.supervised = {
+                    **last,
+                    "failed_at": started.isoformat(),
+                    "error": f"{type(err).__name__}: {err}",
+                }
+            await asyncio.sleep(supervise_seconds)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.pool = db.pool(database_url)
@@ -288,6 +327,8 @@ def create_app(
         titling = asyncio.create_task(title_untitled()) if interval > 0 else None
         # The cost sources, harvested beside the sweeps: off wherever the sweeps are (tests).
         harvesting = asyncio.create_task(app.state.harvest_costs()) if interval > 0 else None
+        # The supervisor runs beside the sweeps, and is off wherever they are (tests).
+        supervising = asyncio.create_task(supervise_forever()) if interval > 0 and supervise_seconds > 0 else None
         try:
             yield
         finally:
@@ -297,9 +338,13 @@ def create_app(
                 titling.cancel()
             if harvesting:
                 harvesting.cancel()
+            if supervising:
+                supervising.cancel()
             app.state.pool.close()
 
     app = FastAPI(title="meta-harness planner", lifespan=lifespan)
+    app.state.supervised = None
+    app.state.supervisor = supervisor
     app.state.title_untitled = title_untitled
 
     def operator(key: str = Depends(auth.bearer), actor: str | None = Header(default=None, alias="X-MH-Actor")) -> str:
@@ -855,6 +900,13 @@ def create_app(
             except Exception as err:  # noqa: BLE001 - the change is saved; the next sweep looks at the budget
                 log.warning("goal %s: could not look at its new budget: %s", goal_id, err)
         return goal
+
+    @app.get("/v1/supervisor")
+    def supervised(who: str = Depends(operator)) -> dict:
+        """What the supervisor's last pass found: when it ran, how many tasks each owner has, what it
+        recovered, ended and canceled, and what it could not do. `every_seconds` is how often it runs (0: it
+        is off), so a page can tell a late pass from a quiet one."""
+        return {"every_seconds": supervise_seconds, "last_pass": app.state.supervised}
 
     @app.get("/v1/limits")
     def limits(who: str = Depends(operator)) -> dict:

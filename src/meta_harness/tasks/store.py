@@ -43,8 +43,12 @@ MERGEABLE = ("ready", "review_unresolved")
 COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
-    "pr_url, head_sha, created_at, updated_at, attempts, waiting_on, retries, resume, review_claimed_by"
+    "pr_url, head_sha, created_at, updated_at, attempts, waiting_on, retries, resume, review_claimed_by, "
+    "status_changed_at, recoveries, spent_carried_usd"
 )
+# The most times the supervisor sends one task back to the queue after finding no workflow behind it. Past
+# it the task fails, for an operator: something ends its workflows, and another try would end the same way.
+MAX_RECOVERIES = 3
 
 
 class TaskError(ValueError):
@@ -228,6 +232,8 @@ def set_status(
         if status != previous and status not in TRANSITIONS[previous]:
             raise TaskError(f"a {previous} task cannot become {status}")
         sets = ["status = %s", "status_reason = %s", "updated_at = now()"]
+        if status != previous:
+            sets.append("status_changed_at = now()")
         params: list[Any] = [status, reason]
         for name, value in fields.items():
             sets.append(f"{name} = %s")
@@ -254,8 +260,12 @@ def request_cancel(conn: psycopg.Connection, task_id: str, reason: str) -> tuple
 def _jsonable(row: dict) -> dict:
     for key in ("created_at", "updated_at"):
         row[key] = row[key].isoformat()
+    if row.get("status_changed_at") is not None:
+        row["status_changed_at"] = row["status_changed_at"].isoformat()
     if row["max_usd"] is not None:
         row["max_usd"] = str(row["max_usd"])
+    if "spent_carried_usd" in row:
+        row["spent_carried_usd"] = str(row["spent_carried_usd"])
     return row
 
 
@@ -329,9 +339,50 @@ def requeue(
         what = "asked for its pull request's merge" if action == "merge" else "retried it"
         cur.execute(
             "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
-            "cancel_requested = false, waiting_on = NULL, max_usd = coalesce(%s, max_usd), updated_at = now() "
+            "cancel_requested = false, waiting_on = NULL, max_usd = coalesce(%s, max_usd), updated_at = now(), "
+            "status_changed_at = now(), spent_carried_usd = 0 "
             f"WHERE id = %s RETURNING {COLUMNS}",
             (f"{actor} {what}", resume, max_usd, task_id),
+        )
+        return _jsonable(cur.fetchone()), row["status"]
+
+
+def recover(conn: psycopg.Connection, task_id: str, why: str, spent_usd: Decimal) -> tuple[dict, str]:
+    """Ends the wait of a task that has no RunTask workflow behind it, which nothing else would end.
+
+    The supervisor calls it for a `running` task, or a `queued` one the scheduler started, whose workflow
+    ended or never existed (why says which). A task asked to cancel is canceled: nothing is left to stop.
+    Otherwise it goes back to the queue for a new workflow, which resumes at its pull request when it has
+    one and counts spent_usd, what its runs spent so far, against its spend limit. After MAX_RECOVERIES it
+    fails instead, for an operator. Returns (task, previous status).
+    """
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT status, pr_url, cancel_requested, recoveries FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        if row["status"] not in ("running", "queued"):
+            raise TaskError(f"a {row['status']} task has no workflow to recover")
+        if row["cancel_requested"]:
+            status, reason, resume = "canceled", f"it was asked to cancel, and {why}", None
+        elif row["recoveries"] >= MAX_RECOVERIES:
+            status, resume = "failed", None
+            reason = (
+                f"{why}, for the {row['recoveries'] + 1}th time: its workflows keep ending without finishing, "
+                "so it was not started again"
+            )
+        else:
+            status, resume = "queued", ("review" if row["pr_url"] else None)
+            reason = f"{why}, so the supervisor sent it back to the queue (recovery {row['recoveries'] + 1})"
+        recovered = 1 if status == "queued" else 0
+        cur.execute(
+            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, waiting_on = NULL, "
+            "retries = retries + %s, recoveries = recoveries + %s, spent_carried_usd = %s, "
+            "cancel_requested = false, updated_at = now(), status_changed_at = now() "
+            f"WHERE id = %s RETURNING {COLUMNS}",
+            (status, reason, resume, recovered, recovered, spent_usd, task_id),
         )
         return _jsonable(cur.fetchone()), row["status"]
 
