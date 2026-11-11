@@ -847,9 +847,10 @@ def _requested(request: LoopPromptRequest) -> str:
             "into it in /workspace and left the conflicts unresolved: every conflicted file holds conflict "
             "markers (<<<<<<<, =======, >>>>>>>). Resolve each one, keeping what both sides meant, so no marker "
             "is left. The merge commit is made when you finish.\n\n"
-            "A conflict in a version or lock file follows the versioning rule in the repository's AGENTS.md: "
-            "take the base's version and apply this pull request's bump on top of it (patch for a fix, minor for "
-            "a feature) in every file the rule names. Never keep the branch's older number. Regenerate each lock "
+            "A conflict in a version or lock file follows the versioning rule in the repository's AGENTS.md. "
+            "When it says a pull request sets no version, take the base's version files as they are. When it says "
+            "a pull request bumps the version, take the base's version and apply this pull request's bump on top "
+            "of it in every file the rule names, never keeping the branch's older number. Regenerate each lock "
             "file with its tool, such as uv lock or npm install --package-lock-only, instead of editing it by hand."
         )
     if request.failed_checks:
@@ -981,7 +982,7 @@ async def merge_pr(request: MergeRequest) -> MergeResult:
             else:
                 repo, number = code_host.pr_number(request.pr_url)
                 state, sha, head, detail = await code_host.merge_pull_request(
-                    repo, number, request.head_sha, request.base
+                    repo, number, request.head_sha, request.base, request.kind
                 )
                 if state == "head_changed" and head:
                     same = await code_host.same_diff(repo, request.base, request.head_sha, head)

@@ -37,6 +37,11 @@ jobs:
       MH_DATABASE_URL: postgresql://mh:mh@127.0.0.1:5444/mh
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: a pull request sets no version
+        if: github.event_name == 'pull_request'
+        run: python3 src/meta_harness/versioning.py --check "origin/${{ github.base_ref }}"
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.12.5"

@@ -116,8 +116,9 @@ async def test_every_prompt_keeps_the_version_files_in_scope_whatever_the_paths(
         fix = await ActivityEnvironment().run(
             activities.loop_prompt, dataclasses.replace(_prompt_request(kind="fix"), description=description)
         )
-        assert "a version bump by that rule is never a finding" in review
-        assert "never revert a bump it requires" in fix
+        assert "The repository's own versioning rule, in its AGENTS.md, decides about its version files" in review
+        assert "one it forbids (as when it says the version is set at merge" in review
+        assert "not at all when it says the version is set at merge" in fix
 
 
 async def test_a_first_review_reads_the_whole_change_and_a_later_one_judges_the_round_befores_findings_first():
@@ -143,8 +144,8 @@ async def test_a_first_review_reads_the_whole_change_and_a_later_one_judges_the_
 async def test_a_conflict_fix_prompt_resolves_a_version_conflict_by_the_agents_rule():
     prompt = await ActivityEnvironment().run(activities.loop_prompt, _prompt_request(kind="fix", conflict=True))
     assert "conflict markers" in prompt
-    assert "take the base's version and apply this pull request's bump on top of it" in prompt
-    assert "Never keep the branch's older number" in prompt and "uv lock" in prompt
+    assert "When it says a pull request sets no version, take the base's version files as they are." in prompt
+    assert "take the base's version and apply this pull request's bump on top" in prompt and "uv lock" in prompt
 
 
 async def test_a_fix_prompt_lists_each_finding_with_its_place():

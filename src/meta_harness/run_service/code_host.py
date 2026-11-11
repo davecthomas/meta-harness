@@ -156,13 +156,14 @@ def issue_paths(body: str) -> list[str]:
 # authors revert the bump the repository requires.
 VERSION_RULE = {
     "review": (
-        "The repository's version files and lock files are always in scope: when its AGENTS.md has a versioning "
-        "rule, a version bump by that rule is never a finding, and a change that ships with no bump the rule "
-        "requires is one."
+        "The repository's own versioning rule, in its AGENTS.md, decides about its version files, whatever the "
+        "task's paths say: a version change that rule asks for is never a finding, and one it forbids (as when "
+        "it says the version is set at merge, not in a pull request), or a missing one it requires, is."
     ),
     "author": (
-        "The repository's version files and lock files are always in scope: when its AGENTS.md has a versioning "
-        "rule, bump the version by it, and never revert a bump it requires."
+        "The repository's own versioning rule, in its AGENTS.md, decides about its version files, whatever the "
+        "task's paths say: change them only as that rule says, and not at all when it says the version is set at "
+        "merge, not in a pull request."
     ),
 }
 
@@ -497,13 +498,15 @@ async def newest_containing(repo: str, base: str, sha: str) -> str | None:
 
 
 async def merge_pull_request(
-    repo: str, number: int, head_sha: str, base: str | None = None
+    repo: str, number: int, head_sha: str, base: str | None = None, kind: str = ""
 ) -> tuple[str, str, str, str]:
     """Squash-merges the pull request if its head is still head_sha. Returns (state, merge sha, head, detail).
 
     state is merged, head_changed (a commit landed after head_sha, or the base was brought in; head is the
     new one), conflict (the branch conflicts with its base), or blocked (GitHub refused for another reason,
     such as branch protection or a required human review).
+
+    kind (fix, feature or none) goes into the merge commit's message as a `Version:` line.
 
     With base, a branch that lacks the base's newest commits is not merged: GitHub merges the base into it
     and the new head comes back as head_changed, so its checks and review run again before it merges. So no
@@ -514,10 +517,13 @@ async def merge_pull_request(
         brought = await _bring_base_in(repo, number, base, head_sha)
         if brought is not None:
             return brought
+    merge = {"sha": head_sha, "merge_method": "squash"}
+    if kind:
+        # The merge commit says what kind of change it is, so a repo that works its version out from its
+        # history (as this one does) counts it right: a feature, a fix, or a change that ships nothing.
+        merge["commit_message"] = f"Version: {kind}"
     try:
-        merged = await _github(
-            repo, MERGE, "PUT", f"/repos/{repo}/pulls/{number}/merge", json={"sha": head_sha, "merge_method": "squash"}
-        )
+        merged = await _github(repo, MERGE, "PUT", f"/repos/{repo}/pulls/{number}/merge", json=merge)
         return "merged", str(merged.get("sha", "")), head_sha, ""
     except CodeHostError as err:
         if err.status not in (405, 409, 422):

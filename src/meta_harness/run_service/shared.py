@@ -393,6 +393,9 @@ class MergeRequest:
     base: str
     # The reviewed head commit: GitHub merges only if the pull request's head is still this commit.
     head_sha: str
+    # What kind of change the merge is, for a version worked out from history: fix, feature, none, or "" to
+    # leave the merge commit's message as the code host writes it.
+    kind: str = ""
 
 
 @dataclass

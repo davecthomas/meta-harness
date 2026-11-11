@@ -119,6 +119,8 @@ umask 077
   echo "MH_GITHUB_APPS=$apps"
   echo "MH_REPOS_CONFIG=$ETC/repos.json"
   # The most per-run sandboxes the VM holds: the ceiling on the task policy's max_parallel.
+  # The commit's version, worked out from main's history (versioning.py), for every service.
+  echo "MH_VERSION=$(python3 "$MH/src/meta_harness/versioning.py" 2>/dev/null || cat "$MH/VERSION")"
   echo "MH_MAX_SANDBOXES=8"
   # Every run gets a Postgres beside its sandbox, for its task's tests, unless its harness profile says otherwise.
   echo "MH_SANDBOX_SERVICES=postgres"

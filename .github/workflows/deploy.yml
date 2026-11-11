@@ -39,6 +39,9 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history: the commit's version is worked out from main's commits (versioning.py).
+          fetch-depth: 0
       - name: wait for main's checks to pass at this commit
         id: checks
         env:
@@ -97,7 +100,9 @@ jobs:
       - name: build the edge image and push it to Artifact Registry
         run: |
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
-          docker build -f deploy/edge.Dockerfile -t "$EDGE_IMAGE" .
+          version=$(python3 src/meta_harness/versioning.py)
+          echo "this commit is version $version"
+          docker build -f deploy/edge.Dockerfile --build-arg "MH_VERSION=$version" -t "$EDGE_IMAGE" .
           docker push "$EDGE_IMAGE"
       - name: plan the release stack
         id: release_plan
