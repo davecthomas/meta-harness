@@ -40,6 +40,38 @@ export interface AttemptsCompare {
   }[];
 }
 
+// What runs spent, in all and by kind (the task's own runs, reviews, fixes), with their turns and tokens.
+export interface SpendTotals {
+  usd: string;
+  by_kind: Record<string, string>;
+  runs: number;
+  turns: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+}
+
+export interface TaskSpend {
+  task_id: string;
+  max_usd: string | null;
+  runs: {
+    run_id: string | null;
+    attempt: number;
+    kind: string;
+    tier: string | null;
+    candidate: string | null;
+    turns: number | null;
+    model_calls: number | null;
+    input_tokens: number | null;
+    cached_input_tokens: number | null;
+    output_tokens: number | null;
+    usd: string;
+    status: string | null;
+    end_reason: string | null;
+  }[];
+  totals: SpendTotals;
+}
+
 // The tasks feature's calls; src/api.ts spreads them into `api`.
 export const tasksApi = {
   tasks: async (
@@ -64,6 +96,8 @@ export const tasksApi = {
     call<{ message_id: number }>(`/v1/tasks/${id}/messages`, { method: "POST", body: JSON.stringify({ text, when }) }),
   setAttempts: (id: string, count: number) => call<Task>(`/v1/tasks/${id}/attempts`, { method: "POST", body: JSON.stringify({ count }) }),
   attempts: (taskId: string) => call<AttemptsCompare>(`/v1/pulls/${taskId}/attempts`),
+  // Where the task's money went: its runs, with their turns, tokens and cost.
+  taskSpend: (id: string) => call<TaskSpend>(`/v1/tasks/${id}/spend`),
   clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
   // Sends an ended task back to the queue, with a spend limit for the retry's runs.
   retryTask: (id: string, max_usd: number) => call<Task>(`/v1/tasks/${id}/retry`, { method: "POST", body: JSON.stringify({ max_usd }) }),

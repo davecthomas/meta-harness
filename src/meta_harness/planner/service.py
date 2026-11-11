@@ -660,6 +660,38 @@ def create_app(
             raise HTTPException(status_code=502, detail=f"could not read the tasks' events: {err}") from err
         return {"goal_id": goal_id, "issues": progress.issues_progress(links, found, recorded)}
 
+    @app.get("/v1/goals/{goal_id}/spend")
+    def goal_spend(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Where the goal's money went: each of its tasks with what its runs spent, in all and by kind of run
+        (the task's own runs, reviews, fixes), dearest first, and the goal's total against its budget."""
+        from meta_harness.tasks import spend
+
+        goal = load(goal_id)
+        try:
+            found = tasks.list(None, goal_id, TASKS_PAGE)
+        except TaskApiError as err:
+            raise HTTPException(status_code=502, detail=f"could not read the goal's tasks: {err}") from err
+        rows = []
+        for task in found:
+            try:
+                page = events.read(0, 5000, task_id=task["id"], event_type=",".join(spend.SPEND_EVENT_TYPES))
+            except Exception as err:  # noqa: BLE001 - an unreachable event service is the caller's 502
+                raise HTTPException(status_code=502, detail=f"could not read the tasks' events: {err}") from err
+            runs = spend.runs(page["events"])
+            rows.append(
+                {
+                    "task_id": task["id"],
+                    "title": task.get("title"),
+                    "status": task["status"],
+                    "external_ref": task.get("external_ref"),
+                    **spend.totals(runs),
+                }
+            )
+        rows.sort(key=lambda row: Decimal(row["usd"]), reverse=True)
+        by_kind = {kind: str(sum((Decimal(r["by_kind"][kind]) for r in rows), Decimal(0))) for kind in spend.KINDS}
+        total = str(sum((Decimal(r["usd"]) for r in rows), Decimal(0)))
+        return {"goal_id": goal_id, "max_usd": goal["max_usd"], "usd": total, "by_kind": by_kind, "tasks": rows}
+
     @app.post("/v1/goals/{goal_id}/issues")
     async def add_issues(goal_id: str, body: RefsIn, who: str = Depends(operator)) -> dict:
         """Hold issues for the goal by ref. An active goal takes them in at once."""

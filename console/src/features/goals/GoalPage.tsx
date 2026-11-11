@@ -7,6 +7,7 @@ import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type Is
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { GoalFailures } from "./GoalFailures";
 import { GoalPlan } from "./GoalPlan";
+import { GoalSpend } from "./GoalSpend";
 import { AutoMergeEdit, BudgetEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
@@ -48,6 +49,7 @@ export function GoalPage() {
     api.limits().then((l) => setSystemParallel(l.max_parallel), () => setSystemParallel(null));
   }, []);
   const [picking, setPicking] = useState(false);
+  const [spending, setSpending] = useState(false);
 
   // quiet: a timed refresh, which rereads the goal and its tasks but not its label's issues on the code host.
   const load = useCallback(async (quiet = false) => {
@@ -285,7 +287,8 @@ export function GoalPage() {
         Issues and tasks
       </SectionTitle>
       {progress && <GoalFailures issues={progress} tasks={tasks} />}
-      {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} />}
+      {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} onSpend={() => setSpending(true)} />}
+      <GoalSpend goalId={goal.id} opened={spending} onClose={() => setSpending(false)} />
       {issues.length > 0 && progress && shownView === "board" ? (
         <GoalBoard issues={progress} tasks={tasks} spend={spend} />
       ) : issues.length > 0 && progress && shownView === "graph" ? (
