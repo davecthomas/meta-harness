@@ -1,3 +1,3 @@
 """The meta-harness control plane."""
 
-__version__ = "0.48.2"
+__version__ = "0.48.3"

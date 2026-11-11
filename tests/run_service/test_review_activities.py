@@ -337,3 +337,38 @@ def test_no_shipped_candidate_or_reviewer_names_an_engine_a_harness_cannot_use()
     pairs = [m for tier in router["tiers"] for m in tier["models"]]
     pairs += json.loads((REPO_ROOT / "config" / "task_policy.json").read_text())["review"]["reviewers"]
     assert pairs and all(routing.replace_engine(p) == p for p in pairs), pairs
+
+
+async def test_a_review_is_told_which_checks_passed_and_not_to_run_them_again():
+    told = await ActivityEnvironment().run(
+        activities.loop_prompt, _prompt_request(kind="review", passed_checks=["control plane tests", "console web app"])
+    )
+    assert (
+        "These checks passed on the code host at the commit you are reviewing: control plane tests, console web app."
+        in told
+    )
+    assert "Do not run them again" in told and "Run each acceptance check with the bash tool" not in told
+    assert "- pytest -q" in told, "the task's acceptance checks are still named"
+
+    alone = await ActivityEnvironment().run(activities.loop_prompt, _prompt_request(kind="review"))
+    assert "Run each acceptance check with the bash tool." in alone and "$" not in alone
+
+
+async def test_wait_checks_names_the_checks_that_passed(monkeypatch):
+    from meta_harness.run_service.code_host import CheckRun
+    from meta_harness.run_service.shared import ChecksRequest
+
+    async def check_runs(repo, sha):
+        return [
+            CheckRun("tests", "completed", "success", ""),
+            CheckRun("lint", "completed", "skipped", ""),
+            CheckRun("deploy", "completed", "failure", "x"),
+        ]
+
+    monkeypatch.setattr(activities.code_host, "check_runs", check_runs)
+    monkeypatch.setattr(activities.events, "emit", lambda *a, **k: None)
+    result = await ActivityEnvironment().run(
+        activities.wait_checks, ChecksRequest(repo="o/r", head_sha="abc", task_id="t-1")
+    )
+    assert result.state == "failed" and [f.name for f in result.failed] == ["deploy"]
+    assert "tests" in result.passed and "deploy" not in result.passed

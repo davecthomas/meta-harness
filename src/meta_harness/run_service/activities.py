@@ -633,7 +633,8 @@ async def wait_checks(request: ChecksRequest) -> ChecksResult:
         pending = [r.name for r in runs if r.status != "completed"]
         if runs and not pending:
             failed = [FailedCheck(r.name, r.summary) for r in runs if r.conclusion not in PASSING_CONCLUSIONS]
-            result = ChecksResult(state="failed" if failed else "passed", failed=failed)
+            passed = sorted({r.name for r in runs if r.conclusion in PASSING_CONCLUSIONS})
+            result = ChecksResult(state="failed" if failed else "passed", failed=failed, passed=passed)
             break
         if not runs and waited >= NO_CHECKS_SECONDS:
             result = ChecksResult(state="none")
@@ -758,7 +759,7 @@ async def review_policy(author_model: str) -> ReviewPolicy:
 
 @activity.defn
 async def loop_prompt(request: LoopPromptRequest) -> str:
-    """A review or fix run's prompt, from prompts/review-v2.txt or prompts/fix-v1.txt."""
+    """A review or fix run's prompt, from prompts/review-v3.txt or prompts/fix-v1.txt."""
     checks = (
         "\n".join(f"- {c}" for c in request.checks) or "- None were given. Run the repository's tests, if it has them."
     )
@@ -773,6 +774,7 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
         "requested": _requested(request),
         "paths": code_host.paths_rule(request.description, request.kind),
         "previous": _previous(request),
+        "checks_rule": _checks_rule(request),
     }
     name = loop_template(request.kind)
     template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
@@ -788,6 +790,18 @@ def _findings(findings: list[dict]) -> list[str]:
             where += f" line {finding['line']}"
         lines.append(f"{n}. {where + ': ' if where else ''}{finding['body']}")
     return lines
+
+
+def _checks_rule(request: LoopPromptRequest) -> str:
+    """What a review does about the acceptance checks. A review starts only once the code host's checks have
+    passed at the reviewed commit, so running them all again spends turns to learn what is known."""
+    if not request.passed_checks:
+        return "Run each acceptance check with the bash tool."
+    return (
+        f"These checks passed on the code host at the commit you are reviewing: {', '.join(request.passed_checks)}. "
+        "Do not run them again, and do not install the project's dependencies to do so. Run a command yourself "
+        "only to confirm a finding, or for an acceptance check above that none of those checks covers."
+    )
 
 
 def _previous(request: LoopPromptRequest) -> str:

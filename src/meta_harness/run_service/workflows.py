@@ -772,7 +772,9 @@ class RunTask:
                         why = "; ".join(policy.unresolved) or "every reviewer pair is the model that wrote it"
                         return "unreviewed", f"the pull request has no reviewer: {why}"
                     reviews += 1
-                    review, reviewer, why = await self._review(loop, policy.reviewers, reviews, previous)
+                    review, reviewer, why = await self._review(
+                        loop, policy.reviewers, reviews, previous, list(checks.passed)
+                    )
                     if review is None:
                         return "review_unresolved", f"review round {reviews} got no verdict: {why}"
                     await workflow.execute_activity(
@@ -955,10 +957,16 @@ class RunTask:
         return f"{clean}; {loop.published.base} was brought in without changing the pull request's diff"
 
     async def _review(
-        self, loop: "_Loop", reviewers: list[Candidate], round_no: int, previous: dict | None = None
+        self,
+        loop: "_Loop",
+        reviewers: list[Candidate],
+        round_no: int,
+        previous: dict | None = None,
+        passed_checks: list[str] | None = None,
     ) -> tuple[dict | None, str, str]:
         """One review round: each reviewer pair in order until one returns a verdict. previous is the round
-        before's review, when it asked for changes: this round judges its findings first."""
+        before's review, when it asked for changes: this round judges its findings first. passed_checks are
+        the code host's checks that passed at this head, which the reviewer does not run again."""
         before = previous or {}
         prompt = await self._loop_prompt(
             loop.prompt_request(
@@ -966,6 +974,7 @@ class RunTask:
                 round_no=round_no,
                 previous_findings=list(before.get("findings") or []),
                 previous_summary=str(before.get("summary") or ""),
+                passed_checks=list(passed_checks or []),
             )
         )
         why = ""
