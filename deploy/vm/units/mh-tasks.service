@@ -9,6 +9,9 @@ WorkingDirectory=/opt/meta-harness
 EnvironmentFile=/etc/meta-harness/env
 ExecStart=/opt/meta-harness/.venv/bin/mh tasks serve --host 0.0.0.0 --port 8302
 Restart=always
+# A restart never waits long on a client that keeps a connection open, such as the console's live event
+# stream: the service gives its requests a few seconds (cli.py), and systemd ends it after fifteen.
+TimeoutStopSec=15
 RestartSec=3
 
 [Install]

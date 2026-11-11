@@ -61,13 +61,21 @@ install_units() {
   systemctl daemon-reload
 }
 
-# An in-place update. Postgres and Temporal keep running, the sandbox images are rebuilt only when their
-# sources changed, the egress proxy and the HTTP Gateway restart only when they changed (a restart drops a
-# running sandbox's model calls), and the control-plane services restart one at a time, each healthy
-# before the next, so at most one is down at once.
+# Applies this commit's schema migrations, as the mh-migrate unit does at boot, without touching the unit.
+# Restarting mh-migrate would stop every service that Requires it (events, tasks, planner, scheduler) until
+# it finished, all at once: the console answered nothing for as long as the slowest of them took to stop.
+apply_migrations() {
+  sudo -u mh -H bash -c "set -a; . /etc/meta-harness/env; set +a; cd $MH && .venv/bin/mh migrate"
+}
+
+# An in-place update. Postgres and Temporal keep running, the migrations are applied beside the running
+# services (a migration only adds, so the old code runs against the new schema), the sandbox images are
+# rebuilt only when their sources changed, the egress proxy and the HTTP Gateway restart only when they
+# changed (a restart drops a running sandbox's model calls), and the control-plane services restart one at a
+# time, each healthy before the next, so at most one is down at once.
 update_services() {
   systemctl start mh-postgres mh-temporal
-  systemctl restart mh-migrate
+  apply_migrations
   if changed images samples/temporal-run-task/Makefile samples/temporal-run-task/egress-proxy deploy/vm/units/mh-images.service; then
     log "the sandbox images changed: rebuilding (running sandboxes keep their images)"
     restart mh-images

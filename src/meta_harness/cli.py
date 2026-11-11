@@ -7,6 +7,11 @@ import click
 
 from meta_harness import __version__, db, migrations
 
+# How every service is served. On a stop, open requests get this many seconds to finish and are then closed:
+# without it a restart waits on any connection a client keeps open, such as the console's live event stream,
+# until systemd kills the service, and a deploy's restart of the event service took 90 seconds.
+SERVE = {"timeout_graceful_shutdown": 5}
+
 
 def _serve_logs(tag: str) -> None:
     """A service's logging: every logger's INFO and above on stdout, tagged, with its level where the journal
@@ -51,7 +56,7 @@ def events_serve(host: str, port: int) -> None:
     from meta_harness.events.service import create_app
 
     _serve_logs("events")
-    uvicorn.run(create_app(), host=host, port=port, log_level="warning", log_config=None)
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning", log_config=None, **SERVE)
 
 
 @events.command("emit")
@@ -117,7 +122,9 @@ def tasks_serve(host: str, port: int) -> None:
     from meta_harness.tasks.service import create_app
 
     _serve_logs("tasks")
-    uvicorn.run(create_app(EventClient(source="task")), host=host, port=port, log_level="warning", log_config=None)
+    uvicorn.run(
+        create_app(EventClient(source="task")), host=host, port=port, log_level="warning", log_config=None, **SERVE
+    )
 
 
 @main.group()
@@ -241,7 +248,12 @@ def planner_serve(host: str, port: int) -> None:
     events_client, tracker, tasks_client = _planner_parts()
     _serve_logs("planner")
     uvicorn.run(
-        create_app(events_client, tracker, tasks_client), host=host, port=port, log_level="warning", log_config=None
+        create_app(events_client, tracker, tasks_client),
+        host=host,
+        port=port,
+        log_level="warning",
+        log_config=None,
+        **SERVE,
     )
 
 
@@ -353,7 +365,7 @@ def edge_serve(host: str, port: int) -> None:
     from meta_harness.edge.app import create_app
 
     _serve_logs("console")
-    uvicorn.run(create_app(), host=host, port=port, log_level="warning", log_config=None)
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning", log_config=None, **SERVE)
 
 
 @main.group()
@@ -400,7 +412,7 @@ def scheduler_serve(host: str, port: int) -> None:
     from meta_harness.scheduler.service import create_app
 
     _serve_logs("scheduler")
-    uvicorn.run(create_app(_admission()), host=host, port=port, log_level="warning", log_config=None)
+    uvicorn.run(create_app(_admission()), host=host, port=port, log_level="warning", log_config=None, **SERVE)
 
 
 @scheduler.command("drain")

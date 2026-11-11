@@ -2748,12 +2748,18 @@ account through OS Login, inside a `systemd-run` unit so a dropped connection
 can't stop it. The script checks the commit out and runs
 `deploy/vm/boot.sh` in update mode:
 
-- Postgres and Temporal keep running, and migrations apply.
+- Postgres and Temporal keep running, and migrations apply beside the
+  running services: the script runs `mh migrate` itself and never restarts
+  the `mh-migrate` unit, which every API service requires, so restarting it
+  would stop them all at once.
 - The sandbox images are rebuilt only when their sources changed.
 - The egress proxy and the HTTP Gateway restart only when they changed,
   because a restart drops a running sandbox's model calls.
 - The control-plane services restart one at a time, each answering
-  `/health` before the next.
+  `/health` before the next. A service gives its open requests five seconds
+  on a stop, and systemd ends it after fifteen (`TimeoutStopSec`), so a
+  connection a client keeps open, such as the console's live event stream,
+  cannot hold a restart.
 
 Running sandboxes are Docker containers that outlive the restart, and
 Temporal hands the interrupted run activity to the restarted worker, which
