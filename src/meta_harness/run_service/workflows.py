@@ -936,6 +936,7 @@ class RunTask:
             loop.published = published
             loop.head = published.commit
             loop.merge_sha = ""
+            loop.merge_fix = True
             outcome, reason = await self._review_loop(loop)
             if outcome != "merged" or not loop.merge_sha:
                 if outcome == "merged":
@@ -1010,6 +1011,7 @@ class RunTask:
                 branch=loop.published.branch,
                 base=loop.published.base,
                 head_sha=loop.head,
+                kind=version_kind(loop.request.task_type) if loop.merge_fix is False else "fix",
             ),
             start_to_close_timeout=CODE_HOST_TIMEOUT,
             retry_policy=CODE_HOST_RETRY,
@@ -1241,6 +1243,8 @@ class _Loop:
         # The merge commit, once the review loop merges; the task policy's fix rounds, once the loop reads them.
         self.merge_sha = ""
         self.max_rounds = 0
+        # Whether the pull request in the loop is a fix for a check that failed after the task's own merge.
+        self.merge_fix = False
 
     def left(self) -> Decimal:
         return self.limit - self.spent
@@ -1256,6 +1260,17 @@ class _Loop:
             branch=self.published.branch,
             **fields,
         )
+
+
+def version_kind(task_type: str) -> str:
+    """What kind of change a task's merge is, for a version worked out from history: a feature task is a
+    feature, a docs or test task ships nothing, and any other task of the Task API is a fix. A task with no
+    type (one started by hand, outside the Task API) says nothing, and the commit's subject decides."""
+    if not task_type:
+        return ""
+    if task_type == "feature":
+        return "feature"
+    return "none" if task_type in ("docs", "test") else "fix"
 
 
 def _need(attempts: list[Attempt], kind: str) -> Decimal:

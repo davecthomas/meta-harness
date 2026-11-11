@@ -86,6 +86,14 @@ async def test_a_merge_names_the_reviewed_commit_and_squashes(monkeypatch):
     assert calls[0] == ("PUT", "/repos/o/r/pulls/7/merge", {"sha": "abc", "merge_method": "squash"})
 
 
+async def test_a_merge_says_what_kind_of_change_it_is_in_the_merge_commit(monkeypatch):
+    calls = _github(monkeypatch, None, {})
+
+    await code_host.merge_pull_request("o/r", 7, "abc", kind="feature")
+
+    assert calls[0][2] == {"sha": "abc", "merge_method": "squash", "commit_message": "Version: feature"}
+
+
 @pytest.mark.parametrize(
     ("status", "pull", "expected"),
     [
@@ -276,7 +284,7 @@ async def test_a_diff_that_cannot_be_read_whole_is_never_called_the_same(monkeyp
 
 
 async def test_merge_pr_says_when_the_base_came_in_without_changing_the_diff(monkeypatch):
-    async def merge_pull_request(repo, number, head_sha, base):
+    async def merge_pull_request(repo, number, head_sha, base, kind=""):
         return "head_changed", "", "new", "brought in 2 new commits from main"
 
     async def same_diff(repo, base, before, after):
