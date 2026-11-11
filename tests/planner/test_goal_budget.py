@@ -225,6 +225,24 @@ def test_resume_raises_the_budget_by_a_worked_out_amount_and_tells_the_held_task
     assert again.status_code == 409 and "nothing to resume" in again.json()["detail"]
 
 
+def test_raising_the_budget_by_hand_takes_effect_at_once(world):
+    client, events, tracker, tasks = world
+    goal = _goal(client, tracker, issues=3)
+    held = _spend(events, tasks, goal, "26.79", status="running")
+    held |= {"waiting_on": "budget", "status_reason": "fix run 2 needs about $1. Raise the goal's budget, or end"}
+    _sweep(client, goal)
+    assert _read(client, goal)["budget_resume_to"] is not None
+
+    raised = client.patch(f"/v1/goals/{goal['id']}", json={"max_usd": "30"}, headers=OPERATOR).json()
+
+    # No sweep between: the answer is already the new budget's.
+    assert raised["status"] == "active" and raised["budget_state"] == "ok"
+    assert raised["budget_resume_to"] is None, "a goal within its budget has nothing to resume"
+    assert tasks.answered == [(held["id"], "raise", "dave")]
+    refused = client.post(f"/v1/goals/{goal['id']}/resume-budget", headers=OPERATOR)
+    assert refused.status_code == 409 and "nothing to resume" in refused.json()["detail"]
+
+
 def test_resume_takes_an_amount_and_refuses_one_that_leaves_the_goal_stopped(world):
     client, events, tracker, tasks = world
     goal = _goal(client, tracker)

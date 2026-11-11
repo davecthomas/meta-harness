@@ -2058,7 +2058,12 @@ the average cost of its finished tasks times its issues not yet done (the
 default task spend limit for each when none has finished), rounded up to a
 whole dollar. The answer says the old budget, the new one and how it was
 worked out, and the change is recorded as `goal_changed` with
-`resumed: true`. A `warn` goal has nothing to resume.
+`resumed: true`. A `warn` goal has nothing to resume. A budget changed by
+hand (`PATCH /v1/goals/{id}` with `max_usd`, `budget_mode` or
+`budget_overage_percent`) takes effect at once too: the planner looks at the
+goal's spend as a sweep would before it answers, so the goal's status,
+`budget_state` and `budget_resume_to` are the new budget's, and its tasks
+held for the budget are told to look again.
 
 #### Latitude
 
@@ -2488,9 +2493,9 @@ Each field the operator set on a goal edits in place on the Goal page, with
 no dialog: the title (the page heading), the description under it, and in
 its facts the label (with New goal's suggestions, cleared only when the goal
 holds picked issues), the repos (checkboxes of the registered repos, at
-least one), the budget (cleared to None) and, for a goal with one, When
-the budget is reached (Stop, or Warn and keep going) and for Stop the
-Allowed overage in percent, the priority, the parallel tasks
+least one), the budget (cleared to None), which shares its row with, for
+a goal with one, what happens when it is reached (Stop, or Warn and keep
+going) and for Stop the allowed overage in percent, the priority, the parallel tasks
 (empty for the system setting, no more than it) and auto-merge, a switch.
 A click on a field, or on its pencil icon on hover, turns it into its input,
 with New goal's limits; Enter or leaving it saves, Escape cancels, and the

@@ -147,7 +147,7 @@ export function BudgetEdit({ goal, readOnly, save }: FieldProps) {
       label="budget"
       readOnly={readOnly}
       value={goal.max_usd ? Number(goal.max_usd) : ""}
-      display={<Text size="sm">{goal.max_usd ? `$${goal.max_usd}` : "None"}</Text>}
+      display={<Text size="sm">{goal.max_usd ? `$${Number(goal.max_usd).toFixed(2)}` : "None"}</Text>}
       same={sameAmount}
       check={(v) => (v === "" || Number(v) > 0 ? null : "A budget is more than $0. Leave it empty for none.")}
       // Emptied: the goal has no budget.

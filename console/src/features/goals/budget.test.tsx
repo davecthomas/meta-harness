@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import type { Goal } from "../../api";
 import { theme } from "../../theme";
-import { BudgetAlert, BudgetMark, ResumeBudget, budgetStanding, budgetWords } from "./budget";
+import { BudgetAlert, BudgetMark, BudgetRow, ResumeBudget, budgetStanding, budgetWords } from "./budget";
 import { GoalProgress } from "./GoalBoard";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -92,4 +92,17 @@ test("a goal whose budget only warns says it keeps going, and offers nothing to 
   inPage(<BudgetAlert goal={goal({ budget_mode: "warn", budget_block_at: null, budget_state: "over", spent_usd: "12.5" })} onResumed={() => undefined} />);
   expect(screen.getByTestId("budget-alert").textContent).toContain("over budget, and it keeps going");
   expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+});
+
+test("the budget, what happens when it is reached, and the overage share one row", () => {
+  const { container, rerender } = inPage(<BudgetRow goal={goal()} readOnly={false} save={async () => undefined} />);
+  const row = container.querySelector('[data-testid="budget-row"]')!;
+  expect(row.textContent).toContain("$10.00");
+  expect(row.textContent).toContain("Stop");
+  expect(row.textContent).toContain("10% over, stops at $11.00");
+  rerender(
+    <MantineProvider theme={theme}><MemoryRouter><BudgetRow goal={goal({ budget_mode: "warn", budget_block_at: null })} readOnly={false} save={async () => undefined} /></MemoryRouter></MantineProvider>,
+  );
+  expect(container.textContent).toContain("Warn and keep going");
+  expect(container.textContent).not.toContain("Overage");
 });
