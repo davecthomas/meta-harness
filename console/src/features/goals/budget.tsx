@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Alert, Badge, Button, Group, Modal, NumberInput, Stack, Text } from "@mantine/core";
 import { IconCoin, IconPlayerPlay } from "@tabler/icons-react";
 import { api, type Goal } from "../../api";
 import type { BudgetResume } from "./api";
-import type { FieldProps } from "./GoalFields";
+import { BudgetEdit, type FieldProps } from "./GoalFields";
 import { InlineEdit, InlineSwitch, refusal } from "./InlineEdit";
 
 // A goal's budget in the console: where the goal stands against it, the two fields that say what it does when
@@ -63,7 +63,7 @@ export function OverageEdit({ goal, readOnly, save }: FieldProps) {
       value={percent}
       display={
         <Text size="sm">
-          {percent}% <Text span size="xs" c="dimmed">{goal.budget_block_at ? `The goal stops at ${usd(goal.budget_block_at)}.` : ""}</Text>
+          {percent}% over{goal.budget_block_at ? `, stops at ${usd(goal.budget_block_at)}` : ""}
         </Text>
       }
       same={(a, b) => String(a) === String(b)}
@@ -82,6 +82,32 @@ export function OverageEdit({ goal, readOnly, save }: FieldProps) {
         />
       )}
     />
+  );
+}
+
+// The goal page's Budget row: the amount, and for a goal with a budget what happens when it is reached and, for
+// one that stops, how far past it the goal may go. One setting, so one row.
+export function BudgetRow(props: FieldProps) {
+  const { goal } = props;
+  if (!goal.max_usd) return <BudgetEdit {...props} />;
+  const part = (label: string, field: ReactNode) => (
+    <Group gap={6} wrap="nowrap" align="center">
+      <Text size="xs" c="dimmed">{label}</Text>
+      {field}
+    </Group>
+  );
+  return (
+    <Group gap="md" wrap="wrap" align="center" data-testid="budget-row">
+      <BudgetEdit {...props} />
+      <Text size="sm" c="dimmed">·</Text>
+      {part("When reached", <BudgetModeEdit {...props} />)}
+      {goal.budget_mode !== "warn" && (
+        <>
+          <Text size="sm" c="dimmed">·</Text>
+          {part("Overage", <OverageEdit {...props} />)}
+        </>
+      )}
+    </Group>
   );
 }
 

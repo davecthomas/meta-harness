@@ -744,9 +744,10 @@ def create_app(
             raise HTTPException(status_code=502, detail=f"could not read the tasks: {err}") from err
 
     @app.patch("/v1/goals/{goal_id}")
-    def patch(goal_id: str, body: GoalPatch, who: str = Depends(operator)) -> dict:
+    async def patch(goal_id: str, body: GoalPatch, who: str = Depends(operator)) -> dict:
         """Change only the fields sent. A field that may be empty (label, max_usd, max_parallel) is cleared
-        when sent as null; any other sent as null is left as it is."""
+        when sent as null; any other sent as null is left as it is. A change to the budget takes effect at
+        once: the goal's standing is worked out again, and its tasks held for the budget look again."""
         fields = {k: v for k, v in body.model_dump().items() if v is not None}
         for clearable in ("label", "max_usd", "max_parallel"):
             if clearable in body.model_fields_set:
@@ -758,7 +759,14 @@ def create_app(
             if unknown:
                 raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
             fields["repos"] = list(dict.fromkeys(repos.get(name).name for name in fields["repos"]))
-        return change(goal_id, who, **fields)
+        goal = await asyncio.to_thread(lambda: change(goal_id, who, **fields))
+        if {"max_usd", "budget_mode", "budget_overage_percent"} & set(fields):
+            try:
+                await budget_api.changed(goal, tasks, events, who)
+                goal = await asyncio.to_thread(load, goal_id)
+            except Exception as err:  # noqa: BLE001 - the change is saved; the next sweep looks at the budget
+                log.warning("goal %s: could not look at its new budget: %s", goal_id, err)
+        return goal
 
     @app.get("/v1/limits")
     def limits(who: str = Depends(operator)) -> dict:

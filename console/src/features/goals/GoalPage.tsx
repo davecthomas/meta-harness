@@ -8,8 +8,8 @@ import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { GoalFailures } from "./GoalFailures";
 import { GoalPlan } from "./GoalPlan";
 import { GoalSpend } from "./GoalSpend";
-import { BudgetAlert, BudgetModeEdit, OverageEdit, ResumeBudget, budgetStanding } from "./budget";
-import { AutoMergeEdit, BudgetEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
+import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding } from "./budget";
+import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 
@@ -239,10 +239,8 @@ export function GoalPage() {
           ["Label", <LabelEdit {...editable} />],
           ["Repos", <ReposEdit {...editable} />],
           ["Auto-merge", <AutoMergeEdit {...editable} />],
-          ["Budget", <BudgetEdit {...editable} />],
-          // What the budget does when it is reached, shown for a goal that has one.
-          ...(goal.max_usd ? [["When the budget is reached", <BudgetModeEdit {...editable} />] as [string, ReactNode]] : []),
-          ...(goal.max_usd && goal.budget_mode !== "warn" ? [["Allowed overage", <OverageEdit {...editable} />] as [string, ReactNode]] : []),
+          // The amount, what happens when it is reached, and the allowed overage, in one row.
+          ["Budget", <BudgetRow {...editable} />],
           ["Priority", <PriorityEdit {...editable} />],
           ["Parallel tasks", <ParallelEdit {...editable} system={systemParallel} />],
           ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],

@@ -103,6 +103,30 @@ async def check(goal: dict, tasks: Any, events: Any) -> None:
     goal["status"] = moved["status"]
 
 
+async def wake_held(found: list[dict], tasks: Any, who: str) -> list[str]:
+    """Answers each of the goal's running tasks held for the goal's budget with raise, so it looks at the budget
+    again at once rather than at its next recheck. found: the goal's tasks. Returns the tasks told."""
+    told = []
+    for task in found:
+        held = task["status"] == "running" and task.get("waiting_on") == "budget"
+        if not held or HELD_FOR_GOAL not in (task.get("status_reason") or ""):
+            continue
+        try:
+            await asyncio.to_thread(tasks.budget, task["id"], "raise", actor=who)
+        except Exception:  # noqa: BLE001 - the task looks again by itself within its next recheck
+            continue
+        told.append(task["id"])
+    return told
+
+
+async def changed(goal: dict, tasks: Any, events: Any, who: str) -> None:
+    """After an operator changes a goal's budget: look at it at once, as a sweep would, so the goal's status, its
+    standing and the budget a resume would set are those of the new budget, and wake the tasks held for it."""
+    await check(goal, tasks, events)
+    if goal["max_usd"] is not None:
+        await wake_held(await asyncio.to_thread(tasks.list, None, goal["id"], TASKS_PAGE), tasks, who)
+
+
 def register(
     app: FastAPI,
     operator: Callable[..., str],
@@ -154,16 +178,7 @@ def register(
             fields["status"] = "active"
         await asyncio.to_thread(lambda: change_with(goal_id, who, {"resumed": True}, **fields))
         await asyncio.to_thread(_save, goal_id, spent, None)
-        told = []
-        for task in found["tasks"]:
-            held = task["status"] == "running" and task.get("waiting_on") == "budget"
-            if not held or HELD_FOR_GOAL not in (task.get("status_reason") or ""):
-                continue
-            try:
-                await asyncio.to_thread(tasks.budget, task["id"], "raise", actor=who)
-            except Exception:  # noqa: BLE001 - the task looks again by itself within its next recheck
-                continue
-            told.append(task["id"])
+        told = await wake_held(found["tasks"], tasks, who)
         return {
             "goal": await asyncio.to_thread(load, goal_id),
             "from": str(old),
