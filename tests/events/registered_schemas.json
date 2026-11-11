@@ -904,10 +904,7 @@
     "additionalProperties": true,
     "properties": {
       "action": {
-        "enum": [
-          "merge",
-          "review"
-        ]
+        "type": "string"
       },
       "drives": {
         "type": "integer"

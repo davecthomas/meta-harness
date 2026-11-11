@@ -186,7 +186,9 @@ REGISTRY: list[EventType] = [
         1,
         _object(
             {
-                "action": {"enum": ["merge", "review"]},
+                # What the supervisor sent the task back for: merge or review today. A string, not a fixed
+                # list, so a new kind of drive needs no new version of the event.
+                "action": {"type": "string"},
                 "why": {"type": "string"},
                 "drives": {"type": "integer"},
                 "resume": {"type": "string"},
