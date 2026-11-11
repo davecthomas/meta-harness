@@ -724,7 +724,7 @@ def create_app(
     @app.get("/v1/goals/{goal_id}/spend")
     def goal_spend(goal_id: str, who: str = Depends(operator)) -> dict:
         """Where the goal's money went: each of its tasks with what its runs spent, in all and by kind of run
-        (the task's own runs, reviews, fixes), dearest first, and the goal's total against its budget."""
+        (the task's own runs, reviews, fixes), most expensive first, and the goal's total against its budget."""
         from meta_harness.tasks import spend
 
         goal = load(goal_id)

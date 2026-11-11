@@ -1,7 +1,7 @@
 """A time series of costs, as the Performance page draws it: buckets, one series per value, and the trend.
 
 Nothing here reads anything: it turns each day's cost per value into buckets of a day, a week or a month, keeps
-the dearest values as series and folds the rest into "other", and fits a straight line through the buckets'
+the most expensive values as series and folds the rest into "other", and fits a straight line through the buckets'
 totals, so every client draws the same trend.
 """
 
@@ -49,7 +49,7 @@ def trend(totals: list[float]) -> dict | None:
 
 
 def build(rows: list[tuple[date, str, Decimal]], first: date, last: date, bucket: str) -> dict:
-    """The series for the rows (day, value, cost): the buckets, a series per value dearest first, each
+    """The series for the rows (day, value, cost): the buckets, a series per value most expensive first, each
     bucket's total, and the trend through the totals."""
     starts = buckets(first, last, bucket)
     index = {start: n for n, start in enumerate(starts)}

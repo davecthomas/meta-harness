@@ -134,7 +134,7 @@ def total(conn: psycopg.Connection, first: date, last: date, filters: dict[str, 
 def top(
     conn: psycopg.Connection, first: date, last: date, dimension: str, filters: dict[str, list[str]], limit: int
 ) -> list[tuple[str, Decimal]]:
-    """The values of a dimension that cost the most, dearest first. A row with no value for it is left out."""
+    """The values of a dimension that cost the most, most expensive first. A row with no value for it is left out."""
     where, params = _where(first, last, filters)
     column = DIMENSIONS[dimension]
     return conn.execute(

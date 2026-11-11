@@ -332,3 +332,20 @@ def test_a_breakdown_by_label_shares_a_tasks_cost_among_its_labels_so_the_series
     assert round(sum(s["total"] for s in by_label["series"]), 4) == by_label["total"] == 4.51
     by_outcome = by_facts.get("/v1/costs", params={**SPAN, "group_by": "outcome", "source": "model"}).json()
     assert {s["key"]: s["total"] for s in by_outcome["series"]} == {"merged": 3.25, "open": 1.25, "": 0.01}
+
+
+def test_no_percentage_change_from_a_span_too_small_to_compare(api):
+    with db.connect(autocommit=True) as conn:
+        store.replace(
+            conn, "cloud", date(2026, 11, 6), date(2026, 11, 8),
+            [store.Cost(day=date(2026, 11, 6), source="cloud", item="Cloud Run", usd=Decimal("0.004"))],
+        )  # fmt: skip
+    seen = api.get("/v1/costs", params={**SPAN, "source": "cloud"}, headers=OPERATOR).json()
+    assert seen["previous_total"] == 0.004 and seen["change_percent"] is None, "a fraction of a cent before is no base"
+    with db.connect(autocommit=True) as conn:
+        store.replace(
+            conn, "cloud", date(2026, 11, 6), date(2026, 11, 8),
+            [store.Cost(day=date(2026, 11, 6), source="cloud", item="Cloud Run", usd=Decimal("2.10"))],
+        )  # fmt: skip
+    again = api.get("/v1/costs", params={**SPAN, "source": "cloud"}, headers=OPERATOR).json()
+    assert again["change_percent"] == 100.0

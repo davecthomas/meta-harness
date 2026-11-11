@@ -149,10 +149,7 @@ export function CostChart({ costs, order, label }: { costs: Costs; order: string
             fontSize: 12,
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span style={{ color: "var(--mantine-color-dimmed)" }}>{bucketLabel(costs.buckets[hover], costs.bucket)}</span>
-            <strong>{usd(costs.totals[hover])}</strong>
-          </div>
+          <div style={{ color: "var(--mantine-color-dimmed)", marginBottom: 4 }}>{bucketLabel(costs.buckets[hover], costs.bucket)}</div>
           {rows.map((s) => (
             <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: 1.6 }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, background: seriesColor(s.key, order), flexShrink: 0 }} />
@@ -161,6 +158,13 @@ export function CostChart({ costs, order, label }: { costs: Costs; order: string
             </div>
           ))}
           {rows.length === 0 && <span style={{ color: "var(--mantine-color-dimmed)" }}>Nothing spent</span>}
+          {/* The stack's total, under its parts. */}
+          {rows.length > 0 && (
+            <div style={{ display: "flex", gap: 6, borderTop: "1px solid var(--mantine-color-default-border)", marginTop: 4, paddingTop: 4, paddingLeft: 14 }}>
+              <strong>{usd(costs.totals[hover])}</strong>
+              <span style={{ color: "var(--mantine-color-dimmed)" }}>Total</span>
+            </div>
+          )}
         </div>
       )}
     </div>

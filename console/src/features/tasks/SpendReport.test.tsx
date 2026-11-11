@@ -33,7 +33,7 @@ function show(spend: TaskSpend) {
   );
 }
 
-test("the spend tab shows each run's kind, turns, tokens and cost, marks the dearest, and totals against the limit", async () => {
+test("the spend tab shows each run's kind, turns, tokens and cost, marks the most expensive, and totals against the limit", async () => {
   show(SPEND);
   const first = await screen.findByTestId("spend-run-1");
   expect(first.textContent).toContain("task");
@@ -41,12 +41,14 @@ test("the spend tab shows each run's kind, turns, tokens and cost, marks the dea
   expect(first.textContent).toContain("8.1M");
   expect(first.textContent).toContain("86%");
   expect(first.textContent).toContain("$4.00");
-  expect(first.textContent).toContain("dearest");
-  expect(screen.getByTestId("spend-run-2").textContent).not.toContain("dearest");
+  expect(first.textContent).toContain("most expensive");
+  expect(screen.getByTestId("spend-run-2").textContent).not.toContain("most expensive");
   expect(screen.getByTestId("spend-run-3").textContent).toContain("ERROR (spend_limit)");
   expect(screen.getByRole("link", { name: "Run 3" }).getAttribute("href")).toBe("/tasks/t?run=t%3Arun-3");
   const totals = screen.getByTestId("spend-totals").textContent ?? "";
   expect(totals).toContain("$5.10 spent of $10.00, in 3 runs and 83 turns");
+  expect(screen.getByTestId("spend-total").textContent).toContain("Total3 runs83");
+  expect(screen.getByTestId("spend-total").textContent).toContain("$5.10");
   expect(totals).toContain("review: $0.24");
   expect(totals).toContain("fix: $0.85");
   expect(totals).toContain("8.7M tokens in (86% from the cache)");

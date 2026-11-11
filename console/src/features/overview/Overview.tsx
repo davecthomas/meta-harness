@@ -221,6 +221,9 @@ export function TodaySpend() {
                 <Text size="xs">${usd.toFixed(2)}</Text>
               </Group>
             ))}
+            <Text size="xs" fw={650} pt={2} style={{ borderTop: "1px solid var(--mantine-color-default-border)" }} data-testid="today-top-total">
+              These {top.length}: ${top.reduce((all, [, usd]) => all + usd, 0).toFixed(2)}
+            </Text>
           </Stack>
         )}
       </Group>
