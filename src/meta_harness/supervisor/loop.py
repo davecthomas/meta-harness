@@ -13,6 +13,8 @@ Temporal, its pull request on the code host, its goal), asks rules.decide who ha
                           step resolves a conflict in a fix run first
     review                one whose checks failed after its review goes back through its review loop
     wait                  one whose checks have not reported is looked at again next pass
+    retry                 a failed task whose failure was the system's (failures.py) runs again, after a
+                          wait that grows with each try; a review loop the system stopped goes back the same
     cancel_for_goal       a task that has not started, of a goal that ended, is canceled
 
 Every action is safe to repeat: the task service refuses a move that no longer applies. A task is acted on
@@ -35,7 +37,7 @@ from meta_harness.planner import cost_facts, store as goal_store
 from meta_harness.planner import sweep
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CodeHostError
-from meta_harness.supervisor import pulls, standing
+from meta_harness.supervisor import failures, pulls, standing
 from meta_harness.supervisor.rules import OPEN_STATUSES, SWEPT, Decision, Facts, decide
 from meta_harness.tasks.store import MAX_DRIVES
 from meta_harness.tasks.client import TaskApiError, TaskClient
@@ -52,6 +54,12 @@ RETRY_LONGEST = timedelta(hours=1)
 PULL_SECONDS = 300.0
 # How long a read of how a pull request stands for a merge is kept: shorter, since a merge waits on it.
 MERGEABLE_SECONDS = 120.0
+# How long after a failure on the system's side the supervisor retries the task: by how often it has already
+# sent the task back. An outage that outlasts the first wait is met by a longer one.
+RETRY_WAITS = (timedelta(minutes=5), timedelta(minutes=30), timedelta(hours=2))
+# How long after a failure the supervisor still retries it by itself. An older failure is an operator's: the
+# supervisor does not start work again that failed days ago and that no one has asked for since.
+RETRY_WINDOW = timedelta(hours=24)
 # The longest the supervisor waits on a pull request's checks before it asks an operator to look.
 WAIT_LONGEST = timedelta(hours=24)
 
@@ -135,7 +143,7 @@ class Supervisor:
                     earlier.situation == "merge_wait_stale"
                     or (earlier.situation == "merge_waiting" and now - earlier.since >= WAIT_LONGEST)
                 )
-                facts, pull = await self._facts(task, goal, task["id"] in admitted, stale)
+                facts, pull = await self._facts(task, goal, task["id"] in admitted, stale, now)
                 decision = decide(facts)
             except Exception as err:  # noqa: BLE001 - one task's facts must not stop the pass for the rest
                 result.errors.append(f"{task['id']}: {type(err).__name__}: {err}")
@@ -166,7 +174,9 @@ class Supervisor:
             known[goal_id] = await asyncio.to_thread(_goal, goal_id)
         return known[goal_id]
 
-    async def _facts(self, task: dict, goal: dict | None, admitted: bool, stale: bool) -> tuple[Facts, Any]:
+    async def _facts(
+        self, task: dict, goal: dict | None, admitted: bool, stale: bool, now: datetime
+    ) -> tuple[Facts, Any]:
         status = task["status"]
         workflow = "none"
         if status in ("running", "taken_over") or (status == "queued" and admitted):
@@ -191,6 +201,12 @@ class Supervisor:
                 auto_merge=auto_merge,
                 mergeable=how,
                 drives_left=int(task.get("drives") or 0) < MAX_DRIVES,
+                failure=failures.kind(task.get("status_reason"))
+                if status in ("failed", "review_unresolved")
+                else "permanent",
+                retry_due=_since_status(task, now)
+                >= RETRY_WAITS[min(int(task.get("drives") or 0), len(RETRY_WAITS) - 1)],
+                failed_long_ago=_since_status(task, now) > RETRY_WINDOW,
                 # Only a wait can go stale: any other situation is acted on, or is an operator's already.
                 stale=stale,
             ),
@@ -242,7 +258,7 @@ class Supervisor:
                 await sweep._record_end(goal, task, pull, self.tasks, self.events, sweep.SweepResult(""))
                 self._pulls.pop(task_id, None)
                 result.ended.append(task_id)
-            elif decision.action in ("merge", "review"):
+            elif decision.action in ("merge", "review", "retry"):
                 spent = await asyncio.to_thread(spent_so_far, self.events, task_id)
                 await asyncio.to_thread(self.tasks.drive, task_id, decision.action, decision.reason, str(spent))
                 self._mergeable.pop(task_id, None)
@@ -272,6 +288,15 @@ def _due(decision: Decision, earlier: standing.Standing | None, now: datetime) -
         return True
     wait = min(RETRY_FIRST * (2 ** max(earlier.attempts - 1, 0)), RETRY_LONGEST)
     return now - earlier.acted_at >= wait
+
+
+def _since_status(task: dict, now: datetime) -> timedelta:
+    """How long the task has been in its status. One with no time kept for it has been there longer than
+    anything waits: it changed before the time was kept."""
+    changed = task.get("status_changed_at")
+    if not changed:
+        return timedelta.max
+    return now - datetime.fromisoformat(str(changed))
 
 
 def spent_so_far(events: Events, task_id: str) -> Decimal:

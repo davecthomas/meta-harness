@@ -33,7 +33,11 @@ GOALS = ("none", "planning", "active", "paused", "stalled", "budget_exhausted", 
 SWEPT = ("active", "budget_exhausted")
 WAITING_ON = ("", "budget", "review", "operator_review")
 # What the supervisor does itself. None: nothing, someone else has the task.
-ACTIONS = ("recover", "end_at_pull_request", "cancel_for_goal", "merge", "review", "wait")
+ACTIONS = ("recover", "end_at_pull_request", "cancel_for_goal", "merge", "review", "retry", "wait")
+# Whether a failure was the system's or the task's (failures.kind).
+FAILURES = ("transient", "permanent")
+# The goals under which a task the supervisor retries would run: a task of any other goal would only be held.
+RUNNABLE = ("none", "active", "budget_exhausted")
 # How a parked task's open pull request stands for a merge (pulls.MERGEABLE).
 MERGEABLE = ("clean", "conflict", "checks_failed", "checks_pending", "blocked", "unknown")
 
@@ -58,6 +62,12 @@ class Facts:
     drives_left: bool = True
     # Whether the task has waited in its situation longer than a wait of the supervisor's may last.
     stale: bool = False
+    # For a failed or unresolved task: whether what it failed on was the system's or its own.
+    failure: str = "permanent"
+    # Whether the wait before the supervisor's next try of a failed task has passed.
+    retry_due: bool = False
+    # Whether the task failed longer ago than the supervisor retries by itself: an old failure is a person's.
+    failed_long_ago: bool = False
 
 
 @dataclass(frozen=True)
@@ -84,12 +94,7 @@ def decide(facts: Facts) -> Decision:
     if status in ("ready", "review_unresolved"):
         return _parked(facts)
     if status == "failed":
-        return Decision(
-            "operator",
-            "failed",
-            "the task failed, and nothing retries it",
-            ask="Read why it failed on its page, then retry it, or close its issue if the work is no longer wanted.",
-        )
+        return _failed(facts)
     if status == "canceled":
         if facts.pull == "open":
             return Decision(
@@ -100,6 +105,45 @@ def decide(facts: Facts) -> Decision:
             )
         return Decision("planner", "canceled", "the task was canceled: nothing is left to do for it")
     raise ValueError(f"no rule for a {status} task")
+
+
+def _failed(facts: Facts) -> Decision:
+    if facts.goal in ("canceled", "met"):
+        ended = "was canceled" if facts.goal == "canceled" else "was completed"
+        return Decision("planner", "failed_goal_ended", f"the task failed, and its goal {ended}: nothing is left to do")
+    if facts.failure == "transient" and facts.goal in RUNNABLE:
+        if facts.failed_long_ago:
+            return Decision(
+                "operator",
+                "failed_long_ago",
+                "the task failed on the system's side, not its own, longer ago than the supervisor retries by itself",
+                ask="Retry it if the work is still wanted: it should run now. Otherwise close its issue.",
+            )
+        if not facts.drives_left:
+            return Decision(
+                "operator",
+                "failed_retries_used",
+                "the task failed on the system's side again after the supervisor retried it as often as it may",
+                ask="Something keeps failing under it: read its last runs and the logs it links, then retry it.",
+            )
+        if not facts.retry_due:
+            return Decision(
+                "supervisor",
+                "retry_waiting",
+                "the task failed on the system's side, not its own; the supervisor retries it after a wait",
+                action="wait",
+            )
+        return Decision("supervisor", "retry_due", "the task failed on the system's side, not its own", action="retry")
+    return Decision(
+        "operator",
+        "failed",
+        "the task failed, and another try would fail the same way"
+        if facts.failure == "permanent"
+        else f"the task failed on the system's side, and its goal is {facts.goal}, so a retry would not start",
+        ask="Read why it failed on its page, then retry it, or close its issue if the work is no longer wanted."
+        if facts.failure == "permanent"
+        else "Resume the goal, then retry the task.",
+    )
 
 
 def _running(facts: Facts) -> Decision:
@@ -216,6 +260,23 @@ def _parked(facts: Facts) -> Decision:
             "its workflow ended with work to merge, and it has no pull request on a code host",
             ask="Mark it done or cancel it on its page.",
         )
+    stopped = facts.status == "review_unresolved" and facts.failure == "transient" and not facts.failed_long_ago
+    if stopped and facts.goal in SWEPT:
+        # Its review loop was stopped by the system, not by its findings: it goes back through the loop.
+        if facts.drives_left and facts.retry_due:
+            return Decision(
+                "supervisor",
+                "review_stopped",
+                "its review loop was stopped by a failure on the system's side, not by its review",
+                action="review",
+            )
+        if facts.drives_left:
+            return Decision(
+                "supervisor",
+                "retry_waiting",
+                "its review loop was stopped by a failure on the system's side; the supervisor sends it back after a wait",
+                action="wait",
+            )
     if facts.status == "review_unresolved":
         return Decision(
             "operator",

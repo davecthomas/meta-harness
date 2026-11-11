@@ -3,9 +3,10 @@
 import dataclasses
 import itertools
 
-from meta_harness.supervisor import pulls
+from meta_harness.supervisor import failures, pulls
 from meta_harness.supervisor.rules import (
     ACTIONS,
+    FAILURES,
     GOALS,
     MERGEABLE,
     OPEN_STATUSES,
@@ -36,7 +37,15 @@ def _every() -> list[Facts]:
             ]
         else:
             found.append(base)
-    return found
+    # Whether a failure was the system's, and when, is read only for a failed or unresolved task.
+    failed = []
+    for facts in found:
+        if facts.status in ("failed", "review_unresolved"):
+            failed += [
+                dataclasses.replace(facts, failure=kind, retry_due=due, failed_long_ago=old)
+                for kind, due, old in itertools.product(FAILURES, flags, flags)
+            ]
+    return found + failed
 
 
 def test_the_rules_cover_every_status_a_task_can_be_left_in():
@@ -157,3 +166,58 @@ def test_how_a_pull_request_stands_for_a_merge_is_read_from_the_code_host():
         assert pulls.mergeable({"mergeable": True, "mergeable_state": state}, "passed") == "clean"
     assert pulls.mergeable({"mergeable": None, "mergeable_state": "unknown"}, "passed") == "unknown"
     assert pulls.mergeable({"mergeable": True, "mergeable_state": "clean", "draft": True}, "passed") == "blocked"
+
+
+def test_a_failure_on_the_systems_side_is_retried_after_a_wait_and_the_tasks_own_is_a_persons():
+    for goal in ("none", "active", "budget_exhausted"):
+        due = decide(Facts("failed", goal=goal, failure="transient", retry_due=True))
+        assert (due.owner, due.action) == ("supervisor", "retry"), goal
+        waiting = decide(Facts("failed", goal=goal, failure="transient"))
+        assert (waiting.owner, waiting.action, waiting.situation) == ("supervisor", "wait", "retry_waiting")
+    own = decide(Facts("failed", goal="active", failure="permanent", retry_due=True))
+    assert own.owner == "operator" and "would fail the same way" in own.reason
+    used = decide(Facts("failed", goal="active", failure="transient", retry_due=True, drives_left=False))
+    assert used.owner == "operator" and used.situation == "failed_retries_used"
+    old = decide(Facts("failed", goal="active", failure="transient", retry_due=True, failed_long_ago=True))
+    assert old.owner == "operator" and old.situation == "failed_long_ago"
+    paused = decide(Facts("failed", goal="paused", failure="transient", retry_due=True))
+    assert paused.owner == "operator" and paused.ask == "Resume the goal, then retry the task."
+    assert decide(Facts("failed", goal="canceled", failure="transient", retry_due=True)).owner == "planner"
+
+
+def test_a_review_loop_the_system_stopped_goes_back_through_it():
+    stopped = Facts("review_unresolved", pull="open", goal="active", failure="transient", retry_due=True)
+    assert (decide(stopped).owner, decide(stopped).action) == ("supervisor", "review")
+    assert decide(dataclasses.replace(stopped, retry_due=False)).action == "wait"
+    assert decide(dataclasses.replace(stopped, drives_left=False)).owner == "operator"
+    assert decide(dataclasses.replace(stopped, failure="permanent")).owner == "operator", "its findings stand"
+
+
+def test_only_the_named_failures_of_the_system_are_transient():
+    transient = [
+        "TaskFailed: run 1 on harness:pi-careful/claude:claude-opus-5-5 ended for good: run_harness failed (WorkerShutdown): WorkerShutdown: Worker is shutting down",
+        "TaskFailed: every candidate failed (3 runs)",
+        "TaskFailed: run 2 on harness:a/b:c ended for good: ended ERROR (model_error): the provider answered 529",
+        "TaskFailed: run 1 on harness:a/b:c ended for good: run_harness failed (CodeHostError): GitHub answered 502: Bad Gateway",
+        "TaskFailed: run 1 on harness:a/b:c ended for good: run_harness failed (SandboxUnavailable): docker did not start",
+        "the review loop stopped: CodeHostError: GitHub API rate limit exceeded",
+        "the review loop stopped: activity task timed out",
+        "TaskFailed: none of the 3 attempts finished",
+    ]
+    permanent = [
+        "TaskFailed: run 1 on harness:a/b:c ended for good: run_harness failed (HarnessConfigError): HarnessConfigError: the HTTP Gateway refused the run grant (422)",
+        "TaskFailed: the task spent its $10.00 spend limit after 4 runs",
+        "TaskFailed: run 2 finished, but pi changed nothing in o/r",
+        "TaskFailed: run 1 on harness:a/b:c ended for good: ended ERROR (max_turns): out of turns",
+        "the review loop used its 3 fix rounds",
+        "it has no RunTask workflow, for the 4th time: its workflows keep ending without finishing, so it was not started again",
+        "deploy failed on the merge commit",
+        "",
+        None,
+    ]
+    for reason in transient:
+        assert failures.kind(reason) == "transient", reason
+    for reason in permanent:
+        assert failures.kind(reason) == "permanent", reason
+    # A reason that names the task's own limit is the task's, even with a system error beside it.
+    assert failures.kind("the task spent its $10.00 spend limit after a GatewayUnavailable") == "permanent"

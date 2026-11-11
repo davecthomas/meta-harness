@@ -355,30 +355,40 @@ def drive(conn: psycopg.Connection, task_id: str, action: str, why: str, spent_u
     workflow ended with its pull request open, which the supervisor found it can move on.
 
     action merge: its next workflow merges the pull request, and resolves a conflict with its base first.
-    action review: its pull request goes back through checks, review and fixes. Either way the workflow
+    action review: its pull request goes back through checks, review and fixes. action retry: a `failed`
+    task whose failure was the system's runs again. Any way the workflow
     counts spent_usd, what the task's runs spent so far, against its spend limit: unlike an operator's retry,
     a drive never gives a task its limit again. Refused once the task has been driven MAX_DRIVES times.
     Returns (task, previous status).
     """
-    if action not in ("merge", "review"):
-        raise TaskError(f"a drive is merge or review, not {action!r}")
+    if action not in ("merge", "review", "retry"):
+        raise TaskError(f"a drive is merge, review or retry, not {action!r}")
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT status, pr_url, drives FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
         row = cur.fetchone()
         if row is None:
             raise NotFound(task_id)
-        if row["status"] not in MERGEABLE:
+        if action == "retry":
+            if row["status"] != "failed":
+                raise TaskError(f"a {row['status']} task has not failed")
+        elif row["status"] not in MERGEABLE:
             raise TaskError(f"a {row['status']} task is not waiting with a pull request open")
-        if not row["pr_url"]:
+        elif not row["pr_url"]:
             raise TaskError("the task has no pull request")
         if row["drives"] >= MAX_DRIVES:
             raise TaskError(f"the supervisor has already sent the task back {row['drives']} times")
-        what = "asked for its merge" if action == "merge" else "sent it back through its review loop"
+        what = {
+            "merge": "asked for its merge",
+            "review": "sent it back through its review loop",
+            "retry": "retried it",
+        }[action]
+        # A retried task resumes at its pull request when it has one, and starts over when it has none.
+        resume = action if action != "retry" else ("review" if row["pr_url"] else None)
         cur.execute(
             "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
             "drives = drives + 1, cancel_requested = false, waiting_on = NULL, spent_carried_usd = %s, "
             f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
-            (f"{why}, so the supervisor {what} (try {row['drives'] + 1} of {MAX_DRIVES})", action, spent_usd, task_id),
+            (f"{why}, so the supervisor {what} (try {row['drives'] + 1} of {MAX_DRIVES})", resume, spent_usd, task_id),
         )
         return _jsonable(cur.fetchone()), row["status"]
 

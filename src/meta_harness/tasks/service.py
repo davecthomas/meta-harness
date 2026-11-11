@@ -125,7 +125,7 @@ class RecoverIn(BaseModel):
 
 class DriveIn(BaseModel):
     # merge: ask for the pull request's merge. review: send it back through checks, review and fixes.
-    action: Literal["merge", "review"]
+    action: Literal["merge", "review", "retry"]
     # What the supervisor found, which the task's reason carries.
     why: str = Field(min_length=1, max_length=500)
     spent_usd: Decimal = Field(default=Decimal(0), ge=0)
