@@ -61,7 +61,7 @@ GATEWAY_API_KEY ?= local-dev-key
 SANDBOX_GATEWAY_URL ?= http://host.docker.internal:$(GATEWAY_PORT)
 # host:port patterns a per-run sandbox may reach through the egress proxy: the HTTP Gateway,
 # the code host and package registries. `*` is a wildcard.
-EGRESS_ALLOW ?= host.docker.internal:$(GATEWAY_PORT),github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443
+EGRESS_ALLOW ?= host.docker.internal:$(GATEWAY_PORT),github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443,temporal.download:443
 # The gateway keeps run grants here. Not 6379, so a Redis you run yourself is left alone.
 REDIS_PORT ?= 6390
 REDIS_URL ?= redis://127.0.0.1:$(REDIS_PORT)/0
@@ -86,12 +86,15 @@ UV ?= $(or $(shell command -v uv),$(HOME)/.local/bin/uv)
 DEMO ?=
 CANCEL_AT ?= turn 1 starts
 RESTART_AT ?= turn 2 starts
+# What make image-checks runs in the sandbox: the checks a task on this repo runs.
+IMAGE_CHECKS ?= uv sync && uv run ruff check . && uv run pytest -q && cd console && npm ci --no-audit --no-fund && npm run typecheck && npm test
 
 export GATEWAY FAKE_GATEWAY_HOST FAKE_TURN_SECONDS HARNESS_DIR HARNESS_IMAGE EGRESS_IMAGE EGRESS_ALLOW RUNS_DIR GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
   SANDBOX_GATEWAY_URL REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB \
-  WAIT_SECONDS ROUTER_CONFIG MODELS_ENV PIN FLOOR CEILING REPO TICKET CHECKS SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT
+  WAIT_SECONDS ROUTER_CONFIG MODELS_ENV PIN FLOOR CEILING REPO TICKET CHECKS SPEND_LIMIT TASK REF UV DEMO CANCEL_AT RESTART_AT \
+  IMAGE_CHECKS MH_SANDBOX_SERVICES
 
-.PHONY: run cancel-demo restart-demo spend-limit-demo fallback-demo repo-demo egress-check e2e up down task tasks status watch cancel images egress
+.PHONY: run cancel-demo restart-demo spend-limit-demo fallback-demo repo-demo egress-check e2e image-checks up down task tasks status watch cancel images egress
 
 run:
 	@./stack.sh run
@@ -130,6 +133,16 @@ e2e: GATEWAY = fake
 e2e: GATEWAY_PORT = $(E2E_GATEWAY_PORT)
 e2e:
 	@./e2e.sh
+
+# The checks a task on this repo runs, run by pi's bash tool in the built sandbox image on a clone of this
+# checkout, with the fake gateway: no model, no cost. It catches an image or sandbox that cannot run them,
+# as when the image set NODE_ENV=production and `npm ci` skipped devDependencies. CI runs it.
+image-checks: GATEWAY = fake
+image-checks: GATEWAY_PORT = $(E2E_GATEWAY_PORT)
+image-checks: MH_SANDBOX_SERVICES = postgres
+image-checks: REF = image-checks-$(shell date +%Y%m%d%H%M%S)
+image-checks:
+	@DEMO=checks ./stack.sh run
 
 up:
 	@./stack.sh up
