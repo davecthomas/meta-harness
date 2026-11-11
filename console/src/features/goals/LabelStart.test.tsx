@@ -11,7 +11,7 @@ function respond(body: unknown, status = 200) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-test("the draft helper is closed until asked for, lists a label's issues read-only, and its draft fills the form", async () => {
+test("the draft helper is closed until asked for, picking a label selects its issues, and its draft fills the form", async () => {
   const drafted: unknown[] = [];
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
     if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }, { name: "o/b" }] });
@@ -77,14 +77,18 @@ test("the draft helper is closed until asked for, lists a label's issues read-on
   fireEvent.click(helper);
 
   fireEvent.click(await screen.findByRole("button", { name: "Label bug" }));
-  expect(await screen.findByText("Crash on save")).toBeTruthy();
+  // Picking the label gives the goal that label at once, and the label's repos, since it had none.
+  expect((screen.getByRole("combobox", { name: /^Label/ }) as HTMLInputElement).value).toBe("bug");
+  expect((screen.getByRole("checkbox", { name: "o/b" }) as HTMLInputElement).checked).toBe(true);
+  expect((await screen.findAllByText("Crash on save")).length).toBeGreaterThan(0);
   expect(screen.getByText(/held by goal g-9/)).toBeTruthy();
   // No checkbox chooses issues here: the draft reads every one no other goal holds.
   expect(screen.queryByRole("checkbox", { name: /Keep/ })).toBeNull();
-  expect(screen.getByText(/bug: 2 open issues for the draft, and 1 another goal holds/)).toBeTruthy();
+  expect(screen.getByText(/bug: 2 open issues for the goal and the draft, and 1 another goal holds/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Draft the goal" }));
 
   expect(await screen.findByText("Fix the save bugs")).toBeTruthy();
+  expect(screen.getByText(/now and later; Pick issues adds others/)).toBeTruthy();
   expect(drafted).toEqual([{ label: "bug", repos: ["o/a", "o/b"], refs: ["github:o/a#1", "github:o/b#5"] }]);
   await waitFor(() => expect((screen.getByLabelText(/Description/) as HTMLTextAreaElement).value).toBe("Make saving reliable."));
   expect((screen.getByRole("textbox", { name: /^Title/ }) as HTMLInputElement).value).toBe("Fix the save bugs");
@@ -93,7 +97,7 @@ test("the draft helper is closed until asked for, lists a label's issues read-on
 
   // The label the draft set selects its issues: the form lists them, and the picker shows them as already in.
   const listed = await screen.findByTestId("label-issues");
-  expect(listed.textContent).toContain("2 open issues with this label, and 1 more that another goal holds");
+  expect(listed.textContent).toContain("2 issues with this label, and 1 more that another goal holds");
   expect(listed.textContent).toContain("Crash on save");
   expect(listed.textContent).toContain("Typo in log");
   expect(listed.textContent).not.toContain("Wrong total");

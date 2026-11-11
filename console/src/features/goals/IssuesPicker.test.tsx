@@ -91,3 +91,29 @@ test("issues the goal's label takes show checked and locked, and are not among t
   fireEvent.click(screen.getByRole("button", { name: "Use these issues" }));
   await waitFor(() => expect(picked).toEqual([["github:o/a#3"]]));
 });
+
+test("the Label filter reads its suggestions once the picker opens, and stays plain text when they can't be read", async () => {
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    if (url === "/v1/labels") return Promise.resolve(new Response(JSON.stringify({ detail: "down" }), { status: 502 }));
+    return respond({ issues: ISSUES, total: 3, next_cursor: null });
+  });
+  const view = (opened: boolean) => (
+    <MantineProvider theme={theme}>
+      <IssuesPicker opened={opened} onClose={() => undefined} repos={["o/a"]} action="Add to goal" onPick={() => undefined} />
+    </MantineProvider>
+  );
+  const { rerender } = render(view(false));
+  await new Promise((r) => setTimeout(r, 20));
+  expect(asked).not.toContain("/v1/labels");
+
+  rerender(view(true));
+  const label = await screen.findByRole("combobox", { name: "Label" });
+  await waitFor(() => expect(asked.filter((u) => u === "/v1/labels")).toHaveLength(1));
+  fireEvent.change(label, { target: { value: "bug" } });
+  await waitFor(() => expect(asked.some((u) => u.includes("label=bug"))).toBe(true));
+  rerender(view(false));
+  rerender(view(true));
+  expect(asked.filter((u) => u === "/v1/labels")).toHaveLength(1);
+});

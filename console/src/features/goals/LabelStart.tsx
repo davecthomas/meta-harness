@@ -17,16 +17,33 @@ import {
 import { IconChevronDown, IconChevronRight, IconSearch, IconSparkles } from "@tabler/icons-react";
 import { api, type GoalDraft, type LabelCount, type LabelIssue } from "../../api";
 
+type LabeledIssue = LabelIssue & { repo: string };
+
 // An optional helper for the New goal form: pick a label, see its open issues, and have a model draft the
-// goal's title and description from them. onDraft fills the form below; nothing is saved here, and nothing
-// here chooses the goal's issues. The form's Label field and Pick issues do that.
-export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void }) {
+// goal's title and description from them. Picking a label sets the form's Label field (onPick), which
+// selects the label's issues there; the draft reads the issues the form has selected. Nothing is saved
+// here, and nothing here chooses issues: the form's Label field and Pick issues do that.
+export function LabelStart({
+  label,
+  repos,
+  issues,
+  selected,
+  onPick,
+  onDraft,
+}: {
+  // The form's label and repos, and the open issues that label has in those repos (null while read).
+  label: string;
+  repos: string[];
+  issues: LabeledIssue[] | null;
+  // The refs the form has selected: its label's free issues and those picked by hand.
+  selected: string[];
+  onPick: (row: LabelCount) => void;
+  onDraft: (draft: GoalDraft) => void;
+}) {
   const [labels, setLabels] = useState<LabelCount[] | null>(null);
-  const [repos, setRepos] = useState<string[]>([]);
+  const [allRepos, setAllRepos] = useState<string[]>([]);
   const [repo, setRepo] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [picked, setPicked] = useState<LabelCount | null>(null);
-  const [issues, setIssues] = useState<(LabelIssue & { repo: string })[] | null>(null);
   // Closed until asked for: the form below is the goal, and this only helps fill it in.
   const [opened, setOpened] = useState(false);
   const [draft, setDraft] = useState<GoalDraft | null>(null);
@@ -37,7 +54,7 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
     api.labels().then(
       (r) => {
         setLabels(r.labels);
-        setRepos(r.repos);
+        setAllRepos(r.repos);
       },
       (err) => setError(err instanceof Error ? err.message : String(err)),
     );
@@ -51,22 +68,16 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
     [labels, repo, search],
   );
 
-  async function pick(row: LabelCount) {
-    setPicked(row);
-    setIssues(null);
+  // The picked label is the form's: picking one here sets it there, and typing one there picks it here.
+  const picked = useMemo(() => (labels ?? []).find((l) => l.label === label.trim()) ?? null, [labels, label]);
+  const free = (issues ?? []).filter((i) => !i.held_by);
+  // The label's repos the goal does not take it from, so the operator can tick them below.
+  const outside = picked ? Object.keys(picked.repos).filter((r) => !repos.includes(r)) : [];
+
+  function pick(row: LabelCount) {
     setDraft(null);
     setError(null);
-    try {
-      const found = await Promise.all(
-        Object.keys(row.repos).map(async (name) =>
-          (await api.labelIssues(name, row.label)).map((issue) => ({ ...issue, repo: name })),
-        ),
-      );
-      const all = found.flat();
-      setIssues(all);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
+    onPick(row);
   }
 
   async function makeDraft() {
@@ -74,7 +85,7 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
     setDrafting(true);
     setError(null);
     try {
-      const made = await api.draftGoal({ label: picked.label, repos: Object.keys(picked.repos), refs: free.map((i) => i.ref) });
+      const made = await api.draftGoal({ label: picked.label, repos, refs: selected });
       setDraft(made);
       onDraft(made);
     } catch (err) {
@@ -83,9 +94,6 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
       setDrafting(false);
     }
   }
-
-  // The issues the draft reads: the label's open issues that no other goal holds.
-  const free = (issues ?? []).filter((i) => !i.held_by);
 
   return (
     <Paper maw={720} mb="lg">
@@ -122,7 +130,7 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
               />
               <Select
                 placeholder="Every repo"
-                data={repos}
+                data={allRepos}
                 value={repo}
                 onChange={setRepo}
                 clearable
@@ -134,13 +142,14 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
               {shown.map((row) => (
                 <UnstyledButton
                   key={row.label}
-                  onClick={() => void pick(row)}
+                  onClick={() => pick(row)}
                   p="xs"
                   style={{
                     borderRadius: "var(--mantine-radius-sm)",
                     background: picked?.label === row.label ? "var(--mantine-color-default-hover)" : undefined,
                   }}
                   aria-label={`Label ${row.label}`}
+                  aria-pressed={picked?.label === row.label}
                 >
                   <Group justify="space-between" wrap="nowrap">
                     <Group gap="xs" wrap="nowrap">
@@ -158,13 +167,18 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
             </Stack>
           </>
         )}
-        {picked && issues === null && !error && <Loader size="sm" />}
+        {picked && issues === null && <Loader size="sm" />}
         {picked && issues && (
           <Stack gap="sm">
             <Text size="sm" fw={600}>
-              {picked.label}: {free.length} open {free.length === 1 ? "issue" : "issues"} for the draft
+              {picked.label}: {free.length} open {free.length === 1 ? "issue" : "issues"} for the goal and the draft
               {issues.length > free.length ? `, and ${issues.length - free.length} another goal holds` : ""}
             </Text>
+            {outside.length > 0 && (
+              <Text size="xs" c="dimmed">
+                Not among the goal's repos: {outside.join(", ")}. Tick them under Repos to take their issues too.
+              </Text>
+            )}
             <Table>
               <Table.Tbody>
                 {issues.map((issue) => (
@@ -185,7 +199,7 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
                 leftSection={<IconSparkles size={16} />}
                 onClick={() => void makeDraft()}
                 loading={drafting}
-                disabled={free.length === 0}
+                disabled={selected.length === 0}
               >
                 Draft the goal
               </Button>
@@ -196,10 +210,9 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
           <Alert color="indigo" title={draft.title}>
             <Text size="sm">{draft.theme}</Text>
             <Text size="xs" c="dimmed" mt={4}>
-              Drafted by {draft.model} for ${draft.usd_cost}. The issues read as {draft.modality}
-. The
-              form below has the title, description, label and repos: edit them, then create the goal. The goal
-              takes every open issue with that label, now and later; Pick issues adds others.
+              Drafted by {draft.model} for ${draft.usd_cost}. The issues read as {draft.modality}. The form below
+              has the title, description, label and repos: edit them, then create the goal. The goal takes every
+              open issue with that label, now and later; Pick issues adds others.
             </Text>
           </Alert>
         )}
