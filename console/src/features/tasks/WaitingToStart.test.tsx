@@ -24,12 +24,16 @@ function show(task: Task) {
   return container.querySelector('[data-testid="waiting-to-start"]');
 }
 
-test("a task queued behind its goal's budget says so, with Resume and a link to the goal's budget", () => {
+test("a task queued behind its goal's budget says so in dollars and cents, with a field for the goal's new budget", async () => {
+  const goal = { id: "g-1", max_usd: "10.0000", spent_usd: "26.7900", budget_block_at: "11.00", budget_resume_to: "45.0000", issues: [] };
+  vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify(goal), { status: 200, headers: { "Content-Type": "application/json" } })));
   const notice = show({ ...QUEUED, held: hold("goal_budget", "goal g-1 spent $26.79 of its $10.0000 budget, and stops at $11.00", { goal_id: "g-1" }) });
   expect(notice?.textContent).toContain("Waiting to start");
-  expect(notice?.textContent).toContain("goal g-1 spent $26.79 of its $10.0000 budget");
-  expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Raise the goal's budget on its page" }).getAttribute("href")).toBe("/goals/g-1");
+  expect(notice?.textContent).toContain("goal g-1 spent $26.79 of its $10.00 budget");
+  expect(((await screen.findByLabelText(/New goal budget/)) as HTMLInputElement).value).toBe("$45");
+  expect(notice?.textContent).toContain("Now $10.00, and the goal has spent $26.79; it stops at $11.00");
+  expect(screen.getByRole("button", { name: "Raise the goal's budget and carry on" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "The goal's page" }).getAttribute("href")).toBe("/goals/g-1");
 });
 
 test("a task waiting for a place links to the tasks that hold them", () => {

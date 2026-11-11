@@ -40,6 +40,7 @@ from typing import Any, Awaitable, Callable
 
 from meta_harness import db
 from meta_harness.events.client import stable_event_id
+from meta_harness.money import usd
 from meta_harness.scheduler import holds
 from meta_harness.scheduler.holds import Hold
 
@@ -265,7 +266,8 @@ class Admission:
         if spend[goal_id] >= line:
             return Hold(
                 "goal_budget",
-                f"goal {goal_id} spent ${spend[goal_id]} of its ${goal['max_usd']} budget, and stops at ${line}",
+                f"goal {goal_id} spent {usd(spend[goal_id])} of its {usd(goal['max_usd'])} budget, "
+                f"and stops at {usd(line)}",
                 {"goal_id": goal_id, "spent_usd": str(spend[goal_id]), "max_usd": str(goal["max_usd"])},
             )
         return None

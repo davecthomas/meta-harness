@@ -7,6 +7,7 @@ import { ActivityMap } from "../activity/ActivityPage";
 import { BudgetMark, ResumeBudget, budgetStanding, budgetWords } from "../goals/budget";
 import { useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, TitleLink, when } from "../../components/ui";
+import { moneyText } from "../../money";
 
 const OPEN_GOALS = ["active", "paused", "stalled", "budget_exhausted"];
 const NEEDS_YOU = ["ready", "failed", "review_unresolved"];
@@ -75,7 +76,7 @@ export function Overview() {
               <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>
               <Table.Td>
                 <Group gap="sm" wrap="nowrap">
-                  <Text size="sm">{t.status === "ready" ? "Its pull request is open for you to merge" : t.status_reason ?? t.status}</Text>
+                  <Text size="sm">{t.status === "ready" ? "Its pull request is open for you to merge" : moneyText(t.status_reason) ?? t.status}</Text>
                   {t.waiting_on === "budget" && t.goal_id && (t.status_reason ?? "").includes("goal's budget") && (
                     <ResumeBudget goalId={t.goal_id} size="xs" variant="light" onResumed={() => setResumed((n) => n + 1)} />
                   )}

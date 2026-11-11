@@ -169,7 +169,7 @@ async def test_a_task_held_for_its_goals_budget_goes_on_when_the_goals_budget_is
 
     assert result.outcome == "clean"
     held, resumed = world.holds
-    assert held.waiting and "goal g-1 has spent $9.95 of its $10 budget" in held.reason
+    assert held.waiting and "goal g-1 has spent $9.95 of its $10.00 budget" in held.reason
     assert "Raise the goal's budget, or end the task" in held.reason
     assert not resumed.waiting
 

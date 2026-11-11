@@ -4,7 +4,8 @@ import { IconHourglass } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import { api, type IssueProgress, type Task } from "../../api";
 import { IssueLink, StatusBadge, when } from "../../components/ui";
-import { ResumeBudget } from "../goals/budget";
+import { RaiseGoalBudget } from "../goals/budget";
+import { moneyText } from "../../money";
 
 // A task that has not started says why at the top of its page, with what would start it. A queued task shows
 // the scheduler's reason for holding it (the task's `held`) and the action that fits its kind; a blocked one
@@ -25,7 +26,7 @@ export function waitReason(task: Pick<Task, "status" | "held" | "depends_on">): 
     return n ? `waits on ${n} ${n === 1 ? "issue" : "issues"}` : "waits on other issues";
   }
   if (task.status !== "queued") return null;
-  return task.held?.reason ?? "starts at the scheduler's next pass";
+  return task.held ? moneyText(task.held.reason) : "starts at the scheduler's next pass";
 }
 
 function Blocked({ task }: { task: Task }) {
@@ -65,10 +66,10 @@ function Action({ task, onChanged }: { task: Task; onChanged?: () => void }) {
   switch (held.kind) {
     case "goal_budget":
       return goalId ? (
-        <Group gap="sm">
-          <ResumeBudget goalId={goalId} size="xs" onResumed={onChanged} />
-          <Anchor component={Link} to={`/goals/${goalId}`} size="sm">Raise the goal's budget on its page</Anchor>
-        </Group>
+        <Stack gap="sm">
+          <RaiseGoalBudget goalId={goalId} onResumed={onChanged} />
+          <Anchor component={Link} to={`/goals/${goalId}`} size="sm">The goal's page</Anchor>
+        </Stack>
       ) : null;
     case "goal_status":
       return goalId ? (
@@ -113,7 +114,7 @@ export function WaitingToStart({ task, onChanged }: { task: Task; onChanged?: ()
         <Blocked task={task} />
       ) : task.held ? (
         <Stack gap="sm" align="flex-start">
-          <Text size="sm">The scheduler holds it: {task.held.reason}.</Text>
+          <Text size="sm">The scheduler holds it: {moneyText(task.held.reason)}.</Text>
           <Action task={task} onChanged={onChanged} />
           <Text size="xs" c="dimmed">Waiting for this since {when(task.held.since)}. The scheduler last looked {when(task.held.last_checked)}.</Text>
         </Stack>

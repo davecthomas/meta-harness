@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import db
 from meta_harness.events.client import stable_event_id
+from meta_harness.money import usd
 from meta_harness.planner import budget, store
 from meta_harness.run_service.shared import DEFAULT_SPEND_LIMIT_USD
 
@@ -162,16 +163,16 @@ def register(
         if budget.state(old, mode, percent, spent, goal["status"]) == "ok":
             raise HTTPException(
                 status_code=409,
-                detail=f"the goal has spent ${spent.quantize(budget.CENT)} of its ${old} budget: nothing to resume",
+                detail=f"the goal has spent {usd(spent)} of its {usd(old)} budget: nothing to resume",
             )
         add = body.add_usd if body else None
         new = old + add if add is not None else Decimal(found["resume"]["to"])
-        how = f"${old} plus the ${add} asked for" if add is not None else found["resume"]["how"]
+        how = f"{usd(old)} plus the {usd(add)} asked for" if add is not None else found["resume"]["how"]
         line = budget.block_at(new, mode, percent)
         if spent >= line:
             raise HTTPException(
                 status_code=409,
-                detail=f"a budget of ${new} stops the goal at ${line}, and it has spent ${spent.quantize(budget.CENT)}",
+                detail=f"a budget of {usd(new)} stops the goal at {usd(line)}, and it has spent {usd(spent)}",
             )
         fields: dict[str, Any] = {"max_usd": new}
         if goal["status"] == "budget_exhausted":

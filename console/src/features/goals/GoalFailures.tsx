@@ -2,6 +2,7 @@ import { Alert, Anchor, List, Text } from "@mantine/core";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import type { IssueProgress, Task } from "../../api";
+import { moneyText } from "../../money";
 
 const FAILED = ["failed", "review_unresolved"];
 
@@ -22,7 +23,7 @@ export function GoalFailures({ issues, tasks }: { issues: IssueProgress[]; tasks
         {failed.map((i) => {
           const name = (i.task_id && tasks[i.task_id]?.title) || i.title || i.ref.replace(/^github:/, "");
           const state = i.task_waiting_on === "budget" ? "out of budget" : i.task_status;
-          const why = i.refused_reason ? `refused: ${i.refused_reason}` : `${state}: ${i.task_status_reason ?? "no reason was recorded"}`;
+          const why = i.refused_reason ? `refused: ${i.refused_reason}` : `${state}: ${moneyText(i.task_status_reason) ?? "no reason was recorded"}`;
           return (
             <List.Item key={i.ref}>
               {i.task_id ? <Anchor component={Link} to={`/tasks/${i.task_id}`} size="sm">{name}</Anchor> : <Text span size="sm">{name}</Text>}

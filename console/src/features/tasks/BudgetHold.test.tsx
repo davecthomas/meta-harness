@@ -40,9 +40,11 @@ test("a task held for its own limit asks for a new limit, above the old one, and
   expect(asked[0]).toEqual({ url: "/v1/tasks/t-1/budget", body: { action: "raise", max_usd: 20 } });
 });
 
-test("a task held for its goal's budget offers the goal's Resume, links to the goal, and can look again or end", async () => {
+test("a task held for its goal's budget has a field for the goal's new budget, links to the goal, and can look again or end", async () => {
   const { asked } = show({ ...HELD, status_reason: "review run 2 needs about $0.30, and goal g-1 has spent $9.95 of its $10 budget. Raise the goal's budget, or end the task" });
-  expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
+  expect(await screen.findByLabelText(/New goal budget/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Raise the goal's budget and carry on" })).toBeTruthy();
+  asked.length = 0;
   expect(screen.getByRole("link", { name: "The goal's page" }).getAttribute("href")).toBe("/goals/g-1");
   expect(screen.queryByLabelText(/New spend limit/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "End the task" }));

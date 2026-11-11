@@ -2,6 +2,7 @@ import { Alert, Anchor, List, Stack, Text } from "@mantine/core";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import type { MhEvent, Task } from "../../api";
+import { moneyText } from "../../money";
 
 const TITLES: Record<string, string> = {
   failed: "This task failed",
@@ -22,7 +23,7 @@ export function TaskFailure({ task, status, events }: { task: Task; status: stri
   return (
     <Alert color={status === "failed" ? "red" : "orange"} title={title} icon={<IconAlertTriangle size={18} />} mb="md" role="alert">
       <Stack gap="xs">
-        <Text size="sm">{task.status_reason ?? "No reason was recorded."}</Text>
+        <Text size="sm">{moneyText(task.status_reason) ?? "No reason was recorded."}</Text>
         {runs.length > 0 && (
           <List size="sm" spacing={2}>
             {runs.map((e) => (

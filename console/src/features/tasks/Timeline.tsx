@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Badge, Code, Collapse, Group, Paper, Stack, Text, UnstyledButton } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconFile, IconRobot, IconSettings } from "@tabler/icons-react";
 import type { MhEvent } from "../../api";
+import { moneyText, usd } from "../../money";
 
 // One entry on the timeline: a turn with what happened in it, or an event between turns.
 export type Entry =
@@ -79,7 +80,7 @@ export function entries(events: MhEvent[]): Entry[] {
         out.push({ kind: "status", position: e.position, text: `Routed to tier ${p.tier}: ${(p.candidates ?? []).join(", ")}`, error: false });
         break;
       case "attempt_finished":
-        out.push({ kind: "status", position: e.position, text: `Attempt ${p.attempt} on ${p.candidate}: ${p.decision}, $${p.spent_usd}${p.detail ? ` (${p.detail})` : ""}`, error: p.decision !== "finished" });
+        out.push({ kind: "status", position: e.position, text: `Attempt ${p.attempt} on ${p.candidate}: ${p.decision}, ${usd(p.spent_usd)}${p.detail ? ` (${moneyText(String(p.detail))})` : ""}`, error: p.decision !== "finished" });
         turn = null;
         break;
       case "run_finished":
@@ -93,13 +94,13 @@ export function entries(events: MhEvent[]): Entry[] {
         out.push({ kind: "status", position: e.position, text: `${e.actor ?? "Operator"}: ${p.when === "stop" ? "stop after this turn" : `${p.text} (${p.when === "after_stop" ? "after it stops" : "next turn"})`}`, error: false });
         break;
       case "task_held":
-        out.push({ kind: "status", position: e.position, text: `Held by the scheduler: ${p.reason}`, error: false });
+        out.push({ kind: "status", position: e.position, text: `Held by the scheduler: ${moneyText(String(p.reason ?? ""))}`, error: false });
         break;
       case "task_admitted":
         out.push({ kind: "status", position: e.position, text: "Admitted by the scheduler: its run starts", error: false });
         break;
       case "task_status_changed":
-        out.push({ kind: "status", position: e.position, text: `Status ${p.from} → ${p.to}${p.reason ? `: ${p.reason}` : ""}`, error: p.to === "failed" });
+        out.push({ kind: "status", position: e.position, text: `Status ${p.from} → ${p.to}${p.reason ? `: ${moneyText(String(p.reason))}` : ""}`, error: p.to === "failed" });
         break;
     }
   }
@@ -156,7 +157,7 @@ function ModelLine({ e }: { e: MhEvent }) {
     <Group gap={8}>
       <IconRobot size={14} />
       <Text size="xs" ff="monospace">{p.engine ? `${p.engine}:${p.model}` : p.model}</Text>
-      <Text size="xs" c="dimmed">{p.input_tokens} in · {p.output_tokens} out · ${Number(p.usd ?? 0).toFixed(4)} · {p.latency_ms}ms</Text>
+      <Text size="xs" c="dimmed">{p.input_tokens} in · {p.output_tokens} out · {usd(p.usd)} · {p.latency_ms}ms</Text>
     </Group>
   );
 }

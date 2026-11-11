@@ -3,6 +3,7 @@ import { Alert, Anchor, Badge, Button, Card, Group, Modal, Stack, Text, Textarea
 import { Link } from "react-router-dom";
 import { api, type ReviewRound, type Task } from "../../api";
 import { Empty } from "../../components/ui";
+import { moneyText } from "../../money";
 
 export function VerdictBadge({ verdict }: { verdict: string }) {
   return <Badge color={verdict === "clean" ? "teal" : "orange"} variant="light">{verdict}</Badge>;
@@ -18,15 +19,15 @@ function nextLine(round: ReviewRound, taskId: string) {
   if (n.kind === "fix") return <Text size="sm">Sent to <Anchor component={Link} to={`/tasks/${taskId}?run=${encodeURIComponent(n.run_id ?? "")}`}>fix run {n.attempt ?? ""}</Anchor></Text>;
   if (n.kind === "merged") return <Text size="sm">Merged</Text>;
   if (n.kind === "reviewed_again") return <Text size="sm">Reviewed again: the pull request's head changed before the next step</Text>;
-  if (n.kind === "waiting") return <Text size="sm">Waiting for an operator{n.reason ? `: ${n.reason}` : ""}</Text>;
-  if (n.kind === "ended") return <Text size="sm">The loop stopped{n.reason ? `: ${n.reason}` : ""}</Text>;
+  if (n.kind === "waiting") return <Text size="sm">Waiting for an operator{n.reason ? `: ${moneyText(n.reason)}` : ""}</Text>;
+  if (n.kind === "ended") return <Text size="sm">The loop stopped{n.reason ? `: ${moneyText(n.reason)}` : ""}</Text>;
   return <Text size="sm" c="dimmed">The loop goes on</Text>;
 }
 
 // Why a pull request has no review yet, from its task's state.
 function noReviewYet(task: Task): string {
   if (task.status === "running") return "No review yet: the checks or the review run are under way.";
-  return `No review: ${task.status_reason ?? task.status}.`;
+  return `No review: ${moneyText(task.status_reason) ?? task.status}.`;
 }
 
 // Every review round on a task's pull request: the verdict, who reviewed which commit, the summary, the
@@ -63,7 +64,7 @@ export function Reviews({ task, rounds, onAnswered }: { task: Task; rounds: Revi
       {held !== null && (
         <Alert color="orange" title={`Round ${held} waits on you before its fix run`} role="alert">
           <Stack gap="xs">
-            <Text size="sm">{task.status_reason}</Text>
+            <Text size="sm">{moneyText(task.status_reason)}</Text>
             <Text size="sm">Dismiss any finding that is wrong, with why. The fix run is asked only for the rest; with none left, the round counts as clean.</Text>
             <Group gap="sm">
               <Button size="xs" loading={busy} onClick={() => void answer(() => api.proceedReview(task.id, held))}>Send to fix now</Button>
