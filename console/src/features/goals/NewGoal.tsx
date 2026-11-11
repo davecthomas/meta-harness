@@ -4,7 +4,7 @@ import { Button, Checkbox, Group, NativeSelect, NumberInput, Paper, SegmentedCon
 import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
-import { api, type GoalDraft, type LabelIssue } from "../../api";
+import { api, type GoalDraft, type LabelCount, type LabelIssue } from "../../api";
 import { LabelField } from "./LabelField";
 import { LabelStart } from "./LabelStart";
 import { ErrorAlert, PageHeader } from "../../components/ui";
@@ -23,7 +23,7 @@ export function LabelIssues({ label, issues }: { label: string; issues: LabeledI
   return (
     <Stack gap={4} data-testid="label-issues">
       <Text size="sm" fw={600}>
-        {free.length} open {free.length === 1 ? "issue" : "issues"} with this label{held ? `, and ${held} more that another goal holds` : ""}
+        {free.length} {free.length === 1 ? "issue" : "issues"} with this label{held ? `, and ${held} more that another goal holds` : ""}
       </Text>
       {free.slice(0, SHOWN).map((i) => (
         <Text key={i.ref} size="sm">
@@ -77,18 +77,21 @@ export function NewGoal() {
 
   // The open issues the goal's label takes, in its repos: read as the label and repos change, so the form
   // shows what the goal will run and the picker shows them as already in.
-  const [labeled, setLabeled] = useState<LabeledIssue[] | null>(null);
+  // Kept with the label and repos they were read for, so a changed label never shows the last one's issues.
+  const [read, setRead] = useState<{ key: string; issues: LabeledIssue[] } | null>(null);
+  const labelKey = `${label.trim()}|${chosen.join(",")}`;
   useEffect(() => {
     const name = label.trim();
     if (!name || !chosen.length) {
-      setLabeled(null);
+      setRead(null);
       return;
     }
     let stale = false;
+    const key = `${name}|${chosen.join(",")}`;
     const wait = setTimeout(() => {
       Promise.all(chosen.map(async (repo) => (await api.labelIssues(repo, name)).map((issue) => ({ ...issue, repo })))).then(
-        (found) => !stale && setLabeled(found.flat()),
-        () => !stale && setLabeled(null),
+        (found) => !stale && setRead({ key, issues: found.flat() }),
+        () => !stale && setRead(null),
       );
     }, 300);
     return () => {
@@ -96,10 +99,20 @@ export function NewGoal() {
       clearTimeout(wait);
     };
   }, [label, chosen]);
+  const labeled = read?.key === labelKey ? read.issues : null;
   const viaLabel = useMemo(() => (labeled ?? []).filter((i) => !i.held_by).map((i) => i.ref), [labeled]);
+  // Every issue the goal is to take: its label's, then those picked by hand. The draft reads these.
+  const selected = useMemo(() => [...viaLabel, ...refs.filter((r) => !viaLabel.includes(r))], [viaLabel, refs]);
 
   // Whether the goal plans its own issues from its description (a feature goal) or runs issues that exist.
   const [plans, setPlans] = useState(false);
+
+  // A label picked in the draft helper becomes the goal's label, which selects its issues. A goal with no
+  // repos yet takes the label's repos, so its issues have somewhere to come from.
+  function fromLabel(row: LabelCount) {
+    setLabel(row.label);
+    setChosen((now) => (now.length ? now : Object.keys(row.repos)));
+  }
 
   function fromDraft(draft: GoalDraft) {
     setTitle(draft.title);
@@ -178,7 +191,7 @@ export function NewGoal() {
       <PageHeader title="New goal" description="A goal takes the open issues with its label, in its repos, and runs each one to a pull request." />
       <ErrorAlert error={error} />
       {unsaved.element}
-      <LabelStart onDraft={fromDraft} />
+      <LabelStart label={label} repos={chosen} issues={labeled} selected={selected} onPick={fromLabel} onDraft={fromDraft} />
       <Paper maw={720}>
         <form onSubmit={submit}>
           <Stack gap="lg">

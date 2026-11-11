@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Anchor, Autocomplete, Badge, Button, Checkbox, Group, Modal, Select, Stack, Table, Text, TextInput, Tooltip } from "@mantine/core";
-import { LabelOption, useLabelSuggestions } from "./LabelField";
+import { Anchor, Badge, Button, Checkbox, Group, Modal, Select, Stack, Table, Text, TextInput, Tooltip } from "@mantine/core";
+import { LabelSuggest, useLabelSuggestions } from "./LabelField";
 import { IconPlus } from "@tabler/icons-react";
 import { api, issueUrl, type LabelIssue } from "../../api";
 import { ErrorAlert } from "../../components/ui";
@@ -72,9 +72,10 @@ export function IssuesPicker(props: {
   const labeled = useMemo(() => new Set(props.viaLabel ?? []), [props.viaLabel]);
   const free = (row: Row) => !row.held_by || row.held_by === props.goalId;
   const pickable = shown.filter((row) => free(row) && !labeled.has(row.ref));
-  // The picker's Label filter suggests the labels of the repo it shows, as the goal's Label field does.
+  // The picker's Label filter suggests the labels of the repo it shows, as the goal's Label field does,
+  // read once when the picker first opens. If they can't be read, the filter is plain text.
   const filterRepos = useMemo(() => (repo === "all" ? available : [repo]), [repo, available]);
-  const suggested = useLabelSuggestions(filterRepos);
+  const suggested = useLabelSuggestions(filterRepos, props.opened);
   const allOnPage = pickable.length > 0 && pickable.every((r) => picked.has(r.ref));
 
   function toggle(ref: string, on: boolean) {
@@ -104,18 +105,7 @@ export function IssuesPicker(props: {
         <ErrorAlert error={error} />
         <Group grow align="flex-end">
           <Select label="Repo" value={repo} onChange={(v) => setRepo(v ?? "all")} data={[{ value: "all", label: "Every repo" }, ...available.map((r) => ({ value: r, label: r }))]} />
-          <Autocomplete
-            label="Label"
-            placeholder="Any label"
-            value={label}
-            onChange={setLabel}
-            data={suggested.options.map((o) => o.label)}
-            maxDropdownHeight={280}
-            renderOption={({ option }) => {
-              const row = suggested.byName.get(option.value);
-              return row ? <LabelOption row={row} /> : option.value;
-            }}
-          />
+          <LabelSuggest label="Label" placeholder="Any label" value={label} onChange={setLabel} suggested={suggested} />
           <TextInput label="Search" placeholder="Text in the title" value={text} onChange={(e) => setText(e.currentTarget.value)} />
         </Group>
         <Table striped highlightOnHover>
