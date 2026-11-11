@@ -34,6 +34,8 @@ export interface Goal {
   // What the budget does when it is reached: stop the goal (block) or only warn; and how far past it a block
   // goal may go, in percent.
   budget_mode?: "block" | "warn";
+  // The deployment's budget policy, from the task policy: under "track" no budget stops anything.
+  budget_policy?: "block" | "track";
   budget_overage_percent?: number;
   // What the goal's runs had spent at the planner's last look, the spend a block goal stops at, where the goal
   // stands, and the budget a resume would set for a goal past its budget.

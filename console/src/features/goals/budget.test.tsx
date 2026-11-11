@@ -106,3 +106,16 @@ test("the budget, what happens when it is reached, and the overage share one row
   expect(container.textContent).toContain("Warn and keep going");
   expect(container.textContent).not.toContain("Overage");
 });
+
+test("under the track budget policy a goal over its budget keeps going, with nothing to resume", () => {
+  const tracked = goal({ budget_policy: "track", budget_block_at: null, budget_state: "over", spent_usd: "42" });
+  const { container } = inPage(
+    <>
+      <BudgetAlert goal={tracked} onResumed={() => undefined} />
+      <BudgetRow goal={tracked} readOnly={false} save={async () => undefined} />
+    </>,
+  );
+  expect(container.textContent).toContain("The budget policy only tracks spend, so nothing is held.");
+  expect(container.textContent).toContain("this budget stops nothing for now");
+  expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+});

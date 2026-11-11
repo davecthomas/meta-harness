@@ -2035,6 +2035,18 @@ spend several times its budget. A `warn` goal keeps going: nothing is held
 or refused for its budget. Each task's own spend limit is unchanged either
 way.
 
+Above every goal and task is the deployment's budget policy, the task
+policy's `budget_policy`, which the Task policy page sets with a switch.
+`block`, the default, leaves each goal's budget and each task's spend limit
+to stop work as it says. Under `track` nothing is held, refused or ended for
+either, and spend is still recorded and shown against them: every goal
+behaves as `warn` whatever its own mode (the planner serves it no blocking
+line, a `budget_exhausted` goal becomes `active` at its next sweep, and
+there is nothing to resume), and a task that starts gets a spend limit no
+run reaches, so its turn and minute limits are what bound a run. A task
+already running keeps the limit it started with. Services read a saved
+policy within five seconds, and one that cannot be read counts as `block`.
+
 Each sweep of a goal with a budget adds up what its tasks' runs have spent
 and saves it on the goal (`planner/budget_api.py`). The first time the spend
 reaches the budget the planner records `goal_budget_reached`, with the

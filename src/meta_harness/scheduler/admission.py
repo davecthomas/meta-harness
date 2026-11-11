@@ -250,14 +250,17 @@ class Admission:
         goal = goals[goal_id]
         # A goal in planning runs one kind of task: the planning task that drafts its issues.
         planning = goal["status"] == "planning" and task.get("task_type") == "plan"
+        # A goal stopped by its budget that the budget policy no longer stops: its next sweep makes it active.
+        if goal["status"] == "budget_exhausted" and goal.get("budget_policy") == "track":
+            return Hold("goal_status", f"goal {goal_id} is starting again", {"goal_id": goal_id, "status": "active"})
         if goal["status"] == "budget_exhausted":
             return Hold("goal_budget", f"goal {goal_id} is stopped by its budget", {"goal_id": goal_id})
         if goal["status"] != "active" and not planning:
             return Hold(
                 "goal_status", f"goal {goal_id} is {goal['status']}", {"goal_id": goal_id, "status": goal["status"]}
             )
-        # A goal that only warns at its budget is never held for it.
-        if goal.get("max_usd") is None or goal.get("budget_mode") == "warn":
+        # No blocking line: the goal only warns at its budget, or the budget policy only tracks spend.
+        if goal.get("max_usd") is None or ("budget_block_at" in goal and goal["budget_block_at"] is None):
             return None
         if goal_id not in spend:
             spend[goal_id] = await asyncio.to_thread(self._goal_spend, goal_id)

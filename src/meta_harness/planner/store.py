@@ -8,6 +8,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from meta_harness.config import store as config_store
 from meta_harness.planner import budget
 
 MODALITIES = {"fix", "feature", "new-system"}
@@ -365,7 +366,7 @@ def _goal(row: dict) -> dict:
     row["latitude"] = float(row["latitude"])
     for key in ("max_usd", "spent_usd", "budget_reached_usd", "budget_resume_to"):
         row[key] = str(row[key]) if row[key] is not None else None
-    return budget.view(row)
+    return budget.view(row, config_store.budget_policy())
 
 
 def _link(row: dict) -> dict:
