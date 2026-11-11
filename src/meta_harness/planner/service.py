@@ -23,7 +23,8 @@ tasks are done, and reports the merge or close of a `ready` or
 `review_unresolved` task's pull request to the task service. A goal no sweep
 covers, met, canceled, paused or stalled, is followed up hourly instead: its
 issues' labels refreshed and its canceled tasks' pull requests watched for
-their end (sweep.follow_up_goal).
+their end (sweep.follow_up_goal), and so are the canceled tasks of no goal
+(sweep.follow_up_goalless).
 """
 
 import asyncio
@@ -64,6 +65,7 @@ from meta_harness.planner.sweep import (
     Events,
     SweepResult,
     follow_up_goal,
+    follow_up_goalless,
     followed_up_goals,
     sweep_goal,
     swept_goals,
@@ -256,6 +258,9 @@ def create_app(
                 with contextlib.suppress(Exception):
                     for goal in await asyncio.to_thread(followed_up_goals):
                         await follow_up_one(goal)
+                # The canceled tasks of no goal, which no goal's sweep lists.
+                with contextlib.suppress(Exception):
+                    await follow_up_goalless(tasks, events, host)
             # A planning goal's ended planning task becomes its plan.
             with contextlib.suppress(Exception):
                 for goal in await asyncio.to_thread(planning_goals):

@@ -176,6 +176,46 @@ async def test_a_pull_request_the_watch_ended_is_not_read_again_once_its_task_is
     assert result.ended == [] and host.reads == [(REPO, 18)] and len(events.events) == 1
 
 
+async def test_a_canceled_task_of_no_goals_pull_request_merged_or_closed_later_is_recorded_once(ends):
+    from meta_harness.planner import activity
+
+    class AllTasks(Tasks):
+        def list(self, statuses=None, goal_id=None, limit=100):
+            assert goal_id is None, "tasks of no goal are found among every task"
+            return [t for t in self.tasks.values() if not statuses or t["status"] in statuses][:limit]
+
+    tasks = AllTasks(
+        {**_task("t-m", 31, "canceled"), "goal_id": None},
+        {**_task("t-c", 32, "canceled"), "goal_id": None},
+        _task("t-g", 33, "canceled"),
+    )
+    host = Host({31: _pull(31, "open"), 32: _pull(32, "open"), 33: _pull(33, "merged")})
+    events = Events()
+    first = await sweep.follow_up_goalless(tasks, events, host)
+    assert first.ended == [] and events.events == [] and not first.errors, "still open: nothing ended yet"
+    assert sorted(host.reads) == [(REPO, 31), (REPO, 32)], "only the tasks of no goal: a goal's follow-up has its own"
+    assert activity.pr_state(tasks.tasks["t-m"], []) == "waiting", "canceled with its pull request open"
+
+    # An operator merges one by hand, and closes the other without merging.
+    host.pulls[31] = _pull(31, "merged", merge="m31")
+    host.pulls[32] = _pull(32, "closed")
+    later = await sweep.follow_up_goalless(tasks, events, host)
+
+    assert sorted(later.ended) == ["t-c", "t-m"] and not later.errors
+    by_task = {e["task_id"]: e for e in events.events}
+    assert by_task["t-m"]["event_type"] == "pull_request_merged" and by_task["t-m"]["tags"] == {}
+    assert by_task["t-m"]["event_id"] == run_events.stable_id("t-m", "pull_request_merged")
+    assert by_task["t-c"]["event_type"] == "pull_request_closed"
+    assert tasks.moves == [] and tasks.tasks["t-m"]["status"] == "canceled", "the task stays canceled"
+    assert ends == {"t-m": "merged", "t-c": "closed"}
+    assert activity.pr_state(tasks.tasks["t-m"], [by_task["t-m"]]) == "merged"
+    assert activity.pr_state(tasks.tasks["t-c"], [by_task["t-c"]]) == "closed"
+
+    reads = len(host.reads)
+    again = await sweep.follow_up_goalless(tasks, events, host)
+    assert again.ended == [] and len(host.reads) == reads, "an ended pull request is not read again"
+
+
 async def test_settled_checks_on_a_new_head_are_recorded_once_per_head():
     tasks = Tasks(_task("t-3", 13))
     host = Host({13: _pull(13, "open", head="h2")}, {"h2": [_run("lint"), _run("tests", conclusion="failure")]})
