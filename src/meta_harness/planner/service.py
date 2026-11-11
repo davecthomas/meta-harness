@@ -11,7 +11,7 @@
     GET, POST  /v1/admin/users                the console's users: invite, set a role, deprovision (users.py)
     GET        /v1/costs                      costs over time, by source, goal, model and more (costs/api.py)
     GET, PUT   /v1/me/settings                the signed-in user's own settings
-    GET        /v1/activity                   every pull request opened, by goal, repo or label, for the heat map
+    GET        /v1/activity                   every pull request opened lately, by state, for the Overview's row
     GET        /health
 
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
@@ -20,7 +20,11 @@ active goal, and every goal stopped by its budget, every MH_PLANNER_SWEEP_SECOND
 starts (on creation, or on its first resume when it was saved with start false)
 or is reopened. A sweep moves a goal to met once its issues are closed and its
 tasks are done, and reports the merge or close of a `ready` or
-`review_unresolved` task's pull request to the task service.
+`review_unresolved` task's pull request to the task service. A goal no sweep
+covers, met, canceled, paused or stalled, is followed up hourly instead: its
+issues' labels refreshed and its canceled tasks' pull requests watched for
+their end (sweep.follow_up_goal), and so are the canceled tasks of no goal
+(sweep.follow_up_goalless).
 """
 
 import asyncio
@@ -45,6 +49,7 @@ from meta_harness.run_service import code_host
 from meta_harness.planner import (
     activity,
     budget_api,
+    cost_facts,
     drafting,
     plan_api,
     planning,
@@ -54,7 +59,17 @@ from meta_harness.planner import (
     store,
     users,
 )
-from meta_harness.planner.sweep import CodeHost, Events, SweepResult, sweep_goal, swept_goals
+from meta_harness.planner.sweep import (
+    FOLLOW_UP_SECONDS,
+    CodeHost,
+    Events,
+    SweepResult,
+    follow_up_goal,
+    follow_up_goalless,
+    followed_up_goals,
+    sweep_goal,
+    swept_goals,
+)
 from meta_harness.planner.tracker import Tracker, parse_ref
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
@@ -225,11 +240,27 @@ def create_app(
         with app.state.pool.connection() as conn:
             return store.list_goals(conn, ["planning"])
 
+    async def follow_up_one(goal: dict) -> SweepResult:
+        async with locks.setdefault(goal["id"], asyncio.Lock()):
+            return await follow_up_goal(goal, tracker, tasks, events, host)
+
     async def sweep_forever() -> None:
+        followed_up_at: float | None = None
         while True:
             with contextlib.suppress(Exception):
                 for goal in await asyncio.to_thread(swept_goals):
                     await sweep_one(goal)
+            # A goal no sweep covers, a met one most of all, keeps its issues' labels and its canceled tasks'
+            # pull request ends true for costs by label and by outcome, less often.
+            now = asyncio.get_running_loop().time()
+            if followed_up_at is None or now - followed_up_at >= FOLLOW_UP_SECONDS:
+                followed_up_at = now
+                with contextlib.suppress(Exception):
+                    for goal in await asyncio.to_thread(followed_up_goals):
+                        await follow_up_one(goal)
+                # The canceled tasks of no goal, which no goal's sweep lists.
+                with contextlib.suppress(Exception):
+                    await follow_up_goalless(tasks, events, host)
             # A planning goal's ended planning task becomes its plan.
             with contextlib.suppress(Exception):
                 for goal in await asyncio.to_thread(planning_goals):
@@ -748,17 +779,10 @@ def create_app(
         return {"goal_id": goal_id, "dropped": ref}
 
     @app.get("/v1/activity")
-    def pull_request_activity(
-        group_by: str = Query("goal", pattern="^(goal|repo|label)$"),
-        days: int = Query(91, ge=1, le=366),
-        who: str = Depends(operator),
-    ) -> dict:
-        """Every pull request the meta-harness opened in the last days, grouped, for the console's heat map."""
-        with app.state.pool.connection() as conn:
-            goals = {goal["id"]: goal for goal in store.list_goals(conn)}
+    def pull_request_activity(days: int = Query(91, ge=1, le=366), who: str = Depends(operator)) -> dict:
+        """Every pull request the meta-harness opened in the last days, by state, for the Overview's row."""
         try:
-            found = tasks.list(None, None, TASKS_PAGE)
-            return activity.activity(found, goals, events, group_by, days)
+            return activity.activity(cost_facts.every_task(tasks), events, days)
         except TaskApiError as err:
             raise HTTPException(status_code=502, detail=f"could not read the tasks: {err}") from err
 
@@ -875,6 +899,13 @@ def create_app(
         except store.NotFound:
             return None
 
-    app.state.harvest_costs = costs_api.register(app, operator, admin, events, tasks, goal_or_none)
+    def task_facts() -> dict[str, dict]:
+        """Each task's issue labels and pull request outcome, for costs by label and by outcome."""
+        found = cost_facts.every_task(tasks)
+        ends = cost_facts.pull_request_ends(events)
+        with app.state.pool.connection() as conn:
+            return cost_facts.task_facts(conn, found, ends)
+
+    app.state.harvest_costs = costs_api.register(app, operator, admin, events, tasks, goal_or_none, task_facts)
 
     return app
