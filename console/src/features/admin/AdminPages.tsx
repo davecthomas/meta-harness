@@ -39,7 +39,7 @@ export function DeploysPage() {
   );
 }
 
-const AUDITED = ["config_changed", "kill_switch_changed"];
+const AUDITED = ["config_changed", "kill_switch_changed", "user_invited", "user_role_changed", "user_deprovisioned"];
 
 export function AuditPage() {
   const [events, setEvents] = useState<MhEvent[] | null>(null);
@@ -69,6 +69,9 @@ export function AuditPage() {
 
 export function describeAudit(e: MhEvent): string {
   const p = e.payload;
+  if (e.event_type === "user_invited") return `Invited ${p.email} as ${p.role === "admin" ? "an admin" : "a regular user"}`;
+  if (e.event_type === "user_role_changed") return `Made ${p.email} ${p.to === "admin" ? "an admin" : "a regular user"}`;
+  if (e.event_type === "user_deprovisioned") return `Ended ${p.email}'s access`;
   if (e.event_type === "kill_switch_changed") return `${p.engaged ? "Turned the kill switch on" : "Lifted the kill switch"}${p.reason ? `: ${p.reason}` : ""}`;
   const verb = p.origin === "rollback" ? `rolled ${p.kind} back to version ${p.rolled_back_from}, as` : `saved ${p.kind}`;
   return `${verb} version ${p.version}${p.note ? `: ${p.note}` : ""}`;

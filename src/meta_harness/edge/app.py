@@ -36,9 +36,10 @@ operator and there is no sign-in.
 
 GET /v1/me answers who is signed in and their roles; GET /auth/config, the OAuth client id.
 
-Roles: every identity on the access list is an operator. MH_CONSOLE_ADMINS
-names the admins, a subset of the operators; while it is empty every
-operator is an admin. A non-admin gets 403 on configuration writes, kill
+Who may use the console, and who is an admin, are the planner's users, which
+an admin changes on the console's Users page (meta_harness.edge.directory).
+MH_CONSOLE_OPERATORS and MH_CONSOLE_ADMINS are the first access list: they
+decide until the planner has users, and seed them. A regular user gets 403 on configuration writes, kill
 switch writes and every /v1/admin path, which the edge serves itself:
 GET /v1/admin/deploys says what is deployed, and GET /v1/admin/logs reads the
 VM's services' and the edge's logs from Cloud Logging (meta_harness.edge.logs).
@@ -58,6 +59,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from starlette.background import BackgroundTask
 
 from meta_harness import __version__
+from meta_harness.edge.directory import Directory
 from meta_harness.edge.logs import EDGE, UNITS, LogsError, read_logs
 from meta_harness.run_service.paths import REPO_ROOT
 
@@ -73,6 +75,8 @@ ROUTES: list[tuple[str, str, str]] = [
     # The edge answers /v1/me itself; the planner keeps each user's settings under it.
     ("/v1/me", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/config", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
+    # The console's users, for admins: every /v1/admin path is an admin's.
+    ("/v1/admin/users", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/tasks", "MH_TASKS_URL", "http://127.0.0.1:8302"),
     ("/v1/events", "MH_EVENTS_URL", "http://127.0.0.1:8301"),
     ("/v1/kill-switch", "MH_SCHEDULER_URL", "http://127.0.0.1:8304"),
@@ -84,6 +88,9 @@ RESTART_WAIT_SECONDS = 20.0
 PASSED_HEADERS = {"content-type", "accept", "last-event-id"}
 # cache-control: the edge sets its own (no-store), so an upstream's cannot let Firebase Hosting cache.
 DROPPED_RESPONSE_HEADERS = {"content-length", "transfer-encoding", "connection", "content-encoding", "cache-control"}
+
+
+USERS_PATH = "/v1/admin/users"
 
 
 def operators_from_env() -> set[str]:
@@ -203,6 +210,7 @@ def create_app(
     stream_origin: str | None = None,
     admins: set[str] | None = None,
     logs_transport: httpx.AsyncBaseTransport | None = None,
+    directory: Directory | None = None,
 ) -> FastAPI:
     app_dir = dist or REPO_ROOT / "console" / "dist"
     allowed = operators if operators is not None else operators_from_env()
@@ -210,10 +218,6 @@ def create_app(
     strangers = sorted(admin_list - allowed) if allowed else []
     if strangers:
         raise RuntimeError(f"MH_CONSOLE_ADMINS names {', '.join(strangers)}, who MH_CONSOLE_OPERATORS does not")
-
-    def is_admin(who: str) -> bool:
-        # No admin list: every operator is an admin, so a deploy before the list is set changes nothing.
-        return not admin_list or who in admin_list
 
     local_identity = (identity if identity is not None else os.environ.get("MH_CONSOLE_DEV_IDENTITY", "")).lower()
     key = service_key if service_key is not None else os.environ.get("MH_SERVICE_KEY", "")
@@ -225,6 +229,15 @@ def create_app(
         raise RuntimeError("MH_GOOGLE_CLIENT_ID is set without MH_SESSION_KEY: sessions could not be signed")
     verify = verify_google or (google_verifier(client_id) if client_id else None)
     client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None), transport=transport)
+    # The planner's users decide who may sign in and who is an admin. With a stand-in transport (a test) and no
+    # directory given, there is no planner to ask and the first access list decides.
+    users = directory or Directory(
+        None if transport is not None else os.environ.get("MH_PLANNER_URL", "http://127.0.0.1:8303"),
+        key,
+        allowed,
+        admin_list,
+    )
+    is_admin = users.is_admin
     app = FastAPI(title="meta-harness edge", docs_url=None, redoc_url=None)
 
     def signed_in(request: Request) -> tuple[str, JSONResponse | None]:
@@ -240,7 +253,7 @@ def create_app(
             who = local_identity
             if not who:
                 return "", JSONResponse({"detail": "nobody is signed in: set MH_CONSOLE_DEV_IDENTITY"}, status_code=401)
-        if who not in allowed:
+        if not users.allowed(who):
             return who, private(JSONResponse({"detail": f"{who} is not on the console's access list"}, 403))
         return who, None
 
@@ -271,8 +284,9 @@ def create_app(
             who = verify(credential)
         except SignInError as err:
             return private(JSONResponse({"detail": f"Google sign-in failed: {err}"}, status_code=401))
-        if who not in allowed:
+        if not users.allowed(who):
             return private(JSONResponse({"detail": f"{who} is not on the console's access list"}, status_code=403))
+        users.signed_in(who)
         response = private(JSONResponse({"identity": who}))
         response.set_cookie(
             SESSION_COOKIE,
@@ -333,7 +347,7 @@ def create_app(
         q: str | None = None,
     ) -> Response:
         """The newest log entries of one VM unit, or the edge, or all of them, for the Logs page."""
-        who, denied = signed_in(request)
+        who, denied = await asyncio.to_thread(signed_in, request)
         if denied:
             return denied
         if not is_admin(who):
@@ -365,7 +379,8 @@ def create_app(
 
     @app.api_route("/v1/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def forward(request: Request, rest: str) -> Response:
-        who, denied = signed_in(request)
+        # Off the event loop: the check may read the users from the planner.
+        who, denied = await asyncio.to_thread(signed_in, request)
         if denied:
             return denied
         refused = foreign(request)
@@ -373,6 +388,12 @@ def create_app(
             return refused
         if admin_only(request.method, request.url.path) and not is_admin(who):
             return private(JSONResponse({"detail": f"{who} is not an admin"}, status_code=403))
+        if request.url.path.startswith(USERS_PATH):
+            # The seed and the sign-in report are the edge's own calls, never a browser's.
+            if request.url.path.endswith(("/seed", "/signed-in")):
+                return private(JSONResponse({"detail": "not a console path"}, status_code=404))
+            if request.method in WRITE_METHODS:
+                users.changed()
         base = target_for(request.url.path)
         if base is None:
             return JSONResponse({"detail": f"no service owns {request.url.path}"}, status_code=404)

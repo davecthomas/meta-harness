@@ -278,6 +278,20 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("goal_met", 1, _object({"goal_id": {"type": "string"}, "reason": {"type": "string"}}, ["goal_id"])),
+    # The console's users: an admin invited one, changed a role, or ended one's access
+    EventType(
+        "user_invited",
+        1,
+        _object(
+            {"email": {"type": "string"}, "role": {"type": "string", "enum": ["admin", "user"]}}, ["email", "role"]
+        ),
+    ),
+    EventType(
+        "user_role_changed",
+        1,
+        _object({"email": {"type": "string"}, "from": {"type": "string"}, "to": {"type": "string"}}, ["email", "to"]),
+    ),
+    EventType("user_deprovisioned", 1, _object({"email": {"type": "string"}}, ["email"])),
     # Configuration: every saved or rolled-back version, with the operator as actor
     EventType(
         "config_changed",
