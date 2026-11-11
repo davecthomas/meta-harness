@@ -1,8 +1,7 @@
-import { Alert, Anchor, List, Text } from "@mantine/core";
+import { Alert } from "@mantine/core";
 import { IconAlertTriangle } from "@tabler/icons-react";
-import { Link } from "react-router-dom";
 import type { IssueProgress, Task } from "../../api";
-import { moneyText } from "../../money";
+import { FailureGroups, groupFailures, type FailureGroup } from "../tasks/FailureGroups";
 
 const FAILED = ["failed", "review_unresolved"];
 
@@ -11,27 +10,33 @@ export function failures(issues: IssueProgress[]): IssueProgress[] {
   return issues.filter((i) => i.refused_reason || i.task_waiting_on || (i.task_status !== null && FAILED.includes(i.task_status)));
 }
 
-// A goal with failed work says so above its board: each failed or unresolved task with why, linked to its page,
-// and each issue the planner refused. Nothing when there is none.
-export function GoalFailures({ issues, tasks }: { issues: IssueProgress[]; tasks: Record<string, Task> }) {
-  const failed = failures(issues);
-  if (!failed.length) return null;
-  const count = `${failed.length} ${failed.length === 1 ? "issue needs" : "issues need"} you`;
+// The goal's failed issues by what went wrong: those that failed the same way are one group.
+export function groups(issues: IssueProgress[], tasks: Record<string, Task> = {}): FailureGroup[] {
+  return groupFailures(
+    failures(issues).map((i) => ({
+      key: i.ref,
+      name: (i.task_id && tasks[i.task_id]?.title) || i.title || i.ref.replace(/^github:/, ""),
+      taskId: i.task_id,
+      issueRef: i.ref,
+      status: i.task_status,
+      reason: i.task_status_reason,
+      waitingOn: i.task_waiting_on,
+      refused: i.refused_reason,
+      max_usd: i.task_id ? tasks[i.task_id]?.max_usd : undefined,
+    })),
+  );
+}
+
+// A goal with failed work says so above its board: what went wrong, why, and what to do, once for the issues
+// that failed the same way, with the action that fixes them. Nothing when there is none.
+export function GoalFailures({ issues, tasks, onChanged }: { issues: IssueProgress[]; tasks: Record<string, Task>; onChanged?: () => void }) {
+  const found = groups(issues, tasks);
+  const total = found.reduce((n, g) => n + g.items.length, 0);
+  if (!total) return null;
+  const count = `${total} ${total === 1 ? "issue needs" : "issues need"} you`;
   return (
     <Alert color="red" title={count} icon={<IconAlertTriangle size={18} />} mb="md" role="alert">
-      <List size="sm" spacing={4}>
-        {failed.map((i) => {
-          const name = (i.task_id && tasks[i.task_id]?.title) || i.title || i.ref.replace(/^github:/, "");
-          const state = i.task_waiting_on === "budget" ? "out of budget" : i.task_status;
-          const why = i.refused_reason ? `refused: ${i.refused_reason}` : `${state}: ${moneyText(i.task_status_reason) ?? "no reason was recorded"}`;
-          return (
-            <List.Item key={i.ref}>
-              {i.task_id ? <Anchor component={Link} to={`/tasks/${i.task_id}`} size="sm">{name}</Anchor> : <Text span size="sm">{name}</Text>}
-              <Text span size="sm"> ({why})</Text>
-            </List.Item>
-          );
-        })}
-      </List>
+      <FailureGroups groups={found} onChanged={onChanged} />
     </Alert>
   );
 }
