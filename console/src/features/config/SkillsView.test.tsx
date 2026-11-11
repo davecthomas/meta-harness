@@ -13,7 +13,7 @@ afterEach(() => vi.unstubAllGlobals());
 const SLOP: SkillEntry = {
   description: "Evaluate text for AI slop patterns.",
   source: { kind: "shipped" },
-  files: { "SKILL.md": "---\nname: no-ai-slop\ndescription: Evaluate text.\n---\n\nRead it.\n", LICENSE: "MIT License" },
+  files: { "SKILL.md": "---\nname: no-ai-slop2\ndescription: Evaluate text.\n---\n\nRead it.\n", LICENSE: "MIT License" },
 };
 const TIDY: SkillEntry = {
   description: "Tidy a file of notes.",
@@ -22,7 +22,7 @@ const TIDY: SkillEntry = {
 };
 
 function Staged({ profiles }: { profiles: Record<string, { skills?: string[] }> }) {
-  const original = { skills: { "no-ai-slop": SLOP } };
+  const original = { skills: { "no-ai-slop2": SLOP } };
   const [document, setDocument] = useState<Record<string, any>>(original);
   const staging: Staging = { document, original, stage: (path, value) => setDocument(setIn(document, path, value)), reasons: () => [] };
   return <SkillsView staging={staging} profiles={profiles} />;
@@ -31,12 +31,12 @@ function Staged({ profiles }: { profiles: Record<string, { skills?: string[] }> 
 const show = (profiles: Record<string, { skills?: string[] }> = {}) => render(<MantineProvider theme={theme}><Staged profiles={profiles} /></MantineProvider>);
 
 test("each skill shows what it is for, where it came from and which profiles use it; one in use cannot be removed", () => {
-  show({ "pi-careful": { skills: ["no-ai-slop"] } });
-  const row = screen.getByTestId("skill-no-ai-slop");
+  show({ "pi-careful": { skills: ["no-ai-slop2"] } });
+  const row = screen.getByTestId("skill-no-ai-slop2");
   expect(row.textContent).toContain("Evaluate text for AI slop patterns.");
   expect(row.textContent).toContain("Ships with the meta-harness");
   expect(row.textContent).toContain("pi-careful");
-  expect((within(row).getByRole("button", { name: "Remove skill no-ai-slop" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((within(row).getByRole("button", { name: "Remove skill no-ai-slop2" }) as HTMLButtonElement).disabled).toBe(true);
   expect(sourceLine(TIDY.source)).toBe("https://github.com/acme/skills / skills/tidy-notes at main (0123456)");
 });
 

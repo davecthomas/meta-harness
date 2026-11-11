@@ -333,8 +333,10 @@ decides everything pi loads:
   allowlist and the egress proxy, so a skill grants no access.
 - The kind is seeded from `config/skills/`, and a skill added there later
   reaches a deployment as a new version, as a shipped profile does. It
-  ships `no-ai-slop` (MIT, from codeandtheory/machine-ai-skills), which no
-  profile names yet. An admin imports a skill on Configuration, Skills,
+  ships `no-ai-slop2` (MIT, from codeandtheory/machine-ai-skills, with its
+  scanner script), adapted to check the text a run is about to write (a pull
+  request summary, a review, an issue draft) rather than a previous reply.
+  No profile names it yet. An admin imports a skill on Configuration, Skills,
   from an https git repository on a public host (a branch or tag and a
   path; the commit read is kept) or from a folder on their machine
   (`POST /v1/config/skills/read`, which saves nothing), reads every file

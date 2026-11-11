@@ -63,9 +63,14 @@ def test_a_skill_a_profile_names_cannot_be_removed_and_a_profile_names_only_know
 
 def test_the_shipped_skills_seed_the_kind_and_no_ai_slop_is_one_of_them(tmp_path: Path, monkeypatch):
     shipped = skills.seed_skills()["skills"]
-    assert "no-ai-slop" in shipped and shipped["no-ai-slop"]["source"] == {"kind": "shipped"}
+    assert "no-ai-slop2" in shipped and shipped["no-ai-slop2"]["source"] == {"kind": "shipped"}
     assert skills.check_skills({"skills": shipped}, {}) == []
-    assert "MIT License" in shipped["no-ai-slop"]["files"]["LICENSE"]
+    assert "MIT License" in shipped["no-ai-slop2"]["files"]["LICENSE"]
+    assert "no-ai-slop-scan.py" in shipped["no-ai-slop2"]["files"], "its scanner ships beside it"
+    assert "no-ai-slop" not in shipped, "the deprecated skill is not installed"
+    instructions = shipped["no-ai-slop2"]["files"]["SKILL.md"]
+    assert "the content you are about to produce next" in instructions
+    assert "preceding assistant message" not in instructions
 
     (tmp_path / "tidy-notes").mkdir()
     (tmp_path / "tidy-notes" / "SKILL.md").write_text(SKILL_MD)
