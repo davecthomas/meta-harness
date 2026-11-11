@@ -1,0 +1,271 @@
+"""One pass of the supervisor: look at every open task, decide who has it, and move the ones no one has.
+
+A pass reads each task that has not ended closed, gathers where it stands (its row, its RunTask workflow in
+Temporal, its pull request on the code host, its goal), asks rules.decide who has it, and saves the answer
+(standing.py). Where the answer is the supervisor, the pass acts:
+
+    recover               a task with no workflow behind it goes back to the queue, to resume where its pull
+                          request stands, with what it spent carried over; a task asked to cancel is canceled
+    end_at_pull_request   a task whose pull request merged or closed, which no goal's sweep covers, is closed
+                          or canceled
+    cancel_for_goal       a task that has not started, of a goal that ended, is canceled
+
+Every action is safe to repeat: the task service refuses a move that no longer applies. A task is acted on
+only after it has stood in its situation for GRACE, so a status write still on its way is not taken for a
+lost one, and an action that fails is tried again with a longer wait each time. Nothing a pass cannot read
+(Temporal, the code host, one goal) stops the pass: that task's facts say unknown, and no one is moved on
+an unknown.
+"""
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from typing import Any, Protocol
+
+from meta_harness import db
+from meta_harness.planner import cost_facts, store as goal_store
+from meta_harness.planner import sweep
+from meta_harness.run_service import code_host
+from meta_harness.run_service.code_host import CodeHostError
+from meta_harness.supervisor import standing
+from meta_harness.supervisor.rules import OPEN_STATUSES, Decision, Facts, decide
+from meta_harness.tasks.client import TaskApiError, TaskClient
+
+log = logging.getLogger("meta_harness.supervisor")
+
+# How long a task stands with no one having it before the supervisor recovers it. A workflow that just
+# ended may still be writing the task's last status, and one just started has not marked it running yet.
+GRACE = timedelta(minutes=3)
+# The wait before an action that failed is tried again: doubled each time, up to the longest.
+RETRY_FIRST = timedelta(minutes=1)
+RETRY_LONGEST = timedelta(hours=1)
+# How long a read of a pull request stands, so a pass does not read every parked task's each minute.
+PULL_SECONDS = 300.0
+
+
+class Events(Protocol):
+    def emit(self, event_type: str, payload: dict[str, Any] | None = None, **fields: Any) -> str: ...
+
+    def read(self, from_position: int = 0, limit: int = 500, **filters: str) -> dict[str, Any]: ...
+
+
+class Workflows(Protocol):
+    async def state(self, task_id: str) -> str:
+        """running, ended, none or unknown (rules.WORKFLOWS)."""
+        ...
+
+
+@dataclass
+class PassResult:
+    looked_at: int = 0
+    # Task ids by what the supervisor did, and what it could not do.
+    recovered: list[str] = field(default_factory=list)
+    ended: list[str] = field(default_factory=list)
+    canceled: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    # How many tasks each owner has.
+    owners: dict[str, int] = field(default_factory=dict)
+
+
+class TemporalWorkflows:
+    """Whether a task's RunTask workflow is running, from Temporal."""
+
+    def __init__(self) -> None:
+        self._client = None
+
+    async def state(self, task_id: str) -> str:
+        from temporalio.client import WorkflowExecutionStatus
+        from temporalio.service import RPCError, RPCStatusCode
+
+        from meta_harness.run_service import start
+
+        try:
+            if self._client is None:
+                self._client = await start.client()
+            described = await self._client.get_workflow_handle(task_id).describe()
+        except RPCError as err:
+            if err.status == RPCStatusCode.NOT_FOUND:
+                return "none"
+            return "unknown"
+        except Exception:  # noqa: BLE001 - Temporal not reachable: the task's workflow is unknown, not gone
+            self._client = None
+            return "unknown"
+        return "running" if described.status in (None, WorkflowExecutionStatus.RUNNING) else "ended"
+
+
+class Supervisor:
+    def __init__(self, tasks: TaskClient, events: Events, workflows: Workflows, host: Any = None) -> None:
+        self.tasks = tasks
+        self.events = events
+        self.workflows = workflows
+        self.host = host or code_host
+        self._pulls: dict[str, tuple[float, Any]] = {}
+
+    async def pass_once(self, now: datetime | None = None) -> PassResult:
+        """Look at every open task once. Raises only when the tasks cannot be listed at all."""
+        now = now or datetime.now(UTC)
+        result = PassResult()
+        found = await asyncio.to_thread(cost_facts.every_task, self.tasks, None, list(OPEN_STATUSES))
+        before = await asyncio.to_thread(_standings)
+        admitted = await asyncio.to_thread(_admitted)
+        goals: dict[str, dict | None] = {}
+        for task in found:
+            result.looked_at += 1
+            try:
+                goal = await self._goal(task.get("goal_id"), goals)
+                facts, pull = await self._facts(task, goal, task["id"] in admitted)
+                decision = decide(facts)
+            except Exception as err:  # noqa: BLE001 - one task's facts must not stop the pass for the rest
+                result.errors.append(f"{task['id']}: {type(err).__name__}: {err}")
+                continue
+            result.owners[decision.owner] = result.owners.get(decision.owner, 0) + 1
+            changed = await asyncio.to_thread(_save, task["id"], decision)
+            earlier = before.get(task["id"])
+            if changed:
+                self.events.emit(
+                    "task_standing",
+                    {
+                        "owner": decision.owner,
+                        "situation": decision.situation,
+                        "reason": decision.reason,
+                        "ask": decision.ask,
+                    },
+                    task_id=task["id"],
+                    actor="supervisor",
+                )
+            if decision.action and _due(decision, earlier if not changed else None, now):
+                await self._act(task, goal, pull, decision, result)
+        await asyncio.to_thread(_forget, [task["id"] for task in found])
+        return result
+
+    async def _goal(self, goal_id: str | None, known: dict[str, dict | None]) -> dict | None:
+        if not goal_id:
+            return None
+        if goal_id not in known:
+            known[goal_id] = await asyncio.to_thread(_goal, goal_id)
+        return known[goal_id]
+
+    async def _facts(self, task: dict, goal: dict | None, admitted: bool) -> tuple[Facts, Any]:
+        status = task["status"]
+        workflow = "none"
+        if status in ("running", "taken_over") or (status == "queued" and admitted):
+            workflow = await self.workflows.state(task["id"])
+        pull_state, pull = "none", None
+        if status in ("ready", "review_unresolved", "canceled") and task.get("pr_url"):
+            pull_state, pull = await self._pull(task)
+        return (
+            Facts(
+                status=status,
+                workflow=workflow,
+                pull=pull_state,
+                goal=goal["status"] if goal else "none",
+                waiting_on=task.get("waiting_on") or "",
+                cancel_requested=bool(task.get("cancel_requested")),
+                admitted=admitted,
+                auto_merge=bool(goal and goal.get("auto_merge")),
+            ),
+            pull,
+        )
+
+    async def _pull(self, task: dict) -> tuple[str, Any]:
+        """The task's pull request's state on the code host, read at most once every PULL_SECONDS."""
+        cached = self._pulls.get(task["id"])
+        if cached and time.monotonic() - cached[0] < PULL_SECONDS:
+            pull = cached[1]
+        else:
+            try:
+                repo, number = code_host.pr_number(task["pr_url"])
+            except CodeHostError:
+                # A local repo's pull request is a file, with no code host to read it from.
+                return "none", None
+            try:
+                pull = await self.host.read_pull_request(repo, number)
+            except Exception:  # noqa: BLE001 - the code host did not answer: unknown, and no one is moved on it
+                return "unknown", None
+            self._pulls[task["id"]] = (time.monotonic(), pull)
+        return ("open" if pull.state in ("open", "draft") else pull.state), pull
+
+    async def _act(self, task: dict, goal: dict | None, pull: Any, decision: Decision, result: PassResult) -> None:
+        task_id = task["id"]
+        try:
+            if decision.action == "recover":
+                spent = await asyncio.to_thread(spent_so_far, self.events, task_id)
+                recovered = await asyncio.to_thread(self.tasks.recover, task_id, decision.reason, str(spent))
+                (result.recovered if recovered["status"] == "queued" else result.ended).append(task_id)
+            elif decision.action == "end_at_pull_request":
+                await sweep._record_end(goal, task, pull, self.tasks, self.events, sweep.SweepResult(""))
+                self._pulls.pop(task_id, None)
+                result.ended.append(task_id)
+            elif decision.action == "cancel_for_goal":
+                await asyncio.to_thread(self.tasks.cancel, task_id, decision.reason, "supervisor")
+                result.canceled.append(task_id)
+            else:
+                raise ValueError(f"no action {decision.action!r}")
+        except (TaskApiError, CodeHostError, ValueError) as err:
+            result.errors.append(f"{task_id}: {decision.action}: {err}")
+            await asyncio.to_thread(_acted, task_id, str(err)[:500])
+            return
+        await asyncio.to_thread(_acted, task_id, "")
+        log.warning("task %s: %s, so the supervisor did %s", task_id, decision.reason, decision.action)
+
+
+def _due(decision: Decision, earlier: standing.Standing | None, now: datetime) -> bool:
+    """Whether the supervisor acts on the task this pass. A recovery waits for the task to have stood GRACE
+    with no workflow; any action that failed waits longer after each failure before it is tried again."""
+    if decision.action == "recover" and (earlier is None or now - earlier.since < GRACE):
+        return False
+    if earlier is None or earlier.acted_at is None:
+        return True
+    wait = min(RETRY_FIRST * (2 ** max(earlier.attempts - 1, 0)), RETRY_LONGEST)
+    return now - earlier.acted_at >= wait
+
+
+def spent_so_far(events: Events, task_id: str) -> Decimal:
+    """What the task's runs have spent since an operator last sent it back to the queue, from the runs'
+    attempt_finished events. A recovered task's next workflow counts it against the task's spend limit, so a
+    recovery never gives a task its limit to spend again."""
+    page = events.read(0, 5000, task_id=task_id, event_type="attempt_finished,task_retried")
+    spent = Decimal(0)
+    for event in page.get("events") or []:
+        if event["event_type"] == "task_retried":
+            spent = Decimal(0)
+        else:
+            spent += Decimal(str((event.get("payload") or {}).get("spent_usd") or 0))
+    return spent
+
+
+def _standings() -> dict[str, standing.Standing]:
+    with db.connect(autocommit=True) as conn:
+        return standing.read(conn)
+
+
+def _save(task_id: str, decision: Decision) -> bool:
+    with db.connect(autocommit=True) as conn:
+        return standing.save(conn, task_id, decision)
+
+
+def _acted(task_id: str, error: str) -> None:
+    with db.connect(autocommit=True) as conn:
+        standing.acted(conn, task_id, error)
+
+
+def _forget(keep: list[str]) -> None:
+    with db.connect(autocommit=True) as conn:
+        standing.forget(conn, keep)
+
+
+def _admitted() -> set[str]:
+    """The tasks the scheduler holds a place for: it started a workflow for each."""
+    with db.connect(autocommit=True) as conn:
+        return {row[0] for row in conn.execute("SELECT DISTINCT task_id FROM scheduler.repo_area_lock").fetchall()}
+
+
+def _goal(goal_id: str) -> dict | None:
+    with db.connect(autocommit=True) as conn:
+        try:
+            return goal_store.get(conn, goal_id)
+        except goal_store.NotFound:
+            return None

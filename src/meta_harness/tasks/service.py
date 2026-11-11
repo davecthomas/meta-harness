@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
 from meta_harness.scheduler import holds
+from meta_harness.supervisor import standing
 from meta_harness.tasks import reviews, spend, store
 
 
@@ -113,6 +114,13 @@ class VerdictIn(BaseModel):
 class RetryIn(BaseModel):
     # The task's new spend limit, for the runs of its next workflow. Left out: the limit it has.
     max_usd: Decimal | None = Field(default=None, gt=0)
+
+
+class RecoverIn(BaseModel):
+    # What the supervisor found: the task's workflow ended without ending it, or it has none.
+    why: str = Field(min_length=1, max_length=500)
+    # What the task's runs have spent so far, which its next workflow counts against its spend limit.
+    spent_usd: Decimal = Field(default=Decimal(0), ge=0)
 
 
 class DismissIn(BaseModel):
@@ -247,8 +255,10 @@ def create_app(
             statuses = status.split(",") if status else None
             tasks, total = store.list_tasks(conn, owner, statuses, goal_id, limit, offset, pr, q, waiting, smoke)
             held = holds.for_tasks(conn, [t["id"] for t in tasks if t["status"] == "queued"])
+            standings = standing.for_tasks(conn, [t["id"] for t in tasks if t["status"] != "closed"])
             for task in tasks:
                 task["held"] = held.get(task["id"])
+                task["standing"] = standings.get(task["id"])
             return {"tasks": tasks, "total": total, "offset": offset, "limit": limit}
 
     @app.get("/v1/tasks/{task_id}")
@@ -258,6 +268,8 @@ def create_app(
                 task = visible(store.get(conn, task_id), who)
                 # Why the scheduler holds a queued task, from the scheduler's own record of it.
                 task["held"] = holds.get(conn, task_id) if task["status"] == "queued" else None
+                # Who has the task, from the supervisor's own record of it.
+                task["standing"] = standing.get(conn, task_id) if task["status"] != "closed" else None
                 return task
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such task") from err
@@ -523,6 +535,27 @@ def create_app(
         with app.state.pool.connection() as conn:
             task, previous = store.set_status(conn, task_id, status, reason)
         emit_status(task, previous, who.actor)
+        return task
+
+    @app.post("/v1/tasks/{task_id}/recover")
+    def recover(task_id: str, body: RecoverIn, who: Caller = Depends(service_only)) -> dict:
+        """The supervisor's move for a running or admitted task that has no RunTask workflow behind it: back
+        to the queue for a new workflow, canceled when it was asked to cancel, or failed once it has been
+        recovered too often. 409 for a task in any other status."""
+        try:
+            with app.state.pool.connection() as conn:
+                task, previous = store.recover(conn, task_id, body.why, body.spent_usd)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        emit_status(task, previous, who.actor)
+        events.emit(
+            "task_recovered",
+            {"from": previous, "to": task["status"], "recoveries": task["recoveries"], "why": body.why},
+            task_id=task_id,
+            actor=who.actor,
+        )
         return task
 
     @app.post("/v1/tasks/{task_id}/status")

@@ -659,3 +659,52 @@ def test_no_spend_limit_above_the_ceiling_for_one_task_is_accepted(api):
         f"/v1/tasks/{task['id']}/budget", json={"action": "raise", "max_usd": "1000000"}, headers=_as(CALLER_KEY)
     )
     assert raised.status_code == 422
+
+
+def test_the_supervisor_recovers_a_task_with_no_workflow_and_gives_up_after_too_many(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    assert task["recoveries"] == 0 and task["status_changed_at"]
+    running = lambda: api.post(  # noqa: E731
+        f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY)
+    )
+    recover = lambda spent="0": api.post(  # noqa: E731
+        f"/v1/tasks/{task['id']}/recover",
+        json={"why": "its RunTask workflow ended without ending the task", "spent_usd": spent},
+        headers=_as(SERVICE_KEY),
+    )
+    assert recover().status_code == 200, "a queued task the scheduler started is recovered too"
+    assert api.post(f"/v1/tasks/{task['id']}/recover", json={"why": "x"}, headers=_as(CALLER_KEY)).status_code == 403
+    running()
+
+    recovered = recover("3.25").json()
+
+    assert recovered["status"] == "queued" and recovered["recoveries"] == 2 and recovered["retries"] == 2
+    assert Decimal(recovered["spent_carried_usd"]) == Decimal("3.25") and recovered["waiting_on"] is None
+    assert "sent it back to the queue (recovery 2)" in recovered["status_reason"]
+    assert ("task_recovered", "running", "queued") in [(e[0], e[1].get("from"), e[1].get("to")) for e in events.events]
+    running()
+    recover()
+    running()
+
+    gave_up = recover().json()
+
+    assert gave_up["status"] == "failed" and gave_up["recoveries"] == 3
+    assert "its workflows keep ending without finishing" in gave_up["status_reason"]
+    assert recover().status_code == 409, "a failed task has no workflow to recover"
+    # An operator's retry starts from nothing spent.
+    retried = api.post(f"/v1/tasks/{task['id']}/retry", headers=_as(CALLER_KEY)).json()
+    assert Decimal(retried["spent_carried_usd"]) == 0
+
+
+def test_a_task_asked_to_cancel_is_canceled_by_a_recovery_and_a_task_says_who_has_it(api):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    api.post(f"/v1/tasks/{task['id']}/cancel", headers=_as(CALLER_KEY))
+
+    ended = api.post(
+        f"/v1/tasks/{task['id']}/recover", json={"why": "it has no RunTask workflow"}, headers=_as(SERVICE_KEY)
+    ).json()
+
+    assert ended["status"] == "canceled" and ended["cancel_requested"] is False
+    assert ended["status_reason"] == "it was asked to cancel, and it has no RunTask workflow"
+    assert api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["standing"] is None, "not looked at yet"

@@ -912,6 +912,30 @@
     ],
     "type": "object"
   },
+  "task_recovered v1": {
+    "additionalProperties": true,
+    "properties": {
+      "from": {
+        "type": "string"
+      },
+      "recoveries": {
+        "type": "integer"
+      },
+      "to": {
+        "type": "string"
+      },
+      "why": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "from",
+      "to",
+      "recoveries",
+      "why"
+    ],
+    "type": "object"
+  },
   "task_retried v1": {
     "additionalProperties": true,
     "properties": {
@@ -989,6 +1013,35 @@
       "tier",
       "method",
       "candidates"
+    ],
+    "type": "object"
+  },
+  "task_standing v1": {
+    "additionalProperties": true,
+    "properties": {
+      "ask": {
+        "type": "string"
+      },
+      "owner": {
+        "enum": [
+          "workflow",
+          "scheduler",
+          "planner",
+          "supervisor",
+          "operator"
+        ]
+      },
+      "reason": {
+        "type": "string"
+      },
+      "situation": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "owner",
+      "situation",
+      "reason"
     ],
     "type": "object"
   },

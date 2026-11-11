@@ -67,6 +67,18 @@ def _spend_limit(task: dict) -> str:
     return f"{min(own, ceiling):.2f}" if own > ceiling else str(task["max_usd"] or DEFAULT_SPEND_LIMIT_USD)
 
 
+def _less_carried(limit: str, task: dict) -> str:
+    """The limit less what the task's runs had spent when the supervisor recovered it: a recovered task's new
+    workflow starts counting from nothing, so the limit it is given is what the task has left. Never below
+    nothing: a task with nothing left ends, or holds, before its first run."""
+    from decimal import Decimal
+
+    carried = Decimal(str(task.get("spent_carried_usd") or 0))
+    if carried <= 0:
+        return limit
+    return f"{max(Decimal(limit) - carried, Decimal(0)):.2f}"
+
+
 @activity.defn
 async def load_task(task_id: str) -> TaskSpec:
     try:
@@ -84,7 +96,7 @@ async def load_task(task_id: str) -> TaskSpec:
         pin=task["pin"] or "",
         floor=FLOOR_FOR_COMPLEXITY.get(task["complexity"] or "", ""),
         ceiling=task["max_tier"] or "",
-        spend_limit_usd=_spend_limit(task),
+        spend_limit_usd=_less_carried(_spend_limit(task), task),
         closes=f"{match['repo']}#{match['number']}" if match else "",
         goal_id=task.get("goal_id") or "",
         attempts=int(task.get("attempts") or 1),

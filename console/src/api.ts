@@ -102,6 +102,8 @@ export interface Task {
   depends_on?: string[];
   // Why the scheduler holds a queued task; null for one it does not hold, and for a task in any other status.
   held?: TaskHold | null;
+  // Who has the task, from the supervisor: null for a closed task, or one it has not looked at yet.
+  standing?: TaskStanding | null;
 }
 
 // A queued task's hold, from the scheduler. kind says what to do about it without reading the reason's words;
@@ -112,6 +114,19 @@ export interface TaskHold {
   since: string;
   last_checked: string;
   detail: Record<string, unknown>;
+}
+
+// Who has an open task, from the supervisor's last pass: its workflow, the scheduler, the planner's sweep,
+// the supervisor itself, or an operator, who is told what to do in `ask`.
+export interface TaskStanding {
+  owner: "workflow" | "scheduler" | "planner" | "supervisor" | "operator";
+  situation: string;
+  reason: string;
+  ask: string | null;
+  since: string;
+  checked_at: string;
+  attempts: number;
+  last_error: string | null;
 }
 
 export interface MhEvent {

@@ -73,6 +73,13 @@ class TaskClient:
     def cancel(self, task_id: str, reason: str = "canceled through the Task API", actor: str | None = None) -> dict:
         return self._call("POST", f"/v1/tasks/{task_id}/cancel", actor=actor, json={"reason": reason})
 
+    def recover(self, task_id: str, why: str, spent_usd: str = "0") -> dict:
+        """End the wait of a running or admitted task with no workflow behind it: back to the queue, canceled
+        when it was asked to cancel, or failed after too many recoveries. The supervisor's."""
+        return self._call(
+            "POST", f"/v1/tasks/{task_id}/recover", actor="supervisor", json={"why": why, "spent_usd": spent_usd}
+        )
+
     def budget(self, task_id: str, action: str, max_usd: str | None = None, actor: str | None = None) -> dict:
         """Answer a task held for budget: raise (with a new spend limit, or none when its goal's was raised) or end."""
         return self._call(

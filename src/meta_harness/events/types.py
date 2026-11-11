@@ -154,6 +154,33 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("review_proceeded", 1, _object({"round": {"type": "integer"}}, ["round"])),
+    # The supervisor: who has a task when that changes, and a task it sent back for want of a workflow
+    EventType(
+        "task_standing",
+        1,
+        _object(
+            {
+                "owner": {"enum": ["workflow", "scheduler", "planner", "supervisor", "operator"]},
+                "situation": {"type": "string"},
+                "reason": {"type": "string"},
+                "ask": {"type": "string"},
+            },
+            ["owner", "situation", "reason"],
+        ),
+    ),
+    EventType(
+        "task_recovered",
+        1,
+        _object(
+            {
+                "from": {"type": "string"},
+                "to": {"type": "string"},
+                "recoveries": {"type": "integer"},
+                "why": {"type": "string"},
+            },
+            ["from", "to", "recoveries", "why"],
+        ),
+    ),
     # The writing pass on the texts of one post: a pull request description, a review, a comment, an issue
     EventType(
         "writing_checked",
