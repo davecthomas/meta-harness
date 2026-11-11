@@ -17,11 +17,10 @@ INLINE_TEMPLATE = "inline"
 # Most a task may spend on model calls across all its runs, in USD, when the task names no max_usd.
 # Each run's grant gets what is left. A standard-tier run on these repos costs a few dollars.
 DEFAULT_SPEND_LIMIT_USD = "10.00"
-# A task's spend limit while the budget policy only tracks spend: far above what a run's turn and minute limits
-# let it spend, so nothing ends or holds for it, and each run's grant still counts what it spends. It is the
-# most the HTTP Gateway grants: a spend limit there has at most six digits before the decimal point, and it
-# refuses a larger one, which failed every task under `track`.
-UNBOUNDED_SPEND_LIMIT_USD = "999999.00"
+# The most any one task may spend, whatever its own limit, its goal's budget or the budget policy says, when
+# the task policy's max_task_usd names no other. No task is ever without a spend limit: under the `track`
+# budget policy, where budgets only record spend, this is the limit a task gets.
+TASK_SPEND_CEILING_USD = "100.00"
 
 
 WORKFLOW_ID_PREFIX = "run-task-"
