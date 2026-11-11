@@ -4,7 +4,7 @@ import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
 import type { Activity } from "../../api";
 import { theme } from "../../theme";
-import { ActivityPage, costColor } from "./ActivityPage";
+import { ActivityPage, costColor, costGradient } from "./ActivityPage";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -62,4 +62,14 @@ test("the cost view adds the tasks that spent without a pull request and totals 
 test("the cost gradient runs cool to warm between the scale's ends", () => {
   expect(costColor(1, { low: 1, high: 4 })).toBe("hsl(210 70% 50%)");
   expect(costColor(9, { low: 1, high: 4 })).toBe("hsl(0 70% 50%)");
+});
+
+test("the cost legend passes through the same colors as the cells, not straight from blue to red", () => {
+  const scale = { low: 0.13, high: 10.01 };
+  const legend = costGradient(scale);
+  // A cost in the middle of the scale: its cell's color is one of the legend's stops.
+  expect(legend).toContain(costColor((scale.low + scale.high) / 2, scale));
+  expect(legend.startsWith(`linear-gradient(90deg, ${costColor(scale.low, scale)}, `)).toBe(true);
+  expect(legend.endsWith(`, ${costColor(scale.high, scale)})`)).toBe(true);
+  expect(legend.split("hsl(").length - 1).toBe(7);
 });

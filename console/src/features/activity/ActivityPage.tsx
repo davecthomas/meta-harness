@@ -22,6 +22,13 @@ export function costColor(usd: number, scale: { low: number; high: number }): st
   return `hsl(${Math.round(210 - 210 * share)} 70% 50%)`;
 }
 
+// The legend's gradient, built from costColor at evenly spaced costs. Two stops would not do: CSS blends them
+// straight through RGB (blue, purple, red), while the cells sweep the hue (blue, cyan, green, yellow, red).
+export function costGradient(scale: { low: number; high: number }, stops = 7): string {
+  const colors = Array.from({ length: stops }, (_, i) => costColor(scale.low + ((scale.high - scale.low) * i) / (stops - 1), scale));
+  return `linear-gradient(90deg, ${colors.join(", ")})`;
+}
+
 function prCell(pr: ActivityPr, view: string, scale: Activity["cost_scale"], open: (pr: { task_id: string; latest_run_id: string | null }) => void) {
   const color = view === "cost" ? costColor(pr.usd, scale) : STATE_COLOR[pr.state];
   const label = (
@@ -107,7 +114,7 @@ function Legend(props: { activity: Activity; view: "state" | "cost" }) {
     return (
       <Group gap="xs">
         <Text size="xs">${low.toFixed(2)}</Text>
-        <Box w={120} h={10} style={{ borderRadius: 3, background: `linear-gradient(90deg, ${costColor(low, props.activity.cost_scale)}, ${costColor(high, props.activity.cost_scale)})` }} />
+        <Box w={120} h={10} style={{ borderRadius: 3, background: costGradient(props.activity.cost_scale) }} />
         <Text size="xs">${high.toFixed(2)}</Text>
         <Text size="xs" c="dimmed">Hatched: spent, no PR</Text>
       </Group>
