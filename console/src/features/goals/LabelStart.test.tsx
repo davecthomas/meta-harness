@@ -108,6 +108,55 @@ test("the draft helper is closed until asked for, picking a label selects its is
   expect(screen.getByRole("button", { name: "Use these issues" }).hasAttribute("disabled")).toBe(true);
 });
 
+test("the draft reads every issue the form selects: the label's, and one picked by hand without the label", async () => {
+  const drafted: any[] = [];
+  const BUG = { ref: "github:o/a#1", number: 1, title: "Crash on save", labels: ["bug"], updated_at: "2", held_by: null };
+  const EXTRA = { ref: "github:o/a#3", number: 3, title: "Slow export", labels: [], updated_at: "1", held_by: null };
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [{ label: "bug", total: 1, repos: { "o/a": 1 } }] });
+    if (url === "/v1/repos/o/a/issues?label=bug") return respond({ issues: [BUG], next_cursor: null });
+    if (url.startsWith("/v1/repos/o/a/issues")) return respond({ issues: [BUG, EXTRA], total: 2, next_cursor: null });
+    if (url === "/v1/goals/draft") {
+      drafted.push(JSON.parse(String(init?.body)));
+      return respond({
+        title: "Fix saving and export",
+        statement: "Make saving and export work.",
+        theme: "Two bugs.",
+        modality: "fix",
+        model: "claude:claude-haiku-4-5",
+        usd_cost: "0.0010",
+        label: "bug",
+        repos: ["o/a"],
+        refs: [BUG.ref, EXTRA.ref],
+      });
+    }
+    return respond({ detail: "not stubbed" }, 404);
+  });
+
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <NewGoal />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  fireEvent.click(await screen.findByRole("button", { name: "Draft from a label (optional)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Label bug" }));
+  await screen.findByTestId("label-issues");
+  fireEvent.click(screen.getByRole("button", { name: "Pick issues" }));
+  fireEvent.click(await screen.findByLabelText("Pick github:o/a#3"));
+  fireEvent.click(screen.getByRole("button", { name: "Use these issues" }));
+  expect(await screen.findByText(/1 picked by hand/)).toBeTruthy();
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Pick issues" })).toBeNull());
+  expect(screen.getByText(/The draft also reads the 1 issue picked by hand/)).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Draft the goal" }));
+  expect(await screen.findByText("Fix saving and export")).toBeTruthy();
+  expect(drafted).toEqual([{ label: "bug", repos: ["o/a"], refs: [BUG.ref, EXTRA.ref] }]);
+});
+
 test("the label list filters by text and by repo", async () => {
   vi.stubGlobal("fetch", (url: string) => {
     if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });

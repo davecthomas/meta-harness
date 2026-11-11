@@ -607,6 +607,34 @@ def test_a_goal_is_drafted_from_the_chosen_issues_and_nothing_is_saved(parts):
     }
 
 
+def test_a_draft_reads_issues_picked_by_hand_without_the_label_too(parts):
+    from meta_harness.planner.drafting import Draft
+
+    _, tracker, _ = parts
+    label = _label()
+    labeled = tracker.add(REPO, _number(), labels=[label], title="Labeled")
+    extra = tracker.add(REPO, _number(), labels=[], title="Picked by hand")
+    closed = tracker.add(REPO, _number(), labels=[], title="Closed", state="closed")
+    seen = []
+
+    async def drafter(label_asked, issues):
+        seen.append([i.ref for i in issues])
+        return Draft(title="T", statement="S", theme="Th", modality="fix", model="claude:m", usd_cost="0.001")
+
+    with _drafting_api(parts, drafter) as client:
+        refs = [labeled, extra, closed, "github:other/repo#1", "not a ref"]
+        drafted = client.post("/v1/goals/draft", json={"label": label, "repos": [REPO], "refs": refs}, headers=OPERATOR)
+        only_extra = client.post(
+            "/v1/goals/draft", json={"label": label, "repos": [REPO], "refs": [extra]}, headers=OPERATOR
+        )
+
+    assert drafted.status_code == 200, drafted.text
+    assert drafted.json()["refs"] == [labeled, extra]
+    assert only_extra.status_code == 200, only_extra.text
+    assert only_extra.json()["refs"] == [extra]
+    assert seen == [[labeled, extra], [extra]]
+
+
 def test_a_draft_the_gateway_could_not_make_is_a_502_with_the_reason(parts):
     from meta_harness.planner.drafting import DraftError
 

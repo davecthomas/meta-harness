@@ -87,7 +87,8 @@ class DraftIn(BaseModel):
     label: str = Field(min_length=1)
     # The repos to read the label's issues from. Empty: every registered repo.
     repos: list[str] = Field(default_factory=list)
-    # The issues to draft from, as refs. Empty: every open issue with the label.
+    # The issues to draft from, as refs: the label's, and any picked by hand without it, in the repos.
+    # Empty: every open issue with the label.
     refs: list[str] = Field(default_factory=list)
 
 
@@ -555,14 +556,34 @@ def create_app(
             ],
         }
 
+    async def drafted_issues(refs: list[str], names: list[str], labeled: list) -> list:
+        """The open issues refs names in the repos, in their order: the label's as listed, and each one picked
+        by hand without the label read on its own. A ref outside the repos, malformed, unreadable or closed is
+        left out."""
+        allowed = {name.lower(): name for name in names}
+        found = {i.ref: i for i in labeled}
+        wanted = []
+        for ref in dict.fromkeys(refs):
+            try:
+                repo, number = parse_ref(ref)
+            except ValueError:
+                continue
+            if repo.lower() in allowed:
+                wanted.append(f"github:{allowed[repo.lower()]}#{number}")
+        missing = [ref for ref in wanted if ref not in found]
+        read = await asyncio.gather(*(tracker.read(ref) for ref in missing), return_exceptions=True)
+        for ref, issue in zip(missing, read, strict=True):
+            if not isinstance(issue, BaseException) and issue.state == "open":
+                found[ref] = issue
+        return [found[ref] for ref in wanted if ref in found]
+
     @app.post("/v1/goals/draft")
     async def draft_goal(body: DraftIn, who: str = Depends(operator)) -> dict:
         """A goal drafted by a model from a label's open issues. Nothing is saved: the operator edits it first."""
         names = registered(body.repos)
         issues = [i for found in (await open_issues(names, body.label)).values() for i in found]
         if body.refs:
-            wanted = set(body.refs)
-            issues = [i for i in issues if i.ref in wanted]
+            issues = await drafted_issues(body.refs, names, issues)
         try:
             drafted = await draft(body.label, issues)
         except drafting.DraftError as err:

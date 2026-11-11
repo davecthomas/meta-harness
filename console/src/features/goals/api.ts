@@ -119,8 +119,20 @@ export const goalsApi = {
     call<{ issues: LabelIssue[]; total: number; next_cursor: number | null }>(`/v1/repos/${repo}/issues` + query(params)),
   addIssues: (goalId: string, refs: string[]) =>
     call<{ added: string[] }>(`/v1/goals/${goalId}/issues`, { method: "POST", body: JSON.stringify({ refs }) }),
-  labelIssues: (repo: string, label: string) =>
-    call<{ issues: LabelIssue[] }>(`/v1/repos/${repo}/issues` + query({ label })).then((r) => r.issues),
+  // Every open issue with the label in the repo, not just the first page: each page is read in turn, from
+  // the one before's next_cursor, until there is none.
+  labelIssues: async (repo: string, label: string): Promise<LabelIssue[]> => {
+    const issues: LabelIssue[] = [];
+    let cursor: number | null | undefined = 0;
+    while (cursor != null) {
+      const page: { issues: LabelIssue[]; next_cursor?: number | null } = await call(
+        `/v1/repos/${repo}/issues` + query({ label, cursor: cursor || undefined }),
+      );
+      issues.push(...page.issues);
+      cursor = page.next_cursor;
+    }
+    return issues;
+  },
   draftGoal: (body: { label: string; repos: string[]; refs: string[] }) =>
     call<GoalDraft>("/v1/goals/draft", { method: "POST", body: JSON.stringify(body) }),
   goalAction: (id: string, action: "pause" | "resume" | "cancel" | "complete" | "reopen" | "sweep") =>
