@@ -1852,11 +1852,11 @@ credential.
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
 | GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues, newest first, with a `label` and text `q` in the title when given, a page at a time from `cursor`, each with the open goal that holds it, if any | built |
 | POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing | built |
-| POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once | built |
+| POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once. Cancel also cancels the goal's `queued` and `blocked` tasks and asks its `running` tasks with no pull request to stop; the goal comes back with `tasks`: the task ids `canceled`, `stopping`, `left` (a pull request open) and `errors` | built |
 | POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on: by `add_usd`, or with no body by a worked-out amount (what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar). Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
-| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it | built |
+| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it. With them, the goal's status (`goal_status`), and for a goal no sweep covers, when its open issues' states were last read from the tracker (`states_checked_at`, at most a minute old) and whether every one could be read (`states_complete`); `GET /v1/goals/{id}` reads them the same way | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet. A ref another goal holds is refused, naming that goal | built |
@@ -1957,7 +1957,14 @@ issue is blocked by a failed issue or waits on an operator, and
 (never for a `warn` goal). `stalled` and
 `budget_exhausted` return to `active` once an operator unblocks the goal or
 raises its budget: the next sweep finds the line above what is spent, and a
-budget resume does it at once. Any open goal can be canceled. A `met` or `canceled`
+budget resume does it at once. Any open goal can be canceled. Canceling a
+goal ends what it has not started: each of its `queued` and `blocked` tasks
+is canceled with the reason "its goal was canceled", recorded as the task's
+`task_status_changed`, and each `running` task with no pull request is asked
+to stop, as a task cancel does. A task with a pull request open is left for
+the operator, who merges it, closes it or cancels the task. Pausing a goal
+cancels nothing: its tasks wait and resume with it. Reopening a canceled
+goal does not bring a canceled task back. A `met` or `canceled`
 goal takes no more issues until an operator reopens it, which makes it
 `active` again, so a `fix` goal over a label that keeps receiving issues is
 reopened, or given a criterion that never passes. A goal can also be saved
@@ -2197,7 +2204,11 @@ service's code-host functions, with a token that has `pull_requests: read`,
 paused or stalled) is followed up every hour instead: the labels and title of
 each issue it holds that has a task are read again, and its canceled tasks'
 pull requests watched for their end, so costs by label and by outcome stay
-true after the goal ends. A follow-up takes nothing in and changes no status.
+true after the goal ends. A follow-up also records each issue the goal holds
+as open that has closed (`issue_closed`), and the planner does the same when
+the goal's page is read, at most once a minute, so a goal no sweep covers
+never shows the state its last sweep saw as today's. A follow-up takes
+nothing in and changes no task's or goal's status.
 The canceled tasks of no goal, which no goal's sweep lists, have their open
 pull requests watched for their end every hour too.
 `pull_request_end` notes each task whose pull request's end a sweep recorded,
@@ -2576,7 +2587,8 @@ its budget; a goal that is paused, planning or closed shows its status and
 links to it; a parallel limit links the tasks holding the places; a repo
 area names the task holding it and the paths they share; the kill switch or
 a drain links to the Overview. A blocked task lists each issue it waits on
-with its state. A queued task nothing holds says it starts at the
+with its state; one whose goal is canceled or met says that first instead,
+with a link to the goal, since it will not start whatever it waits on. A queued task nothing holds says it starts at the
 scheduler's next pass. The Timeline shows `task_held` and `task_admitted`
 as items, the Tasks page's Queued and blocked list has a Why it waits
 column, and a goal's board shows the reason on a queued task's card.
@@ -2652,7 +2664,12 @@ description saves with Ctrl/Cmd+Enter. A save sends only that field
 (`PATCH /v1/goals/{id}`), shows that it is saving and then the saved value;
 a refused save keeps the input open with the API's reason under it. The
 modality, the goal's id, Created, Started and Ended are read-only, and a met
-or canceled goal shows every field read-only until it is reopened. The rest
+or canceled goal shows every field read-only until it is reopened. Cancel
+goal asks first (`console/src/features/goals/CancelGoal.tsx`): its dialog
+says how many tasks that have not started are canceled, how many running
+ones are stopped, and how many have a pull request open and are left, with a
+link to each. The page of a goal no sweep covers says when its issues'
+states were read from GitHub. The rest
 of the table is planned.
 
 | View | Shows | Actions |

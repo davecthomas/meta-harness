@@ -100,6 +100,17 @@ export interface IssueProgress {
   checks: { head_sha: string | null; state: "passed" | "failed" | "pending" | "none"; failed: string[] } | null;
 }
 
+// A goal's issues with what the planner knows of their states. A goal no sweep covers (met, canceled, paused,
+// stalled) has its issues' states read from GitHub when this is asked for: states_checked_at says when, and
+// states_complete is false when one could not be read and kept the state it had.
+export interface GoalIssues {
+  goal_id: string;
+  goal_status?: string;
+  states_checked_at?: string | null;
+  states_complete?: boolean;
+  issues: IssueProgress[];
+}
+
 // The goals feature's calls; src/api.ts spreads them into `api`.
 export const goalsApi = {
   goals: async (statuses: string[], offset: number, limit: number): Promise<Page<Goal>> => {
@@ -144,4 +155,6 @@ export const goalsApi = {
   approvePlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/approve`, { method: "POST" }),
   // Each of a goal's issues with its task's status and its pull request's state and checks.
   goalIssues: (id: string) => call<{ issues: IssueProgress[] }>(`/v1/goals/${id}/issues`).then((r) => r.issues),
+  // The same, with the goal's status and when its issues' states were read from GitHub.
+  goalIssuesChecked: (id: string) => call<GoalIssues>(`/v1/goals/${id}/issues`),
 };
