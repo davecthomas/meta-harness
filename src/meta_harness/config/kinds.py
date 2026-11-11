@@ -117,6 +117,9 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
         reviewers = []
     if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or max_rounds < 0:
         reasons.append("review.max_rounds must be a whole number, 0 or more")
+    wait = document.get("merge_wait_minutes")
+    if wait is not None and (isinstance(wait, bool) or not isinstance(wait, int) or wait < 0):
+        reasons.append("merge_wait_minutes must be a whole number of minutes, 0 or more (0: merge without waiting)")
     if others is not None:
         profiles = (others.get("profiles") or {}).get("profiles", {})
         for pair in reviewers:

@@ -409,6 +409,12 @@ async def read_pull_request(repo: str, number: int) -> PullRequest:
     )
 
 
+async def branch_head(repo: str, branch: str) -> str:
+    """The branch's newest commit."""
+    commit = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/commits/{branch}") or {}
+    return str(commit.get("sha", ""))
+
+
 async def pull_request(repo: str, number: int) -> dict:
     """The pull request as the code host returns it: its state, whether it merged, and its head and base."""
     return await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
