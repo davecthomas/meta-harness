@@ -174,6 +174,26 @@ async def test_a_paused_or_spent_goal_holds_its_tasks(repo):
     assert "spent $1.05" in result.held[spent]
 
 
+async def test_a_block_goal_is_held_at_its_blocking_line_and_a_warn_goal_never(repo):
+    tasks, goals = Tasks(), Goals()
+    # $1.05 spent of $1: over the budget, short of the line the planner worked out.
+    goals.goals["g-over"] = {"status": "active", "max_usd": "1.00", "budget_mode": "block", "budget_block_at": "1.10"}
+    goals.goals["g-line"] = {"status": "active", "max_usd": "1.00", "budget_mode": "block", "budget_block_at": "1.05"}
+    goals.goals["g-warn"] = {"status": "active", "max_usd": "1.00", "budget_mode": "warn", "budget_block_at": None}
+    spent = {}
+    waiting = {}
+    for goal_id in goals.goals:
+        done = tasks.add(f"{repo}-{goal_id}-done", status="ready", goal_id=goal_id)
+        spent[done] = [Decimal("1.05")]
+        waiting[goal_id] = tasks.add(f"{repo}-{goal_id}", goal_id=goal_id)
+    admission, started = _admission(tasks, goals, Events(spent=spent))
+
+    result = await admission.pass_once()
+
+    assert set(result.started) == {waiting["g-over"], waiting["g-warn"]}
+    assert "spent $1.05 of its $1.00 budget, and stops at $1.05" in result.held[waiting["g-line"]]
+
+
 async def test_a_deploys_smoke_task_starts_though_the_running_limit_is_reached(repo):
     tasks = Tasks()
     running = [tasks.add(f"{repo}-{n}", status="queued") for n in range(2)]

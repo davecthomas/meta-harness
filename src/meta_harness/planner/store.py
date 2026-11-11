@@ -8,6 +8,8 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from meta_harness.planner import budget
+
 MODALITIES = {"fix", "feature", "new-system"}
 # The modalities the planner runs today. new-system needs phases, which are not built.
 BUILT_MODALITIES = {"fix", "feature"}
@@ -27,7 +29,8 @@ GOAL_MOVES = {
 }
 GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
-    "status, created_at, updated_at, started_at, closed_at, title, max_parallel, plan_task_id, plan_approved_at"
+    "status, created_at, updated_at, started_at, closed_at, title, max_parallel, plan_task_id, plan_approved_at, "
+    "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to"
 )
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
@@ -59,6 +62,16 @@ class NewGoal:
     title: str | None = None
     # The most of its tasks that run at once. None: the system's, the task policy's max_parallel.
     max_parallel: int | None = None
+    # What the budget does when it is reached, and how far past it a block goal may go (budget.py).
+    budget_mode: str = budget.DEFAULT_MODE
+    budget_overage_percent: int = budget.DEFAULT_OVERAGE_PERCENT
+
+
+def _check_budget(mode: str | None, overage_percent: int | None) -> None:
+    if mode is not None and mode not in budget.MODES:
+        raise GoalError(f"budget_mode {mode!r} is not one of {list(budget.MODES)}")
+    if overage_percent is not None and overage_percent < 0:
+        raise GoalError("budget_overage_percent must be 0 or more")
 
 
 def new_goal_id() -> str:
@@ -70,11 +83,14 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
         raise GoalError(f"modality {goal.modality!r} is not one of {sorted(MODALITIES)}")
     if goal.modality not in BUILT_MODALITIES:
         raise GoalError(f"the {goal.modality} modality needs phases, which are not built yet; use fix or feature")
+    _check_budget(goal.budget_mode, goal.budget_overage_percent)
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             f"INSERT INTO planner.goal (id, created_by, statement, repos, label, modality, modality_source, "
-            f"auto_merge, max_usd, priority, status, started_at, title, max_parallel) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, %s) "
+            f"auto_merge, max_usd, priority, status, started_at, title, max_parallel, budget_mode, "
+            f"budget_overage_percent) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, %s, "
+            f"%s, %s) "
             f"RETURNING {GOAL_COLUMNS}",
             (
                 new_goal_id(),
@@ -90,6 +106,8 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
                 goal.start and goal.modality not in PLANNED_MODALITIES,
                 goal.title,
                 goal.max_parallel,
+                goal.budget_mode,
+                goal.budget_overage_percent,
             ),
         )
         return _goal(cur.fetchone())
@@ -140,8 +158,8 @@ def update(
     dropped: list[str] | None = None,
     **fields: Any,
 ) -> tuple[dict, dict]:
-    """Change title, statement, label, repos, auto_merge, priority, max_usd, max_parallel or status. Returns
-    (goal, the fields that changed with their old values).
+    """Change title, statement, label, repos, auto_merge, priority, max_usd, budget_mode,
+    budget_overage_percent, max_parallel or status. Returns (goal, the fields that changed with their old values).
 
     only_if: change nothing unless the goal's status is this one when its row is locked.
 
@@ -155,8 +173,10 @@ def update(
     can tell a goal's first start, which sweeps at once, from a resume.
     """
     allowed = {"title", "statement", "label", "repos", "auto_merge", "priority", "max_usd", "max_parallel", "status"}
+    allowed |= {"budget_mode", "budget_overage_percent"}
     if set(fields) - allowed:
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
+    _check_budget(fields.get("budget_mode"), fields.get("budget_overage_percent"))
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(f"SELECT {GOAL_COLUMNS} FROM planner.goal WHERE id = %s FOR UPDATE", (goal_id,))
         row = cur.fetchone()
@@ -201,6 +221,23 @@ def update(
             [*values, goal_id],
         )
         return _goal(cur.fetchone()), changed
+
+
+def record_spend(
+    conn: psycopg.Connection,
+    goal_id: str,
+    spent: Decimal,
+    resume_to: Decimal | None,
+    reached: Decimal | None = None,
+) -> None:
+    """Save what a look at the goal's spend found: the spend, and the budget a resume would set. reached, when
+    given, is the budget goal_budget_reached was just recorded for."""
+    with conn.transaction():
+        conn.execute(
+            "UPDATE planner.goal SET spent_usd = %s, budget_resume_to = %s, "
+            "budget_reached_usd = COALESCE(%s, budget_reached_usd) WHERE id = %s",
+            (spent, resume_to, reached, goal_id),
+        )
 
 
 def untitled(conn: psycopg.Connection) -> list[dict]:
@@ -326,8 +363,9 @@ def _goal(row: dict) -> dict:
     for key in ("created_at", "updated_at", "started_at", "closed_at", "plan_approved_at"):
         row[key] = row[key].isoformat() if row[key] else None
     row["latitude"] = float(row["latitude"])
-    row["max_usd"] = str(row["max_usd"]) if row["max_usd"] is not None else None
-    return row
+    for key in ("max_usd", "spent_usd", "budget_reached_usd", "budget_resume_to"):
+        row[key] = str(row[key]) if row[key] is not None else None
+    return budget.view(row)
 
 
 def _link(row: dict) -> dict:

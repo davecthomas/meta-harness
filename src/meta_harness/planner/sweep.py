@@ -25,6 +25,13 @@ A met goal moves to `met` and the planner emits `goal_met`. Only an `active`
 goal is checked, so a paused goal, and one saved without starting, is left
 alone.
 
+A goal with a budget then has its spend looked at (budget_api.check): the
+spend is saved on the goal, `goal_budget_reached` is recorded the first time
+it reaches the budget, and a `block` goal moves to `budget_exhausted` at its
+blocking line. A `budget_exhausted` goal is swept like an active one, so its
+pull requests are still watched and it returns to `active` once its line is
+above what it has spent.
+
 The planner runs a sweep on every active goal every MH_PLANNER_SWEEP_SECONDS,
 and right after a goal first starts: when it is created, or on its first
 resume when it was saved without starting. Webhooks make it immediate later.
@@ -37,7 +44,7 @@ from typing import Any, Protocol
 from meta_harness import db
 from meta_harness.events.client import stable_event_id
 from meta_harness.github_app import GitHubAppError
-from meta_harness.planner import repos, store
+from meta_harness.planner import budget_api, repos, store
 from meta_harness.planner.tracker import Issue, Tracker
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CheckRun, CodeHostError, PullRequest
@@ -108,6 +115,10 @@ async def sweep_goal(
     await _release_unblocked(goal, tracker, tasks, events, result)
     if not result.errors:
         await _complete_if_met(goal, tracker, tasks, events, result)
+    try:
+        await budget_api.check(goal, tasks, events)
+    except Exception as err:  # noqa: BLE001 - an unreadable spend is this sweep's error; the next one looks again
+        result.errors.append(f"{goal['id']}: could not check the budget: {err}")
     return result
 
 
@@ -383,6 +394,12 @@ def _set_state(ref: str, state: str) -> None:
 def active_goals() -> list[dict]:
     with db.connect(autocommit=True) as conn:
         return store.list_goals(conn, ["active"])
+
+
+def swept_goals() -> list[dict]:
+    """The goals a timed sweep covers: the active ones, and those stopped by their budget."""
+    with db.connect(autocommit=True) as conn:
+        return store.list_goals(conn, ["active", "budget_exhausted"])
 
 
 async def sweep_active(

@@ -8,6 +8,7 @@ import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { GoalFailures } from "./GoalFailures";
 import { GoalPlan } from "./GoalPlan";
 import { GoalSpend } from "./GoalSpend";
+import { BudgetAlert, BudgetModeEdit, OverageEdit, ResumeBudget, budgetStanding } from "./budget";
 import { AutoMergeEdit, BudgetEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
@@ -169,6 +170,8 @@ export function GoalPage() {
   // An active goal opens on its board; any other on the table, until the operator picks a view.
   const shownView = view ?? (goal.status === "active" ? "board" : "table");
   const editable = { goal, readOnly: !open, save: saveField };
+  // What the goal's runs have spent, once the board has added it up: newer than the planner's last look.
+  const spentNow = progress ? Object.values(spend).reduce((a, b) => a + b, 0) : undefined;
 
   return (
     <>
@@ -191,8 +194,12 @@ export function GoalPage() {
             {status === "not_started" && (
               <Button leftSection={<IconPlayerPlay size={16} />} onClick={() => act(() => api.goalAction(goal.id, "resume"))}>Start</Button>
             )}
-            {["paused", "stalled", "budget_exhausted"].includes(status) && (
+            {["paused", "stalled"].includes(status) && (
               <Button leftSection={<IconPlayerPlay size={16} />} onClick={() => act(() => api.goalAction(goal.id, "resume"))}>Resume</Button>
+            )}
+            {/* Stopped by its budget, or past it and heading there: Resume raises the budget. */}
+            {goal.budget_mode !== "warn" && ["active", "budget_exhausted"].includes(goal.status) && budgetStanding(goal, spentNow) !== "ok" && (
+              <ResumeBudget goalId={goal.id} goal={goal} onResumed={() => void act(async () => undefined)} />
             )}
             {["active", "paused", "stalled"].includes(goal.status) && (
               <Button color="teal" variant="light" leftSection={<IconCircleCheck size={16} />} onClick={() => act(() => api.goalAction(goal.id, "complete"))}>Complete goal</Button>
@@ -210,6 +217,7 @@ export function GoalPage() {
         }
       />
       <ErrorAlert error={error} />
+      <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
       <IssuesPicker
         opened={picking}
         onClose={() => setPicking(false)}
@@ -232,6 +240,9 @@ export function GoalPage() {
           ["Repos", <ReposEdit {...editable} />],
           ["Auto-merge", <AutoMergeEdit {...editable} />],
           ["Budget", <BudgetEdit {...editable} />],
+          // What the budget does when it is reached, shown for a goal that has one.
+          ...(goal.max_usd ? [["When the budget is reached", <BudgetModeEdit {...editable} />] as [string, ReactNode]] : []),
+          ...(goal.max_usd && goal.budget_mode !== "warn" ? [["Allowed overage", <OverageEdit {...editable} />] as [string, ReactNode]] : []),
           ["Priority", <PriorityEdit {...editable} />],
           ["Parallel tasks", <ParallelEdit {...editable} system={systemParallel} />],
           ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
@@ -287,7 +298,7 @@ export function GoalPage() {
         Issues and tasks
       </SectionTitle>
       {progress && <GoalFailures issues={progress} tasks={tasks} />}
-      {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} onSpend={() => setSpending(true)} />}
+      {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
       <GoalSpend goalId={goal.id} opened={spending} onClose={() => setSpending(false)} />
       {issues.length > 0 && progress && shownView === "board" ? (
         <GoalBoard issues={progress} tasks={tasks} spend={spend} />

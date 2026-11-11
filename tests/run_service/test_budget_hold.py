@@ -177,3 +177,45 @@ async def test_a_task_held_for_its_goals_budget_goes_on_when_the_goals_budget_is
 def test_a_goal_with_no_budget_caps_nothing():
     assert GoalBudget().share() is None
     assert GoalBudget("10", "12", 2).share() == Decimal("-1.0000")
+
+
+def test_what_a_goal_has_left_is_measured_to_its_blocking_line():
+    # $10 budget with 10% overage: $10.50 spent leaves $0.50 before the line, shared by two running tasks.
+    assert GoalBudget("10", "10.50", 2, block_at="11.00").share() == Decimal("0.2500")
+
+
+def test_the_goals_budget_is_read_with_its_blocking_line_and_a_warn_goal_has_none(monkeypatch):
+    from meta_harness.events import client as events_client
+    from meta_harness.planner import client as planner_client
+    from meta_harness.run_service import budget_activities
+
+    goal = {"max_usd": "10.0000", "budget_mode": "block", "budget_block_at": "11.00"}
+
+    class Goals:
+        def __init__(self, **kwargs):
+            pass
+
+        def get(self, goal_id):
+            return goal
+
+    class Tasks:
+        def list(self, statuses, goal_id, limit):
+            return [{"id": "t-1", "status": "running"}, {"id": "t-2", "status": "closed"}]
+
+    class Events:
+        def __init__(self, **kwargs):
+            pass
+
+        def read(self, from_position, limit, task_id=None, event_type=None):
+            return {"events": [{"payload": {"spent_usd": "5.25"}}]}
+
+    monkeypatch.setattr(planner_client, "GoalsClient", Goals)
+    monkeypatch.setattr(events_client, "EventClient", Events)
+    monkeypatch.setattr(budget_activities, "_tasks", lambda: Tasks())
+
+    found = budget_activities._goal_budget("g-1")
+    assert (found.max_usd, found.spent_usd, found.running, found.block_at) == ("10.0000", "10.50", 1, "11.00")
+    assert found.share() == Decimal("0.5000")
+
+    goal["budget_mode"], goal["budget_block_at"] = "warn", None
+    assert budget_activities._goal_budget("g-1") == GoalBudget(), "a goal that only warns caps no run"

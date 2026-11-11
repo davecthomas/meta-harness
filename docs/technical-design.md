@@ -965,8 +965,10 @@ A task short of budget holds and asks before it ends (#188, behind the
 `budget-hold` patch). Before every run, the first included, the workflow
 works out what the run may spend: what the task has left of its `max_usd`,
 or, when that is less, the task's share of what its goal has left (the goal's
-`max_usd` less what its tasks' runs have spent, divided among its running
-tasks, so tasks running side by side cannot together pass the goal's budget).
+blocking line, its `max_usd` plus its allowed overage, less what its tasks'
+runs have spent, divided among its running tasks, so tasks running side by
+side cannot together pass the line). A goal whose budget only warns
+(`budget_mode: warn`) caps no run and holds none.
 When that is under what the run needs, which is what the task's last run of
 that kind spent, and at least $0.10, the task holds: it stays `running`, with
 its repo-area lock and its place in the parallel limit, marked
@@ -976,7 +978,8 @@ once there is budget, runs again. The operator answers through
 `POST /v1/tasks/{id}/budget`: `raise` with a new `max_usd` for the task, or
 `end`, which ends the task as it would have ended. A task held for its
 goal's budget looks again every five minutes, so raising the goal's budget
-on its page lets its tasks go on by themselves. A task no one answers in 24
+on its page lets its tasks go on by themselves, and a budget resume
+(`POST /v1/goals/{id}/resume-budget`) tells them to look again at once. A task no one answers in 24
 hours ends as if ended. The hold and the answer are recorded as `budget_hold`
 and `budget_decision`.
 
@@ -1672,8 +1675,10 @@ every task event:
    with a TTL, so a meta-harness scheduler leader that dies holding them
    cannot strand a repo.
 4. It admits a goal's task once every issue the task depends on is closed,
-   while the goal is active, has budget left, and runs fewer of its tasks than
-   its `max_parallel`.
+   while the goal is active, has spent less than its blocking line (its
+   `max_usd` plus its allowed overage; a goal whose budget only warns is
+   never held for budget), and runs fewer of its tasks than its
+   `max_parallel`.
 
 As built, the global limit is the task policy's `max_parallel`, 8 as shipped, which the scheduler reads
 each pass and checks at startup against `MH_MAX_SANDBOXES`; the locks are expiring
@@ -1771,14 +1776,15 @@ credential.
 | GET, POST | `/v1/kill-switch` | Meta-harness scheduler | Read the kill switch, or turn it on or off with a reason. While it is on, the scheduler stops every running task and admits none. `mode` sets it instead: `stop` is on, `drain` admits nothing new and lets running tasks finish (a deploy that replaces the VM drains), and `off` ends both. `kill_switch_changed` carries the mode. Scopes smaller than everything (a run, a caller) are planned | built |
 | POST | `/v1/reviews/{task_id}/claim`, `/verdict`, `/release` | Meta-harness run service | An operator review: claim the round, submit a verdict with findings, or release the claim | planned |
 | GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest. `start` (default `true`) creates it `active` and sweeps it at once; `start: false` saves it `paused`, not started (`started_at` null), and takes in no issue until its first `/resume` | built |
-| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `label`, `repos`, `auto_merge`, priority, budget (`max_usd`, null for none) and `max_parallel` (null to inherit), each sent alone by the Goal page's in-place edits and recorded as `goal_changed` with the fields changed. A repo must be registered; `label` may be null only when the goal holds issues an operator picked by ref (`picked` on its issues; ones its label swept in do not count) in its repos, else 409. Tasks the goal already made keep their issues, and its next sweep takes in issues by the new label and repos; an issue it holds with no task yet in a repo it no longer names is let go, recorded as `issue_dropped`, and never becomes a task there | partly built |
+| GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `label`, `repos`, `auto_merge`, priority, budget (`max_usd`, null for none), `budget_mode`, `budget_overage_percent` and `max_parallel` (null to inherit), each sent alone by the Goal page's in-place edits and recorded as `goal_changed` with the fields changed. A repo must be registered; `label` may be null only when the goal holds issues an operator picked by ref (`picked` on its issues; ones its label swept in do not count) in its repos, else 409. Tasks the goal already made keep their issues, and its next sweep takes in issues by the new label and repos; an issue it holds with no task yet in a repo it no longer names is let go, recorded as `issue_dropped`, and never becomes a task there | partly built |
 | GET | `/v1/repos` | Planner | The repo registry: the repos a goal may name | built |
 | GET | `/v1/repos/available` | Planner | The repos the deployment's GitHub Apps are installed on that the registry does not list yet, and each app's page for installing it on more. The console's Repositories page adds from it | built |
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
 | GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues, newest first, with a `label` and text `q` in the title when given, a page at a time from `cursor`, each with the open goal that holds it, if any | built |
 | POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing | built |
 | POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once | built |
-| POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval | built |
+| POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on: by `add_usd`, or with no body by a worked-out amount (what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar). Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
+| POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
 | GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
@@ -1849,6 +1855,8 @@ capacity by priority.
 | `success_criteria` | Checks the planner evaluates to decide the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a check name. A goal that names none is met when every issue it holds is closed and none of its tasks is queued, blocked or running |
 | `auto_merge` | Whether a pull request whose review comes back clean merges without an operator. The modality's default when unset |
 | `max_usd`, `priority` | One budget and one priority for all the goal's tasks, review and fix runs included |
+| `budget_mode` | What the budget does when the goal's runs have spent it: `block` (the default) stops the goal at its blocking line, and `warn` lets it keep going, with the budget reached recorded and shown and nothing held or refused. It has no effect on a goal with no budget |
+| `budget_overage_percent` | How far past its budget a `block` goal may go before it stops: a whole number, 0 or more, 10 by default. The goal blocks at `max_usd × (1 + overage / 100)`, and between the budget and that line it runs on, over budget. 0 blocks at the budget exactly. Ignored in `warn` mode |
 | `max_parallel` | The most of the goal's tasks that run at once. Null inherits the task policy's `max_parallel`; a goal may set it lower, never higher. The New goal form sets it, and the Goal page shows the value in use, marked inherited or set, and edits it in place. A change applies at the next admission pass |
 | `status` | `planning`, `active`, `paused`, `met`, `stalled`, `budget_exhausted` or `canceled` |
 
@@ -1873,9 +1881,11 @@ is approved. `active` becomes `paused` and back by an operator, `met` when
 its criteria pass or an operator completes it (a `paused` or `stalled` goal
 can be completed too), `stalled` when every open
 issue is blocked by a failed issue or waits on an operator, and
-`budget_exhausted` when its `max_usd` is spent. `stalled` and
+`budget_exhausted` when a `block` goal's spend reaches its blocking line
+(never for a `warn` goal). `stalled` and
 `budget_exhausted` return to `active` once an operator unblocks the goal or
-raises its budget. Any open goal can be canceled. A `met` or `canceled`
+raises its budget: the next sweep finds the line above what is spent, and a
+budget resume does it at once. Any open goal can be canceled. A `met` or `canceled`
 goal takes no more issues until an operator reopens it, which makes it
 `active` again, so a `fix` goal over a label that keeps receiving issues is
 reopened, or given a criterion that never passes. A goal can also be saved
@@ -2004,11 +2014,41 @@ issues a planning task writes.
 
 A goal is `met` when its success criteria pass, and `stalled` when every open
 issue is blocked by a failed issue or waits on an operator issue, which raises
-an alert. Its `max_usd` covers every task it queued; once spent, the meta-harness scheduler
-admits no more of its tasks and the goal ends `budget_exhausted`. Its running
-tasks share what it has left, run by run, and hold for an operator when that
-is too little (see the review loop's budget hold), so a goal's tasks started
-together no longer spend several times its budget.
+an alert. Its `max_usd` covers every task it queued. What happens once it is
+spent is the goal's `budget_mode`. A `block` goal runs on, over budget, to its
+blocking line, `max_usd` plus `budget_overage_percent` of it; from there the
+meta-harness scheduler admits no more of its tasks and the goal becomes
+`budget_exhausted`. Its running tasks share what it has left before that
+line, run by run, and hold for an operator when that is too little (see the
+review loop's budget hold), so a goal's tasks started together no longer
+spend several times its budget. A `warn` goal keeps going: nothing is held
+or refused for its budget. Each task's own spend limit is unchanged either
+way.
+
+Each sweep of a goal with a budget adds up what its tasks' runs have spent
+and saves it on the goal (`planner/budget_api.py`). The first time the spend
+reaches the budget the planner records `goal_budget_reached`, with the
+spend, the budget, the mode and the blocking line; once per budget, so
+raising the budget lets it be recorded again. A `budget_exhausted` goal is
+swept like an active one, so its pull requests are still watched. The goal
+the planner serves carries `budget_block_at` (the blocking line in dollars,
+null in `warn` mode or with no budget), which admission and the budget hold
+read so the line is worked out in one place, `budget_state` (`ok`, `over`
+for past the budget and still running, or `blocked`) and, for a goal that
+is over or blocked, `budget_resume_to`, the budget a resume would set.
+
+A goal stopped by its budget resumes in one step:
+`POST /v1/goals/{id}/resume-budget` raises its `max_usd`, makes a
+`budget_exhausted` goal `active`, and answers each of its running tasks held
+for the goal's budget with `raise`, so they look again at once; its queued
+tasks start at the scheduler's next pass. With `add_usd` the budget rises by
+that much, refused when the goal would still be stopped. Without it the new
+budget is worked out (`planner/budget.py`): what the goal has spent, plus
+the average cost of its finished tasks times its issues not yet done (the
+default task spend limit for each when none has finished), rounded up to a
+whole dollar. The answer says the old budget, the new one and how it was
+worked out, and the change is recorded as `goal_changed` with
+`resumed: true`. A `warn` goal has nothing to resume.
 
 #### Latitude
 
@@ -2119,7 +2159,7 @@ the same approval.
 | Owner | Entity | Fields |
 |---|---|---|
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over) |
-| Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
+| Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), budget_mode, budget_overage_percent, spent_usd (at the last sweep), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
 | Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, last_webhook_at |
@@ -2173,7 +2213,7 @@ Meta-harness services append through the event service client library:
 | Producer | Events |
 |---|---|
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
-| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status, `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created), `plan_requested` when a planning task starts (with the operator's note on a replan), `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is) and `plan_approved` with the issues created, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
+| Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume), `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line), `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created), `plan_requested` when a planning task starts (with the operator's note on a replan), `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is) and `plan_approved` with the issues created, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason the meta-harness scheduler holds a meta-harness task. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v3`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
@@ -2271,8 +2311,8 @@ repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
 The header's inbox lists what waits on the operator: a pull request ready to
-merge, a review that ended unresolved, a recent failed task, a goal out of
-budget or stalled, and the kill switch. It refreshes every 30 seconds and,
+merge, a review that ended unresolved, a recent failed task, a goal over its
+budget or stopped by it, a stalled goal, and the kill switch. It refreshes every 30 seconds and,
 when the operator turned notifications on in Settings, raises a browser
 notification for each new item.
 
@@ -2359,7 +2399,8 @@ did not (both `POST /v1/tasks/{id}/clear`). There is no Clear task button.
 A running task held for budget shows an alert at the top of its page with
 what the next run needs and what is left, a field for a new spend limit
 with Raise the limit and carry on, and End the task; one held for its goal's
-budget links to the goal instead, with Look again now. Held tasks head the
+budget offers the goal's Resume and a link to the goal instead, with Look
+again now. Held tasks head the
 Overview's Needs you list, and show under Needs attention on their goal's
 board and in its alert.
 A task that ended `failed` or `review_unresolved` says so in an alert at
@@ -2411,12 +2452,22 @@ checks, a refused issue, or a failed dependency), each card with its task's
 status and cost and its pull request with its checks. A Graph view lays the
 same issues out by dependency, colored by column, and a Table view lists
 them. Issues done and spend against budget head the section, and the page
-reloads them as the goal's tasks record events.
+reloads them as the goal's tasks record events. Past the budget the spend
+line says where the goal stands ("$10.40 spent of $10.00: over budget, stops
+at $11.00", or "over budget, and it keeps going" for a goal that only warns)
+and its bar turns orange; stopped, red. A goal over its budget or stopped by
+it shows an alert at the top of its page, is marked in the Goals list, and
+heads the Overview's Needs you list. For a goal that stops, the alert, the
+page's actions, its Needs you row, and the page and Needs you row of a task
+held for its budget offer Resume: "Raise the budget from $10.00 to $45.00",
+the amount editable before confirming (`console/src/features/goals/budget.tsx`).
 Each field the operator set on a goal edits in place on the Goal page, with
 no dialog: the title (the page heading), the description under it, and in
 its facts the label (with New goal's suggestions, cleared only when the goal
 holds picked issues), the repos (checkboxes of the registered repos, at
-least one), the budget (cleared to None), the priority, the parallel tasks
+least one), the budget (cleared to None) and, for a goal with one, When
+the budget is reached (Stop, or Warn and keep going) and for Stop the
+Allowed overage in percent, the priority, the parallel tasks
 (empty for the system setting, no more than it) and auto-merge, a switch.
 A click on a field, or on its pencil icon on hover, turns it into its input,
 with New goal's limits; Enter or leaving it saves, Escape cancels, and the

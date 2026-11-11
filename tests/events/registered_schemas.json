@@ -179,6 +179,40 @@
     ],
     "type": "object"
   },
+  "goal_budget_reached v1": {
+    "additionalProperties": true,
+    "properties": {
+      "block_at": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "max_usd": {
+        "type": "string"
+      },
+      "mode": {
+        "enum": [
+          "block",
+          "warn"
+        ],
+        "type": "string"
+      },
+      "spent_usd": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "spent_usd",
+      "max_usd",
+      "mode"
+    ],
+    "type": "object"
+  },
   "goal_changed v1": {
     "additionalProperties": true,
     "properties": {

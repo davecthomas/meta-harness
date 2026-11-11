@@ -9,8 +9,10 @@ Every MH_ADMISSION_SECONDS the meta-harness scheduler runs one admission pass:
 2. It takes queued tasks by priority, then age, while fewer tasks hold
    locks than the task policy's max_parallel, read each pass, so a saved
    change applies at the next one.
-3. It holds a task whose goal is not active, whose goal has spent its
-   `max_usd`, whose goal already runs its `max_parallel` tasks, or whose repo
+3. It holds a task whose goal is not active, whose `block` goal has spent
+   to its blocking line (its `max_usd` plus its allowed overage; a `warn`
+   goal is never held for budget), whose goal already runs its
+   `max_parallel` tasks, or whose repo
    area another task holds. A task's areas are its `paths`, from its issue's
    `Paths:` lines. Two areas conflict when they are the same path or one is a
    directory above the other. A task with none takes no area and runs beside
@@ -215,12 +217,15 @@ class Admission:
         planning = goal["status"] == "planning" and task.get("task_type") == "plan"
         if goal["status"] != "active" and not planning:
             return f"goal {goal_id} is {goal['status']}"
-        if goal.get("max_usd") is None:
+        # A goal that only warns at its budget is never held for it.
+        if goal.get("max_usd") is None or goal.get("budget_mode") == "warn":
             return None
         if goal_id not in spend:
             spend[goal_id] = await asyncio.to_thread(self._goal_spend, goal_id)
-        if spend[goal_id] >= Decimal(goal["max_usd"]):
-            return f"goal {goal_id} spent ${spend[goal_id]} of its ${goal['max_usd']} budget"
+        # The planner works the blocking line out; one from before it did blocks at the budget.
+        line = Decimal(goal.get("budget_block_at") or goal["max_usd"])
+        if spend[goal_id] >= line:
+            return f"goal {goal_id} spent ${spend[goal_id]} of its ${goal['max_usd']} budget, and stops at ${line}"
         return None
 
     def _goal_spend(self, goal_id: str) -> Decimal:

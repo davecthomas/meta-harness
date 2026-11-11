@@ -5,6 +5,9 @@ limit failed in the middle of its work, and a goal's tasks, each started while t
 together spend several times it. The RunTask workflow now asks before every run, behind its `budget-hold`
 patch. When the task or the goal has too little left for the run, the task waits, still running, marked
 `waiting_on: budget`, until an operator raises the limit or ends it.
+
+What a goal has left is measured to its blocking line, its budget plus its allowed overage, which the planner
+works out and serves as `budget_block_at`. A goal whose budget only warns caps no run and holds none.
 """
 
 import asyncio
@@ -27,13 +30,16 @@ class GoalBudget:
     spent_usd: str = "0"
     # The goal's tasks that are running now, this one included: what is left is shared among them.
     running: int = 1
+    # The spend the goal stops at: its budget plus its allowed overage. "": the budget itself.
+    block_at: str = ""
 
     def share(self) -> Decimal | None:
-        """What one of the goal's running tasks may spend next: an equal share of what the goal has left, so
-        tasks running side by side cannot together pass its budget. None when the goal has no budget."""
+        """What one of the goal's running tasks may spend next: an equal share of what the goal has left before
+        its blocking line, so tasks running side by side cannot together pass it. None when the goal has no
+        budget."""
         if not self.max_usd:
             return None
-        left = Decimal(self.max_usd) - Decimal(self.spent_usd)
+        left = Decimal(self.block_at or self.max_usd) - Decimal(self.spent_usd)
         return (left / max(self.running, 1)).quantize(Decimal("0.0001"))
 
 
@@ -53,7 +59,7 @@ def _goal_budget(goal_id: str) -> GoalBudget:
 
     key = os.environ.get("MH_SERVICE_KEY", "")
     goal = GoalsClient(api_key=key).get(goal_id)
-    if goal.get("max_usd") is None:
+    if goal.get("max_usd") is None or goal.get("budget_mode") == "warn":
         return GoalBudget()
     events = EventClient(source="run_service")
     tasks = _tasks().list(None, goal_id, 1000)
@@ -62,7 +68,12 @@ def _goal_budget(goal_id: str) -> GoalBudget:
         page = events.read(0, 5000, task_id=task["id"], event_type="attempt_finished")
         spent += sum((Decimal(e["payload"]["spent_usd"]) for e in page["events"]), Decimal(0))
     running = sum(1 for task in tasks if task["status"] == "running")
-    return GoalBudget(max_usd=str(goal["max_usd"]), spent_usd=str(spent), running=max(running, 1))
+    return GoalBudget(
+        max_usd=str(goal["max_usd"]),
+        spent_usd=str(spent),
+        running=max(running, 1),
+        block_at=str(goal.get("budget_block_at") or ""),
+    )
 
 
 @activity.defn

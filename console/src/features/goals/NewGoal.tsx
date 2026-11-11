@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Checkbox, Group, NumberInput, Paper, SegmentedControl, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
+import { Button, Checkbox, Group, NativeSelect, NumberInput, Paper, SegmentedControl, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
 import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
@@ -47,6 +47,9 @@ export function NewGoal() {
   const [picking, setPicking] = useState(false);
   const [label, setLabel] = useState("");
   const [budget, setBudget] = useState<string | number>("");
+  // What the budget does when it is reached, and how far past it a goal that stops may go.
+  const [budgetMode, setBudgetMode] = useState<"block" | "warn">("block");
+  const [overage, setOverage] = useState<string | number>(10);
   const [parallel, setParallel] = useState<string | number>("");
   const [systemParallel, setSystemParallel] = useState<number | null>(null);
   useEffect(() => {
@@ -129,6 +132,7 @@ export function NewGoal() {
         ...(label.trim() ? { label: label.trim() } : {}),
         refs,
         max_usd: budget === "" ? null : String(budget),
+        ...(budget === "" ? {} : { budget_mode: budgetMode, budget_overage_percent: Number(overage) || 0 }),
         max_parallel: parallel === "" ? null : Number(parallel),
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
@@ -236,7 +240,7 @@ export function NewGoal() {
             <Group grow align="flex-start">
               <NumberInput
                 label="Budget"
-                description="Optional. No more of the goal's tasks start once its runs have spent this."
+                description="Optional. What the goal's runs may spend; below, what happens when they have."
                 prefix="$"
                 min={0}
                 decimalScale={2}
@@ -255,6 +259,28 @@ export function NewGoal() {
                 onChange={setParallel}
               />
             </Group>
+            {budget !== "" && (
+              <Group grow align="flex-start">
+                <NativeSelect
+                  label="When the budget is reached"
+                  description="Stop: no more of its tasks start. Warn: it is recorded and shown, and the goal keeps going."
+                  data={[{ value: "block", label: "Stop" }, { value: "warn", label: "Warn and keep going" }]}
+                  value={budgetMode}
+                  onChange={(e) => setBudgetMode(e.currentTarget.value as "block" | "warn")}
+                />
+                {budgetMode === "block" && (
+                  <NumberInput
+                    label="Allowed overage"
+                    description="How far past its budget the goal may go before it stops. 0 stops at the budget exactly."
+                    suffix="%"
+                    min={0}
+                    allowDecimal={false}
+                    value={overage}
+                    onChange={setOverage}
+                  />
+                )}
+              </Group>
+            )}
             <Switch
               label="Merge pull requests without me"
               description="Off: every pull request waits for you to merge it."
