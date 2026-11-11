@@ -243,7 +243,8 @@ test("a refused save shows a profile field's reason beside that field, not under
 
   const reason = await screen.findByText("pi-lean: resources.memory_gb must be a positive number");
   const cells = within(screen.getByTestId("profile-pi-lean")).getAllByRole("cell");
-  expect(cells[3].contains(reason)).toBe(true);
+  // Profile, Tools, Skills, Limits, Resources: the reason sits in the Resources cell.
+  expect(cells[4].contains(reason)).toBe(true);
   expect(cells[0].contains(reason)).toBe(false);
   expect(within(cells[0]).getByText("pi-lean: a reason about the whole profile")).toBeTruthy();
   expect(screen.getByText("1 change to version 1")).toBeTruthy();

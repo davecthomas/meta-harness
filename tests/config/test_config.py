@@ -67,7 +67,7 @@ def client():
 def test_every_kind_is_seeded_from_its_file_on_first_read(client):
     listed = client.get("/v1/config").json()["kinds"]
 
-    assert [k["kind"] for k in listed] == ["tiers", "profiles", "repos", "task_policy"]
+    assert [k["kind"] for k in listed] == ["tiers", "profiles", "repos", "skills", "task_policy"]
     assert all(k["version"] == 1 and k["edited_by"] == "seed" for k in listed)
     assert client.get("/v1/config/tiers").json()["document"] == TIERS
     assert client.get("/v1/config/profiles").json()["document"] == PROFILES

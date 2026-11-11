@@ -6,6 +6,8 @@
     GET  /v1/config/{kind}/versions       the version history, newest first
     PUT  /v1/config/{kind}                save a new version: {document, note}; 422 lists every reason it is refused
     POST /v1/config/{kind}/rollback       make an earlier version active again: {version, note}
+    POST /v1/config/skills/read           read a skill from a git repository or from uploaded files, to look at
+                                          before it is saved: nothing is saved here
 
 The planner process serves it for every kind, until the run service has an
 HTTP API of its own. Every save and rollback is a `config_changed` event with
@@ -18,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from meta_harness.config import store
+from meta_harness.config import skills, store
 from meta_harness.config.kinds import KINDS, ConfigError, sandbox_ceiling
 from meta_harness.config.models import catalog
 
@@ -26,6 +28,16 @@ from meta_harness.config.models import catalog
 class SaveIn(BaseModel):
     document: dict[str, Any]
     note: str | None = Field(default=None, max_length=500)
+
+
+class SkillIn(BaseModel):
+    """Where to read a skill from: a git repository (url, with a branch or tag and a path inside it), or its
+    files, uploaded."""
+
+    url: str | None = Field(default=None, max_length=500)
+    ref: str | None = Field(default=None, max_length=200)
+    path: str | None = Field(default=None, max_length=500)
+    files: dict[str, str] | None = None
 
 
 class RollbackIn(BaseModel):
@@ -94,6 +106,21 @@ def router(
     def models(who: str = Depends(operator)) -> dict:
         """Every priced completions model a tier candidate can name, as <engine>:<model>."""
         return {"models": catalog()}
+
+    @api.post("/v1/config/skills/read")
+    def read_skill(body: SkillIn, who: str = Depends(operator)) -> dict:
+        """A skill as an import would take it, for an admin to read before saving: its name, description,
+        source and every file. Saving is a new version of the skills kind (PUT /v1/config/skills)."""
+        try:
+            if body.files is not None:
+                name, skill = skills.from_files(body.files, {"kind": "upload", "by": who})
+            elif body.url:
+                name, skill = skills.from_git(body.url.strip(), (body.ref or "").strip() or None, body.path)
+            else:
+                raise skills.SkillError("give a git url, or the skill's files")
+        except skills.SkillError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
+        return {"name": name, "skill": skill}
 
     @api.get("/v1/config/{kind}")
     def read(kind: str, who: str = Depends(operator)) -> dict:

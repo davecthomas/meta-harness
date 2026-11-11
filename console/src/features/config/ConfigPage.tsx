@@ -8,6 +8,7 @@ import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { DataTable, ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
 import { ReposView, TaskPolicyView, type Staging } from "./ConfigViews";
 import { ProfilesView } from "./ProfilesView";
+import { SkillsView } from "./SkillsView";
 import { JsonDialog, ReviewDialog, StagedBar } from "./StagedChanges";
 import { TiersView } from "./TiersView";
 import { countChanges, reasonTarget, setIn, shapeProblems } from "./staging";
@@ -82,6 +83,9 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
   const [viewing, setViewing] = useState<ConfigVersion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [profileNames, setProfileNames] = useState<string[]>([]);
+  // The profiles, for which skills each names; and the skills, for the profiles' choices.
+  const [profileDocs, setProfileDocs] = useState<Record<string, { skills?: string[] }>>({});
+  const [skillNames, setSkillNames] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
 
   const load = useCallback(async () => {
@@ -101,7 +105,14 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
   // A tier candidate names a harness profile and a model: the selects offer the active profiles and the priced models.
   useEffect(() => {
     if (summary.kind !== "tiers") return;
-    api.config("profiles").then((p) => setProfileNames(Object.keys(p.document.profiles ?? {})), () => setProfileNames([]));
+    api.config("profiles").then(
+      (p) => {
+        setProfileNames(Object.keys(p.document.profiles ?? {}));
+        setProfileDocs(p.document.profiles ?? {});
+      },
+      () => setProfileNames([]),
+    );
+    api.config("skills").then((k) => setSkillNames(Object.keys(k.document.skills ?? {}).sort()), () => setSkillNames([]));
     api.configModels().then((m) => setModels(m.map((x) => x.name)), () => setModels([]));
   }, [summary.kind]);
 
@@ -224,7 +235,8 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
       <ErrorAlert error={error} />
 
       {summary.kind === "tiers" && <TiersView staging={staging} profiles={profileNames} models={models} />}
-      {summary.kind === "profiles" && <ProfilesView staging={staging} />}
+      {summary.kind === "profiles" && <ProfilesView staging={staging} skills={skillNames} />}
+      {summary.kind === "skills" && <SkillsView staging={staging} profiles={profileDocs} />}
       {summary.kind === "repos" && <ReposView staging={staging} />}
       {summary.kind === "task_policy" && <TaskPolicyView policy={document} maxSandboxes={maxSandboxes} staging={staging} />}
 
@@ -304,6 +316,7 @@ const KIND_NAMES: Record<ConfigKind, string> = {
   tiers: "router tiers",
   profiles: "harness profiles",
   repos: "repo registry",
+  skills: "skills",
   task_policy: "task policy",
 };
 
