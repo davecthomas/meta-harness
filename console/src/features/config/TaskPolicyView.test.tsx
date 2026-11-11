@@ -59,3 +59,15 @@ test("the budget policy is a switch: stop at budgets, or track spend only", asyn
   expect(await screen.findByText(/No goal or task is held, refused or ended/)).toBeTruthy();
   expect(screen.getByText("Track spend only")).toBeTruthy();
 });
+
+test("the writing pass is a switch, on unless the policy turns it off", async () => {
+  render(
+    <MantineProvider theme={theme}>
+      <Staged />
+    </MantineProvider>,
+  );
+  expect(screen.getByText("Check what is posted for people to read")).toBeTruthy();
+  fireEvent.click(screen.getByRole("switch", { name: /Writing pass|Check what is posted/ }));
+  expect(await screen.findByText("Post what a run wrote as it is")).toBeTruthy();
+  expect(screen.getByText(/Nothing is scanned or rewritten before it is posted/)).toBeTruthy();
+});

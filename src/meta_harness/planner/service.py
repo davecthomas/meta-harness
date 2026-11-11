@@ -47,7 +47,7 @@ from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
 from meta_harness.config.kinds import ConfigError, sandbox_ceiling
 from meta_harness.github_app import GitHubApps
-from meta_harness.run_service import code_host
+from meta_harness.run_service import code_host, writing
 from meta_harness.planner import (
     activity,
     budget_api,
@@ -167,7 +167,11 @@ def parallel_reason(max_parallel: int | None) -> str | None:
 def add_shipped_configuration(pool, events: Events) -> None:
     """At startup: what the shipped files add to the configuration reaches the active versions."""
     with pool.connection() as conn:
-        for saved in [*config_store.add_shipped(conn), *config_store.replace_engines(conn)]:
+        for saved in [
+            *config_store.add_shipped(conn),
+            *config_store.add_shipped_to_profiles(conn),
+            *config_store.replace_engines(conn),
+        ]:
             print(f"[planner] configuration {saved['kind']} v{saved['version']}: {saved['note']}", flush=True)
             events.emit(
                 "config_changed",
@@ -358,6 +362,7 @@ def create_app(
     drafting.check_settings()
     costs_api.check_settings()
     planning.check_settings()
+    writing.check_settings()
     draft = drafter or drafting.draft_goal
 
     def registered(names: list[str]) -> list[str]:

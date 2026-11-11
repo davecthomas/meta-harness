@@ -336,7 +336,12 @@ decides everything pi loads:
   ships `no-ai-slop2` (MIT, from codeandtheory/machine-ai-skills, with its
   scanner script), adapted to check the text a run is about to write (a pull
   request summary, a review, an issue draft) rather than a previous reply.
-  No profile names it yet. An admin imports a skill on Configuration, Skills,
+  Every shipped profile that writes for people names it (`pi-lean`,
+  `pi-careful`, `pi-review`, `pi-plan`), and their prompts tell the run to
+  apply it to its summary, review or drafts before it finishes (What the
+  meta-harness writes). A skill or bash command a shipped profile starts
+  to name reaches the deployment's profile of that name as a new version,
+  once: one an operator removed is not added again. An admin imports a skill on Configuration, Skills,
   from an https git repository on a public host (a branch or tag and a
   path; the commit read is kept) or from a folder on their machine
   (`POST /v1/config/skills/read`, which saves nothing), reads every file
@@ -710,7 +715,9 @@ The task policy holds the rules for task types, exploration, run budgets,
 parallelism and review. It is the `task_policy` configuration kind, seeded
 from `config/task_policy.json` and edited on the console's Configuration page.
 Built today: `max_parallel`, which the scheduler reads each admission pass,
-and `review.reviewers` and `review.max_rounds`, which the run service reads.
+`review.reviewers` and `review.max_rounds`, which the run service reads, and
+`writing_pass`, a switch: `false` turns the writing pass off (What the
+meta-harness writes), and left out or `true` it is on.
 The other fields below are planned.
 
 ```json
@@ -763,7 +770,7 @@ task's remaining spend, its attempts so far and the task policy's limits.
 | Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the harness profile's `max_minutes` plus 10 minutes, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
 | Collect | Reads the harness server's `/usage`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
 | Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
-| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
+| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary, which goes through the writing pass first (What the meta-harness writes); the description is written when the pull request is opened, and no later push changes it. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
 The RunTask workflow's Temporal history records every attempt, tier candidate
 and decision. The operator console and the harness analyzer read each run's
@@ -949,7 +956,9 @@ loop:
    `submit_review` tool ends the run with verdict `clean` or `changes` and
    its findings. The meta-harness run service posts them as a pull request
    review and records the verdict with the reviewed head SHA in a
-   `pull_request_reviewed` event.
+   `pull_request_reviewed` event. The summary and each finding go through
+   the writing pass before they are posted; the fix run is given the review
+   as the review run wrote it.
 3. On `changes` or a failed check, a fix run: the pair that opened the pull
    request, with the findings or the check output as its input. It continues
    the pull request's pi session in a follow-up run (`POST /followup`), and
@@ -1182,6 +1191,61 @@ The routes are the task service's, beside the review hold's, not the run
 service's: the run service has no HTTP API. Not built: an alert when a
 claimed round has waited longer than `review.operator_alert_minutes`, and a
 `review_started` event (the `run_prompt` of kind `review` serves as it).
+
+### What the meta-harness writes
+
+Everything the meta-harness posts on a code host for people to read is
+checked for the tells of model-written text before it is posted: filler,
+puffery, "not X but Y" framing, long sentences, runs of em dashes. It applies
+to text written from now on; nothing already posted is changed. Code, diffs,
+quoted text, log output and check output are never touched.
+
+It is done twice. First by the run: each profile that writes for people
+names the `no-ai-slop2` skill, and its prompt (`repo-task-v1`, `fix-v1`,
+`review-v3`, `plan-v1`) tells the run to apply the skill to its summary, its
+review or its issue drafts before it finishes. A task or review run can run
+the skill's scanner with `python3`. A planning run cannot: its profile reads
+only, so it applies the skill's rules by reading them.
+
+Then by the control plane, in the writing pass
+(`src/meta_harness/run_service/writing.py`), which needs no run:
+
+| Text | Where the pass runs |
+|---|---|
+| The run's summary in a pull request's description | The Publish activity, when the pull request is opened. The lines the meta-harness adds around the summary are not rewritten |
+| A review's summary and each finding | The activity that posts the review |
+| A comment: findings an operator dismissed, an operator's verdict | The activity that posts the comment |
+| The body of an issue a plan drafted | The planner, when the plan is approved |
+
+1. The text goes through the skill's scanner, `no-ai-slop-scan.py`, read
+   from the active `skills` configuration and run as a child process with no
+   model. Only the hits the scanner decides by itself count as findings; a
+   candidate that needs a reader to confirm does not.
+2. A text with findings gets one rewrite, on the model
+   `config/planner.json`'s `writing_pass` names, through the HTTP Gateway's
+   `/v1/structured`. A text over 20,000 characters is not rewritten.
+3. The rewrite is kept only when the scanner finds nothing in it and it
+   keeps every heading, link, code span, code block and number of the
+   original, and every line the control plane reads back: `Paths:`,
+   `Depends on:`, `Closes`, and each line under `## Acceptance checks`.
+   Otherwise the rewrite is dropped and the original is posted.
+
+The pass never stops a post. A scanner that cannot run, a HTTP Gateway that
+does not answer, or a pass that takes over 70 seconds leaves the text as it
+was. Each post's pass is recorded as `writing_checked`: on the task, or with
+the goal's tag for a plan's issue. It carries the kind of text, how many
+texts were looked at, the scanner's findings by category, how many were
+rewritten and kept, the reasons a rewrite was dropped, the model and its
+cost, and the original and the rewrite of each text that changed. The task's
+Timeline shows it as an item. A rewrite's cost is a model cost of kind
+`writing`, of the task or the plan's goal. The task policy's
+`writing_pass: false` turns the pass off, with a switch on the Task policy
+page; runs are still told to apply the skill. `writing_pass`'s settings are
+checked when the planner and the run service's worker start.
+
+Not built: the pass on merge-check notes, which are a task's status reason
+and are not posted, and a pull request description updated after a fix run,
+since no description is updated today.
 
 ### Sequences
 
@@ -1858,7 +1922,7 @@ credential.
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
 | GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it. With them, the goal's status (`goal_status`), and for a goal no sweep covers, when its open issues' states were last read from the tracker (`states_checked_at`, at most a minute old) and whether every one could be read (`states_complete`); `GET /v1/goals/{id}` reads them the same way | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
-| POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
+| POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. Each draft's body goes through the writing pass before it becomes an issue. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet. A ref another goal holds is refused, naming that goal | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row: each one's state (in review, waiting, blocked, merged, closed; merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting, not closed), when it was opened and reached that state, its fix rounds and latest run; the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
@@ -2340,7 +2404,7 @@ Meta-harness services append through the event service client library:
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason and the kind of hold, recorded when a task's reason is new or has changed. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v3`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
-| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
+| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL), `writing_checked` for the writing pass on each pull request description, review and comment it posts (the planner records it for a plan's issues), `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
 | Configuration, in the planner process | `config_changed` for every configuration version an operator saves, approves or rolls back, with the actor |

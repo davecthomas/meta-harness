@@ -167,6 +167,8 @@ class PublishRequest:
     branch: str = ""
     # A paragraph that opens the pull request's description, such as which merge it fixes.
     note: str = ""
+    # The task the pull request is for, so the writing pass on its description is recorded on it.
+    task_id: str = ""
 
 
 @dataclass
@@ -390,6 +392,8 @@ class CommentRequest:
     repo: str
     pr_url: str
     body: str
+    # The task the comment is for, so the writing pass on it is recorded on it.
+    task_id: str = ""
 
 
 @dataclass

@@ -1,7 +1,8 @@
 """Model cost, harvested from the events that record it.
 
 A run's cost is its `attempt_finished` event: what the run's grant counted, the figure every other total in
-the meta-harness uses. The planner's own model calls are `goal_drafted` and `goal_titled`. Each harvest reads
+the meta-harness uses. The planner's own model calls are `goal_drafted` and `goal_titled`, and the writing
+pass's rewrites are `writing_checked`, a task's or, for a plan's issue, a goal's. Each harvest reads
 the events after the position the last one reached, and saves their costs with the new position in one
 transaction, so an event is counted once however a harvest ends.
 """
@@ -16,8 +17,10 @@ from meta_harness.costs import store
 from meta_harness.costs.store import Cost
 
 SOURCE = "model"
-EVENT_TYPES = "attempt_finished,goal_drafted,goal_titled"
+EVENT_TYPES = "attempt_finished,goal_drafted,goal_titled,writing_checked"
 PAGE = 2000
+# The kind of cost a writing pass's rewrite is.
+WRITING = "writing"
 
 
 def model_of(candidate: str) -> tuple[str, str]:
@@ -73,6 +76,23 @@ def harvest(
                     # Who the work was for: the operator who created the goal, else whoever submitted the task.
                     operator=owner.get("created_by") or spec.get("caller") or "",
                 )
+            elif event["event_type"] == "writing_checked" and event.get("task_id"):
+                usd = Decimal(str(payload.get("usd_cost") or 0))
+                spec = task(event["task_id"]) or {}
+                owner = goal(spec.get("goal_id") or "") or {}
+                engine, model = model_of(str(payload.get("model") or ""))
+                cost = Cost(
+                    day=_day(event),
+                    source=SOURCE,
+                    item=WRITING,
+                    usd=usd,
+                    goal_id=spec.get("goal_id") or "",
+                    task_id=event["task_id"],
+                    repo=spec.get("repo") or "",
+                    model=model,
+                    engine=engine,
+                    operator=owner.get("created_by") or spec.get("caller") or "",
+                )
             else:
                 usd = Decimal(str(payload.get("usd_cost") or 0))
                 engine, model = model_of(str(payload.get("model") or ""))
@@ -80,7 +100,7 @@ def harvest(
                 cost = Cost(
                     day=_day(event),
                     source=SOURCE,
-                    item="planning",
+                    item=WRITING if event["event_type"] == "writing_checked" else "planning",
                     usd=usd,
                     goal_id=payload.get("goal_id") or "",
                     repo=(owner.get("repos") or [""])[0],
