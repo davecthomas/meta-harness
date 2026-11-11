@@ -5,6 +5,7 @@ import { IconPlus } from "@tabler/icons-react";
 import { goalTitle, api, goalStatus } from "../../api";
 import { useInfinite } from "../../hooks";
 import { useRowKeys } from "../../components/CommandPalette";
+import { BudgetMark } from "./budget";
 import { DataTable, Empty, ErrorAlert, PageHeader, StatusBadge, TitleLink, when } from "../../components/ui";
 
 const FILTERS: Record<string, { label: string; statuses: string[] }> = {
@@ -48,7 +49,12 @@ export function GoalsPage() {
               <Table.Td><Text size="sm">{g.modality}</Text></Table.Td>
               <Table.Td>{g.label ? <Badge variant="outline" tt="none" radius="sm">{g.label}</Badge> : <Text size="xs" c="dimmed">Picked issues</Text>}</Table.Td>
               <Table.Td>{g.repos.map((r) => <Text ff="monospace" size="xs" key={r}>{r}</Text>)}</Table.Td>
-              <Table.Td><Text size="sm">{g.max_usd ? `$${g.max_usd}` : "None"}</Text></Table.Td>
+              <Table.Td>
+                <Group gap={6} wrap="nowrap">
+                  <Text size="sm">{g.max_usd ? `$${Number(g.max_usd).toFixed(2)}` : "None"}</Text>
+                  <BudgetMark goal={g} />
+                </Group>
+              </Table.Td>
               <Table.Td><Text size="sm" c="dimmed">{when(g.created_at)}</Text></Table.Td>
             </Table.Tr>
           ))}

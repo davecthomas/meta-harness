@@ -73,6 +73,16 @@ export interface GoalPlan {
   } | null;
 }
 
+// The answer to a budget resume: the goal as it now is, the old and new budgets, and how the new one was worked out.
+export interface BudgetResume {
+  goal: Goal;
+  from: string;
+  to: string;
+  spent_usd: string;
+  how: string;
+  tasks_told: string[];
+}
+
 export interface IssueProgress {
   ref: string;
   // The issue's title, once a sweep has read it: what a card with no task yet shows.
@@ -117,6 +127,12 @@ export const goalsApi = {
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
   patchGoal: (id: string, fields: Record<string, unknown>) =>
     call<Goal>(`/v1/goals/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
+  // Raise the budget of a goal over it or stopped by it: by addUsd, or by an amount the planner works out.
+  resumeBudget: (id: string, addUsd?: number) =>
+    call<BudgetResume>(`/v1/goals/${id}/resume-budget`, {
+      method: "POST",
+      body: JSON.stringify(addUsd === undefined ? {} : { add_usd: addUsd.toFixed(2) }),
+    }),
   // Where the goal's money went: each task's spend, and the goal's by kind of run.
   goalSpend: (id: string) => call<GoalSpend>(`/v1/goals/${id}/spend`),
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.

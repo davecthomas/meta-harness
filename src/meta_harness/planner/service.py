@@ -4,6 +4,7 @@
     GET, PATCH /v1/goals/{id}                 a goal with its issues, or change any field an operator set on it
     GET        /v1/goals/{id}/issues          each issue with its task status, pull request, PR state and checks
     POST       /v1/goals/{id}/pause, /resume, /cancel   resume also starts a goal saved without starting
+    POST       /v1/goals/{id}/resume-budget   raise the budget of a goal over it or stopped by it (budget_api.py)
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
@@ -13,7 +14,7 @@
 
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
 services with a service key (MH_SERVICE_KEYS). The planner sweeps every
-active goal every MH_PLANNER_SWEEP_SECONDS, and a goal at once when it first
+active goal, and every goal stopped by its budget, every MH_PLANNER_SWEEP_SECONDS, and a goal at once when it first
 starts (on creation, or on its first resume when it was saved with start false)
 or is reopened. A sweep moves a goal to met once its issues are closed and its
 tasks are done, and reports the merge or close of a `ready` or
@@ -27,7 +28,7 @@ import os
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -38,8 +39,8 @@ from meta_harness.config import store as config_store
 from meta_harness.config.kinds import ConfigError, sandbox_ceiling
 from meta_harness.github_app import GitHubApps
 from meta_harness.run_service import code_host
-from meta_harness.planner import activity, drafting, plan_api, planning, progress, repos, settings, store
-from meta_harness.planner.sweep import CodeHost, Events, SweepResult, active_goals, sweep_goal
+from meta_harness.planner import activity, budget_api, drafting, plan_api, planning, progress, repos, settings, store
+from meta_harness.planner.sweep import CodeHost, Events, SweepResult, sweep_goal, swept_goals
 from meta_harness.planner.tracker import Tracker, parse_ref
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
@@ -61,6 +62,9 @@ class GoalIn(BaseModel):
     modality: str = "fix"
     auto_merge: bool = False
     max_usd: Decimal | None = Field(default=None, gt=0)
+    # What the budget does when it is reached, and how far past it a block goal may go, in percent (budget.py).
+    budget_mode: Literal["block", "warn"] = "block"
+    budget_overage_percent: int = Field(default=10, ge=0, le=1000)
     # The most of its tasks that run at once, no more than the system's. None: the system's.
     max_parallel: int | None = Field(default=None, ge=1)
     priority: int = 0
@@ -100,6 +104,8 @@ class GoalPatch(BaseModel):
     priority: int | None = None
     # Sent as null: the goal has no budget.
     max_usd: Decimal | None = Field(default=None, gt=0)
+    budget_mode: Literal["block", "warn"] | None = None
+    budget_overage_percent: int | None = Field(default=None, ge=0, le=1000)
     # Sent as null: the goal goes back to the system's limit.
     max_parallel: int | None = Field(default=None, ge=1)
 
@@ -208,7 +214,7 @@ def create_app(
     async def sweep_forever() -> None:
         while True:
             with contextlib.suppress(Exception):
-                for goal in await asyncio.to_thread(active_goals):
+                for goal in await asyncio.to_thread(swept_goals):
                     await sweep_one(goal)
             # A planning goal's ended planning task becomes its plan.
             with contextlib.suppress(Exception):
@@ -254,9 +260,10 @@ def create_app(
         goal, _ = change_with(goal_id, who, **fields)
         return goal
 
-    def change_with(goal_id: str, who: str, **fields: Any) -> tuple[dict, dict]:
+    def change_with(goal_id: str, who: str, event_extra: dict | None = None, **fields: Any) -> tuple[dict, dict]:
         """Change a goal and record goal_changed, and issue_dropped for each issue with no task that a change of
-        repos let go. Returns (goal, the fields that changed with their old values)."""
+        repos let go. Returns (goal, the fields that changed with their old values). event_extra is added to
+        the goal_changed payload."""
         dropped: list[str] = []
         try:
             with app.state.pool.connection() as conn:
@@ -268,7 +275,11 @@ def create_app(
         if changed:
             events.emit(
                 "goal_changed",
-                {"goal_id": goal_id, "changes": {k: {"from": str(v), "to": str(goal[k])} for k, v in changed.items()}},
+                {
+                    "goal_id": goal_id,
+                    "changes": {k: {"from": str(v), "to": str(goal[k])} for k, v in changed.items()},
+                    **(event_extra or {}),
+                },
                 actor=who,
             )
         for ref in dropped:
@@ -811,7 +822,7 @@ def create_app(
     @app.post("/v1/goals/{goal_id}/sweep")
     async def sweep_now(goal_id: str, who: str = Depends(operator)) -> dict:
         goal = await asyncio.to_thread(load, goal_id)
-        if goal["status"] != "active":
+        if goal["status"] not in ("active", "budget_exhausted"):
             raise HTTPException(status_code=409, detail=f"the goal is {goal['status']}")
         return asdict(await sweep_one(goal))
 
@@ -821,5 +832,6 @@ def create_app(
         asyncio.create_task(sweep_one(goal))
 
     plan_api.register(app, operator, load, events, tracker, tasks, activate)
+    budget_api.register(app, operator, load, change_with, events, tasks)
 
     return app

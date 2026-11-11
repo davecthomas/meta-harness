@@ -31,6 +31,16 @@ export interface Goal {
   status: string;
   auto_merge: boolean;
   max_usd: string | null;
+  // What the budget does when it is reached: stop the goal (block) or only warn; and how far past it a block
+  // goal may go, in percent.
+  budget_mode?: "block" | "warn";
+  budget_overage_percent?: number;
+  // What the goal's runs had spent at the planner's last look, the spend a block goal stops at, where the goal
+  // stands, and the budget a resume would set for a goal past its budget.
+  spent_usd?: string;
+  budget_block_at?: string | null;
+  budget_state?: "ok" | "over" | "blocked";
+  budget_resume_to?: string | null;
   // The most of its tasks that run at once; null: the system's, the task policy's max_parallel.
   max_parallel?: number | null;
   priority: number;

@@ -16,12 +16,14 @@ const POLL_MS = 30_000;
 const FAILED_DAYS = 3;
 
 // What waits on the operator: a pull request ready to merge, a review that ended unresolved, a failed task,
-// a goal out of budget or stalled, and the kill switch. An item leaves when what it names is resolved.
+// a goal past its budget or stalled, and the kill switch. An item leaves when what it names is resolved.
 export function inboxItems(tasks: Task[], goals: Goal[], kill: KillSwitch | null, now = Date.now()): InboxItem[] {
   const items: InboxItem[] = [];
   if (kill?.engaged) items.push({ key: "kill", text: `The kill switch is on: ${kill.reason ?? "nothing runs"}`, to: "/admin/kill-switch" });
   for (const g of goals) {
-    if (g.status === "budget_exhausted") items.push({ key: `goal-${g.id}`, text: `Out of budget: ${goalTitle(g)}`, to: `/goals/${g.id}` });
+    // A goal past its budget, once: its key is the same whether it is over or stopped.
+    if (g.status === "budget_exhausted" || g.budget_state === "blocked") items.push({ key: `goal-${g.id}`, text: `Stopped by its budget: ${goalTitle(g)}`, to: `/goals/${g.id}` });
+    else if (g.budget_state === "over") items.push({ key: `goal-${g.id}`, text: `Over budget: ${goalTitle(g)}`, to: `/goals/${g.id}` });
     if (g.status === "stalled") items.push({ key: `goal-${g.id}`, text: `Stalled: ${goalTitle(g)}`, to: `/goals/${g.id}` });
   }
   for (const t of tasks) {
@@ -45,7 +47,7 @@ export function Inbox() {
     try {
       const [tasks, goals, kill] = await Promise.all([
         api.tasks({ statuses: ["ready", "review_unresolved", "failed"] }, 0, 200),
-        api.goals(["budget_exhausted", "stalled"], 0, 100),
+        api.goals(["active", "budget_exhausted", "stalled"], 0, 100),
         api.killSwitch().catch(() => null),
       ]);
       const found = inboxItems(tasks.items, goals.items, kill);

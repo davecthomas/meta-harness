@@ -155,7 +155,7 @@ export function BudgetEdit({ goal, readOnly, save }: FieldProps) {
       input={({ value, onChange, invalid }) => (
         <NumberInput
           aria-label="Budget"
-          description="No more of its tasks start once its runs have spent this. Leave it empty for none."
+          description="What its runs may spend; the fields below say what happens when they have. Leave it empty for none."
           placeholder="None"
           prefix="$"
           min={0}

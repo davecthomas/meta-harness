@@ -247,6 +247,21 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("goal_changed", 1, _object({"goal_id": {"type": "string"}, "changes": {"type": "object"}}, ["goal_id"])),
+    # The first time a goal's spend reaches its budget: block_at is null for a goal that only warns
+    EventType(
+        "goal_budget_reached",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "spent_usd": {"type": "string"},
+                "max_usd": {"type": "string"},
+                "mode": {"type": "string", "enum": ["block", "warn"]},
+                "block_at": {"type": ["string", "null"]},
+            },
+            ["goal_id", "spent_usd", "max_usd", "mode"],
+        ),
+    ),
     EventType("goal_met", 1, _object({"goal_id": {"type": "string"}, "reason": {"type": "string"}}, ["goal_id"])),
     # Configuration: every saved or rolled-back version, with the operator as actor
     EventType(
