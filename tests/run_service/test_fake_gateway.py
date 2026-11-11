@@ -37,3 +37,57 @@ def test_a_fix_run_changes_the_file_so_its_publish_has_a_new_commit():
     call = fake_gateway.scripted_turn(_grant("run-task-d:run-3"), prompt, ["write"])["tool_calls"][0]
 
     assert call["input"]["content"] == fake_gateway.FIXED_TEXT != fake_gateway.EXPECTED_TEXT
+
+
+def _checks_prompt() -> list[dict]:
+    text = f"--- task ---\nCheck the sandbox. {fake_gateway.CHECKS_MARKER} uv sync && uv run pytest -q\n--- end of task ---"
+    return [{"role": "user", "content": [{"type": "text", "text": text}]}]
+
+
+def test_a_checks_run_runs_its_command_with_bash_then_records_that_it_passed():
+    grant = _grant("run-task-e:run-1")
+    prompt = _checks_prompt()
+
+    first = fake_gateway.scripted_turn(grant, prompt, ["bash", "write"])
+    assert first["finish_reason"] == "tool_use"
+    assert first["tool_calls"][0]["name"] == "bash"
+    assert first["tool_calls"][0]["input"] == {
+        "command": f"uv sync && uv run pytest -q && echo {fake_gateway.CHECKS_OK}"
+    }
+
+    output = {
+        "type": "tool_result",
+        "tool_call_id": "call_1",
+        "result": {"output": f"12 passed\n{fake_gateway.CHECKS_OK}\n"},
+        "is_error": False,
+    }
+    second = fake_gateway.scripted_turn(grant, [*prompt, output], ["bash", "write"])["tool_calls"][0]
+    assert second["name"] == "write" and second["input"]["path"] == fake_gateway.CHECKS_FILE
+    assert second["input"]["content"].startswith("passed\n") and "12 passed" in second["input"]["content"]
+
+    written = {"type": "tool_result", "tool_call_id": "call_2", "result": {"output": "ok"}, "is_error": False}
+    done = fake_gateway.scripted_turn(grant, [*prompt, output, written], ["bash", "write"])
+    assert done["finish_reason"] == "complete" and not done["tool_calls"]
+
+
+def test_a_checks_run_whose_command_failed_records_that_with_its_output():
+    prompt = _checks_prompt()
+    failed = {
+        "type": "tool_result",
+        "tool_call_id": "call_1",
+        "result": {"output": "sh: tsc: not found"},
+        "is_error": True,
+    }
+    call = fake_gateway.scripted_turn(_grant("run-task-f:run-1"), [*prompt, failed], ["bash", "write"])["tool_calls"][0]
+    assert call["input"]["content"].startswith("failed\n") and "tsc: not found" in call["input"]["content"]
+
+    # Output that never reached the end marker is a failure too, whatever the tool said.
+    cut = {"type": "tool_result", "tool_call_id": "call_1", "result": {"output": "12 passed"}, "is_error": False}
+    call = fake_gateway.scripted_turn(_grant("run-task-g:run-1"), [*prompt, cut], ["bash", "write"])["tool_calls"][0]
+    assert call["input"]["content"].startswith("failed\n")
+
+
+def test_a_checks_tasks_review_run_still_submits_a_verdict(monkeypatch):
+    monkeypatch.setattr(fake_gateway, "REVIEWED", set())
+    call = fake_gateway.scripted_turn(_grant("run-task-h:run-2"), _checks_prompt(), ["read", "bash", "submit_review"])
+    assert call["tool_calls"][0]["name"] == "submit_review"

@@ -2538,7 +2538,7 @@ Run from the image built from it.
 
 Every merge to main deploys itself, infrastructure included, so a task's
 merged pull request is all it takes to change either stack.
-`.github/workflows/deploy.yml` waits for main's four checks to pass at the
+`.github/workflows/deploy.yml` waits for main's five checks to pass at the
 merged commit, then:
 
 1. It plans the platform stack. No change applies nothing. A change is
@@ -2751,6 +2751,7 @@ through the local egress proxy's control listener.
 | Per-run sandbox: the harness server in a Docker container per run, which the meta-harness run service run activity starts and removes with the Docker executor backend | built for local development | `images/harness-pi/Dockerfile`, `samples/temporal-run-task` |
 | Per-run sandbox egress allowlist: each per-run sandbox on its own internal Docker network, with a local egress proxy that lets it reach only the HTTP Gateway, the code host and package registries | built for local development | `samples/temporal-run-task/egress-proxy`, `make egress-check` |
 | A zero-cost end-to-end check: the RunTask workflow against a fake HTTP Gateway that makes no model calls, on every pull request | built | `samples/temporal-run-task/e2e.sh`, `make e2e`, `.github/workflows/e2e.yml` |
+| The sandbox runs this repo's checks (#203): on every pull request, `make image-checks` has pi's bash tool run the checks a task on this repo runs (`uv sync`, ruff, the whole Python suite, and the console's install, typecheck and tests) in the built per-run sandbox image, on a clone of the checkout under test, behind the egress proxy, with the run's database beside it, against the fake HTTP Gateway. It fails when the image or the sandbox cannot run them, and the deploy waits for it. On its first runs it found the sandbox started under the wrong name once it had a database, a database host name too long for a long task ref, and every workflow test skipped in a sandbox because `temporal.download`, where Temporal's test server comes from, was not on the egress allowlist | built | `samples/temporal-run-task/stack.sh` (`checks`), `src/meta_harness/run_service/fake_gateway.py` |
 | Provider-neutral tool results: one tool-result shape the HTTP Gateway converts for each model provider | built | ai-api-unified-http 1.19.0, `images/harness-pi/extension` |
 | The RunTask workflow's run loop over the ai-api-unified router's candidates, with a meta-harness run service `route` activity, escalation, pins and a task-wide spend limit | built | ai-api-unified 3.30.0 (`AiRouteClassifier`), `samples/temporal-run-task`, `make fallback-demo` |
 | Repo work in a run: each run starts from a fresh clone of the task's repo, pi's `bash` tool runs the acceptance checks, and the meta-harness run service's Publish step commits pi's changes, pushes the branch and opens the pull request with `Closes <issue>`. The per-run sandbox holds no code-host credential | built for local development | `samples/temporal-run-task`, `make repo-demo`, `make run TICKET=owner/name#N` |
