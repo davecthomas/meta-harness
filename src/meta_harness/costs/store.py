@@ -145,9 +145,10 @@ def top(
 
 
 def values(conn: psycopg.Connection, dimension: str, filters: dict[str, list[str]]) -> list[str]:
-    """Every value a dimension takes, for a filter's choices, within the scope the filters give."""
+    """Every value a dimension takes, for a filter's choices: within the cost source and operator the filters
+    give, but never narrowed by the dimension's own filter, so a value chosen can always be chosen away."""
     column = DIMENSIONS[dimension]
-    scope = {k: v for k, v in filters.items() if k in ("source", "operator")}
+    scope = {k: v for k, v in filters.items() if k in ("source", "operator") and k != dimension}
     clauses, params = ["true"], []
     for name, wanted in scope.items():
         clauses.append(f"{DIMENSIONS[name]} = ANY(%s)")

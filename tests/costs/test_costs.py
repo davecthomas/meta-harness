@@ -272,3 +272,9 @@ def test_a_harvest_reads_from_the_first_of_the_previous_month_where_google_fills
     assert cloud_source.first_day(date(2026, 11, 11)) == date(2026, 10, 1)
     assert cloud_source.first_day(date(2026, 3, 31)) == date(2026, 2, 1)
     assert cloud_source.first_day(date(2026, 1, 5)) == date(2025, 12, 1)
+
+
+def test_a_filters_choices_are_not_narrowed_by_its_own_value(api):
+    picked = api.get("/v1/costs", params={**SPAN, "source": "cloud", "model": "claude-opus-5-5"}, headers=OPERATOR).json()
+    assert picked["choices"]["source"] == ["cloud", "model"], "the source filter still offers both, to choose back"
+    assert picked["choices"]["kind"] == ["Compute Engine"], "within the cloud source, its billed services"
