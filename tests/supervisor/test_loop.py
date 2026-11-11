@@ -8,7 +8,7 @@ import pytest
 
 from meta_harness import db, migrations
 from meta_harness.planner import store as goal_store
-from meta_harness.run_service.code_host import PullRequest
+from meta_harness.run_service.code_host import CheckRun, PullRequest
 from meta_harness.supervisor import standing
 from meta_harness.supervisor.loop import GRACE, Supervisor, spent_so_far
 from meta_harness.tasks.client import TaskApiError
@@ -40,6 +40,7 @@ class Tasks:
         self.tasks: dict[str, dict] = {}
         self.recovered: list[tuple[str, str, str]] = []
         self.canceled: list[tuple[str, str]] = []
+        self.driven: list[tuple[str, str, str, str]] = []
         self.refuse: str | None = None
 
     def add(self, status: str, **fields) -> dict:
@@ -57,6 +58,12 @@ class Tasks:
         self.recovered.append((task_id, why, spent_usd))
         task = self.tasks[task_id]
         task["status"] = "canceled" if task.get("cancel_requested") else "queued"
+        return task
+
+    def drive(self, task_id, action, why, spent_usd="0"):
+        self.driven.append((task_id, action, why, spent_usd))
+        task = self.tasks[task_id]
+        task.update(status="queued", drives=int(task.get("drives") or 0) + 1)
         return task
 
     def cancel(self, task_id, reason="", actor=None):
@@ -96,6 +103,15 @@ class Host:
     def __init__(self):
         self.pulls: dict[int, str] = {}
         self.reads = 0
+        # For an open pull request: what the code host says of a merge, and its head's checks.
+        self.raw: dict[int, dict] = {}
+        self.checks: dict[int, list] = {}
+
+    async def pull_request(self, repo, number):
+        return {"head": {"sha": f"head-{number}"}, **self.raw[number]}
+
+    async def check_runs(self, repo, sha):
+        return self.checks.get(int(sha.removeprefix("head-")), [])
 
     async def read_pull_request(self, repo, number):
         self.reads += 1
@@ -270,3 +286,66 @@ async def test_a_closed_task_is_forgotten_and_a_failed_one_names_what_an_operato
     assert _standing(done["id"]) is None
     found = _standing(failed["id"])
     assert found["owner"] == "operator" and "retry it" in found["ask"]
+
+
+def _auto_merge_goal() -> str:
+    goal_id = _goal("active")
+    with db.connect(autocommit=True) as conn:
+        conn.execute("UPDATE planner.goal SET auto_merge = true WHERE id = %s", (goal_id,))
+    return goal_id
+
+
+async def test_ready_tasks_of_an_auto_merge_goal_are_merged_fixed_or_waited_on_by_how_their_pull_request_stands(world):
+    supervisor, tasks, events, _, host = world
+    goal_id, url = _auto_merge_goal(), f"https://github.com/{REPO}/pull"
+    done = CheckRun("ci", "completed", "success", "")
+    clean = tasks.add("ready", pr_url=f"{url}/21", goal_id=goal_id)
+    conflict = tasks.add("ready", pr_url=f"{url}/22", goal_id=goal_id)
+    failing = tasks.add("ready", pr_url=f"{url}/23", goal_id=goal_id)
+    pending = tasks.add("ready", pr_url=f"{url}/24", goal_id=goal_id)
+    tried = tasks.add("ready", pr_url=f"{url}/25", goal_id=goal_id, drives=3)
+    by_hand = tasks.add("ready", pr_url=f"{url}/26", goal_id=_goal("active"))
+    host.pulls = {n: "open" for n in range(21, 27)}
+    host.raw = {
+        21: {"mergeable": True, "mergeable_state": "clean"},
+        22: {"mergeable": False, "mergeable_state": "dirty"},
+        23: {"mergeable": True, "mergeable_state": "unstable"},
+        24: {"mergeable": True, "mergeable_state": "blocked"},
+        25: {"mergeable": True, "mergeable_state": "clean"},
+    }
+    host.checks = {21: [done], 22: [done], 23: [CheckRun("ci", "completed", "failure", "")], 25: [done]}
+    events.stored = [{"task_id": clean["id"], "event_type": "attempt_finished", "payload": {"spent_usd": "4.00"}}]
+
+    result = await supervisor.pass_once()
+
+    assert sorted(result.driven) == sorted([clean["id"], conflict["id"], failing["id"]])
+    assert {(task_id, action) for task_id, action, _, _ in tasks.driven} == {
+        (clean["id"], "merge"),
+        (conflict["id"], "merge"),
+        (failing["id"], "review"),
+    }
+    assert [spent for task_id, _, _, spent in tasks.driven if task_id == clean["id"]] == ["4.00"], (
+        "its spend is carried"
+    )
+    waiting = _standing(pending["id"])
+    assert (waiting["owner"], waiting["situation"]) == ("supervisor", "merge_waiting")
+    assert pending["status"] == "ready" and waiting["attempts"] == 0, "a wait is not an attempt"
+    used = _standing(tried["id"])
+    assert used["owner"] == "operator" and used["situation"] == "merge_tries_used"
+    assert _standing(by_hand["id"])["owner"] == "operator", "its goal does not merge by itself"
+
+
+async def test_checks_that_never_report_are_an_operators_after_a_day(world):
+    supervisor, tasks, _, _, host = world
+    task = tasks.add("ready", pr_url=f"https://github.com/{REPO}/pull/31", goal_id=_auto_merge_goal())
+    host.pulls, host.raw = {31: "open"}, {31: {"mergeable": True, "mergeable_state": "blocked"}}
+    start = datetime.now(UTC)
+    await supervisor.pass_once(start)
+    assert _standing(task["id"])["situation"] == "merge_waiting"
+
+    await supervisor.pass_once(start + timedelta(hours=25))
+
+    found = _standing(task["id"])
+    assert (found["owner"], found["situation"]) == ("operator", "merge_wait_stale")
+    await supervisor.pass_once(start + timedelta(hours=26))
+    assert _standing(task["id"])["situation"] == "merge_wait_stale", "it stays an operator's while it still waits"

@@ -181,6 +181,19 @@ REGISTRY: list[EventType] = [
             ["from", "to", "recoveries", "why"],
         ),
     ),
+    EventType(
+        "task_driven",
+        1,
+        _object(
+            {
+                "action": {"enum": ["merge", "review"]},
+                "why": {"type": "string"},
+                "drives": {"type": "integer"},
+                "resume": {"type": "string"},
+            },
+            ["action", "why", "drives"],
+        ),
+    ),
     # The writing pass on the texts of one post: a pull request description, a review, a comment, an issue
     EventType(
         "writing_checked",

@@ -44,8 +44,11 @@ COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
     "pr_url, head_sha, created_at, updated_at, attempts, waiting_on, retries, resume, review_claimed_by, "
-    "status_changed_at, recoveries, spent_carried_usd"
+    "status_changed_at, recoveries, spent_carried_usd, drives"
 )
+# The most times the supervisor sends one parked task back by itself, for its merge or through its review
+# loop, between an operator's retries. Past it the task waits for an operator.
+MAX_DRIVES = 3
 # The most times the supervisor sends one task back to the queue after finding no workflow behind it. Past
 # it the task fails, for an operator: something ends its workflows, and another try would end the same way.
 MAX_RECOVERIES = 3
@@ -340,9 +343,42 @@ def requeue(
         cur.execute(
             "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
             "cancel_requested = false, waiting_on = NULL, max_usd = coalesce(%s, max_usd), updated_at = now(), "
-            "status_changed_at = now(), spent_carried_usd = 0 "
+            "status_changed_at = now(), spent_carried_usd = 0, drives = 0 "
             f"WHERE id = %s RETURNING {COLUMNS}",
             (f"{actor} {what}", resume, max_usd, task_id),
+        )
+        return _jsonable(cur.fetchone()), row["status"]
+
+
+def drive(conn: psycopg.Connection, task_id: str, action: str, why: str, spent_usd: Decimal) -> tuple[dict, str]:
+    """Sends a parked task back to the queue for the supervisor: a `ready` or `review_unresolved` task whose
+    workflow ended with its pull request open, which the supervisor found it can move on.
+
+    action merge: its next workflow merges the pull request, and resolves a conflict with its base first.
+    action review: its pull request goes back through checks, review and fixes. Either way the workflow
+    counts spent_usd, what the task's runs spent so far, against its spend limit: unlike an operator's retry,
+    a drive never gives a task its limit again. Refused once the task has been driven MAX_DRIVES times.
+    Returns (task, previous status).
+    """
+    if action not in ("merge", "review"):
+        raise TaskError(f"a drive is merge or review, not {action!r}")
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT status, pr_url, drives FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        if row["status"] not in MERGEABLE:
+            raise TaskError(f"a {row['status']} task is not waiting with a pull request open")
+        if not row["pr_url"]:
+            raise TaskError("the task has no pull request")
+        if row["drives"] >= MAX_DRIVES:
+            raise TaskError(f"the supervisor has already sent the task back {row['drives']} times")
+        what = "asked for its merge" if action == "merge" else "sent it back through its review loop"
+        cur.execute(
+            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
+            "drives = drives + 1, cancel_requested = false, waiting_on = NULL, spent_carried_usd = %s, "
+            f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
+            (f"{why}, so the supervisor {what} (try {row['drives'] + 1} of {MAX_DRIVES})", action, spent_usd, task_id),
         )
         return _jsonable(cur.fetchone()), row["status"]
 
