@@ -8,7 +8,9 @@ const KINDS: [string, string][] = [["task", "Tasks' own runs"], ["review", "Revi
 
 // Where a goal's money went, opened from its spend line: how much went to the tasks' own runs, to reviews and
 // to fixes, and each task with what its runs spent, the dearest first.
-export function GoalSpend({ goalId, opened, onClose }: { goalId: string; opened: boolean; onClose: () => void }) {
+// goalName: the goal's name, shown under the title as a link to the goal, since the window can outlive the
+// page it was opened from in the reader's attention.
+export function GoalSpend({ goalId, goalName, opened, onClose }: { goalId: string; goalName?: string; opened: boolean; onClose: () => void }) {
   const [spend, setSpend] = useState<Spent | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -17,8 +19,21 @@ export function GoalSpend({ goalId, opened, onClose }: { goalId: string; opened:
     api.goalSpend(goalId).then(setSpend, (err) => setError(err instanceof Error ? err.message : String(err)));
   }, [goalId, opened]);
   const total = spend ? Number(spend.usd) : 0;
+  const sum = (pick: (task: Spent["tasks"][number]) => number) => (spend?.tasks ?? []).reduce((all, task) => all + pick(task), 0);
   return (
-    <Modal opened={opened} onClose={onClose} title="Where the goal's money went" size="xl">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      size="xl"
+      title={
+        <Stack gap={2}>
+          <span>Where the goal's money went</span>
+          <Anchor component={Link} to={`/goals/${goalId}`} size="sm" fw={400} onClick={onClose} data-testid="goal-spend-goal">
+            {goalName ?? goalId}
+          </Anchor>
+        </Stack>
+      }
+    >
       <ErrorAlert error={error} />
       {!spend && !error && <Center h={120}><Loader /></Center>}
       {spend && (
@@ -50,6 +65,16 @@ export function GoalSpend({ goalId, opened, onClose }: { goalId: string; opened:
                 <Table.Td><Text size="sm" fw={650}>${Number(task.usd).toFixed(2)}</Text></Table.Td>
               </Table.Tr>
             ))}
+            <Table.Tr data-testid="goal-spend-total" style={{ borderTop: "2px solid var(--mantine-color-default-border)" }}>
+              <Table.Td><Text size="sm" fw={650}>Total, {spend.tasks.length} tasks</Text></Table.Td>
+              <Table.Td />
+              <Table.Td><Text size="sm" fw={650}>{sum((t) => t.runs)}</Text></Table.Td>
+              <Table.Td><Text size="sm" fw={650}>{sum((t) => t.turns)}</Text></Table.Td>
+              {(["task", "review", "fix"] as const).map((kind) => (
+                <Table.Td key={kind}><Text size="sm" fw={650}>${Number(spend.by_kind[kind] ?? 0).toFixed(2)}</Text></Table.Td>
+              ))}
+              <Table.Td><Text size="sm" fw={650}>${total.toFixed(2)}</Text></Table.Td>
+            </Table.Tr>
           </DataTable>
         </Stack>
       )}

@@ -23,7 +23,7 @@ test("a goal's spend shows how much went to own runs, reviews and fixes, and eac
   render(
     <MantineProvider theme={theme}>
       <MemoryRouter>
-        <GoalSpend goalId="g-1" opened onClose={() => undefined} />
+        <GoalSpend goalId="g-1" goalName="Console UX" opened onClose={() => undefined} />
       </MemoryRouter>
     </MantineProvider>,
   );
@@ -37,4 +37,12 @@ test("a goal's spend shows how much went to own runs, reviews and fixes, and eac
   expect(dear.textContent).toContain("$10.15");
   expect(dear.textContent).toContain("240");
   expect(screen.getByRole("link", { name: "Record prompts" }).getAttribute("href")).toBe("/tasks/t-2?tab=spend");
+  // The window names its goal and links back to it, and the table ends with its totals.
+  expect(screen.getByRole("link", { name: "Console UX" }).getAttribute("href")).toBe("/goals/g-1");
+  const totals = screen.getByTestId("goal-spend-total").textContent ?? "";
+  expect(totals).toContain("Total, 2 tasks");
+  expect(totals).toContain("13");
+  expect(totals).toContain("330");
+  expect(totals).toContain("$16.00");
+  expect(totals).toContain("$26.79");
 });
