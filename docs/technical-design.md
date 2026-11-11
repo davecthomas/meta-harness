@@ -2408,7 +2408,10 @@ service: each run's `attempt_finished`, and the planner's own model calls,
 read from the position the last harvest reached and saved with the new
 position in one transaction, so an event is counted once. Cloud cost comes
 from the Google Cloud billing export in BigQuery, by billed service; the
-last 35 days are read again each time, since a bill is restated. The billing
+last 35 days, and back to the first of the previous month, are read again
+each time, since a bill is restated and Google fills a new export from the
+previous month. The page's Google Cloud service breakdown shows the bill by
+service. The billing
 account's standard usage cost export writes to the platform stack's
 `billing_export` dataset (turned on 2026-11-11), which the VM's service
 account may read and query. `MH_BILLING_EXPORT_TABLE` names the dataset, and
