@@ -2058,6 +2058,13 @@ with a comment holding the outcome, and the issues that depend on it stay
 blocked. An issue labeled while the goal is active joins it, including the
 issues a planning task writes.
 
+An issue closed some other way than by its task's pull request (another pull
+request, or by hand) has no work left. Each sweep cancels such a task when
+it has opened no pull request of its own: queued, blocked, or running with
+none. So a goal never pays to redo finished work, and the task frees its
+repo area for the ones behind it. A task with a pull request is left to its
+workflow, since its own merge is what closes its issue.
+
 A goal is `met` when its success criteria pass, and `stalled` when every open
 issue is blocked by a failed issue or waits on an operator issue, which raises
 an alert. Its `max_usd` covers every task it queued. What happens once it is

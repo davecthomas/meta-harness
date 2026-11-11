@@ -117,6 +117,10 @@ class FakeTasks:
         self.tasks[task_id]["status"] = status
         return self.tasks[task_id]
 
+    def cancel(self, task_id, reason="", actor=None):
+        self.tasks[task_id]["status"] = "canceled"
+        return self.tasks[task_id]
+
     def list(self, statuses=None, goal_id=None, limit=100):
         found = [
             t
@@ -391,8 +395,10 @@ async def test_a_goal_is_met_when_its_last_issue_closes_and_its_tasks_are_done(a
     ref = tracker.add("davecthomas/meta-harness", _number(), labels=[label])
     _sweep(api, goal)
     [task] = [t for t in tasks.tasks.values() if t["external_ref"] == ref]
+    # Its own pull request merged and closed the issue; its workflow still waits on the merge commit's checks.
     tracker.issues[ref].state = "closed"
     task["status"] = "running"
+    task["pr_url"] = "local-pull-request"
     assert _sweep(api, goal)["met"] is False, "a running task keeps the goal open"
     assert api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "active"
     task["status"] = "closed"

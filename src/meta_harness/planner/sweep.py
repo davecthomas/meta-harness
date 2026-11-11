@@ -9,6 +9,11 @@ with open dependencies in `blocked`. A sweep also records issues that closed,
 and moves a blocked task to `queued` once every issue it depends on is
 closed. An issue already in another goal stays there.
 
+An issue closed by someone else's pull request, or by hand, has no work
+left: a sweep cancels its task when the task has not opened a pull request
+of its own (queued, blocked, or running with none), so the goal never pays
+to redo finished work and the task frees its repo area.
+
 A sweep also watches the pull request of each of the goal's tasks that ended
 `ready` or `review_unresolved`, which no RunTask workflow watches any more. It
 reads the pull request and its head commit's checks from GitHub, records each
@@ -78,6 +83,8 @@ class SweepResult:
     refused: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
     unblocked: list[str] = field(default_factory=list)
+    # Task ids canceled because their issue was closed with their work not yet published.
+    stale: list[str] = field(default_factory=list)
     # Task ids whose pull request the sweep found merged, or closed without merging.
     merged: list[str] = field(default_factory=list)
     canceled: list[str] = field(default_factory=list)
@@ -112,6 +119,7 @@ async def sweep_goal(
     await _take_in_added(goal, seen, tracker, tasks, events, result)
     await _watch_pull_requests(goal, tasks, events, host or code_host, result)
     await _record_closed(goal, seen, tracker, events, result)
+    await _cancel_for_closed_issues(goal, tasks, result)
     await _release_unblocked(goal, tracker, tasks, events, result)
     if not result.errors:
         await _complete_if_met(goal, tracker, tasks, events, result)
@@ -259,6 +267,44 @@ async def _record_closed(goal: dict, seen: set[str], tracker: Tracker, events: E
                 event_id=stable_event_id("issue_closed", link["ref"]),
             )
             result.closed.append(link["ref"])
+
+
+# A task in one of these has not ended, so an issue closed under it may leave it with nothing to do.
+UNSTARTED_OR_RUNNING = ["queued", "blocked", "running"]
+
+
+async def _cancel_for_closed_issues(goal: dict, tasks: TaskClient, result: SweepResult) -> None:
+    """Cancel each of the goal's tasks whose issue is closed and that has no pull request of its own.
+
+    The issue was closed some other way: another pull request, or by hand. A task with a pull request is left
+    alone, since its own merge is what closes its issue, and its workflow or the watch above ends it.
+    """
+    closed = {
+        link["task_id"]: link["ref"]
+        for link in await asyncio.to_thread(_links, goal["id"])
+        if link["state"] == "closed" and link["task_id"]
+    }
+    if not closed:
+        return
+    try:
+        unfinished = await asyncio.to_thread(tasks.list, UNSTARTED_OR_RUNNING, goal["id"], PR_WATCH_LIMIT)
+    except TaskApiError as err:
+        result.errors.append(f"{goal['id']}: {err}")
+        return
+    for task in unfinished:
+        if task["id"] not in closed or task.get("pr_url") or task.get("cancel_requested"):
+            continue
+        try:
+            await asyncio.to_thread(
+                tasks.cancel,
+                task["id"],
+                f"its issue {closed[task['id']].removeprefix('github:')} was closed",
+                "planner",
+            )
+        except TaskApiError as err:
+            result.errors.append(f"{task['id']}: {err}")
+            continue
+        result.stale.append(task["id"])
 
 
 async def _release_unblocked(goal: dict, tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult):
