@@ -8,6 +8,7 @@ import { Reviews } from "./Reviews";
 import { SpendReport } from "./SpendReport";
 import { BudgetHold } from "./BudgetHold";
 import { WaitingToStart } from "./WaitingToStart";
+import { ReviewBanner } from "./reviewing";
 import { TaskActions } from "./TaskActions";
 import { TaskFailure } from "./TaskFailure";
 import { Timeline } from "./Timeline";
@@ -196,6 +197,7 @@ export function TaskPage() {
         }
       />
       <ErrorAlert error={error} />
+      <ReviewBanner task={{ ...task, status }} events={events} />
       <BudgetHold task={{ ...task, status }} onAnswered={setTask} />
       <WaitingToStart task={{ ...task, status }} onChanged={() => void api.task(taskId).then(setTask, () => undefined)} />
       <TaskFailure task={task} status={status} events={events} />
