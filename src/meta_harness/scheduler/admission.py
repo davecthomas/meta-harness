@@ -112,8 +112,9 @@ class Admission:
             if goal_id := self._running_goal.get(task_id):
                 per_goal[goal_id] = per_goal.get(goal_id, 0) + 1
         for task in queued:
-            if len(in_flight) >= limit:
-                break
+            # A deploy's smoke task runs whatever is running: it is tiny, and the deploy waits on it.
+            if len(in_flight) >= limit and task.get("task_type") != "smoke":
+                continue
             if task["id"] in in_flight:
                 continue
             reason = await self._goal_hold(task, goals, spend)

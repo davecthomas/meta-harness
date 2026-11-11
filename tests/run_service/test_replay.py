@@ -86,6 +86,8 @@ SCENARIOS = {
     "patched-budget-hold-merged": {"verdicts": [CLEAN], "goal_id": "g-1", "auto_merge": True},
     # After the plan-task patch: a goal's planning task ends closed after its run, with no publish and no review.
     "patched-plan-task": {"goal_id": "g-1", "task_type": "plan"},
+    # After the smoke-task patch: a deploy's smoke task ends closed after its run, as a planning task does.
+    "patched-smoke-task": {"task_type": "smoke"},
     # After the merge-base-health patch: the merge waits while the base's own checks run, then merges.
     "patched-merge-base-health": {
         "verdicts": [CLEAN],
