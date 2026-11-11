@@ -3,7 +3,7 @@
     POST /v1/tasks                       submit a task, idempotent on the caller's external_ref
     GET  /v1/tasks?external_ref=...      the caller's task with that external_ref
     GET  /v1/tasks?status=queued,...     list tasks; a caller sees its own, a service sees all
-    GET  /v1/tasks/{id}
+    GET  /v1/tasks/{id}                  the task; `held` says why the scheduler holds a queued one
     POST /v1/tasks/{id}/cancel           cancel a task that has not started, or flag a running one
     POST /v1/tasks/{id}/status           a control-plane service moves a task (service keys only)
     GET  /health
@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
+from meta_harness.scheduler import holds
 from meta_harness.tasks import reviews, spend, store
 
 
@@ -214,13 +215,19 @@ def create_app(
                     raise HTTPException(status_code=404, detail="no such task") from err
             statuses = status.split(",") if status else None
             tasks, total = store.list_tasks(conn, owner, statuses, goal_id, limit, offset, pr, q, waiting, smoke)
+            held = holds.for_tasks(conn, [t["id"] for t in tasks if t["status"] == "queued"])
+            for task in tasks:
+                task["held"] = held.get(task["id"])
             return {"tasks": tasks, "total": total, "offset": offset, "limit": limit}
 
     @app.get("/v1/tasks/{task_id}")
     def read(task_id: str, who: Caller = Depends(caller)) -> dict:
         try:
             with app.state.pool.connection() as conn:
-                return visible(store.get(conn, task_id), who)
+                task = visible(store.get(conn, task_id), who)
+                # Why the scheduler holds a queued task, from the scheduler's own record of it.
+                task["held"] = holds.get(conn, task_id) if task["status"] == "queued" else None
+                return task
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such task") from err
 

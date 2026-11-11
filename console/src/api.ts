@@ -92,6 +92,20 @@ export interface Task {
   max_usd?: string | null;
   // What the running task waits on an operator for: "budget" while it is held for budget.
   waiting_on?: string | null;
+  // The issues a blocked task waits on, as refs.
+  depends_on?: string[];
+  // Why the scheduler holds a queued task; null for one it does not hold, and for a task in any other status.
+  held?: TaskHold | null;
+}
+
+// A queued task's hold, from the scheduler. kind says what to do about it without reading the reason's words;
+// detail names what the reason is about: goal_id, the tasks holding the places (holders), shared paths.
+export interface TaskHold {
+  reason: string;
+  kind: "goal_budget" | "goal_status" | "goal_parallel" | "system_parallel" | "repo_area" | "kill_switch" | "draining" | "start_failed";
+  since: string;
+  last_checked: string;
+  detail: Record<string, unknown>;
 }
 
 export interface MhEvent {

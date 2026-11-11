@@ -23,6 +23,10 @@ Every MH_ADMISSION_SECONDS the meta-harness scheduler runs one admission pass:
 While the kill switch is draining, as a deploy that replaces the VM sets it,
 a pass admits nothing but stops nothing: running tasks finish.
 
+Every task a pass does not start has a reason, saved as its hold (holds.py)
+with a kind a page can act on, and recorded as `task_held` when the reason
+is new or has changed. The Task API serves a queued task's hold as `held`.
+
 Blocked tasks are not queued: the planner queues them once their
 dependencies close.
 """
@@ -36,6 +40,8 @@ from typing import Any, Awaitable, Callable
 
 from meta_harness import db
 from meta_harness.events.client import stable_event_id
+from meta_harness.scheduler import holds
+from meta_harness.scheduler.holds import Hold
 
 log = logging.getLogger("meta_harness.scheduler")
 # An area no current task takes: a lock from before tasks with no paths took no area, which excludes every
@@ -90,7 +96,6 @@ class Admission:
         self.cancel = cancel
         self.signal = signal
         self.max_running = max_running
-        self._last_hold: dict[str, str] = {}
         # Each task holding a lock, with its goal (None for a task with no goal), from the last release pass.
         self._running_goal: dict[str, str | None] = {}
         self._canceling: set[str] = set()
@@ -101,12 +106,21 @@ class Admission:
         await self._stop_running(engaged, result)
         await self._hand_over_messages()
         await self._release_and_renew(result)
+        queued = await asyncio.to_thread(self.tasks.list, ["queued"], None, 200)
+        found: dict[str, Hold] = {}
         if engaged or draining:
+            stopped = (
+                Hold("kill_switch", "the kill switch is on: no task may start")
+                if engaged
+                else Hold("draining", "the scheduler is draining for a deploy: no new task starts until it ends")
+            )
+            # A task being canceled is not waiting to start.
+            found = {task["id"]: stopped for task in queued if not task.get("cancel_requested")}
+            await self._save_holds(found, result)
             return result
         limit = self.max_running if isinstance(self.max_running, int) else await asyncio.to_thread(self.max_running)
         locked = await asyncio.to_thread(_locks)
         in_flight = {row["task_id"] for row in locked}
-        queued = await asyncio.to_thread(self.tasks.list, ["queued"], None, 200)
         goals: dict[str, dict] = {}
         spend: dict[str, Decimal] = {}
         per_goal: dict[str, int] = {}
@@ -114,30 +128,34 @@ class Admission:
             if goal_id := self._running_goal.get(task_id):
                 per_goal[goal_id] = per_goal.get(goal_id, 0) + 1
         for task in queued:
-            # A deploy's smoke task runs whatever is running: it is tiny, and the deploy waits on it.
-            if len(in_flight) >= limit and task.get("task_type") != "smoke":
-                continue
             if task["id"] in in_flight:
                 continue
-            reason = await self._goal_hold(task, goals, spend)
-            if reason is None:
-                reason = self._goal_parallel_hold(task, goals, per_goal)
-            if reason is None:
-                reason = await asyncio.to_thread(_lock, task["id"], task["repo"], areas_for(task))
-            if reason is not None:
-                self._hold(task, reason, result)
+            # A deploy's smoke task runs whatever is running: it is tiny, and the deploy waits on it.
+            if len(in_flight) >= limit and task.get("task_type") != "smoke":
+                found[task["id"]] = Hold(
+                    "system_parallel",
+                    f"the system already runs {len(in_flight)} tasks, its limit",
+                    {"holders": sorted(in_flight)},
+                )
+                continue
+            hold = await self._goal_hold(task, goals, spend)
+            if hold is None:
+                hold = self._goal_parallel_hold(task, goals, per_goal)
+            if hold is None:
+                hold = await asyncio.to_thread(_lock, task["id"], task["repo"], areas_for(task))
+            if hold is not None:
+                found[task["id"]] = hold
                 continue
             try:
                 await self.start(task["id"])
             except Exception as err:  # noqa: BLE001 - any failure to start: free the area and say why
                 await asyncio.to_thread(_unlock, task["id"])
-                self._hold(task, f"the RunTask workflow did not start: {err}", result)
+                found[task["id"]] = Hold("start_failed", f"the RunTask workflow did not start: {err}")
                 continue
             in_flight.add(task["id"])
             self._running_goal[task["id"]] = task.get("goal_id")
             if task.get("goal_id"):
                 per_goal[task["goal_id"]] = per_goal.get(task["goal_id"], 0) + 1
-            self._last_hold.pop(task["id"], None)
             self.events.emit(
                 "task_admitted",
                 {"repo": task["repo"], "areas": areas_for(task)},
@@ -146,7 +164,18 @@ class Admission:
                 event_id=stable_event_id("task_admitted", task["id"]),
             )
             result.started.append(task["id"])
+        await self._save_holds(found, result)
         return result
+
+    async def _save_holds(self, found: dict[str, Hold], result: AdmissionResult) -> None:
+        """Saves why each task this pass did not start waits, and records task_held for each reason that is new
+        or has changed. A task the pass started, or that is queued no longer, has no hold any more."""
+        result.held.update({task_id: hold.reason for task_id, hold in found.items()})
+        for task_id in await asyncio.to_thread(holds.save, found):
+            hold = found[task_id]
+            self.events.emit(
+                "task_held", {"reason": hold.reason, "kind": hold.kind}, task_id=task_id, actor="scheduler"
+            )
 
     async def _hand_over_messages(self) -> None:
         """Hands each operator message to its task's RunTask workflow as a signal, then marks it delivered. One
@@ -198,15 +227,20 @@ class Admission:
                 result.released.append(task_id)
         self._running_goal = running
 
-    def _goal_parallel_hold(self, task: dict, goals: dict, per_goal: dict[str, int]) -> str | None:
+    def _goal_parallel_hold(self, task: dict, goals: dict, per_goal: dict[str, int]) -> Hold | None:
         """Why the task waits for its goal's own parallel limit, when the goal sets one and runs that many."""
         goal_id = task.get("goal_id")
         limit = (goals.get(goal_id) or {}).get("max_parallel") if goal_id else None
         if limit is not None and per_goal.get(goal_id, 0) >= int(limit):
-            return f"goal {goal_id} already runs {per_goal[goal_id]} tasks, its limit"
+            holders = sorted(t for t, g in self._running_goal.items() if g == goal_id)
+            return Hold(
+                "goal_parallel",
+                f"goal {goal_id} already runs {per_goal[goal_id]} tasks, its limit",
+                {"goal_id": goal_id, "holders": holders},
+            )
         return None
 
-    async def _goal_hold(self, task: dict, goals: dict, spend: dict) -> str | None:
+    async def _goal_hold(self, task: dict, goals: dict, spend: dict) -> Hold | None:
         goal_id = task.get("goal_id")
         if not goal_id or self.goals is None:
             return None
@@ -215,8 +249,12 @@ class Admission:
         goal = goals[goal_id]
         # A goal in planning runs one kind of task: the planning task that drafts its issues.
         planning = goal["status"] == "planning" and task.get("task_type") == "plan"
+        if goal["status"] == "budget_exhausted":
+            return Hold("goal_budget", f"goal {goal_id} is stopped by its budget", {"goal_id": goal_id})
         if goal["status"] != "active" and not planning:
-            return f"goal {goal_id} is {goal['status']}"
+            return Hold(
+                "goal_status", f"goal {goal_id} is {goal['status']}", {"goal_id": goal_id, "status": goal["status"]}
+            )
         # A goal that only warns at its budget is never held for it.
         if goal.get("max_usd") is None or goal.get("budget_mode") == "warn":
             return None
@@ -225,7 +263,11 @@ class Admission:
         # The planner works the blocking line out; one from before it did blocks at the budget.
         line = Decimal(goal.get("budget_block_at") or goal["max_usd"])
         if spend[goal_id] >= line:
-            return f"goal {goal_id} spent ${spend[goal_id]} of its ${goal['max_usd']} budget, and stops at ${line}"
+            return Hold(
+                "goal_budget",
+                f"goal {goal_id} spent ${spend[goal_id]} of its ${goal['max_usd']} budget, and stops at ${line}",
+                {"goal_id": goal_id, "spent_usd": str(spend[goal_id]), "max_usd": str(goal["max_usd"])},
+            )
         return None
 
     def _goal_spend(self, goal_id: str) -> Decimal:
@@ -235,12 +277,6 @@ class Admission:
             page = self.events.read(0, 5000, task_id=task["id"], event_type="attempt_finished")
             total += sum((Decimal(e["payload"]["spent_usd"]) for e in page["events"]), Decimal(0))
         return total
-
-    def _hold(self, task: dict, reason: str, result: AdmissionResult) -> None:
-        result.held[task["id"]] = reason
-        if self._last_hold.get(task["id"]) != reason:
-            self._last_hold[task["id"]] = reason
-            self.events.emit("task_held", {"reason": reason}, task_id=task["id"], actor="scheduler")
 
 
 def kill_switch_engaged() -> bool:
@@ -294,7 +330,7 @@ def _locks() -> list[dict]:
     return [{"task_id": r[0], "repo": r[1], "area": r[2]} for r in rows]
 
 
-def _lock(task_id: str, repo: str, areas: list[str]) -> str | None:
+def _lock(task_id: str, repo: str, areas: list[str]) -> Hold | None:
     """Locks the task's areas, or returns why it cannot: the task holding a conflicting area."""
     repo = repo.lower()
     with db.connect(autocommit=True) as conn, conn.transaction():
@@ -308,7 +344,11 @@ def _lock(task_id: str, repo: str, areas: list[str]) -> str | None:
             held.setdefault(holder, []).append(area)
         for holder, holder_areas in held.items():
             if conflicts(areas, holder_areas):
-                return f"repo area {', '.join(areas)} of {repo} is held by {holder}"
+                return Hold(
+                    "repo_area",
+                    f"repo area {', '.join(areas)} of {repo} is held by {holder}",
+                    {"holders": [holder], "paths": areas, "held_paths": sorted(a for a in holder_areas if a)},
+                )
         # A task with no area still holds one row, so it counts as running.
         for area in areas or [NO_AREA]:
             conn.execute(

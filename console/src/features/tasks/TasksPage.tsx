@@ -5,6 +5,7 @@ import { api, type Task } from "../../api";
 import { useInfinite } from "../../hooks";
 import { TileGrid, type TileSize } from "../../components/TileGrid";
 import { VerdictBadge } from "./Reviews";
+import { waitReason } from "./WaitingToStart";
 import { useRowKeys } from "../../components/CommandPalette";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, StatusBadge, TitleLink, when } from "../../components/ui";
 
@@ -154,7 +155,7 @@ export function TasksPage() {
         </>
       ) : (
         tasks.items.length > 0 && (
-          <DataTable head={[...(clearable ? [""] : []), "Task", "Status", "Repo", "Issue", "Pull request", "Updated"]}>
+          <DataTable head={[...(clearable ? [""] : []), "Task", "Status", ...(filter[0] === "waiting" ? ["Why it waits"] : []), "Repo", "Issue", "Pull request", "Updated"]}>
             {tasks.items.map((t, i) => (
               <Table.Tr key={t.id} data-picked={row === i || undefined} bg={row === i ? "var(--mantine-color-default-hover)" : undefined}>
                 {clearable && (
@@ -181,6 +182,7 @@ export function TasksPage() {
                     {showVerdicts && verdicts[t.id] && <VerdictBadge verdict={verdicts[t.id]} />}
                   </Group>
                 </Table.Td>
+                {filter[0] === "waiting" && <Table.Td maw={360}><Text size="sm">{waitReason(t)}</Text></Table.Td>}
                 <Table.Td><Text ff="monospace" size="xs">{t.repo}</Text></Table.Td>
                 <Table.Td><IssueLink issueRef={t.external_ref} /></Table.Td>
                 <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>

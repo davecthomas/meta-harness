@@ -42,6 +42,8 @@ def migrated():
             # The test database outlives a run, and the pending list holds 100: messages earlier runs left
             # undelivered would crowd this run's out of it.
             conn.execute("UPDATE tasks.task_message SET delivered_at = now() WHERE delivered_at IS NULL")
+            # The same for the list of tasks waiting on an operator, which holds 100 by default.
+            conn.execute("UPDATE tasks.task SET waiting_on = NULL WHERE waiting_on IS NOT NULL")
             conn.commit()
     except Exception as err:  # noqa: BLE001
         pytest.skip(f"no Postgres at {db.database_url()}: {err}")
