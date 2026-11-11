@@ -1105,6 +1105,16 @@ immediate later.
 
 ### Operator review
 
+Built so far is the notice (`console/src/features/tasks/reviewing.tsx`): the
+console says an agent's review is under way wherever the operator is. A
+review run with a `run_prompt` of kind `review` and no `attempt_finished`
+yet is in progress. The Overview heads with each pull request being
+reviewed now, the task's page shows a banner, and the header inbox lists it
+with a browser notification. Each offers Review it yourself, which opens
+the task's diff, where a comment on its lines posts to the pull request
+under the operator's name. Claiming the round, so that it waits for the
+operator's verdict, is the rest of this section and is planned (#236).
+
 Operator review is planned. When a meta-harness review run starts, the meta-harness run service appends a
 `review_started` meta-harness domain event. The operator console shows it as a
 notification to every operator watching, with the pull request link and an offer to

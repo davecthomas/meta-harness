@@ -4,6 +4,7 @@ import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Table, Te
 import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons-react";
 import { goalTitle, api, goalStatus, type Activity, type Goal, type KillSwitch, type MhEvent } from "../../api";
 import { ActivityMap } from "../activity/ActivityPage";
+import { ReviewsInProgress } from "../tasks/reviewing";
 import { BudgetMark, ResumeBudget, budgetStanding, budgetStops, budgetWords } from "../goals/budget";
 import { useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, TitleLink, when } from "../../components/ui";
@@ -41,6 +42,7 @@ export function Overview() {
         <Stat label="Open goals" value={goals.total} to="/goals" link="All goals" />
       </SimpleGrid>
 
+      <ReviewsInProgress />
       <TodaySpend />
       <PullRequestsRow />
 
