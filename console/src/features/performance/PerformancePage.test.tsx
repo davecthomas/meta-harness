@@ -56,7 +56,9 @@ test("an admin sees the totals, the chart with its trend, where the money went a
   const stats = await screen.findByTestId("cost-stats");
   expect(stats.textContent).toContain("$8.71");
   expect(stats.textContent).toContain("$2.90");
+  expect(stats.textContent).toContain("Change from the 3 days before");
   expect(stats.textContent).toContain("+117.8%");
+  expect(stats.textContent).toContain("$4.00 in the 3 days before");
   expect(stats.textContent).toContain("$105.90");
   expect(stats.textContent).toContain("Rising $0.63 a day");
   expect(asked[0]).toMatch(/^\/v1\/costs\?from=\d{4}-\d\d-\d\d&to=\d{4}-\d\d-\d\d&bucket=day&group_by=source$/);
@@ -68,6 +70,8 @@ test("an admin sees the totals, the chart with its trend, where the money went a
   const breakdown = screen.getByTestId("cost-breakdown").textContent ?? "";
   expect(breakdown).toContain("AI$4.51 52%");
   expect(breakdown).toContain("Cloud$4.20 48%");
+  expect(screen.getByTestId("cost-breakdown-total").textContent).toBe("Total$8.71");
+  expect(screen.getByTestId("top-tasks-total").textContent).toBe("Total of these 1$3.25");
   expect(screen.getByRole("link", { name: "Fix it" }).getAttribute("href")).toBe("/tasks/t-1?tab=spend");
   expect(screen.getByTestId("cost-sources").textContent).toContain("Not connected: turn on the billing export");
   expect(screen.queryByTestId("own-scope")).toBeNull();
@@ -76,7 +80,7 @@ test("an admin sees the totals, the chart with its trend, where the money went a
   fireEvent.pointerEnter(chart.querySelectorAll("rect")[1]);
   const tip = await screen.findByRole("tooltip");
   expect(tip.textContent).toContain("Nov 10");
-  expect(tip.textContent).toContain("$7.45");
+  expect(tip.textContent).toContain("$7.45Total");
   expect(tip.textContent).toContain("$4.20Cloud");
 });
 
@@ -162,4 +166,10 @@ test("the cloud category breaks the bill down by the service billed", async () =
   expect(breakdown.textContent).toContain("Compute Engine$3.30");
   expect(screen.getByTestId("cost-legend").textContent).toContain("Cloud Run");
   expect(screen.queryByLabelText("Source")).toBeNull();
+});
+
+test("too little spent before shows no percentage, and says why", async () => {
+  show({ ...COSTS, previous_total: 0.004, change_percent: null });
+  const stats = await screen.findByTestId("cost-stats");
+  expect(stats.textContent).toContain("Change from the 3 days before–$0.00 then: too little to compare");
 });
