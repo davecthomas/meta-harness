@@ -1,6 +1,8 @@
 """Canceling a goal ends the tasks it has not started, and a goal no sweep covers reads its issues' states
 from the tracker when its page asks for them."""
 
+import dataclasses
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -171,3 +173,49 @@ async def test_a_follow_up_records_an_issue_that_closed_after_the_goal_ended(api
 
     assert result.closed == [ref] and sweep._link(ref)["state"] == "closed"
     assert _tasks_by_ref(tasks)[ref]["status"] == "queued", "a follow-up changes no task"
+
+
+def test_a_refused_issue_becomes_a_task_once_it_is_given_its_acceptance_checks(api, parts, monkeypatch):
+    from meta_harness.planner import repos
+    from meta_harness.planner import tracker as tracker_module
+
+    events, tracker, tasks = parts
+    label = _label()
+    goal = _goal(api, label)
+    ref = tracker.add(REPO, _number(), labels=[label])
+    # The repo names no default checks, and the issue has none: it is refused.
+    registered = repos.get(REPO)
+    monkeypatch.setattr(repos, "get", lambda name: dataclasses.replace(registered, default_checks=[]))
+    assert _sweep(api, goal)["refused"] == [ref]
+    assert _sweep(api, goal)["refused"] == [ref], "still refused, and said so once"
+    assert [t for t, p in events.events if t == "issue_refused"] == ["issue_refused"]
+    assert not tasks.tasks
+
+    issue = tracker.issues[ref]
+    issue.body = "Fix it.\n\n## Acceptance checks\n\n- make test\n"
+    issue.checks = tracker_module.acceptance_checks(issue.body)
+    swept = _sweep(api, goal)
+
+    assert swept["joined"] == [ref] and swept["refused"] == []
+    assert _tasks_by_ref(tasks)[ref]["acceptance_checks"] == ["make test"]
+    shown = api.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR).json()["issues"]
+    assert shown[0]["refused_reason"] is None and shown[0]["task_id"]
+
+
+async def test_one_goals_failing_sweep_does_not_stop_the_next_goals_and_is_kept_for_its_page(api):
+    swept: list[str] = []
+
+    async def one(goal):
+        if goal["id"] == "g-bad":
+            raise RuntimeError("the task service is not answering")
+        swept.append(goal["id"])
+        return sweep.SweepResult(goal["id"], errors=["o/r: GitHub answered 502"] if goal["id"] == "g-partly" else [])
+
+    await api.app.state.each([{"id": "g-bad"}, {"id": "g-partly"}, {"id": "g-good"}], one, "sweep")
+
+    assert swept == ["g-partly", "g-good"], "the goals after the one that raised are still swept"
+    sweeps = api.app.state.sweeps
+    assert sweeps["g-bad"]["errors"] == ["the sweep failed: RuntimeError: the task service is not answering"]
+    assert sweeps["g-partly"]["errors"] == ["o/r: GitHub answered 502"] and sweeps["g-good"]["errors"] == []
+    failing = api.get("/v1/supervisor", headers=OPERATOR).json()["sweeps_failing"]
+    assert set(failing) == {"g-bad", "g-partly"}

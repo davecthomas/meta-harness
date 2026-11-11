@@ -34,6 +34,10 @@ SWEPT = ("active", "budget_exhausted")
 WAITING_ON = ("", "budget", "review", "operator_review")
 # What the supervisor does itself. None: nothing, someone else has the task.
 ACTIONS = ("recover", "end_at_pull_request", "cancel_for_goal", "merge", "review", "retry", "wait")
+# Where the issues a blocked task waits on stand. open: each is being worked, or will be. stuck: one's task
+# failed, was canceled or ended unresolved, and waits on an operator. unheld: one is in no goal, so nothing
+# is working on it.
+DEPENDENCIES = ("open", "stuck", "unheld")
 # Whether a failure was the system's or the task's (failures.kind).
 FAILURES = ("transient", "permanent")
 # The goals under which a task the supervisor retries would run: a task of any other goal would only be held.
@@ -68,6 +72,9 @@ class Facts:
     retry_due: bool = False
     # Whether the task failed longer ago than the supervisor retries by itself: an old failure is a person's.
     failed_long_ago: bool = False
+    # For a blocked task: where the issues it waits on stand, and which of them is in the way.
+    dependency: str = "open"
+    blocker: str = ""
 
 
 @dataclass(frozen=True)
@@ -217,6 +224,20 @@ def _blocked(facts: Facts) -> Decision:
         ended = "was canceled" if facts.goal == "canceled" else "was completed"
         return Decision(
             "supervisor", "goal_ended", f"its goal {ended}, so it will never start", action="cancel_for_goal"
+        )
+    if facts.goal in SWEPT and facts.dependency == "stuck":
+        return Decision(
+            "operator",
+            "blocked_on_stuck",
+            f"it waits on {facts.blocker or 'an issue'}, whose task is not moving and waits on an operator",
+            ask="Open that issue's task and retry or fix it: this one is queued once that issue closes.",
+        )
+    if facts.goal in SWEPT and facts.dependency == "unheld":
+        return Decision(
+            "operator",
+            "blocked_on_unheld",
+            f"it waits on {facts.blocker or 'an issue'}, which no goal holds, so nothing is working on it",
+            ask="Add that issue to a goal, or close it if it is done: this one is queued once it closes.",
         )
     if facts.goal in SWEPT:
         return Decision(
