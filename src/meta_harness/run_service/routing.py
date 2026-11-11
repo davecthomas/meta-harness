@@ -148,6 +148,13 @@ THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "max"}
 SANDBOX_SERVICES = ("postgres",)
 
 
+def skills() -> dict[str, dict[str, Any]]:
+    """The skills a harness profile may name: the active configuration version, or config/skills/."""
+    from meta_harness.config import store
+
+    return dict(store.current_document("skills").get("skills") or {})
+
+
 def profile_errors(name: str, profile: dict[str, Any]) -> list[str]:
     """What is wrong with one harness profile, as the harness server would refuse it at its first run."""
     errors = []
