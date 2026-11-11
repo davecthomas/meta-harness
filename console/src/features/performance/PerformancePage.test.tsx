@@ -97,3 +97,14 @@ test("a regular user is told they see their own model costs, with no sources and
   const options = [...(screen.getByLabelText("Break down by") as HTMLSelectElement).options].map((o) => o.value);
   expect(options).toEqual(["kind", "goal", "repo", "model"]);
 });
+
+test("the Google Cloud service breakdown asks for the cloud source by the service billed", async () => {
+  const cloud = { ...COSTS, group_by: "kind", series: [{ key: "Compute Engine", usd: [1, 1.2, 1.1], total: 3.3 }, { key: "Cloud Run", usd: [0.1, 0.1, 0.1], total: 0.3 }] };
+  const asked = show(cloud, "/performance?by=service");
+  const breakdown = await screen.findByTestId("cost-breakdown");
+  expect(asked[0]).toContain("group_by=kind");
+  expect(asked[0]).toContain("source=cloud");
+  expect(breakdown.textContent).toContain("Compute Engine$3.30");
+  expect(screen.getByTestId("cost-legend").textContent).toContain("Cloud Run");
+  expect(screen.queryByLabelText("Source")).toBeNull();
+});

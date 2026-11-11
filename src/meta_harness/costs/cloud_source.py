@@ -30,8 +30,17 @@ SETTING = "MH_BILLING_EXPORT_TABLE"
 TABLE = re.compile(r"^[A-Za-z0-9_\-]+\.[A-Za-z0-9_]+(\.[A-Za-z0-9_\-]+)?$")
 # The standard usage cost export's table; the detailed export's is gcp_billing_export_resource_v1_<account>.
 EXPORT_PREFIX = "gcp_billing_export_v1_"
-# How far back a harvest reads again: Google restates a day's cost for a while after it.
+# How far back a harvest reads again: Google restates a day's cost for a while after it. A harvest also reads
+# from the first of the previous month, which is how far back Google fills a newly turned-on export.
 DAYS = 35
+
+
+def first_day(today: date) -> date:
+    """The first day a harvest reads: DAYS ago, or the first of the previous month when that is earlier."""
+    previous_month = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
+    return min(today - timedelta(days=DAYS), previous_month)
+
+
 METADATA_TOKEN = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
 QUERY_URL = "https://bigquery.googleapis.com/bigquery/v2/projects/{project}/queries"
 TABLES_URL = "https://bigquery.googleapis.com/bigquery/v2/projects/{project}/datasets/{dataset}/tables"
@@ -65,7 +74,7 @@ def harvest(conn: psycopg.Connection, today: date, transport: httpx.BaseTranspor
     name = table()
     if name is None:
         return 0
-    first = today - timedelta(days=DAYS)
+    first = first_day(today)
     project = name.split(".", 1)[0]
     with httpx.Client(timeout=60, transport=transport) as http:
         headers = {"Authorization": f"Bearer {_token(http)}"}

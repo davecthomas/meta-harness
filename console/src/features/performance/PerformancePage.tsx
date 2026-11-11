@@ -19,6 +19,8 @@ const RANGES = [
 const BUCKETS = [{ value: "day", label: "Daily" }, { value: "week", label: "Weekly" }, { value: "month", label: "Monthly" }];
 const BREAKDOWNS = [
   { value: "source", label: "Cost source" },
+  // The Google Cloud bill by the service billed: Compute Engine, Cloud Run, Logging and the rest.
+  { value: "service", label: "Google Cloud service" },
   { value: "kind", label: "Kind of work" },
   { value: "goal", label: "Goal" },
   { value: "repo", label: "Repository" },
@@ -95,7 +97,9 @@ export function PerformancePage() {
   const asked = JSON.stringify({ ...span, bucket, by, filters });
   useEffect(() => {
     let live = true;
-    api.costs({ ...span, bucket, group_by: by, ...filters }).then(
+    // A cloud cost's item is the service billed, as a model cost's is the kind of work: the cloud source by item.
+    const asked = by === "service" ? { group_by: "kind", ...filters, source: "cloud" } : { group_by: by, ...filters };
+    api.costs({ ...span, bucket, ...asked }).then(
       (found) => live && (setCosts(found), setError(null)),
       (err) => live && setError(err instanceof Error ? err.message : String(err)),
     );
@@ -106,7 +110,8 @@ export function PerformancePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asked]);
 
-  const label = (key: string) => (costs ? costLabel(key, costs) : key);
+  // Under the cloud breakdown a key is a service's own name, shown as it is.
+  const label = (key: string) => (costs ? (by === "service" ? key || NAMES[""] : costLabel(key, costs)) : key);
   // A series' color is its place among every value its dimension takes, so filtering never repaints the rest.
   const order = costs ? (costs.choices[by]?.length ? costs.choices[by] : costs.series.map((s) => s.key).sort()) : [];
   const own = costs?.scope === "own";
@@ -133,11 +138,11 @@ export function PerformancePage() {
               </>
             )}
             <SegmentedControl aria-label="Bucket" value={bucket} onChange={(v) => set({ bucket: v })} data={BUCKETS} />
-            <NativeSelect label="Break down by" data={own ? BREAKDOWNS.filter((b) => !["source", "operator"].includes(b.value)) : BREAKDOWNS} value={by} onChange={(e) => set({ by: e.currentTarget.value })} />
+            <NativeSelect label="Break down by" data={own ? BREAKDOWNS.filter((b) => !["source", "service", "operator"].includes(b.value)) : BREAKDOWNS} value={by} onChange={(e) => set({ by: e.currentTarget.value })} />
           </Group>
           {costs && (
             <Group gap="md" align="flex-end" wrap="wrap">
-              {FILTERS.filter((f) => !(own && f.name === "source") && (costs.choices[f.name]?.length ?? 0) > 1).map((f) => (
+              {FILTERS.filter((f) => !((own || by === "service") && f.name === "source") && (costs.choices[f.name]?.length ?? 0) > 1).map((f) => (
                 <MultiSelect
                   key={f.name}
                   label={f.label}

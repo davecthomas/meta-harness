@@ -165,7 +165,7 @@ def test_cloud_cost_is_read_from_the_billing_export_and_restated_days_replace_wh
         assert cloud_source.harvest(conn, date(2026, 11, 11), httpx.MockTransport(bigquery)) == 0, "no export named"
         monkeypatch.setenv(cloud_source.SETTING, "billing-proj.billing.gcp_billing_export_v1_ABC")
         assert cloud_source.harvest(conn, date(2026, 11, 11), httpx.MockTransport(bigquery)) == 2
-        assert "billing-proj.billing.gcp_billing_export_v1_ABC" in asked[0] and "2026-10-07" in asked[0]
+        assert "billing-proj.billing.gcp_billing_export_v1_ABC" in asked[0] and "2026-10-01" in asked[0]
         bill[0] = ("2026-11-10", "Compute Engine", "4.35")
         cloud_source.harvest(conn, date(2026, 11, 11), httpx.MockTransport(bigquery))
         assert store.total(conn, date(2026, 11, 1), date(2026, 11, 30), {"source": ["cloud"]}) == Decimal("4.65")
@@ -266,3 +266,9 @@ def test_the_harvest_setting_is_checked_at_startup(monkeypatch):
     monkeypatch.setenv(costs_api.HARVEST_SETTING, "0")
     assert costs_api.harvest_seconds() == 0
     assert uuid.uuid4()
+
+
+def test_a_harvest_reads_from_the_first_of_the_previous_month_where_google_fills_a_new_export_from():
+    assert cloud_source.first_day(date(2026, 11, 11)) == date(2026, 10, 1)
+    assert cloud_source.first_day(date(2026, 3, 31)) == date(2026, 2, 1)
+    assert cloud_source.first_day(date(2026, 1, 5)) == date(2025, 12, 1)
