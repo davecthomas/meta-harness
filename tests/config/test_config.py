@@ -359,3 +359,27 @@ def test_the_scheduler_reads_max_parallel_from_the_active_version(client, monkey
     monkeypatch.setenv("MH_MAX_SANDBOXES", "lots")
     with pytest.raises(kinds.ConfigError, match="MH_MAX_SANDBOXES must be a positive whole number"):
         store.max_parallel()
+
+
+def test_the_budget_policy_blocks_unless_it_is_set_to_track(monkeypatch):
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
+    policy = {"max_parallel": 4, "review": {"reviewers": ["harness:pi-review/x:y"], "max_rounds": 3}}
+    for ok in ("block", "track"):
+        assert kinds.check_task_policy({**policy, "budget_policy": ok}) == []
+    [reason] = kinds.check_task_policy({**policy, "budget_policy": "off"})
+    assert reason.startswith("budget_policy must be one of block, track")
+
+    from meta_harness.config import store
+
+    document = dict(policy)
+    monkeypatch.setattr(store, "current_document", lambda kind: document)
+    assert store.budget_policy(fresh=True) == "block", "left out, budgets stop work as each says"
+    document["budget_policy"] = "track"
+    assert store.budget_policy() == "block", "a save reaches a service within a few seconds, not at once"
+    assert store.budget_policy(fresh=True) == "track"
+
+    def unreadable(kind):
+        raise RuntimeError("no database")
+
+    monkeypatch.setattr(store, "current_document", unreadable)
+    assert store.budget_policy(fresh=True) == "block", "a policy that cannot be read unbounds nothing"

@@ -180,6 +180,8 @@ async def test_a_block_goal_is_held_at_its_blocking_line_and_a_warn_goal_never(r
     goals.goals["g-over"] = {"status": "active", "max_usd": "1.00", "budget_mode": "block", "budget_block_at": "1.10"}
     goals.goals["g-line"] = {"status": "active", "max_usd": "1.00", "budget_mode": "block", "budget_block_at": "1.05"}
     goals.goals["g-warn"] = {"status": "active", "max_usd": "1.00", "budget_mode": "warn", "budget_block_at": None}
+    # Its own mode blocks, but the budget policy only tracks spend: the planner serves it no blocking line.
+    goals.goals["g-track"] = {"status": "active", "max_usd": "1.00", "budget_mode": "block", "budget_block_at": None}
     spent = {}
     waiting = {}
     for goal_id in goals.goals:
@@ -190,7 +192,7 @@ async def test_a_block_goal_is_held_at_its_blocking_line_and_a_warn_goal_never(r
 
     result = await admission.pass_once()
 
-    assert set(result.started) == {waiting["g-over"], waiting["g-warn"]}
+    assert set(result.started) == {waiting["g-over"], waiting["g-warn"], waiting["g-track"]}
     assert "spent $1.05 of its $1.00 budget, and stops at $1.05" in result.held[waiting["g-line"]]
 
 

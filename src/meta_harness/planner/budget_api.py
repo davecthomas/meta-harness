@@ -68,7 +68,8 @@ async def check(goal: dict, tasks: Any, events: Any) -> None:
     if goal.get("max_usd") is not None:
         found = await asyncio.to_thread(figures, goal, tasks, events)
         spent, max_usd = found["spent"], Decimal(goal["max_usd"])
-        line = budget.block_at(max_usd, goal["budget_mode"], goal["budget_overage_percent"])
+        mode = budget.mode_in_effect(goal)
+        line = budget.block_at(max_usd, mode, goal["budget_overage_percent"])
         reached = None
         if spent >= max_usd and Decimal(goal["budget_reached_usd"] or -1) != max_usd:
             # Recorded before it is saved as recorded: a failed emit is tried again at the next sweep.
@@ -78,7 +79,7 @@ async def check(goal: dict, tasks: Any, events: Any) -> None:
                     "goal_id": goal["id"],
                     "spent_usd": str(spent),
                     "max_usd": str(max_usd),
-                    "mode": goal["budget_mode"],
+                    "mode": mode,
                     "block_at": str(line) if line is not None else None,
                 },
                 actor="planner",
@@ -148,6 +149,10 @@ def register(
         goal = await asyncio.to_thread(load, goal_id)
         if goal["max_usd"] is None:
             raise HTTPException(status_code=409, detail="the goal has no budget to raise")
+        if goal.get("budget_policy") == "track":
+            raise HTTPException(
+                status_code=409, detail="the budget policy only tracks spend, so no goal is stopped: nothing to resume"
+            )
         if goal["budget_mode"] == "warn":
             raise HTTPException(
                 status_code=409, detail="the goal only warns at its budget, so it never stopped: nothing to resume"

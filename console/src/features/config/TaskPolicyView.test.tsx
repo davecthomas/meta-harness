@@ -47,3 +47,15 @@ test("the parallel limit edits in place, refused above the VM's ceiling and stag
   await waitFor(() => expect(screen.getByText("staged")).toBeTruthy());
   expect(screen.getByText("changed")).toBeTruthy();
 });
+
+test("the budget policy is a switch: stop at budgets, or track spend only", async () => {
+  render(
+    <MantineProvider theme={theme}>
+      <Staged />
+    </MantineProvider>,
+  );
+  expect(screen.getByText("A goal's budget and a task's spend limit stop work, as each says.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("switch", { name: /Budget policy|Stop at budgets/ }));
+  expect(await screen.findByText(/No goal or task is held, refused or ended/)).toBeTruthy();
+  expect(screen.getByText("Track spend only")).toBeTruthy();
+});

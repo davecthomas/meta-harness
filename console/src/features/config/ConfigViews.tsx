@@ -75,6 +75,26 @@ export function TaskPolicyView({ policy, maxSandboxes, staging }: { policy: Reco
           </Stack>,
         ],
         [
+          "Budget policy",
+          <Stack gap={2}>
+            <InlineField
+              kind="switch"
+              label="Budget policy"
+              value={doc.budget_policy !== "track"}
+              switchLabel={doc.budget_policy !== "track" ? "Stop at budgets and spend limits" : "Track spend only"}
+              changed={changed(s, ["budget_policy"])}
+              reasons={s.reasons("budget_policy")}
+              readOnly={s.readOnly}
+              onCommit={(stop) => s.stage(["budget_policy"], stop ? "block" : "track")}
+            />
+            <Text size="xs" c="dimmed">
+              {doc.budget_policy !== "track"
+                ? "A goal's budget and a task's spend limit stop work, as each says."
+                : "No goal or task is held, refused or ended for its budget or spend limit. Spend is still recorded and shown against them. A task takes this when it starts; one already running keeps its limit."}
+            </Text>
+          </Stack>,
+        ],
+        [
           "Fix rounds",
           <InlineField
             kind="number"

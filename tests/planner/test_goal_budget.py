@@ -258,3 +258,32 @@ def test_resume_takes_an_amount_and_refuses_one_that_leaves_the_goal_stopped(wor
     no_budget = _goal(client, tracker, max_usd=None)
     refused = client.post(f"/v1/goals/{no_budget['id']}/resume-budget", headers=OPERATOR)
     assert refused.status_code == 409 and "no budget" in refused.json()["detail"]
+
+
+def test_under_the_track_budget_policy_no_goal_stops_and_spend_is_still_recorded(world, monkeypatch):
+    from meta_harness.config import store as config_store
+
+    client, events, tracker, tasks = world
+    goal = _goal(client, tracker)
+    _spend(events, tasks, goal, "12")
+    _sweep(client, goal)
+    assert _read(client, goal)["status"] == "budget_exhausted"
+
+    monkeypatch.setattr(config_store, "budget_policy", lambda fresh=False: "track")
+    tracked = _read(client, goal)
+    # Its own mode is still block; the policy above it is what lets it go on.
+    assert (tracked["budget_policy"], tracked["budget_mode"]) == ("track", "block")
+    assert tracked["budget_block_at"] is None and tracked["budget_state"] == "over"
+    assert tracked["budget_resume_to"] is None
+    refused = client.post(f"/v1/goals/{goal['id']}/resume-budget", headers=OPERATOR)
+    assert refused.status_code == 409 and "only tracks spend" in refused.json()["detail"]
+
+    _spend(events, tasks, goal, "30")
+    _sweep(client, goal)
+    after = _read(client, goal)
+    assert after["status"] == "active", "its next sweep makes a goal the policy no longer stops active"
+    assert Decimal(after["spent_usd"]) == Decimal("42"), "the spend is still added up"
+
+    monkeypatch.setattr(config_store, "budget_policy", lambda fresh=False: "block")
+    _sweep(client, goal)
+    assert _read(client, goal)["status"] == "budget_exhausted", "and blocking again stops it again"
