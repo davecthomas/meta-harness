@@ -6,6 +6,10 @@ A goal with a budget (`max_usd`) says what the budget does once its runs have sp
   of it (10 by default). Between the budget and that line the goal runs on, over budget.
 - `warn`: the goal keeps going. Reaching the budget is recorded and shown, and nothing is held or refused.
 
+Above every goal is the deployment's budget policy (the task policy's `budget_policy`). Under `track`, no
+goal's budget stops anything, whatever its own mode: each behaves as `warn`, and spend is still recorded and
+shown against it.
+
 The scheduler's admission and the run service's budget hold read the blocking line from the goal the planner
 serves (`budget_block_at`), so the line is worked out in one place. Nothing here reads or writes anything:
 budget_api.py does that.
@@ -44,15 +48,22 @@ def state(max_usd: Any, mode: str, overage_percent: int, spent: Any, status: str
     return "over" if spent >= Decimal(str(max_usd)) else "ok"
 
 
-def view(goal: dict) -> dict:
-    """The goal with budget_block_at and budget_state, as the API serves it. budget_resume_to shows only for a
-    goal that is over or blocked."""
-    line = block_at(goal["max_usd"], goal["budget_mode"], goal["budget_overage_percent"])
+def mode_in_effect(goal: dict) -> str:
+    """What the goal's budget does now: its own mode, or warn while the deployment's budget policy is track."""
+    return "warn" if goal.get("budget_policy") == "track" else goal["budget_mode"]
+
+
+def view(goal: dict, policy: str = "block") -> dict:
+    """The goal with the deployment's budget_policy, budget_block_at and budget_state, as the API serves it.
+    budget_resume_to shows only for a goal that is over or blocked."""
+    goal["budget_policy"] = policy
+    mode = mode_in_effect(goal)
+    line = block_at(goal["max_usd"], mode, goal["budget_overage_percent"])
     goal["budget_block_at"] = str(line) if line is not None else None
-    goal["budget_state"] = state(
-        goal["max_usd"], goal["budget_mode"], goal["budget_overage_percent"], goal["spent_usd"], goal["status"]
-    )
-    stopped = goal["budget_state"] == "blocked" or (goal["budget_state"] == "over" and goal["budget_mode"] == "block")
+    # A goal the policy no longer stops reads as over, not blocked, until its next sweep makes it active.
+    status = goal["status"] if mode == "block" else "active"
+    goal["budget_state"] = state(goal["max_usd"], mode, goal["budget_overage_percent"], goal["spent_usd"], status)
+    stopped = goal["budget_state"] == "blocked" or (goal["budget_state"] == "over" and mode == "block")
     if not stopped:
         goal["budget_resume_to"] = None
     return goal

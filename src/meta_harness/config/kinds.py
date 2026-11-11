@@ -94,6 +94,11 @@ def sandbox_ceiling() -> int | None:
     return int(raw)
 
 
+# What a budget does across the deployment. block: a goal's budget and a task's spend limit stop work, as each
+# says. track: nothing is held, refused or ended for either; spend is still recorded and shown against them.
+BUDGET_POLICIES = ("block", "track")
+
+
 def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]] | None = None) -> list[str]:
     """Problems with a task policy. Reviewer pairs are checked against the profiles when others holds them."""
     reasons = []
@@ -120,6 +125,12 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
     hold = review.get("hold_minutes")
     if hold is not None and (isinstance(hold, bool) or not isinstance(hold, int) or hold < 0):
         reasons.append("review.hold_minutes must be a whole number of minutes, 0 or more (0: fix runs start at once)")
+    budget = document.get("budget_policy")
+    if budget is not None and budget not in BUDGET_POLICIES:
+        reasons.append(
+            f"budget_policy must be one of {', '.join(BUDGET_POLICIES)}: block stops work at a budget or spend "
+            "limit, and track only records the spend against it"
+        )
     wait = document.get("merge_wait_minutes")
     if wait is not None and (isinstance(wait, bool) or not isinstance(wait, int) or wait < 0):
         reasons.append("merge_wait_minutes must be a whole number of minutes, 0 or more (0: merge without waiting)")
@@ -231,7 +242,8 @@ KINDS: dict[str, Kind] = {
     "task_policy": Kind(
         "task_policy",
         "Task policy",
-        "How many tasks run at once across every goal, and the review loop's reviewer pairs and fix rounds.",
+        "How many tasks run at once across every goal, whether budgets stop work or only track spend, and the "
+        "review loop's reviewer pairs and fix rounds.",
         seed_task_policy,
         check_task_policy,
     ),

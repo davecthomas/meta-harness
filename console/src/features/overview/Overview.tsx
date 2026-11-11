@@ -4,7 +4,7 @@ import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Table, Te
 import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons-react";
 import { goalTitle, api, goalStatus, type Activity, type Goal, type KillSwitch, type MhEvent } from "../../api";
 import { ActivityMap } from "../activity/ActivityPage";
-import { BudgetMark, ResumeBudget, budgetStanding, budgetWords } from "../goals/budget";
+import { BudgetMark, ResumeBudget, budgetStanding, budgetStops, budgetWords } from "../goals/budget";
 import { useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, TitleLink, when } from "../../components/ui";
 import { moneyText } from "../../money";
@@ -57,7 +57,7 @@ export function Overview() {
               <Table.Td>
                 <Group gap="sm" wrap="nowrap">
                   <Text size="sm">The goal has spent ${Number(g.spent_usd ?? 0).toFixed(2)} of ${Number(g.max_usd).toFixed(2)}: {budgetWords(g)}</Text>
-                  {g.budget_mode !== "warn" && <ResumeBudget goalId={g.id} goal={g} size="xs" variant="light" onResumed={() => setResumed((n) => n + 1)} />}
+                  {budgetStops(g) && <ResumeBudget goalId={g.id} goal={g} size="xs" variant="light" onResumed={() => setResumed((n) => n + 1)} />}
                 </Group>
               </Table.Td>
             </Table.Tr>

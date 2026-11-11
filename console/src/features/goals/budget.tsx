@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Alert, Badge, Button, Group, Modal, NumberInput, Stack, Text } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, Modal, NumberInput, Stack, Text } from "@mantine/core";
+import { Link } from "react-router-dom";
 import { IconCoin, IconPlayerPlay } from "@tabler/icons-react";
 import { api, type Goal } from "../../api";
 import type { BudgetResume } from "./api";
@@ -31,6 +32,10 @@ export function budgetWords(goal: Budgeted, spent?: number): string | null {
   if (standing === "blocked") return "stopped by its budget";
   return goal.budget_block_at ? `over budget, stops at ${usd(goal.budget_block_at)}` : "over budget, and it keeps going";
 }
+
+// Whether the goal's budget can stop it: it has one, its own mode stops, and the deployment's budget policy does.
+export const budgetStops = (goal: Pick<Goal, "max_usd" | "budget_mode" | "budget_policy">) =>
+  Boolean(goal.max_usd) && goal.budget_mode !== "warn" && goal.budget_policy !== "track";
 
 export const budgetColor = (standing: Standing) => (standing === "blocked" ? "red" : standing === "over" ? "orange" : "blue");
 
@@ -106,6 +111,11 @@ export function BudgetRow(props: FieldProps) {
           <Text size="sm" c="dimmed">·</Text>
           {part("Overage", <OverageEdit {...props} />)}
         </>
+      )}
+      {goal.budget_policy === "track" && (
+        <Text size="xs" c="dimmed" w="100%">
+          The budget policy only tracks spend, so this budget stops nothing for now. <Anchor component={Link} to="/config?kind=task_policy" size="xs">Task policy</Anchor>
+        </Text>
       )}
     </Group>
   );
@@ -254,7 +264,7 @@ export function BudgetAlert({ goal, spent, onResumed }: { goal: Goal; spent?: nu
   const standing = budgetStanding(goal, spent);
   if (standing === "ok") return null;
   const shown = usd(spent ?? goal.spent_usd);
-  const warns = goal.budget_mode === "warn";
+  const warns = !budgetStops(goal);
   return (
     <Alert
       color={budgetColor(standing)}
@@ -269,7 +279,9 @@ export function BudgetAlert({ goal, spent, onResumed }: { goal: Goal; spent?: nu
           {shown} spent of {usd(goal.max_usd)}: {budgetWords(goal, spent)}.{" "}
           {standing === "blocked"
             ? "None of its tasks starts, and its running tasks wait before their next run."
-            : warns
+            : goal.budget_policy === "track"
+              ? "The budget policy only tracks spend, so nothing is held."
+              : warns
               ? "Its budget only warns, so nothing is held."
               : "It runs on until it reaches that."}
         </Text>

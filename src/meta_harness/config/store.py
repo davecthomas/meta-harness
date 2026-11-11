@@ -6,6 +6,7 @@ anything reads it, so a fresh deployment starts from what it shipped with.
 
 import json
 import os
+import time
 from typing import Any
 
 import psycopg
@@ -239,6 +240,27 @@ def current_document(kind: str) -> dict[str, Any]:
         return active_document(kind)[1]
     _known(kind)
     return KINDS[kind].seed()
+
+
+# How long budget_policy answers from its last read: the planner asks once for every goal it serves.
+BUDGET_POLICY_SECONDS = 5.0
+_budget_policy: tuple[float, str] | None = None
+
+
+def budget_policy(fresh: bool = False) -> str:
+    """The task policy's budget_policy: `block`, the default, or `track`, under which no budget or spend limit
+    stops work and spend is only recorded. A policy that cannot be read answers block: the safe one. A save
+    reaches every service within BUDGET_POLICY_SECONDS."""
+    global _budget_policy
+    now = time.monotonic()
+    if not fresh and _budget_policy is not None and now - _budget_policy[0] < BUDGET_POLICY_SECONDS:
+        return _budget_policy[1]
+    try:
+        policy = current_document("task_policy").get("budget_policy") or "block"
+    except Exception:  # noqa: BLE001 - an unreadable policy must not unbound anything
+        policy = "block"
+    _budget_policy = (now, policy if policy == "track" else "block")
+    return _budget_policy[1]
 
 
 def max_parallel() -> int:

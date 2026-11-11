@@ -7,7 +7,8 @@ patch. When the task or the goal has too little left for the run, the task waits
 `waiting_on: budget`, until an operator raises the limit or ends it.
 
 What a goal has left is measured to its blocking line, its budget plus its allowed overage, which the planner
-works out and serves as `budget_block_at`. A goal whose budget only warns caps no run and holds none.
+works out and serves as `budget_block_at`. A goal whose budget only warns caps no run and holds none, and
+neither does any goal while the deployment's budget policy is `track`.
 """
 
 import asyncio
@@ -59,7 +60,8 @@ def _goal_budget(goal_id: str) -> GoalBudget:
 
     key = os.environ.get("MH_SERVICE_KEY", "")
     goal = GoalsClient(api_key=key).get(goal_id)
-    if goal.get("max_usd") is None or goal.get("budget_mode") == "warn":
+    # No blocking line: the goal only warns at its budget, or the budget policy only tracks spend.
+    if goal.get("max_usd") is None or ("budget_block_at" in goal and goal["budget_block_at"] is None):
         return GoalBudget()
     events = EventClient(source="run_service")
     tasks = _tasks().list(None, goal_id, 1000)

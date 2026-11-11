@@ -25,6 +25,7 @@ from meta_harness import db
 from meta_harness.run_service import events
 from meta_harness.run_service.shared import (
     DEFAULT_SPEND_LIMIT_USD,
+    UNBOUNDED_SPEND_LIMIT_USD,
     AttemptRecord,
     PublishedRecord,
     RouteRecord,
@@ -52,6 +53,16 @@ def _task_api_error(err: TaskApiError) -> ApplicationError:
     return ApplicationError(str(err), type="TaskApiError", non_retryable=err.status in (401, 403, 404, 409, 422))
 
 
+def _spend_limit(task: dict) -> str:
+    """The task's spend limit as its workflow starts: its own, else the default; under the budget policy
+    `track`, one no run reaches, so the task is never held or ended for spend."""
+    from meta_harness.config import store as config_store
+
+    if config_store.budget_policy(fresh=True) == "track":
+        return UNBOUNDED_SPEND_LIMIT_USD
+    return task["max_usd"] or DEFAULT_SPEND_LIMIT_USD
+
+
 @activity.defn
 async def load_task(task_id: str) -> TaskSpec:
     try:
@@ -69,7 +80,7 @@ async def load_task(task_id: str) -> TaskSpec:
         pin=task["pin"] or "",
         floor=FLOOR_FOR_COMPLEXITY.get(task["complexity"] or "", ""),
         ceiling=task["max_tier"] or "",
-        spend_limit_usd=task["max_usd"] or DEFAULT_SPEND_LIMIT_USD,
+        spend_limit_usd=_spend_limit(task),
         closes=f"{match['repo']}#{match['number']}" if match else "",
         goal_id=task.get("goal_id") or "",
         attempts=int(task.get("attempts") or 1),

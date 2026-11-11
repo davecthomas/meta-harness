@@ -8,7 +8,7 @@ import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { GoalFailures } from "./GoalFailures";
 import { GoalPlan } from "./GoalPlan";
 import { GoalSpend } from "./GoalSpend";
-import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding } from "./budget";
+import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
 import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
@@ -198,7 +198,7 @@ export function GoalPage() {
               <Button leftSection={<IconPlayerPlay size={16} />} onClick={() => act(() => api.goalAction(goal.id, "resume"))}>Resume</Button>
             )}
             {/* Stopped by its budget, or past it and heading there: Resume raises the budget. */}
-            {goal.budget_mode !== "warn" && ["active", "budget_exhausted"].includes(goal.status) && budgetStanding(goal, spentNow) !== "ok" && (
+            {budgetStops(goal) && ["active", "budget_exhausted"].includes(goal.status) && budgetStanding(goal, spentNow) !== "ok" && (
               <ResumeBudget goalId={goal.id} goal={goal} onResumed={() => void act(async () => undefined)} />
             )}
             {["active", "paused", "stalled"].includes(goal.status) && (
