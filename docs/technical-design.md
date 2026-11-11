@@ -944,6 +944,23 @@ leaves the pull request open, ends the task `review_unresolved`, and a
 meta-harness alert rule fires. A pull request closed on the code host ends
 the loop and the task.
 
+An operator can dismiss a finding before its fix run starts (#207, behind
+the `review-hold` patch): the first part of the operator review below. When
+the task policy's `review.hold_minutes` is above 0, a review that asks for
+changes waits that long before its fix run. The task stays `running`, marked
+`waiting_on: review`, its status reason saying how many findings wait and
+for how long. The operator dismisses any finding that is wrong, with why
+(`POST /v1/tasks/{id}/reviews/{round}/findings/{n}/dismiss`, `n` from 1),
+and may end the wait at once (`.../reviews/{round}/proceed`); each reaches
+the workflow as an operator message. The fix run is asked only for the
+findings not dismissed, and the next review is given those as the round
+before's. With every finding dismissed, the round counts as clean and goes
+on to the merge. The dismissals are posted as a comment on the pull request,
+and recorded as `finding_dismissed`; the hold and the word to go on are
+`review_hold` and `review_proceeded`. A review no one answers goes to its
+fix run with every finding when the wait ends. With `hold_minutes` 0, as it
+is unless an operator sets it, findings go straight to the fix run.
+
 A task short of budget holds and asks before it ends (#188, behind the
 `budget-hold` patch). Before every run, the first included, the workflow
 works out what the run may spend: what the task has left of its `max_usd`,
@@ -1738,7 +1755,8 @@ credential.
 | POST | `/v1/tasks/{id}/attempts` | Task service | Run a task that has not started as 2 to 4 attempts at once | built |
 | GET | `/v1/pulls/{task_id}/attempts` | Meta-harness run service, served from the planner process | A task's attempts side by side: candidate, how each ended, cost, and the changes in each one's workspace, and whether the task waits for a pick | built |
 | POST | `/v1/tasks/{id}/messages` | Task service | An operator's message to a running task (`when`: `next_turn`, `after_stop`), or `stop` after the current turn, recorded as `operator_message`. The scheduler hands each to the task's RunTask workflow as an `operator_message` signal, and the workflow's `deliver_message` activity gives it to the harness server of the run in progress (behind the `operator-messages` patch) | built |
-| GET | `/v1/tasks/{id}/reviews` | Task service | The task's review rounds, oldest first: verdict, reviewer, reviewed commit, summary, findings and review URL, from the `review_submitted` and `pull_request_reviewed` events, each with what came next, read from the events before the next round: its own fix run, the merge, another review when the head changed before it could merge, waiting, or the loop's end. The Task page's Reviews tab | built |
+| GET | `/v1/tasks/{id}/reviews` | Task service | The task's review rounds, oldest first: verdict, reviewer, reviewed commit, summary, findings (each numbered from 1, with who dismissed it and why when an operator did) and review URL, from the `review_submitted`, `pull_request_reviewed` and `finding_dismissed` events, each with what came next, read from the events before the next round: its own fix run, the merge, another review when the head changed before it could merge, waiting, or the loop's end. The Task page's Reviews tab | built |
+| POST | `/v1/tasks/{id}/reviews/{round}/findings/{n}/dismiss`, `/v1/tasks/{id}/reviews/{round}/proceed` | Task service | An operator's word on a review its task holds for them (`waiting_on: review`): dismiss finding `n` (from 1) with a `reason`, or end the wait now. 409 unless the task holds a review. The scheduler hands each to the task's workflow | built |
 | POST | `/v1/tasks/{id}/budget` | Task service | An operator's answer to a running task held for budget (`waiting_on: budget`): `{"action": "raise", "max_usd": ...}` saves the task's new spend limit (above the old one; left out, the task only looks at its budget again) and `{"action": "end"}` ends it. The scheduler hands the answer to the task's workflow. `GET /v1/tasks?waiting=true` lists the tasks waiting on an operator | built |
 | GET | `/v1/tasks/{id}/spend` | Task service | Where the task's money went: each of its runs, oldest first, with its kind (the task's own run, review or fix), candidate, turns, model calls, input, cached-input and output tokens, cost, and how it ended, from its `attempt_finished` and `run_finished` events, and their totals in all and by kind against the task's `max_usd`. The Task page's Spend tab | built |
 | GET | `/v1/goals/{id}/spend` | Planner | Where the goal's money went: each of its tasks with what its runs spent in all and by kind of run, and its runs and turns, dearest first, and the goal's total and its split by kind against its budget. Opened from the Goal page's spend line | built |
@@ -2319,6 +2337,12 @@ the terminal, each opening to the full text. A run started before prompts
 were recorded shows none. The page reads every `run_prompt` on the task as
 it opens, besides its newest events, so an older run's prompt, or the one a
 `?run=` link opens on, is on the timeline before older events load.
+While a task holds its newest review for an operator, the Reviews tab says
+so above the rounds, each finding of that round has a Dismiss button that
+asks why, and Send to fix now ends the wait. A dismissed finding shows
+struck through, with who dismissed it and why, on any round. Such tasks are
+in the Overview's Needs you list, marked "review waits". The Task policy tab
+has the wait as "Wait before a fix run".
 The Task page's Spend tab (#198) lists each run with its kind, model, turns,
 tokens in, the share of them read from the cache, tokens out and cost, marks
 the dearest run, links each to its output, and heads them with the total

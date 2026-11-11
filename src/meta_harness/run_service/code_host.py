@@ -483,6 +483,12 @@ async def comment_on_lines(
     return str(comment.get("html_url", ""))
 
 
+async def comment(repo: str, number: int, body: str) -> str:
+    """Posts a comment on the pull request's conversation, and returns its URL."""
+    posted = await _github(repo, REVIEW, "POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})
+    return str((posted or {}).get("html_url", ""))
+
+
 MERGE = {"contents": "write", "pull_requests": "write"}
 
 

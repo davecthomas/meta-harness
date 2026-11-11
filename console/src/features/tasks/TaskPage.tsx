@@ -133,7 +133,9 @@ export function TaskPage() {
     newest.current = e.position;
     setFacts((f) => fold(f, e));
     // A hold for budget, or its answer, changes what the task waits on: read the task again.
-    if (e.event_type === "budget_hold" || e.event_type === "budget_decision") void api.task(taskId).then(setTask, () => undefined);
+    if (["budget_hold", "budget_decision", "review_hold", "review_proceeded"].includes(e.event_type)) void api.task(taskId).then(setTask, () => undefined);
+    // A dismissal shows on its finding: read the rounds again.
+    if (e.event_type === "finding_dismissed" || e.event_type === "review_hold") void api.reviews(taskId).then(setRounds, () => undefined);
     if (e.event_type === "task_status_changed") setTask((t) => (t ? { ...t, status: e.payload.to, status_reason: e.payload.reason ?? null } : t));
     if (e.event_type === "pull_request_opened") setTask((t) => (t ? { ...t, pr_url: e.payload.pr_url } : t));
     // A prompt read with every run's prompts may come again on the stream.
@@ -227,7 +229,16 @@ export function TaskPage() {
         ]}
       />
       {tab === "reviews" && task.pr_url ? (
-        rounds ? <Reviews task={task} rounds={rounds} /> : <Center h={120}><Loader /></Center>
+        rounds ? (
+          <Reviews
+            task={{ ...task, status }}
+            rounds={rounds}
+            onAnswered={() => {
+              void api.task(task.id).then(setTask, () => undefined);
+              void api.reviews(task.id).then(setRounds, () => undefined);
+            }}
+          />
+        ) : <Center h={120}><Loader /></Center>
       ) : tab === "spend" ? (
         <SpendReport taskId={task.id} status={status} />
       ) : tab === "attempts" ? (
