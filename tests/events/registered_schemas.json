@@ -1055,5 +1055,56 @@
     "properties": {},
     "required": [],
     "type": "object"
+  },
+  "user_deprovisioned v1": {
+    "additionalProperties": true,
+    "properties": {
+      "email": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "email"
+    ],
+    "type": "object"
+  },
+  "user_invited v1": {
+    "additionalProperties": true,
+    "properties": {
+      "email": {
+        "type": "string"
+      },
+      "role": {
+        "enum": [
+          "admin",
+          "user"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "email",
+      "role"
+    ],
+    "type": "object"
+  },
+  "user_role_changed v1": {
+    "additionalProperties": true,
+    "properties": {
+      "email": {
+        "type": "string"
+      },
+      "from": {
+        "type": "string"
+      },
+      "to": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "email",
+      "to"
+    ],
+    "type": "object"
   }
 }
