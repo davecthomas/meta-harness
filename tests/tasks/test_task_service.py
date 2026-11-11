@@ -39,6 +39,10 @@ def migrated():
     try:
         with db.connect() as conn:
             migrations.apply(conn)
+            # The test database outlives a run, and the pending list holds 100: messages earlier runs left
+            # undelivered would crowd this run's out of it.
+            conn.execute("UPDATE tasks.task_message SET delivered_at = now() WHERE delivered_at IS NULL")
+            conn.commit()
     except Exception as err:  # noqa: BLE001
         pytest.skip(f"no Postgres at {db.database_url()}: {err}")
 
@@ -428,7 +432,8 @@ def test_a_tasks_spend_lists_its_runs_and_totals_against_its_limit(api, events):
 def test_a_smoke_task_is_a_services_to_create_and_is_left_out_of_lists_unless_asked(api):
     refused = api.post("/v1/tasks", json=_task(task_type="smoke"), headers=_as(CALLER_KEY))
     assert refused.status_code == 422 and "only the meta-harness creates smoke tasks" in refused.json()["detail"]
-    created = api.post("/v1/tasks", json=_task(task_type="smoke"), headers=_as(SERVICE_KEY))
+    # As smoke.py sends it: with no acceptance check.
+    created = api.post("/v1/tasks", json=_task(task_type="smoke", acceptance_checks=[]), headers=_as(SERVICE_KEY))
     assert created.status_code == 201
     smoke_id = created.json()["id"]
 
@@ -437,6 +442,16 @@ def test_a_smoke_task_is_a_services_to_create_and_is_left_out_of_lists_unless_as
     asked = api.get("/v1/tasks", params={"q": smoke_id, "smoke": "true"}, headers=_as(SERVICE_KEY)).json()["tasks"]
     assert [t["id"] for t in asked] == [smoke_id]
     assert api.get(f"/v1/tasks/{smoke_id}", headers=_as(SERVICE_KEY)).json()["task_type"] == "smoke"
+
+
+def test_only_a_plan_or_a_smoke_task_may_name_no_acceptance_check(api):
+    refused = api.post("/v1/tasks", json=_task(acceptance_checks=[]), headers=_as(CALLER_KEY))
+    assert refused.status_code == 422
+    assert "task needs at least one acceptance check" in refused.json()["detail"]
+    # As planner/planning.py sends a goal's planning task.
+    plan = _task(task_type="plan", acceptance_checks=[])
+    created = api.post("/v1/tasks", json=plan, headers=_as(SERVICE_KEY))
+    assert created.status_code == 201 and created.json()["acceptance_checks"] == []
 
 
 def _holding_review(api) -> dict:
