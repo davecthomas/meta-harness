@@ -297,7 +297,7 @@ export function GoalPage() {
       </SectionTitle>
       {progress && <GoalFailures issues={progress} tasks={tasks} />}
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
-      <GoalSpend goalId={goal.id} opened={spending} onClose={() => setSpending(false)} />
+      <GoalSpend goalId={goal.id} goalName={goalTitle(goal)} opened={spending} onClose={() => setSpending(false)} />
       {issues.length > 0 && progress && shownView === "board" ? (
         <GoalBoard issues={progress} tasks={tasks} spend={spend} />
       ) : issues.length > 0 && progress && shownView === "graph" ? (
