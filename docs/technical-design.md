@@ -2415,8 +2415,13 @@ did not (both `POST /v1/tasks/{id}/clear`). There is no Clear task button.
 A running task held for budget shows an alert at the top of its page with
 what the next run needs and what is left, a field for a new spend limit
 with Raise the limit and carry on, and End the task; one held for its goal's
-budget offers the goal's Resume and a link to the goal instead, with Look
-again now. Held tasks head the
+budget has a field for the goal's new budget instead, holding the budget a
+resume would set, with Raise the goal's budget and carry on, a link to the
+goal, and Look again now. Money reads as dollars and cents everywhere: the
+services round the amounts in the reasons they write
+(`src/meta_harness/money.py`), and the console formats every amount it
+shows and rounds the amounts in a reason recorded before that
+(`console/src/money.ts`). Held tasks head the
 Overview's Needs you list, and show under Needs attention on their goal's
 board and in its alert.
 A queued or blocked task says why it has not started in a Waiting to start

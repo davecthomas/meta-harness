@@ -7,6 +7,7 @@ import { useEventStream, useSettled } from "../hooks";
 import { PrLink } from "./ui";
 import { describe, fold, taskOf, type Line, type TileFacts } from "../terminal";
 import { Terminal } from "./Terminal";
+import { usd } from "../money";
 
 export type TileSize = 1 | 4 | 16 | 32;
 const KEEP = 300;
@@ -108,7 +109,7 @@ export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?:
                 {props.size !== 32 && <Text size="xs" c="dimmed" ff="monospace">{t.repo.split("/").pop()}</Text>}
                 {t.pr_url && <PrLink url={t.pr_url} size="xs" />}
                 <Text size="xs" c="dimmed">turn {f.turn}</Text>
-                <Text size="xs" c="dimmed">${f.usd.toFixed(4)}</Text>
+                <Text size="xs" c="dimmed">{usd(f.usd)}</Text>
                 {props.size <= 4 && f.model && <Text size="xs" c="dimmed" ff="monospace">{f.model}</Text>}
               </Group>
             </header>

@@ -3,10 +3,11 @@ import { Alert, Anchor, Button, Group, NumberInput, Stack, Text } from "@mantine
 import { IconCoin } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import { api, type Task } from "../../api";
-import { ResumeBudget } from "../goals/budget";
+import { RaiseGoalBudget } from "../goals/budget";
+import { moneyText } from "../../money";
 
 // A running task held for budget says so at the top of its page and asks: raise the limit and carry on, or
-// end the task. A hold for the goal's budget offers the goal's Resume, which raises the goal's budget and tells
+// end the task. A hold for the goal's budget has a field for the goal's new budget, which raises it and tells
 // the task to look again; the task also looks again by itself within five minutes, or at once with Look again now.
 export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task: Task) => void }) {
   const current = Number(task.max_usd ?? 0);
@@ -31,15 +32,17 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
   return (
     <Alert color="orange" title="Waiting on you: this task is out of budget" icon={<IconCoin size={18} />} mb="md" role="alert">
       <Stack gap="sm">
-        <Text size="sm">{task.status_reason}</Text>
+        <Text size="sm">{moneyText(task.status_reason)}</Text>
         {forGoal ? (
-          <Group gap="sm" align="center">
-            {/* Raises the goal's budget, which tells this task to look again. */}
-            <ResumeBudget goalId={task.goal_id!} size="xs" onResumed={() => void api.task(task.id).then(onAnswered, () => undefined)} />
-            <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm">The goal's page</Anchor>
-            <Button size="xs" variant="light" loading={busy} onClick={() => void answer("raise")}>Look again now</Button>
-            <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void answer("end")}>End the task</Button>
-          </Group>
+          <Stack gap="sm">
+            {/* Raises the goal's budget here, which tells this task to look again. */}
+            <RaiseGoalBudget goalId={task.goal_id!} onResumed={() => void api.task(task.id).then(onAnswered, () => undefined)} />
+            <Group gap="sm" align="center">
+              <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm">The goal's page</Anchor>
+              <Button size="xs" variant="light" loading={busy} onClick={() => void answer("raise")}>Look again now</Button>
+              <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void answer("end")}>End the task</Button>
+            </Group>
+          </Stack>
         ) : (
           <Group gap="sm" align="flex-end">
             <NumberInput

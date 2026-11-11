@@ -4,6 +4,7 @@ import { issueUrl, type Goal, type IssueProgress, type Task } from "../../api";
 import { budgetColor, budgetStanding, budgetWords } from "./budget";
 import { PrLink, StatusBadge } from "../../components/ui";
 import { projection } from "../tasks/Spend";
+import { moneyText } from "../../money";
 
 // The board's columns, in order, each with its color in the board and the graph.
 export const COLUMNS = [
@@ -95,7 +96,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number }) {
         )}
         {issue.refused_reason && <Text size="xs" c="red">{issue.refused_reason}</Text>}
         {/* Why a queued task has not started, from the scheduler. */}
-        {task?.status === "queued" && task.held && <Text size="xs" c="dimmed" lineClamp={3}>{task.held.reason}</Text>}
+        {task?.status === "queued" && task.held && <Text size="xs" c="dimmed" lineClamp={3}>{moneyText(task.held.reason)}</Text>}
       </Stack>
     </Paper>
   );

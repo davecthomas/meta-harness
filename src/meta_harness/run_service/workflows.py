@@ -96,6 +96,7 @@ with workflow.unsafe.imports_passed_through():
     from meta_harness.run_service.budget_activities import BudgetHold, budget_hold, goal_budget
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
     from meta_harness.run_service.resume_activities import resume_state
+    from meta_harness.money import usd
     from meta_harness.run_service.shared import (
         Attempt,
         BaseHealthRequest,
@@ -332,7 +333,7 @@ class RunTask:
         held = False
         while True:
             left = limit - spent
-            why = "" if left >= need else f"the task has ${left} left of its ${limit} spend limit"
+            why = "" if left >= need else f"the task has {usd(left)} left of its {usd(limit)} spend limit"
             share = None
             if goal_id:
                 goal = await workflow.execute_activity(
@@ -341,8 +342,8 @@ class RunTask:
                 share = goal.share()
                 if not why and share is not None and share < need:
                     why = (
-                        f"goal {goal_id} has spent ${goal.spent_usd} of its ${goal.max_usd} budget, which leaves "
-                        f"${share} for each of its {goal.running} running tasks"
+                        f"goal {goal_id} has spent {usd(goal.spent_usd)} of its {usd(goal.max_usd)} budget, which "
+                        f"leaves {usd(share)} for each of its {goal.running} running tasks"
                     )
             if not why:
                 if held:
@@ -354,7 +355,7 @@ class RunTask:
                 self._budget_answer = None
                 raise_what = "the goal's budget" if for_goal else "the task's spend limit"
                 await self._budget_hold(
-                    True, f"{what} needs about ${need}, and {why}. Raise {raise_what}, or end the task"
+                    True, f"{what} needs about {usd(need)}, and {why}. Raise {raise_what}, or end the task"
                 )
                 workflow.logger.warning("%s is held for budget before %s: %s", self._where(), what, why)
             wait = min(BUDGET_RECHECK, BUDGET_HOLD - waited) if for_goal else BUDGET_HOLD - waited
@@ -459,7 +460,7 @@ class RunTask:
                     request.goal_id, limit, spent, _need(attempts, "task"), f"run {len(attempts) + 1}"
                 )
                 if left is None:
-                    raise _failed(f"the task spent its ${limit} spend limit after {len(attempts)} runs", attempts)
+                    raise _failed(f"the task spent its {usd(limit)} spend limit after {len(attempts)} runs", attempts)
                 attempt = len(attempts) + 1
                 run_id = run_id_for(info.workflow_id, attempt)
                 self._current_run_id = run_id
@@ -552,7 +553,7 @@ class RunTask:
                 harness=harness,
                 spent_usd=str(spent),
                 outcome="planned",
-                outcome_reason=f"the smoke run finished in {harness.turns} turns for ${spent}",
+                outcome_reason=f"the smoke run finished in {harness.turns} turns for {usd(spent)}",
             )
         if request.task_type == "plan" and workflow.patched("plan-task"):
             workflow.logger.info("%s: the planning run finished; the planner reads its drafts", info.workflow_id)
@@ -1118,7 +1119,7 @@ class RunTask:
         why = ""
         for reviewer in reviewers:
             if loop.left() <= 0 and not self._holds():
-                return None, "", f"the task spent its ${loop.limit} spend limit"
+                return None, "", f"the task spent its {usd(loop.limit)} spend limit"
             harness, detail = await self._loop_run(loop, prompt, reviewer, "review", thinking=None)
             if harness is not None and harness.review:
                 return harness.review, reviewer.label, ""
@@ -1174,7 +1175,7 @@ class RunTask:
     async def _fix(self, loop: "_Loop", fix: LoopPromptRequest, round_no: int) -> str:
         """One fix run on the pull request's branch, published to it. Returns why the loop must stop, or ""."""
         if loop.left() <= 0 and not self._holds():
-            return f"the task spent its ${loop.limit} spend limit before fix round {round_no}"
+            return f"the task spent its {usd(loop.limit)} spend limit before fix round {round_no}"
         fix.round_no = round_no
         prompt = await self._loop_prompt(fix)
         merge_base = loop.published.base if fix.conflict else ""
@@ -1224,7 +1225,7 @@ class RunTask:
             loop.request.goal_id, loop.limit, loop.spent, _need(loop.attempts, kind), f"{kind} run {attempt}"
         )
         if grant is None:
-            return None, f"the task spent its ${loop.limit} spend limit"
+            return None, f"the task spent its {usd(loop.limit)} spend limit"
         run_id = run_id_for(info.workflow_id, attempt)
         self._current_run_id = run_id
         harness, decision, detail, run_spent = await self._try(

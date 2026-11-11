@@ -9,6 +9,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from meta_harness.money import usd
+
 TASK_TYPES = {"bug", "feature", "refactor", "dependency", "test", "security", "docs", "plan", "review", "fix", "smoke"}
 # A deploy's own check that tasks still run (smoke.py): only a service creates one, and the lists a person
 # reads leave them out unless asked.
@@ -364,7 +366,7 @@ def decide_budget(conn: psycopg.Connection, task_id: str, action: str, max_usd: 
         body = action
         if action == "raise" and max_usd is not None:
             if row["max_usd"] is not None and max_usd <= row["max_usd"]:
-                raise TaskError(f"the new limit must be above the task's ${row['max_usd']}")
+                raise TaskError(f"the new limit must be above the task's {usd(row['max_usd'])}")
             cur.execute("UPDATE tasks.task SET max_usd = %s, updated_at = now() WHERE id = %s", (max_usd, task_id))
             body = f"raise:{max_usd}"
         cur.execute(
