@@ -35,6 +35,9 @@ HARVEST_SETTING = "MH_COSTS_HARVEST_SECONDS"
 DEFAULT_HARVEST_SECONDS = 300.0
 MAX_DAYS = 400
 TOP_TASKS = 10
+# Below this, what was spent in the span before is too little for a percentage change to mean anything: from
+# a cent to $100 is not a "1,000,000% rise", it is new spending.
+MIN_COMPARABLE_USD = 1.0
 # The filters a request may give, each a comma-separated list of values.
 FILTERS = ("source", "kind", "goal", "task", "repo", "model", "engine", "operator")
 # The filters and breakdowns that are a task's facts, not a cost row's columns.
@@ -189,8 +192,9 @@ def register(
         is_admin: bool = Depends(admin),
     ) -> dict:
         """Costs from one day to another, in buckets, as one series per value of group_by, within the filters:
-        the buckets, the series dearest first, the totals, the change against the same span before, the
-        linear trend, the dearest tasks, and what each source is. An admin sees everything; anyone else, the
+        the buckets, the series most expensive first, the totals, the change from the same number of days
+        before (none when too little was spent then to compare), the linear trend, the most expensive tasks,
+        and what each source is. An admin sees everything; anyone else, the
         model cost of their own work. label and outcome keep the costs of the tasks whose issue carries one
         of the labels, or whose pull request has one of the outcomes."""
         last = end or datetime.now(UTC).date()
@@ -243,7 +247,7 @@ def register(
             built = series.build(rows, first, last, bucket)
             total = float(store.total(conn, first, last, filters))
             before = float(store.total(conn, first - timedelta(days=days), first - timedelta(days=1), filters))
-            dearest = store.top(conn, first, last, "task", filters, TOP_TASKS)
+            costliest = store.top(conn, first, last, "task", filters, TOP_TASKS)
             choices = {name: store.values(conn, name, filters) for name in ("source", "kind", "goal", "repo", "model")}
             spent = [known[t] for t in store.values(conn, "task", filters) if t in known] if known else []
             described = sources(conn) if is_admin else {"model": sources(conn)["model"]}
@@ -258,7 +262,7 @@ def register(
             if found:
                 labels[key] = found.get("title") or found["statement"][:80]
         top_tasks = []
-        for task_id, usd in dearest:
+        for task_id, usd in costliest:
             try:
                 title = tasks.get(task_id).get("title")
             except Exception:  # noqa: BLE001 - a task that is gone is still named by its id
@@ -275,7 +279,7 @@ def register(
             "total": round(total, 4),
             "daily_average": round(total / days, 4),
             "previous_total": round(before, 4),
-            "change_percent": round(100 * (total - before) / before, 1) if before else None,
+            "change_percent": round(100 * (total - before) / before, 1) if before >= MIN_COMPARABLE_USD else None,
             # A month at the rate the trend line ends on.
             "projected_month": round(max(trend["end"], 0) * 30 / per_bucket, 2) if trend else None,
             "top_tasks": top_tasks,

@@ -1834,7 +1834,7 @@ credential.
 | POST | `/v1/tasks/{id}/reviews/{round}/findings/{n}/dismiss`, `/v1/tasks/{id}/reviews/{round}/proceed` | Task service | An operator's word on a review its task holds for them (`waiting_on: review`): dismiss finding `n` (from 1) with a `reason`, or end the wait now. 409 unless the task holds a review. The scheduler hands each to the task's workflow | built |
 | POST | `/v1/tasks/{id}/budget` | Task service | An operator's answer to a running task held for budget (`waiting_on: budget`): `{"action": "raise", "max_usd": ...}` saves the task's new spend limit (above the old one; left out, the task only looks at its budget again) and `{"action": "end"}` ends it. The scheduler hands the answer to the task's workflow. `GET /v1/tasks?waiting=true` lists the tasks waiting on an operator | built |
 | GET | `/v1/tasks/{id}/spend` | Task service | Where the task's money went: each of its runs, oldest first, with its kind (the task's own run, review or fix), candidate, turns, model calls, input, cached-input and output tokens, cost, and how it ended, from its `attempt_finished` and `run_finished` events, and their totals in all and by kind against the task's `max_usd`. The Task page's Spend tab | built |
-| GET | `/v1/goals/{id}/spend` | Planner | Where the goal's money went: each of its tasks with what its runs spent in all and by kind of run, and its runs and turns, dearest first, and the goal's total and its split by kind against its budget. Opened from the Goal page's spend line | built |
+| GET | `/v1/goals/{id}/spend` | Planner | Where the goal's money went: each of its tasks with what its runs spent in all and by kind of run, and its runs and turns, most expensive first, and the goal's total and its split by kind against its budget. Opened from the Goal page's spend line | built |
 | POST | `/v1/tasks/{id}/retry` | Task service | Send a `review_unresolved`, `failed` or `canceled` task back to `queued`, with `max_usd` as its new spend limit when given; its `retries` counts up and `task_retried` is recorded. The scheduler starts a new RunTask workflow for it (the one case a task id runs a second workflow, after the first has ended). With an open pull request the workflow resumes at the review loop, on the pull request's head, with fix rounds and spend counted from nothing and its runs numbered after the earlier ones; a pull request that has merged ends the task `closed`; with none, or one closed unmerged, it makes a new first run | built |
 | POST | `/v1/tasks/{id}/merge` | Task service | Ask for a `ready` or `review_unresolved` task's pull request to be merged: back to `queued` with `resume: merge`, and its new workflow merges through the merge queue whatever the goal's `auto_merge` says, then waits for the merge commit's checks. A head that moved, or a conflict, goes through checks, review and fixes first | built |
 | POST | `/v1/tasks/{id}/clear` | Task service | Take a `ready` or `review_unresolved` task off the list: `closed` when its pull request's merge is recorded, else `canceled`, with the reason naming the pull request and who cleared it. The pull request stays on GitHub | built |
@@ -1883,7 +1883,7 @@ credential.
 | GET | `/v1/admin/logs` | Edge | The VM's services' and the edge's log entries from Cloud Logging, newest first, at most 500, by unit, lowest severity, time and text. Every entry has a message: a service's line is its text; a request Cloud Run served, which has none, reads as its method, path, status and time (and counts as an error at 500 or above); an audit entry as its method and status; any other structured entry as its fields. An empty line a service printed is left out. The VM's Ops Agent ships the journal as `mh_journald`; the edge reads with its own service account's `roles/logging.viewer`. Admins only | built |
 | GET | `/v1/admin/deploys` | Edge | What is deployed: the version, the commit the VM and the edge run, and the edge's revision. Admins only | built |
 | GET, POST | `/v1/admin/users` | Planner, through the edge | The console's users: list them, or invite an email with a role (`admin` or `user`). `PATCH /v1/admin/users/{email}` sets the role and `DELETE` deprovisions. The last admin can be neither deprovisioned nor made a regular user (409). Each change is recorded (`user_invited`, `user_role_changed`, `user_deprovisioned`) with the admin as actor and shows on the Audit page. Admins only | built |
-| GET | `/v1/costs` | Cost service, in the planner's process | Costs over time: `from`, `to`, `bucket` (`day`, `week`, `month`), `group_by` (`source`, `kind`, `goal`, `task`, `repo`, `model`, `engine`, `operator`, `label`, `outcome`) and a comma-separated filter on each. `label` is the labels of the issue a task worked on, and `outcome` what became of its pull request (`merged`, `closed` without merging, still `open`, or `none` opened), as its `pull_request_merged` and `pull_request_closed` events record it, not the task's status, so a canceled task's pull request left open is `open` until it merges or closes, which the planner's sweep, or the hourly follow-up of a goal no sweep covers, records then: a task's facts, not a cost row's, which the planner gives when costs are asked for, so a relabel or a merge shows at once. A task whose issue carries several labels puts an even share of its cost under each in a breakdown by label, so the series add up to the total. `choices` offers the labels and outcomes of the tasks that spent. Answers the buckets, one series per value dearest first (the eighth and later folded into `other`), each bucket's total, the total, the daily average, the change against the same span before, the least-squares `trend` through the totals, a month projected at the trend, the ten costliest tasks, and what each source is. An admin sees every source and goal; anyone else, only the model cost of their own work (`scope: own`). `POST /v1/costs/harvest` reads every source now (admins) | built |
+| GET | `/v1/costs` | Cost service, in the planner's process | Costs over time: `from`, `to`, `bucket` (`day`, `week`, `month`), `group_by` (`source`, `kind`, `goal`, `task`, `repo`, `model`, `engine`, `operator`, `label`, `outcome`) and a comma-separated filter on each. `label` is the labels of the issue a task worked on, and `outcome` what became of its pull request (`merged`, `closed` without merging, still `open`, or `none` opened), as its `pull_request_merged` and `pull_request_closed` events record it, not the task's status, so a canceled task's pull request left open is `open` until it merges or closes, which the planner's sweep, or the hourly follow-up of a goal no sweep covers, records then: a task's facts, not a cost row's, which the planner gives when costs are asked for, so a relabel or a merge shows at once. A task whose issue carries several labels puts an even share of its cost under each in a breakdown by label, so the series add up to the total. `choices` offers the labels and outcomes of the tasks that spent. Answers the buckets, one series per value most expensive first (the eighth and later folded into `other`), each bucket's total, the total, the daily average, the change against the same span before, the least-squares `trend` through the totals, a month projected at the trend, the ten costliest tasks, and what each source is. An admin sees every source and goal; anyone else, only the model cost of their own work (`scope: own`). `POST /v1/costs/harvest` reads every source now (admins) | built |
 | GET | `/health` | Every service | Liveness and configuration identity | built |
 
 The run service has no HTTP API yet. Until it has one, a path it owns that
@@ -2422,8 +2422,9 @@ Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
 The Performance page (`console/src/features/performance`) is what the
 meta-harness costs over time. Four figures head it for the chosen range: the
-total, the daily average, the change against the span before, and a month
-at the current trend. The controls start with the cost category: All costs,
+total, the daily average, the change from the same number of days before
+(no percentage when less than $1 was spent then, since a change from almost
+nothing means nothing), and a month at the current trend. The controls start with the cost category: All costs,
 AI (what model calls cost) or Cloud (the Google Cloud bill). Each category
 has its own breakdowns and filters: All by category; AI by model, run type
 (task runs, reviews, fixes, planning), goal, repository, operator, label
@@ -2438,7 +2439,9 @@ cost per day, week or month as stacked columns, one segment per value of the
 chosen breakdown, with the trend line through
 the totals and a tooltip listing every series of the hovered bucket. Beside
 it, where the money went as a ranked list with each share, and the ten
-costliest tasks, linked. The range (7, 30 or 90 days, or two dates), the
+costliest tasks, linked. Wherever costs are stacked or listed (the chart's
+tooltip, the breakdown, the costliest tasks, a task's runs, the Overview's
+most expensive tasks today), a total ends them. The range (7, 30 or 90 days, or two dates), the
 bucket, the breakdown and the filters (source, kind of work, goal,
 repository, model, label, outcome) live in the URL. A series keeps its color whatever is
 filtered. An admin sees every source and is told what each is and when it
@@ -2542,11 +2545,11 @@ in the Overview's Needs you list, marked "review waits". The Task policy tab
 has the wait as "Wait before a fix run".
 The Task page's Spend tab (#198) lists each run with its kind, model, turns,
 tokens in, the share of them read from the cache, tokens out and cost, marks
-the dearest run, links each to its output, and heads them with the total
+the most expensive run, links each to its output, and heads them with the total, which also ends the table
 against the task's limit and its split between the task's own runs, reviews
 and fixes. On the Goal page, "where it went" beside the spend opens the
 goal's: the split between own runs, reviews and fixes, and each task with
-its runs, turns and cost, dearest first, linked to its Spend tab.
+its runs, turns and cost, most expensive first, linked to its Spend tab, with the totals at the bottom.
 An ended task's page offers what can be done with it, each button saying in
 its tooltip what it does to the task and to the pull request: Retry (from
 `review_unresolved`, `failed` or `canceled`, with a spend limit for the

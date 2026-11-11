@@ -81,6 +81,11 @@ export function rangeDays(n: number, today = new Date()): { from: string; to: st
 
 // What a series or a filter's value is called. category: the cost category in view, since under Cloud a
 // "kind" value is a service's own name and is shown as it is.
+// How many days the range covers, which the change figure compares against the same number of days before.
+export function spanDays(costs: Pick<Costs, "from" | "to">): number {
+  return Math.round((Date.parse(costs.to) - Date.parse(costs.from)) / 86_400_000) + 1;
+}
+
 export function costLabel(key: string, costs: Pick<Costs, "labels" | "group_by">, category: Category = "all"): string {
   if (costs.labels[key]) return costs.labels[key];
   if (costs.group_by === "outcome" && OUTCOME_NAMES[key]) return OUTCOME_NAMES[key];
@@ -231,9 +236,13 @@ export function PerformancePage() {
             <Stat label="Total" value={usd(costs.total)} note={`${costs.from} to ${costs.to}`} />
             <Stat label="Daily average" value={usd(costs.daily_average)} />
             <Stat
-              label="Against the span before"
+              label={`Change from the ${spanDays(costs)} days before`}
               value={costs.change_percent === null ? "–" : `${costs.change_percent > 0 ? "+" : ""}${costs.change_percent}%`}
-              note={costs.change_percent === null ? "Nothing was spent in the span before" : `${usd(costs.previous_total)} before`}
+              note={
+                costs.change_percent === null
+                  ? `${usd(costs.previous_total)} then: too little to compare`
+                  : `${usd(costs.previous_total)} in the ${spanDays(costs)} days before`
+              }
             />
             <Stat
               label="A month at this trend"
@@ -295,6 +304,12 @@ export function PerformancePage() {
                   </div>
                 ))}
                 {costs.series.length === 0 && <Text size="sm" c="dimmed">Nothing to break down.</Text>}
+                {costs.series.length > 0 && (
+                  <Group justify="space-between" pt={6} style={{ borderTop: "1px solid var(--mantine-color-default-border)" }} data-testid="cost-breakdown-total">
+                    <Text size="sm" fw={650}>Total</Text>
+                    <Text size="sm" fw={650}>{usd(costs.total)}</Text>
+                  </Group>
+                )}
               </Stack>
             </div>
             {/* The cloud bill is the deployment's, not any task's. */}
@@ -308,6 +323,10 @@ export function PerformancePage() {
                       <Table.Td><Text size="sm" fw={600}>{usd(t.usd)}</Text></Table.Td>
                     </Table.Tr>
                   ))}
+                  <Table.Tr data-testid="top-tasks-total" style={{ borderTop: "2px solid var(--mantine-color-default-border)" }}>
+                    <Table.Td><Text size="sm" fw={650}>Total of these {costs.top_tasks.length}</Text></Table.Td>
+                    <Table.Td><Text size="sm" fw={650}>{usd(costs.top_tasks.reduce((all, t) => all + t.usd, 0))}</Text></Table.Td>
+                  </Table.Tr>
                 </DataTable>
               ) : (
                 <Text size="sm" c="dimmed">No task spent anything in this range.</Text>
