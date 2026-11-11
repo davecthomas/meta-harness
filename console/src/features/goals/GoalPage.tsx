@@ -303,7 +303,7 @@ export function GoalPage() {
       >
         Issues and tasks
       </SectionTitle>
-      {progress && <GoalFailures issues={progress} tasks={tasks} />}
+      {progress && <GoalFailures issues={progress} tasks={tasks} onChanged={() => void Promise.all([load(), loadProgress()])} />}
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
       <GoalSpend goalId={goal.id} goalName={goalTitle(goal)} opened={spending} onClose={() => setSpending(false)} />
       {issues.length > 0 && progress && shownView === "board" ? (

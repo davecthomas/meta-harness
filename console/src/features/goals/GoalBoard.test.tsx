@@ -4,7 +4,7 @@ import { MantineProvider } from "@mantine/core";
 import { expect, test } from "vitest";
 import type { IssueProgress, Task } from "../../api";
 import { theme } from "../../theme";
-import { GoalBoard, GoalGraph, GoalProgress, columnOf, layout } from "./GoalBoard";
+import { GoalBoard, GoalGraph, GoalProgress, columnOf, layout, standing } from "./GoalBoard";
 
 function issue(n: number, fields: Partial<IssueProgress> = {}): IssueProgress {
   return {
@@ -81,10 +81,27 @@ test("the board shows each card in its column with its task, cost and pull reque
   expect(await screen.findByText("task page")).toBeTruthy();
 });
 
-test("the graph colors each issue by its column", () => {
+test("the graph draws the order of work, says each issue's standing in words, and explains itself", () => {
   renderIn(<GoalGraph issues={ISSUES} tasks={{}} />);
   expect(screen.getByTestId("node-github:o/r#4").getAttribute("data-column")).toBe("done");
   expect(screen.getByTestId("node-github:o/r#6").getAttribute("data-column")).toBe("attention");
+  expect(screen.getByTestId("graph-legend").textContent).toContain("Work runs left to right");
+  expect(screen.getByTestId("node-github:o/r#4").textContent).toContain("Done");
+});
+
+test("a goal whose issues do not depend on each other says there is no order to draw", () => {
+  const independent = ISSUES.map((i) => ({ ...i, depends_on: [] }));
+  renderIn(<GoalGraph issues={independent} tasks={{}} />);
+  expect(screen.getByTestId("graph-no-order").textContent).toContain("No issue in this goal waits on another");
+  expect(screen.queryByTestId("graph-legend")).toBeNull();
+});
+
+test("an issue's standing names what it waits for or what it needs", () => {
+  const byRef = new Map(ISSUES.map((i) => [i.ref, i]));
+  const failed = { ...ISSUES[0], task_status: "failed", depends_on: [] };
+  expect(standing(failed, "attention", byRef)).toBe("Needs you: failed, retry it");
+  expect(standing({ ...ISSUES[0], depends_on: [] }, "queued", byRef)).toBe("Queued: starts when a place is free");
+  expect(standing({ ...ISSUES[0], pr_url: "https://github.com/o/r/pull/30" }, "review", byRef)).toBe("In review: pull request #30");
 });
 
 test("progress counts done issues and spend against the budget", () => {
