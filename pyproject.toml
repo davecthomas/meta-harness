@@ -48,7 +48,8 @@ markers = [
 
 [tool.ruff]
 line-length = 120
-extend-exclude = ["samples", "images"]
+# Shipped skills (config/skills) keep their source's code exactly as it is.
+extend-exclude = ["samples", "images", "config/skills"]
 
 [tool.uv.sources]
 ai-api-unified = { git = "https://github.com/davecthomas/ai-api-unified", rev = "ebf9d489cc02ad075dddd313e1146e5e2d9840fc" }
