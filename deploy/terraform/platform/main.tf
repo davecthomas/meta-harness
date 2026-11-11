@@ -208,6 +208,8 @@ resource "google_project_iam_member" "deploy" {
     "roles/compute.networkAdmin", "roles/compute.securityAdmin", "roles/iam.serviceAccountAdmin",
     "roles/iam.workloadIdentityPoolAdmin", "roles/resourcemanager.projectIamAdmin", "roles/secretmanager.admin",
     "roles/artifactregistry.admin", "roles/serviceusage.serviceUsageAdmin", "roles/firebase.admin",
+    # The billing_export dataset and who may read it.
+    "roles/bigquery.dataOwner",
   ])
   project = var.project
   role    = each.value
