@@ -203,3 +203,83 @@ test("a typed label selects its free issues, the picker locks them, and only iss
   await waitFor(() => expect(created).toHaveLength(1));
   expect(created[0]).toMatchObject({ label: "bug", refs: ["github:o/a#3"] });
 });
+
+test("an issue picked by hand, then taken by a typed label, is not sent as a ref, and is picked again when the label is cleared", async () => {
+  const created: any[] = [];
+  const ISSUES = [
+    { ref: "github:o/a#1", number: 1, title: "Crash on save", labels: ["bug"], updated_at: "2", held_by: null },
+    { ref: "github:o/a#3", number: 3, title: "Typo", labels: [], updated_at: "1", held_by: null },
+  ];
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [{ label: "bug", total: 1, repos: { "o/a": 1 }, held: 0, held_by: [] }] });
+    if (url === "/v1/repos/o/a/issues?label=bug") return respond({ issues: ISSUES.slice(0, 1), next_cursor: null });
+    if (url.startsWith("/v1/repos/o/a/issues")) return respond({ issues: ISSUES, total: 2, next_cursor: null });
+    if (url === "/v1/goals" && init?.method === "POST") {
+      created.push(JSON.parse(String(init.body)));
+      return respond({ id: "g-1" }, 201);
+    }
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <NewGoal />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the bugs" } });
+  // First the issues, by hand: #1, which carries the label, and #3.
+  fireEvent.click(screen.getByRole("button", { name: "Pick issues" }));
+  fireEvent.click(await screen.findByLabelText("Pick github:o/a#1"));
+  fireEvent.click(screen.getByLabelText("Pick github:o/a#3"));
+  fireEvent.click(screen.getByRole("button", { name: "Use these issues" }));
+  expect(await screen.findByText(/2 picked by hand/)).toBeTruthy();
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Pick issues" })).toBeNull());
+
+  // Then the label, which takes #1: it counts as the label's, not as picked by hand.
+  fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
+  await screen.findByTestId("label-issues");
+  expect(await screen.findByText(/1 picked by hand/)).toBeTruthy();
+
+  // Cleared, the label gives #1 back to the hand-picked ones.
+  fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "" } });
+  expect(await screen.findByText(/2 picked by hand/)).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
+  await screen.findByTestId("label-issues");
+  expect(await screen.findByText(/1 picked by hand/)).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(created).toHaveLength(1));
+  expect(created[0]).toMatchObject({ label: "bug", refs: ["github:o/a#3"] });
+});
+
+test("a label with more open issues than one page selects them all", async () => {
+  const issue = (n: number) => ({ ref: `github:o/a#${n}`, number: n, title: `Bug ${n}`, labels: ["bug"], updated_at: String(n), held_by: null });
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
+    if (url === "/v1/repos/o/a/issues?label=bug")
+      return respond({ issues: Array.from({ length: 100 }, (_, i) => issue(150 - i)), total: 150, next_cursor: 100 });
+    if (url === "/v1/repos/o/a/issues?label=bug&cursor=100")
+      return respond({ issues: Array.from({ length: 50 }, (_, i) => issue(50 - i)), total: 150, next_cursor: null });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <NewGoal />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
+  const listed = await screen.findByTestId("label-issues");
+  expect(listed.textContent).toContain("150 issues with this label");
+  expect(asked).toContain("/v1/repos/o/a/issues?label=bug&cursor=100");
+});

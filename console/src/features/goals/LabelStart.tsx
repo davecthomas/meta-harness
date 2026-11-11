@@ -73,6 +73,8 @@ export function LabelStart({
   const free = (issues ?? []).filter((i) => !i.held_by);
   // The label's repos the goal does not take it from, so the operator can tick them below.
   const outside = picked ? Object.keys(picked.repos).filter((r) => !repos.includes(r)) : [];
+  // Selected issues the label does not take: those picked by hand. The draft reads them too.
+  const extra = selected.filter((ref) => !free.some((i) => i.ref === ref)).length;
 
   function pick(row: LabelCount) {
     setDraft(null);
@@ -174,6 +176,11 @@ export function LabelStart({
               {picked.label}: {free.length} open {free.length === 1 ? "issue" : "issues"} for the goal and the draft
               {issues.length > free.length ? `, and ${issues.length - free.length} another goal holds` : ""}
             </Text>
+            {extra > 0 && (
+              <Text size="xs" c="dimmed">
+                The draft also reads the {extra} {extra === 1 ? "issue" : "issues"} picked by hand under Pick issues.
+              </Text>
+            )}
             {outside.length > 0 && (
               <Text size="xs" c="dimmed">
                 Not among the goal's repos: {outside.join(", ")}. Tick them under Repos to take their issues too.

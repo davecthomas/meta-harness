@@ -102,7 +102,10 @@ export function NewGoal() {
   const labeled = read?.key === labelKey ? read.issues : null;
   const viaLabel = useMemo(() => (labeled ?? []).filter((i) => !i.held_by).map((i) => i.ref), [labeled]);
   // Every issue the goal is to take: its label's, then those picked by hand. The draft reads these.
-  const selected = useMemo(() => [...viaLabel, ...refs.filter((r) => !viaLabel.includes(r))], [viaLabel, refs]);
+  // Picked by hand and not taken by the label: what the goal is created with as refs. Refs keeps every hand
+  // pick, so one the label now takes is picked again if the label is cleared or changed.
+  const byHand = useMemo(() => refs.filter((r) => !viaLabel.includes(r)), [viaLabel, refs]);
+  const selected = useMemo(() => [...viaLabel, ...byHand], [viaLabel, byHand]);
 
   // Whether the goal plans its own issues from its description (a feature goal) or runs issues that exist.
   const [plans, setPlans] = useState(false);
@@ -143,7 +146,8 @@ export function NewGoal() {
         statement,
         repos: chosen,
         ...(label.trim() ? { label: label.trim() } : {}),
-        refs,
+        // The label's issues are not also sent as refs: the label takes them.
+        refs: byHand,
         max_usd: budget === "" ? null : String(budget),
         ...(budget === "" ? {} : { budget_mode: budgetMode, budget_overage_percent: Number(overage) || 0 }),
         max_parallel: parallel === "" ? null : Number(parallel),
@@ -246,7 +250,7 @@ export function NewGoal() {
                 Pick issues
               </Button>
               <Text size="sm" c="dimmed">
-                {refs.length ? `${refs.length} picked by hand: the goal takes these besides its label's, or instead of a label.` : "Optional: pick more open issues for the goal by hand."}
+                {byHand.length ? `${byHand.length} picked by hand: the goal takes these besides its label's, or instead of a label.` : "Optional: pick more open issues for the goal by hand."}
               </Text>
             </Group>
             <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} />

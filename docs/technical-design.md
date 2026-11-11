@@ -1791,7 +1791,7 @@ credential.
 | GET | `/v1/repos/available` | Planner | The repos the deployment's GitHub Apps are installed on that the registry does not list yet, and each app's page for installing it on more. The console's Repositories page adds from it | built |
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
 | GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues, newest first, with a `label` and text `q` in the title when given, a page at a time from `cursor`, each with the open goal that holds it, if any | built |
-| POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing | built |
+| POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen, which may name open issues in the repos without the label): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing | built |
 | POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once | built |
 | POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on: by `add_usd`, or with no body by a worked-out amount (what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar). Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
@@ -2438,12 +2438,15 @@ the goal's repos that no other goal holds: the form lists them under the
 field, and Pick issues shows them checked and locked, marked "via label",
 since the label takes them whatever is unchecked; to leave one out, the
 operator clears the label and picks by hand. Issues picked by hand are sent
-as the goal's `refs`; the label's are not. The picker's Label filter suggests
+as the goal's `refs`; the label's are not, even one picked by hand before
+the label took it, which is picked again if the label is cleared. The label's
+issues are read a page at a time until there are no more. The picker's Label filter suggests
 the labels of the repos it shows, with their open-issue counts, as the Label
 field does. Above the form, "Draft from a label (optional)", closed until
 asked for, lists a label's open issues read-only; picking one sets the form's
 Label (and its repos, when none is ticked), and a model drafts the title and
-description from the issues the form has selected; it fills the form and
+description from the issues the form has selected, the label's and those
+picked by hand; it fills the form and
 saves nothing. The picker reads its label suggestions once, when it opens.
 New goal asks where the goal's issues come from: issues that exist (a `fix`
 goal, by label and by picking), or planned from the description (a `feature`
