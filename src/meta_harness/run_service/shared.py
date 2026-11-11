@@ -371,6 +371,24 @@ class ReviewPolicy:
     max_rounds: int
     # Reviewer pairs that could not be resolved, and why: shown when no reviewer is left.
     unresolved: list[str] = field(default_factory=list)
+    # How long a merge waits for the base's own checks to pass before it gives up; 0: it does not wait.
+    merge_wait_minutes: int = 0
+
+
+@dataclass
+class BaseHealthRequest:
+    repo: str
+    base: str
+
+
+@dataclass
+class BaseHealth:
+    """The checks on a base branch's newest commit: healthy (all passed, or it runs none), running, or failed,
+    with the commit and the checks that are running or failed."""
+
+    state: str
+    sha: str = ""
+    checks: list[str] = field(default_factory=list)
 
 
 @dataclass

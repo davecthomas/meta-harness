@@ -61,6 +61,8 @@ from meta_harness.run_service.shared import (
     ChecksResult,
     FailedCheck,
     LoopPromptRequest,
+    BaseHealth,
+    BaseHealthRequest,
     MergeChecksRequest,
     MergeRequest,
     MergeResult,
@@ -754,7 +756,42 @@ async def review_policy(author_model: str) -> ReviewPolicy:
         # By model, not engine: one model reached through two engines is still the author.
         if candidate.model != author_model.partition(":")[2]:
             reviewers.append(candidate)
-    return ReviewPolicy(reviewers=reviewers, max_rounds=int(policy["max_rounds"]), unresolved=unresolved)
+    document = routing.task_policy()
+    wait = document.get("merge_wait_minutes")
+    return ReviewPolicy(
+        reviewers=reviewers,
+        max_rounds=int(policy["max_rounds"]),
+        unresolved=unresolved,
+        merge_wait_minutes=MERGE_WAIT_MINUTES if wait is None else int(wait),
+    )
+
+
+# How long a merge waits for the base's own checks when the task policy does not say.
+MERGE_WAIT_MINUTES = 60
+# A check that ended one of these ways is no sign the base is broken: a deploy a later merge replaced is canceled.
+BASE_HEALTHY_CONCLUSIONS = (*PASSING_CONCLUSIONS, "cancelled")
+
+
+@activity.defn
+async def base_health(request: BaseHealthRequest) -> BaseHealth:
+    """How the base branch's newest commit's checks stand, so nothing merges onto a broken base.
+
+    While a check there has failed, a pull request merged onto it would ship on top of a failure it did not
+    cause, and its task would wait on, or try to fix, that failure. While checks there still run, no one
+    knows yet. A local repo has no checks, and is healthy.
+    """
+    if code_host.is_local(request.repo):
+        return BaseHealth(state="healthy")
+    try:
+        sha = await code_host.branch_head(request.repo, request.base)
+        runs = await code_host.check_runs(request.repo, sha)
+    except code_host.CodeHostError as err:
+        raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    failed = sorted({r.name for r in runs if r.status == "completed" and r.conclusion not in BASE_HEALTHY_CONCLUSIONS})
+    if failed:
+        return BaseHealth(state="failed", sha=sha, checks=failed)
+    running = sorted({r.name for r in runs if r.status != "completed"})
+    return BaseHealth(state="running" if running else "healthy", sha=sha, checks=running)
 
 
 @activity.defn

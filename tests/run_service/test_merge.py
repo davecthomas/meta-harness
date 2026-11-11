@@ -341,3 +341,36 @@ async def test_a_failed_merge_check_is_judged_by_the_same_check_on_a_newer_commi
     assert ("deploy", "completed", "failure") in await _judged(
         monkeypatch, failed, [CheckRun("tests", "completed", "success", "")]
     )
+
+
+async def test_the_bases_health_is_its_newest_commits_checks(monkeypatch):
+    from meta_harness.run_service.code_host import CheckRun
+    from meta_harness.run_service.shared import BaseHealthRequest
+
+    runs: list = []
+
+    async def branch_head(repo, branch):
+        return "abc123"
+
+    async def check_runs(repo, sha):
+        return runs
+
+    monkeypatch.setattr(code_host, "branch_head", branch_head)
+    monkeypatch.setattr(code_host, "check_runs", check_runs)
+
+    async def health():
+        result = await ActivityEnvironment().run(activities.base_health, BaseHealthRequest(repo="o/r", base="main"))
+        return result.state, result.sha, result.checks
+
+    assert await health() == ("healthy", "abc123", []), "a base that runs no checks is healthy"
+    runs[:] = [CheckRun("tests", "completed", "success", ""), CheckRun("deploy", "in_progress", None, "")]
+    assert await health() == ("running", "abc123", ["deploy"])
+    runs[:] = [CheckRun("tests", "completed", "failure", "x"), CheckRun("deploy", "in_progress", None, "")]
+    assert await health() == ("failed", "abc123", ["tests"]), "a failure counts before the rest finish"
+    # A deploy a later merge replaced is canceled: no sign the base is broken.
+    runs[:] = [CheckRun("tests", "completed", "success", ""), CheckRun("deploy", "completed", "cancelled", "")]
+    assert (await health())[0] == "healthy"
+    local = await ActivityEnvironment().run(
+        activities.base_health, BaseHealthRequest(repo="/tmp/origin.git", base="main")
+    )
+    assert local.state == "healthy"

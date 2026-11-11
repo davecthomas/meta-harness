@@ -14,6 +14,8 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from meta_harness.run_service.shared import (
+    BaseHealth,
+    BaseHealthRequest,
     Candidate,
     ChecksRequest,
     ChecksResult,
@@ -84,6 +86,11 @@ class Script:
     merge_checks: list[str] = field(default_factory=list)
     # A fix run after a merge changes no file, so its publish opens no pull request.
     fix_changes_nothing: bool = False
+    # How long a merge waits for the base's own checks (0: it does not look), and how they stand each time it
+    # looks: healthy, running or failed. None left: healthy.
+    merge_wait_minutes: int = 0
+    base: list[str] = field(default_factory=list)
+    base_asked: list[BaseHealthRequest] = field(default_factory=list)
 
     runs: list[HarnessRequest] = field(default_factory=list)
     prompts: list[LoopPromptRequest] = field(default_factory=list)
@@ -188,7 +195,18 @@ class Script:
         async def review_policy(author_model: str) -> ReviewPolicy:
             self.policy_asked_for.append(author_model)
             reviewers = [r for r in self.reviewers if f"{r.engine}:{r.model}" != author_model]
-            return ReviewPolicy(reviewers=reviewers, max_rounds=self.max_rounds, unresolved=self.unresolved)
+            return ReviewPolicy(
+                reviewers=reviewers,
+                max_rounds=self.max_rounds,
+                unresolved=self.unresolved,
+                merge_wait_minutes=self.merge_wait_minutes,
+            )
+
+        @activity.defn(name="base_health")
+        async def base_health(request: BaseHealthRequest) -> BaseHealth:
+            self.base_asked.append(request)
+            state = self.base.pop(0) if self.base else "healthy"
+            return BaseHealth(state=state, sha="b0b0b0b0b0b0", checks=[] if state == "healthy" else ["deploy"])
 
         @activity.defn(name="loop_prompt")
         async def loop_prompt(request: LoopPromptRequest) -> str:
@@ -229,6 +247,7 @@ class Script:
             publish,
             wait_checks,
             wait_merge_checks,
+            base_health,
             review_policy,
             loop_prompt,
             post_review,
@@ -549,6 +568,49 @@ async def test_a_review_after_the_first_is_given_the_round_befores_findings(env)
     assert second.round_no == 2 and second.previous_findings == CHANGES["findings"]
     assert second.previous_summary == CHANGES["summary"]
     assert first.passed_checks == ["tests"] == second.passed_checks, "each review is told the checks that passed"
+
+
+async def test_a_merge_waits_until_the_bases_own_checks_have_passed(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True, merge_wait_minutes=30, base=["running", "running", "healthy"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert len(script.base_asked) == 3 and script.base_asked[0].base == "main"
+    assert len(script.merge_requests) == 1, "it merged once, after the base was healthy"
+
+
+async def test_a_base_that_stays_broken_leaves_the_pull_request_open_for_an_operator(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True, merge_wait_minutes=2, base=["failed"] * 5)
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "clean" and not script.merge_requests, "nothing merges onto a broken base"
+    assert "main's checks at b0b0b0b0b0b0 (deploy) have failed after 2 minutes" in result.outcome_reason
+    assert "merge it once they pass" in result.outcome_reason
+
+
+async def test_a_fix_for_the_bases_own_failed_check_merges_without_waiting_for_the_base(env):
+    script = Script(
+        verdicts=[CLEAN, CLEAN],
+        auto_merge=True,
+        merge_checks=["failed", "passed"],
+        merge_wait_minutes=30,
+        base=["healthy", "failed"],
+    )
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged" and len(script.merge_requests) == 2
+    assert len(script.base_asked) == 1, "the first merge looked; the fix that repairs the base did not"
+
+
+async def test_a_policy_with_no_wait_merges_without_looking_at_the_base(env):
+    script = Script(verdicts=[CLEAN], auto_merge=True, base=["failed"])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged" and not script.base_asked
 
 
 async def test_a_conflict_goes_to_a_fix_run_that_resolves_the_merge_then_merges(env):

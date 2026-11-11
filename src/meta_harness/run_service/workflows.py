@@ -88,6 +88,7 @@ with workflow.unsafe.imports_passed_through():
         review_policy,
         route,
         run_harness,
+        base_health,
         wait_checks,
         wait_merge_checks,
     )
@@ -96,6 +97,7 @@ with workflow.unsafe.imports_passed_through():
     from meta_harness.run_service.resume_activities import resume_state
     from meta_harness.run_service.shared import (
         Attempt,
+        BaseHealthRequest,
         DeliverRequest,
         OperatorMessage,
         ChecksRequest,
@@ -162,6 +164,8 @@ CHECKS_TIMEOUT = timedelta(minutes=75)
 CHECKS_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 # Longer than wait_merge_checks's own 120 minutes, which ends the wait with a result.
 MERGE_CHECKS_TIMEOUT = timedelta(minutes=125)
+# How often a merge waiting for the base's own checks looks again.
+BASE_HEALTH_POLL_MINUTES = 1
 # How long a task held for budget waits for an operator before it ends as it would have. It holds its repo-area
 # lock and its place in the parallel limit while it waits.
 BUDGET_HOLD = timedelta(hours=24)
@@ -737,6 +741,7 @@ class RunTask:
                 retry_policy=PREPARE_RETRY,
             )
             loop.max_rounds = policy.max_rounds
+            loop.merge_wait_minutes = policy.merge_wait_minutes
             fixes = 0
             reviews = 0
             # A clean verdict that still stands at the new head: the base was brought in and the pull request's
@@ -943,6 +948,41 @@ class RunTask:
                     outcome = "merge_checks_failed"
                 return outcome, f"the fix for {names} after {merged_pr}: {reason}"
 
+    async def _wait_for_base(self, loop: "_Loop", clean: str) -> str:
+        """Waits until the base branch's newest commit's checks have passed, so nothing merges onto a broken
+        base. Returns "" once they have, or why the merge is given up: they were still failed, or still
+        running, after the task policy's merge_wait_minutes.
+
+        A fix for a check that failed after the task's own merge does not wait: it is what repairs the base.
+        Behind a patch: a workflow from before it merges without looking.
+        """
+        if loop.merge_wait_minutes <= 0 or loop.merge_fix or not workflow.patched("merge-base-health"):
+            return ""
+        base = loop.published.base
+        waited, told = 0, False
+        while True:
+            health = await workflow.execute_activity(
+                base_health,
+                BaseHealthRequest(repo=loop.prepared.repo, base=base),
+                start_to_close_timeout=CODE_HOST_TIMEOUT,
+                retry_policy=CODE_HOST_RETRY,
+            )
+            if health.state == "healthy":
+                return ""
+            what = f"{base}'s checks at {health.sha[:12]} ({', '.join(health.checks)})"
+            how = "have failed" if health.state == "failed" else "are still running"
+            if waited >= loop.merge_wait_minutes:
+                return (
+                    f"{what} {how} after {loop.merge_wait_minutes} minutes, so it was not merged onto them: "
+                    "merge it once they pass"
+                )
+            if not told and self._task_id:
+                told = True
+                await self._task_status("running", f"{clean}; waiting to merge: {what} {how}", loop.published.pr_url)
+                workflow.logger.info("%s: waiting to merge: %s %s", workflow.info().workflow_id, what, how)
+            await workflow.sleep(timedelta(minutes=BASE_HEALTH_POLL_MINUTES))
+            waited += BASE_HEALTH_POLL_MINUTES
+
     def _still_clean(self, merged: MergeResult, clean: str, loop: "_Loop") -> str:
         """The clean verdict to merge on at the new head with no new review, or "" when it must be reviewed again.
 
@@ -1002,6 +1042,8 @@ class RunTask:
         if not auto:
             why = "its goal has auto_merge off" if loop.request.goal_id else "the task has no goal to allow a merge"
             return MergeResult(state="ready", detail=f"{clean}; {why}, so it waits for an operator")
+        if held := await self._wait_for_base(loop, clean):
+            return MergeResult(state="blocked", detail=f"{clean}; {held}")
         merged = await workflow.execute_activity(
             merge_pr,
             MergeRequest(
@@ -1245,6 +1287,8 @@ class _Loop:
         self.max_rounds = 0
         # Whether the pull request in the loop is a fix for a check that failed after the task's own merge.
         self.merge_fix = False
+        # How long a merge waits for the base's own checks, from the task policy; 0: it does not wait.
+        self.merge_wait_minutes = 0
 
     def left(self) -> Decimal:
         return self.limit - self.spent
