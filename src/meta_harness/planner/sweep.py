@@ -7,7 +7,9 @@ issue's text, its `## Acceptance checks` (else the repo registry's default
 checks), and the open issues it depends on. The task service starts a task
 with open dependencies in `blocked`. A sweep also records issues that closed,
 and moves a blocked task to `queued` once every issue it depends on is
-closed. An issue already in another goal stays there.
+closed. An issue already in another goal stays there. Each sweep refreshes
+the title and labels it keeps of every issue it holds that has a task, open
+or closed, so costs by label follow a relabel.
 
 An issue closed by someone else's pull request, or by hand, has no work
 left: a sweep cancels its task when the task has not opened a pull request
@@ -21,7 +23,11 @@ change as an event (`pull_request_checks` once a new head commit's checks
 settle, `pull_request_merged`, `pull_request_closed`) with the event id the
 workflow uses for the same fact, so the fact is recorded once whoever sees it,
 and reports a merge to the task service as `closed` and a close without
-merging as `canceled`.
+merging as `canceled`. It reads too the pull request of each of the goal's
+`canceled` tasks that left one open, which nothing else watches: an operator
+can cancel a task and merge or close its pull request by hand later. Its end
+is recorded the same way, once, and the task stays canceled, so costs by
+outcome see it (cost_facts.py).
 
 Last, a sweep checks whether the goal is met: it has held at least one issue,
 every issue it holds is closed, its label has no open issue it could take in,
@@ -40,6 +46,14 @@ above what it has spent.
 The planner runs a sweep on every active goal every MH_PLANNER_SWEEP_SECONDS,
 and right after a goal first starts: when it is created, or on its first
 resume when it was saved without starting. Webhooks make it immediate later.
+
+A goal no sweep covers any more, met, canceled, paused or stalled, is
+followed up every FOLLOW_UP_SECONDS instead (follow_up_goal): the title and
+labels of each issue it holds that has a task are refreshed, and its canceled
+tasks' pull requests watched for their end, so costs by label and by outcome
+stay true after the goal ends. It takes in nothing and changes no task. The
+canceled tasks of no goal, which no goal's sweep lists, have their pull
+requests watched as often (follow_up_goalless).
 """
 
 import asyncio
@@ -49,7 +63,7 @@ from typing import Any, Protocol
 from meta_harness import db
 from meta_harness.events.client import stable_event_id
 from meta_harness.github_app import GitHubAppError
-from meta_harness.planner import budget_api, repos, store
+from meta_harness.planner import budget_api, cost_facts, repos, store
 from meta_harness.planner.tracker import Issue, Tracker
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CheckRun, CodeHostError, PullRequest
@@ -62,6 +76,9 @@ UNFINISHED_TASK_STATUSES = ["queued", "blocked", "running", "taken_over", "ready
 PR_WATCHED_STATUSES = ["ready", "review_unresolved"]
 # The most tasks one sweep watches per goal: the Task API's page limit.
 PR_WATCH_LIMIT = 1000
+# The goals no sweep covers, which a follow-up looks at instead, and how often.
+FOLLOWED_UP_STATUSES = ["met", "canceled", "paused", "stalled"]
+FOLLOW_UP_SECONDS = 3600.0
 
 
 class Events(Protocol):
@@ -88,6 +105,8 @@ class SweepResult:
     # Task ids whose pull request the sweep found merged, or closed without merging.
     merged: list[str] = field(default_factory=list)
     canceled: list[str] = field(default_factory=list)
+    # Task ids, canceled with their pull request open, whose pull request the sweep found merged or closed.
+    ended: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     met: bool = False
 
@@ -118,6 +137,7 @@ async def sweep_goal(
             await _take_in(goal, issue, tracker, tasks, events, result)
     await _take_in_added(goal, seen, tracker, tasks, events, result)
     await _watch_pull_requests(goal, tasks, events, host or code_host, result)
+    await _watch_canceled_pull_requests(goal, tasks, events, host or code_host, result)
     await _record_closed(goal, seen, tracker, events, result)
     await _cancel_for_closed_issues(goal, tasks, result)
     await _release_unblocked(goal, tracker, tasks, events, result)
@@ -127,6 +147,27 @@ async def sweep_goal(
         await budget_api.check(goal, tasks, events)
     except Exception as err:  # noqa: BLE001 - an unreadable spend is this sweep's error; the next one looks again
         result.errors.append(f"{goal['id']}: could not check the budget: {err}")
+    return result
+
+
+async def follow_up_goal(
+    goal: dict, tracker: Tracker, tasks: TaskClient, events: Events, host: CodeHost | None = None
+) -> SweepResult:
+    """For a goal no sweep covers any more: refresh the title and labels of each issue it holds that has a
+    task, and record the end of each pull request its canceled tasks left open. Nothing is taken in, and no
+    task or goal changes status."""
+    result = SweepResult(goal["id"])
+    for link in await asyncio.to_thread(_links, goal["id"]):
+        if not link["task_id"]:
+            continue
+        try:
+            issue = await tracker.read(link["ref"])
+        except (GitHubAppError, ValueError) as err:
+            # One that cannot be read keeps the labels it had.
+            result.errors.append(f"{link['ref']}: {err}")
+            continue
+        await _refresh(link, issue)
+    await _watch_canceled_pull_requests(goal, tasks, events, host or code_host, result)
     return result
 
 
@@ -201,15 +242,20 @@ async def _take_in_added(
 async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult):
     existing = await asyncio.to_thread(_link, issue.ref)
     title = issue.title[:300]
+    labels = list(dict.fromkeys(issue.labels))
     if existing and existing["goal_id"] == goal["id"] and existing.get("title") != title:
         await asyncio.to_thread(_set_title, issue.ref, title)
+    if existing and existing["goal_id"] == goal["id"] and existing.get("labels") != labels:
+        await asyncio.to_thread(_set_labels, issue.ref, labels)
     if existing and (existing["goal_id"] != goal["id"] or existing["task_id"] or existing["refused_reason"]):
         return
     registered = repos.get(issue.repo)
     checks = issue.checks or (registered.default_checks if registered else [])
     if not checks:
         reason = "the issue has no ## Acceptance checks and the repo registry names no default checks"
-        await asyncio.to_thread(_save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, reason, title)
+        await asyncio.to_thread(
+            _save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, reason, title, labels
+        )
         events.emit(
             "issue_refused",
             {"ref": issue.ref, "reason": reason},
@@ -237,7 +283,9 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
     except TaskApiError as err:
         result.errors.append(f"{issue.ref}: {err}")
         return
-    await asyncio.to_thread(_save, issue.ref, goal["id"], issue.repo, "open", open_deps, task["id"], None, title)
+    await asyncio.to_thread(
+        _save, issue.ref, goal["id"], issue.repo, "open", open_deps, task["id"], None, title, labels
+    )
     events.emit(
         "issue_joined",
         {"ref": issue.ref, "goal_id": goal["id"], "depends_on": open_deps, "status": task["status"]},
@@ -249,15 +297,21 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
 
 
 async def _record_closed(goal: dict, seen: set[str], tracker: Tracker, events: Events, result: SweepResult) -> None:
+    """Record each held issue the label's listing left out that has closed, and refresh the title and labels
+    of every one the listing left out: one taken in already, one closed, one an operator added by ref. Costs by
+    label read them (cost_facts.py), so a relabel shows even after the issue was taken in or closed."""
     for link in await asyncio.to_thread(_links, goal["id"]):
-        if link["state"] != "open" or link["ref"] in seen:
+        if link["ref"] in seen or (link["state"] != "open" and not link["task_id"]):
             continue
         try:
             issue = await tracker.read(link["ref"])
         except GitHubAppError as err:
-            result.errors.append(f"{link['ref']}: {err}")
+            # A closed issue is read only for its labels: one that cannot be read keeps those it had.
+            if link["state"] == "open":
+                result.errors.append(f"{link['ref']}: {err}")
             continue
-        if issue.state == "closed":
+        await _refresh(link, issue)
+        if link["state"] == "open" and issue.state == "closed":
             await asyncio.to_thread(_set_state, link["ref"], "closed")
             events.emit(
                 "issue_closed",
@@ -267,6 +321,16 @@ async def _record_closed(goal: dict, seen: set[str], tracker: Tracker, events: E
                 event_id=stable_event_id("issue_closed", link["ref"]),
             )
             result.closed.append(link["ref"])
+
+
+async def _refresh(link: dict, issue: Issue) -> None:
+    """Save the issue's title and labels on its link where they changed."""
+    title = issue.title[:300]
+    labels = list(dict.fromkeys(issue.labels))
+    if link.get("title") != title:
+        await asyncio.to_thread(_set_title, issue.ref, title)
+    if link.get("labels") != labels:
+        await asyncio.to_thread(_set_labels, issue.ref, labels)
 
 
 # A task in one of these has not ended, so an issue closed under it may leave it with nothing to do.
@@ -356,6 +420,52 @@ async def _watch_pull_requests(goal: dict, tasks: TaskClient, events: Events, ho
             result.errors.append(f"{task['id']}: {err}")
 
 
+async def follow_up_goalless(tasks: TaskClient, events: Events, host: CodeHost | None = None) -> SweepResult:
+    """Record the end of each pull request a canceled task of no goal left open. A task can be made without a
+    goal, and no goal's sweep or follow-up lists it, so this watches those, as often as goals are followed up."""
+    result = SweepResult("")
+    await _watch_canceled_pull_requests(None, tasks, events, host or code_host, result)
+    return result
+
+
+async def _watch_canceled_pull_requests(
+    goal: dict | None, tasks: TaskClient, events: Events, host: CodeHost, result: SweepResult
+) -> None:
+    """Record the end of each pull request a canceled task left open, which no workflow and no other watch
+    reads: one merged or closed by hand after its task was canceled. The task stays canceled. Each is read
+    until its end is recorded, then never again. Without a goal, the canceled tasks of no goal are watched."""
+    try:
+        if goal:
+            canceled = await asyncio.to_thread(cost_facts.every_task, tasks, goal["id"], ["canceled"])
+        else:
+            every = await asyncio.to_thread(cost_facts.every_task, tasks, None, ["canceled"])
+            canceled = [task for task in every if not task.get("goal_id")]
+    except TaskApiError as err:
+        result.errors.append(f"{goal['id'] if goal else 'tasks of no goal'}: {err}")
+        return
+    with_pull = [task for task in canceled if task.get("pr_url")]
+    if not with_pull:
+        return
+    ended = await asyncio.to_thread(_ended, [task["id"] for task in with_pull])
+    for task in with_pull:
+        if task["id"] in ended:
+            continue
+        try:
+            repo, number = code_host.pr_number(task["pr_url"])
+        except CodeHostError:
+            continue
+        try:
+            pull = await host.read_pull_request(repo, number)
+        except CodeHostError as err:
+            result.errors.append(f"{task['id']}: {err}")
+            continue
+        if pull.state in ("open", "draft"):
+            continue
+        _emit_end(goal, task, pull, events)
+        await asyncio.to_thread(_save_end, task["id"], pull.state)
+        result.ended.append(task["id"])
+
+
 async def _record_checks(goal: dict, task: dict, pull: PullRequest, host: CodeHost, events: Events) -> None:
     """Record the head commit's checks once they settle: pending checks are recorded when they end."""
     if not pull.head_sha:
@@ -379,21 +489,31 @@ async def _record_end(
 ) -> None:
     """A merged pull request closes its task; one closed without merging cancels it."""
     if pull.state == "merged":
-        event_type, status, reason = "pull_request_merged", "closed", "its pull request merged"
+        status, reason = "closed", "its pull request merged"
+    else:
+        status, reason = "canceled", "its pull request was closed without merging"
+    _emit_end(goal, task, pull, events)
+    await asyncio.to_thread(_save_end, task["id"], pull.state)
+    await asyncio.to_thread(tasks.set_status, task["id"], status, reason)
+    (result.merged if status == "closed" else result.canceled).append(task["id"])
+
+
+def _emit_end(goal: dict | None, task: dict, pull: PullRequest, events: Events) -> None:
+    """Record a pull request's end, merged or closed without merging, as the run workflow does."""
+    if pull.state == "merged":
+        event_type = "pull_request_merged"
         payload = {"pr_url": task["pr_url"], "head_sha": pull.head_sha, "merge_sha": pull.merge_sha}
     else:
-        event_type, status, reason = "pull_request_closed", "canceled", "its pull request was closed without merging"
+        event_type = "pull_request_closed"
         payload = {"pr_url": task["pr_url"], "head_sha": pull.head_sha}
     events.emit(
         event_type,
         payload,
         task_id=task["id"],
         actor="planner",
-        tags={"goal_id": goal["id"]},
+        tags={"goal_id": goal["id"]} if goal else {},
         event_id=stable_event_id(task["id"], event_type),
     )
-    await asyncio.to_thread(tasks.set_status, task["id"], status, reason)
-    (result.merged if status == "closed" else result.canceled).append(task["id"])
 
 
 async def _is_open(ref: str, tracker: Tracker) -> bool:
@@ -417,14 +537,29 @@ def _links(goal_id: str) -> list[dict]:
         return store.links(conn, goal_id)
 
 
-def _save(ref, goal_id, repo, state, depends_on, task_id, refused_reason, title=None) -> None:
+def _save(ref, goal_id, repo, state, depends_on, task_id, refused_reason, title=None, labels=None) -> None:
     with db.connect(autocommit=True) as conn:
-        store.save_link(conn, ref, goal_id, repo, state, depends_on, task_id, refused_reason, title)
+        store.save_link(conn, ref, goal_id, repo, state, depends_on, task_id, refused_reason, title, labels)
 
 
 def _set_title(ref: str, title: str) -> None:
     with db.connect(autocommit=True) as conn:
         store.set_link_title(conn, ref, title)
+
+
+def _set_labels(ref: str, labels: list[str]) -> None:
+    with db.connect(autocommit=True) as conn:
+        store.set_link_labels(conn, ref, labels)
+
+
+def _ended(task_ids: list[str]) -> set[str]:
+    with db.connect(autocommit=True) as conn:
+        return store.ended_pull_requests(conn, task_ids)
+
+
+def _save_end(task_id: str, state: str) -> None:
+    with db.connect(autocommit=True) as conn:
+        store.save_pull_request_end(conn, task_id, "merged" if state == "merged" else "closed")
 
 
 def _complete(goal_id: str) -> tuple[dict, dict]:
@@ -440,6 +575,12 @@ def _set_state(ref: str, state: str) -> None:
 def active_goals() -> list[dict]:
     with db.connect(autocommit=True) as conn:
         return store.list_goals(conn, ["active"])
+
+
+def followed_up_goals() -> list[dict]:
+    """The goals a follow-up covers: those no timed sweep does."""
+    with db.connect(autocommit=True) as conn:
+        return store.list_goals(conn, FOLLOWED_UP_STATUSES)
 
 
 def swept_goals() -> list[dict]:

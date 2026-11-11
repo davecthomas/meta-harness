@@ -103,6 +103,9 @@ class Tasks:
     def list(self, statuses=None, goal_id=None, limit=100):
         return []
 
+    def page(self, statuses=None, goal_id=None, limit=25, offset=0):
+        return {"tasks": [], "total": 0, "offset": offset, "limit": limit}
+
 
 TASKS = {
     "t-1": {"id": "t-1", "title": "Fix it", "goal_id": "g-a", "repo": "o/r", "task_type": "bug", "caller": "planner"},
@@ -280,3 +283,52 @@ def test_a_filters_choices_are_not_narrowed_by_its_own_value(api):
     ).json()
     assert picked["choices"]["source"] == ["cloud", "model"], "the source filter still offers both, to choose back"
     assert picked["choices"]["kind"] == ["Compute Engine"], "within the cloud source, its billed services"
+
+
+# Each task's issue labels and pull request outcome, as the planner gives them to the cost API.
+FACTS = {
+    "t-1": {"labels": ["bug", "saves"], "outcome": "merged"},
+    "t-2": {"labels": ["bug"], "outcome": "open"},
+}
+
+
+@pytest.fixture
+def by_facts(clean, monkeypatch):
+    from fastapi import FastAPI
+
+    monkeypatch.delenv(cloud_source.SETTING, raising=False)
+    _harvest(_events())
+    with db.connect(autocommit=True) as conn:
+        store.replace(
+            conn, "cloud", date(2026, 11, 1), date(2026, 11, 30),
+            [store.Cost(day=date(2026, 11, 10), source="cloud", item="Compute Engine", usd=Decimal("4.20"))],
+        )  # fmt: skip
+    app = FastAPI()
+    costs_api.register(app, lambda: "dave@example.com", lambda: True, Events(), Tasks(TASKS), GOALS.get, lambda: FACTS)
+    with TestClient(app) as client:
+        yield client
+
+
+def test_costs_are_filtered_by_the_labels_of_a_tasks_issue_and_its_pull_requests_outcome(by_facts):
+    def seen(**params) -> dict:
+        response = by_facts.get("/v1/costs", params={**SPAN, **params})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    merged = seen(outcome="merged")
+    assert merged["total"] == 3.25 and [t["task_id"] for t in merged["top_tasks"]] == ["t-1"]
+    assert seen(outcome="merged,open")["total"] == 4.5
+    assert seen(label="bug")["total"] == 4.5 and seen(label="saves")["total"] == 3.25
+    assert seen(label="saves", outcome="open")["total"] == 0, "both filters hold"
+    assert seen(label="nobody-uses-this")["total"] == 0
+    assert seen(source="model")["choices"]["label"] == ["bug", "saves"]
+    assert seen(source="model", outcome="open")["choices"]["outcome"] == ["merged", "open"], "not narrowed by itself"
+    assert by_facts.get("/v1/costs", params={**SPAN, "outcome": "abandoned"}).status_code == 422
+
+
+def test_a_breakdown_by_label_shares_a_tasks_cost_among_its_labels_so_the_series_add_up(by_facts):
+    by_label = by_facts.get("/v1/costs", params={**SPAN, "group_by": "label", "source": "model"}).json()
+    assert {s["key"]: s["total"] for s in by_label["series"]} == {"bug": 2.875, "saves": 1.625, "": 0.01}
+    assert round(sum(s["total"] for s in by_label["series"]), 4) == by_label["total"] == 4.51
+    by_outcome = by_facts.get("/v1/costs", params={**SPAN, "group_by": "outcome", "source": "model"}).json()
+    assert {s["key"]: s["total"] for s in by_outcome["series"]} == {"merged": 3.25, "open": 1.25, "": 0.01}

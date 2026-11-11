@@ -2,11 +2,10 @@
 import { feature as overview } from "./overview";
 import { feature as goals } from "./goals";
 import { feature as tasks } from "./tasks";
-import { feature as activity } from "./activity";
 import { feature as performance } from "./performance";
 import { feature as config } from "./config";
 import { feature as admin } from "./admin";
 import { feature as settings } from "./settings";
 import type { Feature } from "./types";
 
-export const FEATURES: Feature[] = [overview, goals, tasks, activity, performance, config, admin, settings];
+export const FEATURES: Feature[] = [overview, goals, tasks, performance, config, admin, settings];

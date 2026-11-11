@@ -35,7 +35,7 @@ GOAL_COLUMNS = (
 )
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
-    "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at, title"
+    "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at, title, labels"
 )
 
 
@@ -298,15 +298,18 @@ def save_link(
     task_id: str | None = None,
     refused_reason: str | None = None,
     title: str | None = None,
+    labels: list[str] | None = None,
 ) -> None:
     with conn.transaction():
         conn.execute(
-            "INSERT INTO planner.issue_link (ref, goal_id, repo, task_id, state, depends_on, refused_reason, title) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (ref) DO UPDATE SET "
+            "INSERT INTO planner.issue_link "
+            "(ref, goal_id, repo, task_id, state, depends_on, refused_reason, title, labels) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (ref) DO UPDATE SET "
             "task_id = COALESCE(EXCLUDED.task_id, planner.issue_link.task_id), state = EXCLUDED.state, "
             "depends_on = EXCLUDED.depends_on, refused_reason = EXCLUDED.refused_reason, "
-            "title = COALESCE(EXCLUDED.title, planner.issue_link.title), last_seen_at = now()",
-            (ref, goal_id, repo, task_id, state, depends_on, refused_reason, title),
+            "title = COALESCE(EXCLUDED.title, planner.issue_link.title), "
+            "labels = COALESCE(EXCLUDED.labels, planner.issue_link.labels), last_seen_at = now()",
+            (ref, goal_id, repo, task_id, state, depends_on, refused_reason, title, labels),
         )
 
 
@@ -314,6 +317,37 @@ def set_link_title(conn: psycopg.Connection, ref: str, title: str) -> None:
     """The issue's title as the tracker has it now, for the goal's board."""
     with conn.transaction():
         conn.execute("UPDATE planner.issue_link SET title = %s WHERE ref = %s", (title, ref))
+
+
+def set_link_labels(conn: psycopg.Connection, ref: str, labels: list[str]) -> None:
+    """The issue's labels as the tracker has them now, for costs by label."""
+    with conn.transaction():
+        conn.execute("UPDATE planner.issue_link SET labels = %s WHERE ref = %s", (labels, ref))
+
+
+def save_pull_request_end(conn: psycopg.Connection, task_id: str, outcome: str) -> None:
+    """Note that a sweep recorded the end of the task's pull request: merged, or closed without merging."""
+    with conn.transaction():
+        conn.execute(
+            "INSERT INTO planner.pull_request_end (task_id, outcome) VALUES (%s, %s) ON CONFLICT (task_id) DO NOTHING",
+            (task_id, outcome),
+        )
+
+
+def ended_pull_requests(conn: psycopg.Connection, task_ids: list[str]) -> set[str]:
+    """Which of these tasks' pull requests a sweep has recorded the end of."""
+    rows = conn.execute("SELECT task_id FROM planner.pull_request_end WHERE task_id = ANY(%s)", (task_ids,)).fetchall()
+    return {row[0] for row in rows}
+
+
+def task_labels(conn: psycopg.Connection) -> dict[str, list[str]]:
+    """For each task made from an issue, that issue's labels. A link stored before the planner kept labels
+    has its goal's label in their place, the one label it is sure the issue carried."""
+    rows = conn.execute(
+        "SELECT l.task_id, COALESCE(l.labels, CASE WHEN g.label IS NULL THEN '{}'::text[] ELSE ARRAY[g.label] END) "
+        "FROM planner.issue_link l JOIN planner.goal g ON g.id = l.goal_id WHERE l.task_id IS NOT NULL"
+    ).fetchall()
+    return {task_id: list(labels) for task_id, labels in rows}
 
 
 def add_refs(conn: psycopg.Connection, goal_id: str, refs: list[tuple[str, str]]) -> list[str]:
