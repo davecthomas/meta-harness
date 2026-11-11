@@ -4,6 +4,7 @@
     GET, PATCH /v1/goals/{id}                 a goal with its issues, or change any field an operator set on it
     GET        /v1/goals/{id}/issues          each issue with its task status, pull request, PR state and checks
     POST       /v1/goals/{id}/pause, /resume, /cancel   resume also starts a goal saved without starting
+                                              cancel also ends the goal's tasks that have not started
     POST       /v1/goals/{id}/resume-budget   raise the budget of a goal over it or stopped by it (budget_api.py)
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
@@ -33,6 +34,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -64,9 +66,11 @@ from meta_harness.planner.sweep import (
     CodeHost,
     Events,
     SweepResult,
+    cancel_goal_tasks,
     follow_up_goal,
     follow_up_goalless,
     followed_up_goals,
+    refresh_states,
     sweep_goal,
     swept_goals,
 )
@@ -77,6 +81,10 @@ log = logging.getLogger("meta_harness.planner")
 
 # The most tasks the issues view reads in one Task API page.
 TASKS_PAGE = 1000
+# The goals a timed sweep covers, whose record of their issues' states it keeps current.
+SWEPT_STATUSES = ("active", "budget_exhausted")
+# How long a read of the tracker for a goal no sweep covers stands, before its page reads it again.
+STATE_CHECK_SECONDS = 60.0
 
 
 class GoalIn(BaseModel):
@@ -689,21 +697,53 @@ def create_app(
             goals, total = store.page_goals(conn, status.split(",") if status else None, limit, offset)
         return {"goals": goals, "total": total, "offset": offset, "limit": limit}
 
+    # For each goal no sweep covers: when its issues' states were last read from the tracker, and whether
+    # every one could be read.
+    checked: dict[str, tuple[float, str, bool]] = {}
+
+    async def current_states(goal: dict) -> dict:
+        """For a goal no sweep covers, read its open issues' states from the tracker, at most once every
+        STATE_CHECK_SECONDS, so its page never shows the state its last sweep saw as today's. Returns when
+        the states were last read and whether every one could be; nothing for a swept goal, whose sweep
+        keeps them."""
+        if goal["status"] in SWEPT_STATUSES:
+            return {"states_checked_at": None, "states_complete": True}
+        now = asyncio.get_running_loop().time()
+        last = checked.get(goal["id"])
+        if last is None or now - last[0] >= STATE_CHECK_SECONDS:
+            errors = await refresh_states(goal, tracker, events)
+            for error in errors:
+                log.warning("goal %s: could not read an issue's state: %s", goal["id"], error)
+            last = (now, datetime.now(UTC).isoformat(), not errors)
+            checked[goal["id"]] = last
+        return {"states_checked_at": last[1], "states_complete": last[2]}
+
     @app.get("/v1/goals/{goal_id}")
-    def read(goal_id: str, who: str = Depends(operator)) -> dict:
-        goal = load(goal_id)
-        with app.state.pool.connection() as conn:
-            goal["issues"] = store.links(conn, goal_id)
+    async def read(goal_id: str, who: str = Depends(operator)) -> dict:
+        goal = await asyncio.to_thread(load, goal_id)
+        goal.update(await current_states(goal))
+
+        def links() -> list[dict]:
+            with app.state.pool.connection() as conn:
+                return store.links(conn, goal_id)
+
+        goal["issues"] = await asyncio.to_thread(links)
         return goal
 
     @app.get("/v1/goals/{goal_id}/issues")
-    def goal_issues(goal_id: str, who: str = Depends(operator)) -> dict:
-        """Each of the goal's issues with its task's status, pull request URL, pull request state and checks.
+    async def goal_issues(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Each of the goal's issues with its task's status, pull request URL, pull request state and checks,
+        the goal's status, and for a goal no sweep covers, when its issues' states were read from the tracker.
 
         The task's facts come from the Task API and the events recorded on it, never from the task
         service's tables.
         """
-        load(goal_id)
+        goal = await asyncio.to_thread(load, goal_id)
+        states = await current_states(goal)
+        shown = await asyncio.to_thread(issues_view, goal_id)
+        return {"goal_id": goal_id, "goal_status": goal["status"], **states, "issues": shown}
+
+    def issues_view(goal_id: str) -> list[dict]:
         with app.state.pool.connection() as conn:
             links = store.links(conn, goal_id)
         task_ids = [link["task_id"] for link in links if link["task_id"]]
@@ -719,7 +759,7 @@ def create_app(
             recorded = progress.pull_request_events(events, task_ids) if task_ids else []
         except Exception as err:  # noqa: BLE001 - an unreachable event service is the caller's 502
             raise HTTPException(status_code=502, detail=f"could not read the tasks' events: {err}") from err
-        return {"goal_id": goal_id, "issues": progress.issues_progress(links, found, recorded)}
+        return progress.issues_progress(links, found, recorded)
 
     @app.get("/v1/goals/{goal_id}/spend")
     def goal_spend(goal_id: str, who: str = Depends(operator)) -> dict:
@@ -846,8 +886,18 @@ def create_app(
         return goal
 
     @app.post("/v1/goals/{goal_id}/cancel")
-    def cancel(goal_id: str, who: str = Depends(operator)) -> dict:
-        return change(goal_id, who, status="canceled")
+    async def cancel(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Cancel the goal, and end what it has not started: its queued and blocked tasks are canceled, and
+        its running tasks with no pull request are asked to stop. A task with a pull request open is left for
+        the operator. The goal comes back with `tasks`: the task ids canceled, stopping, left, and any the
+        task service refused."""
+        # Under the goal's sweep lock, so a sweep in progress makes no task after these are ended.
+        async with locks.setdefault(goal_id, asyncio.Lock()):
+            goal = await asyncio.to_thread(change, goal_id, who, status="canceled")
+            done = await cancel_goal_tasks(goal, tasks, who)
+        for error in done["errors"]:
+            log.warning("goal %s: could not end a task on cancel: %s", goal_id, error)
+        return {**goal, "tasks": done}
 
     @app.post("/v1/goals/{goal_id}/complete")
     def complete(goal_id: str, who: str = Depends(operator)) -> dict:
