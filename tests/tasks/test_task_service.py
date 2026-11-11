@@ -644,3 +644,18 @@ def test_a_claimed_review_can_be_given_back_by_the_operator_who_holds_it(api, ev
     assert released.status_code == 202 and released.json()["review_claimed_by"] is None
     pending = api.get("/v1/messages/pending", headers=_as(SERVICE_KEY)).json()["messages"]
     assert [m["body"] for m in pending if m["task_id"] == tid] == ["claim:ops", "release"]
+
+
+def test_no_spend_limit_above_the_ceiling_for_one_task_is_accepted(api):
+    over = api.post("/v1/tasks", json=_task(max_usd="100.01"), headers=_as(CALLER_KEY))
+    assert over.status_code == 422 and "the most one task may spend" in over.json()["detail"]
+    assert "$100.00" in over.json()["detail"]
+
+    task = api.post("/v1/tasks", json=_task(max_usd="100.00"), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/cancel", headers=_as(CALLER_KEY))
+    retried = api.post(f"/v1/tasks/{task['id']}/retry", json={"max_usd": "5000"}, headers=_as(CALLER_KEY))
+    assert retried.status_code == 422 and "max_task_usd" in retried.json()["detail"]
+    raised = api.post(
+        f"/v1/tasks/{task['id']}/budget", json={"action": "raise", "max_usd": "1000000"}, headers=_as(CALLER_KEY)
+    )
+    assert raised.status_code == 422

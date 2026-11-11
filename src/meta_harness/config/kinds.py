@@ -19,6 +19,7 @@ VM holds.
 import json
 import os
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from ai_api_unified.routing.router_config import load_router_config
@@ -100,6 +101,9 @@ def sandbox_ceiling() -> int | None:
 # What a budget does across the deployment. block: a goal's budget and a task's spend limit stop work, as each
 # says. track: nothing is held, refused or ended for either; spend is still recorded and shown against them.
 BUDGET_POLICIES = ("block", "track")
+# The highest ceiling a task policy may set on one task's spend. A ceiling is a safety limit, so it cannot be
+# set out of reach.
+MAX_TASK_USD = Decimal("1000")
 
 
 def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]] | None = None) -> list[str]:
@@ -134,6 +138,18 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
             f"budget_policy must be one of {', '.join(BUDGET_POLICIES)}: block stops work at a budget or spend "
             "limit, and track only records the spend against it"
         )
+    ceiling = document.get("max_task_usd")
+    if ceiling is not None:
+        try:
+            amount = Decimal(str(ceiling))
+            usable = not isinstance(ceiling, bool) and amount.is_finite() and 0 < amount <= MAX_TASK_USD
+        except InvalidOperation:
+            usable = False
+        if not usable:
+            reasons.append(
+                f"max_task_usd must be an amount above 0 and at most {MAX_TASK_USD}: the most one task may "
+                "spend, whatever its own limit or the budget policy says"
+            )
     writing = document.get("writing_pass")
     if writing is not None and not isinstance(writing, bool):
         reasons.append(

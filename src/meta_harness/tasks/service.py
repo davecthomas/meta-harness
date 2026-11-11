@@ -147,6 +147,20 @@ def create_app(
 
     app = FastAPI(title="meta-harness task service", lifespan=lifespan)
 
+    def within_ceiling(max_usd: Decimal | None) -> None:
+        """Refuse a spend limit above the task policy's ceiling for one task, naming the ceiling."""
+        from meta_harness.config import store as config_store
+
+        ceiling = config_store.task_spend_ceiling()
+        if max_usd is not None and max_usd > ceiling:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"max_usd {max_usd} is above ${ceiling:.2f}, the most one task may spend "
+                    "(the task policy's max_task_usd)"
+                ),
+            )
+
     def caller(key: str = Depends(auth.bearer), actor: str | None = Header(default=None, alias="X-MH-Actor")) -> Caller:
         if label := auth.label_for(key, services):
             return Caller(label, service=True, actor=actor or label)
@@ -186,6 +200,7 @@ def create_app(
 
     @app.post("/v1/tasks", status_code=201)
     def submit(body: TaskIn, response: Response, who: Caller = Depends(caller)) -> dict:
+        within_ceiling(body.max_usd)
         try:
             with app.state.pool.connection() as conn:
                 task, created = store.create(conn, who.label, store.NewTask(**body.model_dump()), internal=who.service)
@@ -332,6 +347,7 @@ def create_app(
         """Send a review_unresolved, failed or canceled task back to the queue. With a pull request it resumes
         at the review loop (or closes, when the pull request has merged); without one it starts a new first run.
         Its runs start from nothing spent, against max_usd when given."""
+        within_ceiling((body or RetryIn()).max_usd)
         return requeue(task_id, "retry", (body or RetryIn()).max_usd, who)
 
     @app.post("/v1/tasks/{task_id}/merge", status_code=202)
@@ -429,6 +445,7 @@ def create_app(
     def budget(task_id: str, body: BudgetIn, who: Caller = Depends(caller)) -> dict:
         """An operator's answer to a task held for budget: raise its spend limit (or carry on, when its goal's
         budget was raised) or end it. The scheduler hands the answer to the task's workflow."""
+        within_ceiling(body.max_usd)
         try:
             with app.state.pool.connection() as conn:
                 visible(store.get(conn, task_id), who)

@@ -7,6 +7,7 @@ anything reads it, so a fresh deployment starts from what it shipped with.
 import json
 import os
 import time
+from decimal import Decimal
 from typing import Any
 
 import psycopg
@@ -287,6 +288,20 @@ def current_document(kind: str) -> dict[str, Any]:
         return active_document(kind)[1]
     _known(kind)
     return KINDS[kind].seed()
+
+
+def task_spend_ceiling() -> Decimal:
+    """The most one task may spend: the task policy's max_task_usd, else TASK_SPEND_CEILING_USD. No task runs
+    without this ceiling, whatever its own limit or the budget policy says. A policy that cannot be read, or
+    names no usable amount, answers the default: the ceiling never opens because a read failed."""
+    from meta_harness.run_service.shared import TASK_SPEND_CEILING_USD
+
+    default = Decimal(TASK_SPEND_CEILING_USD)
+    try:
+        ceiling = Decimal(str(current_document("task_policy").get("max_task_usd") or default))
+    except Exception:  # noqa: BLE001 - an unreadable policy must not unbound anything
+        return default
+    return ceiling if ceiling.is_finite() and ceiling > 0 else default
 
 
 # How long budget_policy answers from its last read: the planner asks once for every goal it serves.

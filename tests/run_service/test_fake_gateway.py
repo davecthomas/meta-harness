@@ -94,7 +94,7 @@ def test_a_checks_tasks_review_run_still_submits_a_verdict(monkeypatch):
 
 
 def test_a_spend_limit_the_http_gateway_would_refuse_is_refused_and_the_unbounded_one_is_granted():
-    from meta_harness.run_service.shared import DEFAULT_SPEND_LIMIT_USD, UNBOUNDED_SPEND_LIMIT_USD
+    from meta_harness.run_service.shared import DEFAULT_SPEND_LIMIT_USD, TASK_SPEND_CEILING_USD
 
     grants = fake_gateway.Grants()
 
@@ -104,5 +104,5 @@ def test_a_spend_limit_the_http_gateway_would_refuse_is_refused_and_the_unbounde
 
     assert issue("r-1", "1000000.00") == 422, "seven digits before the point: the HTTP Gateway refuses it"
     assert issue("r-2", "ten") == 422
-    assert issue("r-3", UNBOUNDED_SPEND_LIMIT_USD) == 200, "what a task gets under the track budget policy"
+    assert issue("r-3", TASK_SPEND_CEILING_USD) == 200, "what a task gets under the track budget policy"
     assert issue("r-4", DEFAULT_SPEND_LIMIT_USD) == 200
