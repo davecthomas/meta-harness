@@ -507,6 +507,40 @@
     "required": [],
     "type": "object"
   },
+  "operator_review_claimed v1": {
+    "additionalProperties": true,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "operator_review_released v1": {
+    "additionalProperties": true,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "operator_review_submitted v1": {
+    "additionalProperties": true,
+    "properties": {
+      "findings": {
+        "type": "integer"
+      },
+      "kept": {
+        "type": "integer"
+      },
+      "verdict": {
+        "enum": [
+          "clean",
+          "changes"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "verdict"
+    ],
+    "type": "object"
+  },
   "plan_approved v1": {
     "additionalProperties": true,
     "properties": {

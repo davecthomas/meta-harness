@@ -5,6 +5,8 @@
     GET  /v1/tasks?status=queued,...     list tasks; a caller sees its own, a service sees all
     GET  /v1/tasks/{id}                  the task; `held` says why the scheduler holds a queued one
     POST /v1/tasks/{id}/cancel           cancel a task that has not started, or flag a running one
+    POST /v1/tasks/{id}/review/claim, /release, /verdict   an operator takes a review over, gives it back, or
+                                         gives their verdict
     POST /v1/tasks/{id}/status           a control-plane service moves a task (service keys only)
     GET  /health
 
@@ -13,6 +15,7 @@ services use a service key (MH_SERVICE_KEYS), which may also create review and
 fix tasks and set any task's status. Each change appends an event.
 """
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -92,6 +95,19 @@ class StatusIn(BaseModel):
     owner: str | None = None
     # What the running task waits on an operator for: "budget", or "" once it no longer waits.
     waiting_on: str | None = None
+
+
+class FindingIn(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+    path: str | None = Field(default=None, max_length=500)
+    line: int | None = Field(default=None, ge=1)
+
+
+class VerdictIn(BaseModel):
+    verdict: Literal["clean", "changes"]
+    # The agent's findings the operator keeps, numbered from 1.
+    keep: list[int] = Field(default_factory=list, max_length=200)
+    findings: list[FindingIn] = Field(default_factory=list, max_length=100)
 
 
 class RetryIn(BaseModel):
@@ -348,6 +364,59 @@ def create_app(
         events.emit("finding_dismissed", dismissed, task_id=task_id, actor=who.actor)
         return task
 
+    def operator_review(task_id: str, who: Caller, change, event: str, payload: dict) -> dict:
+        try:
+            with app.state.pool.connection() as conn:
+                visible(store.get(conn, task_id), who)
+                task = change(conn)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        events.emit(event, payload, task_id=task_id, actor=who.actor)
+        return task
+
+    @app.post("/v1/tasks/{task_id}/review/claim", status_code=202)
+    def claim_review(task_id: str, who: Caller = Depends(caller)) -> dict:
+        """Take the review of a running task's pull request over. The agent's review still finishes, and the
+        round then waits for this operator's verdict. The first claim wins; another operator's is refused,
+        naming who holds it."""
+        return operator_review(
+            task_id, who, lambda conn: store.claim_review(conn, task_id, who.actor), "operator_review_claimed", {}
+        )
+
+    @app.post("/v1/tasks/{task_id}/review/release", status_code=202)
+    def release_review(task_id: str, who: Caller = Depends(caller)) -> dict:
+        """Give a claimed review back: the round decides on the agent's verdict."""
+        return operator_review(
+            task_id,
+            who,
+            lambda conn: store.end_review_claim(conn, task_id, who.actor, "release"),
+            "operator_review_released",
+            {},
+        )
+
+    @app.post("/v1/tasks/{task_id}/review/verdict", status_code=202)
+    def review_verdict(task_id: str, body: VerdictIn, who: Caller = Depends(caller)) -> dict:
+        """The verdict of the operator who holds the review, once the agent's review has finished: which of the
+        agent's findings they keep (numbered from 1) and their own. With none of either the round is clean;
+        otherwise the fix run is asked for them. Posted on the pull request under the operator's name."""
+        if body.verdict == "clean" and (body.keep or body.findings):
+            raise HTTPException(status_code=422, detail="a clean verdict keeps no finding and adds none")
+        if body.verdict == "changes" and not (body.keep or body.findings):
+            raise HTTPException(status_code=422, detail="a changes verdict keeps or adds at least one finding")
+        word = "verdict:" + json.dumps(
+            {"keep": sorted(set(body.keep)), "findings": [f.model_dump(exclude_none=True) for f in body.findings]}
+        )
+        submitted = {"verdict": body.verdict, "kept": len(set(body.keep)), "findings": len(body.findings)}
+        return operator_review(
+            task_id,
+            who,
+            lambda conn: store.end_review_claim(conn, task_id, who.actor, word),
+            "operator_review_submitted",
+            submitted,
+        )
+
     @app.post("/v1/tasks/{task_id}/reviews/{round_no}/proceed", status_code=202)
     def proceed_review(task_id: str, round_no: int, who: Caller = Depends(caller)) -> dict:
         """End the wait on a held review now: its fix run starts with the findings not dismissed, or, with
@@ -455,7 +524,8 @@ def create_app(
         if task["waiting_on"] == "budget" and before.get("waiting_on") != "budget":
             log.warning("task %s is held for budget: %s", task_id, task["status_reason"])
             events.emit("budget_hold", {"reason": task["status_reason"] or ""}, task_id=task_id, actor=who.actor)
-        if task["waiting_on"] == "review" and before.get("waiting_on") != "review":
+        # A review held before its fix run, or a round waiting for the verdict of the operator who took it over.
+        if task["waiting_on"] in ("review", "operator_review") and before.get("waiting_on") != task["waiting_on"]:
             events.emit("review_hold", {"reason": task["status_reason"] or ""}, task_id=task_id, actor=who.actor)
         return task
 

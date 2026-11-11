@@ -100,6 +100,11 @@ export const tasksApi = {
   // An operator's word on a review its task holds for them: dismiss a finding with why, or go on to the fix now.
   dismissFinding: (id: string, round: number, finding: number, reason: string) =>
     call<Task>(`/v1/tasks/${id}/reviews/${round}/findings/${finding}/dismiss`, { method: "POST", body: JSON.stringify({ reason }) }),
+  // An operator's own review: take the round over, give it back, or give the verdict it waits for.
+  claimReview: (id: string) => call<Task>(`/v1/tasks/${id}/review/claim`, { method: "POST" }),
+  releaseReview: (id: string) => call<Task>(`/v1/tasks/${id}/review/release`, { method: "POST" }),
+  reviewVerdict: (id: string, body: { verdict: "clean" | "changes"; keep: number[]; findings: { body: string; path?: string; line?: number }[] }) =>
+    call<Task>(`/v1/tasks/${id}/review/verdict`, { method: "POST", body: JSON.stringify(body) }),
   proceedReview: (id: string, round: number) => call<Task>(`/v1/tasks/${id}/reviews/${round}/proceed`, { method: "POST" }),
   // Where the task's money went: its runs, with their turns, tokens and cost.
   taskSpend: (id: string) => call<TaskSpend>(`/v1/tasks/${id}/spend`),

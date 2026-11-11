@@ -33,7 +33,11 @@ test("a task's page says an agent is reviewing its pull request, and offers the 
   const events = [ev("run_prompt", "t-1:run-2", { kind: "review" })];
   const { rerender } = render(<MantineProvider theme={theme}><MemoryRouter><ReviewBanner task={TASK} events={events} /></MemoryRouter></MantineProvider>);
   expect(screen.getByTestId("review-banner").textContent).toContain("An agent is reviewing this pull request now");
-  expect(screen.getByRole("link", { name: "Review it yourself" }).getAttribute("href")).toBe("/tasks/t-1?tab=changes");
+  expect(screen.getByRole("link", { name: "Open the diff" }).getAttribute("href")).toBe("/tasks/t-1?tab=changes");
+  expect(screen.queryByRole("button", { name: "Take over this review" })).toBeNull();
+
+  rerender(<MantineProvider theme={theme}><MemoryRouter><ReviewBanner task={TASK} events={events} onChanged={() => undefined} /></MemoryRouter></MantineProvider>);
+  expect(screen.getByRole("button", { name: "Take over this review" })).toBeTruthy();
 
   rerender(<MantineProvider theme={theme}><MemoryRouter><ReviewBanner task={TASK} events={[...events, ev("attempt_finished", "t-1:run-2")]} /></MemoryRouter></MantineProvider>);
   expect(screen.queryByTestId("review-banner")).toBeNull();
