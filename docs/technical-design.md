@@ -2119,7 +2119,9 @@ either, and spend is still recorded and shown against them: every goal
 behaves as `warn` whatever its own mode (the planner serves it no blocking
 line, a `budget_exhausted` goal becomes `active` at its next sweep, and
 there is nothing to resume), and a task that starts gets a spend limit no
-run reaches, so its turn and minute limits are what bound a run. A task
+run reaches ($999,999, the most the HTTP Gateway grants a run: its spend
+limit has at most six digits before the decimal point), so its turn and
+minute limits are what bound a run. A task
 already running keeps the limit it started with. Services read a saved
 policy within five seconds, and one that cannot be read counts as `block`.
 
