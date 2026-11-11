@@ -12,6 +12,7 @@ import { ReviewBanner } from "./reviewing";
 import { OperatorReview } from "./OperatorReview";
 import { TaskActions } from "./TaskActions";
 import { TaskFailure } from "./TaskFailure";
+import { Standing } from "./Standing";
 import { Timeline } from "./Timeline";
 import { Plan } from "./Plan";
 import { SteerBox } from "./SteerBox";
@@ -211,6 +212,7 @@ export function TaskPage() {
               {task.cancel_requested && status === "running" && " (cancel requested)"}
             </Text>
           )],
+          ...(task.standing && status !== "closed" ? [["Who has it", <Standing standing={task.standing} />] as [string, React.ReactNode]] : []),
           ["Repo", <Code>{task.repo}</Code>],
           ["Issue", <IssueLink issueRef={task.external_ref} />],
           ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
