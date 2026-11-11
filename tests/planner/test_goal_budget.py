@@ -287,3 +287,23 @@ def test_under_the_track_budget_policy_no_goal_stops_and_spend_is_still_recorded
     monkeypatch.setattr(config_store, "budget_policy", lambda fresh=False: "block")
     _sweep(client, goal)
     assert _read(client, goal)["status"] == "budget_exhausted", "and blocking again stops it again"
+
+
+def test_a_task_whose_issue_was_closed_elsewhere_is_canceled_unless_it_has_a_pull_request(world):
+    client, _, tracker, tasks = world
+    goal = _goal(client, tracker, issues=3)
+    canceled: list[tuple[str, str]] = []
+    tasks.cancel = lambda task_id, reason="", actor=None: canceled.append((task_id, reason)) or tasks.tasks[task_id]
+    queued, running, published = [t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]]
+    running["status"] = "running"
+    published |= {"status": "running", "pr_url": "https://github.com/o/r/pull/9"}
+    # Someone closed all three issues: another pull request, or by hand.
+    for issue in tracker.issues.values():
+        if issue.ref in (queued["external_ref"], running["external_ref"], published["external_ref"]):
+            issue.state = "closed"
+
+    swept = client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).json()
+
+    assert sorted(swept["stale"]) == sorted([queued["id"], running["id"]])
+    assert {task_id for task_id, _ in canceled} == {queued["id"], running["id"]}, "the one with a pull request is left"
+    assert all("was closed" in reason for _, reason in canceled)
