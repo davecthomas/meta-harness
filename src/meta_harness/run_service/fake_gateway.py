@@ -20,6 +20,10 @@ prompt) appends a line to hello.txt, so its publish pushes a new commit.
 Tool results count only in the HTTP Gateway's neutral shape
 ({"type": "tool_result", "tool_call_id", "result", "is_error"}), and a
 malformed one gets 400, so the check fails if pi sends an engine's own shape.
+A task whose text holds CHECKS_MARKER followed by a command is a checks run
+(make image-checks): the first turn runs that command with pi's bash tool,
+as a task's agent would run its acceptance checks, and the second writes
+CHECKS_FILE saying passed or failed, with the end of the command's output.
 Each turn takes FAKE_TURN_SECONDS (default 2) and costs TURN_USD, so the
 cancel and restart demos have time to act and the spend-limit demo trips
 on turn 2. Grants live in memory. Run grants work as on the real gateway:
@@ -47,6 +51,11 @@ TURN_USD = Decimal("0.002")
 TURN_SECONDS = float(os.environ.get("FAKE_TURN_SECONDS", "2"))
 FIRST_REVIEW = os.environ.get("FAKE_FIRST_REVIEW", "clean")
 FIX_MARKER = "You are fixing a pull request"
+# A checks run: the command after this marker goes to pi's bash tool, and its result into CHECKS_FILE.
+CHECKS_MARKER = "Run this command with the bash tool, and nothing else:"
+CHECKS_FILE = "image-checks.txt"
+# The command ends by printing this, so a pass is told from the output, whatever the tool calls an error.
+CHECKS_OK = "MH_CHECKS_OK"
 FIXED_TEXT = EXPECTED_TEXT + "\nFixed after review.\n"
 API_KEY = os.environ.get("GATEWAY_API_KEY", "local-dev-key")
 GRANT_PATH = re.compile(r"^/v1/run-grants/([^/]+)$")
@@ -141,6 +150,38 @@ def has_tool_result(messages: list[Any]) -> bool:
     return any(isinstance(m, dict) and m.get("type") == "tool_result" and "role" not in m for m in messages)
 
 
+def _strings(value: Any) -> list[str]:
+    """Every string anywhere in a JSON value."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def checks_command(messages: list[Any]) -> str | None:
+    """The command a checks run names: the rest of the line after CHECKS_MARKER in the task's text."""
+    for text in _strings([m for m in messages if not (isinstance(m, dict) and m.get("type") == "tool_result")]):
+        if CHECKS_MARKER in text:
+            return text.split(CHECKS_MARKER, 1)[1].strip().splitlines()[0].strip() or None
+    return None
+
+
+def checks_turn(command: str, messages: list[Any], turn: int) -> tuple[str | None, list[dict[str, Any]]]:
+    """A checks run's next step: run the command, then record how it went, then say so. Returns (text, calls)."""
+    results = [m for m in messages if isinstance(m, dict) and m.get("type") == "tool_result" and "role" not in m]
+    if not results:
+        return None, [{"id": f"call_{turn}", "name": "bash", "input": {"command": f"{command} && echo {CHECKS_OK}"}}]
+    if len(results) == 1:
+        output = "\n".join(_strings(results[0].get("result")))
+        passed = CHECKS_OK in output and not results[0].get("is_error", False)
+        content = f"{'passed' if passed else 'failed'}\n\n{command}\n\n{output[-6000:]}\n"
+        return None, [{"id": f"call_{turn}", "name": "write", "input": {"path": CHECKS_FILE, "content": content}}]
+    return f"Done. I wrote {CHECKS_FILE}.", []
+
+
 # The tasks (workflow ids) whose first review has been given, so each task's later reviews are clean.
 REVIEWED: set[str] = set()
 
@@ -175,6 +216,10 @@ def scripted_turn(grant: dict[str, Any], messages: list[Any], tools: list[str] |
         "model": grant["model"],
         "served_by_fallback": False,
     }
+    command = checks_command(messages)
+    if command and "submit_review" not in (tools or []):
+        text, calls = checks_turn(command, messages, grant["turns"])
+        return {**base, "text": text, "tool_calls": calls, "finish_reason": "tool_use" if calls else "complete"}
     if has_tool_result(messages):
         return {**base, "text": f"Done. I wrote {EXPECTED_FILE}.", "tool_calls": [], "finish_reason": "complete"}
     if "submit_review" in (tools or []):

@@ -19,6 +19,10 @@ and what is planned.
 - CI also runs the zero-cost end-to-end check, which builds the images and
   runs whole tasks against a fake HTTP Gateway. A change to the run service,
   the harness image or the sandbox must keep it green.
+- CI runs this repo's own checks inside the sandbox too (`make image-checks`
+  in `samples/temporal-run-task`): what a task's agent meets when it runs
+  them. A check that passes on a developer's machine and fails there is a
+  sandbox or image problem to fix, not a check to weaken.
 
 ## Rules
 

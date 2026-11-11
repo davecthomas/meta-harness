@@ -71,6 +71,41 @@ jobs:
             samples/temporal-run-task/runs/*/harness-server.log
           if-no-files-found: ignore
 
+  # The checks a task on this repo runs, run by pi's bash tool in the built sandbox image, on a clone of this
+  # checkout, behind the egress proxy, with a database beside it: what a task's agent meets. It fails when the
+  # image or the sandbox cannot run them, as when the image set NODE_ENV=production (#187). No model is called.
+  image-checks:
+    name: sandbox runs this repo's checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.5"
+
+      - name: Install the Temporal CLI
+        run: |
+          curl -sSf https://temporal.download/cli.sh | sh -s -- --version v1.10.0
+          echo "$HOME/.temporalio/bin" >> "$GITHUB_PATH"
+
+      - name: make image-checks
+        working-directory: samples/temporal-run-task
+        env:
+          FAKE_GATEWAY_HOST: 0.0.0.0
+        run: make image-checks
+
+      - name: Keep the logs of a failed check
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-checks-logs
+          path: |
+            samples/temporal-run-task/*.log
+            samples/temporal-run-task/runs/*/harness-server.log
+          if-no-files-found: ignore
+
   harness-server:
     name: harness server tests
     runs-on: ubuntu-24.04

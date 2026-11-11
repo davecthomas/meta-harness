@@ -373,6 +373,26 @@ cmd_run() {
         || { log "expected a clean review posted to runs/$REF/review-1.md. See worker.log"; exit 1; }
       log "branch mh/$REF in $origin holds hello.txt, runs/$REF/pull-request.md the pull request, and review-1.md its clean review"
       ;;
+    checks)
+      # The repo's own acceptance checks, run by pi's bash tool in a per-run sandbox on a clone of this
+      # checkout: what a task's agent does when it runs them. IMAGE_CHECKS is the command.
+      local origin="$RUNS_DIR/$REF/origin.git" marker file result
+      marker=$("$PY" -c 'from meta_harness.run_service.fake_gateway import CHECKS_MARKER; print(CHECKS_MARKER)')
+      file=$("$PY" -c 'from meta_harness.run_service.fake_gateway import CHECKS_FILE; print(CHECKS_FILE)')
+      make_checkout_origin "$origin"
+      REPO="$origin"
+      TASK="Check that this repository's acceptance checks run in the sandbox. $marker $IMAGE_CHECKS"
+      CHECKS=
+      starter
+      result=$(git --git-dir "$origin" show "mh/$REF:$file" 2>/dev/null) \
+        || { log "expected $file on branch mh/$REF in $origin. See worker.log"; exit 1; }
+      if [ "$(head -n 1 <<<"$result")" != passed ]; then
+        log "the checks did not pass in the sandbox. $file:"
+        sed 's/^/    /' <<<"$result"
+        exit 1
+      fi
+      log "the sandbox ran the checks, and they passed: $IMAGE_CHECKS"
+      ;;
     fallback)
       starter
       grep -qF "escalates to" worker.log || { log "the task finished, but did not escalate a tier. See worker.log"; exit 1; }
@@ -453,6 +473,20 @@ make_origin() {
   printf '# demo repo\n\nA repo the repo demo clones.\n' >"$seed/README.md"
   git -C "$seed" add README.md
   git -C "$seed" -c user.name=demo -c user.email=demo@localhost commit --quiet -m "first commit"
+  git -C "$seed" push --quiet "$origin" main
+}
+
+# make_checkout_origin PATH: a bare repo whose main is this checkout as it stands, uncommitted changes and
+# all, standing in for the code host, so the sandbox's checks run on the code under test.
+make_checkout_origin() {
+  local origin=$1 seed="$1.seed" root
+  root=$(git -C "$ROOT" rev-parse --show-toplevel)
+  git init --quiet --bare --initial-branch=main "$origin"
+  git init --quiet --initial-branch=main "$seed"
+  # Every tracked file, and untracked ones git does not ignore, as they are now.
+  (cd "$root" && git ls-files -z --cached --others --exclude-standard | xargs -0 tar -cf - 2>/dev/null) | tar -xf - -C "$seed"
+  git -C "$seed" add --all
+  git -C "$seed" -c user.name=demo -c user.email=demo@localhost commit --quiet -m "the checkout under test"
   git -C "$seed" push --quiet "$origin" main
 }
 
