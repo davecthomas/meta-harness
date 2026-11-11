@@ -172,6 +172,18 @@ def _ship_profiles(monkeypatch, document: dict) -> None:
     )
 
 
+def test_the_task_policys_merge_wait_is_whole_minutes_or_left_out(monkeypatch):
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
+    policy = {"max_parallel": 4, "review": {"reviewers": ["harness:pi-review/x:y"], "max_rounds": 3}}
+    assert kinds.check_task_policy(policy) == []
+    assert kinds.check_task_policy({**policy, "merge_wait_minutes": 0}) == []
+    assert kinds.check_task_policy({**policy, "merge_wait_minutes": 90}) == []
+    for bad in (-1, 1.5, "60", True):
+        assert kinds.check_task_policy({**policy, "merge_wait_minutes": bad}) == [
+            "merge_wait_minutes must be a whole number of minutes, 0 or more (0: merge without waiting)"
+        ]
+
+
 def test_the_planning_profile_can_draft_issues_and_read_but_never_write():
     profiles = json.loads((REPO_ROOT / "config" / "harness_profiles.json").read_text())
     plan = profiles["profiles"]["pi-plan"]

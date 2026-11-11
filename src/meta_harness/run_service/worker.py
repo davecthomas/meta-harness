@@ -25,6 +25,7 @@ from meta_harness.run_service import events, routing
 from meta_harness import logs
 from meta_harness.logs import JournalFormatter
 from meta_harness.run_service.activities import (
+    base_health,
     deliver_message,
     cleanup_run,
     goal_auto_merge,
@@ -106,6 +107,7 @@ async def main() -> None:
             record_prompt,
             goal_budget,
             budget_hold,
+            base_health,
             resume_state,
             deliver_message,
         ],
