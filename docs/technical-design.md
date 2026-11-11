@@ -22,7 +22,7 @@ rest. A section that describes a planned component says so.
 | Task service | Accepts and tracks tasks and serves the Task API. Code-host webhooks are planned. | built | `tasks/` |
 | Planner | Turns a goal's labeled GitHub issues into tasks with their dependencies, by a periodic sweep, records what becomes of the pull requests of tasks that ended `ready` or `review_unresolved`, and drafts a goal from a label's issues. Planning tasks, the `feature` and `new-system` modalities, issue write-back and Jira and Linear adapters are planned. | partly built | `planner/` |
 | Meta-harness scheduler | Admits queued tasks by priority, global concurrency, repo-area locks, closed dependencies and the goal's budget, and carries out cancels and the kill switch, which it owns. Caller quotas and daily caps are planned. | built | `scheduler/` |
-| Supervisor | Looks at every open task once a minute, decides who has it (its workflow, the scheduler, its goal's sweep, an operator, or no one), records that, and moves the tasks no one has: a task with no workflow behind it, a parked task whose pull request ended outside any sweep, an unstarted task of an ended goal, and a `ready` task of an auto-merge goal, which it sees through its merge. Runs in the planner's process. Retrying transient failures, goal-level stalls and deadlines on operator waits are planned. | partly built | `supervisor/` |
+| Supervisor | Looks at every open task once a minute, decides who has it (its workflow, the scheduler, its goal's sweep, an operator, or no one), records that, and moves the tasks no one has: a task with no workflow behind it, a parked task whose pull request ended outside any sweep, an unstarted task of an ended goal, a `ready` task of an auto-merge goal, which it sees through its merge, and a task that failed on the system's side, which it retries. Runs in the planner's process. Goal-level stalls and deadlines on operator waits are planned. | partly built | `supervisor/` |
 | Meta-harness run service | Runs each task as a Temporal workflow, the RunTask workflow: routes it, runs its candidates, opens its pull request, runs the review loop on it and merges it. Takeover, operator review, exploration and an HTTP API of its own are planned. The only caller of the ai-api-unified router. | partly built | `run_service/` |
 | Pool manager | Leases per-run sandboxes by run id, keeps a warm pool, and replaces unhealthy sandboxes. Until it exists, the run activity starts each sandbox itself. | planned | |
 | Event service | Holds the ordered record of every meta-harness domain event. | built | `events/` |
@@ -1868,6 +1868,8 @@ Who has it. Where the owner is the supervisor, the pass acts:
 | A `ready` task of an active goal with `auto_merge` on, whose pull request the code host would merge, or that conflicts with its base | `merge` (`POST /v1/tasks/{id}/drive`): back to `queued` to resume at the merge. The merge step resolves a conflict in a fix run first, as it does in a first workflow |
 | The same, with its head's checks failed | `review`: back through checks, review and fixes |
 | The same, with checks that have not reported, or mergeability the code host has not worked out | `wait`: the supervisor has it and looks again each pass. After a day it is an operator's, told to see what holds the checks |
+| A `failed` task whose failure was the system's, of an active goal or of none | `retry`: back to `queued` after a wait of 5 minutes, then 30, then 2 hours. It resumes at its pull request when it has one |
+| A `review_unresolved` task whose review loop the system stopped, not its findings | `review`: back through the loop after the same waits |
 
 A `ready` task is one whose workflow ended without merging: its goal does
 not merge by itself, or the code host refused the merge at that moment (its
@@ -1882,6 +1884,21 @@ the branch wants what only a person gives, an approval or an exception, and
 is an operator's. The supervisor sends one task back at most three times
 between an operator's retries (`drives`); after that the task is an
 operator's, and its standing says the tries are used up.
+
+A task fails for one of two kinds of reason (`supervisor/failures.py`). The
+work could not be done: the run changed nothing, hit its turn limit, a
+setting is wrong, the review never came clean. Or the system let it down
+while the work was fine: the worker restarted under it in a deploy, a
+sandbox did not start, every model was unavailable, the code host answered
+5xx. The first kind is an operator's. The second needs only another try, and
+used to get none: a task that failed in an outage stayed failed after the
+outage ended. The supervisor reads the recorded reason, and calls a failure
+the system's only when it names one of a fixed list of errors of the control
+plane and what it depends on; a reason it does not recognize, and any that
+names the task's own limit, is the task's, so an unknown failure waits for a
+person rather than being run again. It retries only a failure less than a
+day old: one older is an operator's, told that a retry should now run. The
+three tries a task gets are shared with the merges above (`drives`).
 
 A recovery waits until the task has stood with no workflow for three
 minutes, so a status write still on its way is not taken for a lost one. A
@@ -1899,9 +1916,11 @@ The supervisor's own trouble shows: a pass that fails is logged as an error
 and said by `GET /v1/supervisor`, which also gives when the last pass ran and
 how many tasks each owner has.
 
-Built so far are the actions above and the standing of every task.
-Planned, in this order: failures recorded by kind, and the transient ones
-retried with a bound; goals marked `stalled` when everything left waits
+Built so far are the actions above and the standing of every task. A run
+that the worker's restart interrupts still fails its task in the workflow
+(#254): the supervisor retries that task within minutes, from a new first
+run, and resuming the same run in place is planned. Planned, in this order:
+goals marked `stalled` when everything left waits
 behind a failure, refused and reopened issues looked at again, and sweep
 errors recorded; and a deadline and a reminder on every wait for an
 operator, with the workflow's six-hour limit no longer shorter than the
@@ -1990,7 +2009,7 @@ credential.
 | POST | `/v1/tasks/{id}/clear` | Task service | Take a `ready` or `review_unresolved` task off the list: `closed` when its pull request's merge is recorded, else `canceled`, with the reason naming the pull request and who cleared it. The pull request stays on GitHub | built |
 | POST | `/v1/tasks/{id}/status` | Task service | Set a task's status. Services only: the RunTask workflow and the planner | built |
 | POST | `/v1/tasks/{id}/recover` | Task service | The supervisor's move for a `running` task, or a `queued` one the scheduler started, with no RunTask workflow behind it (`why`, and `spent_usd`, what its runs have spent): back to `queued` to resume at its pull request, `canceled` when it was asked to cancel, or `failed` after three recoveries. Services only. 409 for a task in any other status | built |
-| POST | `/v1/tasks/{id}/drive` | Task service | The supervisor's move for a `ready` or `review_unresolved` task it can move on (`action` `merge` or `review`, `why`, `spent_usd`): back to `queued` to resume there, with its spend carried. Services only. 409 for a task in any other status, with no pull request, or already sent back three times | built |
+| POST | `/v1/tasks/{id}/drive` | Task service | The supervisor's move for a `ready` or `review_unresolved` task it can move on (`action` `merge` or `review`, `why`, `spent_usd`), or for a `failed` one whose failure was the system's (`retry`): back to `queued`, with its spend carried. Services only. 409 for a task in any other status, a merge or review with no pull request, or a task already sent back three times | built |
 | GET | `/v1/supervisor` | Planner | The supervisor's last pass: when it ran, how many tasks each owner has, what it recovered, ended and canceled, what it could not do, and how often it runs | built |
 | POST | `/v1/tasks/{id}/take-over` | Meta-harness run service | Stop the active run, publish its work so far, and hand the task to the calling operator | planned |
 | POST | `/v1/tasks/{id}/hand-back`, `/close` | Meta-harness run service | End a takeover: a follow-up run continues on the branch, or the task closes with the operator's outcome | planned |

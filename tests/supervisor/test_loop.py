@@ -349,3 +349,30 @@ async def test_checks_that_never_report_are_an_operators_after_a_day(world):
     assert (found["owner"], found["situation"]) == ("operator", "merge_wait_stale")
     await supervisor.pass_once(start + timedelta(hours=26))
     assert _standing(task["id"])["situation"] == "merge_wait_stale", "it stays an operator's while it still waits"
+
+
+async def test_a_task_that_failed_in_an_outage_is_retried_after_a_wait_and_one_that_failed_itself_is_not(world):
+    supervisor, tasks, events, _, _ = world
+    now = datetime.now(UTC)
+    outage = "TaskFailed: every candidate failed (3 runs)"
+    fresh = tasks.add("failed", status_reason=outage, status_changed_at=(now - timedelta(minutes=1)).isoformat())
+    due = tasks.add("failed", status_reason=outage, status_changed_at=(now - timedelta(minutes=10)).isoformat())
+    second = tasks.add(
+        "failed", status_reason=outage, status_changed_at=(now - timedelta(minutes=10)).isoformat(), drives=1
+    )
+    old = tasks.add("failed", status_reason=outage, status_changed_at=(now - timedelta(days=3)).isoformat())
+    own = tasks.add(
+        "failed",
+        status_reason="TaskFailed: run 2 finished, but pi changed nothing in o/r",
+        status_changed_at=(now - timedelta(minutes=10)).isoformat(),
+    )
+    events.stored = [{"task_id": due["id"], "event_type": "attempt_finished", "payload": {"spent_usd": "1.50"}}]
+
+    result = await supervisor.pass_once(now)
+
+    assert result.driven == [due["id"]]
+    assert tasks.driven == [(due["id"], "retry", "the task failed on the system's side, not its own", "1.50")]
+    assert _standing(fresh["id"])["situation"] == "retry_waiting"
+    assert _standing(second["id"])["situation"] == "retry_waiting", "its second wait is longer"
+    assert _standing(old["id"])["situation"] == "failed_long_ago"
+    assert _standing(own["id"])["owner"] == "operator" and own["status"] == "failed"
