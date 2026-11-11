@@ -752,8 +752,7 @@ def create_app(
     def pull_request_activity(days: int = Query(91, ge=1, le=366), who: str = Depends(operator)) -> dict:
         """Every pull request the meta-harness opened in the last days, by state, for the Overview's row."""
         try:
-            found = tasks.list(None, None, TASKS_PAGE)
-            return activity.activity(found, events, days)
+            return activity.activity(cost_facts.every_task(tasks), events, days)
         except TaskApiError as err:
             raise HTTPException(status_code=502, detail=f"could not read the tasks: {err}") from err
 
@@ -872,9 +871,10 @@ def create_app(
 
     def task_facts() -> dict[str, dict]:
         """Each task's issue labels and pull request outcome, for costs by label and by outcome."""
-        found = tasks.list(None, None, TASKS_PAGE)
+        found = cost_facts.every_task(tasks)
+        ends = cost_facts.pull_request_ends(events)
         with app.state.pool.connection() as conn:
-            return cost_facts.task_facts(conn, found)
+            return cost_facts.task_facts(conn, found, ends)
 
     app.state.harvest_costs = costs_api.register(app, operator, admin, events, tasks, goal_or_none, task_facts)
 

@@ -103,6 +103,9 @@ class Tasks:
     def list(self, statuses=None, goal_id=None, limit=100):
         return []
 
+    def page(self, statuses=None, goal_id=None, limit=25, offset=0):
+        return {"tasks": [], "total": 0, "offset": offset, "limit": limit}
+
 
 TASKS = {
     "t-1": {"id": "t-1", "title": "Fix it", "goal_id": "g-a", "repo": "o/r", "task_type": "bug", "caller": "planner"},

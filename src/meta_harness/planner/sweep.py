@@ -7,7 +7,9 @@ issue's text, its `## Acceptance checks` (else the repo registry's default
 checks), and the open issues it depends on. The task service starts a task
 with open dependencies in `blocked`. A sweep also records issues that closed,
 and moves a blocked task to `queued` once every issue it depends on is
-closed. An issue already in another goal stays there.
+closed. An issue already in another goal stays there. Each sweep refreshes
+the title and labels it keeps of every issue it holds that has a task, open
+or closed, so costs by label follow a relabel.
 
 An issue closed by someone else's pull request, or by hand, has no work
 left: a sweep cancels its task when the task has not opened a pull request
@@ -256,15 +258,21 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
 
 
 async def _record_closed(goal: dict, seen: set[str], tracker: Tracker, events: Events, result: SweepResult) -> None:
+    """Record each held issue the label's listing left out that has closed, and refresh the title and labels
+    of every one the listing left out: one taken in already, one closed, one an operator added by ref. Costs by
+    label read them (cost_facts.py), so a relabel shows even after the issue was taken in or closed."""
     for link in await asyncio.to_thread(_links, goal["id"]):
-        if link["state"] != "open" or link["ref"] in seen:
+        if link["ref"] in seen or (link["state"] != "open" and not link["task_id"]):
             continue
         try:
             issue = await tracker.read(link["ref"])
         except GitHubAppError as err:
-            result.errors.append(f"{link['ref']}: {err}")
+            # A closed issue is read only for its labels: one that cannot be read keeps those it had.
+            if link["state"] == "open":
+                result.errors.append(f"{link['ref']}: {err}")
             continue
-        if issue.state == "closed":
+        await _refresh(link, issue)
+        if link["state"] == "open" and issue.state == "closed":
             await asyncio.to_thread(_set_state, link["ref"], "closed")
             events.emit(
                 "issue_closed",
@@ -274,6 +282,16 @@ async def _record_closed(goal: dict, seen: set[str], tracker: Tracker, events: E
                 event_id=stable_event_id("issue_closed", link["ref"]),
             )
             result.closed.append(link["ref"])
+
+
+async def _refresh(link: dict, issue: Issue) -> None:
+    """Save the issue's title and labels on its link where they changed."""
+    title = issue.title[:300]
+    labels = list(dict.fromkeys(issue.labels))
+    if link.get("title") != title:
+        await asyncio.to_thread(_set_title, issue.ref, title)
+    if link.get("labels") != labels:
+        await asyncio.to_thread(_set_labels, issue.ref, labels)
 
 
 # A task in one of these has not ended, so an issue closed under it may leave it with nothing to do.
