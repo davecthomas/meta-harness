@@ -7,6 +7,7 @@ import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../..
 import { Reviews } from "./Reviews";
 import { SpendReport } from "./SpendReport";
 import { BudgetHold } from "./BudgetHold";
+import { WaitingToStart } from "./WaitingToStart";
 import { TaskActions } from "./TaskActions";
 import { TaskFailure } from "./TaskFailure";
 import { Timeline } from "./Timeline";
@@ -133,7 +134,8 @@ export function TaskPage() {
     newest.current = e.position;
     setFacts((f) => fold(f, e));
     // A hold for budget, or its answer, changes what the task waits on: read the task again.
-    if (["budget_hold", "budget_decision", "review_hold", "review_proceeded"].includes(e.event_type)) void api.task(taskId).then(setTask, () => undefined);
+    // So does a new reason the scheduler holds it for.
+    if (["budget_hold", "budget_decision", "review_hold", "review_proceeded", "task_held"].includes(e.event_type)) void api.task(taskId).then(setTask, () => undefined);
     // A dismissal shows on its finding: read the rounds again.
     if (e.event_type === "finding_dismissed" || e.event_type === "review_hold") void api.reviews(taskId).then(setRounds, () => undefined);
     if (e.event_type === "task_status_changed") setTask((t) => (t ? { ...t, status: e.payload.to, status_reason: e.payload.reason ?? null } : t));
@@ -194,6 +196,7 @@ export function TaskPage() {
       />
       <ErrorAlert error={error} />
       <BudgetHold task={{ ...task, status }} onAnswered={setTask} />
+      <WaitingToStart task={{ ...task, status }} onChanged={() => void api.task(taskId).then(setTask, () => undefined)} />
       <TaskFailure task={task} status={status} events={events} />
       <Facts
         items={[

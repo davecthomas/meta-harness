@@ -1680,6 +1680,16 @@ every task event:
    never held for budget), and runs fewer of its tasks than its
    `max_parallel`.
 
+Every queued task a pass does not start has a reason, and the scheduler
+stores it (`scheduler.task_hold`, `scheduler/holds.py`): one row per held
+task with the reason, its kind, what it names, when the task began waiting
+for it and when a pass last looked. The row goes when the task starts or is
+queued no longer. The rows survive a restart, so `task_held` is recorded
+only when a task's reason is new or has changed, not again at every deploy.
+A task past the system's parallel limit, and every queued task while the
+kill switch is on or the scheduler drains, has a hold too. The Task API
+serves a queued task's hold as `held`.
+
 As built, the global limit is the task policy's `max_parallel`, 8 as shipped, which the scheduler reads
 each pass and checks at startup against `MH_MAX_SANDBOXES`; the locks are expiring
 Postgres rows the scheduler renews while a task is `queued`, `running` or
@@ -1753,7 +1763,7 @@ credential.
 |---|---|---|---|---|
 | POST | `/v1/tasks` | Task service | Submit a task, idempotent on `external_ref`. Returns the task id | built |
 | GET | `/v1/tasks` | Task service | Tasks by status, goal or `external_ref`; a caller sees its own | built |
-| GET | `/v1/tasks/{id}` | Task service | State, current run, routing decision, pull request URL and outcome | built |
+| GET | `/v1/tasks/{id}` | Task service | State, current run, routing decision, pull request URL and outcome. `held` says why the scheduler holds a queued task: `{reason, kind, since, last_checked, detail}`, null for a queued task it does not hold and for a task in any other status. `kind` is one of `goal_budget`, `goal_status`, `goal_parallel`, `system_parallel`, `repo_area`, `kill_switch`, `draining` or `start_failed`, so a page need not read the reason's words, and `detail` names what the reason is about (`goal_id`, the tasks holding the places as `holders`, the shared `paths`). The list (`GET /v1/tasks`) carries `held` on each queued task too. The task service reads it from the scheduler's record with scheduler code (`scheduler/holds.py`) | built |
 | POST | `/v1/tasks/{id}/cancel` | Task service | Cancel a task that has not started, or ask for its active run to stop, which the scheduler carries out | built |
 | GET | `/v1/pulls/{task_id}/diff` | Meta-harness run service, served from the planner process | The files the task's pull request changes, with their added and removed counts and patches, and its head commit. The Task page's Changes tab | built |
 | POST | `/v1/pulls/{task_id}/comments` | Meta-harness run service, served from the planner process | A review comment on lines of the pull request's head commit, posted as the GitHub App with the operator named in its text, and recorded as `pull_request_commented` with the operator as actor | built |
@@ -2159,6 +2169,7 @@ the same approval.
 | Owner | Entity | Fields |
 |---|---|---|
 | Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over) |
+| Meta-harness scheduler | task_hold | task_id, kind, reason, detail (what the reason names), since, last_checked. One row per queued task the scheduler holds |
 | Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), budget_mode, budget_overage_percent, spent_usd (at the last sweep), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
@@ -2214,7 +2225,7 @@ Meta-harness services append through the event service client library:
 |---|---|
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
 | Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume), `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line), `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created), `plan_requested` when a planning task starts (with the operator's note on a replan), `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is) and `plan_approved` with the issues created, `issue_joined`, `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
-| Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason the meta-harness scheduler holds a meta-harness task. `kill_switch_changed` with the operator as actor |
+| Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason and the kind of hold, recorded when a task's reason is new or has changed. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v3`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
 | Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
@@ -2403,6 +2414,18 @@ budget offers the goal's Resume and a link to the goal instead, with Look
 again now. Held tasks head the
 Overview's Needs you list, and show under Needs attention on their goal's
 board and in its alert.
+A queued or blocked task says why it has not started in a Waiting to start
+notice at the top of its page (`console/src/features/tasks/WaitingToStart.tsx`):
+the scheduler's reason and when it last looked, with the action that fits
+the hold's kind. A goal over budget offers the goal's Resume and a link to
+its budget; a goal that is paused, planning or closed shows its status and
+links to it; a parallel limit links the tasks holding the places; a repo
+area names the task holding it and the paths they share; the kill switch or
+a drain links to the Overview. A blocked task lists each issue it waits on
+with its state. A queued task nothing holds says it starts at the
+scheduler's next pass. The Timeline shows `task_held` and `task_admitted`
+as items, the Tasks page's Queued and blocked list has a Why it waits
+column, and a goal's board shows the reason on a queued task's card.
 A task that ended `failed` or `review_unresolved` says so in an alert at
 the top of its page: its reason, each run that did not finish (linked to
 that run), and a link to its warnings and errors on the Logs page. Its
