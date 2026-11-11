@@ -8,7 +8,8 @@ answers one question for each: who has it?
     workflow    its RunTask workflow is running and will move it
     scheduler   it is queued, and an admission pass starts it or records why it holds it
     planner     a goal's sweep moves it: releases it when its dependencies close, ends it at its pull request
-    supervisor  no one has it, and the supervisor's own action moves it (Decision.action)
+    supervisor  no one else has it: the supervisor's own action moves it, or it waits on something only
+                the supervisor is watching, and looks again each pass (Decision.action)
     operator    it waits on a person, and `ask` says exactly what for
 
 There is no sixth answer. `decide` is total: every combination of a task's status, what it waits on, its
@@ -32,7 +33,9 @@ GOALS = ("none", "planning", "active", "paused", "stalled", "budget_exhausted", 
 SWEPT = ("active", "budget_exhausted")
 WAITING_ON = ("", "budget", "review", "operator_review")
 # What the supervisor does itself. None: nothing, someone else has the task.
-ACTIONS = ("recover", "end_at_pull_request", "cancel_for_goal")
+ACTIONS = ("recover", "end_at_pull_request", "cancel_for_goal", "merge", "review", "wait")
+# How a parked task's open pull request stands for a merge (pulls.MERGEABLE).
+MERGEABLE = ("clean", "conflict", "checks_failed", "checks_pending", "blocked", "unknown")
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,12 @@ class Facts:
     admitted: bool = False
     # Whether the task's goal merges clean pull requests itself.
     auto_merge: bool = False
+    # For a parked task with an open pull request: how the pull request stands for a merge.
+    mergeable: str = "unknown"
+    # Whether the supervisor may still send the task back by itself: it has not used up its tries.
+    drives_left: bool = True
+    # Whether the task has waited in its situation longer than a wait of the supervisor's may last.
+    stale: bool = False
 
 
 @dataclass(frozen=True)
@@ -214,10 +223,58 @@ def _parked(facts: Facts) -> Decision:
             "its review loop ended without a clean review, and its pull request is open",
             ask="Read the last review, then merge it as it is, retry the review loop, or fix it on the branch.",
         )
+    if facts.auto_merge and facts.goal in SWEPT:
+        return _to_merge(facts)
     return Decision(
         "operator",
         "ready",
-        "its review is clean and its pull request is open, and nothing merges it"
-        + (" again after a refused merge" if facts.auto_merge else ": its goal does not merge by itself"),
+        "its review is clean and its pull request is open, and its goal does not merge by itself"
+        if facts.goal != "none"
+        else "its review is clean and its pull request is open, and it has no goal to merge it",
         ask="Merge the pull request, on the code host or with Merge on the task's page.",
     )
+
+
+def _to_merge(facts: Facts) -> Decision:
+    """A ready task of a goal that merges by itself: its workflow ended without merging, so the supervisor
+    sees the merge through. It asks for the merge when the code host would take it, sends a conflict or a
+    failed check back for a fix, and waits on checks that have not reported. It hands the task to an
+    operator when the code host wants something only a person gives, when its own tries are used up, or
+    when a wait has gone on too long."""
+    how = facts.mergeable
+    if how == "blocked":
+        return Decision(
+            "operator",
+            "merge_blocked",
+            "its checks passed and the code host still refuses the merge: a rule on the branch wants something more",
+            ask="Open the pull request: give the approval or lift the rule it names, then press Merge on the task's page.",
+        )
+    if how in ("checks_pending", "unknown"):
+        waiting = (
+            "its pull request's checks have not all reported"
+            if how == "checks_pending"
+            else "the code host has not said whether its pull request can merge"
+        )
+        if facts.stale:
+            return Decision(
+                "operator",
+                "merge_wait_stale",
+                f"{waiting}, and that has not changed in a day",
+                ask="Open the pull request and see what holds its checks: rerun them, or merge it yourself.",
+            )
+        return Decision(
+            "supervisor", "merge_waiting", f"{waiting}; the supervisor looks again each pass", action="wait"
+        )
+    what = {
+        "clean": ("merge_due", "the code host would take its merge now", "merge"),
+        "conflict": ("merge_conflict", "its pull request conflicts with its base", "merge"),
+        "checks_failed": ("merge_checks_failed", "its pull request's checks failed after its review", "review"),
+    }[how]
+    if not facts.drives_left:
+        return Decision(
+            "operator",
+            "merge_tries_used",
+            f"{what[1]}, and the supervisor has already sent it back as often as it may",
+            ask="Read the task's last runs for why it keeps coming back, then merge it, retry it or fix it yourself.",
+        )
+    return Decision("supervisor", what[0], what[1], action=what[2])

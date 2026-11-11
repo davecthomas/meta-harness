@@ -8,6 +8,11 @@ Temporal, its pull request on the code host, its goal), asks rules.decide who ha
                           request stands, with what it spent carried over; a task asked to cancel is canceled
     end_at_pull_request   a task whose pull request merged or closed, which no goal's sweep covers, is closed
                           or canceled
+    merge                 a ready task of a goal that merges by itself, whose pull request the code host
+                          would take or that conflicts with its base, goes back for its merge; the merge
+                          step resolves a conflict in a fix run first
+    review                one whose checks failed after its review goes back through its review loop
+    wait                  one whose checks have not reported is looked at again next pass
     cancel_for_goal       a task that has not started, of a goal that ended, is canceled
 
 Every action is safe to repeat: the task service refuses a move that no longer applies. A task is acted on
@@ -30,8 +35,9 @@ from meta_harness.planner import cost_facts, store as goal_store
 from meta_harness.planner import sweep
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CodeHostError
-from meta_harness.supervisor import standing
-from meta_harness.supervisor.rules import OPEN_STATUSES, Decision, Facts, decide
+from meta_harness.supervisor import pulls, standing
+from meta_harness.supervisor.rules import OPEN_STATUSES, SWEPT, Decision, Facts, decide
+from meta_harness.tasks.store import MAX_DRIVES
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
 log = logging.getLogger("meta_harness.supervisor")
@@ -44,6 +50,10 @@ RETRY_FIRST = timedelta(minutes=1)
 RETRY_LONGEST = timedelta(hours=1)
 # How long a read of a pull request stands, so a pass does not read every parked task's each minute.
 PULL_SECONDS = 300.0
+# How long a read of how a pull request stands for a merge is kept: shorter, since a merge waits on it.
+MERGEABLE_SECONDS = 120.0
+# The longest the supervisor waits on a pull request's checks before it asks an operator to look.
+WAIT_LONGEST = timedelta(hours=24)
 
 
 class Events(Protocol):
@@ -63,6 +73,8 @@ class PassResult:
     looked_at: int = 0
     # Task ids by what the supervisor did, and what it could not do.
     recovered: list[str] = field(default_factory=list)
+    # Sent back for a merge, or through the review loop.
+    driven: list[str] = field(default_factory=list)
     ended: list[str] = field(default_factory=list)
     canceled: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -103,6 +115,7 @@ class Supervisor:
         self.workflows = workflows
         self.host = host or code_host
         self._pulls: dict[str, tuple[float, Any]] = {}
+        self._mergeable: dict[str, tuple[float, str]] = {}
 
     async def pass_once(self, now: datetime | None = None) -> PassResult:
         """Look at every open task once. Raises only when the tasks cannot be listed at all."""
@@ -116,14 +129,19 @@ class Supervisor:
             result.looked_at += 1
             try:
                 goal = await self._goal(task.get("goal_id"), goals)
-                facts, pull = await self._facts(task, goal, task["id"] in admitted)
+                earlier = before.get(task["id"])
+                # A wait goes stale once it has lasted WAIT_LONGEST, and stays stale while it is still a wait.
+                stale = earlier is not None and (
+                    earlier.situation == "merge_wait_stale"
+                    or (earlier.situation == "merge_waiting" and now - earlier.since >= WAIT_LONGEST)
+                )
+                facts, pull = await self._facts(task, goal, task["id"] in admitted, stale)
                 decision = decide(facts)
             except Exception as err:  # noqa: BLE001 - one task's facts must not stop the pass for the rest
                 result.errors.append(f"{task['id']}: {type(err).__name__}: {err}")
                 continue
             result.owners[decision.owner] = result.owners.get(decision.owner, 0) + 1
             changed = await asyncio.to_thread(_save, task["id"], decision)
-            earlier = before.get(task["id"])
             if changed:
                 self.events.emit(
                     "task_standing",
@@ -148,7 +166,7 @@ class Supervisor:
             known[goal_id] = await asyncio.to_thread(_goal, goal_id)
         return known[goal_id]
 
-    async def _facts(self, task: dict, goal: dict | None, admitted: bool) -> tuple[Facts, Any]:
+    async def _facts(self, task: dict, goal: dict | None, admitted: bool, stale: bool) -> tuple[Facts, Any]:
         status = task["status"]
         workflow = "none"
         if status in ("running", "taken_over") or (status == "queued" and admitted):
@@ -156,6 +174,11 @@ class Supervisor:
         pull_state, pull = "none", None
         if status in ("ready", "review_unresolved", "canceled") and task.get("pr_url"):
             pull_state, pull = await self._pull(task)
+        auto_merge = bool(goal and goal.get("auto_merge"))
+        how = "unknown"
+        # Only a task the supervisor may merge has its pull request's mergeability read.
+        if status == "ready" and pull_state == "open" and auto_merge and goal["status"] in SWEPT:
+            how = await self._how_mergeable(task, pull)
         return (
             Facts(
                 status=status,
@@ -165,7 +188,11 @@ class Supervisor:
                 waiting_on=task.get("waiting_on") or "",
                 cancel_requested=bool(task.get("cancel_requested")),
                 admitted=admitted,
-                auto_merge=bool(goal and goal.get("auto_merge")),
+                auto_merge=auto_merge,
+                mergeable=how,
+                drives_left=int(task.get("drives") or 0) < MAX_DRIVES,
+                # Only a wait can go stale: any other situation is acted on, or is an operator's already.
+                stale=stale,
             ),
             pull,
         )
@@ -188,6 +215,22 @@ class Supervisor:
             self._pulls[task["id"]] = (time.monotonic(), pull)
         return ("open" if pull.state in ("open", "draft") else pull.state), pull
 
+    async def _how_mergeable(self, task: dict, pull: Any) -> str:
+        """How the task's open pull request stands for a merge (pulls.MERGEABLE), read at most once every
+        MERGEABLE_SECONDS. A code host that does not answer reads as unknown, which the supervisor waits on."""
+        cached = self._mergeable.get(task["id"])
+        if cached and time.monotonic() - cached[0] < MERGEABLE_SECONDS:
+            return cached[1]
+        try:
+            raw = await self.host.pull_request(pull.repo, pull.number)
+            head = str((raw.get("head") or {}).get("sha") or pull.head_sha)
+            checks = code_host.checks_state(await self.host.check_runs(pull.repo, head)).state if head else "none"
+        except Exception:  # noqa: BLE001 - unknown, and the next pass asks again
+            return "unknown"
+        how = pulls.mergeable(raw, checks)
+        self._mergeable[task["id"]] = (time.monotonic(), how)
+        return how
+
     async def _act(self, task: dict, goal: dict | None, pull: Any, decision: Decision, result: PassResult) -> None:
         task_id = task["id"]
         try:
@@ -199,6 +242,14 @@ class Supervisor:
                 await sweep._record_end(goal, task, pull, self.tasks, self.events, sweep.SweepResult(""))
                 self._pulls.pop(task_id, None)
                 result.ended.append(task_id)
+            elif decision.action in ("merge", "review"):
+                spent = await asyncio.to_thread(spent_so_far, self.events, task_id)
+                await asyncio.to_thread(self.tasks.drive, task_id, decision.action, decision.reason, str(spent))
+                self._mergeable.pop(task_id, None)
+                self._pulls.pop(task_id, None)
+                result.driven.append(task_id)
+            elif decision.action == "wait":
+                return
             elif decision.action == "cancel_for_goal":
                 await asyncio.to_thread(self.tasks.cancel, task_id, decision.reason, "supervisor")
                 result.canceled.append(task_id)
