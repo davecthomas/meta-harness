@@ -710,6 +710,7 @@ class RunTask:
                 candidate=candidate.label,
                 summary=harness.answer,
                 spent_usd=str(spent),
+                task_id=self._task_id,
             ),
             start_to_close_timeout=PUBLISH_TIMEOUT,
             retry_policy=PUBLISH_RETRY,
@@ -982,6 +983,7 @@ class RunTask:
                         f"{merged_pr} merged, and then {names} failed on its merge commit {loop.merge_sha[:12]}. "
                         "This pull request fixes that. It closes no issue: the merged one closed it."
                     ),
+                    task_id=self._task_id,
                 ),
                 start_to_close_timeout=PUBLISH_TIMEOUT,
                 retry_policy=PUBLISH_RETRY,
@@ -1056,7 +1058,12 @@ class RunTask:
                 lines.append(f"- Finding {n} ({where}): dismissed. {dismissed[n]}")
             await workflow.execute_activity(
                 post_comment,
-                CommentRequest(repo=loop.prepared.repo, pr_url=loop.published.pr_url, body="\n".join(lines)),
+                CommentRequest(
+                    repo=loop.prepared.repo,
+                    pr_url=loop.published.pr_url,
+                    body="\n".join(lines),
+                    task_id=self._task_id,
+                ),
                 start_to_close_timeout=CODE_HOST_TIMEOUT,
                 retry_policy=CODE_HOST_RETRY,
             )
@@ -1113,7 +1120,12 @@ class RunTask:
             lines.append(f"- {where}{line}: {finding.get('body', '')}")
         await workflow.execute_activity(
             post_comment,
-            CommentRequest(repo=loop.prepared.repo, pr_url=loop.published.pr_url, body="\n".join(lines)),
+            CommentRequest(
+                repo=loop.prepared.repo,
+                pr_url=loop.published.pr_url,
+                body="\n".join(lines),
+                task_id=self._task_id,
+            ),
             start_to_close_timeout=CODE_HOST_TIMEOUT,
             retry_policy=CODE_HOST_RETRY,
         )

@@ -141,6 +141,53 @@ def add_shipped(conn: psycopg.Connection) -> list[dict[str, Any]]:
     return saved
 
 
+# The lists in a shipped profile whose new members reach a deployment's profile of the same name: the skills
+# it loads and the commands its bash tool may run.
+SHIPPED_PROFILE_LISTS = ("skills", "bash_allow")
+
+
+def add_shipped_to_profiles(conn: psycopg.Connection) -> list[dict[str, Any]]:
+    """Adds to each active profile the skills and bash commands its shipped profile has that no version of
+    that profile ever had.
+
+    So a skill the code starts to rely on, and the command that runs its script, reach a deployment that
+    reads its profiles from here. A member any earlier version of the profile held is never added again: an
+    operator who removed it meant to. A profile the deployment does not have is left out: add_shipped adds
+    whole profiles. The change is one new version, origin `shipped`, checked like any save, and left unsaved
+    when the check refuses it. Returns the versions saved.
+    """
+    shipped = KINDS["profiles"].seed().get("profiles") or {}
+    with conn.transaction():
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("config:profiles",))
+        current = active(conn, "profiles")
+        document = json.loads(json.dumps(current["document"]))
+        history = [
+            row[0].get("profiles") or {}
+            for row in conn.execute(
+                "SELECT document FROM config.config_version WHERE kind = %s", ("profiles",)
+            ).fetchall()
+        ]
+        notes = []
+        for name, profile in (document.get("profiles") or {}).items():
+            for key in SHIPPED_PROFILE_LISTS:
+                wanted = (shipped.get(name) or {}).get(key)
+                if not isinstance(wanted, list) or (key == "bash_allow" and not profile.get(key)):
+                    continue
+                seen = {member for past in history for member in ((past.get(name) or {}).get(key) or [])}
+                added = [member for member in wanted if member not in seen]
+                if added:
+                    profile[key] = [*(profile.get(key) or []), *added]
+                    notes.append(f"{name} {key}: {', '.join(added)}")
+        if not notes:
+            return []
+        try:
+            check(conn, "profiles", document)
+        except ConfigError:
+            return []
+        note = f"added from the shipped file: {'; '.join(notes)}"
+        return [_insert(conn, "profiles", document, SHIPPED_BY, note, "shipped", None)]
+
+
 def replace_engines(conn: psycopg.Connection) -> list[dict[str, Any]]:
     """Moves the active tiers' candidates off engines that cannot run a harness (REPLACED_ENGINES).
 

@@ -7,6 +7,7 @@
       "max_turns": 80,
       "max_minutes": 45,
       "resources": {"cpu": 2, "memory_gb": 6},
+      "skills": ["no-ai-slop2"],
       "bash_allow": [
         "cd", "pwd", "ls", "cat", "head", "tail", "wc", "grep", "rg", "fd", "fdfind", "find", "sed", "awk",
         "sort", "uniq", "cut", "tr", "diff", "echo", "printf", "test", "[", "true", "false", "mkdir", "touch",
@@ -20,6 +21,7 @@
       "max_turns": 200,
       "max_minutes": 120,
       "resources": {"cpu": 2, "memory_gb": 6},
+      "skills": ["no-ai-slop2"],
       "bash_allow": [
         "cd", "pwd", "ls", "cat", "head", "tail", "wc", "grep", "rg", "fd", "fdfind", "find", "sed", "awk",
         "sort", "uniq", "cut", "tr", "diff", "echo", "printf", "test", "[", "true", "false", "mkdir", "touch",
@@ -33,6 +35,7 @@
       "max_turns": 60,
       "max_minutes": 30,
       "resources": {"cpu": 2, "memory_gb": 6},
+      "skills": ["no-ai-slop2"],
       "bash_allow": [
         "cd", "pwd", "ls", "cat", "head", "tail", "wc", "grep", "rg", "fd", "fdfind", "find", "sed", "awk",
         "sort", "uniq", "cut", "tr", "diff", "echo", "printf", "test", "[", "true", "false", "git", "python",
@@ -46,6 +49,7 @@
       "max_turns": 60,
       "max_minutes": 30,
       "resources": {"cpu": 2, "memory_gb": 6},
+      "skills": ["no-ai-slop2"],
       "bash_allow": [
         "cd", "pwd", "ls", "cat", "head", "tail", "wc", "grep", "rg", "fd", "fdfind", "find", "sort", "uniq",
         "cut", "git"

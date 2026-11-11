@@ -1106,5 +1106,72 @@
       "to"
     ],
     "type": "object"
+  },
+  "writing_checked v1": {
+    "additionalProperties": true,
+    "properties": {
+      "categories": {
+        "type": "object"
+      },
+      "changes": {
+        "items": {
+          "additionalProperties": true,
+          "properties": {
+            "after": {
+              "type": "string"
+            },
+            "before": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "before",
+            "after"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "findings": {
+        "type": "integer"
+      },
+      "kept": {
+        "type": "integer"
+      },
+      "kind": {
+        "enum": [
+          "pull_request",
+          "review",
+          "comment",
+          "issue"
+        ]
+      },
+      "model": {
+        "type": "string"
+      },
+      "reasons": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "rewritten": {
+        "type": "integer"
+      },
+      "texts": {
+        "type": "integer"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "texts",
+      "findings",
+      "rewritten",
+      "kept"
+    ],
+    "type": "object"
   }
 }

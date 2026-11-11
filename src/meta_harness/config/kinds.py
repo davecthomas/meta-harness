@@ -134,6 +134,12 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
             f"budget_policy must be one of {', '.join(BUDGET_POLICIES)}: block stops work at a budget or spend "
             "limit, and track only records the spend against it"
         )
+    writing = document.get("writing_pass")
+    if writing is not None and not isinstance(writing, bool):
+        reasons.append(
+            "writing_pass must be true or false: false posts what a run wrote without the writing pass's "
+            "check and rewrite"
+        )
     wait = document.get("merge_wait_minutes")
     if wait is not None and (isinstance(wait, bool) or not isinstance(wait, int) or wait < 0):
         reasons.append("merge_wait_minutes must be a whole number of minutes, 0 or more (0: merge without waiting)")

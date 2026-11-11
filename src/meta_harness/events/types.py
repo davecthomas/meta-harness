@@ -154,6 +154,29 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("review_proceeded", 1, _object({"round": {"type": "integer"}}, ["round"])),
+    # The writing pass on the texts of one post: a pull request description, a review, a comment, an issue
+    EventType(
+        "writing_checked",
+        1,
+        _object(
+            {
+                "kind": {"enum": ["pull_request", "review", "comment", "issue"]},
+                "texts": {"type": "integer"},
+                "findings": {"type": "integer"},
+                "categories": {"type": "object"},
+                "rewritten": {"type": "integer"},
+                "kept": {"type": "integer"},
+                "reasons": {"type": "array", "items": {"type": "string"}},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+                "changes": {
+                    "type": "array",
+                    "items": _object({"before": {"type": "string"}, "after": {"type": "string"}}, ["before", "after"]),
+                },
+            },
+            ["kind", "texts", "findings", "rewritten", "kept"],
+        ),
+    ),
     # A running task held for budget, and the operator's answer
     EventType("budget_hold", 1, _object({"reason": {"type": "string"}}, ["reason"])),
     EventType(
