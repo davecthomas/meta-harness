@@ -13,7 +13,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from meta_harness import db
-from meta_harness.config.kinds import KINDS, ConfigError
+from meta_harness.config.kinds import KINDS, ConfigError, check_size_limits
 
 SOURCE_ENV = "MH_CONFIG_SOURCE"
 
@@ -103,7 +103,8 @@ def rollback(conn: psycopg.Connection, kind: str, version: int, who: str, note: 
 
 # The kinds whose entries, by name, reach the deployment from the shipped files: the document's key
 # holding them. Tiers are left out: they are an ordered routing list, and an added tier changes routing.
-SHIPPED_ENTRIES = {"profiles": "profiles"}
+# The task policy's spend limit by issue size reaches a deployment that had none, one size at a time.
+SHIPPED_ENTRIES = {"profiles": "profiles", "task_policy": "max_usd_by_size"}
 SHIPPED_BY = "meta-harness"
 
 
@@ -261,6 +262,22 @@ def budget_policy(fresh: bool = False) -> str:
         policy = "block"
     _budget_policy = (now, policy if policy == "track" else "block")
     return _budget_policy[1]
+
+
+def max_usd_for_size(size: str | None) -> str | None:
+    """The spend limit the task policy's max_usd_by_size gives a task of this issue size, as a dollar string;
+    None when the issue was not sized, the policy names no limit for its size, or the policy cannot be read."""
+    if not size:
+        return None
+    try:
+        limits = current_document("task_policy").get("max_usd_by_size")
+    except Exception:  # noqa: BLE001 - an unreadable policy leaves the task unlimited by size, as before sizing
+        return None
+    if not isinstance(limits, dict) or limits.get(size) is None:
+        return None
+    if check_size_limits({size: limits[size]}):
+        return None
+    return str(limits[size])
 
 
 def max_parallel() -> int:

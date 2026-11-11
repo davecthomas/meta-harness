@@ -7,6 +7,12 @@
     "body_chars": 2000,
     "max_issues": 40
   },
+  "issue_sizing": {
+    "engine": "openai-decisions",
+    "model": "gpt-6-luna",
+    "max_response_tokens": 800,
+    "body_chars": 8000
+  },
   "planning": {
     "candidate": "harness:pi-plan/claude:claude-opus-5-5",
     "max_usd": "3.00"

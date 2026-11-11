@@ -98,6 +98,26 @@ export interface IssueProgress {
   pr_url: string | null;
   pr_state: "open" | "merged" | "closed" | null;
   checks: { head_sha: string | null; state: "passed" | "failed" | "pending" | "none"; failed: string[] } | null;
+  // What the planner's sizing found before the issue became a task; null and empty for an issue not sized.
+  size?: IssueSize | null;
+  size_reasons?: string[];
+  // What the issue lacks: shown on its card, and what holds it if the goal is strict.
+  missing?: IssueGap[];
+  // For a large issue, the smaller issues it splits into, and its own paths and checks, for the split drafts.
+  split?: string[];
+  paths?: string[];
+  checks_named?: string[];
+  // Why the issue waits for an operator instead of becoming a task: Run anyway or Split answers it.
+  held_reason?: string | null;
+}
+
+export type IssueSize = "small" | "medium" | "large";
+export type IssueGap = "acceptance_checks" | "paths" | "testable_outcome";
+
+// One issue a held issue splits into, as the operator edited it before it is created.
+export interface SplitDraft {
+  title: string;
+  body: string;
 }
 
 // The goals feature's calls; src/api.ts spreads them into `api`.
@@ -142,6 +162,17 @@ export const goalsApi = {
   replan: (id: string, note: string) =>
     call<GoalPlan>(`/v1/goals/${id}/replan`, { method: "POST", body: JSON.stringify({ note }) }),
   approvePlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/approve`, { method: "POST" }),
+  // A held issue: make it a task whatever its size and gaps, or create the smaller issues it splits into.
+  runAnyway: (id: string, ref: string) =>
+    call<{ goal_id: string; ref: string; run_anyway: boolean }>(`/v1/goals/${id}/issues/run-anyway`, {
+      method: "POST",
+      body: JSON.stringify({ ref }),
+    }),
+  splitIssue: (id: string, ref: string, issues: SplitDraft[]) =>
+    call<{ goal_id: string; ref: string; created: string[] }>(`/v1/goals/${id}/issues/split`, {
+      method: "POST",
+      body: JSON.stringify({ ref, issues }),
+    }),
   // Each of a goal's issues with its task's status and its pull request's state and checks.
   goalIssues: (id: string) => call<{ issues: IssueProgress[] }>(`/v1/goals/${id}/issues`).then((r) => r.issues),
 };

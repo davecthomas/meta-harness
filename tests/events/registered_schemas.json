@@ -421,6 +421,107 @@
     ],
     "type": "object"
   },
+  "issue_released v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "held_reason": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ref",
+      "goal_id"
+    ],
+    "type": "object"
+  },
+  "issue_sized v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "missing": {
+        "items": {
+          "enum": [
+            "acceptance_checks",
+            "paths",
+            "testable_outcome"
+          ],
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "model": {
+        "type": "string"
+      },
+      "reasons": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "ref": {
+        "type": "string"
+      },
+      "size": {
+        "enum": [
+          "small",
+          "medium",
+          "large"
+        ],
+        "type": "string"
+      },
+      "split": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ref",
+      "goal_id",
+      "size",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
+  "issue_split v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "issues": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ref",
+      "goal_id",
+      "issues"
+    ],
+    "type": "object"
+  },
   "kill_switch_changed v1": {
     "additionalProperties": true,
     "properties": {

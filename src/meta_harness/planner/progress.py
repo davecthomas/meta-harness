@@ -90,6 +90,7 @@ def issues_progress(links: list[dict], tasks: list[dict], events: list[dict]) ->
                 "state": link["state"],
                 "depends_on": link.get("depends_on") or [],
                 "refused_reason": link.get("refused_reason"),
+                **_sizing_view(link),
                 "task_id": task_id,
                 "task_status": task["status"] if task else None,
                 "task_status_reason": task.get("status_reason") if task else None,
@@ -99,6 +100,23 @@ def issues_progress(links: list[dict], tasks: list[dict], events: list[dict]) ->
             }
         )
     return shown
+
+
+def _sizing_view(link: dict) -> dict[str, Any]:
+    """The issue's size and what its sizing found, for its card: null and empty for an issue not sized."""
+    sizing = link.get("sizing") or {}
+    return {
+        "size": link.get("size"),
+        "size_reasons": list(sizing.get("reasons") or []),
+        # What the issue lacks: acceptance_checks, paths, testable_outcome.
+        "missing": list(sizing.get("missing") or []),
+        # The titles of the smaller issues a large one splits into, and the issue's paths and checks for them.
+        "split": list(sizing.get("split") or []),
+        "paths": list(sizing.get("paths") or []),
+        "checks_named": list(sizing.get("checks") or []),
+        # Why the issue waits for an operator instead of becoming a task: Run anyway or Split answers it.
+        "held_reason": link.get("held_reason"),
+    }
 
 
 def _no_pull_request() -> dict[str, Any]:

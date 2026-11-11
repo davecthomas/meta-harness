@@ -5,7 +5,8 @@
 - `profiles`: the harness profiles, as in config/harness_profiles.json.
 - `repos`: the repo registry, as in config/repos.example.json.
 - `task_policy`: the task policy, as in config/task_policy.json: how many tasks
-  run at once (`max_parallel`) and the review loop's reviewers and rounds.
+  run at once (`max_parallel`), the review loop's reviewers and rounds, and the
+  spend limit a task gets for its issue's size (`max_usd_by_size`).
 
 A kind's first version is seeded from the deployment's file. A new version is
 refused, with every reason, when the service that reads it would refuse it at
@@ -17,6 +18,7 @@ VM holds.
 import json
 import os
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from ai_api_unified.routing.router_config import load_router_config
@@ -97,6 +99,29 @@ def sandbox_ceiling() -> int | None:
 # What a budget does across the deployment. block: a goal's budget and a task's spend limit stop work, as each
 # says. track: nothing is held, refused or ended for either; spend is still recorded and shown against them.
 BUDGET_POLICIES = ("block", "track")
+# The sizes the planner gives an issue before it becomes a task (meta_harness.planner.sizing).
+ISSUE_SIZES = ("small", "medium", "large")
+
+
+def check_size_limits(limits: Any) -> list[str]:
+    """Problems with a task policy's max_usd_by_size: an object from issue size to a positive dollar amount, as a
+    string or a number. Left out, or a size left out: a task of that size gets no spend limit from its size."""
+    if limits is None:
+        return []
+    if not isinstance(limits, dict):
+        return ["max_usd_by_size must be an object from issue size (small, medium, large) to a dollar amount"]
+    reasons = []
+    for size, amount in limits.items():
+        if size not in ISSUE_SIZES:
+            reasons.append(f"max_usd_by_size: {size} is not an issue size; use {', '.join(ISSUE_SIZES)}")
+            continue
+        try:
+            positive = not isinstance(amount, bool) and Decimal(str(amount)) > 0
+        except (InvalidOperation, ValueError):
+            positive = False
+        if not positive:
+            reasons.append(f'max_usd_by_size.{size} must be a dollar amount above 0, such as "5.00"')
+    return reasons
 
 
 def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]] | None = None) -> list[str]:
@@ -134,6 +159,7 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
     wait = document.get("merge_wait_minutes")
     if wait is not None and (isinstance(wait, bool) or not isinstance(wait, int) or wait < 0):
         reasons.append("merge_wait_minutes must be a whole number of minutes, 0 or more (0: merge without waiting)")
+    reasons += check_size_limits(document.get("max_usd_by_size"))
     if others is not None:
         profiles = (others.get("profiles") or {}).get("profiles", {})
         for pair in reviewers:
@@ -242,8 +268,8 @@ KINDS: dict[str, Kind] = {
     "task_policy": Kind(
         "task_policy",
         "Task policy",
-        "How many tasks run at once across every goal, whether budgets stop work or only track spend, and the "
-        "review loop's reviewer pairs and fix rounds.",
+        "How many tasks run at once across every goal, whether budgets stop work or only track spend, the "
+        "review loop's reviewer pairs and fix rounds, and the spend limit a task gets for its issue's size.",
         seed_task_policy,
         check_task_policy,
     ),
