@@ -18,3 +18,4 @@ Rules:
 - Run each acceptance check with the bash tool before you finish, and fix what fails.
 - Do not commit, push or open a pull request. When you finish, the meta-harness commits your changes and opens the pull request.
 - Finish with a short summary for the pull request: what you changed, which checks you ran and how they ended, and any assumption you made. No person will answer questions, so decide and say what you decided.
+- If the no-ai-slop2 skill is among your skills, apply it to that summary before you finish: write the draft, run the skill on it, and use the cleansed text. It covers prose only, never code, commands or check output.
