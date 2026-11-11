@@ -1105,46 +1105,58 @@ immediate later.
 
 ### Operator review
 
-Built so far is the notice (`console/src/features/tasks/reviewing.tsx`): the
-console says an agent's review is under way wherever the operator is. A
-review run with a `run_prompt` of kind `review` and no `attempt_finished`
-yet is in progress. The Overview heads with each pull request being
-reviewed now, the task's page shows a banner, and the header inbox lists it
-with a browser notification. Each offers Review it yourself, which opens
-the task's diff, where a comment on its lines posts to the pull request
-under the operator's name. Claiming the round, so that it waits for the
-operator's verdict, is the rest of this section and is planned (#236).
+Operator review is built (#236). An operator always knows when an agent is
+reviewing a pull request, and can take the review over.
 
-Operator review is planned. When a meta-harness review run starts, the meta-harness run service appends a
-`review_started` meta-harness domain event. The operator console shows it as a
-notification to every operator watching, with the pull request link and an offer to
-review the pull request too. The offer needs no answer:
+The notice (`console/src/features/tasks/reviewing.tsx`): a review run with a
+`run_prompt` of kind `review` and no `attempt_finished` yet is in progress.
+The Overview heads with each pull request being reviewed now, the task's
+page shows a banner, and the header inbox lists it with a browser
+notification. Each offers Take over this review, and Open the diff, where a
+comment on the diff's lines posts to the pull request under the operator's
+name.
 
-- The offer closes when the agent review run ends, and the
-  review round decides on the agent's verdict alone.
-- An operator who takes the offer sends a review claim from the
-  operator console to the meta-harness run service. The meta-harness run service records
-  the claim in its `operator_review` table and appends
-  `operator_review_claimed` with the operator as actor. The first claim wins,
-  and the operator console tells later operators who holds it. The agent
-  review run still finishes, and the operator console shows its findings to
-  the operator.
-- A claimed review round waits for the operator. The task's
-  RunTask workflow waits on a Temporal signal, so the wait survives restarts.
-  The pool manager releases the agent review run's sandbox when that run
-  ends, and the metering service counts run time only, so the wait adds no
-  dollar-hours. The
-  task keeps its repo-area lock while it waits.
-- The operator reads the pull request on the code host and submits a
-  verdict, `clean` or `changes`, with findings, from the operator console. The
-  meta-harness run service posts the operator's findings as a code-host pull request
-  review that names the operator, and appends `operator_review_submitted`.
-  The round's verdict is `changes` when the agent or the operator says
-  `changes`, and the fix run gets both sets of findings.
-- The operator can release the claim from the operator console,
-  and the round then decides on the agent's verdict. A meta-harness alert
-  fires when a claimed round has waited longer than the task policy's
-  `review.operator_alert_minutes`. Nothing releases a claim on its own.
+The takeover:
+
+- `POST /v1/tasks/{id}/review/claim` claims the review of a running task
+  with a pull request, at any point of its review loop. The task service
+  records the operator on the task (`review_claimed_by`), appends
+  `operator_review_claimed` with the operator as actor, and queues the claim
+  for the task's workflow. The first claim wins: another operator's is
+  refused, naming who holds it.
+- The agent's review still finishes and is posted, so the operator starts
+  from its findings.
+- The round then waits for the operator (behind the `operator-review`
+  patch). The task stays `running`, marked `waiting_on: operator_review`,
+  its status reason naming the operator, and keeps its repo-area lock. The
+  wait is a Temporal condition on a signal, so it survives restarts.
+  Nothing releases a claim but the operator.
+- `POST /v1/tasks/{id}/review/verdict`, once the round waits: `clean`, or
+  `changes` with the agent's findings the operator keeps (`keep`, numbered
+  from 1) and their own (`findings`: `body`, with `path` and `line` when
+  they have them). The operator's verdict decides the round: the fix run is
+  asked for exactly the kept findings and theirs, so an operator can drop an
+  agent's wrong finding and can ask for a change the agent did not; with
+  none of either the round is clean and goes on to the merge. The workflow
+  posts the verdict as a pull request comment that names the operator, and
+  the task service appends `operator_review_submitted`.
+- `POST /v1/tasks/{id}/review/release` gives the review back, and the round
+  decides on the agent's verdict (`operator_review_released`).
+- A claim is for one round: the next review is the agent's alone unless it
+  is claimed again. A claimed round skips the timed hold of
+  `review.hold_minutes`, since the operator's verdict already chooses the
+  findings.
+- The task's page shows the operator review panel while a review is held
+  (`console/src/features/tasks/OperatorReview.tsx`): that the agent's review
+  is still running, or the agent's findings to keep or drop, fields for the
+  operator's own, Submit: changes needed, Submit: no change needed, and Give
+  the review back to the agent. A task waiting for an operator's review
+  heads the Overview's Needs you list.
+
+The routes are the task service's, beside the review hold's, not the run
+service's: the run service has no HTTP API. Not built: an alert when a
+claimed round has waited longer than `review.operator_alert_minutes`, and a
+`review_started` event (the `run_prompt` of kind `review` serves as it).
 
 ### Sequences
 
@@ -1794,7 +1806,7 @@ credential.
 | GET | `/v1/runs/{id}` | Meta-harness run service | Run state, candidate, token usage and cost so far | planned |
 | GET | `/v1/routing` | Meta-harness run service | Routing decisions and the candidate each task finished on, by modality, tier and time | planned |
 | GET, POST | `/v1/kill-switch` | Meta-harness scheduler | Read the kill switch, or turn it on or off with a reason. While it is on, the scheduler stops every running task and admits none. `mode` sets it instead: `stop` is on, `drain` admits nothing new and lets running tasks finish (a deploy that replaces the VM drains), and `off` ends both. `kill_switch_changed` carries the mode. Scopes smaller than everything (a run, a caller) are planned | built |
-| POST | `/v1/reviews/{task_id}/claim`, `/verdict`, `/release` | Meta-harness run service | An operator review: claim the round, submit a verdict with findings, or release the claim | planned |
+| POST | `/v1/tasks/{id}/review/claim`, `/verdict`, `/release` | Task service | An operator review: take the review of a running task's pull request over, give the verdict the round then waits for (`clean`, or `changes` with the agent's findings kept and the operator's own), or give the review back. 409 for a task with no review to take, a review another operator holds, or a verdict before the agent's review has finished | built |
 | GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest. `start` (default `true`) creates it `active` and sweeps it at once; `start: false` saves it `paused`, not started (`started_at` null), and takes in no issue until its first `/resume` | built |
 | GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `label`, `repos`, `auto_merge`, priority, budget (`max_usd`, null for none), `budget_mode`, `budget_overage_percent` and `max_parallel` (null to inherit), each sent alone by the Goal page's in-place edits and recorded as `goal_changed` with the fields changed. A repo must be registered; `label` may be null only when the goal holds issues an operator picked by ref (`picked` on its issues; ones its label swept in do not count) in its repos, else 409. Tasks the goal already made keep their issues, and its next sweep takes in issues by the new label and repos; an issue it holds with no task yet in a repo it no longer names is let go, recorded as `issue_dropped`, and never becomes a task there | partly built |
 | GET | `/v1/repos` | Planner | The repo registry: the repos a goal may name | built |

@@ -17,12 +17,14 @@ which records each scenario below that has no file yet. Recorded files are
 never rewritten: they are the workflows a deploy would find running.
 """
 
+import asyncio
 import json
 import os
 from pathlib import Path
 
 import pytest
 from temporalio import activity
+from temporalio.activity import _Definition
 from temporalio.client import WorkflowHistory
 from temporalio.worker import Replayer, Worker
 
@@ -30,6 +32,7 @@ from meta_harness.run_service.budget_activities import BudgetHold, GoalBudget
 from meta_harness.run_service.prompt_activities import RunPromptRecord
 from meta_harness.run_service.shared import (
     AttemptRecord,
+    OperatorMessage,
     PublishedRecord,
     RouteRecord,
     RunTaskInput,
@@ -90,6 +93,14 @@ SCENARIOS = {
     "patched-review-hold": {"verdicts": [CHANGES, CLEAN], "fix_commits": ["c1"], "goal_id": "g-1", "hold_minutes": 5},
     # After the smoke-task patch: a deploy's smoke task ends closed after its run, as a planning task does.
     "patched-smoke-task": {"task_type": "smoke"},
+    # After the operator-review patch: an operator took the review over, and their verdict decided the round.
+    "patched-operator-review": {
+        "verdicts": [CHANGES, CLEAN],
+        "fix_commits": ["c1"],
+        "goal_id": "g-1",
+        "claim": "dave",
+        "operator_verdict": '{"keep": [1], "findings": [{"path": "app.py", "line": 3, "body": "Also this."}]}',
+    },
     # After the merge-base-health patch: the merge waits while the base's own checks run, then merges.
     "patched-merge-base-health": {
         "verdicts": [CLEAN],
@@ -176,17 +187,36 @@ async def test_record_a_history(env, name):  # noqa: F811 - env is the fixture i
     goal_id = scenario.pop("goal_id", "")
     auto_merge = scenario.pop("auto_merge", False)
     task_type = scenario.pop("task_type", "")
+    claim, operator_verdict = scenario.pop("claim", ""), scenario.pop("operator_verdict", "")
     script = Script(**scenario)
     script.auto_merge = auto_merge
     workflow_id = f"run-task-{name}"
     activities = [*script.activities(), *_task_activities(review, goal_id, task_type)]
+    waiting = asyncio.Event()
+    if claim:
+        # An operator's review: the claim arrives with the start, and the verdict once the round waits for it.
+        @activity.defn(name="budget_hold")
+        async def budget_hold(hold: BudgetHold) -> None:
+            if hold.waiting:
+                waiting.set()
+
+        activities = [a for a in activities if _Definition.from_callable(a).name != "budget_hold"] + [budget_hold]
+    review_word = lambda n, text: OperatorMessage(message_id=n, text=text, when="review")  # noqa: E731
     async with Worker(env.client, task_queue=QUEUE, workflows=[RunTask], activities=activities):
         handle = await env.client.start_workflow(
             RunTask.run,
             RunTaskInput(task="", repo="", task_id=f"t-{name}"),
             id=workflow_id,
             task_queue=QUEUE,
+            **(
+                {"start_signal": "operator_message", "start_signal_args": [review_word(1, f"claim:{claim}")]}
+                if claim
+                else {}
+            ),
         )
+        if claim:
+            await asyncio.wait_for(waiting.wait(), timeout=30)
+            await handle.signal(RunTask.operator_message, review_word(2, f"verdict:{operator_verdict}"))
         try:
             await handle.result()
         except Exception:  # noqa: BLE001 - a run that ends in failure is a history all the same
