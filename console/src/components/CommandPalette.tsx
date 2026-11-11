@@ -48,7 +48,6 @@ export function CommandPalette({ admin }: { admin: boolean }) {
       { group: "Pages", label: "Overview", run: go("/") },
       { group: "Pages", label: "Goals", run: go("/goals") },
       { group: "Pages", label: "Tasks", run: go("/tasks") },
-      { group: "Pages", label: "Activity", run: go("/activity") },
       { group: "Pages", label: "Settings", run: go("/settings") },
       ...(admin
         ? ([

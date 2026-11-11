@@ -88,7 +88,7 @@ test("the cost category sets the source, and each category has its own breakdown
   expect(asked[0]).toContain("goal=g-a");
   expect(asked[0]).toContain("source=model");
   const breakdowns = [...(screen.getByLabelText("Break down by") as HTMLSelectElement).options].map((o) => o.textContent);
-  expect(breakdowns).toEqual(["Model", "Run type", "Goal", "Repository", "Operator"]);
+  expect(breakdowns).toEqual(["Model", "Run type", "Goal", "Repository", "Operator", "Label", "Pull request outcome"]);
   expect(screen.queryByText("Kind of work")).toBeNull();
   // A filter with a value stays, so it can be cleared, though it has one choice.
   expect(screen.getAllByText("Goal").some((e) => e.tagName === "LABEL")).toBe(true);
@@ -124,7 +124,33 @@ test("a regular user is told they see their own model costs, with no sources and
   expect(screen.queryByTestId("cost-sources")).toBeNull();
   await waitFor(() => expect(screen.queryByRole("radio", { name: "Cloud" })).toBeNull());
   const options = [...(screen.getByLabelText("Break down by") as HTMLSelectElement).options].map((o) => o.value);
-  expect(options).toEqual(["model", "run", "goal", "repo", "operator"]);
+  expect(options).toEqual(["model", "run", "goal", "repo", "operator", "label", "outcome"]);
+});
+
+test("AI costs are filtered and broken down by the issue's label and by what became of the pull request", async () => {
+  const byOutcome = {
+    ...COSTS,
+    group_by: "outcome",
+    series: [{ key: "merged", usd: [0, 3.25, 0], total: 3.25 }, { key: "closed", usd: [0, 0, 1.25], total: 1.25 }],
+    choices: { ...COSTS.choices, label: ["bug", "saves"], outcome: ["closed", "merged"] },
+  };
+  const asked = show(byOutcome, "/performance?category=ai&by=outcome&label=bug&outcome=merged,closed");
+  const breakdown = await screen.findByTestId("cost-breakdown");
+  expect(asked[0]).toContain("group_by=outcome");
+  expect(asked[0]).toContain("label=bug");
+  expect(asked[0]).toContain("outcome=merged%2Cclosed");
+  expect(breakdown.textContent).toContain("Merged$3.25");
+  expect(breakdown.textContent).toContain("Closed without merging$1.25");
+  expect(screen.getAllByText("Label").some((e) => e.tagName === "LABEL")).toBe(true);
+  expect(screen.getAllByText("Pull request").some((e) => e.tagName === "LABEL")).toBe(true);
+  expect(costLabel("", { labels: {}, group_by: "label" })).toBe("No label");
+  expect(costLabel("none", { labels: {}, group_by: "outcome" })).toBe("No pull request");
+
+  // A label filter belongs to AI costs: the cloud bill is no issue's.
+  fireEvent.click(screen.getByRole("radio", { name: "Cloud" }));
+  await waitFor(() => expect(asked[asked.length - 1]).toContain("source=cloud"));
+  expect(asked[asked.length - 1]).not.toContain("label=");
+  expect(asked[asked.length - 1]).not.toContain("outcome=");
 });
 
 test("the cloud category breaks the bill down by the service billed", async () => {

@@ -27,7 +27,9 @@ export interface Costs {
   scope: "all" | "own";
 }
 
-export type CostFilter = "source" | "kind" | "goal" | "repo" | "model";
+// label: the labels of the issue a task worked on. outcome: what became of its pull request (merged, closed,
+// open, or none opened).
+export type CostFilter = "source" | "kind" | "goal" | "repo" | "model" | "label" | "outcome";
 export type CostQuery = { from: string; to: string; bucket: string; group_by: string } & Partial<Record<CostFilter, string>>;
 
 // The performance feature's calls; src/api.ts spreads them into `api`.

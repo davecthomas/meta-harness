@@ -1835,7 +1835,7 @@ credential.
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet. A ref another goal holds is refused, naming that goal | built |
-| GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days`, grouped by goal, repo or label: each one's state (in review, waiting, blocked, merged, closed), cost, fix rounds and latest run, the tasks that spent without opening one, and the cost scale. From the Task API, the planner's goals and the tasks' events | built |
+| GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row: each one's state (in review, waiting, blocked, merged, closed), when it was opened and reached that state, its fix rounds and latest run; the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. A tier candidate's model select offers them | built |
@@ -1858,7 +1858,7 @@ credential.
 | GET | `/v1/admin/logs` | Edge | The VM's services' and the edge's log entries from Cloud Logging, newest first, at most 500, by unit, lowest severity, time and text. Every entry has a message: a service's line is its text; a request Cloud Run served, which has none, reads as its method, path, status and time (and counts as an error at 500 or above); an audit entry as its method and status; any other structured entry as its fields. An empty line a service printed is left out. The VM's Ops Agent ships the journal as `mh_journald`; the edge reads with its own service account's `roles/logging.viewer`. Admins only | built |
 | GET | `/v1/admin/deploys` | Edge | What is deployed: the version, the commit the VM and the edge run, and the edge's revision. Admins only | built |
 | GET, POST | `/v1/admin/users` | Planner, through the edge | The console's users: list them, or invite an email with a role (`admin` or `user`). `PATCH /v1/admin/users/{email}` sets the role and `DELETE` deprovisions. The last admin can be neither deprovisioned nor made a regular user (409). Each change is recorded (`user_invited`, `user_role_changed`, `user_deprovisioned`) with the admin as actor and shows on the Audit page. Admins only | built |
-| GET | `/v1/costs` | Cost service, in the planner's process | Costs over time: `from`, `to`, `bucket` (`day`, `week`, `month`), `group_by` (`source`, `kind`, `goal`, `task`, `repo`, `model`, `engine`, `operator`) and a comma-separated filter on each. Answers the buckets, one series per value dearest first (the eighth and later folded into `other`), each bucket's total, the total, the daily average, the change against the same span before, the least-squares `trend` through the totals, a month projected at the trend, the ten costliest tasks, and what each source is. An admin sees every source and goal; anyone else, only the model cost of their own work (`scope: own`). `POST /v1/costs/harvest` reads every source now (admins) | built |
+| GET | `/v1/costs` | Cost service, in the planner's process | Costs over time: `from`, `to`, `bucket` (`day`, `week`, `month`), `group_by` (`source`, `kind`, `goal`, `task`, `repo`, `model`, `engine`, `operator`, `label`, `outcome`) and a comma-separated filter on each. `label` is the labels of the issue a task worked on, and `outcome` what became of its pull request (`merged`, `closed` without merging, still `open`, or `none` opened): a task's facts, not a cost row's, which the planner gives when costs are asked for, so a relabel or a merge shows at once. A task whose issue carries several labels puts an even share of its cost under each in a breakdown by label, so the series add up to the total. `choices` offers the labels and outcomes of the tasks that spent. Answers the buckets, one series per value dearest first (the eighth and later folded into `other`), each bucket's total, the total, the daily average, the change against the same span before, the least-squares `trend` through the totals, a month projected at the trend, the ten costliest tasks, and what each source is. An admin sees every source and goal; anyone else, only the model cost of their own work (`scope: own`). `POST /v1/costs/harvest` reads every source now (admins) | built |
 | GET | `/health` | Every service | Liveness and configuration identity | built |
 
 The run service has no HTTP API yet. Until it has one, a path it owns that
@@ -2236,7 +2236,7 @@ the same approval.
 | Planner | console_user | email, role (admin, user), status (invited, active, deprovisioned), invited_by, invited_at, last_sign_in_at. Who may use the console, and as what |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
-| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, last_webhook_at |
+| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, title and labels (the issue's, refreshed by each sweep; labels give costs by label), last_webhook_at |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |
 | Meta-harness run service | operator_review | task_id, round, operator, claimed_at, verdict, findings, submitted_at, released_at |
@@ -2390,8 +2390,12 @@ total, the daily average, the change against the span before, and a month
 at the current trend. The controls start with the cost category: All costs,
 AI (what model calls cost) or Cloud (the Google Cloud bill). Each category
 has its own breakdowns and filters: All by category; AI by model, run type
-(task runs, reviews, fixes, planning), goal, repository or operator, with
-filters for model, run type, goal and repository; Cloud by the service
+(task runs, reviews, fixes, planning), goal, repository, operator, label
+(the labels of the issue a task worked on, a task with several sharing its
+cost evenly among them) or pull request outcome (merged, closed without
+merging, still open, no pull request), with filters for model, run type,
+goal, repository, label and pull request outcome, so what merged work cost
+and what abandoned work cost are one choice each; Cloud by the service
 billed, with a filter for it. A filter with a value always shows, so it can
 be cleared, and its choices are never narrowed by its own value. Under them,
 cost per day, week or month as stacked columns, one segment per value of the
@@ -2400,7 +2404,7 @@ the totals and a tooltip listing every series of the hovered bucket. Beside
 it, where the money went as a ranked list with each share, and the ten
 costliest tasks, linked. The range (7, 30 or 90 days, or two dates), the
 bucket, the breakdown and the filters (source, kind of work, goal,
-repository, model) live in the URL. A series keeps its color whatever is
+repository, model, label, outcome) live in the URL. A series keeps its color whatever is
 filtered. An admin sees every source and is told what each is and when it
 was last read; a regular user sees the model cost of their own work, and
 the page says so.
@@ -2620,7 +2624,7 @@ of the table is planned.
 | Tasks | One task: its issue, every ai-api-unified router routing decision, every run including fallbacks, every check result, the diff, the pull request, each review round's verdict and findings and the fix run it led to, the merge, and cost per run | Take over, hand back, cancel |
 | Run | Live timeline of the run's events: each turn's model call (model, thinking, tokens, cost, latency) and its ai-api-unified decisions (the model that served it, fallbacks, guardrail blocks, cache hits), tool calls, file changes, test runs, compactions and guardrail blocks, the OpenTelemetry trace, and the per-run sandbox | Take over, cancel |
 | Live runs | Every run in flight across every goal: task, repo, model, turn, spend as it accrues, time since its last event | Take over, cancel |
-| Activity | A heat map of pull requests, one cell each, oldest first, in a row per goal, repo or label: colored by state (blocked and waiting strongest) or by cost on a gradient between the 5th and 95th percentile, with the tasks that spent without a pull request hatched. The Overview shows one row of them all | Open a cell's latest run (`/tasks/{id}?run=`) |
+| Overview's Pull requests row | Every pull request of the last 13 weeks as one strip of cells, oldest first, colored by state (blocked and waiting strongest), with how many are blocked and waiting and a count of each state beside its color. There is no Activity page: where the work and the money went, by goal, repo, label or pull request outcome, is the Performance page's | Open a cell's latest run (`/tasks/{id}?run=`) |
 | Routing | Tier picked versus the candidate whose run finished, classifier confidence, floors and ceilings by modality, moves between candidates and escalations | |
 | Pool | Per-run sandboxes by image and state, warm targets versus actual, lease latency, health failures | |
 | Spend and performance | Cost by goal, modality, repo, model, harness profile and routing tier. Cost per merged pull request and time to merge, by modality. Dollar-hours per completed task over time. Cache hit rate | |
