@@ -129,6 +129,10 @@ class FakeTasks:
         ]
         return found[:limit]
 
+    def page(self, statuses=None, goal_id=None, limit=25, offset=0):
+        found = self.list(statuses, goal_id, len(self.tasks))
+        return {"tasks": found[offset : offset + limit], "total": len(found), "offset": offset, "limit": limit}
+
 
 @pytest.fixture
 def parts():
@@ -893,14 +897,63 @@ def test_a_tasks_cost_facts_are_its_issues_labels_as_each_sweep_sees_them_and_it
     _sweep(api, goal.json())
     [task] = [t for t in tasks.tasks.values() if t["external_ref"] == ref]
     with db.connect(autocommit=True) as conn:
-        assert cost_facts.task_facts(conn, [task])[task["id"]] == {"labels": [label, "type:bug"], "outcome": "none"}
+        facts = cost_facts.task_facts(conn, [task], {})
+        assert facts[task["id"]] == {"labels": [label, "type:bug"], "outcome": "none"}
 
     tracker.issues[ref].labels = [label, "area:saves"]
     _sweep(api, goal.json())
     task.update(pr_url="https://github.com/o/r/pull/9", status="canceled")
     with db.connect(autocommit=True) as conn:
-        assert cost_facts.task_facts(conn, [task])[task["id"]] == {"labels": [label, "area:saves"], "outcome": "closed"}
+        facts = cost_facts.task_facts(conn, [task], {})
+        assert facts[task["id"]] == {"labels": [label, "area:saves"], "outcome": "open"}, "canceled, its PR open"
+        ended = cost_facts.task_facts(conn, [task], {task["id"]: "closed"})
+        assert ended[task["id"]]["outcome"] == "closed"
     assert [cost_facts.outcome({"pr_url": "u", "status": s}) for s in ("closed", "ready")] == ["merged", "open"]
+    assert cost_facts.outcome({"pr_url": "u", "status": "closed"}, "closed") == "closed", "its events decide"
+
+
+def test_a_pull_requests_outcome_is_read_from_its_end_events_not_its_tasks_status(parts):
+    from meta_harness.planner import cost_facts
+
+    events, _, _ = parts
+    events.emit("pull_request_closed", {}, task_id="t-closed")
+    events.emit("pull_request_merged", {}, task_id="t-merged")
+    events.emit("pull_request_opened", {}, task_id="t-open")
+    assert cost_facts.pull_request_ends(events) == {"t-closed": "closed", "t-merged": "merged"}
+
+
+def test_every_task_pages_through_the_task_api_past_its_first_page(parts, monkeypatch):
+    from meta_harness.planner import cost_facts
+
+    _, _, tasks = parts
+    for n in range(7):
+        tasks.tasks[f"t-{n}"] = {"id": f"t-{n}", "status": "queued"}
+    monkeypatch.setattr(cost_facts, "TASKS_PER_PAGE", 3)
+    assert sorted(t["id"] for t in cost_facts.every_task(tasks)) == [f"t-{n}" for n in range(7)]
+
+
+def test_a_sweep_refreshes_the_labels_of_issues_already_taken_in_and_of_closed_ones(api, parts):
+    from meta_harness.planner import store
+
+    _, tracker, tasks = parts
+    label = _label()
+    goal = api.post("/v1/goals", json={"statement": "Fix saves.", "repos": [REPO], "label": label}, headers=OPERATOR)
+    taken = tracker.add(REPO, _number(), body="Broken.", labels=[label])
+    closing = tracker.add(REPO, _number(), body="Broken.", labels=[label])
+    _sweep(api, goal.json())
+    by_ref = {t["external_ref"]: t["id"] for t in tasks.tasks.values()}
+
+    # One leaves the goal's label but stays held; the other closes, and is relabeled after.
+    tracker.issues[taken].labels = ["area:saves"]
+    tracker.issues[closing].state = "closed"
+    _sweep(api, goal.json())
+    tracker.issues[closing].labels = [label, "area:exports"]
+    _sweep(api, goal.json())
+
+    with db.connect(autocommit=True) as conn:
+        labels = store.task_labels(conn)
+    assert labels[by_ref[taken]] == ["area:saves"]
+    assert labels[by_ref[closing]] == [label, "area:exports"]
 
 
 # --- The repo registry from the console -----------------------------------------------------------------
