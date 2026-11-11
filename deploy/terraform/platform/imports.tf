@@ -87,3 +87,9 @@ import {
   to       = google_secret_manager_secret.this[each.value]
   id       = "projects/${local.p}/secrets/${each.value}"
 }
+
+# Created by hand when the billing export was turned on (2026-11-11), before this stack named it.
+import {
+  to = google_bigquery_dataset.billing_export
+  id = "projects/${local.p}/datasets/billing_export"
+}

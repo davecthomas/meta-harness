@@ -2407,11 +2407,14 @@ reads each source into `costs.daily_cost`. Model cost comes from the event
 service: each run's `attempt_finished`, and the planner's own model calls,
 read from the position the last harvest reached and saved with the new
 position in one transaction, so an event is counted once. Cloud cost comes
-from the Google Cloud billing export in BigQuery, by billed service, when
-`MH_BILLING_EXPORT_TABLE` names the table; the last 35 days are read again
-each time, since a bill is restated. Until the export is turned on for the
-billing account and the setting names it, the page says cloud cost is not
-connected. Temporal runs on the VM, so its cost is inside Compute Engine's.
+from the Google Cloud billing export in BigQuery, by billed service; the
+last 35 days are read again each time, since a bill is restated. The billing
+account's standard usage cost export writes to the platform stack's
+`billing_export` dataset (turned on 2026-11-11), which the VM's service
+account may read and query. `MH_BILLING_EXPORT_TABLE` names the dataset, and
+the harvest finds the export's table in it, so the billing account's id is
+named nowhere in the repo. Until Google has created the table, within a day
+of the export being turned on, the page says the last read failed and why. Temporal runs on the VM, so its cost is inside Compute Engine's.
 A source is a module with a `harvest` function. The edge names the caller's
 role to the services (`X-MH-Role`), and the cost API decides by it who sees
 what.

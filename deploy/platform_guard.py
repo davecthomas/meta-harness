@@ -34,6 +34,8 @@ PROTECTED_TYPES = {
     "google_firebase_project",
     "google_firebase_hosting_site",
     "google_project_service",
+    # The bill's history: the export writes each day once, so a dataset recreated loses every day before.
+    "google_bigquery_dataset",
     "random_password",
 }
 # Grants to the deploy account without which no later deploy could sign in or read the state.

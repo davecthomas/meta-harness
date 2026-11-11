@@ -139,6 +139,9 @@ umask 077
   # Router tiers, harness profiles and the repo registry are the versions operators edit in the console,
   # seeded from the files on the first read.
   echo "MH_CONFIG_SOURCE=db"
+  # The dataset the billing account's export writes the Google Cloud bill to (the platform stack's
+  # billing_export); the cost service finds the export's table in it.
+  echo "MH_BILLING_EXPORT_TABLE=$PROJECT.billing_export"
 } >"$ETC/env.new"
 secret MH_REPOS_CONFIG >"$ETC/repos.json.new"
 mv "$ETC/env.new" "$ETC/env"
