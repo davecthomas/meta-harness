@@ -99,7 +99,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number }) {
 }
 
 // The goal's progress: its issues done of all, and what its tasks spent against its budget.
-export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<string, number>; budget: string | null }) {
+export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<string, number>; budget: string | null; onSpend?: () => void }) {
   const { column } = layout(props.issues);
   const done = props.issues.filter((i) => column.get(i.ref) === "done").length;
   const spent = Object.values(props.spend).reduce((a, b) => a + b, 0);
@@ -115,6 +115,12 @@ export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<str
         <Text size="xs" c="dimmed">
           ${spent.toFixed(2)} spent{budget ? ` of $${budget.toFixed(2)}` : ""}
           {projected !== null && done < props.issues.length && ` · about $${projected.toFixed(2)} to finish`}
+          {props.onSpend && spent > 0 && (
+            <>
+              {" · "}
+              <Anchor component="button" type="button" size="xs" onClick={props.onSpend}>where it went</Anchor>
+            </>
+          )}
         </Text>
         {budget !== null && (
           <Progress value={Math.min(100, (100 * spent) / budget)} color={spent >= budget ? "red" : spent >= 0.8 * budget ? "yellow" : "blue"} />

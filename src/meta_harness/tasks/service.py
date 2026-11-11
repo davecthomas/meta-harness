@@ -23,7 +23,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
-from meta_harness.tasks import reviews, store
+from meta_harness.tasks import reviews, spend, store
 
 
 class Events(Protocol):
@@ -350,6 +350,22 @@ def create_app(
         except Exception as err:  # noqa: BLE001 - the event service is the caller's 502
             raise HTTPException(status_code=502, detail=f"could not read the task's events: {err}") from err
         return {"task_id": task_id, "rounds": reviews.rounds(task, recorded)}
+
+    @app.get("/v1/tasks/{task_id}/spend")
+    def task_spend(task_id: str, who: Caller = Depends(caller)) -> dict:
+        """Where the task's money went: each of its runs with its kind, turns, tokens and cost, oldest first,
+        and their totals against the task's spend limit."""
+        try:
+            with app.state.pool.connection() as conn:
+                task = visible(store.get(conn, task_id), who)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        try:
+            recorded = events.read(0, 5000, task_id=task_id, event_type=",".join(spend.SPEND_EVENT_TYPES))["events"]
+        except Exception as err:  # noqa: BLE001 - the event service is the caller's 502
+            raise HTTPException(status_code=502, detail=f"could not read the task's events: {err}") from err
+        rows = spend.runs(recorded)
+        return {"task_id": task_id, "max_usd": task["max_usd"], "runs": rows, "totals": spend.totals(rows)}
 
     @app.post("/v1/tasks/{task_id}/clear")
     def clear(task_id: str, who: Caller = Depends(caller)) -> dict:

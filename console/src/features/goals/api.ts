@@ -32,6 +32,14 @@ export interface GoalDraft {
 }
 
 // An issue of a goal with its task's progress, from GET /v1/goals/{id}/issues.
+export interface GoalSpend {
+  goal_id: string;
+  max_usd: string | null;
+  usd: string;
+  by_kind: Record<string, string>;
+  tasks: { task_id: string; title: string | null; status: string; usd: string; by_kind: Record<string, string>; runs: number; turns: number }[];
+}
+
 // One issue a planning task proposed. depends_on names other drafts by draft_id, or issues as owner/repo#12.
 export interface PlanDraft {
   draft_id: string;
@@ -109,6 +117,8 @@ export const goalsApi = {
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
   patchGoal: (id: string, fields: Record<string, unknown>) =>
     call<Goal>(`/v1/goals/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
+  // Where the goal's money went: each task's spend, and the goal's by kind of run.
+  goalSpend: (id: string) => call<GoalSpend>(`/v1/goals/${id}/spend`),
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
   goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
   savePlan: (id: string, drafts: PlanDraft[]) =>
