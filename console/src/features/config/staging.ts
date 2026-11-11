@@ -118,6 +118,7 @@ export function reasonTarget(kind: ConfigKind, document: Record<string, any>, re
   if (reason.startsWith("max_parallel")) return "max_parallel";
   if (reason.startsWith("review.reviewers") || reason.startsWith("reviewer ")) return "reviewers";
   if (reason.startsWith("review.max_rounds")) return "max_rounds";
+  if (reason.startsWith("review.hold_minutes")) return "hold_minutes";
   return null;
 }
 

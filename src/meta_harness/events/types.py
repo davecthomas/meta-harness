@@ -128,6 +128,17 @@ REGISTRY: list[EventType] = [
             ["action", "retries"],
         ),
     ),
+    # A review held for an operator before its fix run, a finding they dismissed, and their word to go on
+    EventType("review_hold", 1, _object({"reason": {"type": "string"}}, ["reason"])),
+    EventType(
+        "finding_dismissed",
+        1,
+        _object(
+            {"round": {"type": "integer"}, "finding": {"type": "integer"}, "reason": {"type": "string"}},
+            ["round", "finding", "reason"],
+        ),
+    ),
+    EventType("review_proceeded", 1, _object({"round": {"type": "integer"}}, ["round"])),
     # A running task held for budget, and the operator's answer
     EventType("budget_hold", 1, _object({"reason": {"type": "string"}}, ["reason"])),
     EventType(

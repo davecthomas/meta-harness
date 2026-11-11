@@ -8,7 +8,8 @@ export interface ReviewRound {
   reviewer: string | null;
   head_sha: string | null;
   summary: string;
-  findings: { path: string | null; line: number | null; body: string }[];
+  // n numbers a round's findings from 1. dismissed: who dismissed the finding and why, when an operator did.
+  findings: { n?: number; path: string | null; line: number | null; body: string; dismissed?: { by: string | null; reason: string } | null }[];
   review_url: string | null;
   reviewed_at: string | null;
   run_id: string | null;
@@ -96,6 +97,10 @@ export const tasksApi = {
     call<{ message_id: number }>(`/v1/tasks/${id}/messages`, { method: "POST", body: JSON.stringify({ text, when }) }),
   setAttempts: (id: string, count: number) => call<Task>(`/v1/tasks/${id}/attempts`, { method: "POST", body: JSON.stringify({ count }) }),
   attempts: (taskId: string) => call<AttemptsCompare>(`/v1/pulls/${taskId}/attempts`),
+  // An operator's word on a review its task holds for them: dismiss a finding with why, or go on to the fix now.
+  dismissFinding: (id: string, round: number, finding: number, reason: string) =>
+    call<Task>(`/v1/tasks/${id}/reviews/${round}/findings/${finding}/dismiss`, { method: "POST", body: JSON.stringify({ reason }) }),
+  proceedReview: (id: string, round: number) => call<Task>(`/v1/tasks/${id}/reviews/${round}/proceed`, { method: "POST" }),
   // Where the task's money went: its runs, with their turns, tokens and cost.
   taskSpend: (id: string) => call<TaskSpend>(`/v1/tasks/${id}/spend`),
   clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),

@@ -9,7 +9,13 @@ after the round: a fix run, the merge, or the task's end.
 
 from typing import Any
 
-REVIEW_EVENT_TYPES = ("review_submitted", "pull_request_reviewed", "attempt_finished", "pull_request_merged")
+REVIEW_EVENT_TYPES = (
+    "review_submitted",
+    "pull_request_reviewed",
+    "attempt_finished",
+    "pull_request_merged",
+    "finding_dismissed",
+)
 
 
 def rounds(task: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -19,6 +25,15 @@ def rounds(task: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str,
     posted = sorted(
         (e for e in ordered if e["event_type"] == "pull_request_reviewed"), key=lambda e: e["payload"]["round"]
     )
+    # Each dismissal by an operator, by round and finding number (from 1): the newest for a finding stands.
+    dismissed: dict[tuple[int, int], dict[str, Any]] = {}
+    for event in ordered:
+        if event["event_type"] == "finding_dismissed":
+            payload = event["payload"] or {}
+            dismissed[(payload.get("round"), payload.get("finding"))] = {
+                "by": event.get("actor"),
+                "reason": payload.get("reason") or "",
+            }
     shown = []
     for index, review in enumerate(posted):
         body = (submitted[index]["payload"] if index < len(submitted) else {}) or {}
@@ -34,8 +49,14 @@ def rounds(task: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str,
                 "head_sha": review["payload"].get("head_sha"),
                 "summary": body.get("summary") or "",
                 "findings": [
-                    {"path": f.get("path"), "line": f.get("line"), "body": f.get("body", "")}
-                    for f in body.get("findings") or []
+                    {
+                        "n": n,
+                        "path": f.get("path"),
+                        "line": f.get("line"),
+                        "body": f.get("body", ""),
+                        "dismissed": dismissed.get((review["payload"]["round"], n)),
+                    }
+                    for n, f in enumerate(body.get("findings") or [], 1)
                 ],
                 "review_url": review["payload"].get("review_url"),
                 "reviewed_at": review.get("time_utc"),

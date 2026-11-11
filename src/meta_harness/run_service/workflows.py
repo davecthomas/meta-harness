@@ -89,6 +89,7 @@ with workflow.unsafe.imports_passed_through():
         route,
         run_harness,
         base_health,
+        post_comment,
         wait_checks,
         wait_merge_checks,
     )
@@ -98,6 +99,7 @@ with workflow.unsafe.imports_passed_through():
     from meta_harness.run_service.shared import (
         Attempt,
         BaseHealthRequest,
+        CommentRequest,
         DeliverRequest,
         OperatorMessage,
         ChecksRequest,
@@ -192,6 +194,8 @@ class RunTask:
         # Set once a budget hold ended with no more budget: the task then ends, and never holds again.
         self._budget_ended = False
         self._task_type = ""
+        # An operator's words on a review held for them, as they came: "dismiss:<round>:<n>:<why>", "proceed:<round>".
+        self._review_words: list[str] = []
 
     @workflow.signal
     def operator_message(self, message: OperatorMessage) -> None:
@@ -202,6 +206,9 @@ class RunTask:
             return
         if message.when == "budget":
             self._budget_answer = message.text
+            return
+        if message.when == "review":
+            self._review_words.append(message.text)
             return
         self._messages.append(message)
 
@@ -365,9 +372,14 @@ class RunTask:
                 limit = Decimal(answer.partition(":")[2])
 
     async def _budget_hold(self, waiting: bool, reason: str) -> None:
+        await self._hold(waiting, reason, "budget")
+
+    async def _hold(self, waiting: bool, reason: str, on: str) -> None:
+        """Marks the running task as waiting on an operator (for budget, or for its review), or as waiting no
+        longer, with why."""
         await workflow.execute_activity(
             budget_hold,
-            BudgetHold(task_id=self._task_id, waiting=waiting, reason=reason),
+            BudgetHold(task_id=self._task_id, waiting=waiting, reason=reason, on=on),
             start_to_close_timeout=TASK_API_TIMEOUT,
             retry_policy=TASK_API_RETRY,
         )
@@ -815,9 +827,16 @@ class RunTask:
                         retry_policy=CODE_HOST_RETRY,
                     )
                     log.info("%s: review round %d by %s: %s", info.workflow_id, reviews, reviewer, review["verdict"])
-                    if review["verdict"] == "clean":
+                    findings = list(review.get("findings") or [])
+                    clean = f"review round {reviews} by {reviewer} came back clean at {loop.head[:12]}"
+                    all_dismissed = False
+                    if review["verdict"] != "clean" and findings and policy.hold_minutes > 0:
+                        findings = await self._review_hold(loop, reviews, findings, policy.hold_minutes)
+                        all_dismissed = not findings
+                        if all_dismissed:
+                            clean = f"an operator dismissed every finding of review round {reviews} at {loop.head[:12]}"
+                    if review["verdict"] == "clean" or all_dismissed:
                         previous = {}
-                        clean = f"review round {reviews} by {reviewer} came back clean at {loop.head[:12]}"
                         merged = await self._merge(loop, clean)
                         if merged.state == "head_changed":
                             log.info("%s: a commit landed after the review: %s", info.workflow_id, merged.head_sha)
@@ -829,10 +848,10 @@ class RunTask:
                             return ("merged" if merged.state == "merged" else "clean"), merged.detail
                         fix = loop.prompt_request("fix", conflict=True)
                     else:
-                        previous = review
+                        previous = {**review, "findings": findings}
                         fix = loop.prompt_request(
                             "fix",
-                            findings=list(review.get("findings") or []),
+                            findings=findings,
                             summary=str(review.get("summary") or ""),
                         )
                 if fixes >= policy.max_rounds:
@@ -965,6 +984,66 @@ class RunTask:
                 if outcome == "merged":
                     outcome = "merge_checks_failed"
                 return outcome, f"the fix for {names} after {merged_pr}: {reason}"
+
+    async def _review_hold(self, loop: "_Loop", round_no: int, findings: list[dict], minutes: int) -> list[dict]:
+        """Holds a review that asks for changes for an operator, before its fix run. Returns the findings the
+        fix run is asked for: all of them, less those the operator dismissed.
+
+        A wrong finding costs a fix round and can undo right work. So when the task policy sets
+        review.hold_minutes, the task waits that long, marked as waiting on its review. The operator may
+        dismiss findings, each with why, and may say go on now. The dismissals are posted on the pull
+        request. Behind a patch: a workflow from before it sends every finding straight to the fix run.
+        """
+        if not self._task_id or not findings or not workflow.patched("review-hold"):
+            return findings
+        self._review_words = []
+        count = f"{len(findings)} {'finding' if len(findings) == 1 else 'findings'}"
+        waiting = (
+            f"review round {round_no} asked for changes ({count}); waiting {minutes} minutes for an operator "
+            "to dismiss any that are wrong before the fix run"
+        )
+        await self._hold(True, waiting, "review")
+        dismissed: dict[int, str] = {}
+        left = timedelta(minutes=minutes)
+        started = workflow.now()
+        proceed = False
+        while not proceed and left > timedelta(0):
+            try:
+                await workflow.wait_condition(lambda: bool(self._review_words), timeout=left)
+            except asyncio.TimeoutError:
+                break
+            words, self._review_words = self._review_words, []
+            for word in words:
+                kind, _, rest = word.partition(":")
+                number, _, rest = rest.partition(":")
+                if not number.isdigit() or int(number) != round_no:
+                    continue
+                if kind == "proceed":
+                    proceed = True
+                elif kind == "dismiss":
+                    finding, _, why = rest.partition(":")
+                    if finding.isdigit() and 1 <= int(finding) <= len(findings):
+                        dismissed[int(finding)] = why
+            left = timedelta(minutes=minutes) - (workflow.now() - started)
+        kept = [f for n, f in enumerate(findings, 1) if n not in dismissed]
+        if dismissed:
+            lines = [f"**meta-harness review, round {round_no}**: an operator dismissed {len(dismissed)} of {count}."]
+            for n in sorted(dismissed):
+                where = findings[n - 1].get("path") or "the change"
+                lines.append(f"- Finding {n} ({where}): dismissed. {dismissed[n]}")
+            await workflow.execute_activity(
+                post_comment,
+                CommentRequest(repo=loop.prepared.repo, pr_url=loop.published.pr_url, body="\n".join(lines)),
+                start_to_close_timeout=CODE_HOST_TIMEOUT,
+                retry_policy=CODE_HOST_RETRY,
+            )
+        after = (
+            f"{len(kept)} of {count} go to the fix run"
+            if kept
+            else "every finding was dismissed, so the round counts as clean"
+        )
+        await self._hold(False, f"review round {round_no}: {after}", "review")
+        return kept
 
     async def _wait_for_base(self, loop: "_Loop", clean: str) -> str:
         """Waits until the base branch's newest commit's checks have passed, so nothing merges onto a broken

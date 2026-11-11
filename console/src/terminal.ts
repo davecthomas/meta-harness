@@ -47,6 +47,9 @@ export function describe(e: MhEvent): Line | null {
     case "pull_request_opened": return line("status", `pull request ${p.pr_url}`);
     case "task_cancel_requested": return line("warn", `cancel requested: ${p.reason}`);
     case "budget_hold": return line("warn", `held for budget: ${p.reason}`);
+    case "review_hold": return line("warn", `review held for an operator: ${p.reason}`);
+    case "finding_dismissed": return line("info", `${e.actor ?? "operator"} dismissed finding ${p.finding} of round ${p.round}: ${p.reason}`);
+    case "review_proceeded": return line("info", `${e.actor ?? "operator"}: send round ${p.round} to its fix run now`);
     case "budget_decision": return line("info", `${e.actor ?? "operator"}: ${p.action === "end" ? "end the task" : p.max_usd ? `raise the spend limit to $${p.max_usd}` : "look at the budget again"}`);
     case "operator_message": return line("warn", `${e.actor ?? "operator"}: ${p.when === "stop" ? "stop after this turn" : `${p.text} (${p.when === "after_stop" ? "after it stops" : "next turn"})`}`);
     case "operator_message_delivered": return line("info", `operator message delivered (${p.when})`);

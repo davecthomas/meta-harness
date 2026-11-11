@@ -90,6 +90,28 @@ export function TaskPolicyView({ policy, maxSandboxes, staging }: { policy: Reco
           />,
         ],
         [
+          "Wait before a fix run",
+          <InlineField
+            kind="number"
+            label="Wait before a fix run"
+            value={doc.review?.hold_minutes ?? 0}
+            min={0}
+            decimalScale={0}
+            suffix=" minutes"
+            display={
+              <Text size="sm">
+                {doc.review?.hold_minutes
+                  ? `${doc.review.hold_minutes} minutes: a review that asks for changes waits for an operator to dismiss findings`
+                  : "None: findings go straight to the fix run"}
+              </Text>
+            }
+            changed={changed(s, ["review", "hold_minutes"])}
+            reasons={s.reasons("hold_minutes")}
+            readOnly={s.readOnly}
+            onCommit={(v) => s.stage(["review", "hold_minutes"], v ?? 0)}
+          />,
+        ],
+        [
           "Reviewers, in order",
           <InlineField
             kind="tags"

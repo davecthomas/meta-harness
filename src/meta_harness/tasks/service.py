@@ -98,6 +98,11 @@ class RetryIn(BaseModel):
     max_usd: Decimal | None = Field(default=None, gt=0)
 
 
+class DismissIn(BaseModel):
+    # Why the finding is wrong, or not worth a fix run: shown on the review and posted on the pull request.
+    reason: str = Field(min_length=1, max_length=2000)
+
+
 class BudgetIn(BaseModel):
     # raise: carry on, with max_usd as the task's new spend limit when given. end: end the task as it would have.
     action: Literal["raise", "end"]
@@ -255,6 +260,8 @@ def create_app(
         task's RunTask workflow, which gives it to the run in progress."""
         if body.when == "budget":
             raise HTTPException(status_code=422, detail="answer a budget hold with POST /v1/tasks/{id}/budget")
+        if body.when == "review":
+            raise HTTPException(status_code=422, detail="answer a held review with POST /v1/tasks/{id}/reviews/...")
         if body.when != "stop" and not body.text.strip():
             raise HTTPException(status_code=422, detail="a message needs text")
         if body.when == "choose" and not body.text.strip().isdigit():
@@ -309,6 +316,38 @@ def create_app(
         """Ask for a ready or review_unresolved task's pull request to be merged: through the merge queue, as an
         auto-merge would, whatever its goal's auto_merge says, then the wait for the merge commit's checks."""
         return requeue(task_id, "merge", None, who)
+
+    def review_word(task_id: str, word: str, who: Caller) -> dict:
+        try:
+            with app.state.pool.connection() as conn:
+                visible(store.get(conn, task_id), who)
+                return store.review_word(conn, task_id, word, who.actor)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+
+    @app.post("/v1/tasks/{task_id}/reviews/{round_no}/findings/{finding}/dismiss", status_code=202)
+    def dismiss_finding(
+        task_id: str, round_no: int, finding: int, body: DismissIn, who: Caller = Depends(caller)
+    ) -> dict:
+        """Dismiss one finding (numbered from 1) of the review a task holds for an operator, with why: the fix
+        run is not asked for it. With every finding dismissed, the round counts as clean."""
+        if finding < 1:
+            raise HTTPException(status_code=422, detail="findings are numbered from 1")
+        reason = " ".join(body.reason.split())
+        task = review_word(task_id, f"dismiss:{round_no}:{finding}:{reason}", who)
+        dismissed = {"round": round_no, "finding": finding, "reason": reason}
+        events.emit("finding_dismissed", dismissed, task_id=task_id, actor=who.actor)
+        return task
+
+    @app.post("/v1/tasks/{task_id}/reviews/{round_no}/proceed", status_code=202)
+    def proceed_review(task_id: str, round_no: int, who: Caller = Depends(caller)) -> dict:
+        """End the wait on a held review now: its fix run starts with the findings not dismissed, or, with
+        none left, the round counts as clean."""
+        task = review_word(task_id, f"proceed:{round_no}", who)
+        events.emit("review_proceeded", {"round": round_no}, task_id=task_id, actor=who.actor)
+        return task
 
     @app.post("/v1/tasks/{task_id}/budget", status_code=202)
     def budget(task_id: str, body: BudgetIn, who: Caller = Depends(caller)) -> dict:
@@ -409,6 +448,8 @@ def create_app(
         if task["waiting_on"] == "budget" and before.get("waiting_on") != "budget":
             log.warning("task %s is held for budget: %s", task_id, task["status_reason"])
             events.emit("budget_hold", {"reason": task["status_reason"] or ""}, task_id=task_id, actor=who.actor)
+        if task["waiting_on"] == "review" and before.get("waiting_on") != "review":
+            events.emit("review_hold", {"reason": task["status_reason"] or ""}, task_id=task_id, actor=who.actor)
         return task
 
     return app

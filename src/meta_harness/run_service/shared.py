@@ -373,6 +373,18 @@ class ReviewPolicy:
     unresolved: list[str] = field(default_factory=list)
     # How long a merge waits for the base's own checks to pass before it gives up; 0: it does not wait.
     merge_wait_minutes: int = 0
+    # How long a review that asks for changes waits for an operator to dismiss findings before its fix run
+    # starts; 0: the fix run starts at once.
+    hold_minutes: int = 0
+
+
+@dataclass
+class CommentRequest:
+    """A comment for the task's pull request, such as which findings an operator dismissed."""
+
+    repo: str
+    pr_url: str
+    body: str
 
 
 @dataclass

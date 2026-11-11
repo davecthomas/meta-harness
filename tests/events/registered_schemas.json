@@ -159,6 +159,26 @@
     "required": [],
     "type": "object"
   },
+  "finding_dismissed v1": {
+    "additionalProperties": true,
+    "properties": {
+      "finding": {
+        "type": "integer"
+      },
+      "reason": {
+        "type": "string"
+      },
+      "round": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "round",
+      "finding",
+      "reason"
+    ],
+    "type": "object"
+  },
   "goal_changed v1": {
     "additionalProperties": true,
     "properties": {
@@ -678,6 +698,30 @@
       "verdict",
       "reviewer",
       "head_sha"
+    ],
+    "type": "object"
+  },
+  "review_hold v1": {
+    "additionalProperties": true,
+    "properties": {
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "reason"
+    ],
+    "type": "object"
+  },
+  "review_proceeded v1": {
+    "additionalProperties": true,
+    "properties": {
+      "round": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "round"
     ],
     "type": "object"
   },

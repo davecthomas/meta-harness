@@ -256,9 +256,10 @@ def _jsonable(row: dict) -> dict:
 
 # How an operator message reaches a running task: at its next turn, when it would stop, or stop it after this turn.
 # budget is the operator's answer to a task held for budget: its own endpoint queues it, not the messages one.
-MESSAGE_KINDS = ("next_turn", "after_stop", "stop", "choose", "budget")
+# review is an operator's word on a review that waits for them: a finding dismissed, or go on to the fix now.
+MESSAGE_KINDS = ("next_turn", "after_stop", "stop", "choose", "budget", "review")
 # What a running task may be waiting on an operator for.
-WAITING_ON = ("budget",)
+WAITING_ON = ("budget", "review")
 # The most attempts a task makes at once.
 MAX_ATTEMPTS = 4
 
@@ -328,6 +329,23 @@ def requeue(
             (f"{actor} {what}", resume, max_usd, task_id),
         )
         return _jsonable(cur.fetchone()), row["status"]
+
+
+def review_word(conn: psycopg.Connection, task_id: str, body: str, actor: str) -> dict:
+    """Queues an operator's word on the review a task holds for them (a dismissal, or go on now) for its
+    workflow. Refused unless the task is running and waiting on its review. Returns the task."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT {COLUMNS} FROM tasks.task WHERE id = %s FOR SHARE", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        if row["status"] != "running" or row["waiting_on"] != "review":
+            raise TaskError("the task is not holding a review for an operator")
+        cur.execute(
+            "INSERT INTO tasks.task_message (task_id, body, deliver, actor) VALUES (%s, %s, 'review', %s)",
+            (task_id, body, actor),
+        )
+        return _jsonable(row)
 
 
 def decide_budget(conn: psycopg.Connection, task_id: str, action: str, max_usd: Decimal | None, actor: str) -> dict:

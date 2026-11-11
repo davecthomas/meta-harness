@@ -63,6 +63,7 @@ from meta_harness.run_service.shared import (
     LoopPromptRequest,
     BaseHealth,
     BaseHealthRequest,
+    CommentRequest,
     MergeChecksRequest,
     MergeRequest,
     MergeResult,
@@ -763,7 +764,20 @@ async def review_policy(author_model: str) -> ReviewPolicy:
         max_rounds=int(policy["max_rounds"]),
         unresolved=unresolved,
         merge_wait_minutes=MERGE_WAIT_MINUTES if wait is None else int(wait),
+        hold_minutes=int(policy.get("hold_minutes") or 0),
     )
+
+
+@activity.defn
+async def post_comment(request: CommentRequest) -> str:
+    """Posts a comment on the task's pull request. A local repo has no pull request to comment on."""
+    if code_host.is_local(request.repo):
+        return ""
+    try:
+        repo, number = code_host.pr_number(request.pr_url)
+        return await code_host.comment(repo, number, request.body)
+    except code_host.CodeHostError as err:
+        raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
 
 
 # How long a merge waits for the base's own checks when the task policy does not say.

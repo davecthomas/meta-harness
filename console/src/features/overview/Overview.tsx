@@ -40,7 +40,13 @@ export function Overview() {
           {[...held.items, ...waiting.items].map((t) => (
             <Table.Tr key={t.id}>
               <Table.Td><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
-              <Table.Td>{t.waiting_on === "budget" ? <Badge color="orange" variant="light" tt="none">out of budget</Badge> : <StatusBadge status={t.status} />}</Table.Td>
+              <Table.Td>{t.waiting_on === "budget" ? (
+                  <Badge color="orange" variant="light" tt="none">out of budget</Badge>
+                ) : t.waiting_on === "review" ? (
+                  <Badge color="orange" variant="light" tt="none">review waits</Badge>
+                ) : (
+                  <StatusBadge status={t.status} />
+                )}</Table.Td>
               <Table.Td><IssueLink issueRef={t.external_ref} /></Table.Td>
               <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>
               <Table.Td><Text size="sm">{t.status === "ready" ? "Its pull request is open for you to merge" : t.status_reason ?? t.status}</Text></Table.Td>

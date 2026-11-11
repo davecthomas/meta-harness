@@ -363,7 +363,7 @@ def test_reviews_pair_each_posted_round_with_its_findings_and_say_what_came_next
     shown = api.get(f"/v1/tasks/{tid}/reviews", headers=_as(CALLER_KEY)).json()["rounds"]
 
     assert [(r["round"], r["verdict"], r["run_id"]) for r in shown] == [(1, "changes", "r-2"), (2, "clean", "r-4")]
-    assert shown[0]["findings"] == [{"path": "a.py", "line": 3, "body": "Test it."}]
+    assert shown[0]["findings"] == [{"n": 1, "path": "a.py", "line": 3, "body": "Test it.", "dismissed": None}]
     assert shown[0]["next"] == {"kind": "fix", "run_id": "r-3", "attempt": 3}
     assert shown[1]["next"]["kind"] == "waiting"
 
@@ -437,6 +437,81 @@ def test_a_smoke_task_is_a_services_to_create_and_is_left_out_of_lists_unless_as
     asked = api.get("/v1/tasks", params={"q": smoke_id, "smoke": "true"}, headers=_as(SERVICE_KEY)).json()["tasks"]
     assert [t["id"] for t in asked] == [smoke_id]
     assert api.get(f"/v1/tasks/{smoke_id}", headers=_as(SERVICE_KEY)).json()["task_type"] == "smoke"
+
+
+def _holding_review(api) -> dict:
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    held = api.post(
+        f"/v1/tasks/{task['id']}/status",
+        json={"status": "running", "reason": "review round 1 asked for changes (2 findings)", "waiting_on": "review"},
+        headers=_as(SERVICE_KEY),
+    )
+    assert held.status_code == 200 and held.json()["waiting_on"] == "review"
+    return held.json()
+
+
+def test_dismissing_a_finding_of_a_held_review_records_it_and_tells_the_workflow(api, events):
+    task = _holding_review(api)
+    tid = task["id"]
+    assert "review_hold" in events.types(tid)
+
+    dismissed = api.post(
+        f"/v1/tasks/{tid}/reviews/1/findings/2/dismiss",
+        json={"reason": "AGENTS.md requires\nthe bump."},
+        headers=_as(CALLER_KEY),
+    )
+    proceeded = api.post(f"/v1/tasks/{tid}/reviews/1/proceed", headers=_as(CALLER_KEY))
+
+    assert dismissed.status_code == 202 and proceeded.status_code == 202
+    pending = api.get("/v1/messages/pending", headers=_as(SERVICE_KEY)).json()["messages"]
+    mine = [(m["deliver"], m["body"]) for m in pending if m["task_id"] == tid]
+    assert mine == [("review", "dismiss:1:2:AGENTS.md requires the bump."), ("review", "proceed:1")]
+    recorded = [(kind, payload) for kind, payload, fields in events.events if fields.get("task_id") == tid]
+    assert ("finding_dismissed", {"round": 1, "finding": 2, "reason": "AGENTS.md requires the bump."}) in recorded
+    assert ("review_proceeded", {"round": 1}) in recorded
+
+
+def test_a_review_is_answered_only_while_its_task_holds_it_and_through_its_own_endpoints(api):
+    running = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{running['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    refused = api.post(f"/v1/tasks/{running['id']}/reviews/1/proceed", headers=_as(CALLER_KEY))
+    assert refused.status_code == 409 and "not holding a review" in refused.json()["detail"]
+
+    held = _holding_review(api)
+    no_reason = api.post(
+        f"/v1/tasks/{held['id']}/reviews/1/findings/1/dismiss", json={"reason": ""}, headers=_as(CALLER_KEY)
+    )
+    assert no_reason.status_code == 422
+    through_messages = api.post(
+        f"/v1/tasks/{held['id']}/messages", json={"text": "proceed:1", "when": "review"}, headers=_as(CALLER_KEY)
+    )
+    assert through_messages.status_code == 422
+
+
+def test_a_rounds_findings_are_numbered_and_say_who_dismissed_them(api, events):
+    task = _ended(api, "ready")
+    tid = task["id"]
+    findings = [
+        {"path": "a.py", "line": 3, "body": "Test it."},
+        {"path": None, "line": None, "body": "Revert the bump."},
+    ]
+    events.emit(
+        "review_submitted", {"verdict": "changes", "summary": "Two.", "findings": findings}, task_id=tid, run_id="r-2"
+    )
+    events.emit("pull_request_reviewed", {"round": 1, "verdict": "changes", "head_sha": "abc"}, task_id=tid)
+    events.emit(
+        "finding_dismissed", {"round": 1, "finding": 2, "reason": "The rule requires it."}, task_id=tid, actor="dave"
+    )
+    for position, event in enumerate(events.events, start=1):
+        event[2]["position"] = position
+
+    [shown] = api.get(f"/v1/tasks/{tid}/reviews", headers=_as(CALLER_KEY)).json()["rounds"]
+
+    assert [(f["n"], f["dismissed"]) for f in shown["findings"]] == [
+        (1, None),
+        (2, {"by": "dave", "reason": "The rule requires it."}),
+    ]
 
 
 def test_tasks_are_found_by_text_in_their_title_id_or_ref(api):

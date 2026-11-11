@@ -178,6 +178,11 @@ def test_the_task_policys_merge_wait_is_whole_minutes_or_left_out(monkeypatch):
     assert kinds.check_task_policy(policy) == []
     assert kinds.check_task_policy({**policy, "merge_wait_minutes": 0}) == []
     assert kinds.check_task_policy({**policy, "merge_wait_minutes": 90}) == []
+    held = {**policy, "review": {**policy["review"], "hold_minutes": 15}}
+    assert kinds.check_task_policy(held) == []
+    assert kinds.check_task_policy({**policy, "review": {**policy["review"], "hold_minutes": -5}}) == [
+        "review.hold_minutes must be a whole number of minutes, 0 or more (0: fix runs start at once)"
+    ]
     for bad in (-1, 1.5, "60", True):
         assert kinds.check_task_policy({**policy, "merge_wait_minutes": bad}) == [
             "merge_wait_minutes must be a whole number of minutes, 0 or more (0: merge without waiting)"
