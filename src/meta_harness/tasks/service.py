@@ -123,6 +123,14 @@ class RecoverIn(BaseModel):
     spent_usd: Decimal = Field(default=Decimal(0), ge=0)
 
 
+class DriveIn(BaseModel):
+    # merge: ask for the pull request's merge. review: send it back through checks, review and fixes.
+    action: Literal["merge", "review"]
+    # What the supervisor found, which the task's reason carries.
+    why: str = Field(min_length=1, max_length=500)
+    spent_usd: Decimal = Field(default=Decimal(0), ge=0)
+
+
 class DismissIn(BaseModel):
     # Why the finding is wrong, or not worth a fix run: shown on the review and posted on the pull request.
     reason: str = Field(min_length=1, max_length=2000)
@@ -553,6 +561,27 @@ def create_app(
         events.emit(
             "task_recovered",
             {"from": previous, "to": task["status"], "recoveries": task["recoveries"], "why": body.why},
+            task_id=task_id,
+            actor=who.actor,
+        )
+        return task
+
+    @app.post("/v1/tasks/{task_id}/drive", status_code=202)
+    def drive(task_id: str, body: DriveIn, who: Caller = Depends(service_only)) -> dict:
+        """The supervisor's move for a ready or review_unresolved task it can move on: back to the queue for
+        its pull request's merge, or through its review loop, with what it spent carried over. 409 for a task
+        in any other status, one with no pull request, or one already sent back as often as allowed."""
+        try:
+            with app.state.pool.connection() as conn:
+                task, previous = store.drive(conn, task_id, body.action, body.why, body.spent_usd)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        emit_status(task, previous, who.actor)
+        events.emit(
+            "task_driven",
+            {"action": body.action, "why": body.why, "drives": task["drives"], "resume": task["resume"]},
             task_id=task_id,
             actor=who.actor,
         )

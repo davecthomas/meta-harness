@@ -708,3 +708,39 @@ def test_a_task_asked_to_cancel_is_canceled_by_a_recovery_and_a_task_says_who_ha
     assert ended["status"] == "canceled" and ended["cancel_requested"] is False
     assert ended["status_reason"] == "it was asked to cancel, and it has no RunTask workflow"
     assert api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["standing"] is None, "not looked at yet"
+
+
+def test_the_supervisor_drives_a_parked_task_a_bounded_number_of_times_with_its_spend_carried(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+
+    def park():
+        api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+        body = {"status": "ready", "pr_url": "https://github.com/o/r/pull/9"}
+        api.post(f"/v1/tasks/{task['id']}/status", json=body, headers=_as(SERVICE_KEY))
+
+    def drive(action="merge", key=SERVICE_KEY):
+        body = {"action": action, "why": "the code host would take its merge now", "spent_usd": "2.50"}
+        return api.post(f"/v1/tasks/{task['id']}/drive", json=body, headers=_as(key))
+
+    assert drive().status_code == 409, "a queued task is not parked"
+    park()
+    assert drive(key=CALLER_KEY).status_code == 403
+
+    driven = drive().json()
+
+    assert (driven["status"], driven["resume"], driven["drives"]) == ("queued", "merge", 1)
+    assert Decimal(driven["spent_carried_usd"]) == Decimal("2.50")
+    assert driven["status_reason"] == (
+        "the code host would take its merge now, so the supervisor asked for its merge (try 1 of 3)"
+    )
+    assert ("task_driven", "merge", 1) in [(e[0], e[1].get("action"), e[1].get("drives")) for e in events.events]
+    park()
+    assert drive("review").json()["resume"] == "review"
+    park()
+    assert drive().status_code == 202
+    park()
+    refused = drive()
+    assert refused.status_code == 409 and "already sent the task back 3 times" in refused.json()["detail"]
+    # An operator's own action starts the count again, and from nothing spent.
+    merged = api.post(f"/v1/tasks/{task['id']}/merge", headers=_as(CALLER_KEY)).json()
+    assert merged["drives"] == 0 and Decimal(merged["spent_carried_usd"]) == 0

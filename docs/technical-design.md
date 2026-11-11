@@ -22,7 +22,7 @@ rest. A section that describes a planned component says so.
 | Task service | Accepts and tracks tasks and serves the Task API. Code-host webhooks are planned. | built | `tasks/` |
 | Planner | Turns a goal's labeled GitHub issues into tasks with their dependencies, by a periodic sweep, records what becomes of the pull requests of tasks that ended `ready` or `review_unresolved`, and drafts a goal from a label's issues. Planning tasks, the `feature` and `new-system` modalities, issue write-back and Jira and Linear adapters are planned. | partly built | `planner/` |
 | Meta-harness scheduler | Admits queued tasks by priority, global concurrency, repo-area locks, closed dependencies and the goal's budget, and carries out cancels and the kill switch, which it owns. Caller quotas and daily caps are planned. | built | `scheduler/` |
-| Supervisor | Looks at every open task once a minute, decides who has it (its workflow, the scheduler, its goal's sweep, an operator, or no one), records that, and moves the tasks no one has: a task with no workflow behind it, a parked task whose pull request ended outside any sweep, an unstarted task of an ended goal. Runs in the planner's process. Driving merges, retrying transient failures, goal-level stalls and deadlines on operator waits are planned. | partly built | `supervisor/` |
+| Supervisor | Looks at every open task once a minute, decides who has it (its workflow, the scheduler, its goal's sweep, an operator, or no one), records that, and moves the tasks no one has: a task with no workflow behind it, a parked task whose pull request ended outside any sweep, an unstarted task of an ended goal, and a `ready` task of an auto-merge goal, which it sees through its merge. Runs in the planner's process. Retrying transient failures, goal-level stalls and deadlines on operator waits are planned. | partly built | `supervisor/` |
 | Meta-harness run service | Runs each task as a Temporal workflow, the RunTask workflow: routes it, runs its candidates, opens its pull request, runs the review loop on it and merges it. Takeover, operator review, exploration and an HTTP API of its own are planned. The only caller of the ai-api-unified router. | partly built | `run_service/` |
 | Pool manager | Leases per-run sandboxes by run id, keeps a warm pool, and replaces unhealthy sandboxes. Until it exists, the run activity starts each sandbox itself. | planned | |
 | Event service | Holds the ordered record of every meta-harness domain event. | built | `events/` |
@@ -1865,12 +1865,30 @@ Who has it. Where the owner is the supervisor, the pass acts:
 | A `running` or `taken_over` task, or a `queued` one the scheduler started, whose workflow ended or does not exist | `recover` (`POST /v1/tasks/{id}/recover`): back to `queued`, to resume at its pull request when it has one. The scheduler starts a new workflow. A task asked to cancel is `canceled` instead. After three recoveries it fails, for an operator: something ends its workflows |
 | A `ready` or `review_unresolved` task whose pull request merged or closed, of a goal no sweep covers, or of no goal | Ended as a sweep would: `closed` or `canceled`, with the pull request's end recorded |
 | A `queued` or `blocked` task of a goal that was canceled or completed | Canceled, with the reason |
+| A `ready` task of an active goal with `auto_merge` on, whose pull request the code host would merge, or that conflicts with its base | `merge` (`POST /v1/tasks/{id}/drive`): back to `queued` to resume at the merge. The merge step resolves a conflict in a fix run first, as it does in a first workflow |
+| The same, with its head's checks failed | `review`: back through checks, review and fixes |
+| The same, with checks that have not reported, or mergeability the code host has not worked out | `wait`: the supervisor has it and looks again each pass. After a day it is an operator's, told to see what holds the checks |
+
+A `ready` task is one whose workflow ended without merging: its goal does
+not merge by itself, or the code host refused the merge at that moment (its
+required checks had not reported, its base was failing). The first is an
+operator's. The second used to be too, forever: the workflow tried once, and
+a conflict that appeared later was seen by no one. Now the supervisor reads
+how the pull request stands (`supervisor/pulls.py`: `clean`, `conflict`,
+`checks_failed`, `checks_pending`, `blocked` or `unknown`, from the pull
+request's `mergeable` and `mergeable_state` and its head commit's checks)
+and sees the merge through. `blocked` with the checks passed means a rule on
+the branch wants what only a person gives, an approval or an exception, and
+is an operator's. The supervisor sends one task back at most three times
+between an operator's retries (`drives`); after that the task is an
+operator's, and its standing says the tries are used up.
 
 A recovery waits until the task has stood with no workflow for three
 minutes, so a status write still on its way is not taken for a lost one. A
 recovered task's next workflow is given what the task has left of its spend
 limit: the task keeps what its runs spent since an operator last retried it
-(`spent_carried_usd`), so a recovery never gives a task its limit again. An
+(`spent_carried_usd`), so a recovery never gives a task its limit again, and
+neither does a drive. An
 action that fails is tried again after a wait that doubles, up to an hour.
 Every action is one the task service refuses when it no longer applies, so a
 repeat does nothing. What a pass cannot read moves no one: a task whose
@@ -1881,10 +1899,8 @@ The supervisor's own trouble shows: a pass that fails is logged as an error
 and said by `GET /v1/supervisor`, which also gives when the last pass ran and
 how many tasks each owner has.
 
-Built so far are the three actions above and the standing of every task.
-Planned, in this order: merging a `ready` task of an auto-merge goal when
-the code host allows it, and sending a conflicted or failing one back
-through the fix run; failures recorded by kind, and the transient ones
+Built so far are the actions above and the standing of every task.
+Planned, in this order: failures recorded by kind, and the transient ones
 retried with a bound; goals marked `stalled` when everything left waits
 behind a failure, refused and reopened issues looked at again, and sweep
 errors recorded; and a deadline and a reminder on every wait for an
@@ -1974,6 +1990,7 @@ credential.
 | POST | `/v1/tasks/{id}/clear` | Task service | Take a `ready` or `review_unresolved` task off the list: `closed` when its pull request's merge is recorded, else `canceled`, with the reason naming the pull request and who cleared it. The pull request stays on GitHub | built |
 | POST | `/v1/tasks/{id}/status` | Task service | Set a task's status. Services only: the RunTask workflow and the planner | built |
 | POST | `/v1/tasks/{id}/recover` | Task service | The supervisor's move for a `running` task, or a `queued` one the scheduler started, with no RunTask workflow behind it (`why`, and `spent_usd`, what its runs have spent): back to `queued` to resume at its pull request, `canceled` when it was asked to cancel, or `failed` after three recoveries. Services only. 409 for a task in any other status | built |
+| POST | `/v1/tasks/{id}/drive` | Task service | The supervisor's move for a `ready` or `review_unresolved` task it can move on (`action` `merge` or `review`, `why`, `spent_usd`): back to `queued` to resume there, with its spend carried. Services only. 409 for a task in any other status, with no pull request, or already sent back three times | built |
 | GET | `/v1/supervisor` | Planner | The supervisor's last pass: when it ran, how many tasks each owner has, what it recovered, ended and canceled, what it could not do, and how often it runs | built |
 | POST | `/v1/tasks/{id}/take-over` | Meta-harness run service | Stop the active run, publish its work so far, and hand the task to the calling operator | planned |
 | POST | `/v1/tasks/{id}/hand-back`, `/close` | Meta-harness run service | End a takeover: a follow-up run continues on the branch, or the task closes with the operator's outcome | planned |
@@ -2419,7 +2436,7 @@ the same approval.
 
 | Owner | Entity | Fields |
 |---|---|---|
-| Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over), status_changed_at (when it last changed status), recoveries and spent_carried_usd (the supervisor's: how often it was sent back for want of a workflow, and what it had spent then) |
+| Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over), status_changed_at (when it last changed status), recoveries and spent_carried_usd (the supervisor's: how often it was sent back for want of a workflow, and what it had spent then), drives (how often the supervisor sent it back for its merge or review since an operator's last retry) |
 | Meta-harness scheduler | task_hold | task_id, kind, reason, detail (what the reason names), since, last_checked. One row per queued task the scheduler holds |
 | Supervisor | standing | task_id, owner (workflow, scheduler, planner, supervisor, operator), situation, reason, ask, since, checked_at, attempts, acted_at, last_error. One row per task that has not ended closed |
 | Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), budget_mode, budget_overage_percent, spent_usd (at the last sweep), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |

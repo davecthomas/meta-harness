@@ -1,10 +1,13 @@
 """The supervisor's rules: every open task has someone who has it. These run without Postgres."""
 
+import dataclasses
 import itertools
 
+from meta_harness.supervisor import pulls
 from meta_harness.supervisor.rules import (
     ACTIONS,
     GOALS,
+    MERGEABLE,
     OPEN_STATUSES,
     OWNERS,
     PULLS,
@@ -18,13 +21,22 @@ from meta_harness.tasks import store as task_store
 
 
 def _every() -> list[Facts]:
+    """Every combination of facts. How a pull request stands for a merge, and the supervisor's tries and
+    waits, are read only for a parked task with an open pull request, so they are varied only there."""
     flags = (False, True)
-    return [
-        Facts(status, workflow, pull, goal, waiting_on, cancel, admitted, auto_merge)
-        for status, workflow, pull, goal, waiting_on, cancel, admitted, auto_merge in itertools.product(
-            OPEN_STATUSES, WORKFLOWS, PULLS, GOALS, WAITING_ON, flags, flags, flags
-        )
-    ]
+    found = []
+    for status, workflow, pull, goal, waiting_on, cancel, admitted, auto_merge in itertools.product(
+        OPEN_STATUSES, WORKFLOWS, PULLS, GOALS, WAITING_ON, flags, flags, flags
+    ):
+        base = Facts(status, workflow, pull, goal, waiting_on, cancel, admitted, auto_merge)
+        if status in ("ready", "review_unresolved") and pull == "open":
+            found += [
+                dataclasses.replace(base, mergeable=how, drives_left=left, stale=stale)
+                for how, left, stale in itertools.product(MERGEABLE, flags, flags)
+            ]
+        else:
+            found.append(base)
+    return found
 
 
 def test_the_rules_cover_every_status_a_task_can_be_left_in():
@@ -96,4 +108,52 @@ def test_a_parked_task_whose_pull_request_ended_is_ended_by_the_sweep_or_by_the_
                 assert (decision.owner, decision.action) == ("supervisor", "end_at_pull_request"), goal
     ready = decide(Facts("ready", pull="open", goal="active"))
     assert ready.owner == "operator" and "Merge the pull request" in ready.ask
+    assert "does not merge by itself" in ready.reason
     assert decide(Facts("ready", pull="unknown", goal="none")).owner == "operator", "no one is moved on an unknown"
+
+
+def _ready(how: str, **facts) -> Facts:
+    return Facts("ready", pull="open", goal="active", auto_merge=True, mergeable=how, **facts)
+
+
+def test_a_ready_task_of_a_goal_that_merges_by_itself_is_seen_through_its_merge():
+    assert pulls.MERGEABLE == MERGEABLE
+    assert (decide(_ready("clean")).owner, decide(_ready("clean")).action) == ("supervisor", "merge")
+    conflict = decide(_ready("conflict"))
+    assert (conflict.action, conflict.situation) == ("merge", "merge_conflict"), "the merge step fixes a conflict"
+    assert decide(_ready("checks_failed")).action == "review", "failed checks go back through the review loop"
+    for how in ("checks_pending", "unknown"):
+        assert (decide(_ready(how)).owner, decide(_ready(how)).action) == ("supervisor", "wait")
+        stale = decide(_ready(how, stale=True))
+        assert stale.owner == "operator" and "has not changed in a day" in stale.reason
+    blocked = decide(_ready("blocked"))
+    assert blocked.owner == "operator" and "approval" in blocked.ask
+
+
+def test_the_supervisors_own_tries_are_bounded_and_then_an_operator_is_asked():
+    for how in ("clean", "conflict", "checks_failed"):
+        spent = decide(_ready(how, drives_left=False))
+        assert spent.owner == "operator" and spent.situation == "merge_tries_used"
+        assert "as often as it may" in spent.reason
+
+
+def test_a_goal_that_does_not_merge_by_itself_or_is_not_swept_leaves_its_ready_tasks_to_an_operator():
+    assert decide(Facts("ready", pull="open", goal="active", mergeable="clean")).owner == "operator"
+    for goal in ("paused", "stalled", "none"):
+        assert decide(Facts("ready", pull="open", goal=goal, auto_merge=True, mergeable="clean")).owner == "operator"
+    unresolved = decide(Facts("review_unresolved", pull="open", goal="active", auto_merge=True, mergeable="clean"))
+    assert unresolved.owner == "operator", "a review that did not come clean is a person's call"
+
+
+def test_how_a_pull_request_stands_for_a_merge_is_read_from_the_code_host():
+    assert pulls.mergeable({"mergeable": False, "mergeable_state": "dirty"}, "passed") == "conflict"
+    assert pulls.mergeable({"mergeable": True, "mergeable_state": "clean"}, "failed") == "checks_failed"
+    assert pulls.mergeable({"mergeable": True, "mergeable_state": "blocked"}, "pending") == "checks_pending"
+    assert pulls.mergeable({"mergeable": True, "mergeable_state": "blocked"}, "none") == "checks_pending", (
+        "required checks that have not been created yet"
+    )
+    assert pulls.mergeable({"mergeable": True, "mergeable_state": "blocked"}, "passed") == "blocked"
+    for state in ("clean", "unstable", "has_hooks", "behind"):
+        assert pulls.mergeable({"mergeable": True, "mergeable_state": state}, "passed") == "clean"
+    assert pulls.mergeable({"mergeable": None, "mergeable_state": "unknown"}, "passed") == "unknown"
+    assert pulls.mergeable({"mergeable": True, "mergeable_state": "clean", "draft": True}, "passed") == "blocked"
