@@ -121,6 +121,19 @@ def tasks_serve(host: str, port: int) -> None:
 
 
 @main.group()
+def deploy() -> None:
+    """What a deploy runs on the deployment's own machine."""
+
+
+@deploy.command("smoke")
+def deploy_smoke() -> None:
+    """Run one small task through the deployed system, and exit 1 if it does not end closed (smoke.py)."""
+    from meta_harness import smoke
+
+    raise SystemExit(smoke.main(lambda line: click.echo(f"[smoke] {line}")))
+
+
+@main.group()
 def task() -> None:
     """Submit and inspect tasks through the Task API (MH_TASKS_URL, MH_TASK_API_KEY)."""
 

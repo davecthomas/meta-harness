@@ -183,6 +183,18 @@ jobs:
           done
           echo "the VM did not report in 30 minutes (last: ${result:-nothing})"
           exit 1
+      - name: run a smoke task through the deployed system
+        # One small task on the cheapest model, through the Task API, the scheduler, a sandbox and the gateway:
+        # a deploy that broke task runs fails here, not at the next task someone needs (src/meta_harness/smoke.py).
+        run: |
+          for try in 1 2 3 4 5 6; do
+            timeout 120 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \
+              --command true && break
+            [ "$try" = 6 ] && { echo "could not log in to the VM in 6 tries"; exit 1; }
+            sleep 20
+          done
+          timeout 1500 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \
+            --command "sudo bash /opt/meta-harness/deploy/vm/smoke.sh ${{ github.sha }}" | tee smoke.txt
       - name: open an issue for the failed deploy
         # A failed deploy is work: the issue's label lets a goal pick it up and fix it.
         if: failure()
@@ -209,4 +221,5 @@ jobs:
 
           The platform stack step: ${{ steps.platform.outcome || 'not reached' }}. The release stack step: ${{ steps.apply.outcome || 'not reached' }}. A platform step that failed with \"refused\" lines met deploy/platform_guard.py: the change destroys something a deploy must keep.
 
+          $( [ -s smoke.txt ] && { echo "The smoke task:"; echo; sed 's/^/    /' smoke.txt; echo; } )
           The VM reported: \`${result:-nothing}\`. A result ending in \"rolled back to <commit>\" means the VM runs that commit again and every service is healthy; the change in ${GITHUB_SHA::7} needs fixing before it can deploy. Its boot log is /var/log/mh-boot.log on mh-vm."

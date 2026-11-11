@@ -51,3 +51,24 @@ async def test_a_planning_tasks_prompt_wraps_the_planners_request_and_names_no_c
     assert "Plan: Add exports" in prepared.prompt and "Add exports\n--- end of goal ---" in prepared.prompt
     assert "Do not change, create or delete any file" in prepared.prompt
     assert "$" not in prepared.prompt and "Acceptance checks:" not in prepared.prompt
+
+
+async def test_a_deploys_smoke_task_closes_after_its_run_with_no_publish_no_review_and_no_hold(env):  # noqa: F811
+    script = Script()
+    statuses: list[TaskStatusRequest] = []
+
+    @activity.defn(name="set_task_status")
+    async def set_task_status(request: TaskStatusRequest) -> str:
+        statuses.append(request)
+        return request.status
+
+    base = [*script.activities(), *_task_activities(True, "", "smoke")]
+    kept = [a for a in base if _Definition.from_callable(a).name != "set_task_status"]
+    async with Worker(env.client, task_queue=QUEUE, workflows=[RunTask], activities=[*kept, set_task_status]):
+        result = await env.client.execute_workflow(
+            RunTask.run, RunTaskInput(task="", repo="", task_id="t-smoke"), id="run-task-t-smoke", task_queue=QUEUE
+        )
+
+    assert len(script.runs) == 1 and script.publishes == 0 and not script.posted
+    assert statuses[-1].status == "closed" and "the smoke run finished in 3 turns" in statuses[-1].reason
+    assert result.published is None

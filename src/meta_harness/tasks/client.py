@@ -61,8 +61,9 @@ class TaskClient:
     def page(
         self, statuses: list[str] | None = None, goal_id: str | None = None, limit: int = 25, offset: int = 0
     ) -> dict:
-        """One page of tasks: {tasks, total, offset, limit}."""
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        """One page of tasks: {tasks, total, offset, limit}. Deploys' smoke tasks included: this client is the
+        services', which must see every task; the console's own lists leave them out."""
+        params: dict[str, Any] = {"limit": limit, "offset": offset, "smoke": "true"}
         if statuses:
             params["status"] = ",".join(statuses)
         if goal_id:

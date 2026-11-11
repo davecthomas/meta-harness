@@ -425,6 +425,20 @@ def test_a_tasks_spend_lists_its_runs_and_totals_against_its_limit(api, events):
     assert api.get("/v1/tasks/t-none/spend", headers=_as(CALLER_KEY)).status_code == 404
 
 
+def test_a_smoke_task_is_a_services_to_create_and_is_left_out_of_lists_unless_asked(api):
+    refused = api.post("/v1/tasks", json=_task(task_type="smoke"), headers=_as(CALLER_KEY))
+    assert refused.status_code == 422 and "only the meta-harness creates smoke tasks" in refused.json()["detail"]
+    created = api.post("/v1/tasks", json=_task(task_type="smoke"), headers=_as(SERVICE_KEY))
+    assert created.status_code == 201
+    smoke_id = created.json()["id"]
+
+    listed = api.get("/v1/tasks", params={"q": smoke_id}, headers=_as(SERVICE_KEY)).json()["tasks"]
+    assert listed == []
+    asked = api.get("/v1/tasks", params={"q": smoke_id, "smoke": "true"}, headers=_as(SERVICE_KEY)).json()["tasks"]
+    assert [t["id"] for t in asked] == [smoke_id]
+    assert api.get(f"/v1/tasks/{smoke_id}", headers=_as(SERVICE_KEY)).json()["task_type"] == "smoke"
+
+
 def test_tasks_are_found_by_text_in_their_title_id_or_ref(api):
     word = f"walrus{uuid.uuid4().hex[:6]}"
     task = api.post("/v1/tasks", json=_task(title=f"Fix the {word} crash"), headers=_as(CALLER_KEY)).json()

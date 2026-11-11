@@ -2596,6 +2596,22 @@ merged commit, then:
    stack reads the platform stack's outputs, which is why the platform goes
    first: a pull request can add a platform output and use it in the release
    stack at once.
+4. Once the VM reports the commit, it runs a smoke task through the deployed
+   system (#204, `src/meta_harness/smoke.py`): one small task, submitted
+   through the Task API on the VM as a caller would, that writes a one-line
+   file in a scratch repo on the VM, pinned to the first candidate of the
+   router's first tier, with a $0.25 spend limit. The scheduler admits it
+   whatever is running, the RunTask workflow runs it in a per-run sandbox,
+   with its database, against the real HTTP Gateway, and it ends `closed`.
+   Its type is `smoke`: only a service creates one, it opens no pull request,
+   gets no review, never holds for budget, and the console's lists leave it
+   out (`GET /v1/tasks?smoke=true` lists them). A task that does not end
+   `closed` in ten minutes is tried once more, since one model call can fail
+   by chance; two failures fail the deploy, and its failure issue quotes
+   what the smoke task said. While the kill switch is on or the scheduler
+   drains, no task may start, and the smoke task is skipped. Tests and the
+   zero-cost end-to-end check use fakes for the model, the code host and
+   the VM; only this shows whether a task runs on the deployment.
 
 The guard refuses a plan that deletes or replaces what the deployment cannot
 lose: the data disk, the network, a service account, the sign-in from

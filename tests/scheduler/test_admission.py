@@ -174,6 +174,22 @@ async def test_a_paused_or_spent_goal_holds_its_tasks(repo):
     assert "spent $1.05" in result.held[spent]
 
 
+async def test_a_deploys_smoke_task_starts_though_the_running_limit_is_reached(repo):
+    tasks = Tasks()
+    running = [tasks.add(f"{repo}-{n}", status="queued") for n in range(2)]
+    admission, started = _admission(tasks, max_running=2)
+    await admission.pass_once()
+    assert sorted(started) == sorted(running)
+
+    waiting = tasks.add(f"{repo}-waiting")
+    smoke = tasks.add(f"{repo}-smoke")
+    tasks.tasks[smoke]["task_type"] = "smoke"
+    result = await admission.pass_once()
+
+    assert smoke in started and waiting not in started
+    assert smoke in result.started
+
+
 async def test_a_goal_in_planning_runs_its_planning_task_and_nothing_else(repo):
     tasks, goals = Tasks(), Goals()
     goals.goals["g-plan"] = {"status": "planning", "max_usd": None}
