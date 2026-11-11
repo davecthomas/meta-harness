@@ -14,8 +14,13 @@ it (sizing.py): one cheap model call, recorded as `issue_sized`. A large
 issue is held instead, its link's held_reason saying why with the suggested
 split, until an operator runs it anyway or splits it; so is one missing
 acceptance checks, paths or a testable outcome when its goal sets
-strict_issues, and otherwise that one runs with the gap on its card. A held
-issue edited since its sizing is sized again. The size is stored on the task
+strict_issues, and otherwise that one runs with the gap on its card: one with
+no acceptance checks, its own or the repo's defaults, runs with none, and its
+run asks the agent to run the repo's tests. An unsized issue with no checks
+(sizing off, or its call failed) is refused, as before sizing. A held issue
+edited since its sizing is sized again, unless an operator split it: a split
+issue stays held, saying what it was split into, until it is closed or run
+anyway. The size is stored on the task
 as its complexity, and the task's spend limit is its issue's own `Spend
 limit:` line, else the task policy's limit for its size.
 
@@ -288,9 +293,24 @@ async def _take_in(
         await asyncio.to_thread(_set_labels, issue.ref, labels)
     if existing and (existing["goal_id"] != goal["id"] or existing["task_id"] or existing["refused_reason"]):
         return
+    if existing and existing.get("split_into") is not None and not existing.get("run_anyway"):
+        # Split by an operator: it stays held, saying what it was split into, and is neither sized nor split again.
+        result.held.append(issue.ref)
+        return
     registered = repos.get(issue.repo)
     checks = issue.checks or (registered.default_checks if registered else [])
-    if not checks:
+    size, sized = await _size(goal, issue, existing, sizer, events, title, labels)
+    was_held = (existing or {}).get("held_reason")
+    if not (existing or {}).get("run_anyway"):
+        held = sizing.hold_reason(size, sized, bool(goal.get("strict_issues")))
+        if held:
+            if held != was_held:
+                await asyncio.to_thread(_hold, issue.ref, held)
+            result.held.append(issue.ref)
+            return
+    if not checks and not size:
+        # Unsized, with sizing off or failing, an issue with no checks is refused as it was before sizing. A sized
+        # one runs with no checks and the gap on its card: the run asks its agent to run the repo's tests.
         reason = "the issue has no ## Acceptance checks and the repo registry names no default checks"
         await asyncio.to_thread(
             _save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, reason, title, labels
@@ -304,15 +324,6 @@ async def _take_in(
         )
         result.refused.append(issue.ref)
         return
-    size, sized = await _size(goal, issue, existing, sizer, events, title, labels)
-    was_held = (existing or {}).get("held_reason")
-    if not (existing or {}).get("run_anyway"):
-        held = sizing.hold_reason(size, sized, bool(goal.get("strict_issues")))
-        if held:
-            if held != was_held:
-                await asyncio.to_thread(_hold, issue.ref, held)
-            result.held.append(issue.ref)
-            return
     # The issue's own limit, else the task policy's for its size; neither: the task has none, as before sizing.
     max_usd = sizing.issue_limit(issue.body) or await asyncio.to_thread(config_store.max_usd_for_size, size)
     open_deps = [ref for ref in issue.depends_on if await _is_open(ref, tracker)]

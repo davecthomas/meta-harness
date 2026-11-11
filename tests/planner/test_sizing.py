@@ -289,13 +289,88 @@ def test_split_creates_the_suggested_issues_with_the_goals_label_and_their_paths
     assert all(i.labels == [goal["label"]] for i in tracker.created)
     assert (REPO, goal["label"]) in tracker.labels
     assert _payloads(events, "issue_split") == [{"ref": ref, "goal_id": goal["id"], "issues": created}]
-    assert _shown(client, goal)[ref]["held_reason"].startswith("split into #")
+    reason = _shown(client, goal)[ref]["held_reason"]
+    assert reason.startswith("split into #")
+    assert _shown(client, goal)[ref]["split_into"] == created
 
-    # The new issues carry the label, so the next sweep sizes them and takes them in; the original stays held.
+    # The new issues carry the label, so the next sweep sizes them and takes them in; the original stays held,
+    # its split kept, even once it is edited.
     for issue in tracker.created:
         issue.paths, issue.checks = ["console"], ["make test"]
-    _sweep(client, goal)
+    tracker.issues[ref].updated_at = "2026-11-12T10:00:00Z"
+    swept = _sweep(client, goal)
     assert all(_task(tasks, r) is not None for r in created) and _task(tasks, ref) is None
+    assert ref in swept["held"]
+    card = _shown(client, goal)[ref]
+    assert (card["held_reason"], card["split_into"]) == (reason, created), "the split outlives the sweep"
+    assert sizer.calls.count(ref) == 1, "a split issue is not sized again"
+
+    again = client.post(url, json={"ref": ref, "issues": drafts}, headers=OPERATOR)
+    assert again.status_code == 409 and "split already" in again.json()["detail"]
+    assert len(tracker.created) == 2, "no issue is created twice"
+    _sweep(client, goal)
+    assert _shown(client, goal)[ref]["held_reason"] == reason
+
+    # Run anyway is still open to it.
+    ran = client.post(f"/v1/goals/{goal['id']}/issues/run-anyway", json={"ref": ref}, headers=OPERATOR)
+    assert ran.status_code == 200, ran.text
+    _sweep(client, goal)
+    assert _task(tasks, ref) is not None
+
+
+@pytest.fixture
+def no_default_checks(tmp_path, monkeypatch):
+    """A repo registry that names no default checks for the repo."""
+    from meta_harness.planner import repos
+
+    checkless = tmp_path / "repos.json"
+    checkless.write_text(json.dumps({"version": "1", "repos": {REPO: {"tracker": "github"}}}))
+    monkeypatch.setenv("MH_REPOS_CONFIG", str(checkless))
+    repos._file_registry.cache_clear()
+    yield
+    repos._file_registry.cache_clear()
+
+
+def test_an_issue_with_no_checks_anywhere_is_sized_and_runs_with_the_gap_shown(world, no_default_checks):
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body="Fix it.\n\nPaths: docs", labels=[goal["label"]])
+
+    swept = _sweep(client, goal)
+
+    assert swept["refused"] == [] and swept["joined"] == [ref]
+    assert [p["ref"] for p in _payloads(events, "issue_sized")] == [ref]
+    assert _task(tasks, ref)["acceptance_checks"] == [], "it runs with no checks"
+    card = _shown(client, goal)[ref]
+    assert card["missing"] == ["acceptance_checks"] and card["refused_reason"] is None
+
+
+def test_a_strict_goal_holds_an_issue_with_no_checks_anywhere_until_it_is_run_anyway(world, no_default_checks):
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client, strict_issues=True)
+    ref = tracker.add(REPO, _number(), body="Fix it.\n\nPaths: docs", labels=[goal["label"]])
+
+    swept = _sweep(client, goal)
+
+    assert swept["held"] == [ref] and swept["refused"] == [] and _task(tasks, ref) is None
+    assert [p["ref"] for p in _payloads(events, "issue_sized")] == [ref]
+    card = _shown(client, goal)[ref]
+    assert "missing acceptance checks" in card["held_reason"] and card["refused_reason"] is None
+
+    ran = client.post(f"/v1/goals/{goal['id']}/issues/run-anyway", json={"ref": ref}, headers=OPERATOR)
+    assert ran.status_code == 200, ran.text
+    _sweep(client, goal)
+    assert _task(tasks, ref)["acceptance_checks"] == []
+
+
+def test_an_unsized_issue_with_no_checks_anywhere_is_refused_as_before_sizing(world, no_default_checks):
+    client, events, tracker, tasks, sizer = world
+    sizer.fail = True
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body="Fix it.", labels=[goal["label"]])
+
+    assert _sweep(client, goal)["refused"] == [ref]
+    assert _task(tasks, ref) is None and "no ## Acceptance checks" in _shown(client, goal)[ref]["refused_reason"]
 
 
 def test_only_a_held_issue_of_the_goal_is_run_anyway_or_split(world):

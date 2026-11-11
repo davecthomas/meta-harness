@@ -129,7 +129,7 @@ export function HeldActions(props: { goalId: string; label: string | null; issue
   const [error, setError] = useState<string | null>(null);
   if (!props.issue.held_reason || props.issue.task_id || props.readOnly) return null;
   // Already split: the issue waits to be closed, so only Run anyway is left.
-  const split = props.issue.held_reason.startsWith("split into");
+  const split = Boolean(props.issue.split_into?.length) || props.issue.held_reason.startsWith("split into");
 
   async function runAnyway() {
     setRunning(true);

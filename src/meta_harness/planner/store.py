@@ -37,8 +37,9 @@ GOAL_COLUMNS = (
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
     "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at, title, labels, "
-    # The issue's size and what its sizing found, why it is held if it is, and whether an operator ran it anyway.
-    "size, sizing, held_reason, run_anyway"
+    # The issue's size and what its sizing found, why it is held if it is, whether an operator ran it anyway, and
+    # the issues an operator split it into.
+    "size, sizing, held_reason, run_anyway, split_into"
 )
 
 
@@ -422,6 +423,30 @@ def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> Non
     """Hold the issue for an operator, saying why, or with None let it go on to be a task."""
     with conn.transaction():
         conn.execute("UPDATE planner.issue_link SET held_reason = %s WHERE ref = %s", (reason, ref))
+
+
+def claim_split(conn: psycopg.Connection, goal_id: str, ref: str) -> bool:
+    """Claim a held issue for one split, so two answers never both create its smaller issues. Returns False
+    when it was split already, or is being split."""
+    with conn.transaction():
+        claimed = conn.execute(
+            "UPDATE planner.issue_link SET split_into = '{}' "
+            "WHERE ref = %s AND goal_id = %s AND split_into IS NULL AND held_reason IS NOT NULL AND task_id IS NULL",
+            (ref, goal_id),
+        )
+        return claimed.rowcount == 1
+
+
+def record_split(conn: psycopg.Connection, ref: str, created: list[str], reason: str | None) -> None:
+    """Record the issues a held issue was split into, and why it stays held. With none created, the claim is
+    let go, so the issue may be split again."""
+    with conn.transaction():
+        if created:
+            conn.execute(
+                "UPDATE planner.issue_link SET split_into = %s, held_reason = %s WHERE ref = %s", (created, reason, ref)
+            )
+        else:
+            conn.execute("UPDATE planner.issue_link SET split_into = NULL WHERE ref = %s", (ref,))
 
 
 def run_anyway(conn: psycopg.Connection, goal_id: str, ref: str) -> dict:

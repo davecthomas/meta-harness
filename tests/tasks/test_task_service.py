@@ -446,10 +446,17 @@ def test_a_smoke_task_is_a_services_to_create_and_is_left_out_of_lists_unless_as
     assert api.get(f"/v1/tasks/{smoke_id}", headers=_as(SERVICE_KEY)).json()["task_type"] == "smoke"
 
 
-def test_only_a_plan_or_a_smoke_task_may_name_no_acceptance_check(api):
+def test_only_a_plan_or_a_smoke_task_or_a_services_goal_task_may_name_no_acceptance_check(api):
     refused = api.post("/v1/tasks", json=_task(acceptance_checks=[]), headers=_as(CALLER_KEY))
     assert refused.status_code == 422
     assert "task needs at least one acceptance check" in refused.json()["detail"]
+    goalless = api.post("/v1/tasks", json=_task(acceptance_checks=[]), headers=_as(SERVICE_KEY))
+    assert goalless.status_code == 422, "a service's task of no goal still names its checks"
+    callers = api.post("/v1/tasks", json=_task(acceptance_checks=[], goal_id="g-1"), headers=_as(CALLER_KEY))
+    assert callers.status_code == 422, "a caller's goal task still names its checks"
+    # As planner/sweep.py sends a goal's issue it sized, with no checks, to run with the gap shown.
+    sized = api.post("/v1/tasks", json=_task(acceptance_checks=[], goal_id="g-1"), headers=_as(SERVICE_KEY))
+    assert sized.status_code == 201 and sized.json()["acceptance_checks"] == []
     # As planner/planning.py sends a goal's planning task.
     plan = _task(task_type="plan", acceptance_checks=[])
     created = api.post("/v1/tasks", json=plan, headers=_as(SERVICE_KEY))
