@@ -19,5 +19,8 @@ COPY src ./src
 COPY config ./config
 RUN uv sync --frozen --no-dev
 COPY --from=console /console/dist ./console/dist
-ENV PATH=/app/.venv/bin:$PATH
+# The commit's version, which the deploy works out from main's history: the image holds no history to read.
+ARG MH_VERSION=
+ENV PATH=/app/.venv/bin:$PATH \
+    MH_VERSION=$MH_VERSION
 CMD ["sh", "-c", "exec mh edge serve --host 0.0.0.0 --port ${PORT:-8080}"]
