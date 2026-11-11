@@ -94,6 +94,8 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number }) {
           </Group>
         )}
         {issue.refused_reason && <Text size="xs" c="red">{issue.refused_reason}</Text>}
+        {/* Why a queued task has not started, from the scheduler. */}
+        {task?.status === "queued" && task.held && <Text size="xs" c="dimmed" lineClamp={3}>{task.held.reason}</Text>}
       </Stack>
     </Paper>
   );

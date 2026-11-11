@@ -45,3 +45,11 @@ test("a tool row opens to its arguments and output", () => {
   fireEvent.click(within(turn).getByText("uv run pytest -q"));
   expect(within(turn).getByText("12 passed")).toBeTruthy();
 });
+
+test("the scheduler's hold and its admission show as items", () => {
+  const list = entries([ev("task_held", { reason: "goal g-1 is paused", kind: "goal_status" }), ev("task_admitted", { repo: "o/r", areas: [] })]);
+  expect(list.map((e) => (e.kind === "status" ? e.text : e.kind))).toEqual([
+    "Held by the scheduler: goal g-1 is paused",
+    "Admitted by the scheduler: its run starts",
+  ]);
+});
