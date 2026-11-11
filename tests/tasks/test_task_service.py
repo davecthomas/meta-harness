@@ -405,6 +405,26 @@ def test_each_round_says_what_came_before_the_next_round_not_what_came_later(api
     ]
 
 
+def test_a_tasks_spend_lists_its_runs_and_totals_against_its_limit(api, events):
+    task = api.post("/v1/tasks", json=_task(max_usd="10.00"), headers=_as(CALLER_KEY)).json()
+    tid = task["id"]
+    usage = {"calls": 9, "input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 50}
+    events.emit("run_finished", {"turns": 8, "usage": usage}, task_id=tid, run_id=f"{tid}:run-1")
+    first = {"attempt": 1, "tier": "standard", "candidate": "harness:a/b:c", "spent_usd": "1.25", "status": "FINISHED"}
+    events.emit("attempt_finished", first, task_id=tid, run_id=f"{tid}:run-1")
+    review = {"attempt": 2, "tier": "review", "candidate": "harness:r/x:y", "spent_usd": "0.25", "status": "FINISHED"}
+    events.emit("attempt_finished", review, task_id=tid, run_id=f"{tid}:run-2")
+    for position, event in enumerate(events.events, start=1):
+        event[2]["position"] = position
+
+    shown = api.get(f"/v1/tasks/{tid}/spend", headers=_as(CALLER_KEY)).json()
+
+    assert Decimal(shown["max_usd"]) == Decimal("10") and Decimal(shown["totals"]["usd"]) == Decimal("1.50")
+    assert [(r["kind"], r["turns"], r["usd"]) for r in shown["runs"]] == [("task", 8, "1.25"), ("review", None, "0.25")]
+    assert shown["totals"]["by_kind"] == {"task": "1.25", "review": "0.25", "fix": "0"}
+    assert api.get("/v1/tasks/t-none/spend", headers=_as(CALLER_KEY)).status_code == 404
+
+
 def test_tasks_are_found_by_text_in_their_title_id_or_ref(api):
     word = f"walrus{uuid.uuid4().hex[:6]}"
     task = api.post("/v1/tasks", json=_task(title=f"Fix the {word} crash"), headers=_as(CALLER_KEY)).json()

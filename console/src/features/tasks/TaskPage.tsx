@@ -5,6 +5,7 @@ import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, SegmentedCon
 import { IconX } from "@tabler/icons-react";
 import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../../api";
 import { Reviews } from "./Reviews";
+import { SpendReport } from "./SpendReport";
 import { BudgetHold } from "./BudgetHold";
 import { TaskActions } from "./TaskActions";
 import { TaskFailure } from "./TaskFailure";
@@ -21,7 +22,7 @@ import { ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusB
 
 const FIRST = 400;
 
-const TABS = ["timeline", "terminal", "changes", "reviews", "attempts"] as const;
+const TABS = ["timeline", "terminal", "changes", "reviews", "attempts", "spend"] as const;
 export type Tab = (typeof TABS)[number];
 
 // The tab a task page URL shows: the one it names, else the Terminal when it names a run, else the Timeline.
@@ -222,10 +223,13 @@ export function TaskPage() {
           { value: "terminal", label: "Terminal" },
           ...((task.attempts ?? 1) > 1 ? [{ value: "attempts", label: "Attempts" }] : []),
           ...(task.pr_url ? [{ value: "changes", label: "Changes" }, { value: "reviews", label: `Reviews${rounds ? ` (${rounds.length})` : ""}` }] : []),
+          { value: "spend", label: "Spend" },
         ]}
       />
       {tab === "reviews" && task.pr_url ? (
         rounds ? <Reviews task={task} rounds={rounds} /> : <Center h={120}><Loader /></Center>
+      ) : tab === "spend" ? (
+        <SpendReport taskId={task.id} status={status} />
       ) : tab === "attempts" ? (
         <CompareAttempts taskId={task.id} />
       ) : tab === "changes" && task.pr_url ? (

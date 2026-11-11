@@ -2,6 +2,7 @@ import asyncio
 import copy
 import dataclasses
 import uuid
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -163,6 +164,48 @@ def test_paths_lines_name_the_areas_an_issue_changes():
     body = "Fix it.\n\nPaths: `console/src/features/goals/`, ./src/meta_harness/planner\npaths: docs, console/src/features/goals\n"
     assert tracker_module.issue_paths(body) == ["console/src/features/goals", "src/meta_harness/planner", "docs"]
     assert tracker_module.issue_paths("No paths here.") == []
+
+
+def test_a_goals_spend_lists_its_tasks_dearest_first_and_totals_by_kind_of_run(api, parts):
+    events, tracker, tasks = parts
+    label = _label()
+    goal = api.post(
+        "/v1/goals",
+        json={"statement": "Fix bugs", "repos": ["davecthomas/meta-harness"], "label": label, "max_usd": "10"},
+        headers=OPERATOR,
+    ).json()
+    for title in ("Cheap", "Dear"):
+        tracker.add("davecthomas/meta-harness", _number(), body="Broken.", labels=[label], title=title)
+    _sweep(api, goal)
+    by_title = {t["title"]: t["id"] for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]}
+
+    def ran(task_id: str, attempt: int, tier: str, usd: str) -> None:
+        payload = {
+            "attempt": attempt,
+            "tier": tier,
+            "candidate": "harness:a/b:c",
+            "spent_usd": usd,
+            "status": "FINISHED",
+        }
+        events.emit("attempt_finished", payload, task_id=task_id, run_id=f"{task_id}:run-{attempt}")
+
+    ran(by_title["Cheap"], 1, "standard", "0.50")
+    ran(by_title["Dear"], 1, "complex", "4.00")
+    ran(by_title["Dear"], 2, "review", "0.25")
+    ran(by_title["Dear"], 3, "fix", "1.00")
+
+    shown = api.get(f"/v1/goals/{goal['id']}/spend", headers=OPERATOR).json()
+
+    assert Decimal(shown["usd"]) == Decimal("5.75") and Decimal(shown["max_usd"]) == Decimal("10")
+    assert [(t["title"], Decimal(t["usd"]), t["runs"]) for t in shown["tasks"]] == [
+        ("Dear", Decimal("5.25"), 3),
+        ("Cheap", Decimal("0.50"), 1),
+    ]
+    assert {k: Decimal(v) for k, v in shown["by_kind"].items()} == {
+        "task": Decimal("4.50"),
+        "review": Decimal("0.25"),
+        "fix": Decimal("1.00"),
+    }
 
 
 def test_a_goals_issues_carry_their_titles_which_each_sweep_refreshes(api, parts):
