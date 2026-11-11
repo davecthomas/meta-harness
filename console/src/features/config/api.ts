@@ -1,6 +1,13 @@
 import { call } from "../../client";
 
-export type ConfigKind = "tiers" | "profiles" | "repos" | "task_policy";
+export type ConfigKind = "tiers" | "profiles" | "repos" | "skills" | "task_policy";
+
+// A skill as the skills configuration keeps it: what it is for, where it came from, and its files.
+export interface SkillEntry {
+  description: string;
+  source: { kind: "git" | "upload" | "shipped"; url?: string; ref?: string; path?: string; commit?: string; by?: string };
+  files: Record<string, string>;
+}
 
 export interface ConfigSummary {
   kind: ConfigKind;
@@ -28,6 +35,9 @@ export const configApi = {
   configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file"; max_sandboxes?: number | null }>("/v1/config"),
   configModels: () =>
     call<{ models: { name: string; engine: string; model: string; status: string }[] }>("/v1/config/models").then((r) => r.models),
+  // Read a skill from a git repository or from its files, to look at before it is staged. Saves nothing.
+  readSkill: (from: { url?: string; ref?: string; path?: string; files?: Record<string, string> }) =>
+    call<{ name: string; skill: SkillEntry }>("/v1/config/skills/read", { method: "POST", body: JSON.stringify(from) }),
   config: (kind: ConfigKind) => call<ConfigVersion>(`/v1/config/${kind}`),
   configVersions: (kind: ConfigKind) =>
     call<{ versions: ConfigVersion[] }>(`/v1/config/${kind}/versions`).then((r) => r.versions),

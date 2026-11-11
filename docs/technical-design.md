@@ -314,9 +314,34 @@ The harness server creates the pi session with `createAgentSession()` and
 decides everything pi loads:
 
 - A custom `ResourceLoader` supplies only the pi model client
-  extension and the owned pi extension tools. Nothing loads from the cloned
-  task repo's `.pi/` directory: no pi settings, pi extensions, pi skills or
-  `SYSTEM.md`.
+  extension, the owned pi extension tools, and the skills the run was sent.
+  Nothing loads from the cloned task repo's `.pi/` directory: no pi
+  settings, pi extensions, pi skills or `SYSTEM.md`.
+- **Skills** come from the control plane. A skill is a directory in the
+  usual shape, `SKILL.md` (its frontmatter names it and says what it is
+  for) and the files beside it, kept as the `skills` configuration kind
+  (`src/meta_harness/config/skills.py`): versioned and rolled back like the
+  rest, and available to every goal's runs. A harness profile names the
+  skills its runs load (`skills: [...]`, checked against the kind, and
+  needing the `read` tool). The run service sends their files with
+  `POST /run`; the harness server writes them to a directory of its own
+  outside the workspace, so none lands in the repo or the pull request,
+  and loads those and no others. pi tells the model each skill's name and
+  description and where it is; the model reads the rest when its work
+  needs it, so a skill it does not use costs a line of the prompt. A
+  skill's scripts run inside the per-run sandbox, under the profile's bash
+  allowlist and the egress proxy, so a skill grants no access.
+- The kind is seeded from `config/skills/`, and a skill added there later
+  reaches a deployment as a new version, as a shipped profile does. It
+  ships `no-ai-slop2` (MIT, from codeandtheory/machine-ai-skills, with its
+  scanner script), adapted to check the text a run is about to write (a pull
+  request summary, a review, an issue draft) rather than a previous reply.
+  No profile names it yet. An admin imports a skill on Configuration, Skills,
+  from an https git repository on a public host (a branch or tag and a
+  path; the commit read is kept) or from a folder on their machine
+  (`POST /v1/config/skills/read`, which saves nothing), reads every file
+  in full, and saves it as a new version. A skill holds text files only,
+  at most 200 files and 2 MB; a skill a profile names cannot be removed.
 - pi SDK sessions leave out the pi CLI's built-in `codemode`, `tool_search`
   and MCP extensions, and the harness server keeps them out, because
   `codemode` can run classifier and image models with the session's
@@ -1515,7 +1540,7 @@ in-process through pi's SDK, using `AgentSessionRuntime` for `newSession()`,
 | Endpoint | Purpose | pi SDK calls |
 |---|---|---|
 | `GET /health` | Harness server readiness: pi model client extension registered, the workspace directory exists, HTTP Gateway reachable. A `warm` per-run sandbox passes it before it clones any task repo | pi model runtime state |
-| `POST /run` | Start a new pi session for the run. The body holds the prompt, acceptance checks, harness profile, limits and the HTTP Gateway run grant key | `newSession()`, `prompt()` |
+| `POST /run` | Start a new pi session for the run. The body holds the prompt, acceptance checks, harness profile, limits, the HTTP Gateway run grant key, and the skills the profile names, each with its files | `newSession()`, `prompt()` |
 | `POST /followup` | Continue the pi session the per-run sandbox holds, kept or restored by the pool manager before the pool manager sandbox lease returned. The body holds the new input and the HTTP Gateway run grant key, and no pi session reference. | `switchSession()` for a restored pi session, then `prompt()` |
 | `GET /events` | Harness server Run API events as server-sent events, resumable with `Last-Event-ID` | `session.subscribe()`: `message_update`, `tool_execution_*`, pi compaction events, `agent_end`, `agent_settled` |
 | `GET /status` | `CREATING`, `RUNNING`, `FINISHED`, `ERROR`, `CANCELED`, `EXPIRED`, plus the last harness server heartbeat event | pi session state |

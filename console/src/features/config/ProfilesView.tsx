@@ -12,7 +12,8 @@ const TOOLS = ["read", "write", "edit", "ls", "find", "grep", "bash", "submit_re
 const NEW_PROFILE = { image: null, tools: ["read", "write", "edit", "ls", "find", "grep", "bash"], max_turns: 80, max_minutes: 45 };
 
 // The harness profiles, one row each: tools, limits, resources, bash allowlist and image, each edited in place.
-export function ProfilesView({ staging: s }: { staging: Staging }) {
+// skills: every skill a profile may name, from the skills configuration.
+export function ProfilesView({ staging: s, skills = [] }: { staging: Staging; skills?: string[] }) {
   const profiles: Record<string, any> = s.document.profiles ?? {};
   // Resources are both or neither: a value emptied drops it, and resources left empty are dropped.
   const stageResource = (name: string, key: string, value: number | null) => {
@@ -22,7 +23,7 @@ export function ProfilesView({ staging: s }: { staging: Staging }) {
     s.stage(["profiles", name, "resources"], Object.keys(next).length ? next : undefined);
   };
   return (
-    <DataTable head={["Profile", "Tools", "Limits", "Resources", "Bash allowlist", "Image", ""]} minWidth={980}>
+    <DataTable head={["Profile", "Tools", "Skills", "Limits", "Resources", "Bash allowlist", "Image", ""]} minWidth={1120}>
       {Object.entries(profiles).map(([name, p]) => {
         const at = (...keys: string[]) => ["profiles", name, ...keys];
         return (
@@ -36,6 +37,19 @@ export function ProfilesView({ staging: s }: { staging: Staging }) {
             </Table.Td>
             <Table.Td maw={260}>
               <InlineField kind="tags" label={`Tools of ${name}`} value={p.tools ?? []} data={TOOLS} changed={changed(s, at("tools"))} reasons={s.reasons(`profile:${name}:tools`)} readOnly={s.readOnly} onCommit={(v) => s.stage(at("tools"), v)} />
+            </Table.Td>
+            <Table.Td maw={220}>
+              <InlineField
+                kind="tags"
+                label={`Skills of ${name}`}
+                value={p.skills ?? []}
+                data={skills}
+                empty="none"
+                changed={changed(s, at("skills"))}
+                reasons={s.reasons(`profile:${name}:skills`)}
+                readOnly={s.readOnly}
+                onCommit={(v) => stageOptional(s, at("skills"), v)}
+              />
             </Table.Td>
             <Table.Td>
               <Stack gap={2}>
