@@ -9,6 +9,7 @@
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
     GET, POST  /v1/admin/users                the console's users: invite, set a role, deprovision (users.py)
+    GET        /v1/costs                      costs over time, by source, goal, model and more (costs/api.py)
     GET, PUT   /v1/me/settings                the signed-in user's own settings
     GET        /v1/activity                   every pull request opened, by goal, repo or label, for the heat map
     GET        /health
@@ -35,6 +36,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
+from meta_harness.costs import api as costs_api
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
 from meta_harness.config.kinds import ConfigError, sandbox_ceiling
@@ -241,6 +243,8 @@ def create_app(
             await asyncio.to_thread(add_shipped_configuration, app.state.pool, events)
         loop = asyncio.create_task(sweep_forever()) if interval > 0 else None
         titling = asyncio.create_task(title_untitled()) if interval > 0 else None
+        # The cost sources, harvested beside the sweeps: off wherever the sweeps are (tests).
+        harvesting = asyncio.create_task(app.state.harvest_costs()) if interval > 0 else None
         try:
             yield
         finally:
@@ -248,6 +252,8 @@ def create_app(
                 loop.cancel()
             if titling:
                 titling.cancel()
+            if harvesting:
+                harvesting.cancel()
             app.state.pool.close()
 
     app = FastAPI(title="meta-harness planner", lifespan=lifespan)
@@ -311,6 +317,7 @@ def create_app(
         return change_with(goal_id, who, status=status)
 
     drafting.check_settings()
+    costs_api.check_settings()
     planning.check_settings()
     draft = drafter or drafting.draft_goal
 
@@ -854,5 +861,20 @@ def create_app(
     plan_api.register(app, operator, load, events, tracker, tasks, activate)
     budget_api.register(app, operator, load, change_with, events, tasks)
     users.register(app, operator, events)
+
+    def admin(key: str = Depends(auth.bearer), role: str | None = Header(default=None, alias="X-MH-Role")) -> bool:
+        """Whether the caller is an admin: an operator key is, and the edge names the role of who it acts for."""
+        return bool(auth.label_for(key, operators)) or role == "admin"
+
+    def goal_or_none(goal_id: str) -> dict | None:
+        if not goal_id:
+            return None
+        try:
+            with app.state.pool.connection() as conn:
+                return store.get(conn, goal_id)
+        except store.NotFound:
+            return None
+
+    app.state.harvest_costs = costs_api.register(app, operator, admin, events, tasks, goal_or_none)
 
     return app
