@@ -5,7 +5,10 @@ relabeled and a pull request merges long after its runs cost what they cost. So 
 are asked for, never stored on a cost row: the labels from the planner's own issue links, which each sweep
 refreshes (sweep.py), and the outcome from the pull request's own events, `pull_request_merged` and
 `pull_request_closed`, which the run workflow or the planner's sweep records when either sees the pull request
-end. The task's status is not the outcome: an operator can cancel a task and leave its pull request open.
+end. The task's status is not the outcome: an operator can cancel a task and leave its pull request open, and
+the sweep keeps reading such a pull request until it merges or closes, and records that end then. A goal the
+timed sweep no longer covers, met or canceled, is followed up the same way, labels included
+(sweep.follow_up_goal).
 """
 
 from typing import Any, Protocol
@@ -33,13 +36,13 @@ class TaskPages(Protocol):
     ) -> dict: ...
 
 
-def every_task(tasks: TaskPages, goal_id: str | None = None) -> list[dict]:
-    """Every task the Task API holds, page after page: one page is only the first thousand, by priority then
-    age, and leaves out the newest once there are more."""
+def every_task(tasks: TaskPages, goal_id: str | None = None, statuses: list[str] | None = None) -> list[dict]:
+    """Every task the Task API holds, of the goal and in the statuses when given, page after page: one page is
+    only the first thousand, by priority then age, and leaves out the newest once there are more."""
     found: dict[str, dict] = {}
     offset = 0
     while True:
-        page = tasks.page(None, goal_id, TASKS_PER_PAGE, offset)
+        page = tasks.page(statuses, goal_id, TASKS_PER_PAGE, offset)
         batch = page.get("tasks") or []
         for task in batch:
             found.setdefault(task["id"], task)

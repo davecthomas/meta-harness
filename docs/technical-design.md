@@ -157,7 +157,7 @@ flowchart TB
 
 | Component | Owns |
 |---|---|
-| Planner | `goal`, `plan`, `issue_link` |
+| Planner | `goal`, `plan`, `issue_link`, `pull_request_end` |
 | Configuration, in the planner process | `config_version`, `active` |
 | Task service | `task` |
 | Meta-harness scheduler | Repo-area locks and the kill switch: Postgres rows today, Redis for the locks later |
@@ -1858,7 +1858,7 @@ credential.
 | GET | `/v1/admin/logs` | Edge | The VM's services' and the edge's log entries from Cloud Logging, newest first, at most 500, by unit, lowest severity, time and text. Every entry has a message: a service's line is its text; a request Cloud Run served, which has none, reads as its method, path, status and time (and counts as an error at 500 or above); an audit entry as its method and status; any other structured entry as its fields. An empty line a service printed is left out. The VM's Ops Agent ships the journal as `mh_journald`; the edge reads with its own service account's `roles/logging.viewer`. Admins only | built |
 | GET | `/v1/admin/deploys` | Edge | What is deployed: the version, the commit the VM and the edge run, and the edge's revision. Admins only | built |
 | GET, POST | `/v1/admin/users` | Planner, through the edge | The console's users: list them, or invite an email with a role (`admin` or `user`). `PATCH /v1/admin/users/{email}` sets the role and `DELETE` deprovisions. The last admin can be neither deprovisioned nor made a regular user (409). Each change is recorded (`user_invited`, `user_role_changed`, `user_deprovisioned`) with the admin as actor and shows on the Audit page. Admins only | built |
-| GET | `/v1/costs` | Cost service, in the planner's process | Costs over time: `from`, `to`, `bucket` (`day`, `week`, `month`), `group_by` (`source`, `kind`, `goal`, `task`, `repo`, `model`, `engine`, `operator`, `label`, `outcome`) and a comma-separated filter on each. `label` is the labels of the issue a task worked on, and `outcome` what became of its pull request (`merged`, `closed` without merging, still `open`, or `none` opened), as its `pull_request_merged` and `pull_request_closed` events record it, not the task's status, so a canceled task's pull request left open is still `open`: a task's facts, not a cost row's, which the planner gives when costs are asked for, so a relabel or a merge shows at once. A task whose issue carries several labels puts an even share of its cost under each in a breakdown by label, so the series add up to the total. `choices` offers the labels and outcomes of the tasks that spent. Answers the buckets, one series per value dearest first (the eighth and later folded into `other`), each bucket's total, the total, the daily average, the change against the same span before, the least-squares `trend` through the totals, a month projected at the trend, the ten costliest tasks, and what each source is. An admin sees every source and goal; anyone else, only the model cost of their own work (`scope: own`). `POST /v1/costs/harvest` reads every source now (admins) | built |
+| GET | `/v1/costs` | Cost service, in the planner's process | Costs over time: `from`, `to`, `bucket` (`day`, `week`, `month`), `group_by` (`source`, `kind`, `goal`, `task`, `repo`, `model`, `engine`, `operator`, `label`, `outcome`) and a comma-separated filter on each. `label` is the labels of the issue a task worked on, and `outcome` what became of its pull request (`merged`, `closed` without merging, still `open`, or `none` opened), as its `pull_request_merged` and `pull_request_closed` events record it, not the task's status, so a canceled task's pull request left open is `open` until it merges or closes, which the planner's sweep, or the hourly follow-up of a goal no sweep covers, records then: a task's facts, not a cost row's, which the planner gives when costs are asked for, so a relabel or a merge shows at once. A task whose issue carries several labels puts an even share of its cost under each in a breakdown by label, so the series add up to the total. `choices` offers the labels and outcomes of the tasks that spent. Answers the buckets, one series per value dearest first (the eighth and later folded into `other`), each bucket's total, the total, the daily average, the change against the same span before, the least-squares `trend` through the totals, a month projected at the trend, the ten costliest tasks, and what each source is. An admin sees every source and goal; anyone else, only the model cost of their own work (`scope: own`). `POST /v1/costs/harvest` reads every source now (admins) | built |
 | GET | `/health` | Every service | Liveness and configuration identity | built |
 
 The run service has no HTTP API yet. Until it has one, a path it owns that
@@ -2144,7 +2144,8 @@ latitude on the Goal view while the goal runs.
 
 #### Planner
 
-The planner owns the goal loop, the `goal`, `plan` and `issue_link` tables and
+The planner owns the goal loop, the `goal`, `plan`, `issue_link` and
+`pull_request_end` tables and
 the issue dependency graph. It is the only component that talks to an issue
 tracker, through one adapter interface:
 
@@ -2164,9 +2165,16 @@ As built, the GitHub adapter has `list_open` and `read`, with an app token
 that only reads issues, and a sweep every `MH_PLANNER_SWEEP_SECONDS` stands
 in for the webhook. The writing operations and the Jira and Linear
 adapters are planned. The sweep also reads the pull requests of `ready` and
-`review_unresolved` tasks and their checks (Review loop), through the run
+`review_unresolved` tasks and their checks (Review loop), and of `canceled`
+tasks that left one open, until it merges or closes, through the run
 service's code-host functions, with a token that has `pull_requests: read`,
-`checks: read` and `statuses: read`.
+`checks: read` and `statuses: read`. A goal no sweep covers (met, canceled,
+paused or stalled) is followed up every hour instead: the labels and title of
+each issue it holds that has a task are read again, and its canceled tasks'
+pull requests watched for their end, so costs by label and by outcome stay
+true after the goal ends. A follow-up takes nothing in and changes no status.
+`pull_request_end` notes each task whose pull request's end a sweep recorded,
+so it is read no more.
 
 The adapter syncs both ways. The planner pulls in work people write: an issue
 labeled in GitHub, Jira or Linear joins its goal, and an edit to its body,
@@ -2236,7 +2244,8 @@ the same approval.
 | Planner | console_user | email, role (admin, user), status (invited, active, deprovisioned), invited_by, invited_at, last_sign_in_at. Who may use the console, and as what |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
-| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, title and labels (the issue's, refreshed by each sweep, for an issue with a task whether the label still lists it or it has closed; labels give costs by label), last_webhook_at |
+| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, title and labels (the issue's, refreshed by each sweep, for an issue with a task whether the label still lists it or it has closed, and hourly once its goal is met or ended; labels give costs by label), last_webhook_at |
+| Planner | pull_request_end | task_id, outcome (`merged` or `closed`), recorded_at: the tasks whose pull request's end a sweep recorded, so a canceled task's pull request is read only until it ends |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |
 | Meta-harness run service | operator_review | task_id, round, operator, claimed_at, verdict, findings, submitted_at, released_at |

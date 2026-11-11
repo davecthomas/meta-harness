@@ -956,6 +956,66 @@ def test_a_sweep_refreshes_the_labels_of_issues_already_taken_in_and_of_closed_o
     assert labels[by_ref[closing]] == [label, "area:exports"]
 
 
+class StateHost:
+    """GitHub, where each pull request is in the state the test sets, by number."""
+
+    def __init__(self):
+        self.states: dict[int, str] = {}
+
+    async def read_pull_request(self, repo, number):
+        from meta_harness.run_service.code_host import PullRequest
+
+        state = self.states.get(number, "open")
+        url = f"https://github.com/{repo}/pull/{number}"
+        return PullRequest(repo, number, url, state, "h1", "m1" if state == "merged" else "")
+
+    async def check_runs(self, repo, sha):
+        return []
+
+
+async def test_a_met_goals_relabeled_issues_and_its_canceled_tasks_later_pull_request_ends_are_followed_up(parts):
+    from meta_harness.planner import cost_facts, store, sweep
+
+    events, tracker, tasks = parts
+    host = StateHost()
+    app = create_app(
+        events, tracker, tasks, operator_keys={"op-key": "dave"}, service_keys={}, sweep_seconds=0, host=host
+    )
+    with TestClient(app) as client:
+        label = _label()
+        goal = _goal(client, label)
+        done = tracker.add(REPO, _number(), labels=[label])
+        dropped = tracker.add(REPO, _number(), labels=[label])
+        _sweep(client, goal)
+        by_ref = {t["external_ref"]: t for t in tasks.tasks.values()}
+        merged_number, dropped_number = _number() % 10**6, _number() % 10**6
+        by_ref[done].update(status="closed", pr_url=f"https://github.com/{REPO}/pull/{merged_number}")
+        # Canceled by an operator with its pull request left open, its issue closed by hand.
+        by_ref[dropped].update(status="canceled", pr_url=f"https://github.com/{REPO}/pull/{dropped_number}")
+        tracker.issues[done].state = tracker.issues[dropped].state = "closed"
+        assert _sweep(client, goal)["met"] is True
+        met = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+
+    assert met["status"] == "met"
+    assert goal["id"] not in {g["id"] for g in sweep.swept_goals()}, "no timed sweep covers a met goal"
+    assert goal["id"] in {g["id"] for g in sweep.followed_up_goals()}
+
+    # After the goal is met, the issue is relabeled and the canceled task's pull request merges by hand.
+    tracker.issues[done].labels = [label, "area:exports"]
+    host.states[dropped_number] = "merged"
+    result = await sweep.follow_up_goal(met, tracker, tasks, events, host)
+
+    assert result.ended == [by_ref[dropped]["id"]] and not result.errors
+    with db.connect(autocommit=True) as conn:
+        facts = cost_facts.task_facts(conn, list(tasks.tasks.values()), cost_facts.pull_request_ends(events))
+        shown = store.get(conn, goal["id"])
+    assert facts[by_ref[done]["id"]]["labels"] == [label, "area:exports"]
+    assert facts[by_ref[dropped]["id"]]["outcome"] == "merged"
+    assert by_ref[dropped]["status"] == "canceled" and shown["status"] == "met", "a follow-up changes no status"
+    again = await sweep.follow_up_goal(met, tracker, tasks, events, host)
+    assert again.ended == [], "its end is recorded once"
+
+
 # --- The repo registry from the console -----------------------------------------------------------------
 
 

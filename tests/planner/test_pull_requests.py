@@ -31,10 +31,23 @@ class Tasks:
         assert goal_id == GOAL
         return [t for t in self.tasks.values() if not statuses or t["status"] in statuses][:limit]
 
+    def page(self, statuses=None, goal_id=None, limit=25, offset=0):
+        found = self.list(statuses, goal_id, len(self.tasks))
+        return {"tasks": found[offset : offset + limit], "total": len(found), "offset": offset, "limit": limit}
+
     def set_status(self, task_id, status, reason=None, **fields):
         self.moves.append((task_id, status, reason))
         self.tasks[task_id]["status"] = status
         return self.tasks[task_id]
+
+
+@pytest.fixture(autouse=True)
+def ends(monkeypatch):
+    """The planner's record of the pull request ends a sweep recorded, in memory: {task id: outcome}."""
+    saved: dict[str, str] = {}
+    monkeypatch.setattr(sweep, "_save_end", lambda task_id, state: saved.setdefault(task_id, state))
+    monkeypatch.setattr(sweep, "_ended", lambda task_ids: {t for t in task_ids if t in saved})
+    return saved
 
 
 class Host:
@@ -101,6 +114,66 @@ async def test_a_pull_request_closed_without_merging_cancels_its_task():
     [event] = events.events
     assert event["event_type"] == "pull_request_closed"
     assert event["event_id"] == stable_event_id("t-2", "pull_request_closed")
+
+
+async def _watch_canceled(tasks, host, events):
+    result = sweep.SweepResult(GOAL)
+    await sweep._watch_canceled_pull_requests({"id": GOAL}, tasks, events, host, result)
+    return result
+
+
+async def test_a_canceled_tasks_pull_request_merged_or_closed_later_is_recorded_once_and_the_task_stays_canceled(
+    ends,
+):
+    from meta_harness.planner import cost_facts
+
+    class Reader(Events):
+        def read(self, from_position=0, limit=500, before_position=None, **filters):
+            types = filters["event_type"].split(",")
+            found = [{**e, "position": n} for n, e in enumerate(self.events, 1) if e["event_type"] in types]
+            return {"events": [e for e in found if e["position"] > from_position][:limit]}
+
+    tasks = Tasks(_task("t-m", 21, "canceled"), _task("t-c", 22, "canceled"), _task("t-q", 23, "queued"))
+    host = Host({21: _pull(21, "open"), 22: _pull(22, "draft"), 23: _pull(23, "merged")})
+    events = Reader()
+    first = await _watch_canceled(tasks, host, events)
+    assert first.ended == [] and events.events == [], "still open: nothing ended yet"
+    assert sorted(host.reads) == [(REPO, 21), (REPO, 22)], "only the canceled tasks' pull requests"
+    facts = {
+        t["id"]: cost_facts.outcome(t, cost_facts.pull_request_ends(events).get(t["id"])) for t in tasks.tasks.values()
+    }
+    assert facts["t-m"] == facts["t-c"] == "open"
+
+    # An operator merges one by hand, and closes the other without merging.
+    host.pulls[21] = _pull(21, "merged", merge="m21")
+    host.pulls[22] = _pull(22, "closed")
+    later = await _watch_canceled(tasks, host, events)
+
+    assert sorted(later.ended) == ["t-c", "t-m"] and not later.errors
+    by_task = {e["task_id"]: e for e in events.events}
+    assert by_task["t-m"]["event_type"] == "pull_request_merged"
+    assert by_task["t-m"]["event_id"] == run_events.stable_id("t-m", "pull_request_merged")
+    assert by_task["t-c"]["event_type"] == "pull_request_closed"
+    assert tasks.moves == [] and tasks.tasks["t-m"]["status"] == "canceled", "the task stays canceled"
+    assert ends == {"t-m": "merged", "t-c": "closed"}
+    recorded = cost_facts.pull_request_ends(events)
+    assert cost_facts.outcome(tasks.tasks["t-m"], recorded.get("t-m")) == "merged"
+    assert cost_facts.outcome(tasks.tasks["t-c"], recorded.get("t-c")) == "closed"
+
+    reads = len(host.reads)
+    again = await _watch_canceled(tasks, host, events)
+    assert again.ended == [] and len(host.reads) == reads, "an ended pull request is not read again"
+
+
+async def test_a_pull_request_the_watch_ended_is_not_read_again_once_its_task_is_canceled(ends):
+    tasks = Tasks(_task("t-8", 18, status="review_unresolved"))
+    host = Host({18: _pull(18, "closed")})
+    events = Events()
+    await _watch(tasks, host, events)
+    assert tasks.tasks["t-8"]["status"] == "canceled" and ends == {"t-8": "closed"}
+
+    result = await _watch_canceled(tasks, host, events)
+    assert result.ended == [] and host.reads == [(REPO, 18)] and len(events.events) == 1
 
 
 async def test_settled_checks_on_a_new_head_are_recorded_once_per_head():
