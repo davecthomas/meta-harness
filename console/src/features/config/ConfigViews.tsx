@@ -95,6 +95,26 @@ export function TaskPolicyView({ policy, maxSandboxes, staging }: { policy: Reco
           </Stack>,
         ],
         [
+          "Writing pass",
+          <Stack gap={2}>
+            <InlineField
+              kind="switch"
+              label="Writing pass"
+              value={doc.writing_pass !== false}
+              switchLabel={doc.writing_pass !== false ? "Check what is posted for people to read" : "Post what a run wrote as it is"}
+              changed={changed(s, ["writing_pass"])}
+              reasons={s.reasons("writing_pass")}
+              readOnly={s.readOnly}
+              onCommit={(on) => s.stage(["writing_pass"], on ? undefined : false)}
+            />
+            <Text size="xs" c="dimmed">
+              {doc.writing_pass !== false
+                ? "A pull request description, a review, a comment and a plan's issue go through the writing skill's scanner before they are posted. One with findings gets one rewrite, kept only when it is clean and keeps every heading, link, code span and number."
+                : "Nothing is scanned or rewritten before it is posted. Runs are still told to apply the writing skill themselves."}
+            </Text>
+          </Stack>,
+        ],
+        [
           "Fix rounds",
           <InlineField
             kind="number"
