@@ -1,4 +1,5 @@
 import type { MhEvent } from "./api";
+import { moneyText, usd } from "./money";
 
 export type LineKind =
   | "turn" | "model" | "tool" | "result" | "file" | "text" | "status" | "warn" | "error" | "info";
@@ -24,16 +25,16 @@ export function describe(e: MhEvent): Line | null {
   const line = (kind: LineKind, text: string): Line => ({ position: e.position, kind, text: `${e.time_utc.slice(11, 19)} ${text}` });
   switch (e.event_type) {
     case "task_created": return line("info", `task created from ${p.external_ref}`);
-    case "task_status_changed": return line("status", `status ${p.from} → ${p.to}${p.reason ? ": " + p.reason : ""}`);
+    case "task_status_changed": return line("status", `status ${p.from} → ${p.to}${p.reason ? ": " + moneyText(String(p.reason)) : ""}`);
     case "task_admitted": return line("info", "admitted by the scheduler");
-    case "task_held": return line("warn", `held: ${p.reason}`);
+    case "task_held": return line("warn", `held: ${moneyText(String(p.reason ?? ""))}`);
     case "task_routed": return line("info", `routed to tier ${p.tier} (${p.method}): ${(p.candidates ?? []).join(", ")}`);
     case "run_prompt": return { ...line("info", `prompt (${p.template})`), detail: String(p.prompt ?? "") };
     case "turn_started": return line("turn", `── turn ${p.turn} ──`);
     case "model_call":
       // A call that failed carries its error, and no model, tokens or cost.
       if (!p.model) return line("error", `model call failed after ${p.latency_ms ?? "?"}ms: ${short(p.error ?? p.error_code ?? "no answer", 240)}`);
-      return line("model", `model ${modelName(p)}  in ${p.input_tokens}  out ${p.output_tokens}  $${p.usd}  ${p.latency_ms}ms`);
+      return line("model", `model ${modelName(p)}  in ${p.input_tokens}  out ${p.output_tokens}  ${usd(p.usd)}  ${p.latency_ms}ms`);
     case "tool_call": return line("tool", `$ ${p.tool} ${short(p.args ?? {}, 160)}`);
     case "tool_result": return line(p.is_error ? "error" : "result", `  ${short(p.output ?? "", 240)}`);
     case "file_changed": return line("file", `M ${p.path}`);
@@ -43,14 +44,14 @@ export function describe(e: MhEvent): Line | null {
     case "plan_updated": return line("info", `plan: ${(p.steps ?? []).map((s: { step: string; status: string }) => `${s.status === "done" ? "[x]" : s.status === "in_progress" ? "[>]" : "[ ]"} ${s.step}`).join("  ")}`);
     case "turn_finished": return p.text ? line("text", String(p.text)) : null;
     case "run_finished": return line(p.status === "FINISHED" ? "status" : "error", `run ${p.status} (${p.end_reason ?? ""})${p.error ? ": " + p.error : ""}`);
-    case "attempt_finished": return line("status", `attempt ${p.attempt} on ${p.candidate}: ${p.decision}, $${p.spent_usd}`);
+    case "attempt_finished": return line("status", `attempt ${p.attempt} on ${p.candidate}: ${p.decision}, ${usd(p.spent_usd)}`);
     case "pull_request_opened": return line("status", `pull request ${p.pr_url}`);
     case "task_cancel_requested": return line("warn", `cancel requested: ${p.reason}`);
-    case "budget_hold": return line("warn", `held for budget: ${p.reason}`);
+    case "budget_hold": return line("warn", `held for budget: ${moneyText(String(p.reason ?? ""))}`);
     case "review_hold": return line("warn", `review held for an operator: ${p.reason}`);
     case "finding_dismissed": return line("info", `${e.actor ?? "operator"} dismissed finding ${p.finding} of round ${p.round}: ${p.reason}`);
     case "review_proceeded": return line("info", `${e.actor ?? "operator"}: send round ${p.round} to its fix run now`);
-    case "budget_decision": return line("info", `${e.actor ?? "operator"}: ${p.action === "end" ? "end the task" : p.max_usd ? `raise the spend limit to $${p.max_usd}` : "look at the budget again"}`);
+    case "budget_decision": return line("info", `${e.actor ?? "operator"}: ${p.action === "end" ? "end the task" : p.max_usd ? `raise the spend limit to ${usd(p.max_usd)}` : "look at the budget again"}`);
     case "operator_message": return line("warn", `${e.actor ?? "operator"}: ${p.when === "stop" ? "stop after this turn" : `${p.text} (${p.when === "after_stop" ? "after it stops" : "next turn"})`}`);
     case "operator_message_delivered": return line("info", `operator message delivered (${p.when})`);
     default: return null;

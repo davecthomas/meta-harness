@@ -1,5 +1,6 @@
 import { Badge, Group, Stack, Text, Tooltip } from "@mantine/core";
 import type { MhEvent } from "../../api";
+import { usd as money } from "../../money";
 
 // What a task's model calls cost, live: the total, the tokens, the cost by model and by attempt.
 export interface TaskSpend {
@@ -41,11 +42,11 @@ export function SpendLine({ spend, turn }: { spend: TaskSpend; turn: number }) {
       <Group gap="xs">
         <Text size="sm">Turn {turn}</Text>
         <Tooltip
-          label={models.length ? models.map(([m, usd]) => `${m}: $${usd.toFixed(4)}`).join("\n") : "No model call yet"}
+          label={models.length ? models.map(([m, usd]) => `${m}: ${money(usd)}`).join("\n") : "No model call yet"}
           style={{ whiteSpace: "pre" }}
           withArrow
         >
-          <Text size="sm" fw={600} data-testid="task-spend">${spend.usd.toFixed(4)}</Text>
+          <Text size="sm" fw={600} data-testid="task-spend">{money(spend.usd)}</Text>
         </Tooltip>
         <Text size="xs" c="dimmed">{tokens(spend.input)} in · {tokens(spend.output)} out</Text>
       </Group>

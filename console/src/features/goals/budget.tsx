@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Alert, Badge, Button, Group, Modal, NumberInput, Stack, Text } from "@mantine/core";
 import { IconCoin, IconPlayerPlay } from "@tabler/icons-react";
 import { api, type Goal } from "../../api";
@@ -191,6 +191,61 @@ export function ResumeBudget(props: {
         </Stack>
       </Modal>
     </>
+  );
+}
+
+// On a task's page, where the task waits for its goal's budget: the goal's budget and spend, a field holding the
+// budget a resume would set, and one button that raises it. No dialog: the task's own limit is raised the same way.
+export function RaiseGoalBudget(props: { goalId: string; onResumed?: (answer: BudgetResume) => void }) {
+  const [goal, setGoal] = useState<Goal | null>(null);
+  const [to, setTo] = useState<number | string>("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.goal(props.goalId).then(
+      (found) => {
+        setGoal(found);
+        setTo(Number(found.budget_resume_to ?? Math.ceil(Math.max(Number(found.spent_usd ?? 0), Number(found.max_usd ?? 0)) * 1.5)));
+      },
+      (err) => setError(refusal(err)),
+    );
+  }, [props.goalId]);
+  if (!goal) return error ? <Text size="sm" c="red">{error}</Text> : null;
+  const from = Number(goal.max_usd ?? 0);
+
+  async function raise() {
+    setBusy(true);
+    setError(null);
+    try {
+      // Unchanged: the planner works the amount out again, and records how. Changed: the operator's amount.
+      const own = goal!.budget_resume_to == null || Number(to) !== Number(goal!.budget_resume_to);
+      props.onResumed?.(await api.resumeBudget(props.goalId, own ? Number(to) - from : undefined));
+    } catch (err) {
+      setError(refusal(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Stack gap={4}>
+      <Group gap="sm" align="flex-end">
+        <NumberInput
+          label="New goal budget"
+          description={`Now ${usd(from)}, and the goal has spent ${usd(goal.spent_usd)}${goal.budget_block_at ? `; it stops at ${usd(goal.budget_block_at)}` : ""}`}
+          prefix="$"
+          min={0}
+          decimalScale={2}
+          value={to}
+          onChange={setTo}
+          w={300}
+        />
+        <Button loading={busy} disabled={!(Number(to) > from)} onClick={() => void raise()}>
+          Raise the goal's budget and carry on
+        </Button>
+      </Group>
+      {error && <Text size="sm" c="red" role="alert">{error}</Text>}
+    </Stack>
   );
 }
 

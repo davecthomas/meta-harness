@@ -20,6 +20,7 @@ import { useEventStream } from "../../hooks";
 import { describe, fold, type Line, type TileFacts } from "../../terminal";
 import { Terminal } from "../../components/Terminal";
 import { ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge } from "../../components/ui";
+import { moneyText } from "../../money";
 
 const FIRST = 400;
 
@@ -202,7 +203,7 @@ export function TaskPage() {
         items={[
           ["Status", (
             <Text size="sm">
-              {status}{task.status_reason && `: ${task.status_reason}`}
+              {status}{task.status_reason && `: ${moneyText(task.status_reason)}`}
               {task.cancel_requested && status === "running" && " (cancel requested)"}
             </Text>
           )],
