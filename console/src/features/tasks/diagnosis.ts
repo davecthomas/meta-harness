@@ -170,8 +170,8 @@ export function diagnose(failure: Failure): Diagnosis | null {
         ? "A task needs commands that prove its work, and neither the issue nor its repo's registry entry names any."
         : `The planner did not make a task for it: ${failure.refused}.`,
       fix: noChecks
-        ? "Add an \"## Acceptance checks\" section to the issue with one command per line, or give the repo default checks in Configuration. The goal's next sweep takes it in."
-        : "Edit the issue so the reason no longer holds. The goal's next sweep takes it in.",
+        ? "Add an \"## Acceptance checks\" section to the issue with one command per line, or give the repo default checks in Configuration. Then drop the issue from the goal: the planner does not look again at an issue it refused, and its next sweep takes a dropped one in fresh."
+        : "Edit the issue so the reason no longer holds, then drop it from the goal: the planner does not look again at an issue it refused, and its next sweep takes a dropped one in fresh.",
       remedies: noChecks ? ["issue", "config"] : ["issue"],
       detail: failure.refused,
     };
