@@ -33,6 +33,9 @@ import {
 	type RunRequest,
 	THINKING_LEVELS,
 	type ThinkingLevel,
+	type RunSkill,
+	SKILL_NAME,
+	safeSkillPath,
 } from "./harness.ts";
 import { useEnvProxy } from "./proxy.ts";
 
@@ -68,7 +71,8 @@ const harness = await Harness.create({
 
 harness.events.subscribe((event) => log(`#${event.id} ${event.run_id} ${event.type} ${summarize(event)}`));
 
-const MAX_BODY_BYTES = 1_000_000;
+// A run's body carries its skills' files, each skill up to 2 MB (the control plane's limit), so it may be large.
+const MAX_BODY_BYTES = 8_000_000;
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,200}$/;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
@@ -113,7 +117,7 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
 	let size = 0;
 	for await (const chunk of request) {
 		size += (chunk as Buffer).length;
-		if (size > MAX_BODY_BYTES) throw new HttpError(413, "The request body is over 1 MB.");
+		if (size > MAX_BODY_BYTES) throw new HttpError(413, "The request body is over 8 MB.");
 		chunks.push(chunk as Buffer);
 	}
 	try {
@@ -170,6 +174,25 @@ function parseThinking(value: unknown): ThinkingLevel | undefined {
 	return value as ThinkingLevel;
 }
 
+/** The run's skills: each a name and its files, every path staying inside the skill's own directory. */
+function parseSkills(value: unknown): RunSkill[] | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (!Array.isArray(value)) throw new HttpError(400, `"skills" must be a list.`);
+	return value.map((item, index) => {
+		const skill = item as Record<string, unknown>;
+		const name = skill && typeof skill === "object" ? skill.name : undefined;
+		if (typeof name !== "string" || !SKILL_NAME.test(name)) throw new HttpError(400, `"skills[${index}].name" is not a skill's name.`);
+		const files = skill.files;
+		if (!files || typeof files !== "object" || Array.isArray(files)) throw new HttpError(400, `"skills[${index}].files" must map each path to its text.`);
+		for (const [path, text] of Object.entries(files as Record<string, unknown>)) {
+			if (typeof text !== "string") throw new HttpError(400, `"skills[${index}].files" must map each path to its text.`);
+			if (!safeSkillPath(path)) throw new HttpError(400, `Skill ${name}: the path ${JSON.stringify(path)} leaves the skill's directory.`);
+		}
+		if (!("SKILL.md" in (files as object))) throw new HttpError(400, `Skill ${name} has no SKILL.md.`);
+		return { name, files: files as Record<string, string> };
+	});
+}
+
 function parseRun(body: Record<string, unknown>): RunRequest {
 	return {
 		run_id: text(body, "run_id", ID_PATTERN),
@@ -179,6 +202,7 @@ function parseRun(body: Record<string, unknown>): RunRequest {
 		profile: parseProfile(body.profile),
 		thinking: parseThinking(body.thinking),
 		grant_key: text(body, "grant_key"),
+		skills: parseSkills(body.skills),
 	};
 }
 

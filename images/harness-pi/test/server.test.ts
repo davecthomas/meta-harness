@@ -642,3 +642,54 @@ test("a message or a stop with no run in progress is refused", async () => {
 	await server.stop();
 	await gateway.close();
 });
+
+const TIDY_SKILL = {
+	name: "tidy-notes",
+	files: {
+		"SKILL.md": "---\nname: tidy-notes\ndescription: Tidy a file of notes, one idea per line.\n---\n\nRead the notes, then tidy them.\n",
+		"scripts/tidy.py": "print('tidy')\n",
+	},
+};
+
+test("a run loads the skills it is sent, and tells the model of them", async () => {
+	const gateway = await startGateway(() => ({ body: DONE_TURN }));
+	const server = await startServer(gateway.url);
+
+	const run = await api(server, "POST", "/run", runBody({ skills: [TIDY_SKILL] }));
+	assert.equal(run.status, 202);
+	await eventsUntilFinished(server, "task-1:0");
+
+	const sent = JSON.stringify(gateway.requests[0]!.body);
+	assert.ok(sent.includes("tidy-notes"), "the model is told the skill's name");
+	assert.ok(sent.includes("Tidy a file of notes, one idea per line."), "and what it is for");
+	assert.ok(sent.includes("run-skills"), "and where to read it: the server's own directory, not the repo");
+	assert.ok(!sent.includes("Read the notes, then tidy them."), "its instructions are read when it is used, not sent up front");
+	await server.stop();
+	await gateway.close();
+});
+
+test("a run sent no skills loads none", async () => {
+	const gateway = await startGateway(() => ({ body: DONE_TURN }));
+	const server = await startServer(gateway.url);
+	await api(server, "POST", "/run", runBody());
+	await eventsUntilFinished(server, "task-1:0");
+	assert.ok(!JSON.stringify(gateway.requests[0]!.body).includes("run-skills"));
+	await server.stop();
+	await gateway.close();
+});
+
+test("a skill whose file would leave its directory, or that has no SKILL.md, is refused", async () => {
+	const gateway = await startGateway(() => ({ body: DONE_TURN }));
+	const server = await startServer(gateway.url);
+	const escaping = { name: "tidy-notes", files: { "SKILL.md": "x", "../../etc/passwd": "x" } };
+	const refused = await api(server, "POST", "/run", runBody({ skills: [escaping] }));
+	assert.equal(refused.status, 400);
+	assert.match(String(refused.json.error), /leaves the skill's directory/);
+	const empty = await api(server, "POST", "/run", runBody({ skills: [{ name: "tidy-notes", files: { "notes.md": "x" } }] }));
+	assert.equal(empty.status, 400);
+	const misnamed = await api(server, "POST", "/run", runBody({ skills: [{ name: "../up", files: { "SKILL.md": "x" } }] }));
+	assert.equal(misnamed.status, 400);
+	assert.equal(gateway.requests.length, 0, "no run started");
+	await server.stop();
+	await gateway.close();
+});

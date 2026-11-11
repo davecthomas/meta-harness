@@ -103,7 +103,7 @@ def rollback(conn: psycopg.Connection, kind: str, version: int, who: str, note: 
 
 # The kinds whose entries, by name, reach the deployment from the shipped files: the document's key
 # holding them. Tiers are left out: they are an ordered routing list, and an added tier changes routing.
-SHIPPED_ENTRIES = {"profiles": "profiles"}
+SHIPPED_ENTRIES = {"profiles": "profiles", "skills": "skills"}
 SHIPPED_BY = "meta-harness"
 
 

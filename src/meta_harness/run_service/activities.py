@@ -504,7 +504,8 @@ async def _revoke_grant(tag: str, run_id: str) -> str | None:
 
 
 def run_body(request: HarnessRequest, grant_key: str) -> dict[str, Any]:
-    """The POST /run body: the prompt, the harness profile's run limits and bash allowlist, and the thinking level."""
+    """The POST /run body: the prompt, the harness profile's run limits and bash allowlist, the thinking level,
+    and the skills the profile names."""
     profile = request.candidate.profile
     body: dict[str, Any] = {
         "run_id": request.run_id,
@@ -520,7 +521,27 @@ def run_body(request: HarnessRequest, grant_key: str) -> dict[str, Any]:
     }
     if request.thinking:
         body["thinking"] = request.thinking
+    loaded = run_skills(profile)
+    if loaded:
+        # The skills the profile names, with their files: the harness server loads these and no others.
+        body["skills"] = loaded
     return body
+
+
+def run_skills(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    """The skills a profile's run loads, with their files, from the skills configuration. A profile that names
+    none reads nothing; skills that cannot be read are left out, with a line saying so, since a run can still
+    do its task without one."""
+    names = [str(name) for name in profile.get("skills") or []]
+    if not names:
+        return []
+    from meta_harness.config.skills import for_run
+
+    try:
+        return for_run(routing.skills(), names)
+    except Exception as err:  # noqa: BLE001 - the run goes on without them
+        print(f"[run] could not read the skills {', '.join(names)}: {err}", flush=True)
+        return []
 
 
 async def _start_or_reattach(

@@ -6,6 +6,8 @@
 - `repos`: the repo registry, as in config/repos.example.json.
 - `task_policy`: the task policy, as in config/task_policy.json: how many tasks
   run at once (`max_parallel`) and the review loop's reviewers and rounds.
+- `skills`: the skills a harness profile may name, each with its files
+  (skills.py), seeded from config/skills/.
 
 A kind's first version is seeded from the deployment's file. A new version is
 refused, with every reason, when the service that reads it would refuse it at
@@ -21,6 +23,7 @@ from typing import Any, Callable
 
 from ai_api_unified.routing.router_config import load_router_config
 
+from meta_harness.config.skills import check_skills, seed_skills
 from meta_harness.run_service.routing import replaced_engine_reason
 
 from meta_harness.run_service.paths import REPO_ROOT
@@ -188,6 +191,16 @@ def check_profiles(document: dict[str, Any], others: dict[str, dict[str, Any]]) 
         unknown = [t for t in profile.get("tools") or [] if t not in KNOWN_TOOLS]
         if unknown:
             reasons.append(f"{name}: unknown tools {', '.join(unknown)}")
+        named = profile.get("skills")
+        if named is not None and not (isinstance(named, list) and all(isinstance(s, str) for s in named)):
+            reasons.append(f"{name}: skills must be a list of skill names, or left out")
+        elif named:
+            known = (others.get("skills") or {}).get("skills", {})
+            missing = [s for s in named if s not in known]
+            if missing:
+                reasons.append(f"{name}: no skill named {', '.join(missing)}; import it on the Skills page first")
+            if "read" not in (profile.get("tools") or []):
+                reasons.append(f"{name}: a profile with skills needs the read tool, which is how a run opens one")
     # A profile the active tiers still name cannot go.
     tiers = others.get("tiers") or {}
     for tier in tiers.get("tiers", []):
@@ -238,6 +251,13 @@ KINDS: dict[str, Kind] = {
         "The repos goals may change, with each one's tracker and default acceptance checks.",
         seed_repos,
         check_repos,
+    ),
+    "skills": Kind(
+        "skills",
+        "Skills",
+        "Packaged instructions, with their scripts and references, that a harness profile's runs load.",
+        seed_skills,
+        check_skills,
     ),
     "task_policy": Kind(
         "task_policy",
