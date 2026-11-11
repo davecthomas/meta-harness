@@ -1820,7 +1820,7 @@ planner process, as the configuration API is, by run service code.
 | `parent_task_id` | no | Reserved. No task has a parent today |
 | `priority` | yes | Higher runs first |
 | `title`, `description` | yes | The task text, treated as untrusted |
-| `acceptance_checks` | yes | Commands or check names that define success |
+| `acceptance_checks` | yes | Commands or check names that define success. At least one, except for a `plan` or `smoke` task, which may send an empty list: a planning task's result is its issue drafts, and a smoke task passes by ending closed |
 | `paths` | no | The paths the task touches, which scope its repo-area lock |
 | `complexity` | no | `low`, `medium` or `high`, which becomes `route_floor` |
 | `max_tier` | no | A tier name, which becomes `route_ceiling` |

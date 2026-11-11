@@ -187,6 +187,8 @@ jobs:
         # One small task on the cheapest model, through the Task API, the scheduler, a sandbox and the gateway:
         # a deploy that broke task runs fails here, not at the next task someone needs (src/meta_harness/smoke.py).
         run: |
+          # The step fails when the smoke command does, not when tee does: tee always succeeds.
+          set -o pipefail
           for try in 1 2 3 4 5 6; do
             timeout 120 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \
               --command true && break

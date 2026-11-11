@@ -15,6 +15,9 @@ TASK_TYPES = {"bug", "feature", "refactor", "dependency", "test", "security", "d
 SERVICE_TASK_TYPES = {"smoke"}
 # Only the meta-harness creates these.
 INTERNAL_TASK_TYPES = {"review", "fix"}
+# These may name no acceptance check: a planning task's result is its issue drafts, and a smoke task passes by
+# ending closed. Every other task says what shows it is done.
+CHECKLESS_TASK_TYPES = {"plan", "smoke"}
 COMPLEXITIES = {"low", "medium", "high"}
 
 # Each status and the statuses it may move to. closed is the end. failed and canceled end the task's workflow,
@@ -82,8 +85,8 @@ def check(task: NewTask, *, internal: bool) -> None:
         raise TaskError(f"a {task.task_type} task needs parent_task_id")
     if task.complexity is not None and task.complexity not in COMPLEXITIES:
         raise TaskError(f"complexity {task.complexity!r} is not one of {sorted(COMPLEXITIES)}")
-    if not task.acceptance_checks:
-        raise TaskError("a task needs at least one acceptance check")
+    if not task.acceptance_checks and task.task_type not in CHECKLESS_TASK_TYPES:
+        raise TaskError(f"a {task.task_type} task needs at least one acceptance check")
 
 
 def create(conn: psycopg.Connection, caller: str, task: NewTask, *, internal: bool = False) -> tuple[dict, bool]:

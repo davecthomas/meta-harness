@@ -117,5 +117,7 @@ def test_the_deploy_runs_the_smoke_task_after_the_vm_reports_and_shows_it_in_a_f
     )
     assert booted < smoked < deploy.index("open an issue for the failed deploy")
     assert "deploy/vm/smoke.sh ${{ github.sha }}" in deploy and "tee smoke.txt" in deploy
+    step = deploy[smoked : deploy.index("open an issue for the failed deploy")]
+    assert step.index("set -o pipefail") < step.index("tee smoke.txt"), "a failed smoke command fails the step"
     script = (root / "deploy/vm/smoke.sh").read_text()
     assert "mh deploy smoke" in script and "source /etc/meta-harness/env" in script
