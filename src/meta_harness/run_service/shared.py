@@ -332,6 +332,8 @@ class ChecksResult:
 
     state: str
     failed: list[FailedCheck] = field(default_factory=list)
+    # The names of the checks that passed, so a review of this commit need not run them again.
+    passed: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -357,6 +359,8 @@ class LoopPromptRequest:
     # A review after the first: the round before's findings and summary, which this round judges first.
     previous_findings: list[dict[str, Any]] = field(default_factory=list)
     previous_summary: str = ""
+    # A review: the code host's checks that passed at the reviewed commit, which the reviewer does not rerun.
+    passed_checks: list[str] = field(default_factory=list)
 
 
 @dataclass

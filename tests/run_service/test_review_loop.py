@@ -173,7 +173,7 @@ class Script:
             self.waited_on.append(request.head_sha)
             state = self.checks.get(request.head_sha, "passed")
             failed = [FailedCheck("tests", "1 failed: test_app")] if state == "failed" else []
-            return ChecksResult(state=state, failed=failed)
+            return ChecksResult(state=state, failed=failed, passed=["tests"] if state == "passed" else [])
 
         @activity.defn(name="wait_merge_checks")
         async def wait_merge_checks(request: MergeChecksRequest) -> ChecksResult:
@@ -548,6 +548,7 @@ async def test_a_review_after_the_first_is_given_the_round_befores_findings(env)
     assert first.previous_findings == [] and first.round_no == 1
     assert second.round_no == 2 and second.previous_findings == CHANGES["findings"]
     assert second.previous_summary == CHANGES["summary"]
+    assert first.passed_checks == ["tests"] == second.passed_checks, "each review is told the checks that passed"
 
 
 async def test_a_conflict_goes_to_a_fix_run_that_resolves_the_merge_then_merges(env):
