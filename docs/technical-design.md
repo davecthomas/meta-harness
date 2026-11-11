@@ -717,7 +717,8 @@ from `config/task_policy.json` and edited on the console's Configuration page.
 Built today: `max_parallel`, which the scheduler reads each admission pass,
 `review.reviewers` and `review.max_rounds`, which the run service reads, and
 `writing_pass`, a switch: `false` turns the writing pass off (What the
-meta-harness writes), and left out or `true` it is on.
+meta-harness writes), and left out or `true` it is on. Also `max_task_usd`, the
+most one task may spend whatever else is set (Budgets).
 The other fields below are planned.
 
 ```json
@@ -2182,10 +2183,16 @@ to stop work as it says. Under `track` nothing is held, refused or ended for
 either, and spend is still recorded and shown against them: every goal
 behaves as `warn` whatever its own mode (the planner serves it no blocking
 line, a `budget_exhausted` goal becomes `active` at its next sweep, and
-there is nothing to resume), and a task that starts gets a spend limit no
-run reaches ($999,999, the most the HTTP Gateway grants a run: its spend
-limit has at most six digits before the decimal point), so its turn and
-minute limits are what bound a run. A task
+there is nothing to resume), and a task that starts gets the ceiling for
+one task as its spend limit, whatever its own `max_usd` says. No task runs
+without a spend limit under either policy: the task policy's `max_task_usd`
+($100.00 when it names none, at most $1,000) is the most one task may spend
+across all its runs. Under `block` a task's limit is its own, or $10.00, and
+never more than the ceiling. The Task API refuses a `max_usd` above the
+ceiling when a task is made, retried or has its limit raised (422, naming
+the ceiling). A task that reaches the ceiling holds for budget, as at any
+spend limit, and an operator ends it or raises the ceiling in the task
+policy first. A task
 already running keeps the limit it started with. Services read a saved
 policy within five seconds, and one that cannot be read counts as `block`.
 

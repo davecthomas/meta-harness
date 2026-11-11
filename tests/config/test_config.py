@@ -436,3 +436,15 @@ def test_a_skill_a_shipped_profile_starts_to_name_reaches_the_deployments_profil
         store.save(conn, "profiles", edited, "op@example.com", "no skill on pi-lean")
         assert store.add_shipped_to_profiles(conn) == []
         assert store.active(conn, "profiles")["document"]["profiles"]["pi-lean"]["skills"] == []
+
+
+def test_the_task_policys_ceiling_on_one_tasks_spend_is_an_amount_within_reach(monkeypatch):
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
+    policy = {"max_parallel": 4, "review": {"reviewers": ["harness:pi-review/x:y"], "max_rounds": 3}}
+    for good in ("100.00", "25", 250, "1000"):
+        assert kinds.check_task_policy({**policy, "max_task_usd": good}) == [], good
+    for bad in ("0", "-1", "1000.01", "999999", "lots", True, "Infinity"):
+        [reason] = kinds.check_task_policy({**policy, "max_task_usd": bad})
+        assert reason.startswith("max_task_usd must be an amount above 0 and at most 1000"), bad
+    shipped = json.loads((REPO_ROOT / "config" / "task_policy.json").read_text())
+    assert shipped["max_task_usd"] == "100.00"
