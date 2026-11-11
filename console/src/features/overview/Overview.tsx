@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Table, Text, TextInput } from "@mantine/core";
 import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons-react";
-import { goalTitle, api, goalStatus, type Activity, type KillSwitch, type MhEvent } from "../../api";
+import { goalTitle, api, goalStatus, type Activity, type Goal, type KillSwitch, type MhEvent } from "../../api";
 import { ActivityMap } from "../activity/ActivityPage";
+import { BudgetMark, ResumeBudget, budgetStanding, budgetWords } from "../goals/budget";
 import { useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, TitleLink, when } from "../../components/ui";
 
@@ -17,6 +18,15 @@ export function Overview() {
   const held = useInfinite((offset, limit) => api.tasks({ waiting: true }, offset, limit), 25, "held");
   const running = useInfinite((offset, limit) => api.tasks({ statuses: ["running"] }, offset, limit), 1, "running");
   const queued = useInfinite((offset, limit) => api.tasks({ statuses: ["queued", "blocked"] }, offset, limit), 1, "queued");
+  // A goal past its budget waits on an operator too: to raise it, or to let it stand.
+  const [resumed, setResumed] = useState(0);
+  const [pastBudget, setPastBudget] = useState<Goal[]>([]);
+  useEffect(() => {
+    api.goals(["active", "budget_exhausted"], 0, 200).then(
+      (page) => setPastBudget(page.items.filter((g) => budgetStanding(g) !== "ok")),
+      () => setPastBudget([]),
+    );
+  }, [resumed]);
 
   return (
     <>
@@ -26,7 +36,7 @@ export function Overview() {
       <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} mb="lg">
         <Stat label="Running" value={running.total} to="/tasks?view=tiles" link="Watch them" />
         <Stat label="Queued or blocked" value={queued.total} to="/tasks?show=waiting" link="See them" />
-        <Stat label="Needs you" value={waiting.total === null ? null : waiting.total + (held.total ?? 0)} />
+        <Stat label="Needs you" value={waiting.total === null ? null : waiting.total + (held.total ?? 0) + pastBudget.length} />
         <Stat label="Open goals" value={goals.total} to="/goals" link="All goals" />
       </SimpleGrid>
 
@@ -35,8 +45,22 @@ export function Overview() {
 
       <SectionTitle>Needs you</SectionTitle>
       <ErrorAlert error={waiting.error} />
-      {waiting.items.length + held.items.length ? (
+      {waiting.items.length + held.items.length + pastBudget.length ? (
         <DataTable head={["Task", "Status", "Issue", "Pull request", "Why"]}>
+          {pastBudget.map((g) => (
+            <Table.Tr key={g.id} data-testid={`past-budget-${g.id}`}>
+              <Table.Td><TitleLink to={`/goals/${g.id}`} title={goalTitle(g)} id={g.id} /></Table.Td>
+              <Table.Td><BudgetMark goal={g} /></Table.Td>
+              <Table.Td />
+              <Table.Td />
+              <Table.Td>
+                <Group gap="sm" wrap="nowrap">
+                  <Text size="sm">The goal has spent ${Number(g.spent_usd ?? 0).toFixed(2)} of ${Number(g.max_usd).toFixed(2)}: {budgetWords(g)}</Text>
+                  {g.budget_mode !== "warn" && <ResumeBudget goalId={g.id} goal={g} size="xs" variant="light" onResumed={() => setResumed((n) => n + 1)} />}
+                </Group>
+              </Table.Td>
+            </Table.Tr>
+          ))}
           {[...held.items, ...waiting.items].map((t) => (
             <Table.Tr key={t.id}>
               <Table.Td><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
@@ -49,7 +73,14 @@ export function Overview() {
                 )}</Table.Td>
               <Table.Td><IssueLink issueRef={t.external_ref} /></Table.Td>
               <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>
-              <Table.Td><Text size="sm">{t.status === "ready" ? "Its pull request is open for you to merge" : t.status_reason ?? t.status}</Text></Table.Td>
+              <Table.Td>
+                <Group gap="sm" wrap="nowrap">
+                  <Text size="sm">{t.status === "ready" ? "Its pull request is open for you to merge" : t.status_reason ?? t.status}</Text>
+                  {t.waiting_on === "budget" && t.goal_id && (t.status_reason ?? "").includes("goal's budget") && (
+                    <ResumeBudget goalId={t.goal_id} size="xs" variant="light" onResumed={() => setResumed((n) => n + 1)} />
+                  )}
+                </Group>
+              </Table.Td>
             </Table.Tr>
           ))}
         </DataTable>

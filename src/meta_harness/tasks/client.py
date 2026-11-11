@@ -73,5 +73,11 @@ class TaskClient:
     def cancel(self, task_id: str, reason: str = "canceled through the Task API", actor: str | None = None) -> dict:
         return self._call("POST", f"/v1/tasks/{task_id}/cancel", actor=actor, json={"reason": reason})
 
+    def budget(self, task_id: str, action: str, max_usd: str | None = None, actor: str | None = None) -> dict:
+        """Answer a task held for budget: raise (with a new spend limit, or none when its goal's was raised) or end."""
+        return self._call(
+            "POST", f"/v1/tasks/{task_id}/budget", actor=actor, json={"action": action, "max_usd": max_usd}
+        )
+
     def set_status(self, task_id: str, status: str, reason: str | None = None, **fields: Any) -> dict:
         return self._call("POST", f"/v1/tasks/{task_id}/status", json={"status": status, "reason": reason, **fields})

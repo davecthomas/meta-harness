@@ -1,6 +1,7 @@
 import { Anchor, Badge, Group, Paper, Progress, SimpleGrid, Stack, Text, Tooltip } from "@mantine/core";
 import { useNavigate } from "react-router-dom";
-import { issueUrl, type IssueProgress, type Task } from "../../api";
+import { issueUrl, type Goal, type IssueProgress, type Task } from "../../api";
+import { budgetColor, budgetStanding, budgetWords } from "./budget";
 import { PrLink, StatusBadge } from "../../components/ui";
 import { projection } from "../tasks/Spend";
 
@@ -99,12 +100,15 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number }) {
 }
 
 // The goal's progress: its issues done of all, and what its tasks spent against its budget.
-export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<string, number>; budget: string | null; onSpend?: () => void }) {
+// goal: the goal, for how it stands against its budget: past it, the spend line says so and the bar changes color.
+export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<string, number>; budget: string | null; onSpend?: () => void; goal?: Goal }) {
   const { column } = layout(props.issues);
   const done = props.issues.filter((i) => column.get(i.ref) === "done").length;
   const spent = Object.values(props.spend).reduce((a, b) => a + b, 0);
   const budget = props.budget ? Number(props.budget) : null;
   const projected = projection(spent, done, props.issues.length);
+  const standing = props.goal ? budgetStanding(props.goal, spent) : "ok";
+  const words = props.goal ? budgetWords(props.goal, spent) : null;
   return (
     <Group gap="xl" mb="md" data-testid="goal-progress">
       <Stack gap={2} w={220}>
@@ -113,7 +117,7 @@ export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<str
       </Stack>
       <Stack gap={2} w={220}>
         <Text size="xs" c="dimmed">
-          ${spent.toFixed(2)} spent{budget ? ` of $${budget.toFixed(2)}` : ""}
+          ${spent.toFixed(2)} spent{budget ? ` of $${budget.toFixed(2)}` : ""}{words && `: ${words}`}
           {projected !== null && done < props.issues.length && ` · about $${projected.toFixed(2)} to finish`}
           {props.onSpend && spent > 0 && (
             <>
@@ -123,7 +127,7 @@ export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<str
           )}
         </Text>
         {budget !== null && (
-          <Progress value={Math.min(100, (100 * spent) / budget)} color={spent >= budget ? "red" : spent >= 0.8 * budget ? "yellow" : "blue"} />
+          <Progress value={Math.min(100, (100 * spent) / budget)} color={props.goal ? (standing !== "ok" ? budgetColor(standing) : spent >= 0.8 * budget ? "yellow" : "blue") : spent >= budget ? "red" : spent >= 0.8 * budget ? "yellow" : "blue"} />
         )}
       </Stack>
     </Group>
