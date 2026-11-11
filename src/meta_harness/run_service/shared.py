@@ -18,8 +18,10 @@ INLINE_TEMPLATE = "inline"
 # Each run's grant gets what is left. A standard-tier run on these repos costs a few dollars.
 DEFAULT_SPEND_LIMIT_USD = "10.00"
 # A task's spend limit while the budget policy only tracks spend: far above what a run's turn and minute limits
-# let it spend, so nothing ends or holds for it, and each run's grant still counts what it spends.
-UNBOUNDED_SPEND_LIMIT_USD = "1000000.00"
+# let it spend, so nothing ends or holds for it, and each run's grant still counts what it spends. It is the
+# most the HTTP Gateway grants: a spend limit there has at most six digits before the decimal point, and it
+# refuses a larger one, which failed every task under `track`.
+UNBOUNDED_SPEND_LIMIT_USD = "999999.00"
 
 
 WORKFLOW_ID_PREFIX = "run-task-"
