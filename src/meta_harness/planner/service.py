@@ -53,6 +53,7 @@ from meta_harness.planner import (
     budget_api,
     cost_facts,
     drafting,
+    goal_costs,
     plan_api,
     planning,
     progress,
@@ -386,6 +387,7 @@ def create_app(
     app.state.supervised = None
     # What each goal's latest sweep, follow-up or plan collecting could not do: {goal_id: {at, errors}}.
     app.state.sweeps = {}
+    app.state.goal_costs = goal_costs.Cache(tasks, events)
     app.state.each = each
     app.state.supervisor = supervisor
     app.state.title_untitled = title_untitled
@@ -791,6 +793,8 @@ def create_app(
         with app.state.pool.connection() as conn:
             goals, total = store.page_goals(conn, status.split(",") if status else None, limit, offset)
         standings(goals)
+        # What each goal has cost, the same total as its Spend section; unknown, with why, when unreadable.
+        goal_costs.give(goals, *app.state.goal_costs.get())
         return {"goals": goals, "total": total, "offset": offset, "limit": limit}
 
     def standings(goals: list[dict]) -> None:
