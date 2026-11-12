@@ -460,12 +460,14 @@ def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> Non
         )
 
 
-def release_for_task(conn: psycopg.Connection, ref: str, goal_id: str) -> str:
+def release_for_task(conn: psycopg.Connection, ref: str, goal_id: str, linked: bool = False) -> str:
     """Let the issue go on to be a task for the goal. Returns "released"; "split" when an operator split it, or
     is splitting it, and did not run it anyway, so it stays held; "gone" when an operator removed it from the
     goal or another goal holds it, so this goal makes no task for it. The sweep calls this just before it
     creates the task, as any of these may happen while it waits on the issue's sizing. Clearing held_reason
-    under the row's lock closes claim_split and Run anyway to the issue until its task is recorded."""
+    under the row's lock closes claim_split and Run anyway to the issue until its task is recorded. With
+    linked, the caller saw a link for the issue (it was sized, or held before): an absent one is "gone", since
+    the goal's repo was removed and its taskless links with it."""
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             "SELECT goal_id, dropped, split_into, run_anyway FROM planner.issue_link WHERE ref = %s FOR UPDATE",
@@ -473,7 +475,7 @@ def release_for_task(conn: psycopg.Connection, ref: str, goal_id: str) -> str:
         )
         row = cur.fetchone()
         if row is None:
-            return "released"
+            return "gone" if linked else "released"
         if row["goal_id"] != goal_id or row["dropped"]:
             return "gone"
         if row["split_into"] is not None and not row["run_anyway"]:

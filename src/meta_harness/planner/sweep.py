@@ -422,7 +422,8 @@ async def _take_in(
     # The link was read before the sizer's call: an operator may have split or removed the issue since, or another
     # goal taken it. Look again under the row's lock, so the original makes no task beside its smaller issues and
     # keeps the reason its split recorded, and a removed issue or another goal's makes none for this goal.
-    released = await asyncio.to_thread(_release, issue.ref, goal["id"])
+    # A sized issue has a link, as has one held before: if it is gone, the goal's repo was removed with it.
+    released = await asyncio.to_thread(_release, issue.ref, goal["id"], bool(size or existing))
     if released == "split":
         result.held.append(issue.ref)
     if released != "released":
@@ -779,9 +780,9 @@ def _hold(ref: str, reason: str | None) -> None:
         store.set_link_held(conn, ref, reason)
 
 
-def _release(ref: str, goal_id: str) -> str:
+def _release(ref: str, goal_id: str, linked: bool) -> str:
     with db.connect(autocommit=True) as conn:
-        return store.release_for_task(conn, ref, goal_id)
+        return store.release_for_task(conn, ref, goal_id, linked)
 
 
 def _forget_link(ref: str) -> None:

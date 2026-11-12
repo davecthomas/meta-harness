@@ -2296,7 +2296,8 @@ The answer is stored on the issue link (`size`, `sizing`) and recorded as
   small, looks at its link again under the row's lock just before it makes
   the task: a split issue, or one being split, stays held with the reason
   its split recorded, and one an operator removed from the goal, or another
-  goal holds, makes no task. Its sizing is recorded only on a link the goal
+  goal holds, makes no task. Nor does a sized issue whose link is gone,
+  deleted when an operator removed its repo from the goal. Its sizing is recorded only on a link the goal
   holds and has not removed: when two goals' sweeps first see one issue at
   once, the one that did not record it first stops, and neither holds nor
   runs it.
