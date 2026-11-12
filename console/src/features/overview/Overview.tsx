@@ -12,17 +12,19 @@ import { moneyText } from "../../money";
 import { diagnose } from "../tasks/diagnosis";
 import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
 import { needsYouNote } from "./needsYou";
+import { SupervisorHealth } from "./SupervisorHealth";
+import { standingLine } from "../tasks/Standing";
 
 const OPEN_GOALS = ["active", "paused", "stalled", "budget_exhausted"];
-const NEEDS_YOU = ["ready", "failed", "review_unresolved"];
 
 export function Overview() {
   // Counted up by each action taken here, so the lists reread.
   const [resumed, setResumed] = useState(0);
   const goals = useInfinite((offset, limit) => api.goals(OPEN_GOALS, offset, limit), 25, "open-goals");
-  const waiting = useInfinite((offset, limit) => api.tasks({ statuses: NEEDS_YOU }, offset, limit), 25, `needs-you-${resumed}`);
-  // Running tasks held for budget wait on an operator too: they head the list.
-  const held = useInfinite((offset, limit) => api.tasks({ waiting: true }, offset, limit), 25, "held");
+  // Every task the supervisor found an operator to have, longest waiting first: failed, ready to merge,
+  // held for budget or a review, stuck behind another task. One list, from the supervisor's own record.
+  const waiting = useInfinite((offset, limit) => api.tasks({ hasIt: "operator" }, offset, limit), 25, `needs-you-${resumed}`);
+  const held = { items: [] as Task[], total: 0 };
   const running = useInfinite((offset, limit) => api.tasks({ statuses: ["running"] }, offset, limit), 1, "running");
   const queued = useInfinite((offset, limit) => api.tasks({ statuses: ["queued", "blocked"] }, offset, limit), 1, "queued");
   // A goal past its budget waits on an operator too: to raise it, or to let it stand.
@@ -66,6 +68,7 @@ export function Overview() {
 
       <div ref={needsYou} />
       <SectionTitle>Needs you</SectionTitle>
+      <SupervisorHealth />
       <ErrorAlert error={waiting.error} />
       {failed.length > 0 && (
         <Paper withBorder p="md" mb="md" data-testid="needs-you-failures" style={{ borderColor: "var(--mantine-color-red-6)" }}>
@@ -104,7 +107,10 @@ export function Overview() {
               <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>
               <Table.Td>
                 <Group gap="sm" wrap="nowrap">
-                  <Text size="sm">{whatToDo(t)}</Text>
+                  <Stack gap={0}>
+                    <Text size="sm">{whatToDo(t)}</Text>
+                    {t.standing && <Text size="xs" c="dimmed">Waiting on you since {when(t.standing.since)}</Text>}
+                  </Stack>
                   {t.waiting_on === "budget" && t.goal_id && (t.status_reason ?? "").includes("goal's budget") && (
                     <ResumeBudget goalId={t.goal_id} size="xs" variant="light" onResumed={() => setResumed((n) => n + 1)} />
                   )}
@@ -148,7 +154,9 @@ function whatToDo(t: Task): string {
   if (t.waiting_on === "review") return "Its review asks for changes and waits for you: open it to dismiss findings or let the fix run start.";
   if (t.status === "ready") return "Its review is clean and its pull request is open: merge it.";
   const diagnosis = diagnose({ status: t.status, reason: t.status_reason });
-  return diagnosis ? `${diagnosis.summary}. ${diagnosis.fix}` : moneyText(t.status_reason) ?? t.status;
+  if (diagnosis) return `${diagnosis.summary}. ${diagnosis.fix}`;
+  // Anything else the supervisor found to be an operator's says why and what to do in its standing.
+  return t.standing ? standingLine(t.standing) : moneyText(t.status_reason) ?? t.status;
 }
 
 // A number on the Overview with what it means and where to act on it. The whole tile is the link.

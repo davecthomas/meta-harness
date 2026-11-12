@@ -80,10 +80,11 @@ class TaskClient:
             "POST", f"/v1/tasks/{task_id}/recover", actor="supervisor", json={"why": why, "spent_usd": spent_usd}
         )
 
-    def drive(self, task_id: str, action: str, why: str, spent_usd: str = "0") -> dict:
+    def drive(self, task_id: str, action: str, why: str, spent_usd: str = "0", counted: bool = True) -> dict:
         """Send a parked task back to the queue for its merge (action merge) or through its review loop
-        (review), with what it has spent carried over. The supervisor's."""
-        body = {"action": action, "why": why, "spent_usd": spent_usd}
+        (review), or a failed one to run again (retry), with what it has spent carried over. counted False:
+        not one of the task's tries. The supervisor's."""
+        body = {"action": action, "why": why, "spent_usd": spent_usd, "counted": counted}
         return self._call("POST", f"/v1/tasks/{task_id}/drive", actor="supervisor", json=body)
 
     def budget(self, task_id: str, action: str, max_usd: str | None = None, actor: str | None = None) -> dict:

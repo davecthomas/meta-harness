@@ -45,3 +45,13 @@ test("each item says what to do, a ready task links its pull request, and a fail
   );
   expect(items[1].detail).not.toContain("string_pattern_mismatch");
 });
+
+test("a task the supervisor found to be an operator's is listed with why and what to do", () => {
+  const blocked = {
+    ...task("b", "blocked"),
+    standing: { owner: "operator", situation: "blocked_on_stuck", reason: "it waits on o/r#7, whose task is not moving and waits on an operator", ask: "Open that issue's task and retry or fix it.", since: "", checked_at: "", attempts: 0, last_error: null },
+  } as Task;
+  const items = inboxItems([blocked, task("r", "running")], [], null, Date.parse("2026-11-10T12:00:00Z"));
+  expect(items.map((i) => i.text)).toEqual(["Needs you: Task b"]);
+  expect(items[0].detail).toBe("It waits on o/r#7, whose task is not moving and waits on an operator. Open that issue's task and retry or fix it.");
+});

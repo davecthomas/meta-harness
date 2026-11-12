@@ -205,7 +205,9 @@ class Supervisor:
                 admitted=admitted,
                 auto_merge=auto_merge,
                 mergeable=how,
-                drives_left=int(task.get("drives") or 0) < MAX_DRIVES,
+                # A retry after the worker's own restart is not one of the task's tries, so it always has one.
+                drives_left=int(task.get("drives") or 0) < MAX_DRIVES
+                or (status == "failed" and failures.restart(task.get("status_reason"))),
                 failure=failures.kind(task.get("status_reason"))
                 if status in ("failed", "review_unresolved")
                 else "permanent",
@@ -265,7 +267,10 @@ class Supervisor:
                 result.ended.append(task_id)
             elif decision.action in ("merge", "review", "retry"):
                 spent = await asyncio.to_thread(spent_so_far, self.events, task_id)
-                await asyncio.to_thread(self.tasks.drive, task_id, decision.action, decision.reason, str(spent))
+                counted = not (decision.action == "retry" and failures.restart(task.get("status_reason")))
+                await asyncio.to_thread(
+                    self.tasks.drive, task_id, decision.action, decision.reason, str(spent), counted
+                )
                 self._mergeable.pop(task_id, None)
                 self._pulls.pop(task_id, None)
                 result.driven.append(task_id)

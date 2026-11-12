@@ -5,6 +5,7 @@ import { IconInbox } from "@tabler/icons-react";
 import { api, goalTitle, type Goal, type KillSwitch, type Task } from "../api";
 import { reviewLink, reviewsInProgress, type ReviewRun } from "../features/tasks/reviewing";
 import { diagnose, oneLine } from "../features/tasks/diagnosis";
+import { standingLine } from "../features/tasks/Standing";
 
 // One thing waiting on the operator, with where it is resolved.
 export interface InboxItem {
@@ -67,6 +68,11 @@ export function inboxItems(
         detail: diagnosis ? oneLine(diagnosis) : undefined,
       });
     }
+    // Anything else the supervisor found to be an operator's: held for budget or a review, stuck behind
+    // another task, waiting with no goal to move it. Its standing says why and what to do.
+    if (!["ready", "review_unresolved", "failed"].includes(t.status) && t.standing?.owner === "operator") {
+      items.push({ key: `task-${t.id}`, text: `Needs you: ${t.title}`, to: `/tasks/${t.id}`, detail: standingLine(t.standing) });
+    }
   }
   return items;
 }
@@ -81,7 +87,8 @@ export function Inbox() {
   const load = useCallback(async () => {
     try {
       const [tasks, goals, kill, events, running] = await Promise.all([
-        api.tasks({ statuses: ["ready", "review_unresolved", "failed"] }, 0, 200),
+        // Every task the supervisor found an operator to have.
+        api.tasks({ hasIt: "operator" }, 0, 200),
         api.goals(["active", "budget_exhausted", "stalled"], 0, 100),
         api.killSwitch().catch(() => null),
         api.recentEvents(["run_prompt", "attempt_finished"], 500).catch(() => []),

@@ -73,22 +73,32 @@ export interface TaskSpend {
   totals: SpendTotals;
 }
 
+// What the supervisor last did, from GET /v1/supervisor. every_seconds 0: it is turned off.
+export interface SupervisorState {
+  every_seconds: number;
+  last_pass: { at?: string; error?: string | null; failed_at?: string; looked_at?: number; errors?: string[]; owners?: Record<string, number> } | null;
+  sweeps_failing?: Record<string, { at: string; errors: string[] }>;
+}
+
 // The tasks feature's calls; src/api.ts spreads them into `api`.
 export const tasksApi = {
   tasks: async (
     // pr: true for tasks with a pull request, false for tasks without one.
     // waiting: true for tasks waiting on an operator (held for budget).
-    params: { statuses?: string[]; goalId?: string; pr?: boolean; waiting?: boolean },
+    // hasIt: only the tasks the supervisor found this owner to have, longest in their situation first.
+    params: { statuses?: string[]; goalId?: string; pr?: boolean; waiting?: boolean; hasIt?: "operator" | "supervisor" | "workflow" | "scheduler" | "planner" },
     offset: number,
     limit: number,
   ): Promise<Page<Task>> => {
     const pr = params.pr === undefined ? undefined : String(params.pr);
     const r = await call<{ tasks: Task[]; total: number }>(
-      "/v1/tasks" + query({ status: params.statuses?.join(","), goal_id: params.goalId, pr, waiting: params.waiting ? "true" : undefined, offset, limit }),
+      "/v1/tasks" + query({ status: params.statuses?.join(","), goal_id: params.goalId, pr, waiting: params.waiting ? "true" : undefined, has_it: params.hasIt, offset, limit }),
     );
     return { items: r.tasks, total: r.total };
   },
   task: (id: string) => call<Task>(`/v1/tasks/${id}`),
+  // The supervisor's last pass, how often it runs, and the goals whose latest sweep could not finish.
+  supervisor: () => call<SupervisorState>("/v1/supervisor"),
   reviews: (id: string) => call<{ rounds: ReviewRound[] }>(`/v1/tasks/${id}/reviews`).then((r) => r.rounds),
   pullDiff: (taskId: string) => call<PullDiff>(`/v1/pulls/${taskId}/diff`),
   commentOnLines: (taskId: string, body: { path: string; line: number; start_line: number | null; body: string }) =>
