@@ -128,6 +128,12 @@ export const goalsApi = {
   // A registered repo's open issues, newest first, with the label and title text given, if any.
   repoIssues: (repo: string, params: { label?: string; q?: string; cursor?: number; limit?: number }) =>
     call<{ issues: LabelIssue[]; total: number; next_cursor: number | null }>(`/v1/repos/${repo}/issues` + query(params)),
+  // Remove an issue from its goal. force: also when its task has a pull request open, which is left open.
+  removeIssue: (goalId: string, ref: string, force = false) =>
+    call<{ dropped: string; task_canceled: string | null }>(
+      `/v1/goals/${goalId}/issues/${ref.replace("#", "%23")}${force ? "?force=true" : ""}`,
+      { method: "DELETE" },
+    ),
   addIssues: (goalId: string, refs: string[]) =>
     call<{ added: string[] }>(`/v1/goals/${goalId}/issues`, { method: "POST", body: JSON.stringify({ refs }) }),
   labelIssues: (repo: string, label: string) =>
