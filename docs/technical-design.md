@@ -771,7 +771,7 @@ task's remaining spend, its attempts so far and the task policy's limits.
 | Start | When `session_state` is `new`, `POST /run` on the per-run sandbox's harness server Run API with the prompt, acceptance checks, harness profile, limits, bash allowlist, the tier's thinking level and run grant key. The pi model client extension sends that thinking level on every turn; a pinned run sends none, so the HTTP Gateway's default applies. When it is `kept` or `restored`, `POST /followup` with the new input and its own run grant key. |
 | Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the harness profile's `max_minutes` plus 10 minutes, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
 | Collect | Reads the harness server's `/usage`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
-| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
+| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run whose activity ended because the worker under it shut down (`WorkerShutdown`, which every deploy's restart causes) is neither: the workflow waits 20 seconds for the worker to be back and takes the same run up again, up to five times, and the activity re-attaches to it by its run id, so the restart costs the task no attempt and no candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
 | Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary, which goes through the writing pass first (What the meta-harness writes); the description is written when the pull request is opened, and no later push changes it. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
 The RunTask workflow's Temporal history records every attempt, tier candidate
@@ -1937,9 +1937,9 @@ and said by `GET /v1/supervisor`, which also gives when the last pass ran and
 how many tasks each owner has.
 
 Built so far are the actions above and the standing of every task. A run
-that the worker's restart interrupts still fails its task in the workflow
-(#254): the supervisor retries that task within minutes, from a new first
-run, and resuming the same run in place is planned.
+that the worker's restart interrupts is taken up again by its own workflow
+(Decide); a task that fails on a restart all the same is retried by the
+supervisor, and that retry is none of its tries.
 
 A RunTask workflow may live 72 hours (`EXECUTION_TIMEOUT`), longer than any
 wait inside it. It was six, while a budget hold waits a day and an
@@ -3179,9 +3179,11 @@ can't stop it. The script checks the commit out and runs
   connection a client keeps open, such as the console's live event stream,
   cannot hold a restart.
 
-Running sandboxes are Docker containers that outlive the restart, and
-Temporal hands the interrupted run activity to the restarted worker, which
-re-attaches to the same container, so no running task is lost. The edge
+Running sandboxes are Docker containers that outlive the restart. The
+interrupted run activity ends with `WorkerShutdown`; its workflow waits for
+the restarted worker and runs the activity again for the same run, which
+re-attaches to the same container, so no running task is lost. A workflow
+used to take that failure as the run's own and fail the task for good. The edge
 retries a request whose connection is refused for up to 20 seconds, so a
 service's few seconds down don't reach the console. Old and new code run
 side by side for those seconds, so migrations only add, and anything removed
