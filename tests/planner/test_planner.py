@@ -792,7 +792,7 @@ def test_issues_are_added_by_ref_and_one_another_goal_holds_is_refused_naming_it
     assert malformed.status_code == 422
 
 
-def test_an_added_issue_with_no_task_can_be_dropped_and_one_with_a_task_cannot(api, parts):
+def test_an_issue_is_removed_from_its_goal_with_or_without_a_task_and_stays_removed(api, parts):
     _, tracker, _ = parts
     goal = api.post(
         "/v1/goals", json={"statement": "A.", "repos": [REPO], "label": _label(), "start": False}, headers=OPERATOR
@@ -808,8 +808,48 @@ def test_an_added_issue_with_no_task_can_be_dropped_and_one_with_a_task_cannot(a
     api.post(f"/v1/goals/{goal['id']}/issues", json={"refs": [started]}, headers=OPERATOR)
     api.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR)
     _sweep(api, goal)
-    kept = api.delete(f"/v1/goals/{goal['id']}/issues/{started.replace('#', '%23')}", headers=OPERATOR)
-    assert kept.status_code == 409 and "cancel the task" in kept.json()["detail"]
+    _, _, tasks = parts
+    [task] = [t for t in tasks.tasks.values() if t["external_ref"] == started]
+
+    removed = api.delete(f"/v1/goals/{goal['id']}/issues/{started.replace('#', '%23')}", headers=OPERATOR)
+
+    assert removed.status_code == 200 and removed.json()["task_canceled"] == task["id"]
+    assert task["status"] == "canceled"
+    assert api.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["issues"] == []
+    assert (
+        api.delete(f"/v1/goals/{goal['id']}/issues/{started.replace('#', '%23')}", headers=OPERATOR).status_code == 404
+    )
+    # Added back by ref, it is the goal's again, with a new start.
+    again = api.post(f"/v1/goals/{goal['id']}/issues", json={"refs": [started]}, headers=OPERATOR)
+    assert again.json()["added"] == [started]
+
+
+def test_a_removed_issue_is_not_swept_back_in_by_its_label_and_another_goal_may_take_it(api, parts):
+    events, tracker, tasks = parts
+    label, other_label = _label(), _label()
+    goal = _goal(api, label)
+    ref = tracker.add(REPO, _number(), labels=[label, other_label])
+    done = tracker.add(REPO, _number(), labels=[label])
+    _sweep(api, goal)
+    by_ref = {t["external_ref"]: t for t in tasks.tasks.values()}
+    by_ref[done]["status"] = "closed"
+    tracker.issues[done].state = "closed"
+    # Its task has a pull request open: the work is done and waiting, so removing it asks first.
+    by_ref[ref].update(status="ready", pr_url="local-pull-request")
+    path = f"/v1/goals/{goal['id']}/issues/{ref.replace('#', '%23')}"
+    refused = api.delete(path, headers=OPERATOR)
+    assert refused.status_code == 409 and "pull request" in refused.json()["detail"]
+
+    assert api.delete(f"{path}?force=true", headers=OPERATOR).status_code == 200
+
+    assert by_ref[ref]["status"] == "canceled"
+    swept = _sweep(api, goal)
+    assert swept["joined"] == [] and swept["met"] is True, "it no longer counts toward the goal being met"
+    assert ("issue_dropped", {"ref": ref, "goal_id": goal["id"]}) in events.events
+    labels = api.get(f"/v1/labels?repo={REPO}", headers=OPERATOR).json()
+    assert labels is not None
+    other = _goal(api, other_label)
+    assert _sweep(api, other)["joined"] in ([ref], []), "another goal may take the issue"
 
 
 def test_a_repos_open_issues_are_browsed_by_label_text_and_page(api, parts):
