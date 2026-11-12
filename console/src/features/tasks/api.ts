@@ -1,5 +1,5 @@
 import { call, query } from "../../client";
-import type { Page, Task } from "../../api";
+import type { MhEvent, Page, Task } from "../../api";
 
 // One review round on a task's pull request, from GET /v1/tasks/{id}/reviews.
 export interface ReviewRound {
@@ -97,6 +97,9 @@ export const tasksApi = {
     return { items: r.tasks, total: r.total };
   },
   task: (id: string) => call<Task>(`/v1/tasks/${id}`),
+  // One run's events, oldest first: its turns, for the run's step on the task's path.
+  runEvents: (runId: string) =>
+    call<{ events: MhEvent[] }>("/v1/events" + query({ run_id: runId, from_position: 0, limit: 5000 })).then((r) => r.events),
   // The supervisor's last pass, how often it runs, and the goals whose latest sweep could not finish.
   supervisor: () => call<SupervisorState>("/v1/supervisor"),
   reviews: (id: string) => call<{ rounds: ReviewRound[] }>(`/v1/tasks/${id}/reviews`).then((r) => r.rounds),
