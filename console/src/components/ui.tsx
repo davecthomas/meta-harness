@@ -34,7 +34,7 @@ const STATUS_LABELS: Record<string, string> = { not_started: "Not started" };
 
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <Badge color={statusColor(status)} variant="light" radius="sm" tt="none">
+    <Badge color={statusColor(status)} variant="light" radius="sm" tt="none" miw="max-content">
       {STATUS_LABELS[status] ?? status.replace(/_/g, " ")}
     </Badge>
   );
