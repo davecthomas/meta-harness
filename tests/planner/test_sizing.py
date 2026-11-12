@@ -673,3 +673,79 @@ def test_an_issue_split_while_the_sweep_sizes_it_makes_no_task_and_keeps_its_spl
     assert ref in swept["held"] and _task(tasks, ref) is None, "the original makes no task beside its split"
     card = _shown(client, goal)[ref]
     assert (card["held_reason"], card["split_into"]) == (reason, created), "the split's reason is kept"
+
+
+class CreatingTasks(FakeTasks):
+    """Tasks whose create lets an operator act while the task is being made: after the sweep's last look at the
+    issue, before it records the task."""
+
+    def __init__(self, tasks: FakeTasks, meanwhile):
+        super().__init__()
+        self.tasks = tasks.tasks
+        self.meanwhile = meanwhile
+
+    def create(self, **task):
+        made = super().create(**task)
+        self.meanwhile(made)
+        return made
+
+
+def _while_creating(client, monkeypatch, tasks, meanwhile) -> None:
+    """Have the planner's task client run meanwhile inside create."""
+    monkeypatch.setattr(tasks, "create", CreatingTasks(tasks, meanwhile).create)
+
+
+def test_an_issue_whose_repo_is_removed_while_its_task_is_made_has_its_task_canceled_and_no_link(world, monkeypatch):
+    # #293: the last window #258's review found. The task was made, then save_link put the deleted link back.
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+
+    def remove_repo(task: dict) -> None:
+        with db.connect(autocommit=True) as conn:
+            store.update(conn, goal["id"], repos=["davecthomas/other-repo"])
+
+    _while_creating(client, monkeypatch, tasks, remove_repo)
+    swept = _sweep(client, goal)
+
+    task = _task(tasks, ref)
+    assert task is not None and task["status"] == "canceled", "the task made for a repo the goal dropped is canceled"
+    assert swept["joined"] == [] and _payloads(events, "issue_joined") == []
+    with db.connect(autocommit=True) as conn:
+        assert store.link(conn, ref) is None, "the removed repo's issue is not put back on the goal"
+
+
+def test_an_issue_removed_from_its_goal_while_its_task_is_made_has_its_task_canceled_and_stays_removed(
+    world, monkeypatch
+):
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+
+    def remove_issue(task: dict) -> None:
+        with db.connect(autocommit=True) as conn:
+            store.drop_ref(conn, goal["id"], ref)
+
+    _while_creating(client, monkeypatch, tasks, remove_issue)
+    swept = _sweep(client, goal)
+
+    assert _task(tasks, ref)["status"] == "canceled" and swept["joined"] == []
+    with db.connect(autocommit=True) as conn:
+        link = store.link(conn, ref)
+    assert link["dropped"] and link["task_id"] is None, "it stays removed, with no task recorded"
+
+
+def test_an_issue_the_goal_still_covers_is_joined_with_its_task_as_before(world):
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+
+    swept = _sweep(client, goal)
+
+    assert swept["joined"] == [ref] and _task(tasks, ref)["status"] == "queued"

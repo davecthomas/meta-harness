@@ -490,6 +490,45 @@ def release_for_task(conn: psycopg.Connection, ref: str, goal_id: str, linked: b
         return "released"
 
 
+def bind_task(
+    conn: psycopg.Connection,
+    ref: str,
+    goal_id: str,
+    repo: str,
+    depends_on: list[str],
+    task_id: str,
+    title: str | None = None,
+    labels: list[str] | None = None,
+) -> bool:
+    """Record the task the sweep just made for the issue, when the goal still covers it. Returns False, saving
+    nothing, when it no longer does: an operator removed the issue's repo from the goal, or the issue itself,
+    or another goal took it, while the task was being made. The caller then cancels the task.
+
+    The goal's row is read under a share lock and the issue's link under an update lock, the rows a goal
+    update and Remove from goal lock, so one of the two goes first. One that comes after finds the task
+    recorded and deals with it: a goal update keeps an issue that has its task, and Remove from goal
+    cancels it."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT repos FROM planner.goal WHERE id = %s FOR SHARE", (goal_id,))
+        goal = cur.fetchone()
+        if goal is None or repo.lower() not in [name.lower() for name in goal["repos"]]:
+            return False
+        cur.execute("SELECT goal_id, dropped FROM planner.issue_link WHERE ref = %s FOR UPDATE", (ref,))
+        link = cur.fetchone()
+        if link is not None and (link["goal_id"] != goal_id or link["dropped"]):
+            return False
+        cur.execute(
+            "INSERT INTO planner.issue_link "
+            "(ref, goal_id, repo, task_id, state, depends_on, refused_reason, title, labels) "
+            "VALUES (%s, %s, %s, %s, 'open', %s, NULL, %s, %s) ON CONFLICT (ref) DO UPDATE SET "
+            "task_id = EXCLUDED.task_id, state = 'open', depends_on = EXCLUDED.depends_on, refused_reason = NULL, "
+            "title = COALESCE(EXCLUDED.title, planner.issue_link.title), "
+            "labels = COALESCE(EXCLUDED.labels, planner.issue_link.labels), last_seen_at = now()",
+            (ref, goal_id, repo, task_id, depends_on, title, labels),
+        )
+        return True
+
+
 def claim_split(conn: psycopg.Connection, goal_id: str, ref: str) -> bool:
     """Claim a held issue for one split, so two answers never both create its smaller issues. Returns False
     when it was split already, or is being split."""

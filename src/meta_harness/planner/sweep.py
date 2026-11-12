@@ -447,9 +447,18 @@ async def _take_in(
     except TaskApiError as err:
         result.errors.append(f"{issue.ref}: {err}")
         return
-    await asyncio.to_thread(
-        _save, issue.ref, goal["id"], issue.repo, "open", open_deps, task["id"], None, title, labels
-    )
+    # An operator may have removed the issue, or its repo from the goal, while the task was being made: the
+    # link is saved only if the goal still covers the issue, and otherwise the task just made is canceled.
+    if not await asyncio.to_thread(_bind, issue.ref, goal["id"], issue.repo, open_deps, task["id"], title, labels):
+        try:
+            await asyncio.to_thread(
+                tasks.cancel, task["id"], "its goal stopped covering its issue while the task was being made", "planner"
+            )
+        except TaskApiError as err:
+            result.errors.append(
+                f"{issue.ref}: its goal no longer covers it, and its task {task['id']} could not be canceled: {err}"
+            )
+        return
     joined = {"ref": issue.ref, "goal_id": goal["id"], "depends_on": open_deps, "status": task["status"]}
     if size:
         joined |= {"size": size, "max_usd": max_usd}
@@ -779,6 +788,11 @@ def _save_sizing(ref, goal_id, repo, depends_on, size, record, title, labels) ->
 def _hold(ref: str, reason: str | None) -> None:
     with db.connect(autocommit=True) as conn:
         store.set_link_held(conn, ref, reason)
+
+
+def _bind(ref, goal_id, repo, depends_on, task_id, title, labels) -> bool:
+    with db.connect(autocommit=True) as conn:
+        return store.bind_task(conn, ref, goal_id, repo, depends_on, task_id, title, labels)
 
 
 def _release(ref: str, goal_id: str, linked: bool) -> str:

@@ -2318,7 +2318,15 @@ The answer is stored on the issue link (`size`, `sizing`) and recorded as
   deleted when an operator removed its repo from the goal. Its sizing is recorded only on a link the goal
   holds and has not removed: when two goals' sweeps first see one issue at
   once, the one that did not record it first stops, and neither holds nor
-  runs it.
+  runs it. An operator can still act while the task is being made, after
+  that last look. So the task is recorded on the issue's link only if the goal
+  still covers it (`store.bind_task`): its repo is still the goal's, and the
+  link was neither removed nor taken by another goal. That check reads the
+  goal's row and the link's under the locks a goal update and Remove from
+  goal take. When it fails, the sweep cancels the task it just made and
+  records nothing, so a removed issue does not come back on the goal's
+  board. When the task is recorded first, the operator's change meets an
+  issue with a task: a goal update keeps it, and Remove from goal cancels it.
 - An issue missing something runs, with the gap on its card. One with no
   acceptance checks, its own or the repo registry's defaults, runs with none,
   and its run asks the agent to run the repo's tests. A goal that sets
