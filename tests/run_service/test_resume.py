@@ -148,6 +148,16 @@ async def test_a_merge_asked_for_that_conflicts_resolves_the_conflict_before_any
     assert script.waited_on == ["c0"] and [m.head_sha for m in script.merge_requests] == ["c5", "c0"]
 
 
+async def test_a_resumed_task_numbers_its_review_rounds_after_the_ones_it_had(env):  # noqa: F811
+    # #288: a resumed workflow numbered its rounds from 1 again, and the task's round 1 event, review file and
+    # pull request title were the earlier round 1's. EARLIER holds one finished review run.
+    script = Script(verdicts=[CHANGES, CLEAN], fix_commits=["c6"])
+
+    await _resume(env, script, "review", _open())
+
+    assert [p.round_no for p in script.posted] == [2, 3]
+
+
 @pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
 async def test_record_the_conflict_first_history(env):  # noqa: F811
     # After the conflict-first patch: a merge asked for that conflicts starts with the fix run that resolves it.
@@ -155,6 +165,15 @@ async def test_record_the_conflict_first_history(env):  # noqa: F811
         pytest.skip("recorded already: an old history is what a deploy finds running, so it stays as it is")
     script = Script(verdicts=[CLEAN], auto_merge=True, merges=["conflict", "merged"])
     await _resume(env, script, "merge", _open(), goal_id="g-1", record="patched-conflict-first")
+
+
+@pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
+async def test_record_the_resumed_rounds_history(env):  # noqa: F811
+    # After the resumed-rounds patch: a resumed task's review rounds follow the ones it had.
+    if (HISTORIES / "patched-resumed-rounds.json").exists():
+        pytest.skip("recorded already: an old history is what a deploy finds running, so it stays as it is")
+    script = Script(verdicts=[CHANGES, CLEAN], fix_commits=["c6"])
+    await _resume(env, script, "review", _open(), record="patched-resumed-rounds")
 
 
 def test_the_author_is_the_pair_of_the_last_finished_run_that_was_not_a_review_or_fix(monkeypatch):
