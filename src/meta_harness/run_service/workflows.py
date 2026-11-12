@@ -159,6 +159,11 @@ HARNESS_RETRY = RetryPolicy(
     maximum_attempts=3,
     non_retryable_error_types=["HarnessConfigError"],
 )
+# The failure a run activity ends with when its worker shuts down, how many times one run is taken up again
+# after it, and how long the workflow waits for the worker to be back before it asks.
+WORKER_SHUTDOWN = "WorkerShutdown"
+WORKER_RESTARTS = 5
+WORKER_RESTART_WAIT = timedelta(seconds=20)
 # run_finished end reasons the next candidate may get past: the infrastructure failed, not the task.
 NEXT_CANDIDATE_END_REASONS = frozenset({"model_error", "harness_error", "server_shutdown"})
 # run_harness failures the next candidate may get past. A failed clone (CodeHostError) is the repo's, not the candidate's.
@@ -1390,31 +1395,55 @@ class RunTask:
         # Behind a patch: workflows started before it record no prompt, and replay as they ran.
         if self._task_id and workflow.patched("run-prompt"):
             await self._record(record_prompt, RunPromptRecord(self._task_id, run_id, kind, template, prompt))
-        try:
-            harness = await workflow.execute_activity(
-                run_harness,
-                HarnessRequest(
-                    run_id=run_id,
-                    prompt=prompt,
-                    candidate=candidate,
-                    spend_limit_usd=str(left),
-                    repo=repo,
-                    task_id=self._task_id,
-                    thinking=thinking,
-                    branch=branch,
-                    merge_base=merge_base,
-                ),
-                start_to_close_timeout=harness_timeout(candidate),
-                heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
-                retry_policy=HARNESS_RETRY,
-                # On cancel, wait until the activity has stopped pi before the workflow ends.
-                cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
-            )
-        except ActivityError as err:
-            if isinstance(err.cause, CancelledError):
-                workflow.logger.info("%s: canceled, and run_harness has stopped pi", workflow.info().workflow_id)
-                raise
-            kind = err.cause.type if isinstance(err.cause, ApplicationError) else type(err.cause).__name__
+        restarts = 0
+        failed: ActivityError | None = None
+        kind = ""
+        while True:
+            try:
+                harness = await workflow.execute_activity(
+                    run_harness,
+                    HarnessRequest(
+                        run_id=run_id,
+                        prompt=prompt,
+                        candidate=candidate,
+                        spend_limit_usd=str(left),
+                        repo=repo,
+                        task_id=self._task_id,
+                        thinking=thinking,
+                        branch=branch,
+                        merge_base=merge_base,
+                    ),
+                    start_to_close_timeout=harness_timeout(candidate),
+                    heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
+                    retry_policy=HARNESS_RETRY,
+                    # On cancel, wait until the activity has stopped pi before the workflow ends.
+                    cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                )
+                break
+            except ActivityError as err:
+                if isinstance(err.cause, CancelledError):
+                    workflow.logger.info("%s: canceled, and run_harness has stopped pi", workflow.info().workflow_id)
+                    raise
+                kind = err.cause.type if isinstance(err.cause, ApplicationError) else type(err.cause).__name__
+                # The worker stopped under the run: a deploy restarts it on every merge. That is not the
+                # run's failure. The run goes on in its sandbox, so the same run is taken up again once the
+                # worker is back: the activity re-attaches to it by its run id. Behind a patch, which is
+                # asked for only here, so a workflow that never meets a restart replays as it ran.
+                if kind == WORKER_SHUTDOWN and restarts < WORKER_RESTARTS and workflow.patched("worker-restart"):
+                    restarts += 1
+                    workflow.logger.warning(
+                        "%s: the worker restarted under run %s; taking the run up again (%d of %d)",
+                        self._where(),
+                        run_id,
+                        restarts,
+                        WORKER_RESTARTS,
+                    )
+                    await workflow.sleep(WORKER_RESTART_WAIT)
+                    continue
+                failed = err
+                break
+        if failed is not None:
+            err = failed
             cleanup = await workflow.execute_activity(
                 cleanup_run, run_id, start_to_close_timeout=CLEANUP_TIMEOUT, retry_policy=PREPARE_RETRY
             )
