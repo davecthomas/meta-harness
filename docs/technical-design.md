@@ -2017,7 +2017,10 @@ The answer is stored on the issue link (`size`, `sizing`) and recorded as
   is refused (409). While a split is creating its issues, its claim
   (`split_into` empty) refuses Run anyway (409), so the original never
   starts beside its smaller issues; once the split ends, Run anyway is open
-  again.
+  again. A sweep that read the issue before a split began, and sized it
+  small, looks at its link again under the row's lock just before it makes
+  the task: a split issue, or one being split, stays held with the reason
+  its split recorded.
 - An issue missing something runs, with the gap on its card. One with no
   acceptance checks, its own or the repo registry's defaults, runs with none,
   and its run asks the agent to run the repo's tests. A goal that sets

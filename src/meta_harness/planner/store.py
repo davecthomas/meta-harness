@@ -420,9 +420,28 @@ def save_sizing(
 
 
 def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> None:
-    """Hold the issue for an operator, saying why, or with None let it go on to be a task."""
+    """Hold the issue for an operator, saying why, or with None let it go on to be a task. An issue split, or
+    being split, keeps the reason its split recorded."""
     with conn.transaction():
-        conn.execute("UPDATE planner.issue_link SET held_reason = %s WHERE ref = %s", (reason, ref))
+        conn.execute(
+            "UPDATE planner.issue_link SET held_reason = %s WHERE ref = %s AND split_into IS NULL", (reason, ref)
+        )
+
+
+def release_for_task(conn: psycopg.Connection, ref: str) -> bool:
+    """Let the issue go on to be a task, unless an operator split it, or is splitting it, and did not run it
+    anyway. Returns False when it stays held. The sweep calls this just before it creates the task: an operator
+    may split the issue while the sweep waits on its sizing. Clearing held_reason under the row's lock closes
+    claim_split and Run anyway to the issue until its task is recorded."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT split_into, run_anyway FROM planner.issue_link WHERE ref = %s FOR UPDATE", (ref,))
+        row = cur.fetchone()
+        if row is None:
+            return True
+        if row["split_into"] is not None and not row["run_anyway"]:
+            return False
+        cur.execute("UPDATE planner.issue_link SET held_reason = NULL WHERE ref = %s", (ref,))
+        return True
 
 
 def claim_split(conn: psycopg.Connection, goal_id: str, ref: str) -> bool:

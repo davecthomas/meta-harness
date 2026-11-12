@@ -118,9 +118,13 @@ class FakeSizer:
         self.answers: dict[str, dict] = {}
         self.calls: list[str] = []
         self.fail = False
+        # What an operator does while the sweep waits on the model.
+        self.meanwhile = None
 
     async def __call__(self, issue: Issue):
         self.calls.append(issue.ref)
+        if self.meanwhile:
+            self.meanwhile(issue)
         if self.fail:
             raise sizing.SizingError("the HTTP Gateway is unreachable")
         answer = self.answers.get(issue.ref, {"size": "small", "reasons": [], "missing": [], "split": []})
@@ -412,3 +416,33 @@ def test_run_anyway_waits_while_the_issue_is_being_split(world):
     assert ran.status_code == 200, ran.text
     _sweep(client, goal)
     assert _task(tasks, ref) is not None
+
+
+def test_an_issue_split_while_the_sweep_sizes_it_makes_no_task_and_keeps_its_split(world):
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Everything.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    sizer.answers[ref] = {"size": "large", "reasons": [], "missing": [], "split": ["Titles", "Labels"]}
+    assert _sweep(client, goal)["held"] == [ref]
+
+    # Edited, so the next sweep sizes it again, small now; while it waits on the model, an operator splits it.
+    tracker.issues[ref].updated_at = "2026-11-12T10:00:00Z"
+    sizer.answers[ref] = {"size": "small", "reasons": [], "missing": [], "split": []}
+    created = [f"github:{REPO}#{_number()}", f"github:{REPO}#{_number()}"]
+    reason = sizing.split_reason(created)
+
+    def split(issue: Issue) -> None:
+        with db.connect(autocommit=True) as conn:
+            assert store.claim_split(conn, goal["id"], issue.ref)
+            store.record_split(conn, issue.ref, created, reason)
+
+    sizer.meanwhile = split
+    swept = _sweep(client, goal)
+
+    assert sizer.calls == [ref, ref]
+    assert ref in swept["held"] and _task(tasks, ref) is None, "the original makes no task beside its split"
+    card = _shown(client, goal)[ref]
+    assert (card["held_reason"], card["split_into"]) == (reason, created), "the split's reason is kept"
