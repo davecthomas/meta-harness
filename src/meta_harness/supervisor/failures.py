@@ -66,6 +66,16 @@ _PERMANENT = re.compile(
 )
 
 
+# A run the worker's own restart interrupted: a deploy restarts the worker on every merge.
+_RESTART = re.compile(r"WorkerShutdown|worker shutdown", re.IGNORECASE)
+
+
+def restart(reason: str | None) -> bool:
+    """Whether the task failed because the worker under it restarted. That is the control plane's doing, on
+    every deploy, so a retry after it is not one of the task's own tries."""
+    return bool(_RESTART.search(reason or "")) and not _PERMANENT.search(reason or "")
+
+
 def kind(reason: str | None) -> str:
     """transient when the recorded reason names a failure of the system, else permanent."""
     text = reason or ""

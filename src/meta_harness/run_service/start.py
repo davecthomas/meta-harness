@@ -23,8 +23,12 @@ from meta_harness.run_service.shared import (
 )
 from meta_harness.run_service.workflows import RunTask
 
-# A task's runs, fallbacks and escalations together.
-EXECUTION_TIMEOUT = timedelta(hours=6)
+# The longest one RunTask workflow lives: longer than any wait inside it. A workflow holds for budget for
+# up to a day and waits on an operator's review with no limit of its own, so a six-hour limit, as this was,
+# ended those workflows mid-wait with the task still running and no one to answer. Temporal ends a workflow
+# at its limit without running any of its code, so nothing a workflow does can be allowed to outlast it. A
+# workflow that dies some other way is the supervisor's to notice, not this limit's.
+EXECUTION_TIMEOUT = timedelta(hours=72)
 
 
 class AlreadyStarted(RuntimeError):

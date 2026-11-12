@@ -1898,7 +1898,10 @@ plane and what it depends on; a reason it does not recognize, and any that
 names the task's own limit, is the task's, so an unknown failure waits for a
 person rather than being run again. It retries only a failure less than a
 day old: one older is an operator's, told that a retry should now run. The
-three tries a task gets are shared with the merges above (`drives`).
+three tries a task gets are shared with the merges above (`drives`). A
+retry after the worker's own restart, which every deploy causes, is not one
+of them: the control plane interrupted that run, so the task keeps its
+tries, and the spend it carries still bounds it.
 
 A recovery waits until the task has stood with no workflow for three
 minutes, so a status write still on its way is not taken for a lost one. A
@@ -1936,11 +1939,26 @@ how many tasks each owner has.
 Built so far are the actions above and the standing of every task. A run
 that the worker's restart interrupts still fails its task in the workflow
 (#254): the supervisor retries that task within minutes, from a new first
-run, and resuming the same run in place is planned. Planned, in this order:
-a goal's own standing, saying when everything it has left waits on an
-operator, and a reopened issue given a new task; and a deadline and a reminder on every wait for an
-operator, with the workflow's six-hour limit no longer shorter than the
-waits inside it.
+run, and resuming the same run in place is planned.
+
+A RunTask workflow may live 72 hours (`EXECUTION_TIMEOUT`), longer than any
+wait inside it. It was six, while a budget hold waits a day and an
+operator's review has no limit: Temporal ended those workflows mid-wait,
+running none of their code, with the task still `running`. Temporal's limit
+is not what notices a dead workflow any more; the supervisor is.
+
+The console's Needs you is the supervisor's record, not a list of its own:
+the Overview and the inbox read the tasks whose standing's owner is an
+operator (`GET /v1/tasks?has_it=operator`, longest waiting first), each with
+what to do and since when. A task of a paused or planning goal is left out:
+that hold is the goal's, and shows on the goal. Because the list is the
+supervisor's, the Overview says so when the supervisor is off, late or
+failing, or a goal's sweep cannot finish: the list may then be missing
+something.
+
+Planned: a goal's own standing, saying when everything it has left waits on
+an operator; a reopened issue given a new task; and a reminder outside the
+console when a wait for an operator grows long.
 
 ### Throughput
 
@@ -2007,7 +2025,7 @@ credential.
 | Method | Path | Owner | Purpose | State |
 |---|---|---|---|---|
 | POST | `/v1/tasks` | Task service | Submit a task, idempotent on `external_ref`. Returns the task id | built |
-| GET | `/v1/tasks` | Task service | Tasks by status, goal or `external_ref`; a caller sees its own | built |
+| GET | `/v1/tasks` | Task service | Tasks by status, goal or `external_ref`, or by who has them (`has_it`: `operator`, `supervisor`, `workflow`, `scheduler` or `planner`, from the supervisor's standing, longest in their situation first); a caller sees its own | built |
 | GET | `/v1/tasks/{id}` | Task service | State, current run, routing decision, pull request URL and outcome. `held` says why the scheduler holds a queued task: `{reason, kind, since, last_checked, detail}`, null for a queued task it does not hold and for a task in any other status. `kind` is one of `goal_budget`, `goal_status`, `goal_parallel`, `system_parallel`, `repo_area`, `kill_switch`, `draining` or `start_failed`, so a page need not read the reason's words, and `detail` names what the reason is about (`goal_id`, the tasks holding the places as `holders`, the shared `paths`). The list (`GET /v1/tasks`) carries `held` on each queued task too. The task service reads it from the scheduler's record with scheduler code (`scheduler/holds.py`) | built |
 | POST | `/v1/tasks/{id}/cancel` | Task service | Cancel a task that has not started, or ask for its active run to stop, which the scheduler carries out | built |
 | GET | `/v1/pulls/{task_id}/diff` | Meta-harness run service, served from the planner process | The files the task's pull request changes, with their added and removed counts and patches, and its head commit. The Task page's Changes tab | built |
