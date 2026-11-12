@@ -40,7 +40,9 @@ request, in this workflow:
    so does a branch merge_pr brought the base's newest commits into: merges
    are one at a time per repo, each on a head that holds the base. A conflict
    with the base goes to a fix run that resolves the merge the host started,
-   and back to step 1.
+   and back to step 1. A merge asked for again (an operator's, or the
+   supervisor's) that meets a conflict starts with that fix run, before any
+   review.
 
 The loop ends review_unresolved after max_rounds fix runs, when the task's
 spend limit is used up, when a fix run changes nothing, or when no reviewer
@@ -771,17 +773,21 @@ class RunTask:
             elif merged.state == "blocked":
                 outcome, reason = "clean", merged.detail
             else:
-                # The head moved, or it conflicts with its base: checks, review and fixes come first.
+                # The head moved, or it conflicts with its base: checks, review and fixes come first. A conflict
+                # is resolved before anything else: a review of a head that cannot merge only finds more to fix,
+                # and the loop reaches the merge, and its conflict fix, only through a clean review.
                 loop.head = merged.head_sha or loop.head
-                outcome, reason = await self._review_loop(loop)
+                conflict = merged.state == "conflict" and workflow.patched("conflict-first")
+                outcome, reason = await self._review_loop(loop, conflict=conflict)
         else:
             outcome, reason = await self._review_loop(loop)
         if outcome == "merged" and loop.merge_sha:
             outcome, reason = await self._after_merge(loop, reason)
         return result(outcome, reason, loop.published, loop.spent), attempts
 
-    async def _review_loop(self, loop: "_Loop") -> tuple[str, str]:
-        """The review loop on the task's pull request. Returns its outcome and why."""
+    async def _review_loop(self, loop: "_Loop", conflict: bool = False) -> tuple[str, str]:
+        """The review loop on the task's pull request. Returns its outcome and why. With conflict, the pull
+        request conflicts with its base, and the loop starts with the fix run that resolves it."""
         info = workflow.info()
         log = workflow.logger
         try:
@@ -800,6 +806,11 @@ class RunTask:
             standing = ""
             # The round before's findings and summary, which the next review judges first.
             previous: dict = {}
+            if conflict:
+                fixes += 1
+                stopped = await self._fix(loop, loop.prompt_request("fix", conflict=True), fixes)
+                if stopped:
+                    return "review_unresolved", stopped
             while True:
                 checks = await workflow.execute_activity(
                     wait_checks,
