@@ -136,6 +136,8 @@ class SweepResult:
     # Task ids, canceled with their pull request open, whose pull request the sweep found merged or closed.
     ended: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Task ids of open issues whose task was canceled, sent back to the queue.
+    retaken: list[str] = field(default_factory=list)
     met: bool = False
 
 
@@ -375,7 +377,10 @@ async def _take_in(
         await asyncio.to_thread(_set_title, issue.ref, title)
     if existing and existing["goal_id"] == goal["id"] and existing.get("labels") != labels:
         await asyncio.to_thread(_set_labels, issue.ref, labels)
-    if existing and (existing["goal_id"] != goal["id"] or existing["task_id"]):
+    if existing and existing["goal_id"] != goal["id"]:
+        return
+    if existing and existing["task_id"]:
+        await _retake(existing["task_id"], issue, tasks, result)
         return
     if existing and existing.get("split_into") is not None and not existing.get("run_anyway"):
         # Split by an operator: it stays held, saying what it was split into, and is neither sized nor split again.
@@ -470,6 +475,23 @@ async def _take_in(
         event_id=stable_event_id("issue_joined", issue.ref, goal["id"]),
     )
     result.joined.append(issue.ref)
+
+
+async def _retake(task_id: str, issue: Issue, tasks: TaskClient, result: SweepResult) -> None:
+    """An open issue the goal still holds whose task was canceled goes back to work: its task is retried, so
+    the goal does not wait on an issue nothing works on. An operator who wants it left alone removes it from
+    the goal instead (Remove from goal), which this sweep never takes in again. A failed task is not retaken:
+    the supervisor retries a failure that was the system's, and any other is an operator's, since running it
+    again unasked could fail the same way at the same cost."""
+    try:
+        task = await asyncio.to_thread(tasks.get, task_id)
+        if task["status"] != "canceled":
+            return
+        await asyncio.to_thread(tasks.retry, task_id, None, "planner")
+    except TaskApiError as err:
+        result.errors.append(f"{issue.ref}: its canceled task {task_id} could not be sent back to work: {err}")
+        return
+    result.retaken.append(task_id)
 
 
 async def _size(

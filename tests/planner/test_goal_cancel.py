@@ -106,7 +106,8 @@ def test_pausing_a_goal_cancels_nothing(api, parts):
     assert _tasks_by_ref(tasks)[ref]["status"] == "queued" and tasks.cancels == []
 
 
-def test_reopening_a_canceled_goal_does_not_bring_its_canceled_tasks_back(api, parts):
+def test_reopening_a_canceled_goal_sends_its_open_issues_canceled_tasks_back_to_work(api, parts):
+    # #256: an open issue in an active goal is worked on; Remove from goal is how an operator keeps one out.
     _, tracker, tasks = parts
     label = _label()
     goal = _goal(api, label)
@@ -117,7 +118,7 @@ def test_reopening_a_canceled_goal_does_not_bring_its_canceled_tasks_back(api, p
     assert api.post(f"/v1/goals/{goal['id']}/reopen", headers=OPERATOR).json()["status"] == "active"
     _sweep(api, goal)
 
-    assert _tasks_by_ref(tasks)[ref]["status"] == "canceled"
+    assert _tasks_by_ref(tasks)[ref]["status"] == "queued"
 
 
 def test_a_canceled_goals_page_reads_its_issues_states_from_the_tracker(api, parts):

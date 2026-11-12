@@ -2233,8 +2233,15 @@ is canceled with the reason "its goal was canceled", recorded as the task's
 `task_status_changed`, and each `running` task with no pull request is asked
 to stop, as a task cancel does. A task with a pull request open is left for
 the operator, who merges it, closes it or cancels the task. Pausing a goal
-cancels nothing: its tasks wait and resume with it. Reopening a canceled
-goal does not bring a canceled task back. A `met` or `canceled`
+cancels nothing: its tasks wait and resume with it. An active goal's sweep
+sends a canceled task of an issue that is still open, and still the goal's,
+back to work (`retaken` in its result): its task is retried, resuming at its
+pull request when one is open, against the spend limit it had. So reopening
+a canceled goal brings its open issues' tasks back. An operator who wants an
+issue left alone removes it from the goal (Remove from goal), and the goal
+never takes it in again. A failed task is not retaken: the supervisor
+retries a failure that was the system's, and any other is an operator's. A
+task whose issue was closed is not retaken either. A `met` or `canceled`
 goal takes no more issues until an operator reopens it, which makes it
 `active` again, so a `fix` goal over a label that keeps receiving issues is
 reopened, or given a criterion that never passes. A goal can also be saved

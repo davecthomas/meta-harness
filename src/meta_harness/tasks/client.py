@@ -41,6 +41,10 @@ class TaskClient:
     def get(self, task_id: str) -> dict:
         return self._call("GET", f"/v1/tasks/{task_id}")
 
+    def retry(self, task_id: str, max_usd: str | None = None, actor: str | None = None) -> dict:
+        """Send a review_unresolved, failed or canceled task back to the queue, against max_usd when given."""
+        return self._call("POST", f"/v1/tasks/{task_id}/retry", actor=actor, json={"max_usd": max_usd})
+
     def find(self, external_ref: str) -> dict:
         return self._call("GET", "/v1/tasks", params={"external_ref": external_ref})
 
