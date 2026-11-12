@@ -373,3 +373,42 @@ async def test_wait_checks_names_the_checks_that_passed(monkeypatch):
     )
     assert result.state == "failed" and [f.name for f in result.failed] == ["deploy"]
     assert "tests" in result.passed and "deploy" not in result.passed
+
+
+async def test_a_review_prompt_shows_the_pull_requests_description_as_it_stands(monkeypatch):
+    # #258: the reviewer was told a change outside the paths needs its reason in the description, and never
+    # shown the description, so an operator's explanation there could not clear the finding.
+    asked: list[tuple[str, int]] = []
+
+    async def pull_request(repo: str, number: int) -> dict:
+        asked.append((repo, number))
+        return {"body": "## Changes outside the issue's Paths\n\nThe cost harvester reads issue_sized."}
+
+    monkeypatch.setattr(activities.code_host, "pull_request", pull_request)
+    request = _prompt_request(kind="review", pr_url="https://github.com/owner/repo/pull/258")
+    prompt = await ActivityEnvironment().run(activities.loop_prompt, request)
+
+    assert asked == [("owner/repo", 258)]
+    assert "--- pull request description ---" in prompt and "The cost harvester reads issue_sized." in prompt
+    assert "$" not in prompt
+
+
+async def test_a_fix_prompt_does_not_read_the_description_and_a_review_says_when_there_is_none(monkeypatch):
+    async def pull_request(repo: str, number: int) -> dict:
+        raise AssertionError("a fix run's prompt does not read the pull request")
+
+    monkeypatch.setattr(activities.code_host, "pull_request", pull_request)
+    await ActivityEnvironment().run(
+        activities.loop_prompt, _prompt_request(kind="fix", pr_url="https://github.com/o/r/pull/1")
+    )
+    review = await ActivityEnvironment().run(activities.loop_prompt, _prompt_request(kind="review"))
+    assert "(no pull request yet)" in review
+
+
+async def test_a_local_pull_requests_description_is_its_record_file(tmp_path):
+    record = tmp_path / "pr.md"
+    record.write_text("# Fix the bug\n\nWhy tests/ changed: the fixture moved.\n", encoding="utf-8")
+    prompt = await ActivityEnvironment().run(
+        activities.loop_prompt, _prompt_request(kind="review", pr_url=f"file://{record}")
+    )
+    assert "Why tests/ changed: the fixture moved." in prompt

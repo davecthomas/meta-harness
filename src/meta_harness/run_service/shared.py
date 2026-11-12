@@ -367,6 +367,8 @@ class LoopPromptRequest:
     previous_summary: str = ""
     # A review: the code host's checks that passed at the reviewed commit, which the reviewer does not rerun.
     passed_checks: list[str] = field(default_factory=list)
+    # The pull request under review, whose description the review prompt shows as it stands on the code host.
+    pr_url: str = ""
 
 
 @dataclass
