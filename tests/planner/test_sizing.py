@@ -749,3 +749,50 @@ def test_an_issue_the_goal_still_covers_is_joined_with_its_task_as_before(world)
     swept = _sweep(client, goal)
 
     assert swept["joined"] == [ref] and _task(tasks, ref)["status"] == "queued"
+
+
+def test_an_open_issue_whose_task_was_canceled_goes_back_to_work(world):
+    # #256: an issue whose task was canceled sat open, holding its goal from being met, with nothing on it.
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    _sweep(client, goal)
+    task = _task(tasks, ref)
+    tasks.cancel(task["id"], "canceled from the console")
+
+    swept = _sweep(client, goal)
+
+    assert swept["retaken"] == [task["id"]] and tasks.retried == [(task["id"], "planner")]
+    assert _task(tasks, ref)["status"] == "queued" and len(tasks.tasks) == 1, "the same task, not a second one"
+    assert _sweep(client, goal)["retaken"] == [], "a task back at work is left alone"
+
+
+def test_a_failed_task_and_an_issue_removed_from_the_goal_are_not_retaken(world):
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    failed = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    removed = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: src\n\n{CHECKS}", labels=[goal["label"]])
+    _sweep(client, goal)
+    tasks.set_status(_task(tasks, failed)["id"], "failed")
+    tasks.cancel(_task(tasks, removed)["id"])
+    with db.connect(autocommit=True) as conn:
+        store.drop_ref(conn, goal["id"], removed)
+
+    swept = _sweep(client, goal)
+
+    assert swept["retaken"] == [] and not getattr(tasks, "retried", [])
+    assert _task(tasks, failed)["status"] == "failed" and _task(tasks, removed)["status"] == "canceled"
+
+
+def test_a_canceled_task_whose_issue_was_closed_is_not_retaken(world):
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    _sweep(client, goal)
+    tasks.cancel(_task(tasks, ref)["id"])
+    tracker.issues[ref].state = "closed"
+
+    assert _sweep(client, goal)["retaken"] == []

@@ -121,6 +121,11 @@ class FakeTasks:
         self.tasks[task_id]["status"] = "canceled"
         return self.tasks[task_id]
 
+    def retry(self, task_id, max_usd=None, actor=None):
+        self.retried = [*getattr(self, "retried", []), (task_id, actor)]
+        self.tasks[task_id]["status"] = "queued"
+        return self.tasks[task_id]
+
     def list(self, statuses=None, goal_id=None, limit=100):
         found = [
             t
