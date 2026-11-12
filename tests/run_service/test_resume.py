@@ -4,6 +4,10 @@ The RunTask workflow runs against the review loop's scripted activities, with st
 and for resume_state, which reads the pull request and the earlier runs. No model, gateway or GitHub is called.
 """
 
+import json
+import os
+
+import pytest
 from temporalio import activity
 from temporalio.activity import _Definition
 from temporalio.worker import Worker
@@ -12,7 +16,7 @@ from meta_harness.run_service.resume_activities import ResumeState, author_of
 from meta_harness.run_service.shared import Attempt, PublishResult, RunTaskInput, TaskSpec, TaskStatusRequest
 from meta_harness.run_service.workflows import RunTask
 
-from .test_replay import _task_activities
+from .test_replay import HISTORIES, _task_activities
 from .test_review_loop import AUTHOR, CHANGES, CLEAN, QUEUE, REPO, Script, env  # noqa: F401 - env is a fixture
 
 PR = f"https://github.com/{REPO}/pull/7"
@@ -28,7 +32,7 @@ def _open(state: str = "open") -> ResumeState:
     return ResumeState(pr_state=state, published=published, author=AUTHOR, attempts=list(EARLIER))
 
 
-async def _resume(env, script: Script, resume: str, state: ResumeState, goal_id: str = ""):  # noqa: F811
+async def _resume(env, script: Script, resume: str, state: ResumeState, goal_id: str = "", record: str = ""):  # noqa: F811
     statuses: list[TaskStatusRequest] = []
 
     @activity.defn(name="load_task")
@@ -63,9 +67,14 @@ async def _resume(env, script: Script, resume: str, state: ResumeState, goal_id:
     kept = [a for a in base if _Definition.from_callable(a).name not in ("load_task", "set_task_status")]
     activities = [*kept, load_task, resume_state, set_task_status]
     async with Worker(env.client, task_queue=QUEUE, workflows=[RunTask], activities=activities):
-        result = await env.client.execute_workflow(
+        handle = await env.client.start_workflow(
             RunTask.run, RunTaskInput(task="", repo="", task_id="t-1"), id=f"run-task-t-1-{resume}", task_queue=QUEUE
         )
+        result = await handle.result()
+        if record:
+            # A resumed task's history, for test_replay to replay against later code (its docstring says why).
+            history = await handle.fetch_history()
+            (HISTORIES / f"{record}.json").write_text(json.dumps(json.loads(history.to_json()), indent=1) + "\n")
     return result, statuses
 
 
@@ -122,6 +131,30 @@ async def test_a_merge_asked_for_on_a_head_that_moved_goes_through_checks_and_re
 
     assert result.outcome == "merged"
     assert script.waited_on == ["c9"] and [p.head_sha for p in script.posted] == ["c9"]
+
+
+async def test_a_merge_asked_for_that_conflicts_resolves_the_conflict_before_any_review(env):  # noqa: F811
+    # #258: the supervisor asked for the merge of a pull request with a clean review that had fallen behind
+    # its base. Reviewed first, it met new findings each round and never reached the merge's conflict fix.
+    # The scripted publish returns "c0" first, here the fix run's commit.
+    script = Script(verdicts=[CLEAN], auto_merge=True, merges=["conflict", "merged"])
+
+    result, _ = await _resume(env, script, "merge", _open(), goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert [r.prompt for r in script.runs] == ["fix", "review"], "the conflict is fixed, then the result reviewed"
+    assert script.runs[0].merge_base == "main", "the host merges the base into the fix run's clone"
+    assert next(p for p in script.prompts if p.kind == "fix").conflict is True
+    assert script.waited_on == ["c0"] and [m.head_sha for m in script.merge_requests] == ["c5", "c0"]
+
+
+@pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
+async def test_record_the_conflict_first_history(env):  # noqa: F811
+    # After the conflict-first patch: a merge asked for that conflicts starts with the fix run that resolves it.
+    if (HISTORIES / "patched-conflict-first.json").exists():
+        pytest.skip("recorded already: an old history is what a deploy finds running, so it stays as it is")
+    script = Script(verdicts=[CLEAN], auto_merge=True, merges=["conflict", "merged"])
+    await _resume(env, script, "merge", _open(), goal_id="g-1", record="patched-conflict-first")
 
 
 def test_the_author_is_the_pair_of_the_last_finished_run_that_was_not_a_review_or_fix(monkeypatch):
