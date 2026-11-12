@@ -44,6 +44,10 @@ export interface Goal {
   // What the goal's runs had spent at the planner's last look, the spend a block goal stops at, where the goal
   // stands, and the budget a resume would set for a goal past its budget.
   spent_usd?: string;
+  // What the goal has cost: its tasks' runs, the same total as its Spend section. On the goal list only; null
+  // with cost_unknown saying why when it could not be read.
+  cost_usd?: string | null;
+  cost_unknown?: string | null;
   budget_block_at?: string | null;
   budget_state?: "ok" | "over" | "blocked";
   budget_resume_to?: string | null;
