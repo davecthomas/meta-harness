@@ -858,7 +858,9 @@ async def base_health(request: BaseHealthRequest) -> BaseHealth:
 
 @activity.defn
 async def loop_prompt(request: LoopPromptRequest) -> str:
-    """A review or fix run's prompt, from prompts/review-v3.txt or prompts/fix-v1.txt."""
+    """A review or fix run's prompt, from prompts/review-v4.txt or prompts/fix-v1.txt. A review's shows the pull
+    request's description as it stands, since the reviewer judges what it explains (why a file outside the
+    task's paths changed) and has no other way to read it."""
     checks = (
         "\n".join(f"- {c}" for c in request.checks) or "- None were given. Run the repository's tests, if it has them."
     )
@@ -874,10 +876,37 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
         "paths": code_host.paths_rule(request.description, request.kind),
         "previous": _previous(request),
         "checks_rule": _checks_rule(request),
+        "pr_description": await _pr_description(request) if request.kind == "review" else "",
     }
     name = loop_template(request.kind)
     template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
     return Template(template).safe_substitute(values).strip()
+
+
+# How much of a pull request's description a review prompt shows.
+PR_DESCRIPTION_CHARS = 8000
+
+
+async def _pr_description(request: LoopPromptRequest) -> str:
+    """The pull request's description as the code host has it now, so an operator's edit counts. Says so when
+    it cannot be read: the reviewer then knows it has not seen it, and does not take it for empty."""
+    if not request.pr_url:
+        return "(no pull request yet)"
+    if request.pr_url.startswith("file://"):
+        # A local repo's pull request is the file publish wrote.
+        record = Path(request.pr_url.removeprefix("file://"))
+        body = record.read_text(encoding="utf-8").strip() if record.is_file() else ""
+    else:
+        try:
+            repo, number = code_host.pr_number(request.pr_url)
+            body = str((await code_host.pull_request(repo, number)).get("body") or "").strip()
+        except code_host.CodeHostError as err:
+            if not err.retryable:
+                return "(the pull request's description could not be read)"
+            raise ApplicationError(str(err), type="CodeHostError") from err
+    if not body:
+        return "(the pull request has no description)"
+    return body if len(body) <= PR_DESCRIPTION_CHARS else body[:PR_DESCRIPTION_CHARS] + "\n(cut short)"
 
 
 def _findings(findings: list[dict]) -> list[str]:

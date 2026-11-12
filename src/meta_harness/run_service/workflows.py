@@ -1536,6 +1536,7 @@ class _Loop:
             checks=list(self.prepared.checks),
             base=self.published.base,
             branch=self.published.branch,
+            pr_url=self.published.pr_url,
             **fields,
         )
 
