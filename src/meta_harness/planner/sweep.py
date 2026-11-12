@@ -503,7 +503,8 @@ async def _size(
         _save_sizing, issue.ref, goal["id"], issue.repo, issue.depends_on, sized.size, record, title, labels
     )
     if not saved:
-        # Another goal holds the issue now, or an operator removed it: this goal neither holds nor runs it.
+        # Another goal holds the issue now, or an operator removed it or its repo: this goal neither holds nor
+        # runs it.
         return None
     events.emit(
         "issue_sized",

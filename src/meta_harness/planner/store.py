@@ -434,8 +434,14 @@ def save_sizing(
     """Record the size the planner gave an open issue, holding the link for the goal if it held none yet. A
     refusal from before it was sized is cleared: a sized issue is held or run, never refused. Returns False,
     recording nothing, when the link is another goal's or was removed: two goals' sweeps may first see one
-    issue at once, and an operator may remove it while the sweep waits on its sizing."""
+    issue at once, and an operator may remove it while the sweep waits on its sizing. It also returns False
+    when the goal no longer names the issue's repo: an operator may remove the repo while the sweep waits, and
+    its taskless links go with it. The goal's row is locked first, so a repo change waits for this, or this
+    sees the change."""
     with conn.transaction():
+        goal = conn.execute("SELECT repos FROM planner.goal WHERE id = %s FOR SHARE", (goal_id,)).fetchone()
+        if goal is None or repo.lower() not in {name.lower() for name in goal[0]}:
+            return False
         saved = conn.execute(
             "INSERT INTO planner.issue_link (ref, goal_id, repo, state, depends_on, title, labels, size, sizing) "
             "VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s) ON CONFLICT (ref) DO UPDATE SET "

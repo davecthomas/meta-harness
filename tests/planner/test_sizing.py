@@ -401,6 +401,29 @@ def test_an_issue_whose_repo_is_removed_while_the_sweep_sizes_it_makes_no_task(w
         assert store.link(conn, ref) is None, "the removed issue is not put back on the goal"
 
 
+def test_an_issue_whose_repo_is_removed_while_the_model_sizes_it_makes_no_task(world):
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+
+    def remove_repo(issue: Issue) -> None:
+        # An operator removes the goal's repo while the sweep waits on the model.
+        with db.connect(autocommit=True) as conn:
+            store.update(conn, goal["id"], repos=["davecthomas/other-repo"])
+
+    sizer.meanwhile = remove_repo
+    swept = _sweep(client, goal)
+
+    assert sizer.calls == [ref]
+    assert swept["joined"] == [] and _task(tasks, ref) is None, "an issue whose repo was removed makes no task"
+    assert _payloads(events, "issue_sized") == [], "its sizing is not recorded"
+    with db.connect(autocommit=True) as conn:
+        assert store.link(conn, ref) is None, "the sizing does not put the removed repo's issue back on the goal"
+
+
 def test_split_creates_the_suggested_issues_with_the_goals_label_and_their_paths(world):
     client, events, tracker, tasks, sizer = world
     goal = _goal(client)
