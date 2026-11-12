@@ -7,9 +7,26 @@ issue's text, its `## Acceptance checks` (else the repo registry's default
 checks), and the open issues it depends on. The task service starts a task
 with open dependencies in `blocked`. A sweep also records issues that closed,
 and moves a blocked task to `queued` once every issue it depends on is
-closed. An issue already in another goal stays there. An issue with no
-acceptance checks, and no default checks for its repo, is refused, and looked
-at again on every sweep, so adding the checks is all it takes. Each sweep refreshes
+closed. An issue already in another goal stays there.
+
+Before an issue becomes a task it is sized, once, when the sweep first sees
+it (sizing.py): one cheap model call, recorded as `issue_sized`. A large
+issue is held instead, its link's held_reason saying why with the suggested
+split, until an operator runs it anyway or splits it; so is one missing
+acceptance checks, paths or a testable outcome when its goal sets
+strict_issues, and otherwise that one runs with the gap on its card: one with
+no acceptance checks, its own or the repo's defaults, runs with none, and its
+run asks the agent to run the repo's tests. With sizing off, an issue with no
+checks is refused, as before sizing, and looked at again on every sweep, so
+adding the checks is all it takes. An issue whose first sizing call fails
+waits, with no task, for the next sweep to size it again. A held issue
+edited since its sizing is sized again, unless an operator split it: a split
+issue stays held, saying what it was split into, until it is closed or run
+anyway. The size is stored on the task
+as its complexity, and the task's spend limit is its issue's own `Spend
+limit:` line, else the task policy's limit for its size.
+
+Each sweep refreshes
 the title and labels it keeps of every issue it holds that has a task, open
 or closed, so costs by label follow a relabel.
 
@@ -62,13 +79,15 @@ requests watched as often (follow_up_goalless).
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from meta_harness import db
+from meta_harness.config import store as config_store
 from meta_harness.events.client import stable_event_id
 from meta_harness.github_app import GitHubAppError
-from meta_harness.planner import budget_api, cost_facts, repos, store
+from meta_harness.planner import budget_api, cost_facts, repos, sizing, store
 from meta_harness.planner.tracker import Issue, Tracker
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CheckRun, CodeHostError, PullRequest
@@ -84,6 +103,8 @@ PR_WATCH_LIMIT = 1000
 # The goals no sweep covers, which a follow-up looks at instead, and how often.
 FOLLOWED_UP_STATUSES = ["met", "canceled", "paused", "stalled"]
 FOLLOW_UP_SECONDS = 3600.0
+
+log = logging.getLogger("meta_harness.planner")
 
 
 class Events(Protocol):
@@ -103,6 +124,8 @@ class SweepResult:
     goal_id: str
     joined: list[str] = field(default_factory=list)
     refused: list[str] = field(default_factory=list)
+    # Issues held for an operator instead of made tasks: sized large, or missing what a strict goal asks for.
+    held: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
     unblocked: list[str] = field(default_factory=list)
     # Task ids canceled because their issue was closed with their work not yet published.
@@ -125,8 +148,15 @@ def task_type_for(issue: Issue) -> str:
 
 
 async def sweep_goal(
-    goal: dict, tracker: Tracker, tasks: TaskClient, events: Events, host: CodeHost | None = None
+    goal: dict,
+    tracker: Tracker,
+    tasks: TaskClient,
+    events: Events,
+    host: CodeHost | None = None,
+    sizer: sizing.Sizer | None = None,
 ) -> SweepResult:
+    """One sweep of a goal, as the module says. sizer sizes each issue before it becomes a task; None: none is
+    sized, and every issue runs as it did before sizing."""
     result = SweepResult(goal["id"])
     seen: set[str] = set()
     # A goal with no label takes only the issues an operator added by ref: listing with no label would
@@ -139,8 +169,8 @@ async def sweep_goal(
             continue
         for issue in issues:
             seen.add(issue.ref)
-            await _take_in(goal, issue, tracker, tasks, events, result)
-    await _take_in_added(goal, seen, tracker, tasks, events, result)
+            await _take_in(goal, issue, tracker, tasks, events, result, sizer)
+    await _take_in_added(goal, seen, tracker, tasks, events, result, sizer)
     await _watch_pull_requests(goal, tasks, events, host or code_host, result)
     await _watch_canceled_pull_requests(goal, tasks, events, host or code_host, result)
     await _record_closed(goal, seen, tracker, events, result)
@@ -295,7 +325,13 @@ async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, even
 
 
 async def _take_in_added(
-    goal: dict, seen: set[str], tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult
+    goal: dict,
+    seen: set[str],
+    tracker: Tracker,
+    tasks: TaskClient,
+    events: Events,
+    result: SweepResult,
+    sizer: sizing.Sizer | None = None,
 ):
     """Take in the issues an operator added to the goal by ref, which its label did not list. One in a repo the
     goal no longer names makes no task there."""
@@ -313,10 +349,18 @@ async def _take_in_added(
             continue
         seen.add(issue.ref)
         if issue.state == "open":
-            await _take_in(goal, issue, tracker, tasks, events, result)
+            await _take_in(goal, issue, tracker, tasks, events, result, sizer)
 
 
-async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult):
+async def _take_in(
+    goal: dict,
+    issue: Issue,
+    tracker: Tracker,
+    tasks: TaskClient,
+    events: Events,
+    result: SweepResult,
+    sizer: sizing.Sizer | None = None,
+):
     existing = await asyncio.to_thread(_link, issue.ref)
     if existing and existing.get("dropped"):
         # An operator removed the issue from its goal. That goal never takes it in again by its label;
@@ -333,11 +377,29 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
         await asyncio.to_thread(_set_labels, issue.ref, labels)
     if existing and (existing["goal_id"] != goal["id"] or existing["task_id"]):
         return
+    if existing and existing.get("split_into") is not None and not existing.get("run_anyway"):
+        # Split by an operator: it stays held, saying what it was split into, and is neither sized nor split again.
+        result.held.append(issue.ref)
+        return
     # An issue refused before is looked at again each sweep, so one given its acceptance checks since, or
     # whose repo was given default checks, becomes a task without anyone dropping and adding it.
     registered = repos.get(issue.repo)
     checks = issue.checks or (registered.default_checks if registered else [])
-    if not checks:
+    found = await _size(goal, issue, existing, sizer, events, title, labels, result)
+    if found is None:
+        return
+    size, sized = found
+    was_held = (existing or {}).get("held_reason")
+    if not (existing or {}).get("run_anyway"):
+        held = sizing.hold_reason(size, sized, bool(goal.get("strict_issues")))
+        if held:
+            if held != was_held:
+                await asyncio.to_thread(_hold, issue.ref, held)
+            result.held.append(issue.ref)
+            return
+    if not checks and not size:
+        # Unsized, with sizing off or failing, an issue with no checks is refused as it was before sizing. A sized
+        # one runs with no checks and the gap on its card: the run asks its agent to run the repo's tests.
         reason = "the issue has no ## Acceptance checks and the repo registry names no default checks"
         if existing and existing.get("refused_reason") == reason:
             result.refused.append(issue.ref)
@@ -354,7 +416,18 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
         )
         result.refused.append(issue.ref)
         return
+    # The issue's own limit, else the task policy's for its size; neither: the task has none, as before sizing.
+    max_usd = sizing.issue_limit(issue.body) or await asyncio.to_thread(config_store.max_usd_for_size, size)
     open_deps = [ref for ref in issue.depends_on if await _is_open(ref, tracker)]
+    # The link was read before the sizer's call: an operator may have split or removed the issue since, or another
+    # goal taken it. Look again under the row's lock, so the original makes no task beside its smaller issues and
+    # keeps the reason its split recorded, and a removed issue or another goal's makes none for this goal.
+    # A sized issue has a link, as has one held before: if it is gone, the goal's repo was removed with it.
+    released = await asyncio.to_thread(_release, issue.ref, goal["id"], bool(size or existing))
+    if released == "split":
+        result.held.append(issue.ref)
+    if released != "released":
+        return
     try:
         task = await asyncio.to_thread(
             tasks.create,
@@ -368,6 +441,8 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
             goal_id=goal["id"],
             depends_on=open_deps or None,
             paths=issue.paths or None,
+            **({"max_usd": max_usd} if max_usd else {}),
+            **({"complexity": sizing.COMPLEXITY_FOR_SIZE[size]} if size in sizing.COMPLEXITY_FOR_SIZE else {}),
         )
     except TaskApiError as err:
         result.errors.append(f"{issue.ref}: {err}")
@@ -375,14 +450,79 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
     await asyncio.to_thread(
         _save, issue.ref, goal["id"], issue.repo, "open", open_deps, task["id"], None, title, labels
     )
+    joined = {"ref": issue.ref, "goal_id": goal["id"], "depends_on": open_deps, "status": task["status"]}
+    if size:
+        joined |= {"size": size, "max_usd": max_usd}
     events.emit(
         "issue_joined",
-        {"ref": issue.ref, "goal_id": goal["id"], "depends_on": open_deps, "status": task["status"]},
+        joined,
         task_id=task["id"],
         actor="planner",
         event_id=stable_event_id("issue_joined", issue.ref, goal["id"]),
     )
     result.joined.append(issue.ref)
+
+
+async def _size(
+    goal: dict,
+    issue: Issue,
+    existing: dict | None,
+    sizer: sizing.Sizer | None,
+    events: Events,
+    title: str,
+    labels: list[str],
+    result: SweepResult,
+) -> tuple[str | None, dict | None] | None:
+    """The issue's size and its sizing record: the one its link holds, or a new one from the sizer for an issue
+    not sized yet, or held and edited since it was sized. None when the issue is not to be taken in this sweep:
+    the sizer failed on an issue never sized, which waits, unsized and with no task, for the next sweep to size
+    it again (the failure is the sweep's error); or another goal, or an operator's removal, took the link while
+    the sizer ran. A sizer that fails on an issue sized before leaves it with the size it had."""
+    size = (existing or {}).get("size")
+    recorded = (existing or {}).get("sizing")
+    edited = bool(
+        size
+        and (existing or {}).get("held_reason")
+        and not (existing or {}).get("run_anyway")
+        and (recorded or {}).get("updated_at") != issue.updated_at
+    )
+    if sizer is None or (size and not edited):
+        return size, recorded
+    try:
+        sized = await sizer(issue)
+    except Exception as err:  # noqa: BLE001 - one issue the sizer fails on waits; the sweep goes on to the next
+        log.warning("could not size %s: %s", issue.ref, err)
+        if size:
+            return size, recorded
+        result.errors.append(f"{issue.ref}: could not size it, so it waits for the next sweep: {err}")
+        return None
+    if sized is None:
+        return size, recorded
+    record = {**sized.record(issue), "updated_at": issue.updated_at}
+    saved = await asyncio.to_thread(
+        _save_sizing, issue.ref, goal["id"], issue.repo, issue.depends_on, sized.size, record, title, labels
+    )
+    if not saved:
+        # Another goal holds the issue now, or an operator removed it or its repo: this goal neither holds nor
+        # runs it.
+        return None
+    events.emit(
+        "issue_sized",
+        {
+            "ref": issue.ref,
+            "goal_id": goal["id"],
+            "size": sized.size,
+            "reasons": sized.reasons,
+            "missing": sized.missing,
+            "split": sized.split,
+            "model": sized.model,
+            "usd_cost": sized.usd_cost,
+        },
+        actor="planner",
+        tags={"goal_id": goal["id"]},
+        event_id=stable_event_id("issue_sized", issue.ref, goal["id"], issue.updated_at),
+    )
+    return sized.size, record
 
 
 async def _record_closed(goal: dict, seen: set[str], tracker: Tracker, events: Events, result: SweepResult) -> None:
@@ -629,6 +769,21 @@ def _links(goal_id: str) -> list[dict]:
 def _save(ref, goal_id, repo, state, depends_on, task_id, refused_reason, title=None, labels=None) -> None:
     with db.connect(autocommit=True) as conn:
         store.save_link(conn, ref, goal_id, repo, state, depends_on, task_id, refused_reason, title, labels)
+
+
+def _save_sizing(ref, goal_id, repo, depends_on, size, record, title, labels) -> bool:
+    with db.connect(autocommit=True) as conn:
+        return store.save_sizing(conn, ref, goal_id, repo, depends_on, size, record, title, labels)
+
+
+def _hold(ref: str, reason: str | None) -> None:
+    with db.connect(autocommit=True) as conn:
+        store.set_link_held(conn, ref, reason)
+
+
+def _release(ref: str, goal_id: str, linked: bool) -> str:
+    with db.connect(autocommit=True) as conn:
+        return store.release_for_task(conn, ref, goal_id, linked)
 
 
 def _forget_link(ref: str) -> None:

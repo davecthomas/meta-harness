@@ -5,7 +5,8 @@
 - `profiles`: the harness profiles, as in config/harness_profiles.json.
 - `repos`: the repo registry, as in config/repos.example.json.
 - `task_policy`: the task policy, as in config/task_policy.json: how many tasks
-  run at once (`max_parallel`) and the review loop's reviewers and rounds.
+  run at once (`max_parallel`), the review loop's reviewers and rounds, and the
+  spend limit a task gets for its issue's size (`max_usd_by_size`).
 - `skills`: the skills a harness profile may name, each with its files
   (skills.py), seeded from config/skills/.
 
@@ -104,6 +105,45 @@ BUDGET_POLICIES = ("block", "track")
 # The highest ceiling a task policy may set on one task's spend. A ceiling is a safety limit, so it cannot be
 # set out of reach.
 MAX_TASK_USD = Decimal("1000")
+# The sizes the planner gives an issue before it becomes a task (meta_harness.planner.sizing).
+ISSUE_SIZES = ("small", "medium", "large")
+
+
+def default_task_ceiling() -> Decimal:
+    """The most one task may spend when the task policy names no max_task_usd (TASK_SPEND_CEILING_USD)."""
+    from meta_harness.run_service.shared import TASK_SPEND_CEILING_USD
+
+    return Decimal(TASK_SPEND_CEILING_USD)
+
+
+def check_size_limits(limits: Any, ceiling: Decimal | None = None) -> list[str]:
+    """Problems with a task policy's max_usd_by_size: an object from issue size to a finite dollar amount above 0
+    and at most ceiling, the most one task may spend (the task service refuses a task's limit above it), as a
+    string or a number. Left out, or a size left out: a task of that size gets no spend limit from its size.
+    ceiling None: the default ceiling."""
+    ceiling = default_task_ceiling() if ceiling is None else ceiling
+    if limits is None:
+        return []
+    if not isinstance(limits, dict):
+        return ["max_usd_by_size must be an object from issue size (small, medium, large) to a dollar amount"]
+    reasons = []
+    for size, amount in limits.items():
+        if size not in ISSUE_SIZES:
+            reasons.append(f"max_usd_by_size: {size} is not an issue size; use {', '.join(ISSUE_SIZES)}")
+            continue
+        try:
+            value = Decimal(str(amount))
+            positive = not isinstance(amount, bool) and value.is_finite() and value > 0
+        except (InvalidOperation, ValueError):
+            positive = False
+        if not positive:
+            reasons.append(f'max_usd_by_size.{size} must be a dollar amount above 0, such as "5.00"')
+        elif value > ceiling:
+            reasons.append(
+                f"max_usd_by_size.{size} {amount} is above {ceiling:.2f}, the most one task may spend "
+                "(max_task_usd): no task of that size could be created"
+            )
+    return reasons
 
 
 def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]] | None = None) -> list[str]:
@@ -139,13 +179,17 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
             "limit, and track only records the spend against it"
         )
     ceiling = document.get("max_task_usd")
+    # The ceiling a size's limit is held to: this policy's own when usable, else the default.
+    task_ceiling = default_task_ceiling()
     if ceiling is not None:
         try:
             amount = Decimal(str(ceiling))
             usable = not isinstance(ceiling, bool) and amount.is_finite() and 0 < amount <= MAX_TASK_USD
         except InvalidOperation:
             usable = False
-        if not usable:
+        if usable:
+            task_ceiling = amount
+        else:
             reasons.append(
                 f"max_task_usd must be an amount above 0 and at most {MAX_TASK_USD}: the most one task may "
                 "spend, whatever its own limit or the budget policy says"
@@ -159,6 +203,7 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
     wait = document.get("merge_wait_minutes")
     if wait is not None and (isinstance(wait, bool) or not isinstance(wait, int) or wait < 0):
         reasons.append("merge_wait_minutes must be a whole number of minutes, 0 or more (0: merge without waiting)")
+    reasons += check_size_limits(document.get("max_usd_by_size"), task_ceiling)
     if others is not None:
         profiles = (others.get("profiles") or {}).get("profiles", {})
         for pair in reviewers:
@@ -284,8 +329,8 @@ KINDS: dict[str, Kind] = {
     "task_policy": Kind(
         "task_policy",
         "Task policy",
-        "How many tasks run at once across every goal, whether budgets stop work or only track spend, and the "
-        "review loop's reviewer pairs and fix rounds.",
+        "How many tasks run at once across every goal, whether budgets stop work or only track spend, the "
+        "review loop's reviewer pairs and fix rounds, and the spend limit a task gets for its issue's size.",
         seed_task_policy,
         check_task_policy,
     ),

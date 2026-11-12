@@ -8,5 +8,10 @@
       "harness:pi-review/openai-responses:gpt-6-sol"
     ],
     "max_rounds": 3
+  },
+  "max_usd_by_size": {
+    "small": "3.00",
+    "medium": "8.00",
+    "large": "20.00"
   }
 }
