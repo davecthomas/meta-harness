@@ -61,6 +61,7 @@ from meta_harness.run_service.shared import (
     ChecksRequest,
     ChecksResult,
     FailedCheck,
+    FollowUpsRequest,
     LoopPromptRequest,
     BaseHealth,
     BaseHealthRequest,
@@ -367,6 +368,19 @@ async def publish(request: PublishRequest) -> PublishResult:
     if published is None:
         print(f"[{request.run_id} publish] pi changed nothing in {workspace}, so there is no pull request", flush=True)
         return PublishResult(branch="", base="", commit="", files=[], pr_url="", created=False)
+    if request.fix_round and request.summary and not published.created:
+        # The fix run was asked to say in its summary why it changed what it did; the review reads it here.
+        [summary] = await _written("pull_request", [request.summary], request.task_id, run_id=request.run_id)
+        try:
+            await code_host.add_to_description(
+                request.repo,
+                published.pr_url,
+                f"Fix round {request.fix_round} ({request.run_id})",
+                summary,
+                sandbox.task_dir_for(ref) / "pull-request.md",
+            )
+        except code_host.CodeHostError as err:
+            raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     print(
         f"[{request.run_id} publish] {', '.join(published.files)} on branch {published.branch} at "
         f"{published.commit[:12]}, pull request {'opened' if published.created else 'already open'}: {published.pr_url}",
@@ -995,18 +1009,30 @@ async def post_review(request: PostReviewRequest) -> str:
     """Posts a review run's verdict and findings on the pull request, and records it. Returns the review's URL."""
     review = request.review
     findings = [dict(f) for f in review.get("findings") or []]
+    follow = set(request.follow_ups)
+    # A round whose findings are all follow-ups lets the pull request merge: that is its verdict.
+    verdict = "clean" if findings and follow >= set(range(len(findings))) else review["verdict"]
     # The review's own words go through the writing pass before they are posted: its summary and each
     # finding. The pull request gets the checked text; the fix run still gets the review as the run wrote it.
     texts = [review.get("summary") or "", *(str(f.get("body") or "") for f in findings)]
     summary, *bodies = await _written("review", texts, request.task_id, round=request.round_no)
-    for finding, text in zip(findings, bodies, strict=True):
-        finding["body"] = text
+    for n, (finding, text) in enumerate(zip(findings, bodies, strict=True)):
+        finding["body"] = f"Follow-up, not blocking: {text}" if n in follow else text
     body = "\n".join(
         [
-            f"**meta-harness review, round {request.round_no}**: `{review['verdict']}`, by `{request.reviewer}`",
+            f"**meta-harness review, round {request.round_no}**: `{verdict}`, by `{request.reviewer}`",
             "",
             summary,
         ]
+        + (
+            [
+                "",
+                f"{len(follow)} of the findings are follow-ups: they are on code an earlier round passed that no "
+                "fix has touched since, so they do not hold the merge. Each is worth its own issue.",
+            ]
+            if follow
+            else []
+        )
         + (
             [""] + [f"- {_finding_line(f)}" for f in findings if not (f.get("path") and f.get("line"))]
             if findings
@@ -1035,16 +1061,65 @@ async def post_review(request: PostReviewRequest) -> str:
             "pull_request_reviewed",
             {
                 "round": request.round_no,
-                "verdict": review["verdict"],
+                "verdict": verdict,
                 "reviewer": request.reviewer,
                 "head_sha": request.head_sha,
-                "findings": len(findings),
+                "findings": len(findings) - len(follow),
                 "review_url": url,
+                # Which findings (from 1) are follow-ups, for the task's Reviews tab.
+                "follow_ups": sorted(n + 1 for n in follow),
             },
             task_id=request.task_id,
             event_id=events.stable_id(request.task_id, "pull_request_reviewed", request.round_no),
         )
     return url
+
+
+# How far from a changed line a finding still counts as on the change: a finding names the line it is about,
+# which may sit just beside the lines a fix touched.
+NEAR_CHANGE = 3
+# How far from the round before's finding a finding counts as the same one raised again.
+NEAR_PREVIOUS = 15
+
+
+def follow_ups(
+    findings: list[dict], previous: list[dict], changed: dict[str, list[tuple[int, int]]] | None
+) -> list[int]:
+    """Which findings (by index) are new findings on code the round before passed and nothing has changed
+    since. Those do not hold the merge: a review that keeps finding something new in code it already read
+    would never let a pull request through. A finding that names no place, that is on a line changed since,
+    or that the round before raised too (the same file, near the same line), still holds it. With the change
+    unreadable, every finding holds it."""
+    if changed is None:
+        return []
+    found = []
+    for n, finding in enumerate(findings):
+        path, line = finding.get("path"), finding.get("line")
+        if not path:
+            continue
+        again = any(
+            p.get("path") == path
+            and (not line or not p.get("line") or abs(int(p["line"]) - int(line)) <= NEAR_PREVIOUS)
+            for p in previous
+        )
+        if again:
+            continue
+        ranges = changed.get(path)
+        if ranges is not None and (not line or any(a - NEAR_CHANGE <= int(line) <= b + NEAR_CHANGE for a, b in ranges)):
+            continue
+        found.append(n)
+    return found
+
+
+@activity.defn
+async def review_follow_ups(request: FollowUpsRequest) -> list[int]:
+    """The findings of a review after the first that are follow-ups (follow_ups), read against what changed
+    on the branch since the round before's head."""
+    try:
+        changed = await code_host.changed_lines(request.repo, request.since, request.head_sha)
+    except code_host.CodeHostError as err:
+        raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    return follow_ups(request.findings, request.previous, changed)
 
 
 def _finding_line(finding: dict) -> str:

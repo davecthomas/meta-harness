@@ -168,6 +168,9 @@ class PublishRequest:
     note: str = ""
     # The task the pull request is for, so the writing pass on its description is recorded on it.
     task_id: str = ""
+    # A fix run's round: its summary is added to the open pull request's description, which is where a review
+    # looks for what the change owes an explanation for, such as a file outside the task's paths.
+    fix_round: int = 0
 
 
 @dataclass
@@ -422,6 +425,22 @@ class PostReviewRequest:
     reviewer: str
     review: dict[str, Any]
     round_no: int
+    # The findings (by index) on code the last review passed and no fix touched since: posted as follow-ups,
+    # which do not hold the merge.
+    follow_ups: list[int] = field(default_factory=list)
+
+
+@dataclass
+class FollowUpsRequest:
+    """A review's findings, to tell the new ones on code an earlier review already passed from the rest."""
+
+    repo: str
+    # The head the round before reviewed, and the head this round reviewed.
+    since: str
+    head_sha: str
+    findings: list[dict[str, Any]]
+    # The round before's findings: one this round raises again holds the merge wherever it is.
+    previous: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
