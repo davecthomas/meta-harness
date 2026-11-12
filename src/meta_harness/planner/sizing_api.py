@@ -63,10 +63,35 @@ def register(
             raise HTTPException(status_code=409, detail=f"the goal is {goal['status']}: reopen it first")
         with db.connect(autocommit=True) as conn:
             link = store.link(conn, ref)
-        if link is None or link["goal_id"] != goal_id:
+        # A removed issue is the goal's no longer, whatever its row still says.
+        if link is None or link["goal_id"] != goal_id or link.get("dropped"):
             raise HTTPException(status_code=404, detail=f"the goal does not hold {ref}")
+        if link["state"] != "open":
+            raise HTTPException(status_code=409, detail=f"{ref} is {link['state']}: only an open issue becomes a task")
         if not link["held_reason"] or link["task_id"]:
             raise HTTPException(status_code=409, detail=f"{ref} is not held")
+        return goal, link
+
+    async def still_open(ref: str) -> None:
+        """Refuse (409) an issue closed on the tracker since the last sweep, recording it closed; 502 when the
+        tracker cannot be read. The sweep makes no task of a closed issue, so neither answer would take effect."""
+        try:
+            issue = await tracker.read(ref)
+        except GitHubAppError as err:
+            raise HTTPException(status_code=502, detail=f"could not read {ref}: {err}") from err
+        if issue.state != "open":
+
+            def closed() -> None:
+                with db.connect(autocommit=True) as conn:
+                    store.set_link_state(conn, ref, "closed")
+
+            await asyncio.to_thread(closed)
+            raise HTTPException(status_code=409, detail=f"{ref} is closed: only an open issue becomes a task")
+
+    async def held_open(goal_id: str, ref: str) -> tuple[dict, dict]:
+        """held(), then still_open(): the goal holds ref, held, and the tracker still has it open."""
+        goal, link = await asyncio.to_thread(held, goal_id, ref)
+        await still_open(ref)
         return goal, link
 
     def sweep_if_active(goal: dict) -> None:
@@ -76,7 +101,7 @@ def register(
     @app.post("/v1/goals/{goal_id}/issues/run-anyway")
     async def run_anyway(goal_id: str, body: HeldIn, who: str = Depends(operator)) -> dict:
         """Make a held issue a task at the goal's next sweep, which an active goal runs at once."""
-        goal, _ = await asyncio.to_thread(held, goal_id, body.ref)
+        goal, _ = await held_open(goal_id, body.ref)
 
         def release() -> dict:
             with db.connect(autocommit=True) as conn:
@@ -100,7 +125,7 @@ def register(
     @app.post("/v1/goals/{goal_id}/issues/split", status_code=201)
     async def split(goal_id: str, body: SplitIn, who: str = Depends(operator)) -> dict:
         """Create the smaller issues a held one splits into, each with the goal's label and a `Paths:` line."""
-        goal, link = await asyncio.to_thread(held, goal_id, body.ref)
+        goal, link = await held_open(goal_id, body.ref)
         pathless = [issue.title for issue in body.issues if not issue_paths(issue.body)]
         if pathless:
             raise HTTPException(

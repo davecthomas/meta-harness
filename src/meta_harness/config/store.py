@@ -328,7 +328,8 @@ def budget_policy(fresh: bool = False) -> str:
 
 def max_usd_for_size(size: str | None) -> str | None:
     """The spend limit the task policy's max_usd_by_size gives a task of this issue size, as a dollar string;
-    None when the issue was not sized, the policy names no limit for its size, or the policy cannot be read."""
+    None when the issue was not sized, the policy names no usable limit for its size (one above the task ceiling
+    is not), or the policy cannot be read."""
     if not size:
         return None
     try:
@@ -337,7 +338,8 @@ def max_usd_for_size(size: str | None) -> str | None:
         return None
     if not isinstance(limits, dict) or limits.get(size) is None:
         return None
-    if check_size_limits({size: limits[size]}):
+    # A limit above the ceiling would get the task refused, so it gives none.
+    if check_size_limits({size: limits[size]}, task_spend_ceiling()):
         return None
     return str(limits[size])
 
