@@ -431,12 +431,13 @@ def save_sizing(
     title: str | None = None,
     labels: list[str] | None = None,
 ) -> None:
-    """Record the size the planner gave an open issue, holding the link for the goal if it held none yet."""
+    """Record the size the planner gave an open issue, holding the link for the goal if it held none yet. A
+    refusal from before it was sized is cleared: a sized issue is held or run, never refused."""
     with conn.transaction():
         conn.execute(
             "INSERT INTO planner.issue_link (ref, goal_id, repo, state, depends_on, title, labels, size, sizing) "
             "VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s) ON CONFLICT (ref) DO UPDATE SET "
-            "size = EXCLUDED.size, sizing = EXCLUDED.sizing, depends_on = EXCLUDED.depends_on, "
+            "size = EXCLUDED.size, sizing = EXCLUDED.sizing, depends_on = EXCLUDED.depends_on, refused_reason = NULL, "
             "title = COALESCE(EXCLUDED.title, planner.issue_link.title), "
             "labels = COALESCE(EXCLUDED.labels, planner.issue_link.labels), last_seen_at = now()",
             (ref, goal_id, repo, depends_on, title, labels, size, Jsonb(sizing)),
@@ -445,10 +446,13 @@ def save_sizing(
 
 def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> None:
     """Hold the issue for an operator, saying why, or with None let it go on to be a task. An issue split, or
-    being split, keeps the reason its split recorded."""
+    being split, keeps the reason its split recorded. A hold clears a refusal from before: the card says one."""
     with conn.transaction():
         conn.execute(
-            "UPDATE planner.issue_link SET held_reason = %s WHERE ref = %s AND split_into IS NULL", (reason, ref)
+            "UPDATE planner.issue_link SET held_reason = %s, "
+            "refused_reason = CASE WHEN %s::text IS NULL THEN refused_reason END "
+            "WHERE ref = %s AND split_into IS NULL",
+            (reason, reason, ref),
         )
 
 

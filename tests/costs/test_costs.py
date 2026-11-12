@@ -172,6 +172,20 @@ def test_a_writing_passs_rewrite_is_a_cost_of_its_task_or_of_the_plans_goal(clea
     ]
 
 
+def test_sizing_an_issue_is_a_planning_cost_of_its_goal(clean):
+    events = Events()
+    payload = {"ref": "o/r#7", "goal_id": "g-a", "size": "large", "model": "claude:claude-haiku-5"}
+    events.add("issue_sized", {**payload, "usd_cost": "0.003"}, actor="planner")
+
+    assert _harvest(events) == 1
+
+    with db.connect(autocommit=True) as conn:
+        rows = conn.execute("SELECT item, goal_id, task_id, repo, model, engine, operator, usd FROM costs.daily_cost")
+        assert rows.fetchall() == [
+            ("planning", "g-a", "", "o/r", "claude-haiku-5", "claude", "dave@example.com", Decimal("0.003"))
+        ]
+
+
 def test_cloud_cost_is_read_from_the_billing_export_and_restated_days_replace_what_was_there(clean, monkeypatch):
     asked: list[str] = []
     bill = [("2026-11-10", "Compute Engine", "4.20"), ("2026-11-10", "Cloud Run", "0.30")]

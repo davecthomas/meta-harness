@@ -8,7 +8,9 @@ the goal's next sweep takes them in; a goal with no label holds them by ref
 instead. Each one's body names its paths on a `Paths:` line. The held issue
 stays held, saying what it was split into, until it is closed: the planner
 never closes an issue a person wrote. The split is recorded on its link
-(split_into), so later sweeps keep that reason, and an issue split once is
+(split_into), with its issue_split event (and issue_added for a labelless
+goal) even when GitHub refuses an issue partway: what was created is the
+split. So later sweeps keep that reason, and an issue split once is
 not split again (409); Run anyway still makes it a task. While a split is
 creating its issues (split_into is empty), Run anyway is refused (409) until
 the split ends.
@@ -123,6 +125,19 @@ def register(
             raise HTTPException(
                 status_code=409, detail=f"{body.ref} was split already" + (f" into {done}" if done else "")
             )
+
+        def audit(created: list[str], added: list[str]) -> None:
+            """The events of a recorded split: each issue a labelless goal took in, then the split itself."""
+            for ref in added:
+                events.emit("issue_added", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
+            if created:
+                events.emit(
+                    "issue_split",
+                    {"ref": body.ref, "goal_id": goal_id, "issues": created},
+                    actor=who,
+                    tags={"goal_id": goal_id},
+                )
+
         created: list[str] = []
         try:
             if label:
@@ -132,21 +147,13 @@ def register(
                 created.append(made.ref)
         except GitHubAppError as err:
             # What was created is recorded as the split, so a retry never creates it twice; none: it may be split again.
-            await asyncio.to_thread(record, created)
+            audit(created, await asyncio.to_thread(record, created))
             done = f"; created before it refused: {', '.join(created)}" if created else ""
             raise HTTPException(status_code=502, detail=f"GitHub refused an issue: {err}{done}") from err
         except Exception:
-            await asyncio.to_thread(record, created)
+            audit(created, await asyncio.to_thread(record, created))
             raise
 
-        added = await asyncio.to_thread(record, created)
-        for ref in added:
-            events.emit("issue_added", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
-        events.emit(
-            "issue_split",
-            {"ref": body.ref, "goal_id": goal_id, "issues": created},
-            actor=who,
-            tags={"goal_id": goal_id},
-        )
+        audit(created, await asyncio.to_thread(record, created))
         sweep_if_active(goal)
         return {"goal_id": goal_id, "ref": body.ref, "created": created}
