@@ -327,6 +327,11 @@ async def _take_in(
     # The issue's own limit, else the task policy's for its size; neither: the task has none, as before sizing.
     max_usd = sizing.issue_limit(issue.body) or await asyncio.to_thread(config_store.max_usd_for_size, size)
     open_deps = [ref for ref in issue.depends_on if await _is_open(ref, tracker)]
+    # The link was read before the sizer's call: an operator may have split the issue since. Look again under the
+    # row's lock, so the original makes no task beside its smaller issues and keeps the reason its split recorded.
+    if not await asyncio.to_thread(_release, issue.ref):
+        result.held.append(issue.ref)
+        return
     try:
         task = await asyncio.to_thread(
             tasks.create,
@@ -349,8 +354,6 @@ async def _take_in(
     await asyncio.to_thread(
         _save, issue.ref, goal["id"], issue.repo, "open", open_deps, task["id"], None, title, labels
     )
-    if was_held:
-        await asyncio.to_thread(_hold, issue.ref, None)
     joined = {"ref": issue.ref, "goal_id": goal["id"], "depends_on": open_deps, "status": task["status"]}
     if size:
         joined |= {"size": size, "max_usd": max_usd}
@@ -670,6 +673,11 @@ def _save_sizing(ref, goal_id, repo, depends_on, size, record, title, labels) ->
 def _hold(ref: str, reason: str | None) -> None:
     with db.connect(autocommit=True) as conn:
         store.set_link_held(conn, ref, reason)
+
+
+def _release(ref: str) -> bool:
+    with db.connect(autocommit=True) as conn:
+        return store.release_for_task(conn, ref)
 
 
 def _set_title(ref: str, title: str) -> None:
