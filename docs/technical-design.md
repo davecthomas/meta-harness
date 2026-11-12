@@ -1956,8 +1956,22 @@ supervisor's, the Overview says so when the supervisor is off, late or
 failing, or a goal's sweep cannot finish: the list may then be missing
 something.
 
-Planned: a goal's own standing, saying when everything it has left waits on
-an operator; a reopened issue given a new task; and a reminder outside the
+A goal has a standing too (`supervisor/goals.py`), read from its tasks'
+standings and served with the goal (`standing`: `state`, `reason`, `ask`,
+the tasks an operator has, and how many are moving). A goal's status says
+what an operator set it to or what the planner found; it does not say
+whether the goal is getting anywhere. `moving`: at least one task is being
+worked or waits to start with no one's help. `needs_you`: the goal is active
+with work left, none of it moving, and an operator has what is left, or its
+issues were refused. `held`: the goal itself is paused, planning or stopped
+by its budget. `idle` and `done` are the rest. This is what `stalled` was
+meant to say and nothing ever set; reading it from the record, rather than
+moving the goal to a status its sweep does not cover, keeps a goal that
+waits on an operator swept, so it goes on the moment one task is unstuck. A
+goal that needs the operator says so at the top of its page, with what each
+task needs, in the Overview's list of goals and in the inbox.
+
+Planned: a reopened issue given a new task; and a reminder outside the
 console when a wait for an operator grows long.
 
 ### Throughput
