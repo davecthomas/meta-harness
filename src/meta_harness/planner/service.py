@@ -74,7 +74,9 @@ from meta_harness.planner.sweep import (
     swept_goals,
 )
 from meta_harness.planner.tracker import Tracker, parse_ref
+from meta_harness.supervisor.goals import goal_standing
 from meta_harness.supervisor.loop import Supervisor, TemporalWorkflows, Workflows
+from meta_harness.supervisor.rules import OPEN_STATUSES
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
 log = logging.getLogger("meta_harness.planner")
@@ -776,7 +778,32 @@ def create_app(
     ) -> dict:
         with app.state.pool.connection() as conn:
             goals, total = store.page_goals(conn, status.split(",") if status else None, limit, offset)
+        standings(goals)
         return {"goals": goals, "total": total, "offset": offset, "limit": limit}
+
+    def standings(goals: list[dict]) -> None:
+        """Give each goal its `standing`: whether it is moving, held, or waits on an operator, from where its
+        tasks stand in the supervisor's record. One read of the open tasks serves every goal asked for. A
+        Task API that does not answer leaves the standing out: the goal is still shown."""
+        wanted = [goal for goal in goals if goal["status"] not in ("met", "canceled")]
+        for goal in goals:
+            goal["standing"] = goal_standing(goal["status"], []) if goal not in wanted else None
+        if not wanted:
+            return
+        try:
+            found = cost_facts.every_task(tasks, None, list(OPEN_STATUSES))
+        except Exception as err:  # noqa: BLE001 - a goal's page does not fail for want of its standing
+            log.warning("could not read the tasks for the goals' standings: %s", err)
+            return
+        by_goal: dict[str, list[dict]] = {}
+        for task in found:
+            by_goal.setdefault(task.get("goal_id") or "", []).append(task)
+        with app.state.pool.connection() as conn:
+            for goal in wanted:
+                refused = sum(
+                    1 for link in store.links(conn, goal["id"]) if link["refused_reason"] and link["state"] == "open"
+                )
+                goal["standing"] = goal_standing(goal["status"], by_goal.get(goal["id"], []), refused)
 
     # For each goal no sweep covers: when its issues' states were last read from the tracker, and whether
     # every one could be read.
@@ -811,6 +838,7 @@ def create_app(
         goal["issues"] = await asyncio.to_thread(links)
         # When the planner last swept the goal, and what that sweep could not do: empty when it did all of it.
         goal["sweep"] = app.state.sweeps.get(goal_id)
+        await asyncio.to_thread(standings, [goal])
         return goal
 
     @app.get("/v1/goals/{goal_id}/issues")

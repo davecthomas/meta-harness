@@ -13,6 +13,7 @@ import { diagnose } from "../tasks/diagnosis";
 import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
 import { needsYouNote } from "./needsYou";
 import { SupervisorHealth } from "./SupervisorHealth";
+import { standingNote } from "../goals/GoalStanding";
 import { standingLine } from "../tasks/Standing";
 
 const OPEN_GOALS = ["active", "paused", "stalled", "budget_exhausted"];
@@ -131,7 +132,12 @@ export function Overview() {
           {goals.items.map((g) => (
             <Table.Tr key={g.id}>
               <Table.Td maw={420}><TitleLink to={`/goals/${g.id}`} title={goalTitle(g)} id={g.id} /></Table.Td>
-              <Table.Td><StatusBadge status={goalStatus(g)} /></Table.Td>
+              <Table.Td>
+                <Stack gap={2}>
+                  <StatusBadge status={goalStatus(g)} />
+                  {standingNote(g.standing) && <Text size="xs" c="orange">{standingNote(g.standing)}</Text>}
+                </Stack>
+              </Table.Td>
               <Table.Td>{g.label ? <Badge variant="outline" tt="none" radius="sm">{g.label}</Badge> : <Text size="xs" c="dimmed">Picked issues</Text>}</Table.Td>
               <Table.Td>{g.repos.map((r) => <Text ff="monospace" size="xs" key={r}>{r}</Text>)}</Table.Td>
               <Table.Td><Text size="sm">{g.auto_merge ? "On" : "Off"}</Text></Table.Td>

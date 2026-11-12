@@ -45,7 +45,10 @@ export function inboxItems(
     // A goal past its budget, once: its key is the same whether it is over or stopped.
     if (g.status === "budget_exhausted" || g.budget_state === "blocked") items.push({ key: `goal-${g.id}`, text: `Stopped by its budget: ${goalTitle(g)}`, to: `/goals/${g.id}`, detail: "None of its tasks starts until it has more to spend. Raise the budget on the goal's page." });
     else if (g.budget_state === "over") items.push({ key: `goal-${g.id}`, text: `Over budget: ${goalTitle(g)}`, to: `/goals/${g.id}`, detail: "It keeps running. Raise the budget on the goal's page, or pause the goal." });
-    if (g.status === "stalled") items.push({ key: `goal-${g.id}`, text: `Stalled: ${goalTitle(g)}`, to: `/goals/${g.id}`, detail: "Every open issue waits on a failed one or on you. Its page says which." });
+    // A goal with work left and none of it moving: everything it has left waits on the operator.
+    if (g.standing?.state === "needs_you") {
+      items.push({ key: `goal-waits-${g.id}`, text: `Going nowhere: ${goalTitle(g)}`, to: `/goals/${g.id}`, detail: `${g.standing.reason.charAt(0).toUpperCase()}${g.standing.reason.slice(1)}. Its page says what each one needs.` });
+    }
   }
   for (const t of tasks) {
     if (t.status === "ready") {
