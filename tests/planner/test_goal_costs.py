@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from meta_harness.planner import goal_costs
 
-from .test_planner import OPERATOR, REPO, _goal, _label, _number, _sweep, api, migrated, parts  # noqa: F401
+from .test_planner import OPERATOR, REPO, _goal, _label, _number, _sweep, api, migrated, parts, registry  # noqa: F401
 
 
 def _cost(events, task_id: str, usd: str) -> None:
