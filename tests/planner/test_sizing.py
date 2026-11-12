@@ -372,6 +372,33 @@ def test_an_issue_is_released_for_a_task_only_to_the_goal_that_holds_it(world):
         assert store.release_for_task(conn, held, other["id"]) == "gone"
         assert store.release_for_task(conn, removed, goal["id"]) == "gone"
         assert store.release_for_task(conn, held, goal["id"]) == "released"
+        absent = f"github:{REPO}#{_number()}"
+        assert store.release_for_task(conn, absent, goal["id"], linked=True) == "gone", "a sized link was deleted"
+        assert store.release_for_task(conn, absent, goal["id"]) == "released", "an unsized issue has no link yet"
+
+
+def test_an_issue_whose_repo_is_removed_while_the_sweep_sizes_it_makes_no_task(world, monkeypatch):
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    real_save = store.save_sizing
+
+    def save_then_remove_repo(conn, *args, **kwargs):
+        # An operator removes the goal's repo after the sizing is saved and before the sweep releases the issue:
+        # the goal's taskless links in that repo are deleted.
+        saved = real_save(conn, *args, **kwargs)
+        store.update(conn, goal["id"], repos=["davecthomas/other-repo"])
+        return saved
+
+    monkeypatch.setattr(store, "save_sizing", save_then_remove_repo)
+    swept = _sweep(client, goal)
+
+    assert swept["joined"] == [] and _task(tasks, ref) is None, "an issue whose repo was removed makes no task"
+    with db.connect(autocommit=True) as conn:
+        assert store.link(conn, ref) is None, "the removed issue is not put back on the goal"
 
 
 def test_split_creates_the_suggested_issues_with_the_goals_label_and_their_paths(world):
