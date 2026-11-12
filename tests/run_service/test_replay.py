@@ -101,6 +101,8 @@ SCENARIOS = {
         "claim": "dave",
         "operator_verdict": '{"keep": [1], "findings": [{"path": "app.py", "line": 3, "body": "Also this."}]}',
     },
+    # After the worker-restart patch: the worker stops under the first run, and the same run is taken up again.
+    "patched-worker-restart": {"verdicts": [CLEAN], "goal_id": "g-1", "auto_merge": True, "worker_restarts": 1},
     # After the merge-base-health patch: the merge waits while the base's own checks run, then merges.
     "patched-merge-base-health": {
         "verdicts": [CLEAN],
