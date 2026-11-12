@@ -1912,6 +1912,23 @@ repeat does nothing. What a pass cannot read moves no one: a task whose
 workflow Temporal cannot be asked about, or whose pull request the code host
 does not answer for, is left as it is, with that as its standing.
 
+A `blocked` task of a swept goal is the sweep's while each issue it waits
+on is being worked. It is an operator's, and its standing names the issue,
+when one of them is in the way: its task failed, was canceled or ended
+unresolved and waits on an operator; it is the task's own issue; or no goal
+holds it, so no task will ever close it.
+
+The planner's sweep used to hide its own trouble. A pass over the goals was
+wrapped whole with its exceptions dropped, so one goal that raised left every
+goal after it unswept, and what a sweep could not do (a repo it could not
+list, an issue it could not read) was returned and thrown away. Each goal's
+sweep, follow-up and plan collecting now runs by itself: one goal's failure
+is recorded on that goal and the next goal still gets its turn. What a goal's
+latest sweep could not do is kept, logged when it changes, served with the
+goal (`sweep`: when, and the errors) and listed by `GET /v1/supervisor`
+(`sweeps_failing`). An issue the planner refused for having no acceptance
+checks is read again on every sweep, so adding the checks is all it takes.
+
 The supervisor's own trouble shows: a pass that fails is logged as an error
 and said by `GET /v1/supervisor`, which also gives when the last pass ran and
 how many tasks each owner has.
@@ -1920,9 +1937,8 @@ Built so far are the actions above and the standing of every task. A run
 that the worker's restart interrupts still fails its task in the workflow
 (#254): the supervisor retries that task within minutes, from a new first
 run, and resuming the same run in place is planned. Planned, in this order:
-goals marked `stalled` when everything left waits
-behind a failure, refused and reopened issues looked at again, and sweep
-errors recorded; and a deadline and a reminder on every wait for an
+a goal's own standing, saying when everything it has left waits on an
+operator, and a reopened issue given a new task; and a deadline and a reminder on every wait for an
 operator, with the workflow's six-hour limit no longer shorter than the
 waits inside it.
 
