@@ -55,3 +55,11 @@ test("a task the supervisor found to be an operator's is listed with why and wha
   expect(items.map((i) => i.text)).toEqual(["Needs you: Task b"]);
   expect(items[0].detail).toBe("It waits on o/r#7, whose task is not moving and waits on an operator. Open that issue's task and retry or fix it.");
 });
+
+test("a goal with nothing moving and work left is in the inbox", () => {
+  const goal = { id: "g-9", status: "active", title: "Exports", statement: "x", standing: { state: "needs_you", reason: "nothing in it is moving: 2 tasks wait on you", ask: "", yours: [], moving: 0 } } as unknown as Goal;
+  const moving = { ...goal, id: "g-8", standing: { ...goal.standing!, state: "moving" } } as unknown as Goal;
+  const items = inboxItems([], [goal, moving], null);
+  expect(items.map((i) => [i.text, i.to])).toEqual([["Going nowhere: Exports", "/goals/g-9"]]);
+  expect(items[0].detail).toBe("Nothing in it is moving: 2 tasks wait on you. Its page says what each one needs.");
+});

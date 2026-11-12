@@ -6,6 +6,7 @@ import { IssuesPicker } from "./IssuesPicker";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
 import { CancelGoal } from "./CancelGoal";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
+import { GoalStanding } from "./GoalStanding";
 import { GoalFailures } from "./GoalFailures";
 import { GoalPlan } from "./GoalPlan";
 import { GoalSpend } from "./GoalSpend";
@@ -221,6 +222,7 @@ export function GoalPage() {
       />
       <ErrorAlert error={error} />
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
+      <GoalStanding standing={goal.standing} />
       <IssuesPicker
         opened={picking}
         onClose={() => setPicking(false)}
