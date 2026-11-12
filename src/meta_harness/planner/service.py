@@ -29,7 +29,6 @@ their end (sweep.follow_up_goal), and so are the canceled tasks of no goal
 """
 
 import asyncio
-import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -271,27 +270,56 @@ def create_app(
         async with locks.setdefault(goal["id"], asyncio.Lock()):
             return await follow_up_goal(goal, tracker, tasks, events, host)
 
+    def swept(goal_id: str, errors: list[str]) -> None:
+        """Keep what a goal's latest sweep or follow-up could not do, for its page and GET /v1/supervisor, and
+        log it when it changes: every minute's sweep failing the same way is one line, not one a minute."""
+        before = (app.state.sweeps.get(goal_id) or {}).get("errors")
+        app.state.sweeps[goal_id] = {"at": datetime.now(UTC).isoformat(), "errors": errors}
+        if errors and errors != before:
+            log.warning("goal %s: its sweep could not finish: %s", goal_id, "; ".join(errors)[:1000])
+
+    async def each(goals: list[dict], one, what: str) -> None:
+        """Run one for each goal, one goal's failure never stopping the next goal's turn. A sweep used to be
+        wrapped as a whole pass with its exceptions dropped, so one goal that raised left every goal after
+        it unswept, with nothing to say so."""
+        for goal in goals:
+            try:
+                result = await one(goal)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001 - recorded on the goal; the next goal still gets its turn
+                swept(goal["id"], [f"the {what} failed: {type(err).__name__}: {err}"])
+                continue
+            swept(goal["id"], list(getattr(result, "errors", None) or []))
+
+    async def listed(lister, what: str) -> list[dict]:
+        try:
+            return await asyncio.to_thread(lister)
+        except Exception as err:  # noqa: BLE001 - logged; the next pass lists again
+            log.error("planner: could not list the goals for the %s: %s: %s", what, type(err).__name__, err)
+            return []
+
     async def sweep_forever() -> None:
         followed_up_at: float | None = None
         while True:
-            with contextlib.suppress(Exception):
-                for goal in await asyncio.to_thread(swept_goals):
-                    await sweep_one(goal)
+            await each(await listed(swept_goals, "sweep"), sweep_one, "sweep")
             # A goal no sweep covers, a met one most of all, keeps its issues' labels and its canceled tasks'
             # pull request ends true for costs by label and by outcome, less often.
             now = asyncio.get_running_loop().time()
             if followed_up_at is None or now - followed_up_at >= FOLLOW_UP_SECONDS:
                 followed_up_at = now
-                with contextlib.suppress(Exception):
-                    for goal in await asyncio.to_thread(followed_up_goals):
-                        await follow_up_one(goal)
+                await each(await listed(followed_up_goals, "follow-up"), follow_up_one, "follow-up")
                 # The canceled tasks of no goal, which no goal's sweep lists.
-                with contextlib.suppress(Exception):
+                try:
                     await follow_up_goalless(tasks, events, host)
+                except Exception as err:  # noqa: BLE001 - logged; the next follow-up tries again
+                    log.error("planner: the follow-up of tasks of no goal failed: %s: %s", type(err).__name__, err)
+
             # A planning goal's ended planning task becomes its plan.
-            with contextlib.suppress(Exception):
-                for goal in await asyncio.to_thread(planning_goals):
-                    await planning.collect(goal, tasks, events)
+            async def collect(goal: dict) -> None:
+                await planning.collect(goal, tasks, events)
+
+            await each(await listed(planning_goals, "plans"), collect, "collecting of its plan")
             await asyncio.sleep(interval)
 
     supervisor = Supervisor(tasks, events, workflows or TemporalWorkflows(), host)
@@ -344,6 +372,9 @@ def create_app(
 
     app = FastAPI(title="meta-harness planner", lifespan=lifespan)
     app.state.supervised = None
+    # What each goal's latest sweep, follow-up or plan collecting could not do: {goal_id: {at, errors}}.
+    app.state.sweeps = {}
+    app.state.each = each
     app.state.supervisor = supervisor
     app.state.title_untitled = title_untitled
 
@@ -778,6 +809,8 @@ def create_app(
                 return store.links(conn, goal_id)
 
         goal["issues"] = await asyncio.to_thread(links)
+        # When the planner last swept the goal, and what that sweep could not do: empty when it did all of it.
+        goal["sweep"] = app.state.sweeps.get(goal_id)
         return goal
 
     @app.get("/v1/goals/{goal_id}/issues")
@@ -906,7 +939,8 @@ def create_app(
         """What the supervisor's last pass found: when it ran, how many tasks each owner has, what it
         recovered, ended and canceled, and what it could not do. `every_seconds` is how often it runs (0: it
         is off), so a page can tell a late pass from a quiet one."""
-        return {"every_seconds": supervise_seconds, "last_pass": app.state.supervised}
+        failing = {goal_id: found for goal_id, found in app.state.sweeps.items() if found["errors"]}
+        return {"every_seconds": supervise_seconds, "last_pass": app.state.supervised, "sweeps_failing": failing}
 
     @app.get("/v1/limits")
     def limits(who: str = Depends(operator)) -> dict:

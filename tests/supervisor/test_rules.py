@@ -6,6 +6,7 @@ import itertools
 from meta_harness.supervisor import failures, pulls
 from meta_harness.supervisor.rules import (
     ACTIONS,
+    DEPENDENCIES,
     FAILURES,
     GOALS,
     MERGEABLE,
@@ -45,7 +46,14 @@ def _every() -> list[Facts]:
                 dataclasses.replace(facts, failure=kind, retry_due=due, failed_long_ago=old)
                 for kind, due, old in itertools.product(FAILURES, flags, flags)
             ]
-    return found + failed
+    # Where its dependencies stand is read only for a blocked task.
+    blocked = [
+        dataclasses.replace(facts, dependency=how, blocker="o/r#7")
+        for facts in found
+        if facts.status == "blocked"
+        for how in DEPENDENCIES
+    ]
+    return found + failed + blocked
 
 
 def test_the_rules_cover_every_status_a_task_can_be_left_in():
@@ -221,3 +229,11 @@ def test_only_the_named_failures_of_the_system_are_transient():
         assert failures.kind(reason) == "permanent", reason
     # A reason that names the task's own limit is the task's, even with a system error beside it.
     assert failures.kind("the task spent its $10.00 spend limit after a GatewayUnavailable") == "permanent"
+
+
+def test_a_blocked_task_behind_a_stuck_or_unheld_issue_is_an_operators_and_names_the_issue():
+    stuck = decide(Facts("blocked", goal="active", dependency="stuck", blocker="o/r#7"))
+    assert stuck.owner == "operator" and "it waits on o/r#7, whose task is not moving" in stuck.reason
+    unheld = decide(Facts("blocked", goal="active", dependency="unheld", blocker="o/r#9"))
+    assert unheld.owner == "operator" and "o/r#9, which no goal holds" in unheld.reason
+    assert decide(Facts("blocked", goal="active")).owner == "planner"

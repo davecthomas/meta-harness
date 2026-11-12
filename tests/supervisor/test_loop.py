@@ -376,3 +376,33 @@ async def test_a_task_that_failed_in_an_outage_is_retried_after_a_wait_and_one_t
     assert _standing(second["id"])["situation"] == "retry_waiting", "its second wait is longer"
     assert _standing(old["id"])["situation"] == "failed_long_ago"
     assert _standing(own["id"])["owner"] == "operator" and own["status"] == "failed"
+
+
+async def test_a_blocked_task_says_which_issue_is_in_its_way(world):
+    supervisor, tasks, _, _, _ = world
+    goal_id = _goal("active")
+    n = uuid.uuid4().int % 10**12
+    failed_ref, waiting_ref, lone_ref, moving_ref, behind_moving_ref = (f"github:{REPO}#{n + i}" for i in range(5))
+    failed = tasks.add("failed", goal_id=goal_id, external_ref=failed_ref, status_reason="pi changed nothing")
+    waiting = tasks.add("blocked", goal_id=goal_id, external_ref=waiting_ref)
+    lone = tasks.add("blocked", goal_id=goal_id, external_ref=lone_ref)
+    moving = tasks.add("running", goal_id=goal_id, external_ref=moving_ref)
+    supervisor.workflows.states = {moving["id"]: "running"}
+    behind_moving = tasks.add("blocked", goal_id=goal_id, external_ref=behind_moving_ref)
+    with db.connect(autocommit=True) as conn:
+        goal_store.save_link(conn, failed_ref, goal_id, REPO, "open", [], failed["id"])
+        goal_store.save_link(conn, waiting_ref, goal_id, REPO, "open", [failed_ref], waiting["id"])
+        goal_store.save_link(conn, lone_ref, goal_id, REPO, "open", [f"github:{REPO}#{n + 99}"], lone["id"])
+        goal_store.save_link(conn, moving_ref, goal_id, REPO, "open", [], moving["id"])
+        goal_store.save_link(conn, behind_moving_ref, goal_id, REPO, "open", [moving_ref], behind_moving["id"])
+    await supervisor.pass_once()
+    assert _standing(waiting["id"])["owner"] == "planner", "the failed task has no standing yet: next pass"
+
+    await supervisor.pass_once()
+
+    stuck = _standing(waiting["id"])
+    assert (stuck["owner"], stuck["situation"]) == ("operator", "blocked_on_stuck")
+    assert failed_ref.removeprefix("github:") in stuck["reason"]
+    unheld = _standing(lone["id"])
+    assert unheld["situation"] == "blocked_on_unheld" and str(n + 99) in unheld["reason"]
+    assert _standing(behind_moving["id"])["owner"] == "planner", "the issue it waits on is being worked"

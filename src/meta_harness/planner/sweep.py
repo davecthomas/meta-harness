@@ -7,7 +7,9 @@ issue's text, its `## Acceptance checks` (else the repo registry's default
 checks), and the open issues it depends on. The task service starts a task
 with open dependencies in `blocked`. A sweep also records issues that closed,
 and moves a blocked task to `queued` once every issue it depends on is
-closed. An issue already in another goal stays there. Each sweep refreshes
+closed. An issue already in another goal stays there. An issue with no
+acceptance checks, and no default checks for its repo, is refused, and looked
+at again on every sweep, so adding the checks is all it takes. Each sweep refreshes
 the title and labels it keeps of every issue it holds that has a task, open
 or closed, so costs by label follow a relabel.
 
@@ -295,7 +297,8 @@ async def _take_in_added(
     goal no longer names makes no task there."""
     names = {name.lower() for name in goal["repos"]}
     for link in await asyncio.to_thread(_links, goal["id"]):
-        if link["task_id"] or link["refused_reason"] or link["state"] != "open" or link["ref"] in seen:
+        # A refused issue is read again each sweep: it may have been given its acceptance checks since.
+        if link["task_id"] or link["state"] != "open" or link["ref"] in seen:
             continue
         if link["repo"].lower() not in names:
             continue
@@ -317,12 +320,17 @@ async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient
         await asyncio.to_thread(_set_title, issue.ref, title)
     if existing and existing["goal_id"] == goal["id"] and existing.get("labels") != labels:
         await asyncio.to_thread(_set_labels, issue.ref, labels)
-    if existing and (existing["goal_id"] != goal["id"] or existing["task_id"] or existing["refused_reason"]):
+    if existing and (existing["goal_id"] != goal["id"] or existing["task_id"]):
         return
+    # An issue refused before is looked at again each sweep, so one given its acceptance checks since, or
+    # whose repo was given default checks, becomes a task without anyone dropping and adding it.
     registered = repos.get(issue.repo)
     checks = issue.checks or (registered.default_checks if registered else [])
     if not checks:
         reason = "the issue has no ## Acceptance checks and the repo registry names no default checks"
+        if existing and existing.get("refused_reason") == reason:
+            result.refused.append(issue.ref)
+            return
         await asyncio.to_thread(
             _save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, reason, title, labels
         )

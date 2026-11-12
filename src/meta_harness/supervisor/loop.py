@@ -25,6 +25,7 @@ an unknown.
 """
 
 import asyncio
+import dataclasses
 import logging
 import time
 from dataclasses import dataclass, field
@@ -133,6 +134,7 @@ class Supervisor:
         before = await asyncio.to_thread(_standings)
         admitted = await asyncio.to_thread(_admitted)
         goals: dict[str, dict | None] = {}
+        by_id = {task["id"]: task for task in found}
         for task in found:
             result.looked_at += 1
             try:
@@ -144,6 +146,9 @@ class Supervisor:
                     or (earlier.situation == "merge_waiting" and now - earlier.since >= WAIT_LONGEST)
                 )
                 facts, pull = await self._facts(task, goal, task["id"] in admitted, stale, now)
+                if task["status"] == "blocked" and facts.goal in SWEPT:
+                    how, blocker = await asyncio.to_thread(dependency, task, by_id, before)
+                    facts = dataclasses.replace(facts, dependency=how, blocker=blocker)
                 decision = decide(facts)
             except Exception as err:  # noqa: BLE001 - one task's facts must not stop the pass for the rest
                 result.errors.append(f"{task['id']}: {type(err).__name__}: {err}")
@@ -288,6 +293,37 @@ def _due(decision: Decision, earlier: standing.Standing | None, now: datetime) -
         return True
     wait = min(RETRY_FIRST * (2 ** max(earlier.attempts - 1, 0)), RETRY_LONGEST)
     return now - earlier.acted_at >= wait
+
+
+def dependency(task: dict, by_id: dict[str, dict], before: dict[str, standing.Standing]) -> tuple[str, str]:
+    """Where the issues a blocked task waits on stand (rules.DEPENDENCIES), and the first one in the way.
+
+    A blocked task is queued when every issue it depends on closes, which needs each to be worked on. One
+    is in the way when its task ended without closing it and waits on an operator (stuck), when it is the
+    task's own issue, or when no goal holds it, so no task will ever close it (unheld). An issue whose task
+    is running, queued, or being retried by the supervisor is not in the way.
+    """
+    own = task.get("external_ref") or ""
+    with db.connect(autocommit=True) as conn:
+        link = goal_store.link(conn, own) if own else None
+        refs = (link or {}).get("depends_on") or task.get("depends_on") or []
+        unheld = ""
+        for ref in refs:
+            name = str(ref).removeprefix("github:")
+            if ref == own:
+                return "stuck", f"{name}, its own issue"
+            held = goal_store.link(conn, ref)
+            if held is None:
+                unheld = unheld or name
+                continue
+            if held["state"] == "closed" or not held.get("task_id"):
+                continue
+            other = by_id.get(held["task_id"])
+            was = before.get(held["task_id"])
+            ended = other and other["status"] in ("failed", "canceled", "review_unresolved")
+            if ended and was and was.owner == "operator":
+                return "stuck", name
+    return ("unheld", unheld) if unheld else ("open", "")
 
 
 def _since_status(task: dict, now: datetime) -> timedelta:
