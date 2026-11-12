@@ -977,6 +977,21 @@ loop:
    `pull_request_reviewed` event. The summary and each finding go through
    the writing pass before they are posted; the fix run is given the review
    as the review run wrote it.
+   A round after the first can still find something new in code it already
+   read, and a loop that keeps doing so never ends. So the run service reads
+   which lines changed on the branch since the round before's head
+   (`review_follow_ups`, behind the `review-follow-ups` patch), and a new
+   finding on code nothing changed since is a follow-up: posted on the pull
+   request marked "Follow-up, not blocking", counted apart in
+   `pull_request_reviewed` (`follow_ups`, the finding numbers), and not sent
+   to a fix run. A finding that names no file, that is within 3 lines of a
+   changed line, or that the round before raised too (the same file, within
+   15 lines) still holds the merge, and so does every finding when the
+   change cannot be read whole. A round whose findings are all follow-ups is
+   clean. A fix run's summary is added to the open pull request's
+   description as a `Fix round <n>` section, once, so what a fix run is asked
+   to explain there (why it changed a file outside the task's paths) is
+   where the next review reads it.
 3. On `changes` or a failed check, a fix run: the pair that opened the pull
    request, with the findings or the check output as its input. It continues
    the pull request's pi session in a follow-up run (`POST /followup`), and
@@ -1064,7 +1079,10 @@ pull request's own diff against the base, which the merge activity compares
 at the reviewed head and the new one (`same_diff` in its result). When the
 diff is the same, as when the base's changes touch none of its files, the
 clean review stands: the new head's checks run, and it merges with no new
-review (behind the `same-diff-no-review` patch). When the diff changed, or
+review (behind the `same-diff-no-review` patch). A merge asked for again
+(by an operator or the supervisor) whose base came in the same way merges
+on the same terms, with no new review (behind the `resume-standing`
+patch). When the diff changed, or
 cannot be read whole (300 files or more, or a file with no patch), or the
 new head's checks fail, it is reviewed again. A conflict with the base becomes a
 fix run: the host merges the base into the fix run's clone, the run resolves

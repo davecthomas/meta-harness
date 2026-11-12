@@ -86,6 +86,7 @@ with workflow.unsafe.imports_passed_through():
         loop_prompt,
         merge_pr,
         post_review,
+        review_follow_ups,
         prepare,
         publish,
         review_policy,
@@ -101,6 +102,7 @@ with workflow.unsafe.imports_passed_through():
     from meta_harness.run_service.resume_activities import resume_state
     from meta_harness.money import usd
     from meta_harness.run_service.shared import (
+        FollowUpsRequest,
         Attempt,
         BaseHealthRequest,
         CommentRequest,
@@ -703,7 +705,7 @@ class RunTask:
         return result
 
     async def _publish(
-        self, prepared: PreparedRun, harness: HarnessResult, candidate: Candidate, spent: Decimal
+        self, prepared: PreparedRun, harness: HarnessResult, candidate: Candidate, spent: Decimal, fix_round: int = 0
     ) -> PublishResult:
         info = workflow.info()
         workflow.logger.info("%s: publishing run %s to %s", info.workflow_id, harness.run_id, prepared.repo)
@@ -718,6 +720,7 @@ class RunTask:
                 summary=harness.answer,
                 spent_usd=str(spent),
                 task_id=self._task_id,
+                fix_round=fix_round,
             ),
             start_to_close_timeout=PUBLISH_TIMEOUT,
             retry_policy=PUBLISH_RETRY,
@@ -778,14 +781,19 @@ class RunTask:
                 # and the loop reaches the merge, and its conflict fix, only through a clean review.
                 loop.head = merged.head_sha or loop.head
                 conflict = merged.state == "conflict" and workflow.patched("conflict-first")
-                outcome, reason = await self._review_loop(loop, conflict=conflict)
+                # The base came in without changing the pull request's own diff: the merge asked for stands, and
+                # the new head's checks are all that run before it.
+                standing = ""
+                if merged.state == "head_changed" and workflow.patched("resume-standing"):
+                    standing = self._still_clean(merged, asked, loop)
+                outcome, reason = await self._review_loop(loop, conflict=conflict, standing=standing)
         else:
             outcome, reason = await self._review_loop(loop)
         if outcome == "merged" and loop.merge_sha:
             outcome, reason = await self._after_merge(loop, reason)
         return result(outcome, reason, loop.published, loop.spent), attempts
 
-    async def _review_loop(self, loop: "_Loop", conflict: bool = False) -> tuple[str, str]:
+    async def _review_loop(self, loop: "_Loop", conflict: bool = False, standing: str = "") -> tuple[str, str]:
         """The review loop on the task's pull request. Returns its outcome and why. With conflict, the pull
         request conflicts with its base, and the loop starts with the fix run that resolves it."""
         info = workflow.info()
@@ -805,8 +813,11 @@ class RunTask:
             # title on the pull request) never meets an earlier round's.
             reviews = _earlier_rounds(loop.attempts) if workflow.patched("resumed-rounds") else 0
             # A clean verdict that still stands at the new head: the base was brought in and the pull request's
-            # own diff is what the reviewer read. Its checks run again, and it merges with no new review.
-            standing = ""
+            # own diff is what the reviewer read. Its checks run again, and it merges with no new review. A
+            # resumed merge may start with one.
+            # The head the last round reviewed, so the next can tell new findings on code it passed.
+            reviewed = ""
+            follows = workflow.patched("review-follow-ups")
             # The round before's findings and summary, which the next review judges first.
             previous: dict = {}
             if conflict:
@@ -847,6 +858,24 @@ class RunTask:
                     )
                     if review is None:
                         return "review_unresolved", f"review round {reviews} got no verdict: {why}"
+                    # A round after the first: a new finding on code the round before passed, which no fix has
+                    # touched since, is a follow-up and does not hold the merge.
+                    later: list[int] = []
+                    if follows and reviewed and review["verdict"] != "clean" and review.get("findings"):
+                        later = await workflow.execute_activity(
+                            review_follow_ups,
+                            FollowUpsRequest(
+                                repo=loop.prepared.repo,
+                                since=reviewed,
+                                head_sha=loop.head,
+                                findings=list(review.get("findings") or []),
+                                previous=list(previous.get("findings") or []),
+                            ),
+                            start_to_close_timeout=CODE_HOST_TIMEOUT,
+                            retry_policy=CODE_HOST_RETRY,
+                        )
+                    if follows:
+                        reviewed = loop.head
                     await workflow.execute_activity(
                         post_review,
                         PostReviewRequest(
@@ -857,6 +886,7 @@ class RunTask:
                             reviewer=reviewer,
                             review=review,
                             round_no=reviews,
+                            follow_ups=later,
                         ),
                         start_to_close_timeout=CODE_HOST_TIMEOUT,
                         retry_policy=CODE_HOST_RETRY,
@@ -864,6 +894,14 @@ class RunTask:
                     log.info("%s: review round %d by %s: %s", info.workflow_id, reviews, reviewer, review["verdict"])
                     findings = list(review.get("findings") or [])
                     clean = f"review round {reviews} by {reviewer} came back clean at {loop.head[:12]}"
+                    if later:
+                        findings = [f for n, f in enumerate(findings) if n not in set(later)]
+                        if not findings:
+                            review = {**review, "verdict": "clean"}
+                            clean = (
+                                f"review round {reviews} by {reviewer} raised only follow-ups, on code an earlier "
+                                f"round passed, at {loop.head[:12]}"
+                            )
                     all_dismissed = False
                     # An operator who took the review over decides the round: the fix run gets the agent's
                     # findings they kept and their own, and with none the round is clean.
@@ -1290,7 +1328,7 @@ class RunTask:
         )
         if harness is None or harness.status != "FINISHED":
             return f"fix round {round_no} on {loop.author.label} did not finish: {detail}"
-        republished = await self._publish(loop.prepared, harness, loop.author, loop.spent)
+        republished = await self._publish(loop.prepared, harness, loop.author, loop.spent, fix_round=round_no)
         if not republished.pr_url or republished.commit == loop.head:
             return f"fix round {round_no} changed nothing"
         loop.head = republished.commit

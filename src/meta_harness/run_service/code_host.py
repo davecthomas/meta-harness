@@ -617,6 +617,68 @@ async def same_diff(repo: str, base: str, before: str, after: str) -> bool:
     return old == await pull_request_diff(repo, base, after)
 
 
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
+
+
+def hunk_lines(patch: str) -> list[tuple[int, int]]:
+    """The new-side line ranges a unified diff's hunks cover, first and last line, inclusive. A hunk that only
+    deletes covers the line it deleted next to, so a finding there still counts as on changed code."""
+    ranges = []
+    for match in HUNK.finditer(patch):
+        start, count = int(match.group(1)), int(match.group(2) if match.group(2) is not None else 1)
+        ranges.append((start, start + max(count, 1) - 1))
+    return ranges
+
+
+async def changed_lines(repo: str, since: str, head_sha: str) -> dict[str, list[tuple[int, int]]] | None:
+    """Each file changed between two commits of a branch, with the line ranges at head_sha that changed. None
+    when the change cannot be read whole (too many files, or a file with no patch), so nothing is taken as
+    unchanged that may have changed."""
+    if is_local(repo):
+        diff = await _run("git", f"--git-dir={repo}", "diff", "--unified=0", "--no-color", since, head_sha)
+        found: dict[str, list[tuple[int, int]]] = {}
+        for part in re.split(r"^diff --git ", diff, flags=re.MULTILINE)[1:]:
+            name = re.search(r"^\+\+\+ (?:b/)?(.+)$", part, re.MULTILINE) or re.search(
+                r"^--- a/(.+)$", part, re.MULTILINE
+            )
+            if name:
+                found[name.group(1).strip()] = hunk_lines(part)
+        return found
+    compare = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/compare/{since}...{head_sha}") or {}
+    files = compare.get("files")
+    if files is None or len(files) >= COMPARE_FILES:
+        return None
+    found = {}
+    for changed in files:
+        if changed.get("patch") is None:
+            return None
+        found[str(changed["filename"])] = hunk_lines(changed["patch"])
+    return found
+
+
+async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr_record: Path) -> None:
+    """Adds a section to the pull request's description, once: a retry finds its heading there and adds
+    nothing. A local repo's pull request is its record file."""
+    section = f"\n\n## {heading}\n\n{text.strip()}\n"
+    if is_local(repo):
+        current = pr_record.read_text(encoding="utf-8") if pr_record.exists() else ""
+        if f"## {heading}\n" not in current:
+            pr_record.write_text(current.rstrip() + section, encoding="utf-8")
+        return
+    owner_repo, number = pr_number(pr_url)
+    pull = await _github(owner_repo, READ_PULL_REQUEST, "GET", f"/repos/{owner_repo}/pulls/{number}") or {}
+    current = str(pull.get("body") or "")
+    if f"## {heading}\n" in current:
+        return
+    await _github(
+        owner_repo,
+        OPEN_PULL_REQUEST,
+        "PATCH",
+        f"/repos/{owner_repo}/pulls/{number}",
+        json={"body": current.rstrip() + section},
+    )
+
+
 async def merge_local(repo: str, base: str, head_sha: str) -> tuple[str, str, str, str]:
     """A local bare repo's merge: fast-forward its base to head_sha, or a conflict when the base has moved on."""
     tip = await _run("git", f"--git-dir={repo}", "rev-parse", base)

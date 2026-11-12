@@ -23,6 +23,7 @@ from meta_harness.run_service.shared import (
     ChecksResult,
     CleanupResult,
     FailedCheck,
+    FollowUpsRequest,
     HarnessRequest,
     HarnessResult,
     LoopPromptRequest,
@@ -98,6 +99,9 @@ class Script:
     worker_restarts: int = 0
     base: list[str] = field(default_factory=list)
     base_asked: list[BaseHealthRequest] = field(default_factory=list)
+    # The follow-ups each review after the first is found to have, in order (finding indexes). None left: none.
+    follow_ups: list[list[int]] = field(default_factory=list)
+    follow_ups_asked: list[FollowUpsRequest] = field(default_factory=list)
 
     runs: list[HarnessRequest] = field(default_factory=list)
     prompts: list[LoopPromptRequest] = field(default_factory=list)
@@ -235,6 +239,11 @@ class Script:
             self.posted.append(request)
             return f"https://github.com/{REPO}/pull/7#review-{request.round_no}"
 
+        @activity.defn(name="review_follow_ups")
+        async def review_follow_ups(request: FollowUpsRequest) -> list[int]:
+            self.follow_ups_asked.append(request)
+            return self.follow_ups.pop(0) if self.follow_ups else []
+
         @activity.defn(name="goal_auto_merge")
         async def goal_auto_merge(goal_id: str) -> bool:
             self.goals_asked.append(goal_id)
@@ -269,6 +278,7 @@ class Script:
             review_policy,
             loop_prompt,
             post_review,
+            review_follow_ups,
         ]
 
 
@@ -684,3 +694,35 @@ async def test_a_worker_that_keeps_stopping_under_a_run_fails_it_in_the_end(env)
 
     assert "WorkerShutdown" in str(failure.value.cause)
     assert len(script.runs) == 6, "the run and five more tries of it"
+
+
+async def test_a_later_rounds_new_findings_on_code_it_passed_are_follow_ups_and_the_pull_request_merges(env):
+    # #289: rounds kept finding something new in code they had already read, and the loop never ended.
+    two = {**CHANGES, "findings": [*CHANGES["findings"], {"path": "lib.py", "line": 40, "body": "Also this."}]}
+    script = Script(verdicts=[CHANGES, two], fix_commits=["c1"], auto_merge=True, follow_ups=[[0, 1]])
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert _kinds(result) == ["standard", "review", "fix", "review"], "no fix run for follow-ups"
+    asked = script.follow_ups_asked[0]
+    assert (asked.since, asked.head_sha) == ("c0", "c1") and asked.previous == CHANGES["findings"]
+    assert [p.follow_ups for p in script.posted] == [[], [0, 1]]
+
+
+async def test_a_later_round_with_one_finding_that_holds_the_merge_sends_only_that_one_to_the_fix(env):
+    two = {**CHANGES, "findings": [{"path": "lib.py", "line": 40, "body": "Old code."}, *CHANGES["findings"]]}
+    script = Script(verdicts=[CHANGES, two, CLEAN], fix_commits=["c1", "c2"], follow_ups=[[0]])
+
+    await _run(env, script, goal_id="g-1")
+
+    second_fix = [p for p in script.prompts if p.kind == "fix"][1]
+    assert [f["body"] for f in second_fix.findings] == ["Off by one."]
+
+
+async def test_the_first_round_is_never_asked_for_follow_ups(env):
+    script = Script(verdicts=[CHANGES, CLEAN], fix_commits=["c1"])
+
+    await _run(env, script, goal_id="g-1")
+
+    assert len(script.follow_ups_asked) == 0, "the second round was clean, and the first has nothing before it"

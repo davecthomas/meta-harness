@@ -158,6 +158,16 @@ async def test_a_resumed_task_numbers_its_review_rounds_after_the_ones_it_had(en
     assert [p.round_no for p in script.posted] == [2, 3]
 
 
+async def test_a_merge_asked_for_whose_base_came_in_without_changing_the_diff_merges_with_no_review(env):  # noqa: F811
+    # #289: on #258 the base came in, the pull request's own diff stayed the same, and it was reviewed again.
+    script = Script(auto_merge=True, merges=[("head_changed", "c9", "same"), "merged"])
+
+    result, _ = await _resume(env, script, "merge", _open(), goal_id="g-1")
+
+    assert result.outcome == "merged" and not script.runs, "no review: only the base came in"
+    assert script.waited_on == ["c9"], "the new head's checks run"
+
+
 @pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
 async def test_record_the_conflict_first_history(env):  # noqa: F811
     # After the conflict-first patch: a merge asked for that conflicts starts with the fix run that resolves it.
@@ -174,6 +184,15 @@ async def test_record_the_resumed_rounds_history(env):  # noqa: F811
         pytest.skip("recorded already: an old history is what a deploy finds running, so it stays as it is")
     script = Script(verdicts=[CHANGES, CLEAN], fix_commits=["c6"])
     await _resume(env, script, "review", _open(), record="patched-resumed-rounds")
+
+
+@pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
+async def test_record_the_resume_standing_history(env):  # noqa: F811
+    # After the resume-standing patch: a merge asked for whose base came in with the same diff merges unreviewed.
+    if (HISTORIES / "patched-resume-standing.json").exists():
+        pytest.skip("recorded already: an old history is what a deploy finds running, so it stays as it is")
+    script = Script(auto_merge=True, merges=[("head_changed", "c9", "same"), "merged"])
+    await _resume(env, script, "merge", _open(), goal_id="g-1", record="patched-resume-standing")
 
 
 def test_the_author_is_the_pair_of_the_last_finished_run_that_was_not_a_review_or_fix(monkeypatch):
