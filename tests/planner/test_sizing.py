@@ -168,10 +168,16 @@ def world(monkeypatch):
 
 
 def _goal(client, **fields) -> dict:
+    """A new active goal, settled: creating it starts a sweep in the background, which could otherwise run
+    after the test adds its issue and size it once more than the test expects. A goal's sweeps take turns
+    (one lock per goal), so a sweep asked for now returns after that one."""
     body = {"statement": "Fix bugs", "repos": [REPO], "label": _label(), **fields}
     created = client.post("/v1/goals", json=body, headers=OPERATOR)
     assert created.status_code == 201, created.text
-    return created.json()
+    goal = created.json()
+    if goal["status"] == "active":
+        assert client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).status_code == 200
+    return goal
 
 
 def _sweep(client, goal: dict) -> dict:
