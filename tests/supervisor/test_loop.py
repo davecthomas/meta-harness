@@ -41,6 +41,7 @@ class Tasks:
         self.recovered: list[tuple[str, str, str]] = []
         self.canceled: list[tuple[str, str]] = []
         self.driven: list[tuple[str, str, str, str]] = []
+        self.uncounted: list[str] = []
         self.refuse: str | None = None
 
     def add(self, status: str, **fields) -> dict:
@@ -60,10 +61,11 @@ class Tasks:
         task["status"] = "canceled" if task.get("cancel_requested") else "queued"
         return task
 
-    def drive(self, task_id, action, why, spent_usd="0"):
+    def drive(self, task_id, action, why, spent_usd="0", counted=True):
         self.driven.append((task_id, action, why, spent_usd))
+        self.uncounted += [] if counted else [task_id]
         task = self.tasks[task_id]
-        task.update(status="queued", drives=int(task.get("drives") or 0) + 1)
+        task.update(status="queued", drives=int(task.get("drives") or 0) + (1 if counted else 0))
         return task
 
     def cancel(self, task_id, reason="", actor=None):
@@ -406,3 +408,20 @@ async def test_a_blocked_task_says_which_issue_is_in_its_way(world):
     unheld = _standing(lone["id"])
     assert unheld["situation"] == "blocked_on_unheld" and str(n + 99) in unheld["reason"]
     assert _standing(behind_moving["id"])["owner"] == "planner", "the issue it waits on is being worked"
+
+
+async def test_a_retry_after_the_workers_own_restart_is_not_one_of_the_tasks_tries(world):
+    supervisor, tasks, _, _, _ = world
+    now = datetime.now(UTC)
+    restarted = "TaskFailed: run 1 on harness:a/b:c ended for good: run_harness failed (WorkerShutdown): WorkerShutdown: Worker is shutting down"
+    ago = (now - timedelta(hours=3)).isoformat()
+    used_up = tasks.add("failed", status_reason=restarted, status_changed_at=ago, drives=3)
+    outage = tasks.add(
+        "failed", status_reason="TaskFailed: every candidate failed (3 runs)", status_changed_at=ago, drives=3
+    )
+
+    result = await supervisor.pass_once(now)
+
+    assert result.driven == [used_up["id"]] and tasks.uncounted == [used_up["id"]]
+    assert used_up["drives"] == 3, "a deploy's restart costs the task none of its tries"
+    assert _standing(outage["id"])["situation"] == "failed_retries_used"

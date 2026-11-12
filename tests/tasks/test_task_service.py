@@ -758,3 +758,35 @@ def test_the_supervisor_retries_a_failed_task_and_only_a_failed_one(api):
     assert (retried["status"], retried["resume"], retried["drives"]) == ("queued", None, 1)
     assert retried["status_reason"].endswith("so the supervisor retried it (try 1 of 3)")
     assert Decimal(retried["spent_carried_usd"]) == Decimal("1")
+
+
+def test_an_uncounted_drive_is_none_of_the_tasks_tries_and_tasks_are_listed_by_who_has_them(api):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    other = api.post("/v1/tasks", json=_task(external_ref="github:o/r#778"), headers=_as(CALLER_KEY)).json()
+    held = api.post("/v1/tasks", json=_task(external_ref="github:o/r#779"), headers=_as(CALLER_KEY)).json()
+    for _ in range(4):
+        api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+        api.post(f"/v1/tasks/{task['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
+        body = {"action": "retry", "why": "the worker restarted under it", "counted": False}
+        driven = api.post(f"/v1/tasks/{task['id']}/drive", json=body, headers=_as(SERVICE_KEY))
+        assert driven.status_code == 202 and driven.json()["drives"] == 0
+    assert driven.json()["status_reason"].endswith("(not one of its tries)")
+
+    from meta_harness import db
+    from meta_harness.supervisor import standing
+    from meta_harness.supervisor.rules import Decision
+
+    with db.connect(autocommit=True) as conn:
+        standing.save(conn, task["id"], Decision("operator", "failed", "the task failed", ask="Retry it."))
+        standing.save(conn, other["id"], Decision("scheduler", "queued", "it waits for the scheduler"))
+        paused = Decision("operator", "goal_not_active", "its goal is paused", ask="Resume the goal.")
+        standing.save(conn, held["id"], paused)
+
+    yours = api.get("/v1/tasks?has_it=operator", headers=_as(CALLER_KEY)).json()
+
+    assert [t["id"] for t in yours["tasks"]] == [task["id"]] and yours["total"] == 1, (
+        "a paused goal's tasks are its own"
+    )
+    assert yours["tasks"][0]["standing"]["ask"] == "Retry it."
+    assert api.get("/v1/tasks?has_it=scheduler", headers=_as(CALLER_KEY)).json()["total"] == 1
+    assert api.get("/v1/tasks?has_it=nobody", headers=_as(CALLER_KEY)).status_code == 422

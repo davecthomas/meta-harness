@@ -129,6 +129,8 @@ class DriveIn(BaseModel):
     # What the supervisor found, which the task's reason carries.
     why: str = Field(min_length=1, max_length=500)
     spent_usd: Decimal = Field(default=Decimal(0), ge=0)
+    # False: not one of the task's three tries, for a retry after the worker's own restart.
+    counted: bool = True
 
 
 class DismissIn(BaseModel):
@@ -249,6 +251,7 @@ def create_app(
         q: str | None = Query(default=None, max_length=200),
         waiting: bool | None = None,
         smoke: bool = False,
+        has_it: Literal["operator", "supervisor", "workflow", "scheduler", "planner"] | None = None,
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         who: Caller = Depends(caller),
@@ -261,7 +264,9 @@ def create_app(
                 except store.NotFound as err:
                     raise HTTPException(status_code=404, detail="no such task") from err
             statuses = status.split(",") if status else None
-            tasks, total = store.list_tasks(conn, owner, statuses, goal_id, limit, offset, pr, q, waiting, smoke)
+            tasks, total = store.list_tasks(
+                conn, owner, statuses, goal_id, limit, offset, pr, q, waiting, smoke, has_it
+            )
             held = holds.for_tasks(conn, [t["id"] for t in tasks if t["status"] == "queued"])
             standings = standing.for_tasks(conn, [t["id"] for t in tasks if t["status"] != "closed"])
             for task in tasks:
@@ -573,7 +578,7 @@ def create_app(
         in any other status, one with no pull request, or one already sent back as often as allowed."""
         try:
             with app.state.pool.connection() as conn:
-                task, previous = store.drive(conn, task_id, body.action, body.why, body.spent_usd)
+                task, previous = store.drive(conn, task_id, body.action, body.why, body.spent_usd, body.counted)
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such task") from err
         except store.TaskError as err:

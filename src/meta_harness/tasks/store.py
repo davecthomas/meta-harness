@@ -172,6 +172,7 @@ def list_tasks(
     q: str | None = None,
     waiting: bool | None = None,
     smoke: bool = False,
+    has_it: str | None = None,
 ) -> tuple[list[dict], int]:
     """One page of tasks, highest priority then oldest first, and how many match in all.
 
@@ -179,6 +180,8 @@ def list_tasks(
     q: text in the title, the id or the issue ref, any case.
     waiting True: only tasks waiting on an operator (waiting_on set); False: only those that are not.
     smoke: also list deploys' smoke tasks, which a list for a person leaves out.
+    has_it: only tasks the supervisor found this owner to have (operator, supervisor, workflow, scheduler or
+    planner), longest in their situation first.
     """
     clauses, params = [], []
     if not smoke:
@@ -199,10 +202,19 @@ def list_tasks(
     if q:
         clauses.append("(title ILIKE %s OR id ILIKE %s OR external_ref ILIKE %s)")
         params += [f"%{q}%"] * 3
+    order = "priority DESC, created_at, id"
+    if has_it:
+        # A goal that is paused or planning holds its tasks on purpose: that is the goal's to show, not a
+        # list of every one of its tasks.
+        clauses.append(
+            "id IN (SELECT task_id FROM supervisor.standing WHERE owner = %s AND situation <> 'goal_not_active')"
+        )
+        params.append(has_it)
+        order = "(SELECT since FROM supervisor.standing WHERE task_id = tasks.task.id), id"
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            f"SELECT {COLUMNS} FROM tasks.task {where} ORDER BY priority DESC, created_at, id LIMIT %s OFFSET %s",
+            f"SELECT {COLUMNS} FROM tasks.task {where} ORDER BY {order} LIMIT %s OFFSET %s",
             [*params, limit, offset],
         )
         rows = [_jsonable(row) for row in cur.fetchall()]
@@ -350,7 +362,9 @@ def requeue(
         return _jsonable(cur.fetchone()), row["status"]
 
 
-def drive(conn: psycopg.Connection, task_id: str, action: str, why: str, spent_usd: Decimal) -> tuple[dict, str]:
+def drive(
+    conn: psycopg.Connection, task_id: str, action: str, why: str, spent_usd: Decimal, counted: bool = True
+) -> tuple[dict, str]:
     """Sends a parked task back to the queue for the supervisor: a `ready` or `review_unresolved` task whose
     workflow ended with its pull request open, which the supervisor found it can move on.
 
@@ -359,7 +373,8 @@ def drive(conn: psycopg.Connection, task_id: str, action: str, why: str, spent_u
     task whose failure was the system's runs again. Any way the workflow
     counts spent_usd, what the task's runs spent so far, against its spend limit: unlike an operator's retry,
     a drive never gives a task its limit again. Refused once the task has been driven MAX_DRIVES times.
-    Returns (task, previous status).
+    counted False: the drive is not one of those tries, for a retry after the worker's own restart, which a
+    deploy causes; the spend it carries still bounds it. Returns (task, previous status).
     """
     if action not in ("merge", "review", "retry"):
         raise TaskError(f"a drive is merge, review or retry, not {action!r}")
@@ -375,7 +390,7 @@ def drive(conn: psycopg.Connection, task_id: str, action: str, why: str, spent_u
             raise TaskError(f"a {row['status']} task is not waiting with a pull request open")
         elif not row["pr_url"]:
             raise TaskError("the task has no pull request")
-        if row["drives"] >= MAX_DRIVES:
+        if counted and row["drives"] >= MAX_DRIVES:
             raise TaskError(f"the supervisor has already sent the task back {row['drives']} times")
         what = {
             "merge": "asked for its merge",
@@ -386,9 +401,16 @@ def drive(conn: psycopg.Connection, task_id: str, action: str, why: str, spent_u
         resume = action if action != "retry" else ("review" if row["pr_url"] else None)
         cur.execute(
             "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
-            "drives = drives + 1, cancel_requested = false, waiting_on = NULL, spent_carried_usd = %s, "
+            "drives = drives + %s, cancel_requested = false, waiting_on = NULL, spent_carried_usd = %s, "
             f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
-            (f"{why}, so the supervisor {what} (try {row['drives'] + 1} of {MAX_DRIVES})", resume, spent_usd, task_id),
+            (
+                f"{why}, so the supervisor {what} "
+                + (f"(try {row['drives'] + 1} of {MAX_DRIVES})" if counted else "(not one of its tries)"),
+                resume,
+                1 if counted else 0,
+                spent_usd,
+                task_id,
+            ),
         )
         return _jsonable(cur.fetchone()), row["status"]
 
