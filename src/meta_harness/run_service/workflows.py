@@ -40,7 +40,9 @@ request, in this workflow:
    so does a branch merge_pr brought the base's newest commits into: merges
    are one at a time per repo, each on a head that holds the base. A conflict
    with the base goes to a fix run that resolves the merge the host started,
-   and back to step 1.
+   and back to step 1. A merge asked for again (an operator's, or the
+   supervisor's) that meets a conflict starts with that fix run, before any
+   review.
 
 The loop ends review_unresolved after max_rounds fix runs, when the task's
 spend limit is used up, when a fix run changes nothing, or when no reviewer
@@ -159,6 +161,11 @@ HARNESS_RETRY = RetryPolicy(
     maximum_attempts=3,
     non_retryable_error_types=["HarnessConfigError"],
 )
+# The failure a run activity ends with when its worker shuts down, how many times one run is taken up again
+# after it, and how long the workflow waits for the worker to be back before it asks.
+WORKER_SHUTDOWN = "WorkerShutdown"
+WORKER_RESTARTS = 5
+WORKER_RESTART_WAIT = timedelta(seconds=20)
 # run_finished end reasons the next candidate may get past: the infrastructure failed, not the task.
 NEXT_CANDIDATE_END_REASONS = frozenset({"model_error", "harness_error", "server_shutdown"})
 # run_harness failures the next candidate may get past. A failed clone (CodeHostError) is the repo's, not the candidate's.
@@ -710,6 +717,7 @@ class RunTask:
                 candidate=candidate.label,
                 summary=harness.answer,
                 spent_usd=str(spent),
+                task_id=self._task_id,
             ),
             start_to_close_timeout=PUBLISH_TIMEOUT,
             retry_policy=PUBLISH_RETRY,
@@ -765,17 +773,21 @@ class RunTask:
             elif merged.state == "blocked":
                 outcome, reason = "clean", merged.detail
             else:
-                # The head moved, or it conflicts with its base: checks, review and fixes come first.
+                # The head moved, or it conflicts with its base: checks, review and fixes come first. A conflict
+                # is resolved before anything else: a review of a head that cannot merge only finds more to fix,
+                # and the loop reaches the merge, and its conflict fix, only through a clean review.
                 loop.head = merged.head_sha or loop.head
-                outcome, reason = await self._review_loop(loop)
+                conflict = merged.state == "conflict" and workflow.patched("conflict-first")
+                outcome, reason = await self._review_loop(loop, conflict=conflict)
         else:
             outcome, reason = await self._review_loop(loop)
         if outcome == "merged" and loop.merge_sha:
             outcome, reason = await self._after_merge(loop, reason)
         return result(outcome, reason, loop.published, loop.spent), attempts
 
-    async def _review_loop(self, loop: "_Loop") -> tuple[str, str]:
-        """The review loop on the task's pull request. Returns its outcome and why."""
+    async def _review_loop(self, loop: "_Loop", conflict: bool = False) -> tuple[str, str]:
+        """The review loop on the task's pull request. Returns its outcome and why. With conflict, the pull
+        request conflicts with its base, and the loop starts with the fix run that resolves it."""
         info = workflow.info()
         log = workflow.logger
         try:
@@ -794,6 +806,11 @@ class RunTask:
             standing = ""
             # The round before's findings and summary, which the next review judges first.
             previous: dict = {}
+            if conflict:
+                fixes += 1
+                stopped = await self._fix(loop, loop.prompt_request("fix", conflict=True), fixes)
+                if stopped:
+                    return "review_unresolved", stopped
             while True:
                 checks = await workflow.execute_activity(
                     wait_checks,
@@ -982,6 +999,7 @@ class RunTask:
                         f"{merged_pr} merged, and then {names} failed on its merge commit {loop.merge_sha[:12]}. "
                         "This pull request fixes that. It closes no issue: the merged one closed it."
                     ),
+                    task_id=self._task_id,
                 ),
                 start_to_close_timeout=PUBLISH_TIMEOUT,
                 retry_policy=PUBLISH_RETRY,
@@ -1056,7 +1074,12 @@ class RunTask:
                 lines.append(f"- Finding {n} ({where}): dismissed. {dismissed[n]}")
             await workflow.execute_activity(
                 post_comment,
-                CommentRequest(repo=loop.prepared.repo, pr_url=loop.published.pr_url, body="\n".join(lines)),
+                CommentRequest(
+                    repo=loop.prepared.repo,
+                    pr_url=loop.published.pr_url,
+                    body="\n".join(lines),
+                    task_id=self._task_id,
+                ),
                 start_to_close_timeout=CODE_HOST_TIMEOUT,
                 retry_policy=CODE_HOST_RETRY,
             )
@@ -1113,7 +1136,12 @@ class RunTask:
             lines.append(f"- {where}{line}: {finding.get('body', '')}")
         await workflow.execute_activity(
             post_comment,
-            CommentRequest(repo=loop.prepared.repo, pr_url=loop.published.pr_url, body="\n".join(lines)),
+            CommentRequest(
+                repo=loop.prepared.repo,
+                pr_url=loop.published.pr_url,
+                body="\n".join(lines),
+                task_id=self._task_id,
+            ),
             start_to_close_timeout=CODE_HOST_TIMEOUT,
             retry_policy=CODE_HOST_RETRY,
         )
@@ -1378,31 +1406,55 @@ class RunTask:
         # Behind a patch: workflows started before it record no prompt, and replay as they ran.
         if self._task_id and workflow.patched("run-prompt"):
             await self._record(record_prompt, RunPromptRecord(self._task_id, run_id, kind, template, prompt))
-        try:
-            harness = await workflow.execute_activity(
-                run_harness,
-                HarnessRequest(
-                    run_id=run_id,
-                    prompt=prompt,
-                    candidate=candidate,
-                    spend_limit_usd=str(left),
-                    repo=repo,
-                    task_id=self._task_id,
-                    thinking=thinking,
-                    branch=branch,
-                    merge_base=merge_base,
-                ),
-                start_to_close_timeout=harness_timeout(candidate),
-                heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
-                retry_policy=HARNESS_RETRY,
-                # On cancel, wait until the activity has stopped pi before the workflow ends.
-                cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
-            )
-        except ActivityError as err:
-            if isinstance(err.cause, CancelledError):
-                workflow.logger.info("%s: canceled, and run_harness has stopped pi", workflow.info().workflow_id)
-                raise
-            kind = err.cause.type if isinstance(err.cause, ApplicationError) else type(err.cause).__name__
+        restarts = 0
+        failed: ActivityError | None = None
+        kind = ""
+        while True:
+            try:
+                harness = await workflow.execute_activity(
+                    run_harness,
+                    HarnessRequest(
+                        run_id=run_id,
+                        prompt=prompt,
+                        candidate=candidate,
+                        spend_limit_usd=str(left),
+                        repo=repo,
+                        task_id=self._task_id,
+                        thinking=thinking,
+                        branch=branch,
+                        merge_base=merge_base,
+                    ),
+                    start_to_close_timeout=harness_timeout(candidate),
+                    heartbeat_timeout=HARNESS_HEARTBEAT_TIMEOUT,
+                    retry_policy=HARNESS_RETRY,
+                    # On cancel, wait until the activity has stopped pi before the workflow ends.
+                    cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                )
+                break
+            except ActivityError as err:
+                if isinstance(err.cause, CancelledError):
+                    workflow.logger.info("%s: canceled, and run_harness has stopped pi", workflow.info().workflow_id)
+                    raise
+                kind = err.cause.type if isinstance(err.cause, ApplicationError) else type(err.cause).__name__
+                # The worker stopped under the run: a deploy restarts it on every merge. That is not the
+                # run's failure. The run goes on in its sandbox, so the same run is taken up again once the
+                # worker is back: the activity re-attaches to it by its run id. Behind a patch, which is
+                # asked for only here, so a workflow that never meets a restart replays as it ran.
+                if kind == WORKER_SHUTDOWN and restarts < WORKER_RESTARTS and workflow.patched("worker-restart"):
+                    restarts += 1
+                    workflow.logger.warning(
+                        "%s: the worker restarted under run %s; taking the run up again (%d of %d)",
+                        self._where(),
+                        run_id,
+                        restarts,
+                        WORKER_RESTARTS,
+                    )
+                    await workflow.sleep(WORKER_RESTART_WAIT)
+                    continue
+                failed = err
+                break
+        if failed is not None:
+            err = failed
             cleanup = await workflow.execute_activity(
                 cleanup_run, run_id, start_to_close_timeout=CLEANUP_TIMEOUT, retry_policy=PREPARE_RETRY
             )

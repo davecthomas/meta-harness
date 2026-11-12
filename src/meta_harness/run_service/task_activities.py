@@ -25,7 +25,6 @@ from meta_harness import db
 from meta_harness.run_service import events
 from meta_harness.run_service.shared import (
     DEFAULT_SPEND_LIMIT_USD,
-    UNBOUNDED_SPEND_LIMIT_USD,
     AttemptRecord,
     PublishedRecord,
     RouteRecord,
@@ -54,13 +53,30 @@ def _task_api_error(err: TaskApiError) -> ApplicationError:
 
 
 def _spend_limit(task: dict) -> str:
-    """The task's spend limit as its workflow starts: its own, else the default; under the budget policy
-    `track`, one no run reaches, so the task is never held or ended for spend."""
+    """The task's spend limit as its workflow starts: its own, else the default, and never more than the
+    task policy's ceiling for one task. Under the budget policy `track` a task's own limit does not stop it,
+    so it gets the ceiling: no task runs without a spend limit."""
+    from decimal import Decimal
+
     from meta_harness.config import store as config_store
 
+    ceiling = config_store.task_spend_ceiling()
     if config_store.budget_policy(fresh=True) == "track":
-        return UNBOUNDED_SPEND_LIMIT_USD
-    return task["max_usd"] or DEFAULT_SPEND_LIMIT_USD
+        return f"{ceiling:.2f}"
+    own = Decimal(str(task["max_usd"] or DEFAULT_SPEND_LIMIT_USD))
+    return f"{min(own, ceiling):.2f}" if own > ceiling else str(task["max_usd"] or DEFAULT_SPEND_LIMIT_USD)
+
+
+def _less_carried(limit: str, task: dict) -> str:
+    """The limit less what the task's runs had spent when the supervisor recovered it: a recovered task's new
+    workflow starts counting from nothing, so the limit it is given is what the task has left. Never below
+    nothing: a task with nothing left ends, or holds, before its first run."""
+    from decimal import Decimal
+
+    carried = Decimal(str(task.get("spent_carried_usd") or 0))
+    if carried <= 0:
+        return limit
+    return f"{max(Decimal(limit) - carried, Decimal(0)):.2f}"
 
 
 @activity.defn
@@ -80,7 +96,7 @@ async def load_task(task_id: str) -> TaskSpec:
         pin=task["pin"] or "",
         floor=FLOOR_FOR_COMPLEXITY.get(task["complexity"] or "", ""),
         ceiling=task["max_tier"] or "",
-        spend_limit_usd=_spend_limit(task),
+        spend_limit_usd=_less_carried(_spend_limit(task), task),
         closes=f"{match['repo']}#{match['number']}" if match else "",
         goal_id=task.get("goal_id") or "",
         attempts=int(task.get("attempts") or 1),

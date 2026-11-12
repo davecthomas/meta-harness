@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
 from meta_harness.scheduler import holds
+from meta_harness.supervisor import standing
 from meta_harness.tasks import reviews, spend, store
 
 
@@ -115,6 +116,23 @@ class RetryIn(BaseModel):
     max_usd: Decimal | None = Field(default=None, gt=0)
 
 
+class RecoverIn(BaseModel):
+    # What the supervisor found: the task's workflow ended without ending it, or it has none.
+    why: str = Field(min_length=1, max_length=500)
+    # What the task's runs have spent so far, which its next workflow counts against its spend limit.
+    spent_usd: Decimal = Field(default=Decimal(0), ge=0)
+
+
+class DriveIn(BaseModel):
+    # merge: ask for the pull request's merge. review: send it back through checks, review and fixes.
+    action: Literal["merge", "review", "retry"]
+    # What the supervisor found, which the task's reason carries.
+    why: str = Field(min_length=1, max_length=500)
+    spent_usd: Decimal = Field(default=Decimal(0), ge=0)
+    # False: not one of the task's three tries, for a retry after the worker's own restart.
+    counted: bool = True
+
+
 class DismissIn(BaseModel):
     # Why the finding is wrong, or not worth a fix run: shown on the review and posted on the pull request.
     reason: str = Field(min_length=1, max_length=2000)
@@ -146,6 +164,20 @@ def create_app(
             app.state.pool.close()
 
     app = FastAPI(title="meta-harness task service", lifespan=lifespan)
+
+    def within_ceiling(max_usd: Decimal | None) -> None:
+        """Refuse a spend limit above the task policy's ceiling for one task, naming the ceiling."""
+        from meta_harness.config import store as config_store
+
+        ceiling = config_store.task_spend_ceiling()
+        if max_usd is not None and max_usd > ceiling:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"max_usd {max_usd} is above ${ceiling:.2f}, the most one task may spend "
+                    "(the task policy's max_task_usd)"
+                ),
+            )
 
     def caller(key: str = Depends(auth.bearer), actor: str | None = Header(default=None, alias="X-MH-Actor")) -> Caller:
         if label := auth.label_for(key, services):
@@ -186,6 +218,7 @@ def create_app(
 
     @app.post("/v1/tasks", status_code=201)
     def submit(body: TaskIn, response: Response, who: Caller = Depends(caller)) -> dict:
+        within_ceiling(body.max_usd)
         try:
             with app.state.pool.connection() as conn:
                 task, created = store.create(conn, who.label, store.NewTask(**body.model_dump()), internal=who.service)
@@ -218,6 +251,7 @@ def create_app(
         q: str | None = Query(default=None, max_length=200),
         waiting: bool | None = None,
         smoke: bool = False,
+        has_it: Literal["operator", "supervisor", "workflow", "scheduler", "planner"] | None = None,
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         who: Caller = Depends(caller),
@@ -230,10 +264,14 @@ def create_app(
                 except store.NotFound as err:
                     raise HTTPException(status_code=404, detail="no such task") from err
             statuses = status.split(",") if status else None
-            tasks, total = store.list_tasks(conn, owner, statuses, goal_id, limit, offset, pr, q, waiting, smoke)
+            tasks, total = store.list_tasks(
+                conn, owner, statuses, goal_id, limit, offset, pr, q, waiting, smoke, has_it
+            )
             held = holds.for_tasks(conn, [t["id"] for t in tasks if t["status"] == "queued"])
+            standings = standing.for_tasks(conn, [t["id"] for t in tasks if t["status"] != "closed"])
             for task in tasks:
                 task["held"] = held.get(task["id"])
+                task["standing"] = standings.get(task["id"])
             return {"tasks": tasks, "total": total, "offset": offset, "limit": limit}
 
     @app.get("/v1/tasks/{task_id}")
@@ -243,6 +281,8 @@ def create_app(
                 task = visible(store.get(conn, task_id), who)
                 # Why the scheduler holds a queued task, from the scheduler's own record of it.
                 task["held"] = holds.get(conn, task_id) if task["status"] == "queued" else None
+                # Who has the task, from the supervisor's own record of it.
+                task["standing"] = standing.get(conn, task_id) if task["status"] != "closed" else None
                 return task
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such task") from err
@@ -332,6 +372,7 @@ def create_app(
         """Send a review_unresolved, failed or canceled task back to the queue. With a pull request it resumes
         at the review loop (or closes, when the pull request has merged); without one it starts a new first run.
         Its runs start from nothing spent, against max_usd when given."""
+        within_ceiling((body or RetryIn()).max_usd)
         return requeue(task_id, "retry", (body or RetryIn()).max_usd, who)
 
     @app.post("/v1/tasks/{task_id}/merge", status_code=202)
@@ -429,6 +470,7 @@ def create_app(
     def budget(task_id: str, body: BudgetIn, who: Caller = Depends(caller)) -> dict:
         """An operator's answer to a task held for budget: raise its spend limit (or carry on, when its goal's
         budget was raised) or end it. The scheduler hands the answer to the task's workflow."""
+        within_ceiling(body.max_usd)
         try:
             with app.state.pool.connection() as conn:
                 visible(store.get(conn, task_id), who)
@@ -506,6 +548,48 @@ def create_app(
         with app.state.pool.connection() as conn:
             task, previous = store.set_status(conn, task_id, status, reason)
         emit_status(task, previous, who.actor)
+        return task
+
+    @app.post("/v1/tasks/{task_id}/recover")
+    def recover(task_id: str, body: RecoverIn, who: Caller = Depends(service_only)) -> dict:
+        """The supervisor's move for a running or admitted task that has no RunTask workflow behind it: back
+        to the queue for a new workflow, canceled when it was asked to cancel, or failed once it has been
+        recovered too often. 409 for a task in any other status."""
+        try:
+            with app.state.pool.connection() as conn:
+                task, previous = store.recover(conn, task_id, body.why, body.spent_usd)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        emit_status(task, previous, who.actor)
+        events.emit(
+            "task_recovered",
+            {"from": previous, "to": task["status"], "recoveries": task["recoveries"], "why": body.why},
+            task_id=task_id,
+            actor=who.actor,
+        )
+        return task
+
+    @app.post("/v1/tasks/{task_id}/drive", status_code=202)
+    def drive(task_id: str, body: DriveIn, who: Caller = Depends(service_only)) -> dict:
+        """The supervisor's move for a ready or review_unresolved task it can move on: back to the queue for
+        its pull request's merge, or through its review loop, with what it spent carried over. 409 for a task
+        in any other status, one with no pull request, or one already sent back as often as allowed."""
+        try:
+            with app.state.pool.connection() as conn:
+                task, previous = store.drive(conn, task_id, body.action, body.why, body.spent_usd, body.counted)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        emit_status(task, previous, who.actor)
+        events.emit(
+            "task_driven",
+            {"action": body.action, "why": body.why, "drives": task["drives"], "resume": task["resume"]},
+            task_id=task_id,
+            actor=who.actor,
+        )
         return task
 
     @app.post("/v1/tasks/{task_id}/status")

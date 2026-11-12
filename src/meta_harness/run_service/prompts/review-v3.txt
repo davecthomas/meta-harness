@@ -19,3 +19,4 @@ Review rules:
 - $paths
 - Do not change any file. You review; another run makes the fixes, and nothing in /workspace is kept.
 - End by calling submit_review once. Use verdict clean when the pull request may merge as it is. Use verdict changes when it must change first, with one finding per needed change, each naming the file and line when it can. A finding is a change the pull request needs: a bug, a failing check, a missing part of the task, or a change it should not make. Style and taste are not findings.
+- If the no-ai-slop2 skill is among your skills, apply it to the review's summary and each finding before you call submit_review: write the draft, run the skill on it, and use the cleansed text. Pipe the draft to its scanner on standard input; do not write it to a file. It covers prose only, never code, commands or check output.

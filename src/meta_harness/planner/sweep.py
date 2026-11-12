@@ -17,7 +17,8 @@ acceptance checks, paths or a testable outcome when its goal sets
 strict_issues, and otherwise that one runs with the gap on its card: one with
 no acceptance checks, its own or the repo's defaults, runs with none, and its
 run asks the agent to run the repo's tests. An unsized issue with no checks
-(sizing off, or its call failed) is refused, as before sizing. A held issue
+(sizing off, or its call failed) is refused, as before sizing, and looked at
+again on every sweep, so adding the checks is all it takes. A held issue
 edited since its sizing is sized again, unless an operator split it: a split
 issue stays held, saying what it was split into, until it is closed or run
 anyway. The size is stored on the task
@@ -68,7 +69,10 @@ A goal no sweep covers any more, met, canceled, paused or stalled, is
 followed up every FOLLOW_UP_SECONDS instead (follow_up_goal): the title and
 labels of each issue it holds that has a task are refreshed, and its canceled
 tasks' pull requests watched for their end, so costs by label and by outcome
-stay true after the goal ends. It takes in nothing and changes no task. The
+stay true after the goal ends. It also records each issue the goal holds as
+open that has closed (refresh_states), which the planner does too when the
+goal's page is read, so the goal's record of its issues does not stop at its
+last sweep. It takes in nothing and changes no task. The
 canceled tasks of no goal, which no goal's sweep lists, have their pull
 requests watched as often (follow_up_goalless).
 """
@@ -184,8 +188,8 @@ async def follow_up_goal(
     goal: dict, tracker: Tracker, tasks: TaskClient, events: Events, host: CodeHost | None = None
 ) -> SweepResult:
     """For a goal no sweep covers any more: refresh the title and labels of each issue it holds that has a
-    task, and record the end of each pull request its canceled tasks left open. Nothing is taken in, and no
-    task or goal changes status."""
+    task, record each open one that has closed, and record the end of each pull request its canceled tasks
+    left open. Nothing is taken in, and no task or goal changes status."""
     result = SweepResult(goal["id"])
     for link in await asyncio.to_thread(_links, goal["id"]):
         if not link["task_id"]:
@@ -197,8 +201,75 @@ async def follow_up_goal(
             result.errors.append(f"{link['ref']}: {err}")
             continue
         await _refresh(link, issue)
+    result.errors.extend(await refresh_states(goal, tracker, events, result))
     await _watch_canceled_pull_requests(goal, tasks, events, host or code_host, result)
     return result
+
+
+async def refresh_states(goal: dict, tracker: Tracker, events: Events, result: SweepResult | None = None) -> list[str]:
+    """Record each issue the goal holds as open that has closed on the tracker, as a sweep would, for a goal
+    no sweep covers: without it the goal's record keeps the state its last sweep saw, and its page shows a
+    closed issue as open. Returns what could not be read; those keep the state they had."""
+    errors: list[str] = []
+    for link in await asyncio.to_thread(_links, goal["id"]):
+        if link["state"] != "open":
+            continue
+        try:
+            issue = await tracker.read(link["ref"])
+        except (GitHubAppError, ValueError) as err:
+            errors.append(f"{link['ref']}: {err}")
+            continue
+        if issue.state != "closed":
+            continue
+        await asyncio.to_thread(_set_state, link["ref"], "closed")
+        events.emit(
+            "issue_closed",
+            {"ref": link["ref"]},
+            task_id=link["task_id"],
+            actor="planner",
+            event_id=stable_event_id("issue_closed", link["ref"]),
+        )
+        if result is not None:
+            result.closed.append(link["ref"])
+    return errors
+
+
+# Why a task ended when its goal was canceled: each task's task_status_changed carries it.
+GOAL_CANCELED_REASON = "its goal was canceled"
+# A task in one of these has a pull request open that canceling its goal leaves for the operator.
+LEFT_WITH_PULL_REQUEST = ["running", "ready", "review_unresolved"]
+
+
+async def cancel_goal_tasks(goal: dict, tasks: TaskClient, who: str) -> dict[str, list[str]]:
+    """End what a canceled goal has not started: cancel each of its queued and blocked tasks, and ask each
+    running one with no pull request to stop, as a task cancel does. A task with a pull request open is left
+    for the operator, who decides what becomes of the pull request. Returns the task ids by what was done:
+    canceled, stopping, left (a pull request open), and errors for those the task service refused."""
+    done: dict[str, list[str]] = {"canceled": [], "stopping": [], "left": [], "errors": []}
+    try:
+        found = await asyncio.to_thread(
+            tasks.list, ["queued", "blocked", *LEFT_WITH_PULL_REQUEST], goal["id"], PR_WATCH_LIMIT
+        )
+    except TaskApiError as err:
+        done["errors"].append(f"{goal['id']}: {err}")
+        return done
+    for task in found:
+        if task.get("pr_url"):
+            done["left"].append(task["id"])
+            continue
+        if task["status"] not in UNSTARTED_OR_RUNNING:
+            # Finished work with no pull request on a code host (a local repo's): nothing to stop.
+            continue
+        if task.get("cancel_requested"):
+            done["stopping"].append(task["id"])
+            continue
+        try:
+            ended = await asyncio.to_thread(tasks.cancel, task["id"], GOAL_CANCELED_REASON, who)
+        except TaskApiError as err:
+            done["errors"].append(f"{task['id']}: {err}")
+            continue
+        done["canceled" if ended["status"] == "canceled" else "stopping"].append(task["id"])
+    return done
 
 
 def issues_done(links: list[dict]) -> bool:
@@ -226,7 +297,11 @@ async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, even
             return
         for issue in issues:
             existing = await asyncio.to_thread(_link, issue.ref)
-            if existing is None or existing["goal_id"] == goal["id"]:
+            mine = existing is not None and existing["goal_id"] == goal["id"]
+            removed = existing is not None and bool(existing.get("dropped"))
+            # An open issue this goal holds, or one it could take in, keeps it open. One an operator removed
+            # from this goal does not: the goal never takes it again. One another goal removed is free to take.
+            if existing is None or (mine and not removed) or (removed and not mine):
                 return
     met, changed = await asyncio.to_thread(_complete, goal["id"])
     if not changed:
@@ -261,7 +336,8 @@ async def _take_in_added(
     goal no longer names makes no task there."""
     names = {name.lower() for name in goal["repos"]}
     for link in await asyncio.to_thread(_links, goal["id"]):
-        if link["task_id"] or link["refused_reason"] or link["state"] != "open" or link["ref"] in seen:
+        # A refused issue is read again each sweep: it may have been given its acceptance checks since.
+        if link["task_id"] or link["state"] != "open" or link["ref"] in seen:
             continue
         if link["repo"].lower() not in names:
             continue
@@ -285,18 +361,27 @@ async def _take_in(
     sizer: sizing.Sizer | None = None,
 ):
     existing = await asyncio.to_thread(_link, issue.ref)
+    if existing and existing.get("dropped"):
+        # An operator removed the issue from its goal. That goal never takes it in again by its label;
+        # another goal takes it as an issue it has not seen.
+        if existing["goal_id"] == goal["id"]:
+            return
+        await asyncio.to_thread(_forget_link, issue.ref)
+        existing = None
     title = issue.title[:300]
     labels = list(dict.fromkeys(issue.labels))
     if existing and existing["goal_id"] == goal["id"] and existing.get("title") != title:
         await asyncio.to_thread(_set_title, issue.ref, title)
     if existing and existing["goal_id"] == goal["id"] and existing.get("labels") != labels:
         await asyncio.to_thread(_set_labels, issue.ref, labels)
-    if existing and (existing["goal_id"] != goal["id"] or existing["task_id"] or existing["refused_reason"]):
+    if existing and (existing["goal_id"] != goal["id"] or existing["task_id"]):
         return
     if existing and existing.get("split_into") is not None and not existing.get("run_anyway"):
         # Split by an operator: it stays held, saying what it was split into, and is neither sized nor split again.
         result.held.append(issue.ref)
         return
+    # An issue refused before is looked at again each sweep, so one given its acceptance checks since, or
+    # whose repo was given default checks, becomes a task without anyone dropping and adding it.
     registered = repos.get(issue.repo)
     checks = issue.checks or (registered.default_checks if registered else [])
     size, sized = await _size(goal, issue, existing, sizer, events, title, labels)
@@ -312,6 +397,9 @@ async def _take_in(
         # Unsized, with sizing off or failing, an issue with no checks is refused as it was before sizing. A sized
         # one runs with no checks and the gap on its card: the run asks its agent to run the repo's tests.
         reason = "the issue has no ## Acceptance checks and the repo registry names no default checks"
+        if existing and existing.get("refused_reason") == reason:
+            result.refused.append(issue.ref)
+            return
         await asyncio.to_thread(
             _save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, reason, title, labels
         )
@@ -678,6 +766,11 @@ def _hold(ref: str, reason: str | None) -> None:
 def _release(ref: str) -> bool:
     with db.connect(autocommit=True) as conn:
         return store.release_for_task(conn, ref)
+
+
+def _forget_link(ref: str) -> None:
+    with db.connect(autocommit=True) as conn:
+        store.forget_link(conn, ref)
 
 
 def _set_title(ref: str, title: str) -> None:

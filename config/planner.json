@@ -13,6 +13,13 @@
     "max_response_tokens": 800,
     "body_chars": 8000
   },
+  "writing_pass": {
+    "skill": "no-ai-slop2",
+    "scanner": "no-ai-slop-scan.py",
+    "engine": "claude",
+    "model": "claude-haiku-4-5",
+    "max_response_tokens": 4000
+  },
   "planning": {
     "candidate": "harness:pi-plan/claude:claude-opus-5-5",
     "max_usd": "3.00"

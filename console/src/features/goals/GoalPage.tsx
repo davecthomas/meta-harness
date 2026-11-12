@@ -1,10 +1,13 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Group, Loader, SegmentedControl, Stack, Table, Text } from "@mantine/core";
-import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlayerPause, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
+import { CancelGoal } from "./CancelGoal";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
+import { GoalStanding } from "./GoalStanding";
+import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures } from "./GoalFailures";
 import { GoalPlan } from "./GoalPlan";
 import { GoalSpend } from "./GoalSpend";
@@ -45,6 +48,8 @@ export function GoalPage() {
   // When the board last reread its issues, and why its latest reread failed, if it did.
   const [refreshed, setRefreshed] = useState<number | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  // For a goal no sweep covers: when its issues' states were read from GitHub, and whether every one was.
+  const [states, setStates] = useState<{ at: string; complete: boolean } | null>(null);
   const [view, setView] = useState<"board" | "graph" | "table" | null>(null);
   const [systemParallel, setSystemParallel] = useState<number | null>(null);
   useEffect(() => {
@@ -80,7 +85,9 @@ export function GoalPage() {
 
   const loadProgress = useCallback(async () => {
     try {
-      const issues = await api.goalIssues(goalId);
+      const read = await api.goalIssuesChecked(goalId);
+      const issues = read.issues;
+      setStates(read.states_checked_at ? { at: read.states_checked_at, complete: read.states_complete !== false } : null);
       const ids = issues.flatMap((i) => (i.task_id ? [i.task_id] : []));
       const attempts = ids.length ? await api.taskEvents(ids, ["attempt_finished"]) : [];
       const spent: Record<string, number> = {};
@@ -211,14 +218,13 @@ export function GoalPage() {
             {open && (
               <Button variant="default" leftSection={<IconListCheck size={16} />} onClick={() => setPicking(true)}>Add issues</Button>
             )}
-            {open && (
-              <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={() => act(() => api.goalAction(goal.id, "cancel"))}>Cancel goal</Button>
-            )}
+            {open && <CancelGoal tasks={Object.values(tasks)} onCancel={() => act(() => api.goalAction(goal.id, "cancel"))} />}
           </>
         }
       />
       <ErrorAlert error={error} />
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
+      <GoalStanding standing={goal.standing} />
       <IssuesPicker
         opened={picking}
         onClose={() => setPicking(false)}
@@ -284,6 +290,11 @@ export function GoalPage() {
         right={
           issues.length > 0 && (
             <Group gap="md">
+            {states && (
+              <Text size="xs" c="dimmed" data-testid="states-checked">
+                {states.complete ? "issue states read from GitHub" : "some issue states could not be read from GitHub; last tried"} {when(states.at)}
+              </Text>
+            )}
             <Refreshed at={refreshed} error={refreshError} />
             <SegmentedControl
               size="xs"
@@ -297,7 +308,7 @@ export function GoalPage() {
       >
         Issues and tasks
       </SectionTitle>
-      {progress && <GoalFailures issues={progress} tasks={tasks} />}
+      {progress && <GoalFailures issues={progress} tasks={tasks} onChanged={() => void Promise.all([load(), loadProgress()])} />}
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
       <GoalSpend goalId={goal.id} goalName={goalTitle(goal)} opened={spending} onClose={() => setSpending(false)} />
       {issues.length > 0 && progress && shownView === "board" ? (
@@ -312,7 +323,7 @@ export function GoalPage() {
       ) : issues.length > 0 && progress && shownView === "graph" ? (
         <GoalGraph issues={progress} tasks={tasks} />
       ) : issues.length ? (
-        <DataTable head={["Task", "Issue state", "Task status", "Pull request", "Waits on"]}>
+        <DataTable head={["Task", "Issue state", "Task status", "Pull request", "Waits on", ""]}>
           {shown.items.map((i) => {
             const task = i.task_id ? tasks[i.task_id] : undefined;
             const to = i.task_id ? `/tasks/${i.task_id}` : null;
@@ -351,6 +362,9 @@ export function GoalPage() {
                   {task?.pr_url && <PrLink url={task.pr_url} />}
                 </Table.Td>
                 <Table.Td>{i.depends_on.map((d) => <Text ff="monospace" size="xs" key={d}>{d}</Text>)}</Table.Td>
+                <Table.Td>
+                  {!["met", "canceled"].includes(goal.status) && <RemoveIssue goalId={goal.id} issueRef={i.ref} task={task} onRemoved={() => void Promise.all([load(), loadProgress()])} />}
+                </Table.Td>
               </Table.Tr>
             );
           })}

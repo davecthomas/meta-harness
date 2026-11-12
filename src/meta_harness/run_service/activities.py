@@ -41,6 +41,7 @@ calls cleanup_run, which revokes the grant and removes the per-run sandbox.
 
 import asyncio
 import contextlib
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -52,7 +53,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
-from meta_harness.run_service import code_host, events, harness_client, routing, run_grants, sandbox
+from meta_harness.run_service import code_host, events, harness_client, routing, run_grants, sandbox, writing
 from meta_harness.run_service.prompt_activities import loop_template
 from meta_harness.run_service.shared import (
     DeliverRequest,
@@ -338,7 +339,15 @@ async def publish(request: PublishRequest) -> PublishResult:
     """
     ref = ref_for(activity.info().workflow_id)
     workspace = sandbox.workspace_for(ref, request.run_id)
-    body = _pr_body(request)
+
+    async def body() -> str:
+        """The description, written once a pull request is to be opened: the run's summary goes through the
+        writing pass, and the lines the meta-harness adds around it stay as they are."""
+        if not request.summary:
+            return _pr_body(request)
+        [summary] = await _written("pull_request", [request.summary], request.task_id, run_id=request.run_id)
+        return _pr_body(request, summary)
+
     message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
         f"\n\nCloses {request.ticket}" if request.ticket else ""
     )
@@ -373,11 +382,28 @@ async def publish(request: PublishRequest) -> PublishResult:
     )
 
 
-def _pr_body(request: PublishRequest) -> str:
+async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> list[str]:
+    """The texts of one post after the writing pass, in order: each one's rewrite where the pass kept it, else
+    the text as given. What the pass found and changed is recorded on the task as `writing_checked`, once for
+    the same texts however often the activity is retried."""
+    outcomes = await writing.check_all(texts)
+    payload = writing.record(kind, outcomes, **extra)
+    if payload and task_id:
+        key = hashlib.sha256("\x00".join(texts).encode()).hexdigest()[:16]
+        events.emit(
+            "writing_checked",
+            payload,
+            task_id=task_id,
+            event_id=events.stable_id(task_id, "writing_checked", kind, key),
+        )
+    return [outcome.text if outcome else text for outcome, text in zip(outcomes, texts, strict=True)]
+
+
+def _pr_body(request: PublishRequest, summary: str | None = None) -> str:
     lines = [request.note, ""] if request.note else []
     if request.ticket:
         lines += [f"Closes {request.ticket}", ""]
-    lines += ["## Summary from the run", "", request.summary or "(the run left no summary)", ""]
+    lines += ["## Summary from the run", "", summary or request.summary or "(the run left no summary)", ""]
     lines += [
         "## Run",
         "",
@@ -504,7 +530,8 @@ async def _revoke_grant(tag: str, run_id: str) -> str | None:
 
 
 def run_body(request: HarnessRequest, grant_key: str) -> dict[str, Any]:
-    """The POST /run body: the prompt, the harness profile's run limits and bash allowlist, and the thinking level."""
+    """The POST /run body: the prompt, the harness profile's run limits and bash allowlist, the thinking level,
+    and the skills the profile names."""
     profile = request.candidate.profile
     body: dict[str, Any] = {
         "run_id": request.run_id,
@@ -520,7 +547,27 @@ def run_body(request: HarnessRequest, grant_key: str) -> dict[str, Any]:
     }
     if request.thinking:
         body["thinking"] = request.thinking
+    loaded = run_skills(profile)
+    if loaded:
+        # The skills the profile names, with their files: the harness server loads these and no others.
+        body["skills"] = loaded
     return body
+
+
+def run_skills(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    """The skills a profile's run loads, with their files, from the skills configuration. A profile that names
+    none reads nothing; skills that cannot be read are left out, with a line saying so, since a run can still
+    do its task without one."""
+    names = [str(name) for name in profile.get("skills") or []]
+    if not names:
+        return []
+    from meta_harness.config.skills import for_run
+
+    try:
+        return for_run(routing.skills(), names)
+    except Exception as err:  # noqa: BLE001 - the run goes on without them
+        print(f"[run] could not read the skills {', '.join(names)}: {err}", flush=True)
+        return []
 
 
 async def _start_or_reattach(
@@ -775,7 +822,8 @@ async def post_comment(request: CommentRequest) -> str:
         return ""
     try:
         repo, number = code_host.pr_number(request.pr_url)
-        return await code_host.comment(repo, number, request.body)
+        [body] = await _written("comment", [request.body], request.task_id)
+        return await code_host.comment(repo, number, body)
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
 
@@ -917,12 +965,18 @@ def _requested(request: LoopPromptRequest) -> str:
 async def post_review(request: PostReviewRequest) -> str:
     """Posts a review run's verdict and findings on the pull request, and records it. Returns the review's URL."""
     review = request.review
-    findings = review.get("findings") or []
+    findings = [dict(f) for f in review.get("findings") or []]
+    # The review's own words go through the writing pass before they are posted: its summary and each
+    # finding. The pull request gets the checked text; the fix run still gets the review as the run wrote it.
+    texts = [review.get("summary") or "", *(str(f.get("body") or "") for f in findings)]
+    summary, *bodies = await _written("review", texts, request.task_id, round=request.round_no)
+    for finding, text in zip(findings, bodies, strict=True):
+        finding["body"] = text
     body = "\n".join(
         [
             f"**meta-harness review, round {request.round_no}**: `{review['verdict']}`, by `{request.reviewer}`",
             "",
-            review.get("summary") or "",
+            summary,
         ]
         + (
             [""] + [f"- {_finding_line(f)}" for f in findings if not (f.get("path") and f.get("line"))]

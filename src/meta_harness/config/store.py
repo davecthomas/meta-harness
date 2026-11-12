@@ -7,6 +7,7 @@ anything reads it, so a fresh deployment starts from what it shipped with.
 import json
 import os
 import time
+from decimal import Decimal
 from typing import Any
 
 import psycopg
@@ -104,7 +105,7 @@ def rollback(conn: psycopg.Connection, kind: str, version: int, who: str, note: 
 # The kinds whose entries, by name, reach the deployment from the shipped files: the document's key
 # holding them. Tiers are left out: they are an ordered routing list, and an added tier changes routing.
 # The task policy's spend limit by issue size reaches a deployment that had none, one size at a time.
-SHIPPED_ENTRIES = {"profiles": "profiles", "task_policy": "max_usd_by_size"}
+SHIPPED_ENTRIES = {"profiles": "profiles", "skills": "skills", "task_policy": "max_usd_by_size"}
 SHIPPED_BY = "meta-harness"
 
 
@@ -140,6 +141,53 @@ def add_shipped(conn: psycopg.Connection) -> list[dict[str, Any]]:
             note = f"added from the shipped file: {', '.join(sorted(added))}"
             saved.append(_insert(conn, kind, document, SHIPPED_BY, note, "shipped", None))
     return saved
+
+
+# The lists in a shipped profile whose new members reach a deployment's profile of the same name: the skills
+# it loads and the commands its bash tool may run.
+SHIPPED_PROFILE_LISTS = ("skills", "bash_allow")
+
+
+def add_shipped_to_profiles(conn: psycopg.Connection) -> list[dict[str, Any]]:
+    """Adds to each active profile the skills and bash commands its shipped profile has that no version of
+    that profile ever had.
+
+    So a skill the code starts to rely on, and the command that runs its script, reach a deployment that
+    reads its profiles from here. A member any earlier version of the profile held is never added again: an
+    operator who removed it meant to. A profile the deployment does not have is left out: add_shipped adds
+    whole profiles. The change is one new version, origin `shipped`, checked like any save, and left unsaved
+    when the check refuses it. Returns the versions saved.
+    """
+    shipped = KINDS["profiles"].seed().get("profiles") or {}
+    with conn.transaction():
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("config:profiles",))
+        current = active(conn, "profiles")
+        document = json.loads(json.dumps(current["document"]))
+        history = [
+            row[0].get("profiles") or {}
+            for row in conn.execute(
+                "SELECT document FROM config.config_version WHERE kind = %s", ("profiles",)
+            ).fetchall()
+        ]
+        notes = []
+        for name, profile in (document.get("profiles") or {}).items():
+            for key in SHIPPED_PROFILE_LISTS:
+                wanted = (shipped.get(name) or {}).get(key)
+                if not isinstance(wanted, list) or (key == "bash_allow" and not profile.get(key)):
+                    continue
+                seen = {member for past in history for member in ((past.get(name) or {}).get(key) or [])}
+                added = [member for member in wanted if member not in seen]
+                if added:
+                    profile[key] = [*(profile.get(key) or []), *added]
+                    notes.append(f"{name} {key}: {', '.join(added)}")
+        if not notes:
+            return []
+        try:
+            check(conn, "profiles", document)
+        except ConfigError:
+            return []
+        note = f"added from the shipped file: {'; '.join(notes)}"
+        return [_insert(conn, "profiles", document, SHIPPED_BY, note, "shipped", None)]
 
 
 def replace_engines(conn: psycopg.Connection) -> list[dict[str, Any]]:
@@ -241,6 +289,20 @@ def current_document(kind: str) -> dict[str, Any]:
         return active_document(kind)[1]
     _known(kind)
     return KINDS[kind].seed()
+
+
+def task_spend_ceiling() -> Decimal:
+    """The most one task may spend: the task policy's max_task_usd, else TASK_SPEND_CEILING_USD. No task runs
+    without this ceiling, whatever its own limit or the budget policy says. A policy that cannot be read, or
+    names no usable amount, answers the default: the ceiling never opens because a read failed."""
+    from meta_harness.run_service.shared import TASK_SPEND_CEILING_USD
+
+    default = Decimal(TASK_SPEND_CEILING_USD)
+    try:
+        ceiling = Decimal(str(current_document("task_policy").get("max_task_usd") or default))
+    except Exception:  # noqa: BLE001 - an unreadable policy must not unbound anything
+        return default
+    return ceiling if ceiling.is_finite() and ceiling > 0 else default
 
 
 # How long budget_policy answers from its last read: the planner asks once for every goal it serves.

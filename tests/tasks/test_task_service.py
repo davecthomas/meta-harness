@@ -651,3 +651,149 @@ def test_a_claimed_review_can_be_given_back_by_the_operator_who_holds_it(api, ev
     assert released.status_code == 202 and released.json()["review_claimed_by"] is None
     pending = api.get("/v1/messages/pending", headers=_as(SERVICE_KEY)).json()["messages"]
     assert [m["body"] for m in pending if m["task_id"] == tid] == ["claim:ops", "release"]
+
+
+def test_no_spend_limit_above_the_ceiling_for_one_task_is_accepted(api):
+    over = api.post("/v1/tasks", json=_task(max_usd="100.01"), headers=_as(CALLER_KEY))
+    assert over.status_code == 422 and "the most one task may spend" in over.json()["detail"]
+    assert "$100.00" in over.json()["detail"]
+
+    task = api.post("/v1/tasks", json=_task(max_usd="100.00"), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/cancel", headers=_as(CALLER_KEY))
+    retried = api.post(f"/v1/tasks/{task['id']}/retry", json={"max_usd": "5000"}, headers=_as(CALLER_KEY))
+    assert retried.status_code == 422 and "max_task_usd" in retried.json()["detail"]
+    raised = api.post(
+        f"/v1/tasks/{task['id']}/budget", json={"action": "raise", "max_usd": "1000000"}, headers=_as(CALLER_KEY)
+    )
+    assert raised.status_code == 422
+
+
+def test_the_supervisor_recovers_a_task_with_no_workflow_and_gives_up_after_too_many(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    assert task["recoveries"] == 0 and task["status_changed_at"]
+    running = lambda: api.post(  # noqa: E731
+        f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY)
+    )
+    recover = lambda spent="0": api.post(  # noqa: E731
+        f"/v1/tasks/{task['id']}/recover",
+        json={"why": "its RunTask workflow ended without ending the task", "spent_usd": spent},
+        headers=_as(SERVICE_KEY),
+    )
+    assert recover().status_code == 200, "a queued task the scheduler started is recovered too"
+    assert api.post(f"/v1/tasks/{task['id']}/recover", json={"why": "x"}, headers=_as(CALLER_KEY)).status_code == 403
+    running()
+
+    recovered = recover("3.25").json()
+
+    assert recovered["status"] == "queued" and recovered["recoveries"] == 2 and recovered["retries"] == 2
+    assert Decimal(recovered["spent_carried_usd"]) == Decimal("3.25") and recovered["waiting_on"] is None
+    assert "sent it back to the queue (recovery 2)" in recovered["status_reason"]
+    assert ("task_recovered", "running", "queued") in [(e[0], e[1].get("from"), e[1].get("to")) for e in events.events]
+    running()
+    recover()
+    running()
+
+    gave_up = recover().json()
+
+    assert gave_up["status"] == "failed" and gave_up["recoveries"] == 3
+    assert "its workflows keep ending without finishing" in gave_up["status_reason"]
+    assert recover().status_code == 409, "a failed task has no workflow to recover"
+    # An operator's retry starts from nothing spent.
+    retried = api.post(f"/v1/tasks/{task['id']}/retry", headers=_as(CALLER_KEY)).json()
+    assert Decimal(retried["spent_carried_usd"]) == 0
+
+
+def test_a_task_asked_to_cancel_is_canceled_by_a_recovery_and_a_task_says_who_has_it(api):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    api.post(f"/v1/tasks/{task['id']}/cancel", headers=_as(CALLER_KEY))
+
+    ended = api.post(
+        f"/v1/tasks/{task['id']}/recover", json={"why": "it has no RunTask workflow"}, headers=_as(SERVICE_KEY)
+    ).json()
+
+    assert ended["status"] == "canceled" and ended["cancel_requested"] is False
+    assert ended["status_reason"] == "it was asked to cancel, and it has no RunTask workflow"
+    assert api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["standing"] is None, "not looked at yet"
+
+
+def test_the_supervisor_drives_a_parked_task_a_bounded_number_of_times_with_its_spend_carried(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+
+    def park():
+        api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+        body = {"status": "ready", "pr_url": "https://github.com/o/r/pull/9"}
+        api.post(f"/v1/tasks/{task['id']}/status", json=body, headers=_as(SERVICE_KEY))
+
+    def drive(action="merge", key=SERVICE_KEY):
+        body = {"action": action, "why": "the code host would take its merge now", "spent_usd": "2.50"}
+        return api.post(f"/v1/tasks/{task['id']}/drive", json=body, headers=_as(key))
+
+    assert drive().status_code == 409, "a queued task is not parked"
+    park()
+    assert drive(key=CALLER_KEY).status_code == 403
+
+    driven = drive().json()
+
+    assert (driven["status"], driven["resume"], driven["drives"]) == ("queued", "merge", 1)
+    assert Decimal(driven["spent_carried_usd"]) == Decimal("2.50")
+    assert driven["status_reason"] == (
+        "the code host would take its merge now, so the supervisor asked for its merge (try 1 of 3)"
+    )
+    assert ("task_driven", "merge", 1) in [(e[0], e[1].get("action"), e[1].get("drives")) for e in events.events]
+    park()
+    assert drive("review").json()["resume"] == "review"
+    park()
+    assert drive().status_code == 202
+    park()
+    refused = drive()
+    assert refused.status_code == 409 and "already sent the task back 3 times" in refused.json()["detail"]
+    # An operator's own action starts the count again, and from nothing spent.
+    merged = api.post(f"/v1/tasks/{task['id']}/merge", headers=_as(CALLER_KEY)).json()
+    assert merged["drives"] == 0 and Decimal(merged["spent_carried_usd"]) == 0
+
+
+def test_the_supervisor_retries_a_failed_task_and_only_a_failed_one(api):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    retry = {"action": "retry", "why": "the task failed on the system's side, not its own", "spent_usd": "1"}
+    assert api.post(f"/v1/tasks/{task['id']}/drive", json=retry, headers=_as(SERVICE_KEY)).status_code == 409
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
+
+    retried = api.post(f"/v1/tasks/{task['id']}/drive", json=retry, headers=_as(SERVICE_KEY)).json()
+
+    assert (retried["status"], retried["resume"], retried["drives"]) == ("queued", None, 1)
+    assert retried["status_reason"].endswith("so the supervisor retried it (try 1 of 3)")
+    assert Decimal(retried["spent_carried_usd"]) == Decimal("1")
+
+
+def test_an_uncounted_drive_is_none_of_the_tasks_tries_and_tasks_are_listed_by_who_has_them(api):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    other = api.post("/v1/tasks", json=_task(external_ref="github:o/r#778"), headers=_as(CALLER_KEY)).json()
+    held = api.post("/v1/tasks", json=_task(external_ref="github:o/r#779"), headers=_as(CALLER_KEY)).json()
+    for _ in range(4):
+        api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+        api.post(f"/v1/tasks/{task['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
+        body = {"action": "retry", "why": "the worker restarted under it", "counted": False}
+        driven = api.post(f"/v1/tasks/{task['id']}/drive", json=body, headers=_as(SERVICE_KEY))
+        assert driven.status_code == 202 and driven.json()["drives"] == 0
+    assert driven.json()["status_reason"].endswith("(not one of its tries)")
+
+    from meta_harness import db
+    from meta_harness.supervisor import standing
+    from meta_harness.supervisor.rules import Decision
+
+    with db.connect(autocommit=True) as conn:
+        standing.save(conn, task["id"], Decision("operator", "failed", "the task failed", ask="Retry it."))
+        standing.save(conn, other["id"], Decision("scheduler", "queued", "it waits for the scheduler"))
+        paused = Decision("operator", "goal_not_active", "its goal is paused", ask="Resume the goal.")
+        standing.save(conn, held["id"], paused)
+
+    yours = api.get("/v1/tasks?has_it=operator", headers=_as(CALLER_KEY)).json()
+
+    assert [t["id"] for t in yours["tasks"]] == [task["id"]] and yours["total"] == 1, (
+        "a paused goal's tasks are its own"
+    )
+    assert yours["tasks"][0]["standing"]["ask"] == "Retry it."
+    assert api.get("/v1/tasks?has_it=scheduler", headers=_as(CALLER_KEY)).json()["total"] == 1
+    assert api.get("/v1/tasks?has_it=nobody", headers=_as(CALLER_KEY)).status_code == 422

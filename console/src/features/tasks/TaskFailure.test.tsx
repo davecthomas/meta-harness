@@ -26,7 +26,9 @@ test("a failed task says why at the top, names each run that did not finish, and
   show("failed");
   const alert = screen.getByRole("alert");
   expect(alert.textContent).toContain("This task failed");
-  expect(alert.textContent).toContain("deploy failed on the merge commit");
+  expect(alert.textContent).toContain("The control plane recorded: deploy failed on the merge commit");
+  expect(alert.textContent).toContain("What to do: Open the task for its runs and their logs. Retry it once the cause is fixed.");
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   expect(alert.textContent).toContain("(fix) on harness:a/b:c: ended ERROR (spend_limit)");
   expect(alert.textContent).not.toContain("ended FINISHED");
   expect(screen.getByRole("link", { name: "Run 7" }).getAttribute("href")).toBe("/tasks/t-1?run=t-1%3Arun-7");

@@ -1001,6 +1001,29 @@
     ],
     "type": "object"
   },
+  "task_driven v1": {
+    "additionalProperties": true,
+    "properties": {
+      "action": {
+        "type": "string"
+      },
+      "drives": {
+        "type": "integer"
+      },
+      "resume": {
+        "type": "string"
+      },
+      "why": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "action",
+      "why",
+      "drives"
+    ],
+    "type": "object"
+  },
   "task_held v1": {
     "additionalProperties": true,
     "properties": {
@@ -1010,6 +1033,30 @@
     },
     "required": [
       "reason"
+    ],
+    "type": "object"
+  },
+  "task_recovered v1": {
+    "additionalProperties": true,
+    "properties": {
+      "from": {
+        "type": "string"
+      },
+      "recoveries": {
+        "type": "integer"
+      },
+      "to": {
+        "type": "string"
+      },
+      "why": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "from",
+      "to",
+      "recoveries",
+      "why"
     ],
     "type": "object"
   },
@@ -1090,6 +1137,35 @@
       "tier",
       "method",
       "candidates"
+    ],
+    "type": "object"
+  },
+  "task_standing v1": {
+    "additionalProperties": true,
+    "properties": {
+      "ask": {
+        "type": "string"
+      },
+      "owner": {
+        "enum": [
+          "workflow",
+          "scheduler",
+          "planner",
+          "supervisor",
+          "operator"
+        ]
+      },
+      "reason": {
+        "type": "string"
+      },
+      "situation": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "owner",
+      "situation",
+      "reason"
     ],
     "type": "object"
   },
@@ -1205,6 +1281,73 @@
     "required": [
       "email",
       "to"
+    ],
+    "type": "object"
+  },
+  "writing_checked v1": {
+    "additionalProperties": true,
+    "properties": {
+      "categories": {
+        "type": "object"
+      },
+      "changes": {
+        "items": {
+          "additionalProperties": true,
+          "properties": {
+            "after": {
+              "type": "string"
+            },
+            "before": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "before",
+            "after"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "findings": {
+        "type": "integer"
+      },
+      "kept": {
+        "type": "integer"
+      },
+      "kind": {
+        "enum": [
+          "pull_request",
+          "review",
+          "comment",
+          "issue"
+        ]
+      },
+      "model": {
+        "type": "string"
+      },
+      "reasons": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "rewritten": {
+        "type": "integer"
+      },
+      "texts": {
+        "type": "integer"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "texts",
+      "findings",
+      "rewritten",
+      "kept"
     ],
     "type": "object"
   }

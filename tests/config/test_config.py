@@ -67,7 +67,7 @@ def client():
 def test_every_kind_is_seeded_from_its_file_on_first_read(client):
     listed = client.get("/v1/config").json()["kinds"]
 
-    assert [k["kind"] for k in listed] == ["tiers", "profiles", "repos", "task_policy"]
+    assert [k["kind"] for k in listed] == ["tiers", "profiles", "repos", "skills", "task_policy"]
     assert all(k["version"] == 1 and k["edited_by"] == "seed" for k in listed)
     assert client.get("/v1/config/tiers").json()["document"] == TIERS
     assert client.get("/v1/config/profiles").json()["document"] == PROFILES
@@ -215,7 +215,7 @@ def test_the_planning_profile_can_draft_issues_and_read_but_never_write():
     }
     assert not writers & set(plan["bash_allow"])
     assert {"ls", "cat", "grep", "find", "git"} <= set(plan["bash_allow"])
-    assert kinds.check_profiles(profiles, {}) == []
+    assert kinds.check_profiles(profiles, {"skills": kinds.KINDS["skills"].seed()}) == []
     assert "create_issue" in kinds.KNOWN_TOOLS
 
 
@@ -383,3 +383,68 @@ def test_the_budget_policy_blocks_unless_it_is_set_to_track(monkeypatch):
 
     monkeypatch.setattr(store, "current_document", unreadable)
     assert store.budget_policy(fresh=True) == "block", "a policy that cannot be read unbounds nothing"
+
+
+def test_the_task_policys_writing_pass_is_a_switch_or_left_out(monkeypatch):
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
+    policy = {"max_parallel": 4, "review": {"reviewers": ["harness:pi-review/x:y"], "max_rounds": 3}}
+    assert kinds.check_task_policy({**policy, "writing_pass": False}) == []
+    assert kinds.check_task_policy({**policy, "writing_pass": True}) == []
+    for bad in ("off", 0, []):
+        [reason] = kinds.check_task_policy({**policy, "writing_pass": bad})
+        assert reason.startswith("writing_pass must be true or false")
+
+
+def test_every_profile_that_writes_for_people_names_the_writing_skill():
+    from meta_harness.run_service import writing
+
+    profiles = json.loads((REPO_ROOT / "config" / "harness_profiles.json").read_text())["profiles"]
+    skill = writing.settings()["skill"]
+    for name in ("pi-lean", "pi-careful", "pi-review", "pi-plan"):
+        assert skill in profiles[name]["skills"], name
+    # A run that can run the skill's scanner has python3; the planning profile reads only, and applies the
+    # skill's rules by reading them.
+    for name in ("pi-lean", "pi-careful", "pi-review"):
+        assert "python3" in profiles[name]["bash_allow"], name
+
+
+def test_a_skill_a_shipped_profile_starts_to_name_reaches_the_deployments_profile_once(monkeypatch):
+    older = copy.deepcopy(PROFILES)
+    for profile in older["profiles"].values():
+        profile.pop("skills", None)
+    older["profiles"]["pi-review"]["bash_allow"] = [
+        c for c in older["profiles"]["pi-review"]["bash_allow"] if c != "python3"
+    ]
+    _ship_profiles(monkeypatch, older)
+    with db.connect(autocommit=True) as conn:
+        first = store.active(conn, "profiles")
+        assert "skills" not in first["document"]["profiles"]["pi-review"]
+        _ship_profiles(monkeypatch, PROFILES)
+
+        [saved] = store.add_shipped_to_profiles(conn)
+
+        assert (saved["kind"], saved["origin"], saved["edited_by"]) == ("profiles", "shipped", "meta-harness")
+        assert "pi-review skills: no-ai-slop2" in saved["note"] and "pi-review bash_allow: python3" in saved["note"]
+        now = store.active(conn, "profiles")["document"]["profiles"]
+        assert now["pi-review"]["skills"] == ["no-ai-slop2"] and "python3" in now["pi-review"]["bash_allow"]
+        assert now["pi-lean"]["skills"] == ["no-ai-slop2"]
+        assert store.add_shipped_to_profiles(conn) == [], "a second start adds nothing"
+
+        # An operator who takes the skill off a profile keeps it off.
+        edited = copy.deepcopy(store.active(conn, "profiles")["document"])
+        edited["profiles"]["pi-lean"]["skills"] = []
+        store.save(conn, "profiles", edited, "op@example.com", "no skill on pi-lean")
+        assert store.add_shipped_to_profiles(conn) == []
+        assert store.active(conn, "profiles")["document"]["profiles"]["pi-lean"]["skills"] == []
+
+
+def test_the_task_policys_ceiling_on_one_tasks_spend_is_an_amount_within_reach(monkeypatch):
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
+    policy = {"max_parallel": 4, "review": {"reviewers": ["harness:pi-review/x:y"], "max_rounds": 3}}
+    for good in ("100.00", "25", 250, "1000"):
+        assert kinds.check_task_policy({**policy, "max_task_usd": good}) == [], good
+    for bad in ("0", "-1", "1000.01", "999999", "lots", True, "Infinity"):
+        [reason] = kinds.check_task_policy({**policy, "max_task_usd": bad})
+        assert reason.startswith("max_task_usd must be an amount above 0 and at most 1000"), bad
+    shipped = json.loads((REPO_ROOT / "config" / "task_policy.json").read_text())
+    assert shipped["max_task_usd"] == "100.00"
