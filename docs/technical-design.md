@@ -2295,13 +2295,17 @@ The answer is stored on the issue link (`size`, `sizing`) and recorded as
   records one it finds closed. A sweep that read the issue before a split began, and sized it
   small, looks at its link again under the row's lock just before it makes
   the task: a split issue, or one being split, stays held with the reason
-  its split recorded.
+  its split recorded, and one an operator removed from the goal, or another
+  goal holds, makes no task. Its sizing is recorded only on a link the goal
+  holds and has not removed: when two goals' sweeps first see one issue at
+  once, the one that did not record it first stops, and neither holds nor
+  runs it.
 - An issue missing something runs, with the gap on its card. One with no
   acceptance checks, its own or the repo registry's defaults, runs with none,
   and its run asks the agent to run the repo's tests. A goal that sets
   `strict_issues` holds it instead, as it holds a large one, until it is run
-  anyway. An issue with no checks that is not sized (sizing off, or its call
-  failed) is refused, as before sizing. Once a later sweep sizes it, the
+  anyway. An issue with no checks that is not sized because sizing is off is
+  refused, as before sizing. Once a later sweep sizes it, the
   refusal is cleared: a sized issue is held or run, never refused, so its
   card says one or the other.
 - A held issue edited since it was sized is sized again on the next sweep,
@@ -2313,8 +2317,11 @@ The answer is stored on the issue link (`size`, `sizing`) and recorded as
   task policy's `max_usd_by_size` for its size.
 
 A sizing call that fails, or a gateway the planner has no address or key for,
-leaves the issue unsized, logged, and it runs as an issue did before sizing:
-sizing guides the planner and never stops a goal.
+leaves an issue never sized waiting, with no task: the failure is the sweep's
+error, and the next sweep sizes it again before it makes the task, so a large
+issue, or one a strict goal would hold, never runs unsized. The sweep goes on
+to the goal's other issues. A held issue whose new sizing fails keeps the
+size it had.
 
 #### Modalities
 

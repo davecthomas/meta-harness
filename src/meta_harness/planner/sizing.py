@@ -22,8 +22,9 @@ What the sweep does with a size (sweep.py):
   size.
 
 issue_sizing.engine "none" turns sizing off: every issue runs unsized, as
-before sizing. A sizing call that fails leaves its issue unsized, and it runs:
-a sizer the gateway cannot reach never stops a goal.
+before sizing. A sizing call that fails leaves an issue never sized waiting,
+with no task, for the next sweep to size it again: no issue runs unsized
+while sizing is on.
 
 Environment: GATEWAY_URL and GATEWAY_API_KEY, the HTTP Gateway the meta-harness calls.
 """

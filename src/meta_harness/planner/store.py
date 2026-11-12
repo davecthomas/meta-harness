@@ -430,18 +430,22 @@ def save_sizing(
     sizing: dict[str, Any],
     title: str | None = None,
     labels: list[str] | None = None,
-) -> None:
+) -> bool:
     """Record the size the planner gave an open issue, holding the link for the goal if it held none yet. A
-    refusal from before it was sized is cleared: a sized issue is held or run, never refused."""
+    refusal from before it was sized is cleared: a sized issue is held or run, never refused. Returns False,
+    recording nothing, when the link is another goal's or was removed: two goals' sweeps may first see one
+    issue at once, and an operator may remove it while the sweep waits on its sizing."""
     with conn.transaction():
-        conn.execute(
+        saved = conn.execute(
             "INSERT INTO planner.issue_link (ref, goal_id, repo, state, depends_on, title, labels, size, sizing) "
             "VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s) ON CONFLICT (ref) DO UPDATE SET "
             "size = EXCLUDED.size, sizing = EXCLUDED.sizing, depends_on = EXCLUDED.depends_on, refused_reason = NULL, "
             "title = COALESCE(EXCLUDED.title, planner.issue_link.title), "
-            "labels = COALESCE(EXCLUDED.labels, planner.issue_link.labels), last_seen_at = now()",
+            "labels = COALESCE(EXCLUDED.labels, planner.issue_link.labels), last_seen_at = now() "
+            "WHERE planner.issue_link.goal_id = EXCLUDED.goal_id AND NOT planner.issue_link.dropped",
             (ref, goal_id, repo, depends_on, title, labels, size, Jsonb(sizing)),
         )
+        return saved.rowcount == 1
 
 
 def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> None:
@@ -456,20 +460,26 @@ def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> Non
         )
 
 
-def release_for_task(conn: psycopg.Connection, ref: str) -> bool:
-    """Let the issue go on to be a task, unless an operator split it, or is splitting it, and did not run it
-    anyway. Returns False when it stays held. The sweep calls this just before it creates the task: an operator
-    may split the issue while the sweep waits on its sizing. Clearing held_reason under the row's lock closes
-    claim_split and Run anyway to the issue until its task is recorded."""
+def release_for_task(conn: psycopg.Connection, ref: str, goal_id: str) -> str:
+    """Let the issue go on to be a task for the goal. Returns "released"; "split" when an operator split it, or
+    is splitting it, and did not run it anyway, so it stays held; "gone" when an operator removed it from the
+    goal or another goal holds it, so this goal makes no task for it. The sweep calls this just before it
+    creates the task, as any of these may happen while it waits on the issue's sizing. Clearing held_reason
+    under the row's lock closes claim_split and Run anyway to the issue until its task is recorded."""
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("SELECT split_into, run_anyway FROM planner.issue_link WHERE ref = %s FOR UPDATE", (ref,))
+        cur.execute(
+            "SELECT goal_id, dropped, split_into, run_anyway FROM planner.issue_link WHERE ref = %s FOR UPDATE",
+            (ref,),
+        )
         row = cur.fetchone()
         if row is None:
-            return True
+            return "released"
+        if row["goal_id"] != goal_id or row["dropped"]:
+            return "gone"
         if row["split_into"] is not None and not row["run_anyway"]:
-            return False
+            return "split"
         cur.execute("UPDATE planner.issue_link SET held_reason = NULL WHERE ref = %s", (ref,))
-        return True
+        return "released"
 
 
 def claim_split(conn: psycopg.Connection, goal_id: str, ref: str) -> bool:
