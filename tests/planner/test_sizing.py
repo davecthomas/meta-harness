@@ -322,6 +322,46 @@ def test_split_creates_the_suggested_issues_with_the_goals_label_and_their_paths
     assert _task(tasks, ref) is not None
 
 
+def test_a_split_github_refused_partway_is_recorded_with_its_events(world):
+    client, events, tracker, tasks, sizer = world
+    ref = tracker.add(REPO, _number(), body=f"Everything.\n\n{CHECKS}")
+    body = {"statement": "Fix bugs", "repos": [REPO], "label": None, "refs": [ref]}
+    created = client.post("/v1/goals", json=body, headers=OPERATOR)
+    assert created.status_code == 201, created.text
+    goal = created.json()
+    sizer.answers[ref] = {"size": "large", "reasons": [], "missing": [], "split": ["Titles", "Labels"]}
+    assert _sweep(client, goal)["held"] == [ref]
+    added_before = len(_payloads(events, "issue_added"))
+
+    tracker.refuse_at = 2
+    drafts = [{"title": t, "body": f"Split from {ref}.\n\nPaths: console\n\n{CHECKS}"} for t in ("Titles", "Labels")]
+    refused = client.post(f"/v1/goals/{goal['id']}/issues/split", json={"ref": ref, "issues": drafts}, headers=OPERATOR)
+
+    assert refused.status_code == 502 and "created before it refused" in refused.json()["detail"]
+    [made] = [i.ref for i in tracker.created]
+    assert _payloads(events, "issue_split") == [{"ref": ref, "goal_id": goal["id"], "issues": [made]}]
+    added = _payloads(events, "issue_added")[added_before:]
+    assert added == [{"ref": made, "goal_id": goal["id"]}], "a labelless goal takes the created issue by ref"
+    assert _shown(client, goal)[ref]["split_into"] == [made]
+
+
+def test_an_issue_refused_unsized_and_then_held_by_a_strict_goal_says_only_held(world, no_default_checks):
+    client, events, tracker, tasks, sizer = world
+    sizer.fail = True
+    goal = _goal(client, strict_issues=True)
+    ref = tracker.add(REPO, _number(), body="Fix it.\n\nPaths: docs", labels=[goal["label"]])
+    assert _sweep(client, goal)["refused"] == [ref]
+    assert _shown(client, goal)[ref]["refused_reason"]
+
+    sizer.fail = False
+    swept = _sweep(client, goal)
+
+    assert swept["held"] == [ref] and swept["refused"] == [] and _task(tasks, ref) is None
+    card = _shown(client, goal)[ref]
+    assert "missing acceptance checks" in card["held_reason"]
+    assert card["refused_reason"] is None, "the refusal from before it was sized is cleared"
+
+
 @pytest.fixture
 def no_default_checks(tmp_path, monkeypatch):
     """A repo registry that names no default checks for the repo."""

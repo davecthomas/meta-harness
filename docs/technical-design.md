@@ -2274,7 +2274,10 @@ The answer is stored on the issue link (`size`, `sizing`) and recorded as
   them (`POST /v1/goals/{id}/issues/split`, `issue_split`) opens each in the
   held issue's repo with the goal's label, refuses a draft with no `Paths:`
   line, and holds them by ref for a goal with no label. The goal takes them in
-  as it takes any issue. The held issue stays held, saying what it was split
+  as it takes any issue. When GitHub refuses a draft partway, the issues
+  created before it are the split: they are recorded, with `issue_split` (and
+  `issue_added` for each one a goal with no label holds by ref), and the 502
+  names them. The held issue stays held, saying what it was split
   into, until it is closed or run anyway: the planner closes no issue a person
   wrote. The split is recorded on its link (`split_into`), so later sweeps
   keep that reason and neither size nor split it again, and a second Split
@@ -2290,7 +2293,9 @@ The answer is stored on the issue link (`size`, `sizing`) and recorded as
   and its run asks the agent to run the repo's tests. A goal that sets
   `strict_issues` holds it instead, as it holds a large one, until it is run
   anyway. An issue with no checks that is not sized (sizing off, or its call
-  failed) is refused, as before sizing.
+  failed) is refused, as before sizing. Once a later sweep sizes it, the
+  refusal is cleared: a sized issue is held or run, never refused, so its
+  card says one or the other.
 - A held issue edited since it was sized is sized again on the next sweep,
   so adding what it lacked, or cutting it down, lets it go. A split one is
   not.
@@ -2780,8 +2785,9 @@ Costs are gathered into one place by the cost service
 planner's process for now, as the configuration API does. Every
 `MH_COSTS_HARVEST_SECONDS` (300; 0 turns it off; checked at startup) it
 reads each source into `costs.daily_cost`. Model cost comes from the event
-service: each run's `attempt_finished`, and the planner's own model calls,
-read from the position the last harvest reached and saved with the new
+service: each run's `attempt_finished`, and the planner's own model calls
+(`goal_drafted`, `goal_titled` and `issue_sized`, each a planning cost of
+its goal), read from the position the last harvest reached and saved with the new
 position in one transaction, so an event is counted once. Cloud cost comes
 from the Google Cloud billing export in BigQuery, by billed service; the
 last 35 days, and back to the first of the previous month, are read again
