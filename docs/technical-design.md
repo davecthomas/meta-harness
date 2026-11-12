@@ -1971,8 +1971,18 @@ waits on an operator swept, so it goes on the moment one task is unstuck. A
 goal that needs the operator says so at the top of its page, with what each
 task needs, in the Overview's list of goals and in the inbox.
 
-Planned: a reopened issue given a new task; and a reminder outside the
-console when a wait for an operator grows long.
+An operator removes an issue from a goal that has started with Remove from
+goal, on the goal's table of issues: the dialog says what that does to the
+issue's task. The goal lets the issue go for good and nothing changes on
+the tracker: `issue_link` keeps the row, marked `dropped`, which is what
+keeps the goal's label from taking the issue in again. A removed issue is
+not listed with the goal, does not count toward the goal being met, and is
+free for another goal.
+
+Planned: an open issue whose task was canceled given a new task (#256's
+first part, which waits until an operator has had Remove from goal to take
+out what should not run again); and a reminder outside the console when a
+wait for an operator grows long.
 
 ### Throughput
 
@@ -2079,7 +2089,7 @@ credential.
 | GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it. With them, the goal's status (`goal_status`), and for a goal no sweep covers, when its open issues' states were last read from the tracker (`states_checked_at`, at most a minute old) and whether every one could be read (`states_complete`); `GET /v1/goals/{id}` reads them the same way | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. Each draft's body goes through the writing pass before it becomes an issue. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
-| POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet. A ref another goal holds is refused, naming that goal | built |
+| POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or remove one from it, with or without a task. A ref another goal holds is refused, naming that goal. Removing an issue cancels its task when the task has not ended, and answers `{dropped, task_canceled}`; a task with a pull request open is refused (409) unless `force=true`, which cancels the task and leaves the pull request open. The goal keeps the ref marked `dropped`, so its label never sweeps the issue back in; adding it back by ref clears the mark, and another goal may take it meanwhile | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row: each one's state (in review, waiting, blocked, merged, closed; merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting, not closed), when it was opened and reached that state, its fix rounds and latest run; the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
@@ -2511,7 +2521,7 @@ the same approval.
 | Planner | console_user | email, role (admin, user), status (invited, active, deprovisioned), invited_by, invited_at, last_sign_in_at. Who may use the console, and as what |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
-| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, title and labels (the issue's, refreshed by each sweep, for an issue with a task whether the label still lists it or it has closed, and hourly once its goal is met or ended; labels give costs by label), last_webhook_at |
+| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, dropped (an operator removed the issue from the goal: the row stays so the label does not take it in again), title and labels (the issue's, refreshed by each sweep, for an issue with a task whether the label still lists it or it has closed, and hourly once its goal is met or ended; labels give costs by label), last_webhook_at |
 | Planner | pull_request_end | task_id, outcome (`merged` or `closed`), recorded_at: the tasks whose pull request's end a sweep recorded, so a canceled task's pull request is read only until it ends |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |

@@ -318,7 +318,7 @@ def dependency(task: dict, by_id: dict[str, dict], before: dict[str, standing.St
             if ref == own:
                 return "stuck", f"{name}, its own issue"
             held = goal_store.link(conn, ref)
-            if held is None:
+            if held is None or held.get("dropped"):
                 unheld = unheld or name
                 continue
             if held["state"] == "closed" or not held.get("task_id"):
