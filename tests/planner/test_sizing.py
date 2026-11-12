@@ -76,6 +76,19 @@ def test_the_task_policy_gives_a_positive_limit_for_each_size_it_names():
     assert kinds.check_task_policy({**policy, "max_usd_by_size": ["5"]})
 
 
+def test_a_size_limit_above_the_task_ceiling_or_infinite_is_refused():
+    policy = json.loads((sizing.REPO_ROOT / "config" / "task_policy.json").read_text())
+    policy.pop("max_task_usd", None)
+    over_default = kinds.check_task_policy({**policy, "max_usd_by_size": {"large": "150"}})
+    assert any("max_usd_by_size.large" in r and "above 100.00" in r for r in over_default)
+    over_own = kinds.check_task_policy({**policy, "max_task_usd": "30", "max_usd_by_size": {"large": "40"}})
+    assert any("above 30.00" in r for r in over_own)
+    assert kinds.check_task_policy({**policy, "max_task_usd": "500", "max_usd_by_size": {"large": "150"}}) == []
+    for infinite in ("Infinity", float("inf"), "NaN"):
+        reasons = kinds.check_task_policy({**policy, "max_usd_by_size": {"small": infinite}})
+        assert any("max_usd_by_size.small" in r for r in reasons), infinite
+
+
 def test_the_shipped_sizing_settings_pass_their_check():
     sizing.check_settings()
     assert sizing.settings()["engine"] == "openai-decisions", "the classifier's engine"
@@ -428,6 +441,33 @@ def test_only_a_held_issue_of_the_goal_is_run_anyway_or_split(world):
     stranger = f"github:{REPO}#{uuid.uuid4().int % 10**9 + 10**12}"
     missing = client.post(f"/v1/goals/{goal['id']}/issues/run-anyway", json={"ref": stranger}, headers=OPERATOR)
     assert missing.status_code == 404
+
+
+def test_a_removed_or_closed_held_issue_is_neither_run_anyway_nor_split(world):
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    removed, closed = (
+        tracker.add(REPO, _number(), body=f"Everything.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+        for _ in range(2)
+    )
+    for ref in (removed, closed):
+        sizer.answers[ref] = {"size": "large", "reasons": [], "missing": [], "split": ["Titles", "Labels"]}
+    assert sorted(_sweep(client, goal)["held"]) == sorted([removed, closed])
+    run_url, split_url = (f"/v1/goals/{goal['id']}/issues/{action}" for action in ("run-anyway", "split"))
+    drafts = [{"title": "Titles", "body": "Paths: docs"}]
+
+    dropped = client.delete(f"/v1/goals/{goal['id']}/issues/{removed.replace('#', '%23')}", headers=OPERATOR)
+    assert dropped.status_code == 200, dropped.text
+    assert client.post(split_url, json={"ref": removed, "issues": drafts}, headers=OPERATOR).status_code == 404
+    assert client.post(run_url, json={"ref": removed}, headers=OPERATOR).status_code == 404
+
+    # Closed on GitHub since the last sweep: the routes read it, and record it closed.
+    tracker.issues[closed].state = "closed"
+    ran = client.post(run_url, json={"ref": closed}, headers=OPERATOR)
+    assert ran.status_code == 409 and "closed" in ran.json()["detail"]
+    assert client.post(split_url, json={"ref": closed, "issues": drafts}, headers=OPERATOR).status_code == 409
+    assert tracker.created == [] and _payloads(events, "issue_released") == []
+    assert _shown(client, goal)[closed]["state"] == "closed"
 
 
 def test_run_anyway_waits_while_the_issue_is_being_split(world):

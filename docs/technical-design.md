@@ -755,8 +755,10 @@ The other fields below are planned.
   turn count is unknown before it starts.
 - `max_usd_by_size` gives a task its `max_usd` from its issue's size (Issue
   sizing), when the issue names no limit of its own on a `Spend limit: $N`
-  line: an object from `small`, `medium` and `large` to a dollar amount above
-  0. A size it leaves out, an issue not sized, or a policy without it gives
+  line: an object from `small`, `medium` and `large` to a finite dollar
+  amount above 0 and at most the task ceiling (`max_task_usd`, else $100.00),
+  since the Task API refuses a task's limit above it. A save that breaks this
+  is refused, and a limit read above the ceiling gives none. A size it leaves out, an issue not sized, or a policy without it gives
   the task no limit, so the $10.00 default applies. A change applies to the
   tasks made after it.
 - `reviewers` lists the review run's
@@ -2102,8 +2104,8 @@ credential.
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. Each draft's body goes through the writing pass before it becomes an issue. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or remove one from it, with or without a task. A ref another goal holds is refused, naming that goal. Removing an issue cancels its task when the task has not ended, and answers `{dropped, task_canceled}`; a task with a pull request open is refused (409) unless `force=true`, which cancels the task and leaves the pull request open. The goal keeps the ref marked `dropped`, so its label never sweeps the issue back in; adding it back by ref clears the mark, and another goal may take it meanwhile | built |
-| POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps, at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold, 409 for one not held or a met or canceled goal. Records `issue_released` | built |
-| POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label; a goal with no label holds them by ref. Each body must name its paths on a `Paths:` line (422 names those that do not); a refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps; one split already is refused (409). Records `issue_split` | built |
+| POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps, at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold or removed, 409 for one not held, closed (the route reads the issue from GitHub first and records it closed; 502 when it cannot be read), or a met or canceled goal. Records `issue_released` | built |
+| POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label; a goal with no label holds them by ref. Each body must name its paths on a `Paths:` line (422 names those that do not); a refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps; one split already is refused (409), as is a closed one; one the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row: each one's state (in review, waiting, blocked, merged, closed; merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting, not closed), when it was opened and reached that state, its fix rounds and latest run; the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
@@ -2284,7 +2286,9 @@ The answer is stored on the issue link (`size`, `sizing`) and recorded as
   is refused (409). While a split is creating its issues, its claim
   (`split_into` empty) refuses Run anyway (409), so the original never
   starts beside its smaller issues; once the split ends, Run anyway is open
-  again. A sweep that read the issue before a split began, and sized it
+  again. Neither action takes an issue the goal removed (404) or one closed
+  on GitHub since the last sweep (409): each reads the issue first, and
+  records one it finds closed. A sweep that read the issue before a split began, and sized it
   small, looks at its link again under the row's lock just before it makes
   the task: a split issue, or one being split, stays held with the reason
   its split recorded.

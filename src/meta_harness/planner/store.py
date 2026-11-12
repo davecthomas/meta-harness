@@ -478,7 +478,8 @@ def claim_split(conn: psycopg.Connection, goal_id: str, ref: str) -> bool:
     with conn.transaction():
         claimed = conn.execute(
             "UPDATE planner.issue_link SET split_into = '{}' "
-            "WHERE ref = %s AND goal_id = %s AND split_into IS NULL AND held_reason IS NOT NULL AND task_id IS NULL",
+            "WHERE ref = %s AND goal_id = %s AND split_into IS NULL AND held_reason IS NOT NULL AND task_id IS NULL "
+            "AND NOT dropped AND state = 'open'",
             (ref, goal_id),
         )
         return claimed.rowcount == 1
@@ -509,8 +510,10 @@ def run_anyway(conn: psycopg.Connection, goal_id: str, ref: str) -> dict:
             f"SELECT {LINK_COLUMNS} FROM planner.issue_link WHERE ref = %s AND goal_id = %s FOR UPDATE", (ref, goal_id)
         )
         row = cur.fetchone()
-        if row is None:
+        if row is None or row["dropped"]:
             raise NotFound(ref)
+        if row["state"] != "open":
+            raise GoalError(f"{ref} is {row['state']}: only an open issue becomes a task")
         if not row["held_reason"] or row["task_id"]:
             raise GoalError(f"{ref} is not held: nothing to run anyway")
         if row["split_into"] == []:
