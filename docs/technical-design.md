@@ -1239,7 +1239,7 @@ the goal's tag for a plan's issue. It carries the kind of text, how many
 texts were looked at, the scanner's findings by category, how many were
 rewritten and kept, the reasons a rewrite was dropped, the model and its
 cost, and the original and the rewrite of each text that changed. The task's
-Timeline shows it as an item. A rewrite's cost is a model cost of kind
+Timeline shows it as a note on the step it happened in. A rewrite's cost is a model cost of kind
 `writing`, of the task or the plan's goal. The task policy's
 `writing_pass: false` turns the pass off, with a switch on the Task policy
 page; runs are still told to apply the skill. `writing_pass`'s settings are
@@ -2801,15 +2801,101 @@ returns to the one before; a link that names only a run (`?run=<run id>`)
 opens the Terminal on that run alone, with Show every run to bring the rest
 back. Each review round on the Reviews tab links to its own review run (Show
 review run) and, when it sent findings to a fix run, to that fix run.
-The Task page shows a run as a timeline by default: each turn's message, its
-model calls (model, tokens, cost), its tool calls opening to their arguments
-and output, and the files it changed, live; the terminal is a second tab.
-Each run opens with the prompt it was given, from its `run_prompt` event: a
-Prompt item on the timeline and one collapsed `prompt (<template>)` line in
-the terminal, each opening to the full text. A run started before prompts
-were recorded shows none. The page reads every `run_prompt` on the task as
-it opens, besides its newest events, so an older run's prompt, or the one a
-`?run=` link opens on, is on the timeline before older events load.
+The Task page's Timeline tab, the one it opens on, is a picture of the
+task's path, drawn from the task's events alone (`console/src/features/tasks/path.ts`
+turns them into steps; no service works anything out for it). The five
+stages are columns, left to right: Waiting, Run, Pull request, Review,
+Outcome. Each step is a card in its stage's column, and time runs left to
+right along a row. A step that belongs to an earlier stage than the one
+before it starts a new row, with a line drawn back to it that says why
+(`3 findings to fix`, `Held for budget`, `Sent back for its merge by the
+supervisor`): so a loop shows as a return, round by round, and a task's
+number of rows is the number of times it went back. Steps that share a
+stage in one row stack in its cell: a second candidate's run under the
+first's, the checks under the pull request, the merge commit's checks and
+the task's end under the merge.
+
+| Step | From | It shows |
+|---|---|---|
+| A wait: Queued, Held by the scheduler, Blocked, Held for budget, Held for an operator, Review taken by an operator, Queued again | `task_created`, `task_held`, `budget_hold`, `review_hold`, `operator_review_claimed`, `task_retried`, `task_driven`, `task_recovered`, a status change to `queued` or `blocked` | Its reason and how long it lasted, drawn with a dashed edge. A retry, and a task the supervisor sent back, name who did it |
+| A run: Task run, Fix run | `run_prompt`, `run_finished`, `attempt_finished` | Its candidate, how it ended, its length, cost and turns. A run that did not finish is red, with why |
+| Pull request opened, Checks | `pull_request_opened`, `pull_request_checks` | The pull request's number and files changed; the checks' result, the failed ones by name, and how long they took |
+| A review round | the review run's events and `pull_request_reviewed` | Its round, verdict and number of findings, its reviewer, length and cost |
+| Merged, Merge commit's checks | `pull_request_merged`, `merge_checks` | The merge commit, and its checks' result |
+| Where it rests: Ready to merge, Review unresolved, Taken over | a status change to one of them | Why, how long it has rested, and what the supervisor asks of the operator |
+| Its end: Closed, Failed, Canceled | a status change to one of them | Why |
+
+What an operator did sits on the step it was done in: a message, a
+dismissed finding, a raised spend limit, a review sent on. So does the
+writing pass's record. The step the
+task is in now is ringed and marked Now, and a step still going counts its
+time up. A line above the picture sums the path: how long from start to
+now or to its end, how much of that was waiting, its runs, review rounds
+and cost. Hovering a step gives everything known about it. Picking a step
+opens it under the picture: a run's turns one by one (each turn's message,
+its model calls with model, tokens and cost, its tool calls opening to
+their arguments and output, the files it changed, and the prompt it was
+given, from its `run_prompt` event), with Open its terminal; a review's
+round on the Reviews tab; the checks and the pull request on the code
+host. A `?run=` link with `tab=timeline` opens with that run's step
+picked. The picture keeps its width and scrolls sideways on a narrow
+window. The page reads every step event of the task as it opens, besides
+its newest events, so the path is whole however long the task has run,
+and reads a picked run's own events when it is picked. The terminal is a
+second tab; it takes every run's `run_prompt` as the page opens, as one
+collapsed `prompt (<template>)` line that opens to the full text, so an
+older run's Terminal opens on its prompt. A run started before prompts
+were recorded shows none, and is told for a task, fix or review run by
+its attempt's tier.
+
+Three tasks from this repo's history, as the picture draws them:
+
+```text
+#252, merged after three fix rounds (1h 2m, 3s of it waiting, 8 runs, $8.13)
+
+ WAITING     RUN                 PULL REQUEST        REVIEW                 OUTCOME
+ Queued ---- Task run ---------- #257 opened ------- Round 1: 3 findings
+ 3s          11m 19s  $3.50      Checks passed 4m    51s  $0.19
+             +---- 3 findings to fix ----------------------+
+             Fix run ----------- Checks passed 4m -- Round 2: 2 findings
+             6m 24s  $1.12                           54s  $0.22
+             +---- 2 findings to fix ----------------------+
+             Fix run ----------- Checks passed 4m -- Round 3: 2 findings
+             8m 52s  $1.70                           46s  $0.17
+             +---- 2 findings to fix ----------------------+
+             Fix run ----------- Checks passed 4m -- Round 4: clean ------- Merged
+             6m 17s  $1.05                           37s  $0.19             Merge commit's checks passed 7m
+                                                                            Closed
+
+#205, held, out of budget, refused its merge, sent back by the supervisor, unresolved
+
+ WAITING              RUN                PULL REQUEST       REVIEW                OUTCOME
+ Held by the          Task run --------- #258 opened ------ Round 1: 2 findings
+ scheduler  1h 2m     20m 53s  $7.84     Checks passed 4m   51s  $0.23
+                      +---- 2 findings to fix --------------------+
+                      Fix run (red: spend limit)
+                      4m 12s  $1.96
+ +- Held for budget --+
+ Held for budget ---- Fix run ---------- Checks passed ---- Round 2: clean ------ Ready to merge
+ 59m 44s              10m 12s  $2.39                        59s  $0.31            3h 10m: GitHub would
+ an operator raised                                                              not merge it
+ the limit to $15
+ +- Sent back for its merge by the supervisor ---------------------------------------+
+ Sent back for its merge ------------------------------- Review
+ its pull request conflicts with its base                1m 26s  $0.46
+                      +---- back for a fix ------------------------+
+                      Fix run ---------- Checks passed ---- Review
+                      (two more rows the same way, round 3: 1 finding)
+                      Fix run ----------------------------------------------- Review unresolved  [Now]
+                      3m 42s  $0.24                                           fix round 3 changed nothing
+
+#263, held, then failed on its first run (6m 59s, 6m 49s of it waiting)
+
+ WAITING              RUN                PULL REQUEST       REVIEW                OUTCOME
+ Held by the -------- Task run (red) -------------------------------------------- Failed
+ scheduler  6m 49s    9s: the HTTP Gateway refused the run grant                  Needs you: read why, then retry
+```
+
 While a task holds its newest review for an operator, the Reviews tab says
 so above the rounds, each finding of that round has a Dismiss button that
 asks why, and Send to fix now ends the wait. A dismissed finding shows
@@ -2851,8 +2937,8 @@ area names the task holding it and the paths they share; the kill switch or
 a drain links to the Overview. A blocked task lists each issue it waits on
 with its state; one whose goal is canceled or met says that first instead,
 with a link to the goal, since it will not start whatever it waits on. A queued task nothing holds says it starts at the
-scheduler's next pass. The Timeline shows `task_held` and `task_admitted`
-as items, the Tasks page's Queued and blocked list has a Why it waits
+scheduler's next pass. The Timeline shows a hold as a wait, with its reason
+and how long it lasted until `task_admitted`, the Tasks page's Queued and blocked list has a Why it waits
 column, and a goal's board shows the reason on a queued task's card.
 A task that ended `failed` or `review_unresolved` says so in an alert at
 the top of its page: its reason, each run that did not finish (linked to

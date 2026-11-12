@@ -113,7 +113,8 @@ test("the task page's Terminal merges an older prompt in position order, each pr
   serveNewestOnly();
   renderTaskPage("/tasks/t");
 
-  await screen.findAllByTestId("prompt");
+  // The page opens on the task's path; a prompt shows there once its run's step is picked.
+  await screen.findByTestId("task-path");
   fireEvent.click(screen.getByText("Terminal"));
   const log = await screen.findByRole("log");
   await waitFor(() => expect(log.textContent).toContain("prompt (repo-task-v1)"));
