@@ -31,7 +31,8 @@ function loadGoogle(): Promise<GoogleId> {
   });
 }
 
-export function SignIn({ onSignedIn }: { onSignedIn: (identity: string) => void }) {
+// expired: the session ended while the console was open (sessions last 12 hours), so the screen says why.
+export function SignIn({ onSignedIn, expired = false }: { onSignedIn: (identity: string) => void; expired?: boolean }) {
   const button = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -67,6 +68,11 @@ export function SignIn({ onSignedIn }: { onSignedIn: (identity: string) => void 
         <Stack align="center" gap="md">
           <IconHexagons size={40} stroke={1.5} color="var(--mantine-primary-color-filled)" />
           <Title order={3}>Meta-harness</Title>
+          {expired && (
+            <Alert color="yellow" title="Your session ended" w="100%" data-testid="session-ended">
+              Sessions last 12 hours. Sign in again and you come back to the page you were on.
+            </Alert>
+          )}
           <Text c="dimmed" size="sm" ta="center">
             Sign in with the Google account on the console's access list.
           </Text>
