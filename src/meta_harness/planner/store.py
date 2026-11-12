@@ -7,6 +7,7 @@ from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from meta_harness.config import store as config_store
 from meta_harness.planner import budget
@@ -31,12 +32,15 @@ GOAL_MOVES = {
 GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
     "status, created_at, updated_at, started_at, closed_at, title, max_parallel, plan_task_id, plan_approved_at, "
-    "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to"
+    "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to, strict_issues"
 )
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
     "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at, title, "
-    "labels, dropped"
+    "labels, dropped, "
+    # The issue's size and what its sizing found, why it is held if it is, whether an operator ran it anyway, and
+    # the issues an operator split it into.
+    "size, sizing, held_reason, run_anyway, split_into"
 )
 
 
@@ -67,6 +71,8 @@ class NewGoal:
     # What the budget does when it is reached, and how far past it a block goal may go (budget.py).
     budget_mode: str = budget.DEFAULT_MODE
     budget_overage_percent: int = budget.DEFAULT_OVERAGE_PERCENT
+    # True: an issue missing acceptance checks, paths or a testable outcome is held, not run (sizing.py).
+    strict_issues: bool = False
 
 
 def _check_budget(mode: str | None, overage_percent: int | None) -> None:
@@ -90,9 +96,9 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
         cur.execute(
             f"INSERT INTO planner.goal (id, created_by, statement, repos, label, modality, modality_source, "
             f"auto_merge, max_usd, priority, status, started_at, title, max_parallel, budget_mode, "
-            f"budget_overage_percent) "
+            f"budget_overage_percent, strict_issues) "
             f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, %s, "
-            f"%s, %s) "
+            f"%s, %s, %s) "
             f"RETURNING {GOAL_COLUMNS}",
             (
                 new_goal_id(),
@@ -110,6 +116,7 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
                 goal.max_parallel,
                 goal.budget_mode,
                 goal.budget_overage_percent,
+                goal.strict_issues,
             ),
         )
         return _goal(cur.fetchone())
@@ -161,7 +168,7 @@ def update(
     **fields: Any,
 ) -> tuple[dict, dict]:
     """Change title, statement, label, repos, auto_merge, priority, max_usd, budget_mode,
-    budget_overage_percent, max_parallel or status. Returns (goal, the fields that changed with their old values).
+    budget_overage_percent, max_parallel, strict_issues or status. Returns (goal, the fields that changed with their old values).
 
     only_if: change nothing unless the goal's status is this one when its row is locked.
 
@@ -175,7 +182,7 @@ def update(
     can tell a goal's first start, which sweeps at once, from a resume.
     """
     allowed = {"title", "statement", "label", "repos", "auto_merge", "priority", "max_usd", "max_parallel", "status"}
-    allowed |= {"budget_mode", "budget_overage_percent"}
+    allowed |= {"budget_mode", "budget_overage_percent", "strict_issues"}
     if set(fields) - allowed:
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
     _check_budget(fields.get("budget_mode"), fields.get("budget_overage_percent"))
@@ -411,6 +418,128 @@ def forget_link(conn: psycopg.Connection, ref: str) -> None:
     """Delete the mark a goal left on an issue it removed, when another goal takes the issue."""
     with conn.transaction():
         conn.execute("DELETE FROM planner.issue_link WHERE ref = %s AND dropped", (ref,))
+
+
+def save_sizing(
+    conn: psycopg.Connection,
+    ref: str,
+    goal_id: str,
+    repo: str,
+    depends_on: list[str],
+    size: str,
+    sizing: dict[str, Any],
+    title: str | None = None,
+    labels: list[str] | None = None,
+) -> bool:
+    """Record the size the planner gave an open issue, holding the link for the goal if it held none yet. A
+    refusal from before it was sized is cleared: a sized issue is held or run, never refused. Returns False,
+    recording nothing, when the link is another goal's or was removed: two goals' sweeps may first see one
+    issue at once, and an operator may remove it while the sweep waits on its sizing. It also returns False
+    when the goal no longer names the issue's repo: an operator may remove the repo while the sweep waits, and
+    its taskless links go with it. The goal's row is locked first, so a repo change waits for this, or this
+    sees the change."""
+    with conn.transaction():
+        goal = conn.execute("SELECT repos FROM planner.goal WHERE id = %s FOR SHARE", (goal_id,)).fetchone()
+        if goal is None or repo.lower() not in {name.lower() for name in goal[0]}:
+            return False
+        saved = conn.execute(
+            "INSERT INTO planner.issue_link (ref, goal_id, repo, state, depends_on, title, labels, size, sizing) "
+            "VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s) ON CONFLICT (ref) DO UPDATE SET "
+            "size = EXCLUDED.size, sizing = EXCLUDED.sizing, depends_on = EXCLUDED.depends_on, refused_reason = NULL, "
+            "title = COALESCE(EXCLUDED.title, planner.issue_link.title), "
+            "labels = COALESCE(EXCLUDED.labels, planner.issue_link.labels), last_seen_at = now() "
+            "WHERE planner.issue_link.goal_id = EXCLUDED.goal_id AND NOT planner.issue_link.dropped",
+            (ref, goal_id, repo, depends_on, title, labels, size, Jsonb(sizing)),
+        )
+        return saved.rowcount == 1
+
+
+def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> None:
+    """Hold the issue for an operator, saying why, or with None let it go on to be a task. An issue split, or
+    being split, keeps the reason its split recorded. A hold clears a refusal from before: the card says one."""
+    with conn.transaction():
+        conn.execute(
+            "UPDATE planner.issue_link SET held_reason = %s, "
+            "refused_reason = CASE WHEN %s::text IS NULL THEN refused_reason END "
+            "WHERE ref = %s AND split_into IS NULL",
+            (reason, reason, ref),
+        )
+
+
+def release_for_task(conn: psycopg.Connection, ref: str, goal_id: str, linked: bool = False) -> str:
+    """Let the issue go on to be a task for the goal. Returns "released"; "split" when an operator split it, or
+    is splitting it, and did not run it anyway, so it stays held; "gone" when an operator removed it from the
+    goal or another goal holds it, so this goal makes no task for it. The sweep calls this just before it
+    creates the task, as any of these may happen while it waits on the issue's sizing. Clearing held_reason
+    under the row's lock closes claim_split and Run anyway to the issue until its task is recorded. With
+    linked, the caller saw a link for the issue (it was sized, or held before): an absent one is "gone", since
+    the goal's repo was removed and its taskless links with it."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT goal_id, dropped, split_into, run_anyway FROM planner.issue_link WHERE ref = %s FOR UPDATE",
+            (ref,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return "gone" if linked else "released"
+        if row["goal_id"] != goal_id or row["dropped"]:
+            return "gone"
+        if row["split_into"] is not None and not row["run_anyway"]:
+            return "split"
+        cur.execute("UPDATE planner.issue_link SET held_reason = NULL WHERE ref = %s", (ref,))
+        return "released"
+
+
+def claim_split(conn: psycopg.Connection, goal_id: str, ref: str) -> bool:
+    """Claim a held issue for one split, so two answers never both create its smaller issues. Returns False
+    when it was split already, or is being split."""
+    with conn.transaction():
+        claimed = conn.execute(
+            "UPDATE planner.issue_link SET split_into = '{}' "
+            "WHERE ref = %s AND goal_id = %s AND split_into IS NULL AND held_reason IS NOT NULL AND task_id IS NULL "
+            "AND NOT dropped AND state = 'open'",
+            (ref, goal_id),
+        )
+        return claimed.rowcount == 1
+
+
+def record_split(conn: psycopg.Connection, ref: str, created: list[str], reason: str | None) -> None:
+    """Record the issues a held issue was split into, and why it stays held. With none created, the claim is
+    let go, so the issue may be split again."""
+    with conn.transaction():
+        if created:
+            conn.execute(
+                "UPDATE planner.issue_link SET split_into = %s, held_reason = %s WHERE ref = %s", (created, reason, ref)
+            )
+        else:
+            conn.execute("UPDATE planner.issue_link SET split_into = NULL WHERE ref = %s", (ref,))
+
+
+def run_anyway(conn: psycopg.Connection, goal_id: str, ref: str) -> dict:
+    """Let a held issue become a task whatever its size and gaps. Returns the link as it was.
+
+    Raises:
+        NotFound: The goal does not hold the issue.
+        GoalError: The issue is not held, or is being split: its claim (split_into empty) is let go or recorded
+            when the split ends, and Run anyway is open to it again.
+    """
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"SELECT {LINK_COLUMNS} FROM planner.issue_link WHERE ref = %s AND goal_id = %s FOR UPDATE", (ref, goal_id)
+        )
+        row = cur.fetchone()
+        if row is None or row["dropped"]:
+            raise NotFound(ref)
+        if row["state"] != "open":
+            raise GoalError(f"{ref} is {row['state']}: only an open issue becomes a task")
+        if not row["held_reason"] or row["task_id"]:
+            raise GoalError(f"{ref} is not held: nothing to run anyway")
+        if row["split_into"] == []:
+            # claim_split holds the row's lock only while it claims, so this check is what keeps a split's
+            # smaller issues and the original's task from both starting.
+            raise GoalError(f"{ref} is being split: run it anyway once the split ends")
+        cur.execute("UPDATE planner.issue_link SET held_reason = NULL, run_anyway = true WHERE ref = %s", (ref,))
+        return _link(row)
 
 
 def set_link_state(conn: psycopg.Connection, ref: str, state: str) -> None:

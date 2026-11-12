@@ -18,7 +18,8 @@ SERVICE_TASK_TYPES = {"smoke"}
 # Only the meta-harness creates these.
 INTERNAL_TASK_TYPES = {"review", "fix"}
 # These may name no acceptance check: a planning task's result is its issue drafts, and a smoke task passes by
-# ending closed. Every other task says what shows it is done.
+# ending closed. So may a goal's task a service creates: the planner's for an issue it sized and ran with its
+# gap shown, whose run asks the agent to run the repo's tests. Every other task says what shows it is done.
 CHECKLESS_TASK_TYPES = {"plan", "smoke"}
 COMPLEXITIES = {"low", "medium", "high"}
 
@@ -94,7 +95,9 @@ def check(task: NewTask, *, internal: bool) -> None:
         raise TaskError(f"a {task.task_type} task needs parent_task_id")
     if task.complexity is not None and task.complexity not in COMPLEXITIES:
         raise TaskError(f"complexity {task.complexity!r} is not one of {sorted(COMPLEXITIES)}")
-    if not task.acceptance_checks and task.task_type not in CHECKLESS_TASK_TYPES:
+    # The planner may make a goal's issue with no checks a task: its issue was sized and runs with the gap shown.
+    checkless_goal_task = internal and task.goal_id is not None
+    if not task.acceptance_checks and task.task_type not in CHECKLESS_TASK_TYPES and not checkless_goal_task:
         raise TaskError(f"a {task.task_type} task needs at least one acceptance check")
 
 

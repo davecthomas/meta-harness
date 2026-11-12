@@ -8,6 +8,7 @@
     POST       /v1/goals/{id}/resume-budget   raise the budget of a goal over it or stopped by it (budget_api.py)
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
+    POST       /v1/goals/{id}/issues/run-anyway, /split   answer an issue the sweep held (sizing_api.py)
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
     GET, POST  /v1/admin/users                the console's users: invite, set a role, deprovision (users.py)
     GET        /v1/costs                      costs over time, by source, goal, model and more (costs/api.py)
@@ -57,6 +58,8 @@ from meta_harness.planner import (
     progress,
     repos,
     settings,
+    sizing,
+    sizing_api,
     store,
     users,
 )
@@ -107,6 +110,8 @@ class GoalIn(BaseModel):
     # The most of its tasks that run at once, no more than the system's. None: the system's.
     max_parallel: int | None = Field(default=None, ge=1)
     priority: int = 0
+    # True: an issue missing acceptance checks, paths or a testable outcome is held, not run (sizing.py).
+    strict_issues: bool = False
     # False: save the goal paused and never started; resume starts it.
     start: bool = True
 
@@ -147,6 +152,8 @@ class GoalPatch(BaseModel):
     budget_overage_percent: int | None = Field(default=None, ge=0, le=1000)
     # Sent as null: the goal goes back to the system's limit.
     max_parallel: int | None = Field(default=None, ge=1)
+    # An issue it has not made a task yet is held, or let go, at the next sweep.
+    strict_issues: bool | None = None
 
 
 def system_max_parallel() -> int | None:
@@ -214,6 +221,7 @@ def create_app(
     titler=None,
     workflows: Workflows | None = None,
     apps: GitHubApps | None = None,
+    sizer: sizing.Sizer | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -223,10 +231,12 @@ def create_app(
 
     # One sweep per goal at a time: the timed sweep, a new goal's first sweep and a requested one never overlap.
     locks: dict[str, asyncio.Lock] = {}
+    # Each issue is sized before it becomes a task: one model call, the first time a sweep sees it.
+    size = sizer or sizing.size_issue
 
     async def sweep_one(goal: dict) -> SweepResult:
         async with locks.setdefault(goal["id"], asyncio.Lock()):
-            return await sweep_goal(goal, tracker, tasks, events, host)
+            return await sweep_goal(goal, tracker, tasks, events, host, size)
 
     name = titler or drafting.title_goal
     # The GitHub Apps, to list the repos they are installed on: the tracker's, else the environment's.
@@ -438,6 +448,7 @@ def create_app(
         return change_with(goal_id, who, status=status)
 
     drafting.check_settings()
+    sizing.check_settings()
     costs_api.check_settings()
     planning.check_settings()
     writing.check_settings()
@@ -753,6 +764,7 @@ def create_app(
                 "label": goal["label"],
                 "modality": goal["modality"],
                 "auto_merge": goal["auto_merge"],
+                "strict_issues": goal["strict_issues"],
                 "start": body.start,
             },
             actor=who,
@@ -1084,6 +1096,7 @@ def create_app(
 
     plan_api.register(app, operator, load, events, tracker, tasks, activate)
     budget_api.register(app, operator, load, change_with, events, tasks)
+    sizing_api.register(app, operator, load, events, tracker, sweep_one)
     users.register(app, operator, events)
 
     def admin(key: str = Depends(auth.bearer), role: str | None = Header(default=None, alias="X-MH-Role")) -> bool:

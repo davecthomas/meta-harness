@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Anchor, Badge, Group, Paper, Progress, SimpleGrid, Stack, Text, Tooltip } from "@mantine/core";
 import { useNavigate } from "react-router-dom";
 import { issueUrl, type Goal, type IssueProgress, type Task } from "../../api";
@@ -5,6 +6,7 @@ import { budgetColor, budgetStanding, budgetWords } from "./budget";
 import { PrLink, StatusBadge } from "../../components/ui";
 import { projection } from "../tasks/Spend";
 import { moneyText } from "../../money";
+import { SizeBadge, gapText } from "./sizing";
 
 // The board's columns, in order, each with its color in the board and the graph.
 export const COLUMNS = [
@@ -23,6 +25,8 @@ export function columnOf(issue: IssueProgress, byRef: Map<string, IssueProgress>
   const status = issue.task_status;
   if (issue.state === "closed" || status === "closed" || issue.pr_state === "merged") return "done";
   if (issue.refused_reason || (status && FAILED.has(status)) || issue.checks?.state === "failed") return "attention";
+  // Held by the planner for its size or its gaps: it waits for Run anyway or Split.
+  if (issue.held_reason && !issue.task_id) return "attention";
   // A running task held for budget waits on an operator.
   if (issue.task_waiting_on) return "attention";
   // A cycle stops here: the planner refuses those, so an issue already on the path adds nothing.
@@ -57,12 +61,15 @@ function shortRef(ref: string): string {
   return ref.replace(/^github:/, "");
 }
 
-function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number }) {
+function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; actions?: ReactNode }) {
   const navigate = useNavigate();
   const { issue, task } = props;
   const url = issueUrl(issue.ref);
   const to = issue.task_id ? `/tasks/${issue.task_id}` : null;
   const checks = issue.checks?.state;
+  const held = issue.held_reason && !issue.task_id ? issue.held_reason : null;
+  // A gap a held issue's reason already names is not said twice.
+  const gap = held ? null : gapText(issue.missing);
   return (
     <Paper
       withBorder
@@ -82,6 +89,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number }) {
         </Group>
         <Group gap={6}>
           {issue.task_status && <StatusBadge status={issue.task_status} />}
+          <SizeBadge issue={issue} />
           {props.usd !== undefined && props.usd > 0 && <Text size="xs" c="dimmed">${props.usd.toFixed(2)}</Text>}
         </Group>
         {issue.pr_url && (
@@ -95,6 +103,9 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number }) {
           </Group>
         )}
         {issue.refused_reason && <Text size="xs" c="red">{issue.refused_reason}</Text>}
+        {held && <Text size="xs" c="orange" data-testid="held-reason">Held: {held}</Text>}
+        {gap && <Text size="xs" c="yellow.8" data-testid="issue-gap">{gap}</Text>}
+        {props.actions}
         {/* Why a queued task has not started, from the scheduler. */}
         {task?.status === "queued" && task.held && <Text size="xs" c="dimmed" lineClamp={3}>{moneyText(task.held.reason)}</Text>}
       </Stack>
@@ -137,7 +148,13 @@ export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<str
   );
 }
 
-export function GoalBoard(props: { issues: IssueProgress[]; tasks: Record<string, Task>; spend: Record<string, number> }) {
+// actions: what a card offers beyond opening its task, such as Run anyway and Split on an issue the planner held.
+export function GoalBoard(props: {
+  issues: IssueProgress[];
+  tasks: Record<string, Task>;
+  spend: Record<string, number>;
+  actions?: (issue: IssueProgress) => ReactNode;
+}) {
   const { column } = layout(props.issues);
   return (
     <SimpleGrid cols={{ base: 1, sm: 3, lg: 5 }} spacing="sm" mb="lg">
@@ -150,7 +167,13 @@ export function GoalBoard(props: { issues: IssueProgress[]; tasks: Record<string
               <Text size="xs" c="dimmed">{cards.length}</Text>
             </Group>
             {cards.map((i) => (
-              <IssueCard key={i.ref} issue={i} task={i.task_id ? props.tasks[i.task_id] : undefined} usd={i.task_id ? props.spend[i.task_id] : undefined} />
+              <IssueCard
+                key={i.ref}
+                issue={i}
+                task={i.task_id ? props.tasks[i.task_id] : undefined}
+                usd={i.task_id ? props.spend[i.task_id] : undefined}
+                actions={props.actions?.(i)}
+              />
             ))}
           </Stack>
         );
