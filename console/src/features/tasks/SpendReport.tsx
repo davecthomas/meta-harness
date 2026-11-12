@@ -20,7 +20,7 @@ export function cachedShare(input: number | null, cached: number | null): string
   return `${Math.round((100 * cached) / input)}%`;
 }
 
-// Where a task's money went: each run with its kind, turns, tokens and cost, the dearest marked, and the
+// Where a task's money went: each run with its kind, turns, tokens and cost, the most expensive marked, and the
 // totals against the task's spend limit. status is the task's, so the tab rereads as the task moves on.
 export function SpendReport({ taskId, status }: { taskId: string; status: string }) {
   const [spend, setSpend] = useState<TaskSpend | null>(null);
@@ -34,7 +34,7 @@ export function SpendReport({ taskId, status }: { taskId: string; status: string
   if (!spend.runs.length) return <Empty>No run has finished yet, so nothing is spent.</Empty>;
   const total = Number(spend.totals.usd);
   const limit = spend.max_usd ? Number(spend.max_usd) : null;
-  const dearest = Math.max(...spend.runs.map((r) => Number(r.usd)));
+  const costliest = Math.max(...spend.runs.map((r) => Number(r.usd)));
   return (
     <Stack gap="md">
       <Group gap="xl" align="flex-end" data-testid="spend-totals">
@@ -69,15 +69,26 @@ export function SpendReport({ taskId, status }: { taskId: string; status: string
               <Table.Td><Text size="sm">{tokens(run.output_tokens)}</Text></Table.Td>
               <Table.Td>
                 <Group gap="xs" wrap="nowrap">
-                  <Text size="sm" fw={usd === dearest ? 700 : 400}>${usd.toFixed(2)}</Text>
-                  {usd === dearest && spend.runs.length > 1 && <Badge size="xs" color="red" variant="light" tt="none">dearest</Badge>}
+                  <Text size="sm" fw={usd === costliest ? 700 : 400}>${usd.toFixed(2)}</Text>
+                  {usd === costliest && spend.runs.length > 1 && <Badge size="xs" color="red" variant="light" tt="none">most expensive</Badge>}
                 </Group>
-                <Progress value={dearest ? (100 * usd) / dearest : 0} size="xs" mt={4} />
+                <Progress value={costliest ? (100 * usd) / costliest : 0} size="xs" mt={4} />
               </Table.Td>
               <Table.Td><Text size="xs" c={run.status === "FINISHED" ? "dimmed" : "red"}>{run.status === "FINISHED" ? "finished" : `${run.status ?? "did not start"}${run.end_reason ? ` (${run.end_reason})` : ""}`}</Text></Table.Td>
             </Table.Tr>
           );
         })}
+        <Table.Tr data-testid="spend-total" style={{ borderTop: "2px solid var(--mantine-color-default-border)" }}>
+          <Table.Td><Text size="sm" fw={650}>Total</Text></Table.Td>
+          <Table.Td><Text size="sm" c="dimmed">{spend.totals.runs} runs</Text></Table.Td>
+          <Table.Td />
+          <Table.Td><Text size="sm" fw={650}>{spend.totals.turns}</Text></Table.Td>
+          <Table.Td><Text size="sm" fw={650}>{tokens(spend.totals.input_tokens)}</Text></Table.Td>
+          <Table.Td><Text size="sm" fw={650}>{cachedShare(spend.totals.input_tokens, spend.totals.cached_input_tokens)}</Text></Table.Td>
+          <Table.Td><Text size="sm" fw={650}>{tokens(spend.totals.output_tokens)}</Text></Table.Td>
+          <Table.Td><Text size="sm" fw={650}>${total.toFixed(2)}</Text></Table.Td>
+          <Table.Td />
+        </Table.Tr>
       </DataTable>
     </Stack>
   );

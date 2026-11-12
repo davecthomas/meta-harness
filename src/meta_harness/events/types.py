@@ -154,6 +154,71 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("review_proceeded", 1, _object({"round": {"type": "integer"}}, ["round"])),
+    # The supervisor: who has a task when that changes, and a task it sent back for want of a workflow
+    EventType(
+        "task_standing",
+        1,
+        _object(
+            {
+                "owner": {"enum": ["workflow", "scheduler", "planner", "supervisor", "operator"]},
+                "situation": {"type": "string"},
+                "reason": {"type": "string"},
+                "ask": {"type": "string"},
+            },
+            ["owner", "situation", "reason"],
+        ),
+    ),
+    EventType(
+        "task_recovered",
+        1,
+        _object(
+            {
+                "from": {"type": "string"},
+                "to": {"type": "string"},
+                "recoveries": {"type": "integer"},
+                "why": {"type": "string"},
+            },
+            ["from", "to", "recoveries", "why"],
+        ),
+    ),
+    EventType(
+        "task_driven",
+        1,
+        _object(
+            {
+                # What the supervisor sent the task back for: merge or review today. A string, not a fixed
+                # list, so a new kind of drive needs no new version of the event.
+                "action": {"type": "string"},
+                "why": {"type": "string"},
+                "drives": {"type": "integer"},
+                "resume": {"type": "string"},
+            },
+            ["action", "why", "drives"],
+        ),
+    ),
+    # The writing pass on the texts of one post: a pull request description, a review, a comment, an issue
+    EventType(
+        "writing_checked",
+        1,
+        _object(
+            {
+                "kind": {"enum": ["pull_request", "review", "comment", "issue"]},
+                "texts": {"type": "integer"},
+                "findings": {"type": "integer"},
+                "categories": {"type": "object"},
+                "rewritten": {"type": "integer"},
+                "kept": {"type": "integer"},
+                "reasons": {"type": "array", "items": {"type": "string"}},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+                "changes": {
+                    "type": "array",
+                    "items": _object({"before": {"type": "string"}, "after": {"type": "string"}}, ["before", "after"]),
+                },
+            },
+            ["kind", "texts", "findings", "rewritten", "kept"],
+        ),
+    ),
     # A running task held for budget, and the operator's answer
     EventType("budget_hold", 1, _object({"reason": {"type": "string"}}, ["reason"])),
     EventType(

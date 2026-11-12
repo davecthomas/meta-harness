@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 import pytest
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -93,6 +94,8 @@ class Script:
     # How long a review that asks for changes waits for an operator before its fix run; 0: no wait.
     hold_minutes: int = 0
     comments: list = field(default_factory=list)
+    # How many times the worker stops under the first run before it is left to finish.
+    worker_restarts: int = 0
     base: list[str] = field(default_factory=list)
     base_asked: list[BaseHealthRequest] = field(default_factory=list)
 
@@ -136,6 +139,10 @@ class Script:
         @activity.defn(name="run_harness")
         async def run_harness(request: HarnessRequest) -> HarnessResult:
             self.runs.append(request)
+            if self.worker_restarts > 0:
+                self.worker_restarts -= 1
+                # What a run activity ends with when its worker shuts down under it.
+                raise ApplicationError("Worker is shutting down", type="WorkerShutdown", non_retryable=True)
             review = None
             if request.prompt == "review":
                 review = self.verdicts.pop(0)
@@ -654,3 +661,26 @@ async def test_an_unreviewed_pull_request_never_merges(env):
 
     assert result.outcome == "unreviewed"
     assert script.merge_requests == [] and script.goals_asked == []
+
+
+async def test_a_run_the_workers_restart_interrupts_is_taken_up_again_and_the_task_does_not_fail(env):
+    script = Script(verdicts=[CLEAN], worker_restarts=2)
+
+    result = await _run(env, script)
+
+    assert result.outcome == "clean", "the restart is not the run's failure"
+    first, again, third, review = script.runs
+    assert first.run_id == again.run_id == third.run_id, "the same run, which the activity re-attaches to"
+    assert review.prompt == "review" and _kinds(result) == ["standard", "review"], "one attempt, not three"
+
+
+async def test_a_worker_that_keeps_stopping_under_a_run_fails_it_in_the_end(env):
+    from temporalio.client import WorkflowFailureError
+
+    script = Script(verdicts=[CLEAN], worker_restarts=50)
+
+    with pytest.raises(WorkflowFailureError) as failure:
+        await _run(env, script)
+
+    assert "WorkerShutdown" in str(failure.value.cause)
+    assert len(script.runs) == 6, "the run and five more tries of it"

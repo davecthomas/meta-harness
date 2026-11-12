@@ -8,6 +8,10 @@ export class ApiError extends Error {
   }
 }
 
+// Sent on window when the edge answers that nobody is signed in: a session that expired while a page was open.
+// The app answers it with the sign-in screen, and the page the operator was on is where they come back to.
+export const SIGNED_OUT = "mh:signed-out";
+
 export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -18,6 +22,8 @@ export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const reasons: string[] = Array.isArray(body?.detail?.reasons) ? body.detail.reasons : [];
     const detail = body && typeof body.detail === "string" ? body.detail : reasons.join("; ") || JSON.stringify(body?.detail ?? body);
+    // A sign-in that failed is the sign-in screen's to say, not a sign-out.
+    if (response.status === 401 && !path.startsWith("/auth/")) window.dispatchEvent(new Event(SIGNED_OUT));
     throw new ApiError(response.status, detail || response.statusText, reasons);
   }
   return body as T;

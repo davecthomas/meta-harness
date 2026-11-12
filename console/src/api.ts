@@ -39,6 +39,8 @@ export interface Goal {
   // The deployment's budget policy, from the task policy: under "track" no budget stops anything.
   budget_policy?: "block" | "track";
   budget_overage_percent?: number;
+  // Whether the goal is getting anywhere, from where its tasks stand in the supervisor's record.
+  standing?: GoalStanding | null;
   // What the goal's runs had spent at the planner's last look, the spend a block goal stops at, where the goal
   // stands, and the budget a resume would set for a goal past its budget.
   spent_usd?: string;
@@ -102,6 +104,8 @@ export interface Task {
   depends_on?: string[];
   // Why the scheduler holds a queued task; null for one it does not hold, and for a task in any other status.
   held?: TaskHold | null;
+  // Who has the task, from the supervisor: null for a closed task, or one it has not looked at yet.
+  standing?: TaskStanding | null;
 }
 
 // A queued task's hold, from the scheduler. kind says what to do about it without reading the reason's words;
@@ -112,6 +116,30 @@ export interface TaskHold {
   since: string;
   last_checked: string;
   detail: Record<string, unknown>;
+}
+
+// Where a goal stands: moving (a task is being worked), needs_you (work is left, none is moving, and an
+// operator has it), held (paused, planning or stopped by its budget), idle or done. `yours` lists the tasks
+// an operator has, longest waiting first, each with what to do.
+export interface GoalStanding {
+  state: "moving" | "needs_you" | "held" | "idle" | "done";
+  reason: string;
+  ask: string;
+  yours: { task_id: string; title: string; reason: string; ask: string; since: string }[];
+  moving: number;
+}
+
+// Who has an open task, from the supervisor's last pass: its workflow, the scheduler, the planner's sweep,
+// the supervisor itself, or an operator, who is told what to do in `ask`.
+export interface TaskStanding {
+  owner: "workflow" | "scheduler" | "planner" | "supervisor" | "operator";
+  situation: string;
+  reason: string;
+  ask: string | null;
+  since: string;
+  checked_at: string;
+  attempts: number;
+  last_error: string | null;
 }
 
 export interface MhEvent {

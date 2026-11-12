@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Alert, Anchor, Badge, Code, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Code, Group, Stack, Table, Text, Title } from "@mantine/core";
 import { issueUrl } from "../api";
+import { SIGNED_OUT } from "../client";
 import { statusColor } from "../theme";
 
 // Small pieces every page shares, so each page reads as layout and data.
@@ -39,8 +40,35 @@ export function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export function ErrorAlert({ error }: { error: string | null }) {
-  return error ? <Alert color="red" mb="md" title="Something failed">{error}</Alert> : null;
+// A failure, with what to do about it. A page that knows the remedy passes it; otherwise the banner gives
+// the general one: try again, and where to read why when it fails again. A lost session sends the operator
+// to sign in again.
+export function ErrorAlert({ error, remedy }: { error: string | null; remedy?: ReactNode }) {
+  if (!error) return null;
+  const signedOut = /not signed in|nobody is signed in/i.test(error);
+  return (
+    <Alert color="red" mb="md" title={signedOut ? "Your session ended" : "Something failed"} data-testid="error-alert">
+      <Stack gap="xs">
+        <Text size="sm">{signedOut ? "The console could not read this page because you are no longer signed in." : error}</Text>
+        {remedy ?? (
+          signedOut ? (
+            <Group gap="xs">
+              <Button size="compact-sm" variant="white" color="red" onClick={() => window.dispatchEvent(new Event(SIGNED_OUT))}>Sign in again</Button>
+              <Text size="xs">You come back to this page after.</Text>
+            </Group>
+          ) : (
+            <Group gap="xs">
+              <Button size="compact-sm" variant="white" color="red" onClick={() => window.location.reload()}>Reload to try again</Button>
+              <Text size="xs">
+                If it fails again, the <Anchor component={Link} to={`/admin/logs?q=${encodeURIComponent(error.slice(0, 60))}&minutes=60`} size="xs">Logs</Anchor> page
+                has the warning that names it (admins), or ask an admin to look there.
+              </Text>
+            </Group>
+          )
+        )}
+      </Stack>
+    </Alert>
+  );
 }
 
 export function Id({ children }: { children: ReactNode }) {

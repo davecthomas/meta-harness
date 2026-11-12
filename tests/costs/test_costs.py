@@ -153,6 +153,25 @@ def test_model_cost_is_harvested_once_from_the_events_that_record_it(clean):
     ]
 
 
+def test_a_writing_passs_rewrite_is_a_cost_of_its_task_or_of_the_plans_goal(clean):
+    events = Events()
+    model = "claude:claude-haiku-5"
+    events.add("writing_checked", {"kind": "review", "model": model, "usd_cost": "0.004"}, task_id="t-1")
+    events.add("writing_checked", {"kind": "issue", "goal_id": "g-a", "model": model, "usd_cost": "0.002"})
+    events.add("writing_checked", {"kind": "comment", "model": "", "usd_cost": "0"}, task_id="t-1")
+
+    assert _harvest(events) == 3
+
+    with db.connect(autocommit=True) as conn:
+        rows = conn.execute(
+            "SELECT item, goal_id, task_id, model, usd FROM costs.daily_cost ORDER BY task_id"
+        ).fetchall()
+    assert rows == [
+        ("writing", "g-a", "", "claude-haiku-5", Decimal("0.002")),
+        ("writing", "g-a", "t-1", "claude-haiku-5", Decimal("0.004")),
+    ]
+
+
 def test_cloud_cost_is_read_from_the_billing_export_and_restated_days_replace_what_was_there(clean, monkeypatch):
     asked: list[str] = []
     bill = [("2026-11-10", "Compute Engine", "4.20"), ("2026-11-10", "Cloud Run", "0.30")]
@@ -332,3 +351,20 @@ def test_a_breakdown_by_label_shares_a_tasks_cost_among_its_labels_so_the_series
     assert round(sum(s["total"] for s in by_label["series"]), 4) == by_label["total"] == 4.51
     by_outcome = by_facts.get("/v1/costs", params={**SPAN, "group_by": "outcome", "source": "model"}).json()
     assert {s["key"]: s["total"] for s in by_outcome["series"]} == {"merged": 3.25, "open": 1.25, "": 0.01}
+
+
+def test_no_percentage_change_from_a_span_too_small_to_compare(api):
+    with db.connect(autocommit=True) as conn:
+        store.replace(
+            conn, "cloud", date(2026, 11, 6), date(2026, 11, 8),
+            [store.Cost(day=date(2026, 11, 6), source="cloud", item="Cloud Run", usd=Decimal("0.004"))],
+        )  # fmt: skip
+    seen = api.get("/v1/costs", params={**SPAN, "source": "cloud"}, headers=OPERATOR).json()
+    assert seen["previous_total"] == 0.004 and seen["change_percent"] is None, "a fraction of a cent before is no base"
+    with db.connect(autocommit=True) as conn:
+        store.replace(
+            conn, "cloud", date(2026, 11, 6), date(2026, 11, 8),
+            [store.Cost(day=date(2026, 11, 6), source="cloud", item="Cloud Run", usd=Decimal("2.10"))],
+        )  # fmt: skip
+    again = api.get("/v1/costs", params={**SPAN, "source": "cloud"}, headers=OPERATOR).json()
+    assert again["change_percent"] == 100.0

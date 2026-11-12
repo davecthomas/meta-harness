@@ -12,3 +12,4 @@ Rules:
 - Read the repository first: its design documents, its AGENTS.md and the code the goal touches, so each issue fits what is there.
 - Do not change, create or delete any file, and do not commit or push. Your only output is create_issue calls and a final summary.
 - Call create_issue once per issue. Give each its own draft_id. To change a draft, call create_issue again with the same draft_id.
+- If the no-ai-slop2 skill is among your skills, apply it to each issue's title and body before you call create_issue: read its SKILL.md and apply its rules to the draft yourself. You cannot run its scanner here; the meta-harness runs it on each draft when the plan is approved. It covers prose only, never code, commands, acceptance checks or paths.

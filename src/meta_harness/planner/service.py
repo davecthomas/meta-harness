@@ -4,6 +4,7 @@
     GET, PATCH /v1/goals/{id}                 a goal with its issues, or change any field an operator set on it
     GET        /v1/goals/{id}/issues          each issue with its task status, pull request, PR state and checks
     POST       /v1/goals/{id}/pause, /resume, /cancel   resume also starts a goal saved without starting
+                                              cancel also ends the goal's tasks that have not started
     POST       /v1/goals/{id}/resume-budget   raise the budget of a goal over it or stopped by it (budget_api.py)
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
@@ -29,11 +30,11 @@ their end (sweep.follow_up_goal), and so are the canceled tasks of no goal
 """
 
 import asyncio
-import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -46,7 +47,7 @@ from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
 from meta_harness.config.kinds import ConfigError, sandbox_ceiling
 from meta_harness.github_app import GitHubApps
-from meta_harness.run_service import code_host
+from meta_harness.run_service import code_host, writing
 from meta_harness.planner import (
     activity,
     budget_api,
@@ -67,19 +68,28 @@ from meta_harness.planner.sweep import (
     CodeHost,
     Events,
     SweepResult,
+    cancel_goal_tasks,
     follow_up_goal,
     follow_up_goalless,
     followed_up_goals,
+    refresh_states,
     sweep_goal,
     swept_goals,
 )
 from meta_harness.planner.tracker import Tracker, parse_ref
+from meta_harness.supervisor.goals import goal_standing
+from meta_harness.supervisor.loop import Supervisor, TemporalWorkflows, Workflows
+from meta_harness.supervisor.rules import OPEN_STATUSES
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
 log = logging.getLogger("meta_harness.planner")
 
 # The most tasks the issues view reads in one Task API page.
 TASKS_PAGE = 1000
+# The goals a timed sweep covers, whose record of their issues' states it keeps current.
+SWEPT_STATUSES = ("active", "budget_exhausted")
+# How long a read of the tracker for a goal no sweep covers stands, before its page reads it again.
+STATE_CHECK_SECONDS = 60.0
 
 
 class GoalIn(BaseModel):
@@ -166,7 +176,11 @@ def parallel_reason(max_parallel: int | None) -> str | None:
 def add_shipped_configuration(pool, events: Events) -> None:
     """At startup: what the shipped files add to the configuration reaches the active versions."""
     with pool.connection() as conn:
-        for saved in [*config_store.add_shipped(conn), *config_store.replace_engines(conn)]:
+        for saved in [
+            *config_store.add_shipped(conn),
+            *config_store.add_shipped_to_profiles(conn),
+            *config_store.replace_engines(conn),
+        ]:
             print(f"[planner] configuration {saved['kind']} v{saved['version']}: {saved['note']}", flush=True)
             events.emit(
                 "config_changed",
@@ -181,6 +195,19 @@ def add_shipped_configuration(pool, events: Events) -> None:
             )
 
 
+def supervisor_seconds() -> float:
+    """How often the supervisor looks at every open task, from MH_SUPERVISOR_SECONDS: 60 when it is not set,
+    0 to turn the supervisor off. Raises RuntimeError, naming the setting, for anything else."""
+    raw = os.environ.get("MH_SUPERVISOR_SECONDS", "60")
+    try:
+        seconds = float(raw)
+    except ValueError as err:
+        raise RuntimeError(f"MH_SUPERVISOR_SECONDS must be a number of seconds, 0 or more, not {raw!r}") from err
+    if seconds < 0 or seconds != seconds:
+        raise RuntimeError(f"MH_SUPERVISOR_SECONDS must be a number of seconds, 0 or more, not {raw!r}")
+    return seconds
+
+
 def create_app(
     events: Events,
     tracker: Tracker,
@@ -192,6 +219,7 @@ def create_app(
     drafter=None,
     host: CodeHost | None = None,
     titler=None,
+    workflows: Workflows | None = None,
     apps: GitHubApps | None = None,
     sizer: sizing.Sizer | None = None,
 ) -> FastAPI:
@@ -254,28 +282,81 @@ def create_app(
         async with locks.setdefault(goal["id"], asyncio.Lock()):
             return await follow_up_goal(goal, tracker, tasks, events, host)
 
+    def swept(goal_id: str, errors: list[str]) -> None:
+        """Keep what a goal's latest sweep or follow-up could not do, for its page and GET /v1/supervisor, and
+        log it when it changes: every minute's sweep failing the same way is one line, not one a minute."""
+        before = (app.state.sweeps.get(goal_id) or {}).get("errors")
+        app.state.sweeps[goal_id] = {"at": datetime.now(UTC).isoformat(), "errors": errors}
+        if errors and errors != before:
+            log.warning("goal %s: its sweep could not finish: %s", goal_id, "; ".join(errors)[:1000])
+
+    async def each(goals: list[dict], one, what: str) -> None:
+        """Run one for each goal, one goal's failure never stopping the next goal's turn. A sweep used to be
+        wrapped as a whole pass with its exceptions dropped, so one goal that raised left every goal after
+        it unswept, with nothing to say so."""
+        for goal in goals:
+            try:
+                result = await one(goal)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001 - recorded on the goal; the next goal still gets its turn
+                swept(goal["id"], [f"the {what} failed: {type(err).__name__}: {err}"])
+                continue
+            swept(goal["id"], list(getattr(result, "errors", None) or []))
+
+    async def listed(lister, what: str) -> list[dict]:
+        try:
+            return await asyncio.to_thread(lister)
+        except Exception as err:  # noqa: BLE001 - logged; the next pass lists again
+            log.error("planner: could not list the goals for the %s: %s: %s", what, type(err).__name__, err)
+            return []
+
     async def sweep_forever() -> None:
         followed_up_at: float | None = None
         while True:
-            with contextlib.suppress(Exception):
-                for goal in await asyncio.to_thread(swept_goals):
-                    await sweep_one(goal)
+            await each(await listed(swept_goals, "sweep"), sweep_one, "sweep")
             # A goal no sweep covers, a met one most of all, keeps its issues' labels and its canceled tasks'
             # pull request ends true for costs by label and by outcome, less often.
             now = asyncio.get_running_loop().time()
             if followed_up_at is None or now - followed_up_at >= FOLLOW_UP_SECONDS:
                 followed_up_at = now
-                with contextlib.suppress(Exception):
-                    for goal in await asyncio.to_thread(followed_up_goals):
-                        await follow_up_one(goal)
+                await each(await listed(followed_up_goals, "follow-up"), follow_up_one, "follow-up")
                 # The canceled tasks of no goal, which no goal's sweep lists.
-                with contextlib.suppress(Exception):
+                try:
                     await follow_up_goalless(tasks, events, host)
+                except Exception as err:  # noqa: BLE001 - logged; the next follow-up tries again
+                    log.error("planner: the follow-up of tasks of no goal failed: %s: %s", type(err).__name__, err)
+
             # A planning goal's ended planning task becomes its plan.
-            with contextlib.suppress(Exception):
-                for goal in await asyncio.to_thread(planning_goals):
-                    await planning.collect(goal, tasks, events)
+            async def collect(goal: dict) -> None:
+                await planning.collect(goal, tasks, events)
+
+            await each(await listed(planning_goals, "plans"), collect, "collecting of its plan")
             await asyncio.sleep(interval)
+
+    supervisor = Supervisor(tasks, events, workflows or TemporalWorkflows(), host)
+    supervise_seconds = supervisor_seconds()
+
+    async def supervise_forever() -> None:
+        """Every MH_SUPERVISOR_SECONDS: look at every open task, and move the ones no one has. What a pass
+        found is kept for GET /v1/supervisor, and a pass that fails is logged and said there, never dropped:
+        the supervisor is what notices the rest, so its own trouble has to show."""
+        while True:
+            started = datetime.now(UTC)
+            try:
+                found = await supervisor.pass_once()
+                app.state.supervised = {"at": started.isoformat(), "error": None, **asdict(found)}
+                for error in found.errors:
+                    log.warning("supervisor: %s", error)
+            except Exception as err:  # noqa: BLE001 - the next pass tries again; this one is on the record
+                log.error("supervisor: the pass failed: %s: %s", type(err).__name__, err)
+                last = getattr(app.state, "supervised", None) or {}
+                app.state.supervised = {
+                    **last,
+                    "failed_at": started.isoformat(),
+                    "error": f"{type(err).__name__}: {err}",
+                }
+            await asyncio.sleep(supervise_seconds)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -286,6 +367,8 @@ def create_app(
         titling = asyncio.create_task(title_untitled()) if interval > 0 else None
         # The cost sources, harvested beside the sweeps: off wherever the sweeps are (tests).
         harvesting = asyncio.create_task(app.state.harvest_costs()) if interval > 0 else None
+        # The supervisor runs beside the sweeps, and is off wherever they are (tests).
+        supervising = asyncio.create_task(supervise_forever()) if interval > 0 and supervise_seconds > 0 else None
         try:
             yield
         finally:
@@ -295,9 +378,16 @@ def create_app(
                 titling.cancel()
             if harvesting:
                 harvesting.cancel()
+            if supervising:
+                supervising.cancel()
             app.state.pool.close()
 
     app = FastAPI(title="meta-harness planner", lifespan=lifespan)
+    app.state.supervised = None
+    # What each goal's latest sweep, follow-up or plan collecting could not do: {goal_id: {at, errors}}.
+    app.state.sweeps = {}
+    app.state.each = each
+    app.state.supervisor = supervisor
     app.state.title_untitled = title_untitled
 
     def operator(key: str = Depends(auth.bearer), actor: str | None = Header(default=None, alias="X-MH-Actor")) -> str:
@@ -361,6 +451,7 @@ def create_app(
     sizing.check_settings()
     costs_api.check_settings()
     planning.check_settings()
+    writing.check_settings()
     draft = drafter or drafting.draft_goal
 
     def registered(names: list[str]) -> list[str]:
@@ -699,23 +790,83 @@ def create_app(
     ) -> dict:
         with app.state.pool.connection() as conn:
             goals, total = store.page_goals(conn, status.split(",") if status else None, limit, offset)
+        standings(goals)
         return {"goals": goals, "total": total, "offset": offset, "limit": limit}
 
-    @app.get("/v1/goals/{goal_id}")
-    def read(goal_id: str, who: str = Depends(operator)) -> dict:
-        goal = load(goal_id)
+    def standings(goals: list[dict]) -> None:
+        """Give each goal its `standing`: whether it is moving, held, or waits on an operator, from where its
+        tasks stand in the supervisor's record. One read of the open tasks serves every goal asked for. A
+        Task API that does not answer leaves the standing out: the goal is still shown."""
+        wanted = [goal for goal in goals if goal["status"] not in ("met", "canceled")]
+        for goal in goals:
+            goal["standing"] = goal_standing(goal["status"], []) if goal not in wanted else None
+        if not wanted:
+            return
+        try:
+            found = cost_facts.every_task(tasks, None, list(OPEN_STATUSES))
+        except Exception as err:  # noqa: BLE001 - a goal's page does not fail for want of its standing
+            log.warning("could not read the tasks for the goals' standings: %s", err)
+            return
+        by_goal: dict[str, list[dict]] = {}
+        for task in found:
+            by_goal.setdefault(task.get("goal_id") or "", []).append(task)
         with app.state.pool.connection() as conn:
-            goal["issues"] = store.links(conn, goal_id)
+            for goal in wanted:
+                refused = sum(
+                    1 for link in store.links(conn, goal["id"]) if link["refused_reason"] and link["state"] == "open"
+                )
+                goal["standing"] = goal_standing(goal["status"], by_goal.get(goal["id"], []), refused)
+
+    # For each goal no sweep covers: when its issues' states were last read from the tracker, and whether
+    # every one could be read.
+    checked: dict[str, tuple[float, str, bool]] = {}
+
+    async def current_states(goal: dict) -> dict:
+        """For a goal no sweep covers, read its open issues' states from the tracker, at most once every
+        STATE_CHECK_SECONDS, so its page never shows the state its last sweep saw as today's. Returns when
+        the states were last read and whether every one could be; nothing for a swept goal, whose sweep
+        keeps them."""
+        if goal["status"] in SWEPT_STATUSES:
+            return {"states_checked_at": None, "states_complete": True}
+        now = asyncio.get_running_loop().time()
+        last = checked.get(goal["id"])
+        if last is None or now - last[0] >= STATE_CHECK_SECONDS:
+            errors = await refresh_states(goal, tracker, events)
+            for error in errors:
+                log.warning("goal %s: could not read an issue's state: %s", goal["id"], error)
+            last = (now, datetime.now(UTC).isoformat(), not errors)
+            checked[goal["id"]] = last
+        return {"states_checked_at": last[1], "states_complete": last[2]}
+
+    @app.get("/v1/goals/{goal_id}")
+    async def read(goal_id: str, who: str = Depends(operator)) -> dict:
+        goal = await asyncio.to_thread(load, goal_id)
+        goal.update(await current_states(goal))
+
+        def links() -> list[dict]:
+            with app.state.pool.connection() as conn:
+                return store.links(conn, goal_id)
+
+        goal["issues"] = await asyncio.to_thread(links)
+        # When the planner last swept the goal, and what that sweep could not do: empty when it did all of it.
+        goal["sweep"] = app.state.sweeps.get(goal_id)
+        await asyncio.to_thread(standings, [goal])
         return goal
 
     @app.get("/v1/goals/{goal_id}/issues")
-    def goal_issues(goal_id: str, who: str = Depends(operator)) -> dict:
-        """Each of the goal's issues with its task's status, pull request URL, pull request state and checks.
+    async def goal_issues(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Each of the goal's issues with its task's status, pull request URL, pull request state and checks,
+        the goal's status, and for a goal no sweep covers, when its issues' states were read from the tracker.
 
         The task's facts come from the Task API and the events recorded on it, never from the task
         service's tables.
         """
-        load(goal_id)
+        goal = await asyncio.to_thread(load, goal_id)
+        states = await current_states(goal)
+        shown = await asyncio.to_thread(issues_view, goal_id)
+        return {"goal_id": goal_id, "goal_status": goal["status"], **states, "issues": shown}
+
+    def issues_view(goal_id: str) -> list[dict]:
         with app.state.pool.connection() as conn:
             links = store.links(conn, goal_id)
         task_ids = [link["task_id"] for link in links if link["task_id"]]
@@ -731,12 +882,12 @@ def create_app(
             recorded = progress.pull_request_events(events, task_ids) if task_ids else []
         except Exception as err:  # noqa: BLE001 - an unreachable event service is the caller's 502
             raise HTTPException(status_code=502, detail=f"could not read the tasks' events: {err}") from err
-        return {"goal_id": goal_id, "issues": progress.issues_progress(links, found, recorded)}
+        return progress.issues_progress(links, found, recorded)
 
     @app.get("/v1/goals/{goal_id}/spend")
     def goal_spend(goal_id: str, who: str = Depends(operator)) -> dict:
         """Where the goal's money went: each of its tasks with what its runs spent, in all and by kind of run
-        (the task's own runs, reviews, fixes), dearest first, and the goal's total against its budget."""
+        (the task's own runs, reviews, fixes), most expensive first, and the goal's total against its budget."""
         from meta_harness.tasks import spend
 
         goal = load(goal_id)
@@ -777,18 +928,49 @@ def create_app(
         return {"goal_id": goal_id, "added": added}
 
     @app.delete("/v1/goals/{goal_id}/issues/{ref:path}")
-    def drop_issue(goal_id: str, ref: str, who: str = Depends(operator)) -> dict:
-        """Let go of an issue the goal holds and has made no task for."""
+    def drop_issue(goal_id: str, ref: str, force: bool = False, who: str = Depends(operator)) -> dict:
+        """Remove an issue from the goal, whether or not it has a task yet.
+
+        The goal holds the issue no longer: its sweep never takes it in again by its label, it does not
+        count toward the goal being met, and another goal may take it. Nothing changes on the tracker. A
+        task of the issue that has not ended is canceled: one queued or blocked at once, one running as a
+        cancel stops it. A task with a pull request open has work done and waiting, so it is refused (409)
+        unless `force` is set; with it the task is canceled and the pull request is left open for the
+        operator. Adding the issue back by ref holds it again.
+        """
         load(goal_id)
+        with app.state.pool.connection() as conn:
+            link = store.link(conn, ref)
+        if link is None or link["goal_id"] != goal_id or link.get("dropped"):
+            raise HTTPException(status_code=404, detail=f"the goal does not hold {ref}")
+        ended = None
+        if link["task_id"]:
+            try:
+                task = tasks.get(link["task_id"])
+            except TaskApiError as err:
+                raise HTTPException(status_code=502, detail=f"could not read the issue's task: {err}") from err
+            live = task["status"] in ("queued", "blocked", "running", "taken_over", "ready", "review_unresolved")
+            if live and task.get("pr_url") and not force:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"its task {task['id']} has pull request {task['pr_url']} open: its work is done and "
+                        "waiting. Removing the issue cancels the task and leaves the pull request open"
+                    ),
+                )
+            if live:
+                try:
+                    tasks.cancel(task["id"], f"its issue was removed from goal {goal_id}", who)
+                except TaskApiError as err:
+                    raise HTTPException(status_code=502, detail=f"could not cancel the issue's task: {err}") from err
+                ended = task["id"]
         try:
             with app.state.pool.connection() as conn:
                 store.drop_ref(conn, goal_id, ref)
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail=f"the goal does not hold {ref}") from err
-        except store.GoalError as err:
-            raise HTTPException(status_code=409, detail=str(err)) from err
         events.emit("issue_dropped", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
-        return {"goal_id": goal_id, "dropped": ref}
+        return {"goal_id": goal_id, "dropped": ref, "task_canceled": ended}
 
     @app.get("/v1/activity")
     def pull_request_activity(days: int = Query(91, ge=1, le=366), who: str = Depends(operator)) -> dict:
@@ -822,6 +1004,14 @@ def create_app(
             except Exception as err:  # noqa: BLE001 - the change is saved; the next sweep looks at the budget
                 log.warning("goal %s: could not look at its new budget: %s", goal_id, err)
         return goal
+
+    @app.get("/v1/supervisor")
+    def supervised(who: str = Depends(operator)) -> dict:
+        """What the supervisor's last pass found: when it ran, how many tasks each owner has, what it
+        recovered, ended and canceled, and what it could not do. `every_seconds` is how often it runs (0: it
+        is off), so a page can tell a late pass from a quiet one."""
+        failing = {goal_id: found for goal_id, found in app.state.sweeps.items() if found["errors"]}
+        return {"every_seconds": supervise_seconds, "last_pass": app.state.supervised, "sweeps_failing": failing}
 
     @app.get("/v1/limits")
     def limits(who: str = Depends(operator)) -> dict:
@@ -858,8 +1048,18 @@ def create_app(
         return goal
 
     @app.post("/v1/goals/{goal_id}/cancel")
-    def cancel(goal_id: str, who: str = Depends(operator)) -> dict:
-        return change(goal_id, who, status="canceled")
+    async def cancel(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Cancel the goal, and end what it has not started: its queued and blocked tasks are canceled, and
+        its running tasks with no pull request are asked to stop. A task with a pull request open is left for
+        the operator. The goal comes back with `tasks`: the task ids canceled, stopping, left, and any the
+        task service refused."""
+        # Under the goal's sweep lock, so a sweep in progress makes no task after these are ended.
+        async with locks.setdefault(goal_id, asyncio.Lock()):
+            goal = await asyncio.to_thread(change, goal_id, who, status="canceled")
+            done = await cancel_goal_tasks(goal, tasks, who)
+        for error in done["errors"]:
+            log.warning("goal %s: could not end a task on cancel: %s", goal_id, error)
+        return {**goal, "tasks": done}
 
     @app.post("/v1/goals/{goal_id}/complete")
     def complete(goal_id: str, who: str = Depends(operator)) -> dict:

@@ -36,7 +36,8 @@ GOAL_COLUMNS = (
 )
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
-    "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at, title, labels, "
+    "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at, title, "
+    "labels, dropped, "
     # The issue's size and what its sizing found, why it is held if it is, whether an operator ran it anyway, and
     # the issues an operator split it into.
     "size, sizing, held_reason, run_anyway, split_into"
@@ -281,16 +282,18 @@ def holders(conn: psycopg.Connection, refs: list[str]) -> dict[str, str]:
         return {}
     rows = conn.execute(
         "SELECT l.ref, l.goal_id FROM planner.issue_link l JOIN planner.goal g ON g.id = l.goal_id "
-        "WHERE l.ref = ANY(%s) AND g.status = ANY(%s)",
+        "WHERE l.ref = ANY(%s) AND g.status = ANY(%s) AND NOT l.dropped",
         (refs, list(OPEN_GOAL_STATUSES)),
     ).fetchall()
     return {ref: goal_id for ref, goal_id in rows}
 
 
 def links(conn: psycopg.Connection, goal_id: str) -> list[dict]:
+    """The issues the goal holds, oldest first. One an operator removed from the goal is not among them."""
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            f"SELECT {LINK_COLUMNS} FROM planner.issue_link WHERE goal_id = %s ORDER BY first_seen_at", (goal_id,)
+            f"SELECT {LINK_COLUMNS} FROM planner.issue_link WHERE goal_id = %s AND NOT dropped ORDER BY first_seen_at",
+            (goal_id,),
         )
         return [_link(row) for row in cur.fetchall()]
 
@@ -364,12 +367,25 @@ def add_refs(conn: psycopg.Connection, goal_id: str, refs: list[tuple[str, str]]
     with conn.transaction():
         for ref, repo in refs:
             row = conn.execute(
-                "SELECT l.goal_id, g.status FROM planner.issue_link l JOIN planner.goal g ON g.id = l.goal_id "
-                "WHERE l.ref = %s FOR UPDATE OF l",
+                "SELECT l.goal_id, g.status, l.dropped FROM planner.issue_link l "
+                "JOIN planner.goal g ON g.id = l.goal_id WHERE l.ref = %s FOR UPDATE OF l",
                 (ref,),
             ).fetchone()
-            if row and row[0] != goal_id:
+            if row and row[0] != goal_id and not row[2]:
                 raise GoalError(f"{ref} is held by goal {row[0]}, which is {row[1]}")
+            if row and row[0] != goal_id:
+                # Another goal removed it: that goal's mark goes, and this goal takes the issue as new.
+                conn.execute("DELETE FROM planner.issue_link WHERE ref = %s", (ref,))
+                row = None
+            if row and row[2]:
+                # This goal removed it, and the operator has added it back: it is held again, with no task.
+                conn.execute(
+                    "UPDATE planner.issue_link SET dropped = false, picked = true, task_id = NULL, "
+                    "refused_reason = NULL, state = 'open' WHERE ref = %s",
+                    (ref,),
+                )
+                added.append(ref)
+                continue
             if row:
                 # Its label swept it in first; the operator has now picked it too.
                 conn.execute("UPDATE planner.issue_link SET picked = true WHERE ref = %s", (ref,))
@@ -383,17 +399,25 @@ def add_refs(conn: psycopg.Connection, goal_id: str, refs: list[tuple[str, str]]
     return added
 
 
-def drop_ref(conn: psycopg.Connection, goal_id: str, ref: str) -> None:
-    """Let go of an issue the goal holds and has made no task for yet."""
+def drop_ref(conn: psycopg.Connection, goal_id: str, ref: str) -> str | None:
+    """Remove an issue from the goal: it is the goal's no longer, with or without a task. The row stays,
+    marked dropped, so the goal's label does not sweep the issue back in. Returns the issue's task, if it
+    had one, for the caller to end. Raises NotFound for an issue the goal does not hold."""
     with conn.transaction():
         row = conn.execute(
-            "SELECT task_id FROM planner.issue_link WHERE ref = %s AND goal_id = %s FOR UPDATE", (ref, goal_id)
+            "SELECT task_id FROM planner.issue_link WHERE ref = %s AND goal_id = %s AND NOT dropped FOR UPDATE",
+            (ref, goal_id),
         ).fetchone()
         if row is None:
             raise NotFound(ref)
-        if row[0]:
-            raise GoalError(f"{ref} already has task {row[0]}: cancel the task instead")
-        conn.execute("DELETE FROM planner.issue_link WHERE ref = %s", (ref,))
+        conn.execute("UPDATE planner.issue_link SET dropped = true, last_seen_at = now() WHERE ref = %s", (ref,))
+        return row[0]
+
+
+def forget_link(conn: psycopg.Connection, ref: str) -> None:
+    """Delete the mark a goal left on an issue it removed, when another goal takes the issue."""
+    with conn.transaction():
+        conn.execute("DELETE FROM planner.issue_link WHERE ref = %s AND dropped", (ref,))
 
 
 def save_sizing(

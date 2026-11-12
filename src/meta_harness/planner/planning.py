@@ -23,6 +23,7 @@ from meta_harness.github_app import GitHubAppError
 from meta_harness.planner import plans, store
 from meta_harness.planner.drafting import PLANNER_CONFIG_PATH
 from meta_harness.planner.tracker import Issue, ref_for
+from meta_harness.run_service import writing
 from meta_harness.tasks.client import TaskApiError, TaskClient
 
 log = logging.getLogger("meta_harness.planner")
@@ -267,7 +268,13 @@ async def approve(goal: dict, writer: IssueWriter, events: Events, who: str) -> 
             if draft["draft_id"] in created:
                 continue
             labels = list(dict.fromkeys([label, *draft["labels"]]))
-            issue = await writer.create_issue(draft["repo"], draft["title"], issue_body(draft, created), labels)
+            # The draft's body goes through the writing pass before it becomes an issue. The plan keeps the
+            # draft as it was approved; the pass's record says what changed.
+            [checked] = await writing.check_all([draft["body"]])
+            if payload := writing.record("issue", [checked], goal_id=goal["id"], draft_id=draft["draft_id"]):
+                events.emit("writing_checked", payload, actor="planner", tags={"goal_id": goal["id"]})
+            written = {**draft, "body": checked.text} if checked else draft
+            issue = await writer.create_issue(draft["repo"], draft["title"], issue_body(written, created), labels)
             ref = issue.ref or ref_for(draft["repo"], issue.number)
             created[draft["draft_id"]] = ref
 

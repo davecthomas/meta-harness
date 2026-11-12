@@ -10,7 +10,8 @@
  * event in the event log. Nothing is parsed from terminal output.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { InMemoryCredentialStore, type Model, type Api } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
@@ -61,6 +62,18 @@ export interface Profile {
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+/** A skill the run loads: its name, and each of its files by its path inside the skill. */
+export interface RunSkill {
+	name: string;
+	files: Record<string, string>;
+}
+
+/** A skill's name, which names its directory, and a file's path, which stays inside it. */
+export const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+export function safeSkillPath(path: string): boolean {
+	return path.length > 0 && !path.startsWith("/") && !path.includes("\\") && !path.split("/").some((part) => part === ".." || part === "");
+}
+
 export interface RunRequest {
 	run_id: string;
 	harness_session_id: string;
@@ -71,6 +84,8 @@ export interface RunRequest {
 	thinking?: ThinkingLevel;
 	/** The run grant's key from the HTTP Gateway. The grant decides the engine, the model and the spend limit. */
 	grant_key: string;
+	/** The skills the harness profile names, from the control plane's configuration. Absent: none. */
+	skills?: RunSkill[];
 }
 
 export interface FollowupRequest {
@@ -272,7 +287,7 @@ export class Harness {
 		this.sessionProfile = request.profile;
 		this.context = { grantKey: request.grant_key, cacheKey: request.harness_session_id, thinking: request.thinking };
 		this.track(run, async () => {
-			this.session = await this.createSession(request.harness_session_id, request.profile);
+			this.session = await this.createSession(request.harness_session_id, request.profile, request.skills ?? []);
 			await this.execute(run, request.prompt);
 		});
 		return { created: true, run };
@@ -373,7 +388,27 @@ export class Harness {
 		this.finished.set(run.run_id, done);
 	}
 
-	private async createSession(sessionId: string, profile: Profile): Promise<AgentSession> {
+	/**
+	 * Writes the run's skills where pi reads them: a directory of the server's own, outside the workspace, so a
+	 * skill never lands in the repo or the pull request, and nothing in the repo can stand in for one.
+	 */
+	private writeSkills(sessionId: string, skills: RunSkill[]): string[] {
+		if (skills.length === 0) return [];
+		const root = join(this.config.agentDir, "run-skills", sessionId);
+		rmSync(root, { recursive: true, force: true });
+		for (const skill of skills) {
+			for (const [path, text] of Object.entries(skill.files)) {
+				const file = join(root, skill.name, path);
+				mkdirSync(dirname(file), { recursive: true });
+				// Scripts are run with their interpreter named (python3 x.py, bash x.sh), so none needs the execute bit.
+				writeFileSync(file, text, "utf8");
+			}
+		}
+		return [root];
+	}
+
+	private async createSession(sessionId: string, profile: Profile, skills: RunSkill[]): Promise<AgentSession> {
+		const skillPaths = this.writeSkills(sessionId, skills);
 		const settingsManager = SettingsManager.inMemory({
 			// pi's retry would stack on the gateway's fallback chain: a failed turn fails the run.
 			retry: { enabled: false },
@@ -384,7 +419,9 @@ export class Harness {
 			agentDir: this.config.agentDir,
 			settingsManager,
 			noExtensions: true,
+			// No skill loads from the repo, the agent directory or pi's settings: only the ones the run was sent.
 			noSkills: true,
+			additionalSkillPaths: skillPaths,
 			noPromptTemplates: true,
 			noThemes: true,
 			noContextFiles: true,
@@ -414,7 +451,10 @@ export class Harness {
 			],
 		});
 		session.subscribe((event) => this.onPiEvent(event));
-		this.config.log(`session ${session.sessionId} created, tools ${session.getActiveToolNames().join(", ")}`);
+		const loaded = resourceLoader.getSkills().skills.map((skill) => skill.name);
+		this.config.log(
+			`session ${session.sessionId} created, tools ${session.getActiveToolNames().join(", ")}${loaded.length ? `, skills ${loaded.join(", ")}` : ""}`,
+		);
 		return session;
 	}
 

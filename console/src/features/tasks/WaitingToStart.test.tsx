@@ -74,3 +74,15 @@ test("a blocked task lists each issue it waits on with its state", async () => {
   expect(screen.getByTestId("waits-on-github:o/r#6").textContent).toContain("closed");
   expect(waitReason(blocked)).toBe("waits on 2 issues");
 });
+
+test("a blocked task whose goal is canceled says so first, not what it waits on", async () => {
+  const issues = [
+    { ref: "github:o/r#5", repo: "o/r", state: "closed", depends_on: [], refused_reason: null, task_id: null, task_status: null, task_status_reason: null, pr_url: null, pr_state: null, checks: null },
+  ];
+  vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify({ goal_status: "canceled", issues }), { status: 200, headers: { "Content-Type": "application/json" } })));
+  const notice = show({ ...QUEUED, status: "blocked", depends_on: ["github:o/r#5"] } as Task);
+
+  expect((await screen.findByTestId("goal-ended")).textContent).toContain("so it will not start");
+  expect(screen.getByRole("link", { name: "Open the goal" }).getAttribute("href")).toBe("/goals/g-1");
+  expect(notice?.textContent).not.toContain("It waits on");
+});

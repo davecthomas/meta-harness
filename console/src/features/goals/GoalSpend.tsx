@@ -7,7 +7,7 @@ import { DataTable, ErrorAlert, StatusBadge } from "../../components/ui";
 const KINDS: [string, string][] = [["task", "Tasks' own runs"], ["review", "Reviews"], ["fix", "Fixes"]];
 
 // Where a goal's money went, opened from its spend line: how much went to the tasks' own runs, to reviews and
-// to fixes, and each task with what its runs spent, the dearest first.
+// to fixes, and each task with what its runs spent, the most expensive first.
 // goalName: the goal's name, shown under the title as a link to the goal, since the window can outlive the
 // page it was opened from in the reader's attention.
 export function GoalSpend({ goalId, goalName, opened, onClose }: { goalId: string; goalName?: string; opened: boolean; onClose: () => void }) {

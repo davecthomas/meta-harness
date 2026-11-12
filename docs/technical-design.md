@@ -22,6 +22,7 @@ rest. A section that describes a planned component says so.
 | Task service | Accepts and tracks tasks and serves the Task API. Code-host webhooks are planned. | built | `tasks/` |
 | Planner | Turns a goal's labeled GitHub issues into tasks with their dependencies, by a periodic sweep, records what becomes of the pull requests of tasks that ended `ready` or `review_unresolved`, and drafts a goal from a label's issues. Planning tasks, the `feature` and `new-system` modalities, issue write-back and Jira and Linear adapters are planned. | partly built | `planner/` |
 | Meta-harness scheduler | Admits queued tasks by priority, global concurrency, repo-area locks, closed dependencies and the goal's budget, and carries out cancels and the kill switch, which it owns. Caller quotas and daily caps are planned. | built | `scheduler/` |
+| Supervisor | Looks at every open task once a minute, decides who has it (its workflow, the scheduler, its goal's sweep, an operator, or no one), records that, and moves the tasks no one has: a task with no workflow behind it, a parked task whose pull request ended outside any sweep, an unstarted task of an ended goal, a `ready` task of an auto-merge goal, which it sees through its merge, and a task that failed on the system's side, which it retries. Runs in the planner's process. Goal-level stalls and deadlines on operator waits are planned. | partly built | `supervisor/` |
 | Meta-harness run service | Runs each task as a Temporal workflow, the RunTask workflow: routes it, runs its candidates, opens its pull request, runs the review loop on it and merges it. Takeover, operator review, exploration and an HTTP API of its own are planned. The only caller of the ai-api-unified router. | partly built | `run_service/` |
 | Pool manager | Leases per-run sandboxes by run id, keeps a warm pool, and replaces unhealthy sandboxes. Until it exists, the run activity starts each sandbox itself. | planned | |
 | Event service | Holds the ordered record of every meta-harness domain event. | built | `events/` |
@@ -316,9 +317,39 @@ The harness server creates the pi session with `createAgentSession()` and
 decides everything pi loads:
 
 - A custom `ResourceLoader` supplies only the pi model client
-  extension and the owned pi extension tools. Nothing loads from the cloned
-  task repo's `.pi/` directory: no pi settings, pi extensions, pi skills or
-  `SYSTEM.md`.
+  extension, the owned pi extension tools, and the skills the run was sent.
+  Nothing loads from the cloned task repo's `.pi/` directory: no pi
+  settings, pi extensions, pi skills or `SYSTEM.md`.
+- **Skills** come from the control plane. A skill is a directory in the
+  usual shape, `SKILL.md` (its frontmatter names it and says what it is
+  for) and the files beside it, kept as the `skills` configuration kind
+  (`src/meta_harness/config/skills.py`): versioned and rolled back like the
+  rest, and available to every goal's runs. A harness profile names the
+  skills its runs load (`skills: [...]`, checked against the kind, and
+  needing the `read` tool). The run service sends their files with
+  `POST /run`; the harness server writes them to a directory of its own
+  outside the workspace, so none lands in the repo or the pull request,
+  and loads those and no others. pi tells the model each skill's name and
+  description and where it is; the model reads the rest when its work
+  needs it, so a skill it does not use costs a line of the prompt. A
+  skill's scripts run inside the per-run sandbox, under the profile's bash
+  allowlist and the egress proxy, so a skill grants no access.
+- The kind is seeded from `config/skills/`, and a skill added there later
+  reaches a deployment as a new version, as a shipped profile does. It
+  ships `no-ai-slop2` (MIT, from codeandtheory/machine-ai-skills, with its
+  scanner script), adapted to check the text a run is about to write (a pull
+  request summary, a review, an issue draft) rather than a previous reply.
+  Every shipped profile that writes for people names it (`pi-lean`,
+  `pi-careful`, `pi-review`, `pi-plan`), and their prompts tell the run to
+  apply it to its summary, review or drafts before it finishes (What the
+  meta-harness writes). A skill or bash command a shipped profile starts
+  to name reaches the deployment's profile of that name as a new version,
+  once: one an operator removed is not added again. An admin imports a skill on Configuration, Skills,
+  from an https git repository on a public host (a branch or tag and a
+  path; the commit read is kept) or from a folder on their machine
+  (`POST /v1/config/skills/read`, which saves nothing), reads every file
+  in full, and saves it as a new version. A skill holds text files only,
+  at most 200 files and 2 MB; a skill a profile names cannot be removed.
 - pi SDK sessions leave out the pi CLI's built-in `codemode`, `tool_search`
   and MCP extensions, and the harness server keeps them out, because
   `codemode` can run classifier and image models with the session's
@@ -688,7 +719,10 @@ parallelism and review. It is the `task_policy` configuration kind, seeded
 from `config/task_policy.json` and edited on the console's Configuration page.
 Built today: `max_parallel`, which the scheduler reads each admission pass,
 `review.reviewers` and `review.max_rounds`, which the run service reads, and
-`max_usd_by_size`, which the planner reads when it makes an issue a task.
+`max_usd_by_size`, which the planner reads when it makes an issue a task, and
+`writing_pass`, a switch: `false` turns the writing pass off (What the
+meta-harness writes), and left out or `true` it is on. Also `max_task_usd`, the
+most one task may spend whatever else is set (Budgets).
 The other fields below are planned.
 
 ```json
@@ -747,8 +781,8 @@ task's remaining spend, its attempts so far and the task policy's limits.
 | Start | When `session_state` is `new`, `POST /run` on the per-run sandbox's harness server Run API with the prompt, acceptance checks, harness profile, limits, bash allowlist, the tier's thinking level and run grant key. The pi model client extension sends that thinking level on every turn; a pinned run sends none, so the HTTP Gateway's default applies. When it is `kept` or `restored`, `POST /followup` with the new input and its own run grant key. |
 | Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the harness profile's `max_minutes` plus 10 minutes, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
 | Collect | Reads the harness server's `/usage`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
-| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
-| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
+| Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run whose activity ended because the worker under it shut down (`WorkerShutdown`, which every deploy's restart causes) is neither: the workflow waits 20 seconds for the worker to be back and takes the same run up again, up to five times, and the activity re-attaches to it by its run id, so the restart costs the task no attempt and no candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
+| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary, which goes through the writing pass first (What the meta-harness writes); the description is written when the pull request is opened, and no later push changes it. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
 The RunTask workflow's Temporal history records every attempt, tier candidate
 and decision. The operator console and the harness analyzer read each run's
@@ -934,7 +968,9 @@ loop:
    `submit_review` tool ends the run with verdict `clean` or `changes` and
    its findings. The meta-harness run service posts them as a pull request
    review and records the verdict with the reviewed head SHA in a
-   `pull_request_reviewed` event.
+   `pull_request_reviewed` event. The summary and each finding go through
+   the writing pass before they are posted; the fix run is given the review
+   as the review run wrote it.
 3. On `changes` or a failed check, a fix run: the pair that opened the pull
    request, with the findings or the check output as its input. It continues
    the pull request's pi session in a follow-up run (`POST /followup`), and
@@ -1031,7 +1067,9 @@ that a conflict in a version or lock file follows the repo's AGENTS.md
 versioning rule: the base's version files as they are where a pull request
 sets no version, or the base's version with this pull request's bump on top
 where it does, and lock files regenerated by their tool. The merged head goes
-back to the checks and a new review like any other. Branch protection or
+back to the checks and a new review like any other. A merge asked for again, by an
+operator or the supervisor, that meets a conflict starts with this fix run,
+before any review (behind the `conflict-first` patch). Branch protection or
 any other refusal ends the task `ready` with GitHub's reason.
 
 Nothing merges onto a broken base (#202). Before a merge, the workflow reads
@@ -1167,6 +1205,61 @@ The routes are the task service's, beside the review hold's, not the run
 service's: the run service has no HTTP API. Not built: an alert when a
 claimed round has waited longer than `review.operator_alert_minutes`, and a
 `review_started` event (the `run_prompt` of kind `review` serves as it).
+
+### What the meta-harness writes
+
+Everything the meta-harness posts on a code host for people to read is
+checked for the tells of model-written text before it is posted: filler,
+puffery, "not X but Y" framing, long sentences, runs of em dashes. It applies
+to text written from now on; nothing already posted is changed. Code, diffs,
+quoted text, log output and check output are never touched.
+
+It is done twice. First by the run: each profile that writes for people
+names the `no-ai-slop2` skill, and its prompt (`repo-task-v1`, `fix-v1`,
+`review-v3`, `plan-v1`) tells the run to apply the skill to its summary, its
+review or its issue drafts before it finishes. A task or review run can run
+the skill's scanner with `python3`. A planning run cannot: its profile reads
+only, so it applies the skill's rules by reading them.
+
+Then by the control plane, in the writing pass
+(`src/meta_harness/run_service/writing.py`), which needs no run:
+
+| Text | Where the pass runs |
+|---|---|
+| The run's summary in a pull request's description | The Publish activity, when the pull request is opened. The lines the meta-harness adds around the summary are not rewritten |
+| A review's summary and each finding | The activity that posts the review |
+| A comment: findings an operator dismissed, an operator's verdict | The activity that posts the comment |
+| The body of an issue a plan drafted | The planner, when the plan is approved |
+
+1. The text goes through the skill's scanner, `no-ai-slop-scan.py`, read
+   from the active `skills` configuration and run as a child process with no
+   model. Only the hits the scanner decides by itself count as findings; a
+   candidate that needs a reader to confirm does not.
+2. A text with findings gets one rewrite, on the model
+   `config/planner.json`'s `writing_pass` names, through the HTTP Gateway's
+   `/v1/structured`. A text over 20,000 characters is not rewritten.
+3. The rewrite is kept only when the scanner finds nothing in it and it
+   keeps every heading, link, code span, code block and number of the
+   original, and every line the control plane reads back: `Paths:`,
+   `Depends on:`, `Closes`, and each line under `## Acceptance checks`.
+   Otherwise the rewrite is dropped and the original is posted.
+
+The pass never stops a post. A scanner that cannot run, a HTTP Gateway that
+does not answer, or a pass that takes over 70 seconds leaves the text as it
+was. Each post's pass is recorded as `writing_checked`: on the task, or with
+the goal's tag for a plan's issue. It carries the kind of text, how many
+texts were looked at, the scanner's findings by category, how many were
+rewritten and kept, the reasons a rewrite was dropped, the model and its
+cost, and the original and the rewrite of each text that changed. The task's
+Timeline shows it as a note on the step it happened in. A rewrite's cost is a model cost of kind
+`writing`, of the task or the plan's goal. The task policy's
+`writing_pass: false` turns the pass off, with a switch on the Task policy
+page; runs are still told to apply the skill. `writing_pass`'s settings are
+checked when the planner and the run service's worker start.
+
+Not built: the pass on merge-check notes, which are a task's status reason
+and are not posted, and a pull request description updated after a fix run,
+since no description is updated today.
 
 ### Sequences
 
@@ -1525,7 +1618,7 @@ in-process through pi's SDK, using `AgentSessionRuntime` for `newSession()`,
 | Endpoint | Purpose | pi SDK calls |
 |---|---|---|
 | `GET /health` | Harness server readiness: pi model client extension registered, the workspace directory exists, HTTP Gateway reachable. A `warm` per-run sandbox passes it before it clones any task repo | pi model runtime state |
-| `POST /run` | Start a new pi session for the run. The body holds the prompt, acceptance checks, harness profile, limits and the HTTP Gateway run grant key | `newSession()`, `prompt()` |
+| `POST /run` | Start a new pi session for the run. The body holds the prompt, acceptance checks, harness profile, limits, the HTTP Gateway run grant key, and the skills the profile names, each with its files | `newSession()`, `prompt()` |
 | `POST /followup` | Continue the pi session the per-run sandbox holds, kept or restored by the pool manager before the pool manager sandbox lease returned. The body holds the new input and the HTTP Gateway run grant key, and no pi session reference. | `switchSession()` for a restored pi session, then `prompt()` |
 | `GET /events` | Harness server Run API events as server-sent events, resumable with `Last-Event-ID` | `session.subscribe()`: `message_update`, `tool_execution_*`, pi compaction events, `agent_end`, `agent_settled` |
 | `GET /status` | `CREATING`, `RUNNING`, `FINISHED`, `ERROR`, `CANCELED`, `EXPIRED`, plus the last harness server heartbeat event | pi session state |
@@ -1742,6 +1835,167 @@ current base (Review loop, the merge). The repo's AGENTS.md asks each task to
 keep to its paths and to add new files rather than logic to a central list,
 and every run's prompt names the paths.
 
+### The supervisor
+
+Every other part of the control plane moves a task when something happens to
+it: a workflow step ends, a sweep sees an issue close, an operator presses a
+button. Each state has one such mover, and a task whose event never comes
+stays where it is: a `running` task whose workflow timed out, a `ready` task
+whose merge GitHub refused once, a `blocked` task of a goal no sweep covers.
+The supervisor (`src/meta_harness/supervisor/`) works the other way. Once
+every `MH_SUPERVISOR_SECONDS` (60; 0 turns it off; checked at startup) it
+looks at where every task that has not ended `closed` stands now, and
+answers one question for each: who has it?
+
+| Owner | Meaning |
+|---|---|
+| `workflow` | Its RunTask workflow is running in Temporal, and will move it |
+| `scheduler` | It is queued, and an admission pass starts it or records why it holds it |
+| `planner` | Its goal's sweep moves it: releases it when its dependencies close, ends it at its pull request |
+| `supervisor` | No one has it, and the supervisor's own action moves it |
+| `operator` | It waits on a person, and the standing says exactly what for |
+
+There is no sixth answer. `rules.decide` is a pure function of a task's facts
+(its status, what it waits on, whether it was asked to cancel, whether the
+scheduler started it, its workflow's state in Temporal, its pull request's
+state on the code host, its goal's status), and it is total: a test walks
+every combination and fails unless each has an owner, an operator is always
+told what to do, and no task is left to a driver that is not there (a
+workflow that ended, a sweep that does not cover its goal). The same test
+compares the rules' statuses with the task service's, so a status added
+without a rule fails it. That test, not any one rule, is what keeps a task
+from being left with no one.
+
+Each pass saves the answer as the task's standing (`supervisor.standing`:
+owner, situation, reason, what an operator is asked, since when, the
+supervisor's attempts and its last error), records `task_standing` when it
+changes, and the Task API serves it with the task. A task's page shows it as
+Who has it. Where the owner is the supervisor, the pass acts:
+
+| Situation | Action |
+|---|---|
+| A `running` or `taken_over` task, or a `queued` one the scheduler started, whose workflow ended or does not exist | `recover` (`POST /v1/tasks/{id}/recover`): back to `queued`, to resume at its pull request when it has one. The scheduler starts a new workflow. A task asked to cancel is `canceled` instead. After three recoveries it fails, for an operator: something ends its workflows |
+| A `ready` or `review_unresolved` task whose pull request merged or closed, of a goal no sweep covers, or of no goal | Ended as a sweep would: `closed` or `canceled`, with the pull request's end recorded |
+| A `queued` or `blocked` task of a goal that was canceled or completed | Canceled, with the reason |
+| A `ready` task of an active goal with `auto_merge` on, whose pull request the code host would merge, or that conflicts with its base | `merge` (`POST /v1/tasks/{id}/drive`): back to `queued` to resume at the merge. The merge step resolves a conflict in a fix run before any review: reviewed first, a head that cannot merge meets new findings each round and may never reach a clean review, and with it the conflict fix |
+| The same, with its head's checks failed | `review`: back through checks, review and fixes |
+| The same, with checks that have not reported, or mergeability the code host has not worked out | `wait`: the supervisor has it and looks again each pass. After a day it is an operator's, told to see what holds the checks |
+| A `failed` task whose failure was the system's, of an active goal or of none | `retry`: back to `queued` after a wait of 5 minutes, then 30, then 2 hours. It resumes at its pull request when it has one |
+| A `review_unresolved` task whose review loop the system stopped, not its findings | `review`: back through the loop after the same waits |
+
+A `ready` task is one whose workflow ended without merging: its goal does
+not merge by itself, or the code host refused the merge at that moment (its
+required checks had not reported, its base was failing). The first is an
+operator's. The second used to be too, forever: the workflow tried once, and
+a conflict that appeared later was seen by no one. Now the supervisor reads
+how the pull request stands (`supervisor/pulls.py`: `clean`, `conflict`,
+`checks_failed`, `checks_pending`, `blocked` or `unknown`, from the pull
+request's `mergeable` and `mergeable_state` and its head commit's checks)
+and sees the merge through. `blocked` with the checks passed means a rule on
+the branch wants what only a person gives, an approval or an exception, and
+is an operator's. The supervisor sends one task back at most three times
+between an operator's retries (`drives`); after that the task is an
+operator's, and its standing says the tries are used up.
+
+A task fails for one of two kinds of reason (`supervisor/failures.py`). The
+work could not be done: the run changed nothing, hit its turn limit, a
+setting is wrong, the review never came clean. Or the system let it down
+while the work was fine: the worker restarted under it in a deploy, a
+sandbox did not start, every model was unavailable, the code host answered
+5xx. The first kind is an operator's. The second needs only another try, and
+used to get none: a task that failed in an outage stayed failed after the
+outage ended. The supervisor reads the recorded reason, and calls a failure
+the system's only when it names one of a fixed list of errors of the control
+plane and what it depends on; a reason it does not recognize, and any that
+names the task's own limit, is the task's, so an unknown failure waits for a
+person rather than being run again. It retries only a failure less than a
+day old: one older is an operator's, told that a retry should now run. The
+three tries a task gets are shared with the merges above (`drives`). A
+retry after the worker's own restart, which every deploy causes, is not one
+of them: the control plane interrupted that run, so the task keeps its
+tries, and the spend it carries still bounds it.
+
+A recovery waits until the task has stood with no workflow for three
+minutes, so a status write still on its way is not taken for a lost one. A
+recovered task's next workflow is given what the task has left of its spend
+limit: the task keeps what its runs spent since an operator last retried it
+(`spent_carried_usd`), so a recovery never gives a task its limit again, and
+neither does a drive. An
+action that fails is tried again after a wait that doubles, up to an hour.
+Every action is one the task service refuses when it no longer applies, so a
+repeat does nothing. What a pass cannot read moves no one: a task whose
+workflow Temporal cannot be asked about, or whose pull request the code host
+does not answer for, is left as it is, with that as its standing.
+
+A `blocked` task of a swept goal is the sweep's while each issue it waits
+on is being worked. It is an operator's, and its standing names the issue,
+when one of them is in the way: its task failed, was canceled or ended
+unresolved and waits on an operator; it is the task's own issue; or no goal
+holds it, so no task will ever close it.
+
+The planner's sweep used to hide its own trouble. A pass over the goals was
+wrapped whole with its exceptions dropped, so one goal that raised left every
+goal after it unswept, and what a sweep could not do (a repo it could not
+list, an issue it could not read) was returned and thrown away. Each goal's
+sweep, follow-up and plan collecting now runs by itself: one goal's failure
+is recorded on that goal and the next goal still gets its turn. What a goal's
+latest sweep could not do is kept, logged when it changes, served with the
+goal (`sweep`: when, and the errors) and listed by `GET /v1/supervisor`
+(`sweeps_failing`). An issue the planner refused for having no acceptance
+checks is read again on every sweep, so adding the checks is all it takes.
+
+The supervisor's own trouble shows: a pass that fails is logged as an error
+and said by `GET /v1/supervisor`, which also gives when the last pass ran and
+how many tasks each owner has.
+
+Built so far are the actions above and the standing of every task. A run
+that the worker's restart interrupts is taken up again by its own workflow
+(Decide); a task that fails on a restart all the same is retried by the
+supervisor, and that retry is none of its tries.
+
+A RunTask workflow may live 72 hours (`EXECUTION_TIMEOUT`), longer than any
+wait inside it. It was six, while a budget hold waits a day and an
+operator's review has no limit: Temporal ended those workflows mid-wait,
+running none of their code, with the task still `running`. Temporal's limit
+is not what notices a dead workflow any more; the supervisor is.
+
+The console's Needs you is the supervisor's record, not a list of its own:
+the Overview and the inbox read the tasks whose standing's owner is an
+operator (`GET /v1/tasks?has_it=operator`, longest waiting first), each with
+what to do and since when. A task of a paused or planning goal is left out:
+that hold is the goal's, and shows on the goal. Because the list is the
+supervisor's, the Overview says so when the supervisor is off, late or
+failing, or a goal's sweep cannot finish: the list may then be missing
+something.
+
+A goal has a standing too (`supervisor/goals.py`), read from its tasks'
+standings and served with the goal (`standing`: `state`, `reason`, `ask`,
+the tasks an operator has, and how many are moving). A goal's status says
+what an operator set it to or what the planner found; it does not say
+whether the goal is getting anywhere. `moving`: at least one task is being
+worked or waits to start with no one's help. `needs_you`: the goal is active
+with work left, none of it moving, and an operator has what is left, or its
+issues were refused. `held`: the goal itself is paused, planning or stopped
+by its budget. `idle` and `done` are the rest. This is what `stalled` was
+meant to say and nothing ever set; reading it from the record, rather than
+moving the goal to a status its sweep does not cover, keeps a goal that
+waits on an operator swept, so it goes on the moment one task is unstuck. A
+goal that needs the operator says so at the top of its page, with what each
+task needs, in the Overview's list of goals and in the inbox.
+
+An operator removes an issue from a goal that has started with Remove from
+goal, on the goal's table of issues: the dialog says what that does to the
+issue's task. The goal lets the issue go for good and nothing changes on
+the tracker: `issue_link` keeps the row, marked `dropped`, which is what
+keeps the goal's label from taking the issue in again. A removed issue is
+not listed with the goal, does not count toward the goal being met, and is
+free for another goal.
+
+Planned: an open issue whose task was canceled given a new task (#256's
+first part, which waits until an operator has had Remove from goal to take
+out what should not run again); and a reminder outside the console when a
+wait for an operator grows long.
+
 ### Throughput
 
 | Resource | Scales by | Notes |
@@ -1807,7 +2061,7 @@ credential.
 | Method | Path | Owner | Purpose | State |
 |---|---|---|---|---|
 | POST | `/v1/tasks` | Task service | Submit a task, idempotent on `external_ref`. Returns the task id. A task names at least one acceptance check, except a `plan` or `smoke` task and a goal's task a service submits: the planner's for a sized issue with no checks, which runs with the gap shown | built |
-| GET | `/v1/tasks` | Task service | Tasks by status, goal or `external_ref`; a caller sees its own | built |
+| GET | `/v1/tasks` | Task service | Tasks by status, goal or `external_ref`, or by who has them (`has_it`: `operator`, `supervisor`, `workflow`, `scheduler` or `planner`, from the supervisor's standing, longest in their situation first); a caller sees its own | built |
 | GET | `/v1/tasks/{id}` | Task service | State, current run, routing decision, pull request URL and outcome. `held` says why the scheduler holds a queued task: `{reason, kind, since, last_checked, detail}`, null for a queued task it does not hold and for a task in any other status. `kind` is one of `goal_budget`, `goal_status`, `goal_parallel`, `system_parallel`, `repo_area`, `kill_switch`, `draining` or `start_failed`, so a page need not read the reason's words, and `detail` names what the reason is about (`goal_id`, the tasks holding the places as `holders`, the shared `paths`). The list (`GET /v1/tasks`) carries `held` on each queued task too. The task service reads it from the scheduler's record with scheduler code (`scheduler/holds.py`) | built |
 | POST | `/v1/tasks/{id}/cancel` | Task service | Cancel a task that has not started, or ask for its active run to stop, which the scheduler carries out | built |
 | GET | `/v1/pulls/{task_id}/diff` | Meta-harness run service, served from the planner process | The files the task's pull request changes, with their added and removed counts and patches, and its head commit. The Task page's Changes tab | built |
@@ -1819,11 +2073,14 @@ credential.
 | POST | `/v1/tasks/{id}/reviews/{round}/findings/{n}/dismiss`, `/v1/tasks/{id}/reviews/{round}/proceed` | Task service | An operator's word on a review its task holds for them (`waiting_on: review`): dismiss finding `n` (from 1) with a `reason`, or end the wait now. 409 unless the task holds a review. The scheduler hands each to the task's workflow | built |
 | POST | `/v1/tasks/{id}/budget` | Task service | An operator's answer to a running task held for budget (`waiting_on: budget`): `{"action": "raise", "max_usd": ...}` saves the task's new spend limit (above the old one; left out, the task only looks at its budget again) and `{"action": "end"}` ends it. The scheduler hands the answer to the task's workflow. `GET /v1/tasks?waiting=true` lists the tasks waiting on an operator | built |
 | GET | `/v1/tasks/{id}/spend` | Task service | Where the task's money went: each of its runs, oldest first, with its kind (the task's own run, review or fix), candidate, turns, model calls, input, cached-input and output tokens, cost, and how it ended, from its `attempt_finished` and `run_finished` events, and their totals in all and by kind against the task's `max_usd`. The Task page's Spend tab | built |
-| GET | `/v1/goals/{id}/spend` | Planner | Where the goal's money went: each of its tasks with what its runs spent in all and by kind of run, and its runs and turns, dearest first, and the goal's total and its split by kind against its budget. Opened from the Goal page's spend line | built |
+| GET | `/v1/goals/{id}/spend` | Planner | Where the goal's money went: each of its tasks with what its runs spent in all and by kind of run, and its runs and turns, most expensive first, and the goal's total and its split by kind against its budget. Opened from the Goal page's spend line | built |
 | POST | `/v1/tasks/{id}/retry` | Task service | Send a `review_unresolved`, `failed` or `canceled` task back to `queued`, with `max_usd` as its new spend limit when given; its `retries` counts up and `task_retried` is recorded. The scheduler starts a new RunTask workflow for it (the one case a task id runs a second workflow, after the first has ended). With an open pull request the workflow resumes at the review loop, on the pull request's head, with fix rounds and spend counted from nothing and its runs numbered after the earlier ones; a pull request that has merged ends the task `closed`; with none, or one closed unmerged, it makes a new first run | built |
-| POST | `/v1/tasks/{id}/merge` | Task service | Ask for a `ready` or `review_unresolved` task's pull request to be merged: back to `queued` with `resume: merge`, and its new workflow merges through the merge queue whatever the goal's `auto_merge` says, then waits for the merge commit's checks. A head that moved, or a conflict, goes through checks, review and fixes first | built |
+| POST | `/v1/tasks/{id}/merge` | Task service | Ask for a `ready` or `review_unresolved` task's pull request to be merged: back to `queued` with `resume: merge`, and its new workflow merges through the merge queue whatever the goal's `auto_merge` says, then waits for the merge commit's checks. A head that moved goes through checks, review and fixes first. A conflict goes first to the fix run that resolves it, then through checks and review | built |
 | POST | `/v1/tasks/{id}/clear` | Task service | Take a `ready` or `review_unresolved` task off the list: `closed` when its pull request's merge is recorded, else `canceled`, with the reason naming the pull request and who cleared it. The pull request stays on GitHub | built |
 | POST | `/v1/tasks/{id}/status` | Task service | Set a task's status. Services only: the RunTask workflow and the planner | built |
+| POST | `/v1/tasks/{id}/recover` | Task service | The supervisor's move for a `running` task, or a `queued` one the scheduler started, with no RunTask workflow behind it (`why`, and `spent_usd`, what its runs have spent): back to `queued` to resume at its pull request, `canceled` when it was asked to cancel, or `failed` after three recoveries. Services only. 409 for a task in any other status | built |
+| POST | `/v1/tasks/{id}/drive` | Task service | The supervisor's move for a `ready` or `review_unresolved` task it can move on (`action` `merge` or `review`, `why`, `spent_usd`), or for a `failed` one whose failure was the system's (`retry`): back to `queued`, with its spend carried. Services only. 409 for a task in any other status, a merge or review with no pull request, or a task already sent back three times | built |
+| GET | `/v1/supervisor` | Planner | The supervisor's last pass: when it ran, how many tasks each owner has, what it recovered, ended and canceled, what it could not do, and how often it runs | built |
 | POST | `/v1/tasks/{id}/take-over` | Meta-harness run service | Stop the active run, publish its work so far, and hand the task to the calling operator | planned |
 | POST | `/v1/tasks/{id}/hand-back`, `/close` | Meta-harness run service | End a takeover: a follow-up run continues on the branch, or the task closes with the operator's outcome | planned |
 | GET | `/v1/runs/{id}` | Meta-harness run service | Run state, candidate, token usage and cost so far | planned |
@@ -1837,14 +2094,14 @@ credential.
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
 | GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues, newest first, with a `label` and text `q` in the title when given, a page at a time from `cursor`, each with the open goal that holds it, if any | built |
 | POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing | built |
-| POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once | built |
+| POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once. Cancel also cancels the goal's `queued` and `blocked` tasks and asks its `running` tasks with no pull request to stop; the goal comes back with `tasks`: the task ids `canceled`, `stopping`, `left` (a pull request open) and `errors` | built |
 | POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on: by `add_usd`, or with no body by a worked-out amount (what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar). Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
-| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its sizing (`size`, `size_reasons`, `missing`, `split`, its `paths` and `checks_named`; null and empty for an issue not sized), why it is held (`held_reason`) and what it was split into (`split_into`), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it | built |
+| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its sizing (`size`, `size_reasons`, `missing`, `split`, its `paths` and `checks_named`; null and empty for an issue not sized), why it is held (`held_reason`) and what it was split into (`split_into`), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it. With them, the goal's status (`goal_status`), and for a goal no sweep covers, when its open issues' states were last read from the tracker (`states_checked_at`, at most a minute old) and whether every one could be read (`states_complete`); `GET /v1/goals/{id}` reads them the same way | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
-| POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
-| POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or drop one that has no task yet. A ref another goal holds is refused, naming that goal | built |
+| POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. Each draft's body goes through the writing pass before it becomes an issue. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
+| POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or remove one from it, with or without a task. A ref another goal holds is refused, naming that goal. Removing an issue cancels its task when the task has not ended, and answers `{dropped, task_canceled}`; a task with a pull request open is refused (409) unless `force=true`, which cancels the task and leaves the pull request open. The goal keeps the ref marked `dropped`, so its label never sweeps the issue back in; adding it back by ref clears the mark, and another goal may take it meanwhile | built |
 | POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps, at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold, 409 for one not held or a met or canceled goal. Records `issue_released` | built |
 | POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label; a goal with no label holds them by ref. Each body must name its paths on a `Paths:` line (422 names those that do not); a refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps; one split already is refused (409). Records `issue_split` | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row: each one's state (in review, waiting, blocked, merged, closed; merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting, not closed), when it was opened and reached that state, its fix rounds and latest run; the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
@@ -1870,7 +2127,7 @@ credential.
 | GET | `/v1/admin/logs` | Edge | The VM's services' and the edge's log entries from Cloud Logging, newest first, at most 500, by unit, lowest severity, time and text. Every entry has a message: a service's line is its text; a request Cloud Run served, which has none, reads as its method, path, status and time (and counts as an error at 500 or above); an audit entry as its method and status; any other structured entry as its fields. An empty line a service printed is left out. The VM's Ops Agent ships the journal as `mh_journald`; the edge reads with its own service account's `roles/logging.viewer`. Admins only | built |
 | GET | `/v1/admin/deploys` | Edge | What is deployed: the version, the commit the VM and the edge run, and the edge's revision. Admins only | built |
 | GET, POST | `/v1/admin/users` | Planner, through the edge | The console's users: list them, or invite an email with a role (`admin` or `user`). `PATCH /v1/admin/users/{email}` sets the role and `DELETE` deprovisions. The last admin can be neither deprovisioned nor made a regular user (409). Each change is recorded (`user_invited`, `user_role_changed`, `user_deprovisioned`) with the admin as actor and shows on the Audit page. Admins only | built |
-| GET | `/v1/costs` | Cost service, in the planner's process | Costs over time: `from`, `to`, `bucket` (`day`, `week`, `month`), `group_by` (`source`, `kind`, `goal`, `task`, `repo`, `model`, `engine`, `operator`, `label`, `outcome`) and a comma-separated filter on each. `label` is the labels of the issue a task worked on, and `outcome` what became of its pull request (`merged`, `closed` without merging, still `open`, or `none` opened), as its `pull_request_merged` and `pull_request_closed` events record it, not the task's status, so a canceled task's pull request left open is `open` until it merges or closes, which the planner's sweep, or the hourly follow-up of a goal no sweep covers, records then: a task's facts, not a cost row's, which the planner gives when costs are asked for, so a relabel or a merge shows at once. A task whose issue carries several labels puts an even share of its cost under each in a breakdown by label, so the series add up to the total. `choices` offers the labels and outcomes of the tasks that spent. Answers the buckets, one series per value dearest first (the eighth and later folded into `other`), each bucket's total, the total, the daily average, the change against the same span before, the least-squares `trend` through the totals, a month projected at the trend, the ten costliest tasks, and what each source is. An admin sees every source and goal; anyone else, only the model cost of their own work (`scope: own`). `POST /v1/costs/harvest` reads every source now (admins) | built |
+| GET | `/v1/costs` | Cost service, in the planner's process | Costs over time: `from`, `to`, `bucket` (`day`, `week`, `month`), `group_by` (`source`, `kind`, `goal`, `task`, `repo`, `model`, `engine`, `operator`, `label`, `outcome`) and a comma-separated filter on each. `label` is the labels of the issue a task worked on, and `outcome` what became of its pull request (`merged`, `closed` without merging, still `open`, or `none` opened), as its `pull_request_merged` and `pull_request_closed` events record it, not the task's status, so a canceled task's pull request left open is `open` until it merges or closes, which the planner's sweep, or the hourly follow-up of a goal no sweep covers, records then: a task's facts, not a cost row's, which the planner gives when costs are asked for, so a relabel or a merge shows at once. A task whose issue carries several labels puts an even share of its cost under each in a breakdown by label, so the series add up to the total. `choices` offers the labels and outcomes of the tasks that spent. Answers the buckets, one series per value most expensive first (the eighth and later folded into `other`), each bucket's total, the total, the daily average, the change against the same span before, the least-squares `trend` through the totals, a month projected at the trend, the ten costliest tasks, and what each source is. An admin sees every source and goal; anyone else, only the model cost of their own work (`scope: own`). `POST /v1/costs/harvest` reads every source now (admins) | built |
 | GET | `/health` | Every service | Liveness and configuration identity | built |
 
 The run service has no HTTP API yet. Until it has one, a path it owns that
@@ -1946,7 +2203,14 @@ issue is blocked by a failed issue or waits on an operator, and
 (never for a `warn` goal). `stalled` and
 `budget_exhausted` return to `active` once an operator unblocks the goal or
 raises its budget: the next sweep finds the line above what is spent, and a
-budget resume does it at once. Any open goal can be canceled. A `met` or `canceled`
+budget resume does it at once. Any open goal can be canceled. Canceling a
+goal ends what it has not started: each of its `queued` and `blocked` tasks
+is canceled with the reason "its goal was canceled", recorded as the task's
+`task_status_changed`, and each `running` task with no pull request is asked
+to stop, as a task cancel does. A task with a pull request open is left for
+the operator, who merges it, closes it or cancels the task. Pausing a goal
+cancels nothing: its tasks wait and resume with it. Reopening a canceled
+goal does not bring a canceled task back. A `met` or `canceled`
 goal takes no more issues until an operator reopens it, which makes it
 `active` again, so a `fix` goal over a label that keeps receiving issues is
 reopened, or given a criterion that never passes. A goal can also be saved
@@ -2155,8 +2419,16 @@ to stop work as it says. Under `track` nothing is held, refused or ended for
 either, and spend is still recorded and shown against them: every goal
 behaves as `warn` whatever its own mode (the planner serves it no blocking
 line, a `budget_exhausted` goal becomes `active` at its next sweep, and
-there is nothing to resume), and a task that starts gets a spend limit no
-run reaches, so its turn and minute limits are what bound a run. A task
+there is nothing to resume), and a task that starts gets the ceiling for
+one task as its spend limit, whatever its own `max_usd` says. No task runs
+without a spend limit under either policy: the task policy's `max_task_usd`
+($100.00 when it names none, at most $1,000) is the most one task may spend
+across all its runs. Under `block` a task's limit is its own, or $10.00, and
+never more than the ceiling. The Task API refuses a `max_usd` above the
+ceiling when a task is made, retried or has its limit raised (422, naming
+the ceiling). A task that reaches the ceiling holds for budget, as at any
+spend limit, and an operator ends it or raises the ceiling in the task
+policy first. A task
 already running keeps the limit it started with. Services read a saved
 policy within five seconds, and one that cannot be read counts as `block`.
 
@@ -2241,7 +2513,11 @@ service's code-host functions, with a token that has `pull_requests: read`,
 paused or stalled) is followed up every hour instead: the labels and title of
 each issue it holds that has a task are read again, and its canceled tasks'
 pull requests watched for their end, so costs by label and by outcome stay
-true after the goal ends. A follow-up takes nothing in and changes no status.
+true after the goal ends. A follow-up also records each issue the goal holds
+as open that has closed (`issue_closed`), and the planner does the same when
+the goal's page is read, at most once a minute, so a goal no sweep covers
+never shows the state its last sweep saw as today's. A follow-up takes
+nothing in and changes no task's or goal's status.
 The canceled tasks of no goal, which no goal's sweep lists, have their open
 pull requests watched for their end every hour too.
 `pull_request_end` notes each task whose pull request's end a sweep recorded,
@@ -2308,14 +2584,15 @@ the same approval.
 
 | Owner | Entity | Fields |
 |---|---|---|
-| Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over) |
+| Task service | task | id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, pr_url, head_sha, priority, spec, acceptance_checks, created_at, status (including `blocked`, `taken_over`, `ready` and `review_unresolved`), owner (the operator, while taken over), status_changed_at (when it last changed status), recoveries and spent_carried_usd (the supervisor's: how often it was sent back for want of a workflow, and what it had spent then), drives (how often the supervisor sent it back for its merge or review since an operator's last retry) |
 | Meta-harness scheduler | task_hold | task_id, kind, reason, detail (what the reason names), since, last_checked. One row per queued task the scheduler holds |
+| Supervisor | standing | task_id, owner (workflow, scheduler, planner, supervisor, operator), situation, reason, ask, since, checked_at, attempts, acted_at, last_error. One row per task that has not ended closed |
 | Planner | goal | id, created_by, title, modality, modality_source (classifier, operator), modality_confidence, repos, label, statement, success_criteria, latitude, auto_merge, max_usd, max_parallel (null: the system's), strict_issues, budget_mode, budget_overage_percent, spent_usd (at the last sweep), priority, status (planning, active, paused, met, stalled, budget_exhausted, canceled), phase, created_at, started_at (null until the goal first becomes active), closed_at |
 | Cost service | daily_cost, harvest | One row per day, source (`model`, `cloud`), item (the kind of run, or the billed service) and the dimensions the source has (goal, task, repo, model, engine, operator), with its dollars; and how far each source has been read |
 | Planner | console_user | email, role (admin, user), status (invited, active, deprovisioned), invited_by, invited_at, last_sign_in_at. Who may use the console, and as what |
 | Planner | user_settings | identity, settings (jsonb), updated_at |
 | Planner | plan | goal_id, version, drafts (each `draft_id`, `repo`, `title`, `body`, `labels`, `depends_on`), invalid (why it cannot be approved; empty when it can), source (`planned` by a planning task, or `edited` by an operator), task_id, note, created (the issue each draft became), created_by, created_at. Planned: phase |
-| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, size and sizing (what the issue's sizing found: reasons, missing, split, and the issue's paths and checks, with the model and its cost), held_reason (why it waits for an operator; null when it does not), run_anyway, split_into (the issues an operator split it into; null until split), title and labels (the issue's, refreshed by each sweep, for an issue with a task whether the label still lists it or it has closed, and hourly once its goal is met or ended; labels give costs by label), last_webhook_at |
+| Planner | issue_link | ref (tracker-qualified), goal_id, task_id, repo, state, depends_on, dropped (an operator removed the issue from the goal: the row stays so the label does not take it in again), size and sizing (what the issue's sizing found: reasons, missing, split, and the issue's paths and checks, with the model and its cost), held_reason (why it waits for an operator; null when it does not), run_anyway, split_into (the issues an operator split it into; null until split), title and labels (the issue's, refreshed by each sweep, for an issue with a task whether the label still lists it or it has closed, and hourly once its goal is met or ended; labels give costs by label), last_webhook_at |
 | Planner | pull_request_end | task_id, outcome (`merged` or `closed`), recorded_at: the tasks whose pull request's end a sweep recorded, so a canceled task's pull request is read only until it ends |
 | Meta-harness run service | run | id, task_id, attempt_no, kind (initial, fallback, followup, retry), candidate, harness_profile, profile_version, model, model_policy, image, sandbox_id, state, started_at, running_at, ended_at, end_reason, fallback_reason |
 | Meta-harness run service | routing_decision | id, task_id, attempt_no, request_id, route_tier, route_method, route_confidence, model_pin, candidates (the tier's candidates, in order), thinking, config_id, config_version, classifier_usd, route_floor, route_ceiling, explored, created_at |
@@ -2371,7 +2648,7 @@ Meta-harness services append through the event service client library:
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason and the kind of hold, recorded when a task's reason is new or has changed. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v3`, `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
-| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL) `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
+| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL), `writing_checked` for the writing pass on each pull request description, review and comment it posts (the planner records it for a plan's issues), `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
 | Configuration, in the planner process | `config_changed` for every configuration version an operator saves, approves or rolls back, with the actor |
@@ -2458,7 +2735,13 @@ than deleting rows. The event service keeps run, routing, attempt,
 Operators run and configure the meta-harness from the operator console, a
 cloud web app. Operators sign in with Google at the edge, and the access
 list names who may (see REST API). The operator console owns no store and calls only the REST API, as the signed-in
-operator.
+operator. A session lasts 12 hours. When one ends while a page is open, the
+first request the edge answers `not signed in` takes the operator to the
+sign-in screen, which says the session ended; signing in returns them to
+the page they were on. Every error the console shows says what to do about
+it: the page's own remedy where it knows one, otherwise reload to try again
+and the Logs page for the warning that names it, and Sign in again for a
+lost session.
 
 Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
@@ -2466,8 +2749,9 @@ Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
 The Performance page (`console/src/features/performance`) is what the
 meta-harness costs over time. Four figures head it for the chosen range: the
-total, the daily average, the change against the span before, and a month
-at the current trend. The controls start with the cost category: All costs,
+total, the daily average, the change from the same number of days before
+(no percentage when less than $1 was spent then, since a change from almost
+nothing means nothing), and a month at the current trend. The controls start with the cost category: All costs,
 AI (what model calls cost) or Cloud (the Google Cloud bill). Each category
 has its own breakdowns and filters: All by category; AI by model, run type
 (task runs, reviews, fixes, planning), goal, repository, operator, label
@@ -2482,7 +2766,9 @@ cost per day, week or month as stacked columns, one segment per value of the
 chosen breakdown, with the trend line through
 the totals and a tooltip listing every series of the hovered bucket. Beside
 it, where the money went as a ranked list with each share, and the ten
-costliest tasks, linked. The range (7, 30 or 90 days, or two dates), the
+costliest tasks, linked. Wherever costs are stacked or listed (the chart's
+tooltip, the breakdown, the costliest tasks, a task's runs, the Overview's
+most expensive tasks today), a total ends them. The range (7, 30 or 90 days, or two dates), the
 bucket, the breakdown and the filters (source, kind of work, goal,
 repository, model, label, outcome) live in the URL. A series keeps its color whatever is
 filtered. An admin sees every source and is told what each is and when it
@@ -2516,6 +2802,29 @@ merge, a review that ended unresolved, a recent failed task, a goal over its
 budget or stopped by it, a stalled goal, and the kill switch. It refreshes every 30 seconds and,
 when the operator turned notifications on in Settings, raises a browser
 notification for each new item.
+
+Wherever the console shows failed work, it says what happened, why, and what
+to do, with the action that does it, and never a bare count or a raw error
+(`console/src/features/tasks/diagnosis.ts`). A failure's recorded reason is
+read into a diagnosis: a summary, a cause, a fix, and the actions that apply
+(Retry, Retry with a higher spend limit, open the task, edit the issue,
+Configuration). The recorded error, without the wrappers each layer adds, is
+shown when asked for. A reason no rule knows says what was recorded and what
+to do next. Tasks that failed the same way are one message with one action
+(`FailureGroups.tsx`): "Retry all 6", not six copies of an error. This is
+what a goal's alert above its board shows, what the Overview's Needs you
+section shows above its table, and what a failed task's own alert shows. Each
+inbox item carries a line saying what to do; a pull request ready to merge
+links to the pull request itself. The Overview's numbers are links, each with
+a line saying what the number is made of: Needs you says how many failed, how
+many are ready to merge and how many are held, and goes to the list.
+
+A goal's Graph view draws the order of work: an issue sits to the right of
+each issue it waits on, with an arrow from it, and says where it stands in
+words (Queued, Waits on 2 issues to its left, Running now, In review, Done,
+Needs you: failed, retry it). Color marks only what is done and what needs
+the operator. A goal whose issues do not depend on each other has no order to
+draw, and the view says so rather than stack boxes.
 
 A value the operator may change is edited where it is shown, one way
 everywhere (`console/src/components/InlineField.tsx`): hovering a value shows
@@ -2569,15 +2878,101 @@ returns to the one before; a link that names only a run (`?run=<run id>`)
 opens the Terminal on that run alone, with Show every run to bring the rest
 back. Each review round on the Reviews tab links to its own review run (Show
 review run) and, when it sent findings to a fix run, to that fix run.
-The Task page shows a run as a timeline by default: each turn's message, its
-model calls (model, tokens, cost), its tool calls opening to their arguments
-and output, and the files it changed, live; the terminal is a second tab.
-Each run opens with the prompt it was given, from its `run_prompt` event: a
-Prompt item on the timeline and one collapsed `prompt (<template>)` line in
-the terminal, each opening to the full text. A run started before prompts
-were recorded shows none. The page reads every `run_prompt` on the task as
-it opens, besides its newest events, so an older run's prompt, or the one a
-`?run=` link opens on, is on the timeline before older events load.
+The Task page's Timeline tab, the one it opens on, is a picture of the
+task's path, drawn from the task's events alone (`console/src/features/tasks/path.ts`
+turns them into steps; no service works anything out for it). The five
+stages are columns, left to right: Waiting, Run, Pull request, Review,
+Outcome. Each step is a card in its stage's column, and time runs left to
+right along a row. A step that belongs to an earlier stage than the one
+before it starts a new row, with a line drawn back to it that says why
+(`3 findings to fix`, `Held for budget`, `Sent back for its merge by the
+supervisor`): so a loop shows as a return, round by round, and a task's
+number of rows is the number of times it went back. Steps that share a
+stage in one row stack in its cell: a second candidate's run under the
+first's, the checks under the pull request, the merge commit's checks and
+the task's end under the merge.
+
+| Step | From | It shows |
+|---|---|---|
+| A wait: Queued, Held by the scheduler, Blocked, Held for budget, Held for an operator, Review taken by an operator, Queued again | `task_created`, `task_held`, `budget_hold`, `review_hold`, `operator_review_claimed`, `task_retried`, `task_driven`, `task_recovered`, a status change to `queued` or `blocked` | Its reason and how long it lasted, drawn with a dashed edge. A retry, and a task the supervisor sent back, name who did it |
+| A run: Task run, Fix run | `run_prompt`, `run_finished`, `attempt_finished` | Its candidate, how it ended, its length, cost and turns. A run that did not finish is red, with why |
+| Pull request opened, Checks | `pull_request_opened`, `pull_request_checks` | The pull request's number and files changed; the checks' result, the failed ones by name, and how long they took |
+| A review round | the review run's events and `pull_request_reviewed` | Its round, verdict and number of findings, its reviewer, length and cost |
+| Merged, Merge commit's checks | `pull_request_merged`, `merge_checks` | The merge commit, and its checks' result |
+| Where it rests: Ready to merge, Review unresolved, Taken over | a status change to one of them | Why, how long it has rested, and what the supervisor asks of the operator |
+| Its end: Closed, Failed, Canceled | a status change to one of them | Why |
+
+What an operator did sits on the step it was done in: a message, a
+dismissed finding, a raised spend limit, a review sent on. So does the
+writing pass's record. The step the
+task is in now is ringed and marked Now, and a step still going counts its
+time up. A line above the picture sums the path: how long from start to
+now or to its end, how much of that was waiting, its runs, review rounds
+and cost. Hovering a step gives everything known about it. Picking a step
+opens it under the picture: a run's turns one by one (each turn's message,
+its model calls with model, tokens and cost, its tool calls opening to
+their arguments and output, the files it changed, and the prompt it was
+given, from its `run_prompt` event), with Open its terminal; a review's
+round on the Reviews tab; the checks and the pull request on the code
+host. A `?run=` link with `tab=timeline` opens with that run's step
+picked. The picture keeps its width and scrolls sideways on a narrow
+window. The page reads every step event of the task as it opens, besides
+its newest events, so the path is whole however long the task has run,
+and reads a picked run's own events when it is picked. The terminal is a
+second tab; it takes every run's `run_prompt` as the page opens, as one
+collapsed `prompt (<template>)` line that opens to the full text, so an
+older run's Terminal opens on its prompt. A run started before prompts
+were recorded shows none, and is told for a task, fix or review run by
+its attempt's tier.
+
+Three tasks from this repo's history, as the picture draws them:
+
+```text
+#252, merged after three fix rounds (1h 2m, 3s of it waiting, 8 runs, $8.13)
+
+ WAITING     RUN                 PULL REQUEST        REVIEW                 OUTCOME
+ Queued ---- Task run ---------- #257 opened ------- Round 1: 3 findings
+ 3s          11m 19s  $3.50      Checks passed 4m    51s  $0.19
+             +---- 3 findings to fix ----------------------+
+             Fix run ----------- Checks passed 4m -- Round 2: 2 findings
+             6m 24s  $1.12                           54s  $0.22
+             +---- 2 findings to fix ----------------------+
+             Fix run ----------- Checks passed 4m -- Round 3: 2 findings
+             8m 52s  $1.70                           46s  $0.17
+             +---- 2 findings to fix ----------------------+
+             Fix run ----------- Checks passed 4m -- Round 4: clean ------- Merged
+             6m 17s  $1.05                           37s  $0.19             Merge commit's checks passed 7m
+                                                                            Closed
+
+#205, held, out of budget, refused its merge, sent back by the supervisor, unresolved
+
+ WAITING              RUN                PULL REQUEST       REVIEW                OUTCOME
+ Held by the          Task run --------- #258 opened ------ Round 1: 2 findings
+ scheduler  1h 2m     20m 53s  $7.84     Checks passed 4m   51s  $0.23
+                      +---- 2 findings to fix --------------------+
+                      Fix run (red: spend limit)
+                      4m 12s  $1.96
+ +- Held for budget --+
+ Held for budget ---- Fix run ---------- Checks passed ---- Round 2: clean ------ Ready to merge
+ 59m 44s              10m 12s  $2.39                        59s  $0.31            3h 10m: GitHub would
+ an operator raised                                                              not merge it
+ the limit to $15
+ +- Sent back for its merge by the supervisor ---------------------------------------+
+ Sent back for its merge ------------------------------- Review
+ its pull request conflicts with its base                1m 26s  $0.46
+                      +---- back for a fix ------------------------+
+                      Fix run ---------- Checks passed ---- Review
+                      (two more rows the same way, round 3: 1 finding)
+                      Fix run ----------------------------------------------- Review unresolved  [Now]
+                      3m 42s  $0.24                                           fix round 3 changed nothing
+
+#263, held, then failed on its first run (6m 59s, 6m 49s of it waiting)
+
+ WAITING              RUN                PULL REQUEST       REVIEW                OUTCOME
+ Held by the -------- Task run (red) -------------------------------------------- Failed
+ scheduler  6m 49s    9s: the HTTP Gateway refused the run grant                  Needs you: read why, then retry
+```
+
 While a task holds its newest review for an operator, the Reviews tab says
 so above the rounds, each finding of that round has a Dismiss button that
 asks why, and Send to fix now ends the wait. A dismissed finding shows
@@ -2586,11 +2981,11 @@ in the Overview's Needs you list, marked "review waits". The Task policy tab
 has the wait as "Wait before a fix run".
 The Task page's Spend tab (#198) lists each run with its kind, model, turns,
 tokens in, the share of them read from the cache, tokens out and cost, marks
-the dearest run, links each to its output, and heads them with the total
+the most expensive run, links each to its output, and heads them with the total, which also ends the table
 against the task's limit and its split between the task's own runs, reviews
 and fixes. On the Goal page, "where it went" beside the spend opens the
 goal's: the split between own runs, reviews and fixes, and each task with
-its runs, turns and cost, dearest first, linked to its Spend tab.
+its runs, turns and cost, most expensive first, linked to its Spend tab, with the totals at the bottom.
 An ended task's page offers what can be done with it, each button saying in
 its tooltip what it does to the task and to the pull request: Retry (from
 `review_unresolved`, `failed` or `canceled`, with a spend limit for the
@@ -2617,9 +3012,10 @@ its budget; a goal that is paused, planning or closed shows its status and
 links to it; a parallel limit links the tasks holding the places; a repo
 area names the task holding it and the paths they share; the kill switch or
 a drain links to the Overview. A blocked task lists each issue it waits on
-with its state. A queued task nothing holds says it starts at the
-scheduler's next pass. The Timeline shows `task_held` and `task_admitted`
-as items, the Tasks page's Queued and blocked list has a Why it waits
+with its state; one whose goal is canceled or met says that first instead,
+with a link to the goal, since it will not start whatever it waits on. A queued task nothing holds says it starts at the
+scheduler's next pass. The Timeline shows a hold as a wait, with its reason
+and how long it lasted until `task_admitted`, the Tasks page's Queued and blocked list has a Why it waits
 column, and a goal's board shows the reason on a queued task's card.
 A task that ended `failed` or `review_unresolved` says so in an alert at
 the top of its page: its reason, each run that did not finish (linked to
@@ -2699,7 +3095,12 @@ description saves with Ctrl/Cmd+Enter. A save sends only that field
 (`PATCH /v1/goals/{id}`), shows that it is saving and then the saved value;
 a refused save keeps the input open with the API's reason under it. The
 modality, the goal's id, Created, Started and Ended are read-only, and a met
-or canceled goal shows every field read-only until it is reopened. The rest
+or canceled goal shows every field read-only until it is reopened. Cancel
+goal asks first (`console/src/features/goals/CancelGoal.tsx`): its dialog
+says how many tasks that have not started are canceled, how many running
+ones are stopped, and how many have a pull request open and are left, with a
+link to each. The page of a goal no sweep covers says when its issues'
+states were read from GitHub. The rest
 of the table is planned.
 
 | View | Shows | Actions |
@@ -2957,9 +3358,11 @@ can't stop it. The script checks the commit out and runs
   connection a client keeps open, such as the console's live event stream,
   cannot hold a restart.
 
-Running sandboxes are Docker containers that outlive the restart, and
-Temporal hands the interrupted run activity to the restarted worker, which
-re-attaches to the same container, so no running task is lost. The edge
+Running sandboxes are Docker containers that outlive the restart. The
+interrupted run activity ends with `WorkerShutdown`; its workflow waits for
+the restarted worker and runs the activity again for the same run, which
+re-attaches to the same container, so no running task is lost. A workflow
+used to take that failure as the run's own and fail the task for good. The edge
 retries a request whose connection is refused for up to 20 seconds, so a
 service's few seconds down don't reach the console. Old and new code run
 side by side for those seconds, so migrations only add, and anything removed

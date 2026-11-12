@@ -223,3 +223,36 @@ def test_a_fix_goal_still_needs_a_label_or_issues_and_never_plans(world):
     ).json()
     assert fix["status"] == "active" and not tasks.tasks
     assert client.post(f"/v1/goals/{fix['id']}/replan", headers=OPERATOR).status_code == 409
+
+
+def test_an_approved_drafts_body_goes_through_the_writing_pass_before_it_becomes_an_issue(world, monkeypatch):
+    from meta_harness.run_service import writing
+
+    client, events, tracker, tasks = world
+    goal = _feature(client)
+    sloppy = "This robust export weaves a rich tapestry.\n\n## Acceptance checks\n\n- make test"
+    plain = "The export writes one file per day.\n\n## Acceptance checks\n\n- make test"
+    _planned(client, events, tasks, goal, [draft("store", body=sloppy), draft("api", ("store",))])
+
+    async def check_all(texts, transport=None):
+        return [
+            writing.Outcome(text=plain, findings=2, rewritten=True, kept=True, before=text, usd_cost="0.002")
+            if text == sloppy
+            else writing.Outcome(text=text)
+            for text in texts
+        ]
+
+    monkeypatch.setattr(writing, "check_all", check_all)
+
+    approved = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+
+    assert approved.status_code == 200, approved.text
+    store_issue, api_issue = tracker.created
+    assert store_issue.body == f"{plain}\n" and "rich tapestry" not in store_issue.body
+    assert api_issue.body.endswith(f"Depends on: #{store_issue.number}\n")
+    checked = [p for t, p in events.events if t == "writing_checked"]
+    assert [(p["kind"], p["draft_id"], p["kept"], p["goal_id"]) for p in checked] == [
+        ("issue", "store", 1, goal["id"]),
+        ("issue", "api", 0, goal["id"]),
+    ]
+    assert checked[0]["changes"] == [{"before": sloppy, "after": plain}]

@@ -7,6 +7,8 @@
 - `task_policy`: the task policy, as in config/task_policy.json: how many tasks
   run at once (`max_parallel`), the review loop's reviewers and rounds, and the
   spend limit a task gets for its issue's size (`max_usd_by_size`).
+- `skills`: the skills a harness profile may name, each with its files
+  (skills.py), seeded from config/skills/.
 
 A kind's first version is seeded from the deployment's file. A new version is
 refused, with every reason, when the service that reads it would refuse it at
@@ -23,6 +25,7 @@ from typing import Any, Callable
 
 from ai_api_unified.routing.router_config import load_router_config
 
+from meta_harness.config.skills import check_skills, seed_skills
 from meta_harness.run_service.routing import replaced_engine_reason
 
 from meta_harness.run_service.paths import REPO_ROOT
@@ -99,6 +102,9 @@ def sandbox_ceiling() -> int | None:
 # What a budget does across the deployment. block: a goal's budget and a task's spend limit stop work, as each
 # says. track: nothing is held, refused or ended for either; spend is still recorded and shown against them.
 BUDGET_POLICIES = ("block", "track")
+# The highest ceiling a task policy may set on one task's spend. A ceiling is a safety limit, so it cannot be
+# set out of reach.
+MAX_TASK_USD = Decimal("1000")
 # The sizes the planner gives an issue before it becomes a task (meta_harness.planner.sizing).
 ISSUE_SIZES = ("small", "medium", "large")
 
@@ -155,6 +161,24 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
         reasons.append(
             f"budget_policy must be one of {', '.join(BUDGET_POLICIES)}: block stops work at a budget or spend "
             "limit, and track only records the spend against it"
+        )
+    ceiling = document.get("max_task_usd")
+    if ceiling is not None:
+        try:
+            amount = Decimal(str(ceiling))
+            usable = not isinstance(ceiling, bool) and amount.is_finite() and 0 < amount <= MAX_TASK_USD
+        except InvalidOperation:
+            usable = False
+        if not usable:
+            reasons.append(
+                f"max_task_usd must be an amount above 0 and at most {MAX_TASK_USD}: the most one task may "
+                "spend, whatever its own limit or the budget policy says"
+            )
+    writing = document.get("writing_pass")
+    if writing is not None and not isinstance(writing, bool):
+        reasons.append(
+            "writing_pass must be true or false: false posts what a run wrote without the writing pass's "
+            "check and rewrite"
         )
     wait = document.get("merge_wait_minutes")
     if wait is not None and (isinstance(wait, bool) or not isinstance(wait, int) or wait < 0):
@@ -214,6 +238,16 @@ def check_profiles(document: dict[str, Any], others: dict[str, dict[str, Any]]) 
         unknown = [t for t in profile.get("tools") or [] if t not in KNOWN_TOOLS]
         if unknown:
             reasons.append(f"{name}: unknown tools {', '.join(unknown)}")
+        named = profile.get("skills")
+        if named is not None and not (isinstance(named, list) and all(isinstance(s, str) for s in named)):
+            reasons.append(f"{name}: skills must be a list of skill names, or left out")
+        elif named:
+            known = (others.get("skills") or {}).get("skills", {})
+            missing = [s for s in named if s not in known]
+            if missing:
+                reasons.append(f"{name}: no skill named {', '.join(missing)}; import it on the Skills page first")
+            if "read" not in (profile.get("tools") or []):
+                reasons.append(f"{name}: a profile with skills needs the read tool, which is how a run opens one")
     # A profile the active tiers still name cannot go.
     tiers = others.get("tiers") or {}
     for tier in tiers.get("tiers", []):
@@ -264,6 +298,13 @@ KINDS: dict[str, Kind] = {
         "The repos goals may change, with each one's tracker and default acceptance checks.",
         seed_repos,
         check_repos,
+    ),
+    "skills": Kind(
+        "skills",
+        "Skills",
+        "Packaged instructions, with their scripts and references, that a harness profile's runs load.",
+        seed_skills,
+        check_skills,
     ),
     "task_policy": Kind(
         "task_policy",

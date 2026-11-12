@@ -65,6 +65,10 @@ def log(text: str) -> None:
     print(f"[fake-gateway] {text}", flush=True)
 
 
+# What the HTTP Gateway accepts as a run grant's spend limit: at most six digits before the decimal point.
+SPEND_LIMIT_PATTERN = re.compile(r"[0-9]{1,6}(\.[0-9]{1,12})?")
+
+
 class Grants:
     """Run grants in memory, keyed by run id, with each grant key pointing at its run."""
 
@@ -77,6 +81,9 @@ class Grants:
         run_id = str(body.get("run_id", ""))
         if not run_id:
             return 422, {"detail": "run_id is required"}
+        # The HTTP Gateway's own rule for a spend limit, so a limit it would refuse fails here too.
+        if not SPEND_LIMIT_PATTERN.fullmatch(str(body.get("spend_limit_usd", ""))):
+            return 422, {"detail": f"spend_limit_usd should match pattern '{SPEND_LIMIT_PATTERN.pattern}'"}
         terms = (str(body.get("engine")), str(body.get("model")), str(Decimal(str(body.get("spend_limit_usd")))))
         key = "rg_" + secrets.token_urlsafe(32)
         with self.lock:

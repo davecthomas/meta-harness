@@ -7,7 +7,7 @@ import { GoalSpend } from "./GoalSpend";
 
 afterEach(() => vi.unstubAllGlobals());
 
-test("a goal's spend shows how much went to own runs, reviews and fixes, and each task dearest first", async () => {
+test("a goal's spend shows how much went to own runs, reviews and fixes, and each task most expensive first", async () => {
   const spend = {
     goal_id: "g-1", max_usd: "10.00", usd: "26.79", by_kind: { task: "16.00", review: "2.79", fix: "8.00" },
     tasks: [
