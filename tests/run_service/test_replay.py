@@ -103,6 +103,15 @@ SCENARIOS = {
     },
     # After the worker-restart patch: the worker stops under the first run, and the same run is taken up again.
     "patched-worker-restart": {"verdicts": [CLEAN], "goal_id": "g-1", "auto_merge": True, "worker_restarts": 1},
+    # After the review-follow-ups patch: a second round's new finding on code the first passed is a follow-up,
+    # and the pull request merges with no second fix run.
+    "patched-review-follow-ups": {
+        "verdicts": [CHANGES, CHANGES],
+        "fix_commits": ["c1"],
+        "goal_id": "g-1",
+        "auto_merge": True,
+        "follow_ups": [[0]],
+    },
     # After the merge-base-health patch: the merge waits while the base's own checks run, then merges.
     "patched-merge-base-health": {
         "verdicts": [CLEAN],

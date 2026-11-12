@@ -412,3 +412,72 @@ async def test_a_local_pull_requests_description_is_its_record_file(tmp_path):
         activities.loop_prompt, _prompt_request(kind="review", pr_url=f"file://{record}")
     )
     assert "Why tests/ changed: the fixture moved." in prompt
+
+
+def test_a_new_finding_on_code_nothing_changed_since_the_round_before_is_a_follow_up():
+    changed = {"app.py": [(10, 14)]}
+    findings = [
+        {"path": "app.py", "line": 12, "body": "On the fix's change."},
+        {"path": "app.py", "line": 16, "body": "Beside it."},
+        {"path": "app.py", "line": 80, "body": "Old code in a changed file."},
+        {"path": "lib.py", "line": 5, "body": "A file no fix touched."},
+        {"path": None, "line": None, "body": "About the whole change."},
+        {"path": "store.py", "line": 101, "body": "Raised again."},
+    ]
+    previous = [{"path": "store.py", "line": 95, "body": "Not fixed."}]
+
+    assert activities.follow_ups(findings, previous, changed) == [2, 3]
+    assert activities.follow_ups(findings, previous, None) == [], "an unreadable change holds every finding"
+
+
+def test_hunk_headers_give_the_new_sides_line_ranges():
+    from meta_harness.run_service import code_host
+
+    patch = "@@ -1,3 +1,4 @@\n a\n+b\n@@ -20 +21 @@\n-x\n+y\n@@ -40,2 +42,0 @@\n-gone\n-gone\n"
+    assert code_host.hunk_lines(patch) == [(1, 4), (21, 21), (42, 42)]
+
+
+async def test_a_fix_runs_summary_is_added_to_a_local_pull_requests_description_once(tmp_path):
+    from meta_harness.run_service import code_host
+
+    record = tmp_path / "pull-request.md"
+    record.write_text("# Fix the bug\n\nThe first run's summary.\n", encoding="utf-8")
+    for _ in range(2):
+        await code_host.add_to_description(
+            str(tmp_path / "repo.git"), "", "Fix round 1 (t:run-3)", "Why lib.py changed.", record
+        )
+    text = record.read_text(encoding="utf-8")
+    assert text.count("## Fix round 1 (t:run-3)") == 1 and "Why lib.py changed." in text
+
+
+async def test_a_local_repos_changed_lines_between_two_commits(tmp_path):
+    import subprocess
+
+    from meta_harness.run_service import code_host
+
+    work = tmp_path / "work"
+    work.mkdir()
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            cwd=work,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+    (work / "app.py").write_text("".join(f"line {n}\n" for n in range(1, 21)), encoding="utf-8")
+    (work / "lib.py").write_text("x\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "one")
+    before = git("rev-parse", "HEAD")
+    (work / "app.py").write_text(
+        "".join(("changed\n" if n == 7 else f"line {n}\n") for n in range(1, 21)), encoding="utf-8"
+    )
+    git("commit", "-qam", "two")
+    after = git("rev-parse", "HEAD")
+
+    changed = await code_host.changed_lines(str(work / ".git"), before, after)
+    assert changed == {"app.py": [(7, 7)]}
