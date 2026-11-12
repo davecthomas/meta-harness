@@ -13,7 +13,8 @@ import { OperatorReview } from "./OperatorReview";
 import { TaskActions } from "./TaskActions";
 import { TaskFailure } from "./TaskFailure";
 import { Standing } from "./Standing";
-import { Timeline } from "./Timeline";
+import { TaskPath } from "./TaskPath";
+import { STEP_EVENTS } from "./path";
 import { Plan } from "./Plan";
 import { SteerBox } from "./SteerBox";
 import { CompareAttempts, RunAttempts } from "./Attempts";
@@ -112,10 +113,12 @@ export function TaskPage() {
         // Every run's prompt, older runs' too: the first page holds only the newest events, and the
         // timeline (or a ?run= link to an older run) would otherwise show no prompt for those runs.
         // The terminal gets them too, so an older run's Terminal opens on its prompt.
-        api.taskEvents([taskId], ["run_prompt"]).then((prompts) => {
+        // Every step of the task's path too, however old, so the picture of it is whole.
+        api.taskEvents([taskId], [...new Set(["run_prompt", ...STEP_EVENTS])]).then((prompts) => {
           if (stale) return;
           setEvents((current) => merge(current, prompts));
-          setLines((current) => merge(current, prompts.map(withRun).filter((l): l is Line => l !== null)));
+          // The terminal takes only the prompts: older steps reach it in order, as it scrolls up.
+          setLines((current) => merge(current, prompts.filter((e) => e.event_type === "run_prompt").map(withRun).filter((l): l is Line => l !== null)));
         }, () => undefined);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -256,7 +259,13 @@ export function TaskPage() {
       ) : tab === "changes" && task.pr_url ? (
         <Changes taskId={task.id} />
       ) : tab === "timeline" ? (
-        <Timeline events={onlyRun ? events.filter((e) => e.run_id === onlyRun || !e.run_id) : events} />
+        <TaskPath
+          events={events}
+          pick={onlyRun}
+          onOpenRun={(run) => setParams({ tab: "terminal", run })}
+          onOpenReviews={() => setParams({ tab: "reviews" })}
+          onPickRun={(run) => void api.runEvents(run).then((found) => setEvents((current) => merge(current, found)), () => undefined)}
+        />
       ) : (
       <>
       <SectionTitle right={<Badge variant="dot" color={STREAM_COLORS[state] ?? "gray"} tt="none">{state}</Badge>}>Run</SectionTitle>
