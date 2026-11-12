@@ -800,7 +800,10 @@ class RunTask:
             loop.max_rounds = policy.max_rounds
             loop.merge_wait_minutes = policy.merge_wait_minutes
             fixes = 0
-            reviews = 0
+            # Rounds are numbered over the task's life, not this workflow's: a resumed task's reviews, and a
+            # merge fix's, follow the ones it had, so what is keyed on the round (its event, its file, its
+            # title on the pull request) never meets an earlier round's.
+            reviews = _earlier_rounds(loop.attempts) if workflow.patched("resumed-rounds") else 0
             # A clean verdict that still stands at the new head: the base was brought in and the pull request's
             # own diff is what the reviewer read. Its checks run again, and it merges with no new review.
             standing = ""
@@ -1482,6 +1485,12 @@ class RunTask:
         if request.ceiling and route_result.tiers.index(request.ceiling) <= index:
             return None
         return route_result.tiers[index + 1]
+
+
+def _earlier_rounds(attempts: list[Attempt]) -> int:
+    """How many review rounds the task has had: its review runs that finished. A round whose first reviewer
+    pair gave no verdict and whose next did counts twice, which skips a number but never repeats one."""
+    return sum(1 for a in attempts if a.tier == "review" and a.decision == "finished")
 
 
 class _Loop:
