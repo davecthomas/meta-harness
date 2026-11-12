@@ -916,18 +916,49 @@ def create_app(
         return {"goal_id": goal_id, "added": added}
 
     @app.delete("/v1/goals/{goal_id}/issues/{ref:path}")
-    def drop_issue(goal_id: str, ref: str, who: str = Depends(operator)) -> dict:
-        """Let go of an issue the goal holds and has made no task for."""
+    def drop_issue(goal_id: str, ref: str, force: bool = False, who: str = Depends(operator)) -> dict:
+        """Remove an issue from the goal, whether or not it has a task yet.
+
+        The goal holds the issue no longer: its sweep never takes it in again by its label, it does not
+        count toward the goal being met, and another goal may take it. Nothing changes on the tracker. A
+        task of the issue that has not ended is canceled: one queued or blocked at once, one running as a
+        cancel stops it. A task with a pull request open has work done and waiting, so it is refused (409)
+        unless `force` is set; with it the task is canceled and the pull request is left open for the
+        operator. Adding the issue back by ref holds it again.
+        """
         load(goal_id)
+        with app.state.pool.connection() as conn:
+            link = store.link(conn, ref)
+        if link is None or link["goal_id"] != goal_id or link.get("dropped"):
+            raise HTTPException(status_code=404, detail=f"the goal does not hold {ref}")
+        ended = None
+        if link["task_id"]:
+            try:
+                task = tasks.get(link["task_id"])
+            except TaskApiError as err:
+                raise HTTPException(status_code=502, detail=f"could not read the issue's task: {err}") from err
+            live = task["status"] in ("queued", "blocked", "running", "taken_over", "ready", "review_unresolved")
+            if live and task.get("pr_url") and not force:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"its task {task['id']} has pull request {task['pr_url']} open: its work is done and "
+                        "waiting. Removing the issue cancels the task and leaves the pull request open"
+                    ),
+                )
+            if live:
+                try:
+                    tasks.cancel(task["id"], f"its issue was removed from goal {goal_id}", who)
+                except TaskApiError as err:
+                    raise HTTPException(status_code=502, detail=f"could not cancel the issue's task: {err}") from err
+                ended = task["id"]
         try:
             with app.state.pool.connection() as conn:
                 store.drop_ref(conn, goal_id, ref)
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail=f"the goal does not hold {ref}") from err
-        except store.GoalError as err:
-            raise HTTPException(status_code=409, detail=str(err)) from err
         events.emit("issue_dropped", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
-        return {"goal_id": goal_id, "dropped": ref}
+        return {"goal_id": goal_id, "dropped": ref, "task_canceled": ended}
 
     @app.get("/v1/activity")
     def pull_request_activity(days: int = Query(91, ge=1, le=366), who: str = Depends(operator)) -> dict:

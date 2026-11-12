@@ -268,7 +268,11 @@ async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, even
             return
         for issue in issues:
             existing = await asyncio.to_thread(_link, issue.ref)
-            if existing is None or existing["goal_id"] == goal["id"]:
+            mine = existing is not None and existing["goal_id"] == goal["id"]
+            removed = existing is not None and bool(existing.get("dropped"))
+            # An open issue this goal holds, or one it could take in, keeps it open. One an operator removed
+            # from this goal does not: the goal never takes it again. One another goal removed is free to take.
+            if existing is None or (mine and not removed) or (removed and not mine):
                 return
     met, changed = await asyncio.to_thread(_complete, goal["id"])
     if not changed:
@@ -314,6 +318,13 @@ async def _take_in_added(
 
 async def _take_in(goal: dict, issue: Issue, tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult):
     existing = await asyncio.to_thread(_link, issue.ref)
+    if existing and existing.get("dropped"):
+        # An operator removed the issue from its goal. That goal never takes it in again by its label;
+        # another goal takes it as an issue it has not seen.
+        if existing["goal_id"] == goal["id"]:
+            return
+        await asyncio.to_thread(_forget_link, issue.ref)
+        existing = None
     title = issue.title[:300]
     labels = list(dict.fromkeys(issue.labels))
     if existing and existing["goal_id"] == goal["id"] and existing.get("title") != title:
@@ -618,6 +629,11 @@ def _links(goal_id: str) -> list[dict]:
 def _save(ref, goal_id, repo, state, depends_on, task_id, refused_reason, title=None, labels=None) -> None:
     with db.connect(autocommit=True) as conn:
         store.save_link(conn, ref, goal_id, repo, state, depends_on, task_id, refused_reason, title, labels)
+
+
+def _forget_link(ref: str) -> None:
+    with db.connect(autocommit=True) as conn:
+        store.forget_link(conn, ref)
 
 
 def _set_title(ref: str, title: str) -> None:

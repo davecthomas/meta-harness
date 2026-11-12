@@ -7,6 +7,7 @@ import { api, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type Is
 import { CancelGoal } from "./CancelGoal";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { GoalStanding } from "./GoalStanding";
+import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures } from "./GoalFailures";
 import { GoalPlan } from "./GoalPlan";
 import { GoalSpend } from "./GoalSpend";
@@ -313,7 +314,7 @@ export function GoalPage() {
       ) : issues.length > 0 && progress && shownView === "graph" ? (
         <GoalGraph issues={progress} tasks={tasks} />
       ) : issues.length ? (
-        <DataTable head={["Task", "Issue state", "Task status", "Pull request", "Waits on"]}>
+        <DataTable head={["Task", "Issue state", "Task status", "Pull request", "Waits on", ""]}>
           {shown.items.map((i) => {
             const task = i.task_id ? tasks[i.task_id] : undefined;
             const to = i.task_id ? `/tasks/${i.task_id}` : null;
@@ -352,6 +353,9 @@ export function GoalPage() {
                   {task?.pr_url && <PrLink url={task.pr_url} />}
                 </Table.Td>
                 <Table.Td>{i.depends_on.map((d) => <Text ff="monospace" size="xs" key={d}>{d}</Text>)}</Table.Td>
+                <Table.Td>
+                  {!["met", "canceled"].includes(goal.status) && <RemoveIssue goalId={goal.id} issueRef={i.ref} task={task} onRemoved={() => void Promise.all([load(), loadProgress()])} />}
+                </Table.Td>
               </Table.Tr>
             );
           })}
