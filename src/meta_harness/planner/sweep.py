@@ -16,9 +16,10 @@ split, until an operator runs it anyway or splits it; so is one missing
 acceptance checks, paths or a testable outcome when its goal sets
 strict_issues, and otherwise that one runs with the gap on its card: one with
 no acceptance checks, its own or the repo's defaults, runs with none, and its
-run asks the agent to run the repo's tests. An unsized issue with no checks
-(sizing off, or its call failed) is refused, as before sizing, and looked at
-again on every sweep, so adding the checks is all it takes. A held issue
+run asks the agent to run the repo's tests. With sizing off, an issue with no
+checks is refused, as before sizing, and looked at again on every sweep, so
+adding the checks is all it takes. An issue whose first sizing call fails
+waits, with no task, for the next sweep to size it again. A held issue
 edited since its sizing is sized again, unless an operator split it: a split
 issue stays held, saying what it was split into, until it is closed or run
 anyway. The size is stored on the task
@@ -384,7 +385,10 @@ async def _take_in(
     # whose repo was given default checks, becomes a task without anyone dropping and adding it.
     registered = repos.get(issue.repo)
     checks = issue.checks or (registered.default_checks if registered else [])
-    size, sized = await _size(goal, issue, existing, sizer, events, title, labels)
+    found = await _size(goal, issue, existing, sizer, events, title, labels, result)
+    if found is None:
+        return
+    size, sized = found
     was_held = (existing or {}).get("held_reason")
     if not (existing or {}).get("run_anyway"):
         held = sizing.hold_reason(size, sized, bool(goal.get("strict_issues")))
@@ -415,10 +419,13 @@ async def _take_in(
     # The issue's own limit, else the task policy's for its size; neither: the task has none, as before sizing.
     max_usd = sizing.issue_limit(issue.body) or await asyncio.to_thread(config_store.max_usd_for_size, size)
     open_deps = [ref for ref in issue.depends_on if await _is_open(ref, tracker)]
-    # The link was read before the sizer's call: an operator may have split the issue since. Look again under the
-    # row's lock, so the original makes no task beside its smaller issues and keeps the reason its split recorded.
-    if not await asyncio.to_thread(_release, issue.ref):
+    # The link was read before the sizer's call: an operator may have split or removed the issue since, or another
+    # goal taken it. Look again under the row's lock, so the original makes no task beside its smaller issues and
+    # keeps the reason its split recorded, and a removed issue or another goal's makes none for this goal.
+    released = await asyncio.to_thread(_release, issue.ref, goal["id"])
+    if released == "split":
         result.held.append(issue.ref)
+    if released != "released":
         return
     try:
         task = await asyncio.to_thread(
@@ -463,10 +470,13 @@ async def _size(
     events: Events,
     title: str,
     labels: list[str],
-) -> tuple[str | None, dict | None]:
+    result: SweepResult,
+) -> tuple[str | None, dict | None] | None:
     """The issue's size and its sizing record: the one its link holds, or a new one from the sizer for an issue
-    not sized yet, or held and edited since it was sized. A sizer that fails leaves the issue as it was, so a
-    gateway the planner cannot reach never stops a goal: the failure is logged, and the issue runs unsized."""
+    not sized yet, or held and edited since it was sized. None when the issue is not to be taken in this sweep:
+    the sizer failed on an issue never sized, which waits, unsized and with no task, for the next sweep to size
+    it again (the failure is the sweep's error); or another goal, or an operator's removal, took the link while
+    the sizer ran. A sizer that fails on an issue sized before leaves it with the size it had."""
     size = (existing or {}).get("size")
     recorded = (existing or {}).get("sizing")
     edited = bool(
@@ -479,15 +489,21 @@ async def _size(
         return size, recorded
     try:
         sized = await sizer(issue)
-    except Exception as err:  # noqa: BLE001 - sizing guides the planner; an issue it cannot size runs as before
+    except Exception as err:  # noqa: BLE001 - one issue the sizer fails on waits; the sweep goes on to the next
         log.warning("could not size %s: %s", issue.ref, err)
-        return size, recorded
+        if size:
+            return size, recorded
+        result.errors.append(f"{issue.ref}: could not size it, so it waits for the next sweep: {err}")
+        return None
     if sized is None:
         return size, recorded
     record = {**sized.record(issue), "updated_at": issue.updated_at}
-    await asyncio.to_thread(
+    saved = await asyncio.to_thread(
         _save_sizing, issue.ref, goal["id"], issue.repo, issue.depends_on, sized.size, record, title, labels
     )
+    if not saved:
+        # Another goal holds the issue now, or an operator removed it: this goal neither holds nor runs it.
+        return None
     events.emit(
         "issue_sized",
         {
@@ -753,9 +769,9 @@ def _save(ref, goal_id, repo, state, depends_on, task_id, refused_reason, title=
         store.save_link(conn, ref, goal_id, repo, state, depends_on, task_id, refused_reason, title, labels)
 
 
-def _save_sizing(ref, goal_id, repo, depends_on, size, record, title, labels) -> None:
+def _save_sizing(ref, goal_id, repo, depends_on, size, record, title, labels) -> bool:
     with db.connect(autocommit=True) as conn:
-        store.save_sizing(conn, ref, goal_id, repo, depends_on, size, record, title, labels)
+        return store.save_sizing(conn, ref, goal_id, repo, depends_on, size, record, title, labels)
 
 
 def _hold(ref: str, reason: str | None) -> None:
@@ -763,9 +779,9 @@ def _hold(ref: str, reason: str | None) -> None:
         store.set_link_held(conn, ref, reason)
 
 
-def _release(ref: str) -> bool:
+def _release(ref: str, goal_id: str) -> str:
     with db.connect(autocommit=True) as conn:
-        return store.release_for_task(conn, ref)
+        return store.release_for_task(conn, ref, goal_id)
 
 
 def _forget_link(ref: str) -> None:

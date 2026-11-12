@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from meta_harness.config import kinds
 from meta_harness.planner import sizing
 from meta_harness.planner.service import create_app
+from meta_harness.planner.sizing import size_issue  # as it is, before conftest.py turns it off with no gateway
 from meta_harness.planner.tracker import Issue
 
 from .test_planner import OPERATOR, Events, FakeTasks, _label, _no_title, _number, migrated, registry  # noqa: F401
@@ -118,9 +119,9 @@ async def test_sizing_is_one_structured_call_with_the_configured_model(monkeypat
 async def test_sizing_says_why_it_could_not_size(monkeypatch):
     monkeypatch.delenv("GATEWAY_URL", raising=False)
     with pytest.raises(sizing.SizingError, match="GATEWAY_URL"):
-        await sizing.size_issue(_issue())
+        await size_issue(_issue())
     monkeypatch.setattr(sizing, "settings", lambda: {"engine": "none"})
-    assert await sizing.size_issue(_issue()) is None, "engine none turns sizing off"
+    assert await size_issue(_issue()) is None, "engine none turns sizing off"
 
 
 # The sweep, with a sizer that answers what each test sets and calls no model.
@@ -131,6 +132,8 @@ class FakeSizer:
         self.answers: dict[str, dict] = {}
         self.calls: list[str] = []
         self.fail = False
+        # Sizing turned off: the sizer answers None, as size_issue does with issue_sizing.engine "none".
+        self.off = False
         # What an operator does while the sweep waits on the model.
         self.meanwhile = None
 
@@ -140,6 +143,8 @@ class FakeSizer:
             self.meanwhile(issue)
         if self.fail:
             raise sizing.SizingError("the HTTP Gateway is unreachable")
+        if self.off:
+            return None
         answer = self.answers.get(issue.ref, {"size": "small", "reasons": [], "missing": [], "split": []})
         return sizing.parse(answer, issue, "openai-decisions:gpt-6-luna", "0.0002")
 
@@ -269,9 +274,29 @@ def test_a_strict_goal_holds_an_issue_with_a_gap_until_the_issue_is_edited_or_th
     assert _task(tasks, other) is not None
 
 
-def test_an_issue_the_sizer_cannot_size_runs_unsized(world):
+def test_an_issue_the_sizer_cannot_size_waits_unsized_for_the_next_sweep(world):
     client, events, tracker, tasks, sizer = world
     sizer.fail = True
+    goal = _goal(client, strict_issues=True)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\n{CHECKS}", labels=[goal["label"]])
+    sizer.answers[ref] = {"size": "large", "reasons": [], "missing": [], "split": ["Titles", "Labels"]}
+
+    swept = client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).json()
+
+    assert _task(tasks, ref) is None, "an issue the sizer failed on makes no task"
+    assert [e for e in swept["errors"] if e.startswith(ref)] and "could not size" in swept["errors"][0]
+    assert swept["held"] == [] and swept["refused"] == []
+    assert _payloads(events, "issue_sized") == []
+
+    # The gateway is back: the next sweep sizes it, and holds it, large, before any task is made.
+    sizer.fail = False
+    assert _sweep(client, goal)["held"] == [ref]
+    assert sizer.calls == [ref, ref] and _task(tasks, ref) is None
+
+
+def test_an_issue_is_run_unsized_when_sizing_is_off(world):
+    client, events, tracker, tasks, sizer = world
+    sizer.off = True
     goal = _goal(client)
     ref = tracker.add(REPO, _number(), body=f"Fix it.\n\n{CHECKS}", labels=[goal["label"]])
 
@@ -281,6 +306,72 @@ def test_an_issue_the_sizer_cannot_size_runs_unsized(world):
     assert "complexity" not in _task(tasks, ref)
     assert _shown(client, goal)[ref]["size"] is None
     assert _payloads(events, "issue_sized") == []
+
+
+def test_an_issue_another_goal_takes_while_the_sweep_sizes_it_stays_that_goals(world):
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal, other = _goal(client), _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+
+    def taken(issue: Issue) -> None:
+        with db.connect(autocommit=True) as conn:
+            store.save_link(conn, issue.ref, other["id"], REPO, "open", [], None, None)
+
+    sizer.meanwhile = taken
+    swept = _sweep(client, goal)
+
+    assert swept["joined"] == [] and swept["held"] == [] and _task(tasks, ref) is None
+    assert _payloads(events, "issue_sized") == []
+    with db.connect(autocommit=True) as conn:
+        link = store.link(conn, ref)
+    assert (link["goal_id"], link["size"]) == (other["id"], None), "the other goal's link is left as it was"
+
+
+def test_an_issue_removed_while_the_sweep_sizes_it_makes_no_task(world):
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Everything.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    sizer.answers[ref] = {"size": "large", "reasons": [], "missing": [], "split": ["Titles", "Labels"]}
+    assert _sweep(client, goal)["held"] == [ref]
+
+    # Edited, so the next sweep sizes it again, small now; while it waits on the model, an operator removes it.
+    tracker.issues[ref].updated_at = "2026-11-12T10:00:00Z"
+    sizer.answers[ref] = {"size": "small", "reasons": [], "missing": [], "split": []}
+
+    def removed(issue: Issue) -> None:
+        with db.connect(autocommit=True) as conn:
+            store.drop_ref(conn, goal["id"], issue.ref)
+
+    sizer.meanwhile = removed
+    swept = _sweep(client, goal)
+
+    assert sizer.calls == [ref, ref]
+    assert swept["joined"] == [] and _task(tasks, ref) is None, "a removed issue makes no task"
+    with db.connect(autocommit=True) as conn:
+        assert store.link(conn, ref)["size"] == "large", "its sizing is not recorded after it was removed"
+
+
+def test_an_issue_is_released_for_a_task_only_to_the_goal_that_holds_it(world):
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks, sizer = world
+    goal, other = _goal(client), _goal(client)
+    held, removed = f"github:{REPO}#{_number()}", f"github:{REPO}#{_number()}"
+    with db.connect(autocommit=True) as conn:
+        for ref in (held, removed):
+            store.save_link(conn, ref, goal["id"], REPO, "open", [], None, None)
+        store.drop_ref(conn, goal["id"], removed)
+
+        assert store.release_for_task(conn, held, other["id"]) == "gone"
+        assert store.release_for_task(conn, removed, goal["id"]) == "gone"
+        assert store.release_for_task(conn, held, goal["id"]) == "released"
 
 
 def test_split_creates_the_suggested_issues_with_the_goals_label_and_their_paths(world):
@@ -360,13 +451,13 @@ def test_a_split_github_refused_partway_is_recorded_with_its_events(world):
 
 def test_an_issue_refused_unsized_and_then_held_by_a_strict_goal_says_only_held(world, no_default_checks):
     client, events, tracker, tasks, sizer = world
-    sizer.fail = True
+    sizer.off = True
     goal = _goal(client, strict_issues=True)
     ref = tracker.add(REPO, _number(), body="Fix it.\n\nPaths: docs", labels=[goal["label"]])
     assert _sweep(client, goal)["refused"] == [ref]
     assert _shown(client, goal)[ref]["refused_reason"]
 
-    sizer.fail = False
+    sizer.off = False
     swept = _sweep(client, goal)
 
     assert swept["held"] == [ref] and swept["refused"] == [] and _task(tasks, ref) is None
@@ -422,7 +513,7 @@ def test_a_strict_goal_holds_an_issue_with_no_checks_anywhere_until_it_is_run_an
 
 def test_an_unsized_issue_with_no_checks_anywhere_is_refused_as_before_sizing(world, no_default_checks):
     client, events, tracker, tasks, sizer = world
-    sizer.fail = True
+    sizer.off = True
     goal = _goal(client)
     ref = tracker.add(REPO, _number(), body="Fix it.", labels=[goal["label"]])
 
