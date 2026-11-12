@@ -23,6 +23,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { IconHexagons, IconMoon, IconPlus, IconSettings, IconSun } from "@tabler/icons-react";
 import { api, ApiError } from "./api";
+import { SIGNED_OUT } from "./client";
 import { SignIn, signOut } from "./features/auth/SignIn";
 import { Inbox } from "./components/Inbox";
 import { FEATURES } from "./features";
@@ -47,6 +48,8 @@ export function App() {
   const [admin, setAdmin] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const [signIn, setSignIn] = useState(false);
+  // Why the sign-in screen shows, when it is not the first visit: the session ended while the console was open.
+  const [expired, setExpired] = useState(false);
   const [opened, { toggle, close }] = useDisclosure();
   const location = useLocation();
   const { setColorScheme } = useMantineColorScheme();
@@ -69,8 +72,18 @@ export function App() {
       },
     );
   }, []);
+  // A request any page makes may find the session gone: sign in again, and come back to the same page.
+  useEffect(() => {
+    const ended = () => {
+      setExpired(true);
+      setSignIn(true);
+    };
+    window.addEventListener(SIGNED_OUT, ended);
+    return () => window.removeEventListener(SIGNED_OUT, ended);
+  }, []);
   const signedIn = useCallback((identity: string) => {
     setSignIn(false);
+    setExpired(false);
     setWho(identity);
     api.me().then((me) => setAdmin((me.roles ?? []).includes("admin")), () => setAdmin(false));
   }, []);
@@ -79,7 +92,7 @@ export function App() {
   useEffect(close, [location.pathname, close]);
 
   // After every hook: React needs the same hooks on every render.
-  if (signIn) return <SignIn onSignedIn={signedIn} />;
+  if (signIn) return <SignIn onSignedIn={signedIn} expired={expired} />;
 
   return (
     <AppShell header={{ height: 56 }} navbar={{ width: 240, breakpoint: "sm", collapsed: { mobile: !opened } }} padding="lg">

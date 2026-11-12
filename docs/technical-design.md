@@ -2666,7 +2666,13 @@ than deleting rows. The event service keeps run, routing, attempt,
 Operators run and configure the meta-harness from the operator console, a
 cloud web app. Operators sign in with Google at the edge, and the access
 list names who may (see REST API). The operator console owns no store and calls only the REST API, as the signed-in
-operator.
+operator. A session lasts 12 hours. When one ends while a page is open, the
+first request the edge answers `not signed in` takes the operator to the
+sign-in screen, which says the session ended; signing in returns them to
+the page they were on. Every error the console shows says what to do about
+it: the page's own remedy where it knows one, otherwise reload to try again
+and the Logs page for the warning that names it, and Sign in again for a
+lost session.
 
 Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
