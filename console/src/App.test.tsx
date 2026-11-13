@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
@@ -34,7 +34,7 @@ test("the shell signs in, shows the navigation, and opens the page for the path"
   for (const name of ["Overview", "Goals", "Tasks", "New goal"]) {
     expect(screen.getAllByRole("link", { name }).length).toBeGreaterThan(0);
   }
-  expect(await screen.findByText("No open goals.")).toBeTruthy();
+  expect(within(screen.getByRole("main")).getByText("No open goals.")).toBeTruthy();
 });
 
 test("an identity outside the access list sees why, and no page", async () => {
@@ -100,8 +100,16 @@ test.each([
   renderAt("/goals");
 
   expect(await screen.findByRole("heading", { name: "Goals" })).toBeTruthy();
+  // The admin pages share one entry at the bottom of the pane: a click opens them in a menu.
+  const menu = screen.queryByRole("button", { name: "Admin" });
+  expect(!!menu).toBe(shown);
+  if (menu) {
+    fireEvent.click(menu);
+    await screen.findAllByRole("menuitem");
+  }
+  const items = screen.queryAllByRole("menuitem", { hidden: true }).map((item) => item.textContent);
   for (const name of ["Configuration", "Kill switch", "Deploys", "Audit", "Google Cloud"]) {
-    expect(screen.queryAllByRole("link", { name }).length > 0).toBe(shown);
+    expect(items.includes(name)).toBe(shown);
   }
 });
 

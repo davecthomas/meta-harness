@@ -1,4 +1,5 @@
 import { IconTarget } from "@tabler/icons-react";
+import { GoalHistory } from "./GoalHistory";
 import { GoalPage } from "./GoalPage";
 import { GoalsPage } from "./GoalsPage";
 import { NewGoal } from "./NewGoal";
@@ -10,5 +11,5 @@ export const feature: Feature = {
     { path: "/goals/new", element: <NewGoal /> },
     { path: "/goals/:goalId", element: <GoalPage /> },
   ],
-  nav: [{ section: "Operate", label: "Goals", to: "/goals", icon: IconTarget }],
+  nav: [{ section: "Operate", label: "Goals", to: "/goals", icon: IconTarget, history: GoalHistory }],
 };

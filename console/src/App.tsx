@@ -28,18 +28,19 @@ import { SignIn, signOut } from "./features/auth/SignIn";
 import { Inbox } from "./components/Inbox";
 import { FEATURES } from "./features";
 import { CommandPalette } from "./components/CommandPalette";
+import { AdminMenu } from "./components/AdminMenu";
+import { TreeItem } from "./components/NavTree";
 
-// The navigation's groups, from the features, in order; admin entries only for an admin.
-function navGroups(admin: boolean) {
-  const items = FEATURES.flatMap((f) => f.nav).filter((n) => admin || !n.admin);
-  return (["Operate", "Admin"] as const)
-    .map((section) => ({ section, items: items.filter((n) => n.section === section) }))
-    .filter((g) => g.items.length);
+// The navigation's entries, from the features, in order; admin entries only for an admin. The Admin section's
+// entries go in one menu at the bottom of the pane.
+// Entries with a history (Goals, Tasks) come after the plain links, so their long lists don't push the links down.
+function navItems(admin: boolean, section: "Operate" | "Admin") {
+  const items = FEATURES.flatMap((f) => f.nav).filter((n) => (admin || !n.admin) && n.section === section);
+  return [...items.filter((n) => !n.history), ...items.filter((n) => n.history)];
 }
 
 function isActive(path: string, to: string): boolean {
   if (to === "/") return path === "/";
-  if (to === "/goals") return path === "/goals" || (path.startsWith("/goals/") && path !== "/goals/new");
   return path === to || path.startsWith(to + "/");
 }
 
@@ -51,6 +52,8 @@ export function App() {
   // Why the sign-in screen shows, when it is not the first visit: the session ended while the console was open.
   const [expired, setExpired] = useState(false);
   const [opened, { toggle, close }] = useDisclosure();
+  // The pane's lists that are closed: Goals and Tasks start open.
+  const [shut, setShut] = useState<Record<string, boolean>>({});
   const location = useLocation();
   const { setColorScheme } = useMantineColorScheme();
 
@@ -95,7 +98,7 @@ export function App() {
   if (signIn) return <SignIn onSignedIn={signedIn} expired={expired} />;
 
   return (
-    <AppShell header={{ height: 56 }} navbar={{ width: 240, breakpoint: "sm", collapsed: { mobile: !opened } }} padding="lg">
+    <AppShell header={{ height: 56 }} navbar={{ width: 300, breakpoint: "sm", collapsed: { mobile: !opened } }} padding="lg">
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
@@ -115,27 +118,35 @@ export function App() {
 
       <AppShell.Navbar p="sm">
         <AppShell.Section grow component={ScrollArea}>
-          {navGroups(admin).map((group) => (
-            <div key={group.section}>
-              <Text size="xs" fw={600} c="dimmed" tt="uppercase" px="sm" mt="md" mb={6}>
-                {group.section}
-              </Text>
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  component={RouterLink}
-                  to={item.to}
-                  label={item.label}
-                  leftSection={<item.icon size={18} stroke={1.6} />}
-                  active={isActive(location.pathname, item.to)}
-                  variant="light"
-                  style={{ borderRadius: "var(--mantine-radius-md)" }}
-                />
-              ))}
-            </div>
-          ))}
+          {navItems(admin, "Operate").map((item) =>
+            item.history && who && !refused ? (
+              <TreeItem
+                key={item.to}
+                label={item.label}
+                to={item.to}
+                active={location.pathname === item.to}
+                leftSection={<item.icon size={18} stroke={1.6} />}
+                opened={!shut[item.to]}
+                onToggle={() => setShut({ ...shut, [item.to]: !shut[item.to] })}
+                bold
+              >
+                <item.history />
+              </TreeItem>
+            ) : (
+              <NavLink
+                key={item.to}
+                component={RouterLink}
+                to={item.to}
+                label={item.label}
+                leftSection={<item.icon size={18} stroke={1.6} />}
+                active={isActive(location.pathname, item.to)}
+                variant="light"
+                style={{ borderRadius: "var(--mantine-radius-md)" }}
+              />
+            ),
+          )}
         </AppShell.Section>
-        <AppShell.Section>
+        <AppShell.Section pt="xs">
           <NavLink
             component={RouterLink}
             to="/goals/new"
@@ -145,6 +156,7 @@ export function App() {
             active
             style={{ borderRadius: "var(--mantine-radius-md)" }}
           />
+          <AdminMenu items={navItems(admin, "Admin")} />
         </AppShell.Section>
       </AppShell.Navbar>
 
