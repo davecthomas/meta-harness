@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Table, Text, TextInput } from "@mantine/core";
 import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons-react";
 import { goalTitle, api, goalStatus, type Goal, type KillSwitch, type MhEvent, type Task } from "../../api";
+import { read as readKillSwitch } from "../../components/KillSwitch";
 import { PullRequestsRow } from "./PullRequestsRow";
 import { ReviewsInProgress } from "../tasks/reviewing";
 import { BudgetMark, ResumeBudget, budgetStanding, budgetStops, budgetWords } from "../goals/budget";
@@ -49,7 +50,6 @@ export function Overview() {
   return (
     <>
       <PageHeader title="Overview" description="What is running, what waits on you, and the goals in flight." />
-      <KillSwitchPanel />
 
       <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} mb="lg">
         <Stat label="Running" value={running.total} to="/tasks?view=tiles" link="Watch them"
@@ -199,6 +199,7 @@ export function KillSwitchPanel({ canChange = false }: { canChange?: boolean }) 
     setBusy(true);
     try {
       setState(await api.setKillSwitch(!state.engaged, reason || (state.engaged ? "lifted" : "stopped from the console")));
+      readKillSwitch();
       setReason("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

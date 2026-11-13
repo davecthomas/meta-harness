@@ -3172,9 +3172,19 @@ pages are one Admin entry at the bottom of the pane, under New goal: a click
 opens them in a menu beside the pane, and the entry is highlighted while an
 admin page shows (`console/src/components/AdminMenu.tsx`).
 
+The kill switch is on every page (`console/src/components/KillSwitch.tsx`).
+An admin has a Stop everything button in the header; it asks first, with an
+optional reason that is recorded. While the switch is on, a red banner over
+every page says nothing runs, who turned it on, when and why, and the header
+button and the banner lift it, after asking. While a deploy drains, a yellow
+banner says so; an admin may end the drain by hand, and is told to do so only
+if no deploy is running. Someone who is not an admin sees the banner and that
+an admin can lift it. Nothing shows while the switch is off. The console reads
+the switch every 15 seconds.
+
 | View | Shows | Actions |
 |---|---|---|
-| Overview | Every active goal with its modality, progress against its success criteria, spend against budget and tasks in flight. A "needs you" list: plans and phases to approve, operator issues (releases, deploys) only an operator can close, unresolved reviews, alerts. Run capacity, HTTP Gateway health and the kill switch | Create goal, kill switch |
+| Overview | Every active goal with its modality, progress against its success criteria, spend against budget and tasks in flight. A "needs you" list: plans and phases to approve, operator issues (releases, deploys) only an operator can close, unresolved reviews, alerts. Run capacity and HTTP Gateway health | Create goal |
 | Inputs | The queued GitHub issues across every registered repo, by repo and by goal: each one's state (queued, blocked and on what, running, pull request open, in review, merged, failed), issues no goal has picked up, and which repos each goal is working in now | Add an issue to a goal, drop one |
 | Goals | Each goal with its status, its cost, and its budget with a bar for how much of it is used and "12% used", "over by $4.10" or "stopped at its budget" ("no budget" without one); a cost that could not be read shows unknown, with why on hover. Sorted newest first, most expensive first or most budget used first, with the listed goals' total cost below, and their total budget when every one has one. Badges show their whole text | Open a goal, start a new one |
 | Goal | The goal's statement, its modality (with the classifier's confidence, or "set by operator") and latitude dial, its issue dependency graph across repos, the plan or the phase timeline with each phase's criteria, every success criterion's live state, spend over time, and its tasks. Each planner-drafted issue shows its `latitude_reason`. A goal saved without starting shows Not started, with its label's open issues read but not yet taken in | Start a saved goal, approve plan or phase, set latitude, edit its title, description, label, repos, budget, priority, parallel tasks and auto-merge in place, pause, resume, cancel |
