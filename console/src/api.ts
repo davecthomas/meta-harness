@@ -216,6 +216,9 @@ export const api = {
   killSwitch: () => call<KillSwitch>("/v1/kill-switch"),
   setKillSwitch: (engaged: boolean, reason: string) =>
     call<KillSwitch>("/v1/kill-switch", { method: "POST", body: JSON.stringify({ engaged, reason }) }),
+  // stop: the kill switch on. drain: no new task starts, running ones finish. off: neither.
+  setKillSwitchMode: (mode: "stop" | "drain" | "off", reason: string) =>
+    call<KillSwitch>("/v1/kill-switch", { method: "POST", body: JSON.stringify({ mode, reason }) }),
   ...adminApi,
   ...performanceApi,
   ...configApi,
