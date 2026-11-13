@@ -3158,6 +3158,20 @@ link to each. The page of a goal no sweep covers says when its issues'
 states were read from GitHub. The rest
 of the table is planned.
 
+The console's left pane lists the plain pages first (Overview,
+Performance), then Goals and Tasks, each opening to its history
+(`console/src/components/NavTree.tsx`). Goals lists every open goal, with the
+met and canceled ones under a closed "Past goals" row; each goal opens to its
+tasks, read only once it is opened, and the goal whose page is showing starts
+open. Tasks lists the tasks still going (queued, blocked, running, taken over,
+ready, review unresolved), with the closed, failed and canceled ones under
+"Past tasks", fifty at a time with Show more. Every row has a dot in its
+status's color, and the lists read again on each page change and every 30
+seconds; a list that could not be read says why and to reload. The admin
+pages are one Admin entry at the bottom of the pane, under New goal: a click
+opens them in a menu beside the pane, and the entry is highlighted while an
+admin page shows (`console/src/components/AdminMenu.tsx`).
+
 | View | Shows | Actions |
 |---|---|---|
 | Overview | Every active goal with its modality, progress against its success criteria, spend against budget and tasks in flight. A "needs you" list: plans and phases to approve, operator issues (releases, deploys) only an operator can close, unresolved reviews, alerts. Run capacity, HTTP Gateway health and the kill switch | Create goal, kill switch |
