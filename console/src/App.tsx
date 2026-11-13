@@ -29,6 +29,7 @@ import { Inbox } from "./components/Inbox";
 import { FEATURES } from "./features";
 import { CommandPalette } from "./components/CommandPalette";
 import { AdminMenu } from "./components/AdminMenu";
+import { KillSwitchBanner, KillSwitchButton } from "./components/KillSwitch";
 import { TreeItem } from "./components/NavTree";
 
 // The navigation's entries, from the features, in order; admin entries only for an admin. The Admin section's
@@ -108,6 +109,7 @@ export function App() {
             {who && <VersionTag />}
           </Group>
           <Group gap="xs" wrap="nowrap">
+            {who && admin && <KillSwitchButton />}
             {who && <CommandPalette admin={admin} />}
             {who && <Inbox />}
             <ColorSchemeToggle />
@@ -166,11 +168,14 @@ export function App() {
         ) : who === null ? (
           <Center h={240}><Loader /></Center>
         ) : (
+          <>
+          <KillSwitchBanner admin={admin} />
           <Routes>
             {FEATURES.flatMap((f) => f.routes).map((r) => (
               <Route key={r.path} path={r.path} element={r.element} />
             ))}
           </Routes>
+          </>
         )}
       </AppShell.Main>
     </AppShell>
