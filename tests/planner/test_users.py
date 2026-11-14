@@ -98,3 +98,24 @@ def test_the_last_admin_can_be_neither_deprovisioned_nor_made_a_regular_user(wor
 
     client.patch("/v1/admin/users/pat@example.com", json={"role": "admin"}, headers=OPERATOR)
     assert client.patch("/v1/admin/users/dave@example.com", json={"role": "user"}, headers=OPERATOR).status_code == 200
+
+
+def test_a_regular_console_user_is_refused_by_the_planner_itself(world):
+    """The edge checks the role first; the planner holds the same rule, so a mistake in the edge's path rules
+    does not let a regular user make themselves an admin."""
+    client, _ = world
+    user = {**OPERATOR, "X-MH-Role": "user"}
+    client.post("/v1/admin/users", json={"email": "pat@example.com", "role": "user"}, headers=OPERATOR)
+
+    for refused in (
+        client.get("/v1/admin/users", headers=user),
+        client.post("/v1/admin/users", json={"email": "eve@example.com", "role": "admin"}, headers=user),
+        client.patch("/v1/admin/users/pat@example.com", json={"role": "admin"}, headers=user),
+        client.delete("/v1/admin/users/pat@example.com", headers=user),
+        client.put("/v1/config/repos", json={"document": {}}, headers=user),
+    ):
+        assert refused.status_code == 403 and "only an admin" in refused.json()["detail"]
+    assert _users(client)["pat@example.com"]["role"] == "user"
+
+    admin = {**OPERATOR, "X-MH-Role": "admin"}
+    assert client.patch("/v1/admin/users/pat@example.com", json={"role": "admin"}, headers=admin).status_code == 200

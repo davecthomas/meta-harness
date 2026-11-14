@@ -19,6 +19,8 @@ from typing import Any, Callable, Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException
+
+from meta_harness import auth
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
@@ -158,12 +160,12 @@ def register(app: FastAPI, operator: Callable[..., str], events: Any) -> None:
             return HTTPException(status_code=404, detail=f"{err.args[0]} is not a user")
         return HTTPException(status_code=409, detail=str(err))
 
-    @app.get("/v1/admin/users")
+    @app.get("/v1/admin/users", dependencies=[Depends(auth.admin_only)])
     def users(who: str = Depends(operator)) -> dict:
         with app.state.pool.connection() as conn:
             return {"users": list_users(conn)}
 
-    @app.post("/v1/admin/users", status_code=201)
+    @app.post("/v1/admin/users", status_code=201, dependencies=[Depends(auth.admin_only)])
     def invite_user(body: InviteIn, who: str = Depends(operator)) -> dict:
         try:
             with app.state.pool.connection() as conn:
@@ -185,7 +187,7 @@ def register(app: FastAPI, operator: Callable[..., str], events: Any) -> None:
             signed_in(conn, email)
         return {"email": email.lower()}
 
-    @app.patch("/v1/admin/users/{email}")
+    @app.patch("/v1/admin/users/{email}", dependencies=[Depends(auth.admin_only)])
     def change_role(email: str, body: RoleIn, who: str = Depends(operator)) -> dict:
         try:
             with app.state.pool.connection() as conn:
@@ -197,7 +199,7 @@ def register(app: FastAPI, operator: Callable[..., str], events: Any) -> None:
             events.emit("user_role_changed", changed, actor=who)
         return user
 
-    @app.delete("/v1/admin/users/{email}")
+    @app.delete("/v1/admin/users/{email}", dependencies=[Depends(auth.admin_only)])
     def deprovision_user(email: str, who: str = Depends(operator)) -> dict:
         try:
             with app.state.pool.connection() as conn:

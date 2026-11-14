@@ -93,7 +93,7 @@ def create_app(
     def read_kill_switch(who: str = Depends(operator)) -> dict:
         return admission_module.kill_switch()
 
-    @app.post("/v1/kill-switch")
+    @app.post("/v1/kill-switch", dependencies=[Depends(auth.admin_only)])
     def change_kill_switch(body: KillSwitchIn, who: str = Depends(operator)) -> dict:
         if body.mode is None and body.engaged is None:
             raise HTTPException(status_code=422, detail="give engaged, or a mode: stop, drain or off")

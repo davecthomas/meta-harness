@@ -63,7 +63,9 @@ class EventClient:
     def __init__(self, base_url: str | None = None, source: str = "unknown", timeout: float = 10.0) -> None:
         self.base_url = (base_url or events_url()).rstrip("/")
         self.source = source
-        self.http = httpx.Client(base_url=self.base_url, timeout=timeout)
+        # The event service takes a control-plane service key on every call.
+        self.auth = {"Authorization": f"Bearer {key}"} if (key := os.environ.get("MH_SERVICE_KEY", "")) else {}
+        self.http = httpx.Client(base_url=self.base_url, timeout=timeout, headers=self.auth)
         self._outbox: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=OUTBOX_LIMIT)
         self._sender: threading.Thread | None = None
         self._stop = threading.Event()
@@ -183,7 +185,7 @@ class EventClient:
         backoff = 0.5
         while True:
             try:
-                headers = {"Last-Event-ID": str(position)} if position else {}
+                headers = {**self.auth, **({"Last-Event-ID": str(position)} if position else {})}
                 params = {**filters, "from_position": position}
                 with httpx.stream(
                     "GET", f"{self.base_url}/v1/events/tail", params=params, headers=headers, timeout=None
