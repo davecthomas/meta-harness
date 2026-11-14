@@ -37,7 +37,8 @@ export MH_SERVICE_KEY ?= local-service-key
 export MH_OPERATOR_KEYS ?= local-operator:local-operator-key
 export MH_OPERATOR_KEY ?= local-operator-key
 
-.PHONY: up down clean-db migrate serve stop test lint console console-dev platform deploy deploy-status
+.PHONY: up down clean-db migrate serve stop test lint console console-dev platform deploy deploy-status \
+	gcp-status gcp-backup gcp-pause gcp-resume gcp-disable gcp-teardown
 
 up:
 	@mkdir -p $(STACK_DIR)
@@ -99,3 +100,13 @@ deploy:
 deploy-status:
 	@echo "VM booted: $$(gcloud compute instances get-guest-attributes mh-vm --zone us-central1-a --project meta-harness-prod --query-path mh/boot --format='value(value)' 2>/dev/null || echo nothing yet)"
 	@echo "console:   https://meta-harness.web.app"
+
+# Leaving the Google Cloud project (deploy/shutdown.sh says what each does). gcp-disable and gcp-teardown each do
+# the whole job in one command: back up the database, stop the meta-harness, then turn billing off or delete
+# the project. Both ask once for the project id before changing anything.
+gcp-status gcp-backup gcp-pause gcp-resume:
+	deploy/shutdown.sh $(@:gcp-%=%)
+gcp-disable:
+	deploy/shutdown.sh disable
+gcp-teardown:
+	deploy/shutdown.sh delete

@@ -3,17 +3,19 @@
 # in to gcloud (an owner of the project) and to gh (an admin of the repo).
 #
 #   shutdown.sh status            what is running: the VM, the deploy workflow, the project's billing
-#   shutdown.sh backup [DIR]      dumps the database (goals, tasks, events, config) to DIR (default: .)
+#   shutdown.sh backup [DIR]      dumps the database (goals, tasks, events, config) to DIR
+#                                 (default: MH_BACKUP_DIR, ~/meta-harness-backups)
 #   shutdown.sh pause [--force]   stops it, keeping everything: turns the deploy workflow off so a merge cannot
 #                                 start it again, drains (no new task starts), waits for running tasks to
 #                                 finish, then stops the VM. --force stops the VM without waiting.
 #   shutdown.sh resume            undoes pause: starts the VM, lets tasks start, turns the deploy workflow on
-#   shutdown.sh disable           pause, then unlinks the project's billing account: nothing more is billed.
-#                                 Google may delete what the project holds if billing stays off; back up first
-#   shutdown.sh delete            pause, then shuts the project down. Google keeps it 30 days, during which
+#   shutdown.sh disable           backs up, pauses, then unlinks the project's billing account: nothing more is billed.
+#                                 Google may delete what the project holds if billing stays off
+#   shutdown.sh delete            backs up, pauses (without waiting), then shuts the project down. Google keeps it 30 days, during which
 #                                 `gcloud projects undelete meta-harness-prod` brings it back; then it is gone
 #
-# disable and delete ask you to type the project's id first, and delete refuses without a backup made today.
+# disable and delete ask once, before anything changes, for the project's id typed out. The make targets
+# gcp-status, gcp-backup, gcp-pause, gcp-resume, gcp-disable and gcp-teardown run these.
 set -Eeuo pipefail
 
 P=${MH_PROJECT:-meta-harness-prod}
@@ -21,6 +23,7 @@ Z=${MH_ZONE:-us-central1-a}
 VM=mh-vm
 REPO=${MH_REPO:-davecthomas/meta-harness}
 WAIT_MINUTES=${MH_WAIT_MINUTES:-60}
+BACKUPS=${MH_BACKUP_DIR:-$HOME/meta-harness-backups}
 
 say() { echo "==> $*"; }
 # Every step is safe to run again, so a failure says where things stand and to rerun.
@@ -56,7 +59,7 @@ status() {
 }
 
 backup() {
-  local dir=${1:-.} file
+  local dir=${1:-$BACKUPS} file
   mkdir -p "$dir"
   [ "$(vm_status)" = RUNNING ] || die "the VM is $(vm_status), and the database is on it. Start it with: $0 resume (or gcloud compute instances start $VM --project $P --zone $Z), then back up."
   file="$dir/meta-harness-db-$(date -u +%Y%m%d-%H%M%S).sql.gz"
@@ -116,10 +119,34 @@ resume() {
   say "running again; the deploy workflow is on"
 }
 
+# A backup before the project is changed: the database as it is now, or, when the VM is already stopped, the
+# newest backup already made (the database cannot change while the VM is stopped). With none, it starts the VM
+# drained, so no task starts, and backs up.
+backup_first() {
+  local newest
+  if [ "$(vm_status)" = RUNNING ]; then
+    backup
+    return
+  fi
+  newest=$(ls -t "$BACKUPS"/meta-harness-db-*.sql.gz 2>/dev/null | head -1 || true)
+  if [ -n "$newest" ]; then
+    say "the VM is stopped, so the database has not changed since the newest backup: $newest"
+    return
+  fi
+  say "the VM is stopped and there is no backup in $BACKUPS: starting it, drained, to back up"
+  gcloud compute instances start "$VM" --project "$P" --zone "$Z"
+  for _ in $(seq 1 30); do
+    vm "sudo bash /opt/meta-harness/deploy/vm/drain.sh on" >/dev/null 2>&1 && break
+    sleep 10
+  done
+  backup
+}
+
 disable() {
   local account
   account=$(gcloud billing projects describe "$P" --format="value(billingAccountName)")
-  confirm "This pauses the meta-harness and unlinks billing account ${account:-none} from $P. Nothing more is billed, and Google may delete what the project holds if billing stays off. Back up first: $0 backup"
+  confirm "This backs up the database to $BACKUPS, stops the meta-harness once running tasks finish, and unlinks billing account ${account:-none} from $P. Nothing more is billed, and Google may delete what the project holds if billing stays off."
+  backup_first
   pause "${1:-}"
   say "unlinking billing"
   gcloud billing projects unlink "$P"
@@ -127,9 +154,8 @@ disable() {
 }
 
 delete() {
-  ls ./meta-harness-db-"$(date -u +%Y%m%d)"-*.sql.gz >/dev/null 2>&1 ||
-    die "no backup from today in this directory. Run $0 backup first (from this directory), so the goals, tasks and history survive the move."
-  confirm "This pauses the meta-harness and shuts down project $P: the VM, its disks, the database, secrets, the console's hosting and the Terraform state. Google keeps the project 30 days, during which gcloud projects undelete $P brings it back; then it is gone."
+  confirm "This backs up the database to $BACKUPS, stops the meta-harness without waiting for running tasks, and shuts down project $P: the VM, its disks, the database, secrets, the console's hosting and the Terraform state. Google keeps the project 30 days, during which gcloud projects undelete $P brings it back; then it is gone."
+  backup_first
   pause --force
   say "shutting down project $P"
   gcloud projects delete "$P" --quiet
@@ -144,7 +170,7 @@ case "${1:-}" in
     "$cmd" "$@"
     ;;
   *)
-    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac
