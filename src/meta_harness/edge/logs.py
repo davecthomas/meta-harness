@@ -58,9 +58,25 @@ def log_filter(project: str, unit: str | None, severity: str | None, since: date
     return " AND ".join(parts)
 
 
+# A stream ticket rides in the event stream's query string, so Cloud Run logs it with the request. It opens a
+# user's read-only stream for five minutes: the logs page shows the request without it.
+TICKET = re.compile(r"([?&]ticket=)[^&\s\"']+")
+
+
+def without_tickets(value: Any) -> Any:
+    """A log entry, or any part of one, with every stream ticket in it replaced."""
+    if isinstance(value, str):
+        return TICKET.sub(r"\1(hidden)", value)
+    if isinstance(value, dict):
+        return {k: without_tickets(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [without_tickets(v) for v in value]
+    return value
+
+
 def _request_line(request: dict[str, Any]) -> str:
     """A served request in a line: "GET /v1/tasks 200, 35 ms". Cloud Run logs each request this way, with no text."""
-    url = str(request.get("requestUrl") or "")
+    url = without_tickets(str(request.get("requestUrl") or ""))
     path = "/" + url.split("://", 1)[-1].partition("/")[2] if "://" in url else url
     line = f"{request.get('requestMethod', 'request')} {path or '/'} {request.get('status', '')}".strip()
     latency = str(request.get("latency") or "")
@@ -115,8 +131,8 @@ def entry_row(entry: dict[str, Any]) -> dict[str, Any]:
         "time": entry.get("timestamp"),
         "service": service,
         "severity": severity,
-        "message": entry_message(entry),
-        "entry": entry,
+        "message": without_tickets(entry_message(entry)),
+        "entry": without_tickets(entry),
     }
 
 
