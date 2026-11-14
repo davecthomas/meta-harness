@@ -73,9 +73,16 @@ backup() {
   [ "$(vm_status)" = RUNNING ] || die "the VM is $(vm_status), and the database is on it. Start it with: $0 resume (or gcloud compute instances start $VM --project $P --zone $Z), then back up."
   file="$dir/meta-harness-db-$(date -u +%Y%m%d-%H%M%S).sql.gz"
   say "dumping the database to $file"
-  vm "sudo docker exec mh-postgres pg_dump -U mh --clean --if-exists mh | gzip" >"$file"
+  # The dump holds everything the database does: only this user may read it.
+  umask 077
+  # pipefail on the VM: a pg_dump that fails must fail the command, not leave gzip's valid, empty archive.
+  vm "sudo bash -o pipefail -c 'docker exec mh-postgres pg_dump -U mh --clean --if-exists mh | gzip'" >"$file" ||
+    die "the dump failed, so $file is not a backup (delete it). Check the database on the VM: sudo docker ps; sudo docker logs mh-postgres. Then run $0 backup again."
   [ -s "$file" ] || die "the dump is empty. Check the database on the VM: sudo docker ps; sudo docker logs mh-postgres."
   gzip -t "$file" || die "the dump in $file is damaged. Run $0 backup again."
+  # pg_dump ends a whole dump with this line; without it the dump stopped part way.
+  gunzip -c "$file" | tail -5 | grep -q "PostgreSQL database dump complete" ||
+    die "the dump in $file stopped part way: it does not end with pg_dump's closing line. Delete it and run $0 backup again."
   say "saved $(du -h "$file" | cut -f1): restore with gunzip -c $file | psql <database url>"
   echo "Secret values (GitHub App keys, the repo registry) stay in Secret Manager; list them with:"
   echo "  gcloud secrets list --project $P"
@@ -129,20 +136,25 @@ resume() {
 }
 
 # A backup before the project is changed: the database as it is now, or, when the VM is already stopped, the
-# newest backup already made (the database cannot change while the VM is stopped). With none, it starts the VM
-# drained, so no task starts, and backs up.
+# newest backup when it was made after the VM last stopped (the database cannot have changed since). Otherwise
+# it starts the VM drained, so no task starts, and backs up.
 backup_first() {
-  local newest
+  local newest stopped made
   if [ "$(vm_status)" = RUNNING ]; then
     backup
     return
   fi
   newest=$(ls -t "$BACKUPS"/meta-harness-db-*.sql.gz 2>/dev/null | head -1 || true)
   if [ -n "$newest" ]; then
-    say "the VM is stopped, so the database has not changed since the newest backup: $newest"
-    return
+    stopped=$(gcloud compute instances describe "$VM" --project "$P" --zone "$Z" --format="value(lastStopTimestamp.date('%s'))")
+    made=$(stat -f %m "$newest" 2>/dev/null || stat -c %Y "$newest")
+    stopped=${stopped%%.*}
+    if [ -n "$stopped" ] && [ "$made" -gt "$stopped" ]; then
+      say "the VM has been stopped since before the newest backup was made, so that backup is current: $newest"
+      return
+    fi
   fi
-  say "the VM is stopped and there is no backup in $BACKUPS: starting it, drained, to back up"
+  say "the VM is stopped and no backup in $BACKUPS is newer than its last stop: starting it, drained, to back up"
   gcloud compute instances start "$VM" --project "$P" --zone "$Z"
   for _ in $(seq 1 30); do
     vm "sudo bash /opt/meta-harness/deploy/vm/drain.sh on" >/dev/null 2>&1 && break
