@@ -1623,7 +1623,11 @@ Each run gets one per-run sandbox: a pod with the gVisor runtime class in the
   host git command names the git directory and the work tree outright. So a
   hook, a rewritten `.git` file or a `core.fsmonitor` setting that pi writes
   in the workspace never runs on the host when the Publish step commits and
-  pushes.
+  pushes. A git repository inside the workspace would get around that, since
+  git reads a nested repository's own configuration when status or diff
+  looks at it: every host git command first refuses a workspace that holds a
+  `.git` below its top (the task fails, to be retried), and status and diff
+  ignore submodules.
 - The image sets the HTTP Gateway URL, and the run grant key arrives in
   the `POST /run` or `POST /followup` body.
 - Egress reaches only the code host, package registries and the HTTP Gateway.

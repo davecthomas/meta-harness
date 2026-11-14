@@ -694,16 +694,44 @@ async def _git(git_dir: Path, workspace: Path, *args: str, env: dict[str, str] |
     Hooks are turned off too. The git directory is outside the sandbox
     mount, so pi cannot write one there; this keeps the host from running a
     hook under any other path into the directory.
+
+    A repository inside the workspace is refused first: git reads a nested
+    repository's own configuration when it looks at one (status and diff
+    start a git there), so what pi wrote into it would run on the host.
+    Submodules are ignored and the file monitor is off as well, should one
+    get past the check.
     """
+    await asyncio.to_thread(refuse_nested_repos, workspace)
+    if args and args[0] in ("status", "diff"):
+        args = (args[0], "--ignore-submodules=all", *args[1:])
     return await _run(
         "git",
         f"--git-dir={git_dir}",
         f"--work-tree={workspace}",
         "-c",
         "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "submodule.recurse=false",
         *args,
         env=env,
     )
+
+
+def refuse_nested_repos(workspace: Path) -> None:
+    """Raises when the workspace holds a git repository below its top: any `.git` file, directory or link
+    other than the workspace's own pointer file."""
+    for folder, dirs, files in os.walk(workspace, followlinks=False):
+        if Path(folder) != workspace and ".git" in (*dirs, *files):
+            where = Path(folder).relative_to(workspace)
+            raise CodeHostError(
+                f"the run left a git repository inside its workspace, at {where}; the control plane runs no git "
+                "command over a workspace that holds one, because git would run what that repository's "
+                "configuration names. Retry the task; if the task needs a second repository, clone it outside "
+                "the workspace.",
+                retryable=False,
+            )
 
 
 async def _run(*args: str, check: bool = True, env: dict[str, str] | None = None, cwd: Path | None = None) -> str:
