@@ -88,7 +88,7 @@ from meta_harness.config import store as config_store
 from meta_harness.events.client import stable_event_id
 from meta_harness.github_app import GitHubAppError
 from meta_harness.planner import budget_api, cost_facts, repos, sizing, store
-from meta_harness.planner.tracker import Issue, Tracker
+from meta_harness.planner.tracker import Issue, Tracker, outside_author, task_text
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CheckRun, CodeHostError, PullRequest
 from meta_harness.tasks.client import TaskApiError, TaskClient
@@ -386,6 +386,21 @@ async def _take_in(
         # Split by an operator: it stays held, saying what it was split into, and is neither sized nor split again.
         result.held.append(issue.ref)
         return
+    # An outsider's issue waits for an operator to read it: anyone may open an issue, and its text becomes an
+    # agent's instructions. One an operator picked by ref, or ran anyway, has been read.
+    if outside_author(issue) and not (existing or {}).get("run_anyway") and not (existing or {}).get("picked"):
+        reason = (
+            f"opened by {issue.author or 'someone'}, who has no write access to {issue.repo}: read the issue, "
+            "its raw text too, then Run anyway"
+        )
+        if not existing:
+            await asyncio.to_thread(
+                _save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, None, title, labels
+            )
+        if reason != (existing or {}).get("held_reason"):
+            await asyncio.to_thread(_hold, issue.ref, reason)
+        result.held.append(issue.ref)
+        return
     # An issue refused before is looked at again each sweep, so one given its acceptance checks since, or
     # whose repo was given default checks, becomes a task without anyone dropping and adding it.
     registered = repos.get(issue.repo)
@@ -440,8 +455,8 @@ async def _take_in(
             repo=issue.repo,
             task_type=task_type_for(issue),
             priority=goal["priority"],
-            title=issue.title[:300],
-            description=issue.body.strip() or issue.title,
+            title=task_text(issue.title)[:300],
+            description=task_text(issue.body).strip() or task_text(issue.title),
             acceptance_checks=checks,
             goal_id=goal["id"],
             depends_on=open_deps or None,
