@@ -34,6 +34,29 @@ class Issue:
     updated_at: str = ""
     # The body's `Paths:` lines: the areas the task locks, so issues naming one area run in turn.
     paths: list[str] = field(default_factory=list)
+    # Who opened the issue and what they are to the repo, as the code host says (OWNER, MEMBER, COLLABORATOR,
+    # CONTRIBUTOR, NONE and so on). Empty when the tracker does not say.
+    author: str = ""
+    author_association: str = ""
+
+
+# Those whose issues the planner runs as written: people the repo's owner gave write access.
+TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+HTML_COMMENT = re.compile(r"<!--.*?(-->|\Z)", re.DOTALL)
+MARKER_LINE = re.compile(r"^(\s*)---(?=\s*\S.*---\s*$)", re.MULTILINE)
+
+
+def outside_author(issue: Issue) -> bool:
+    """Whether the issue was opened by someone the repo's owner gave no write access. Its text is then an
+    outsider's, and an operator reads it before it becomes an agent's task."""
+    return bool(issue.author_association) and issue.author_association not in TRUSTED_ASSOCIATIONS
+
+
+def task_text(text: str) -> str:
+    """An issue's title or body as a task's prompt carries it: without HTML comments, which GitHub does not
+    show to the person who labeled the issue, and with no line shaped like the prompt's own `--- task ---`
+    markers, which would end the task's block early."""
+    return MARKER_LINE.sub(r"\1- - -", HTML_COMMENT.sub("", text or ""))
 
 
 class Tracker(Protocol):
@@ -79,6 +102,8 @@ def _issue(repo: str, data: dict) -> Issue:
         checks=acceptance_checks(body),
         updated_at=data.get("updated_at") or "",
         paths=issue_paths(body),
+        author=(data.get("user") or {}).get("login") or "",
+        author_association=data.get("author_association") or "",
     )
 
 
