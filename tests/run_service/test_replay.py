@@ -19,6 +19,7 @@ never rewritten: they are the workflows a deploy would find running.
 
 import asyncio
 import json
+import re
 import os
 from pathlib import Path
 
@@ -188,6 +189,21 @@ def _histories() -> list[Path]:
     return sorted(HISTORIES.glob("*.json"))
 
 
+def _public(history: str) -> str:
+    """A recorded history as the public repo keeps it: the worker's identity (`<pid>@<hostname>`) and the
+    checkout's path, which name the machine and account it was recorded on, are replaced."""
+    text = json.dumps(json.loads(history), indent=1) + "\n"
+    text = re.sub(r'("identity": ")[^"]*"', r'\g<1>1@worker"', text)
+    return text.replace(str(Path(__file__).resolve().parents[2]) + "/", "/repo/")
+
+
+def test_no_recorded_history_names_the_machine_it_was_recorded_on() -> None:
+    for path in HISTORIES.glob("*.json"):
+        text = path.read_text()
+        assert set(re.findall(r'"identity": "([^"]*)"', text)) <= {"1@worker", ""}, path.name
+        assert "/Users/" not in text and "/home/" not in text, path.name
+
+
 @pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 async def test_record_a_history(env, name):  # noqa: F811 - env is the fixture imported above
@@ -234,7 +250,7 @@ async def test_record_a_history(env, name):  # noqa: F811 - env is the fixture i
             pass
         history = await handle.fetch_history()
     HISTORIES.mkdir(exist_ok=True)
-    (HISTORIES / f"{name}.json").write_text(json.dumps(json.loads(history.to_json()), indent=1) + "\n")
+    (HISTORIES / f"{name}.json").write_text(_public(history.to_json()))
 
 
 @pytest.mark.parametrize("path", _histories(), ids=[p.stem for p in _histories()])
@@ -344,4 +360,4 @@ async def test_parallel_attempts_wait_for_the_operators_pick_and_publish_it(env)
     assert any("waiting for an operator to compare them" in s for s in statuses)
     path = HISTORIES / "patched-parallel-attempts.json"
     if os.environ.get("MH_RECORD_HISTORIES") and not path.exists():
-        path.write_text(json.dumps(json.loads(history.to_json()), indent=1) + "\n")
+        path.write_text(_public(history.to_json()))
