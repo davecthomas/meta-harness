@@ -2302,7 +2302,18 @@ off), reads the issue's title and body as data and answers its `size`
 titles of the issues it would `split` into. What the planner sees without the
 model, no `## Acceptance checks` or no `Paths:` line, is added to `missing`.
 The answer is stored on the issue link (`size`, `sizing`) and recorded as
-`issue_sized` with the model and its cost. Then:
+`issue_sized` with the model and its cost.
+
+An issue opened by someone with no write access to the repo (GitHub's
+`author_association` is not OWNER, MEMBER or COLLABORATOR) is held before it
+is sized: anyone may open an issue, and its text becomes an agent's
+instructions. Its `held_reason` names the author and says to read the issue,
+its raw text too, then Run anyway; an issue an operator picked by ref is not
+held. Every task's title and description leave out HTML comments, which
+GitHub hides from whoever labeled the issue, and any line shaped like the
+prompt's `--- task ---` markers (`tracker.task_text`).
+
+After sizing:
 
 - A `large` issue is held: it does not become a task, and its link's
   `held_reason` says why, with the suggested split. The goal's board shows it
