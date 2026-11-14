@@ -124,6 +124,28 @@ def admin_only(method: str, path: str) -> bool:
     return method in WRITE_METHODS and any(path == p or path.startswith(p + "/") for p in ADMIN_WRITES)
 
 
+# Calls only a control-plane service makes. The edge forwards with its service key, so it refuses these from a
+# browser: appending events (which would forge the audit record and a goal's counted spend), and setting a
+# task's status, recovery or drive.
+SERVICE_ONLY_TASK_CALLS = ("status", "recover", "drive")
+
+
+def canonical(path: str) -> bool:
+    """Whether a path has no empty, `.` or `..` segment and no backslash. The role checks read the path as
+    sent, and the HTTP client collapses dot segments when it forwards, so `/v1/goals/../admin/users` would pass
+    as a goals path and arrive as an admin one."""
+    segments = path.split("/")[1:]
+    return "\\" not in path and all(s not in ("", ".", "..") for s in segments)
+
+
+def service_only(method: str, path: str) -> bool:
+    """Whether a request is one only a control-plane service may make, never a browser."""
+    if path == "/v1/events" or path.startswith("/v1/events/"):
+        return method in WRITE_METHODS
+    parts = path.split("/")
+    return len(parts) == 5 and parts[1:3] == ["v1", "tasks"] and parts[4] in SERVICE_ONLY_TASK_CALLS
+
+
 def target_for(path: str) -> str | None:
     for prefix, env, default in ROUTES:
         if path == prefix or path.startswith(prefix + "/") or path.startswith(prefix + "?"):
@@ -387,6 +409,20 @@ def create_app(
         refused = foreign(request)
         if refused:
             return refused
+        if not canonical(request.url.path):
+            return private(
+                JSONResponse(
+                    {"detail": "the path has an empty, '.' or '..' part; send the path of the page or call itself"},
+                    status_code=400,
+                )
+            )
+        if service_only(request.method, request.url.path):
+            return private(
+                JSONResponse(
+                    {"detail": "only a control-plane service may make this call; the console's own actions do it"},
+                    status_code=403,
+                )
+            )
         if admin_only(request.method, request.url.path) and not is_admin(who):
             return private(JSONResponse({"detail": f"{who} is not an admin"}, status_code=403))
         if request.url.path.startswith(USERS_PATH):
