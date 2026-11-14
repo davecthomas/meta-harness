@@ -102,3 +102,46 @@ def test_a_deprovisioned_users_next_request_is_refused_and_a_regular_user_opens_
     planner.users[1]["status"] = "deprovisioned"
     refused = pat.get("/v1/me")
     assert refused.status_code == 403 and "not on the console's access list" in refused.json()["detail"]
+
+
+def test_a_path_with_dot_segments_or_a_service_only_call_is_refused_before_it_is_forwarded(tmp_path) -> None:
+    """The role checks read the path as sent and the HTTP client collapses `..` when it forwards, so a regular
+    user could reach an admin route as /v1/goals/../admin/users; and the edge forwards with its service key, so
+    a browser could append events or set a task's status."""
+    planner = Planner(
+        [
+            {"email": "dave@example.com", "role": "admin", "status": "active"},
+            {"email": "pat@example.com", "role": "user", "status": "active"},
+        ]
+    )
+    forwarded: list[tuple[str, str]] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        forwarded.append((request.method, request.url.path))
+        return httpx.Response(200, json={})
+
+    def edge(identity: str) -> TestClient:
+        app = create_app(
+            dist=tmp_path, identity=identity, operators=set(), service_key="key",
+            transport=httpx.MockTransport(answer), directory=_directory(planner, operators=()),
+        )  # fmt: skip
+        return TestClient(app)
+
+    pat, dave = edge("pat@example.com"), edge("dave@example.com")
+    for path in ("/v1/goals/%2e%2e/admin/users/pat@example.com", "/v1/goals/%2e%2e/config/repos", "/v1/goals//x"):
+        refused = pat.patch(path, json={"role": "admin"})
+        assert refused.status_code == 400 and "'..'" in refused.json()["detail"], path
+    # An admin's browser holds no service key either.
+    for client in (pat, dave):
+        assert client.post("/v1/events", json={"type": "attempt_finished"}).status_code == 403
+        for call in ("status", "recover", "drive"):
+            assert client.post(f"/v1/tasks/t-1/{call}", json={}).status_code == 403
+    assert forwarded == []
+
+    assert pat.get("/v1/events").status_code == 200
+    assert pat.post("/v1/tasks/t-1/retry", json={}).status_code == 200
+    assert forwarded == [("GET", "/v1/events"), ("POST", "/v1/tasks/t-1/retry")]
+
+    from meta_harness.edge.app import canonical
+
+    assert canonical("/v1/goals/g-1") and not canonical("/v1/goals/../admin/users") and not canonical("/v1/a/./b")
