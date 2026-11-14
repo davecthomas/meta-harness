@@ -43,9 +43,9 @@ variable "state_bucket" {
 }
 
 variable "operators" {
-  description = "Who may open the console: the Google accounts the edge lets sign in."
+  description = "Who may open the console: the Google accounts the edge lets sign in. Kept out of the public repo: CI sets it from the MH_OPERATORS secret, and `make platform` from deploy/.env (see deploy/.env.example)."
   type        = list(string)
-  default     = ["operator@example.com"]
+  sensitive   = true
 }
 
 variable "admins" {

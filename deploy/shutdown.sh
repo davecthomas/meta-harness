@@ -18,6 +18,15 @@
 # gcp-status, gcp-backup, gcp-pause, gcp-resume, gcp-disable and gcp-teardown run these.
 set -Eeuo pipefail
 
+# deploy/.env, when there is one, sets these without putting them in the repo (deploy/.env.example).
+ENV_FILE="$(dirname "$0")/.env"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+  set +a
+fi
+
 P=${MH_PROJECT:-meta-harness-prod}
 Z=${MH_ZONE:-us-central1-a}
 VM=mh-vm
