@@ -36,3 +36,19 @@ A deploy replaces the VM. Its boot disk is new every time; the data disk
 The VM has no public address. `gcloud compute ssh mh-vm --zone us-central1-a
 --project meta-harness-prod --tunnel-through-iap` reaches it; the boot log is
 `/var/log/mh-boot.log`.
+
+## Pausing or leaving the project
+
+`deploy/shutdown.sh` takes the meta-harness out of its project, run from a
+machine signed in to gcloud (a project owner) and gh (a repo admin):
+
+| Command | Does | Undo |
+|---|---|---|
+| `status` | the VM, the deploy workflow, billing, running tasks | |
+| `backup [DIR]` | dumps the database to a `.sql.gz` file | |
+| `pause [--force]` | turns the deploy workflow off, drains, waits up to an hour for running tasks, stops the VM | `resume` |
+| `disable` | `pause`, then unlinks billing | relink billing, then `resume` |
+| `delete` | `pause`, then shuts the project down; needs a backup from today | `gcloud projects undelete` within 30 days |
+
+`disable` and `delete` ask for the project id typed out before they change
+anything. Every step is safe to run again.
