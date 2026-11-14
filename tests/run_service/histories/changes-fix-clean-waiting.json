@@ -25,7 +25,7 @@
     "workflowRunTimeout": "315360000s",
     "workflowTaskTimeout": "10s",
     "originalExecutionRunId": "b1fbb6f2-39d5-4795-8979-fc0e35d6f517",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "firstExecutionRunId": "b1fbb6f2-39d5-4795-8979-fc0e35d6f517",
     "attempt": 1,
     "firstWorkflowTaskBackoff": "0s",
@@ -50,7 +50,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "2",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "489"
    }
   },
@@ -60,7 +60,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "2",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {
      "coreUsedFlags": [
@@ -118,7 +118,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "5",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -139,7 +139,7 @@
     },
     "scheduledEventId": "5",
     "startedEventId": "6",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -160,7 +160,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "8",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "1302"
    }
   },
@@ -170,7 +170,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "8",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -220,7 +220,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "11",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -241,7 +241,7 @@
     },
     "scheduledEventId": "11",
     "startedEventId": "12",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -262,7 +262,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "14",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "1949"
    }
   },
@@ -272,7 +272,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "14",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -322,7 +322,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "17",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -343,7 +343,7 @@
     },
     "scheduledEventId": "17",
     "startedEventId": "18",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -364,7 +364,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "20",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "2897"
    }
   },
@@ -374,7 +374,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "20",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -427,7 +427,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "23",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -448,7 +448,7 @@
     },
     "scheduledEventId": "23",
     "startedEventId": "24",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -469,7 +469,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "26",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "3810"
    }
   },
@@ -479,7 +479,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "26",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -529,7 +529,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "29",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -549,7 +549,7 @@
     },
     "scheduledEventId": "29",
     "startedEventId": "30",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -570,7 +570,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "32",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "4755"
    }
   },
@@ -580,7 +580,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "32",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -633,7 +633,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "35",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -654,7 +654,7 @@
     },
     "scheduledEventId": "35",
     "startedEventId": "36",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -675,7 +675,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "38",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "5991"
    }
   },
@@ -685,7 +685,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "38",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -735,7 +735,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "41",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -755,7 +755,7 @@
     },
     "scheduledEventId": "41",
     "startedEventId": "42",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -776,7 +776,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "44",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "7268"
    }
   },
@@ -786,7 +786,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "44",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -836,7 +836,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "47",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -857,7 +857,7 @@
     },
     "scheduledEventId": "47",
     "startedEventId": "48",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -878,7 +878,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "50",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "8078"
    }
   },
@@ -888,7 +888,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "50",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -938,7 +938,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "53",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -958,7 +958,7 @@
     },
     "scheduledEventId": "53",
     "startedEventId": "54",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -979,7 +979,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "56",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "8759"
    }
   },
@@ -989,7 +989,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "56",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1039,7 +1039,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "59",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1060,7 +1060,7 @@
     },
     "scheduledEventId": "59",
     "startedEventId": "60",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -1081,7 +1081,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "62",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "9702"
    }
   },
@@ -1091,7 +1091,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "62",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1141,7 +1141,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "65",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1162,7 +1162,7 @@
     },
     "scheduledEventId": "65",
     "startedEventId": "66",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -1183,7 +1183,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "68",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "10303"
    }
   },
@@ -1193,7 +1193,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "68",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1243,7 +1243,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "71",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1264,7 +1264,7 @@
     },
     "scheduledEventId": "71",
     "startedEventId": "72",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -1285,7 +1285,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "74",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "11033"
    }
   },
@@ -1295,7 +1295,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "74",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1348,7 +1348,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "77",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1369,7 +1369,7 @@
     },
     "scheduledEventId": "77",
     "startedEventId": "78",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -1390,7 +1390,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "80",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "12374"
    }
   },
@@ -1400,7 +1400,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "80",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1450,7 +1450,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "83",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1470,7 +1470,7 @@
     },
     "scheduledEventId": "83",
     "startedEventId": "84",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -1491,7 +1491,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "86",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "13750"
    }
   },
@@ -1501,7 +1501,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "86",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1551,7 +1551,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "89",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1572,7 +1572,7 @@
     },
     "scheduledEventId": "89",
     "startedEventId": "90",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -1593,7 +1593,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "92",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "14585"
    }
   },
@@ -1603,7 +1603,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "92",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1653,7 +1653,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "95",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1674,7 +1674,7 @@
     },
     "scheduledEventId": "95",
     "startedEventId": "96",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -1695,7 +1695,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "98",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "15364"
    }
   },
@@ -1705,7 +1705,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "98",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1758,7 +1758,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "101",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1779,7 +1779,7 @@
     },
     "scheduledEventId": "101",
     "startedEventId": "102",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -1800,7 +1800,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "104",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "16605"
    }
   },
@@ -1810,7 +1810,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "104",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1860,7 +1860,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "107",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1880,7 +1880,7 @@
     },
     "scheduledEventId": "107",
     "startedEventId": "108",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -1901,7 +1901,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "110",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "17878"
    }
   },
@@ -1911,7 +1911,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "110",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1961,7 +1961,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "113",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1982,7 +1982,7 @@
     },
     "scheduledEventId": "113",
     "startedEventId": "114",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -2003,7 +2003,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "116",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "18691"
    }
   },
@@ -2013,7 +2013,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "116",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2063,7 +2063,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "119",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2084,7 +2084,7 @@
     },
     "scheduledEventId": "119",
     "startedEventId": "120",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -2105,7 +2105,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "122",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "19293"
    }
   },
@@ -2115,7 +2115,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "122",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2165,7 +2165,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "125",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2186,7 +2186,7 @@
     },
     "scheduledEventId": "125",
     "startedEventId": "126",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -2207,7 +2207,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "128",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "20025"
    }
   },
@@ -2217,7 +2217,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "128",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2270,7 +2270,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "131",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2291,7 +2291,7 @@
     },
     "scheduledEventId": "131",
     "startedEventId": "132",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -2312,7 +2312,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "134",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "21334"
    }
   },
@@ -2322,7 +2322,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "134",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2372,7 +2372,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "137",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2392,7 +2392,7 @@
     },
     "scheduledEventId": "137",
     "startedEventId": "138",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -2413,7 +2413,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "140",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "22678"
    }
   },
@@ -2423,7 +2423,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "140",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2473,7 +2473,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "143",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2494,7 +2494,7 @@
     },
     "scheduledEventId": "143",
     "startedEventId": "144",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -2515,7 +2515,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "146",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "23481"
    }
   },
@@ -2525,7 +2525,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "146",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2575,7 +2575,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "149",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2596,7 +2596,7 @@
     },
     "scheduledEventId": "149",
     "startedEventId": "150",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -2617,7 +2617,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "152",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "23999"
    }
   },
@@ -2627,7 +2627,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "152",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2677,7 +2677,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "155",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2698,7 +2698,7 @@
     },
     "scheduledEventId": "155",
     "startedEventId": "156",
-    "identity": "39383@Daves-Macbook-Air-2026.local"
+    "identity": "1@worker"
    }
   },
   {
@@ -2719,7 +2719,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "158",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "historySizeBytes": "24762"
    }
   },
@@ -2729,7 +2729,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "158",
-    "identity": "39383@Daves-Macbook-Air-2026.local",
+    "identity": "1@worker",
     "binaryChecksum": "099f979051b736362cec17ad146c4b0d",
     "sdkMetadata": {},
     "meteringMetadata": {}

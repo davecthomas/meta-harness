@@ -25,7 +25,7 @@
     "workflowRunTimeout": "315360000s",
     "workflowTaskTimeout": "10s",
     "originalExecutionRunId": "47687318-148d-43c5-8d78-7f4ec2a975f6",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "firstExecutionRunId": "47687318-148d-43c5-8d78-7f4ec2a975f6",
     "attempt": 1,
     "firstWorkflowTaskBackoff": "0s",
@@ -50,7 +50,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "2",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "508"
    }
   },
@@ -60,7 +60,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "2",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {
      "coreUsedFlags": [
@@ -158,7 +158,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "7",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -179,7 +179,7 @@
     },
     "scheduledEventId": "7",
     "startedEventId": "8",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -200,7 +200,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "10",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "1538"
    }
   },
@@ -210,7 +210,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "10",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -260,7 +260,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "13",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -281,7 +281,7 @@
     },
     "scheduledEventId": "13",
     "startedEventId": "14",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -302,7 +302,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "16",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "2107"
    }
   },
@@ -312,7 +312,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "16",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -362,7 +362,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "19",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -383,7 +383,7 @@
     },
     "scheduledEventId": "19",
     "startedEventId": "20",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -404,7 +404,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "22",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "3017"
    }
   },
@@ -414,7 +414,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "22",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -467,7 +467,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "25",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -488,7 +488,7 @@
     },
     "scheduledEventId": "25",
     "startedEventId": "26",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -509,7 +509,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "28",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "3852"
    }
   },
@@ -519,7 +519,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "28",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -569,7 +569,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "31",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -589,7 +589,7 @@
     },
     "scheduledEventId": "31",
     "startedEventId": "32",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -610,7 +610,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "34",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "4719"
    }
   },
@@ -620,7 +620,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "34",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -710,7 +710,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "39",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -731,7 +731,7 @@
     },
     "scheduledEventId": "39",
     "startedEventId": "40",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -752,7 +752,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "42",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "5429"
    }
   },
@@ -762,7 +762,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "42",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -852,7 +852,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "47",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -872,7 +872,7 @@
     },
     "scheduledEventId": "47",
     "startedEventId": "48",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -893,7 +893,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "50",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "6258"
    }
   },
@@ -903,7 +903,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "50",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -956,7 +956,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "53",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -977,7 +977,7 @@
     },
     "scheduledEventId": "53",
     "startedEventId": "54",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -998,7 +998,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "56",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "7416"
    }
   },
@@ -1008,7 +1008,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "56",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1058,7 +1058,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "59",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1078,7 +1078,7 @@
     },
     "scheduledEventId": "59",
     "startedEventId": "60",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -1099,7 +1099,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "62",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "8615"
    }
   },
@@ -1109,7 +1109,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "62",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1159,7 +1159,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "65",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1180,7 +1180,7 @@
     },
     "scheduledEventId": "65",
     "startedEventId": "66",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -1201,7 +1201,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "68",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "9370"
    }
   },
@@ -1211,7 +1211,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "68",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1261,7 +1261,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "71",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1281,7 +1281,7 @@
     },
     "scheduledEventId": "71",
     "startedEventId": "72",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -1302,7 +1302,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "74",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "9974"
    }
   },
@@ -1312,7 +1312,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "74",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1362,7 +1362,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "77",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1383,7 +1383,7 @@
     },
     "scheduledEventId": "77",
     "startedEventId": "78",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -1404,7 +1404,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "80",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "10863"
    }
   },
@@ -1414,7 +1414,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "80",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1464,7 +1464,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "83",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1485,7 +1485,7 @@
     },
     "scheduledEventId": "83",
     "startedEventId": "84",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -1506,7 +1506,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "86",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "11405"
    }
   },
@@ -1516,7 +1516,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "86",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1566,7 +1566,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "89",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1587,7 +1587,7 @@
     },
     "scheduledEventId": "89",
     "startedEventId": "90",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -1608,7 +1608,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "92",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "12143"
    }
   },
@@ -1618,7 +1618,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "92",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1668,7 +1668,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "95",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1689,7 +1689,7 @@
     },
     "scheduledEventId": "95",
     "startedEventId": "96",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -1710,7 +1710,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "98",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "12602"
    }
   },
@@ -1720,7 +1720,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "98",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1770,7 +1770,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "101",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1790,7 +1790,7 @@
     },
     "scheduledEventId": "101",
     "startedEventId": "102",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -1811,7 +1811,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "104",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "13169"
    }
   },
@@ -1821,7 +1821,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "104",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1874,7 +1874,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "107",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1895,7 +1895,7 @@
     },
     "scheduledEventId": "107",
     "startedEventId": "108",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -1916,7 +1916,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "110",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "14387"
    }
   },
@@ -1926,7 +1926,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "110",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -1976,7 +1976,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "113",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -1996,7 +1996,7 @@
     },
     "scheduledEventId": "113",
     "startedEventId": "114",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -2017,7 +2017,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "116",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "15640"
    }
   },
@@ -2027,7 +2027,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "116",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2077,7 +2077,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "119",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2098,7 +2098,7 @@
     },
     "scheduledEventId": "119",
     "startedEventId": "120",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -2119,7 +2119,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "122",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "16352"
    }
   },
@@ -2129,7 +2129,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "122",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2179,7 +2179,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "125",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2200,7 +2200,7 @@
     },
     "scheduledEventId": "125",
     "startedEventId": "126",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -2221,7 +2221,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "128",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "16779"
    }
   },
@@ -2231,7 +2231,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "128",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2321,7 +2321,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "133",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2342,7 +2342,7 @@
     },
     "scheduledEventId": "133",
     "startedEventId": "134",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -2363,7 +2363,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "136",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "17598"
    }
   },
@@ -2373,7 +2373,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "136",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2423,7 +2423,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "139",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2444,7 +2444,7 @@
     },
     "scheduledEventId": "139",
     "startedEventId": "140",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -2465,7 +2465,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "142",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "18305"
    }
   },
@@ -2475,7 +2475,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "142",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2518,7 +2518,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "147",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "18532"
    }
   },
@@ -2528,7 +2528,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "147",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2578,7 +2578,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "150",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2599,7 +2599,7 @@
     },
     "scheduledEventId": "150",
     "startedEventId": "151",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -2620,7 +2620,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "153",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "19045"
    }
   },
@@ -2630,7 +2630,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "153",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2680,7 +2680,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "156",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2701,7 +2701,7 @@
     },
     "scheduledEventId": "156",
     "startedEventId": "157",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -2722,7 +2722,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "159",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "19722"
    }
   },
@@ -2732,7 +2732,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "159",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2862,7 +2862,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "166",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2883,7 +2883,7 @@
     },
     "scheduledEventId": "166",
     "startedEventId": "167",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -2904,7 +2904,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "169",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "21061"
    }
   },
@@ -2914,7 +2914,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "169",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -2964,7 +2964,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "172",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -2985,7 +2985,7 @@
     },
     "scheduledEventId": "172",
     "startedEventId": "173",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -3006,7 +3006,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "175",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "21645"
    }
   },
@@ -3016,7 +3016,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "175",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}
@@ -3066,7 +3066,7 @@
    "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
    "activityTaskStartedEventAttributes": {
     "scheduledEventId": "178",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "attempt": 1
    }
   },
@@ -3087,7 +3087,7 @@
     },
     "scheduledEventId": "178",
     "startedEventId": "179",
-    "identity": "90538@Mac.lan"
+    "identity": "1@worker"
    }
   },
   {
@@ -3108,7 +3108,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
    "workflowTaskStartedEventAttributes": {
     "scheduledEventId": "181",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "historySizeBytes": "22323"
    }
   },
@@ -3118,7 +3118,7 @@
    "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
    "workflowTaskCompletedEventAttributes": {
     "scheduledEventId": "181",
-    "identity": "90538@Mac.lan",
+    "identity": "1@worker",
     "binaryChecksum": "bba7e9f042550d38f8fc74d5c76a75b7",
     "sdkMetadata": {},
     "meteringMetadata": {}

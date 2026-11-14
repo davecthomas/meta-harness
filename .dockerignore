@@ -1,0 +1,13 @@
+# Kept out of every image build's context: credentials, local configuration and what a build never needs.
+.git
+.env
+deploy/.env
+gha-creds-*.json
+*.pem
+*.sql.gz
+*.tfplan
+*.tfvars
+config/repos.local.json
+**/node_modules
+**/.terraform
+.venv

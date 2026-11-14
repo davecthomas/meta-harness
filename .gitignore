@@ -10,6 +10,12 @@ runs/
 config/repos.local.json
 
 # Terraform
+*.tfvars
+*.tfplan
 .terraform/
 *.tfstate
 *.tfstate.*
+
+# Credentials: private keys, and the file google-github-actions/auth writes into the workspace.
+*.pem
+gha-creds-*.json
