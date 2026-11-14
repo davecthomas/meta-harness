@@ -2852,6 +2852,13 @@ A source is a module with a `harvest` function. The edge names the caller's
 role to the services (`X-MH-Role`), and the cost API decides by it who sees
 what.
 
+The edge forwards with its own service key, so it decides what a browser may
+ask before it forwards (`src/meta_harness/edge/app.py`). It refuses a path
+with an empty, `.` or `..` part (400): the role checks read the path as sent,
+and the HTTP client collapses dot segments when it forwards. It refuses the
+calls only a control-plane service makes (403): appending an event, and
+setting a task's status, recovery or drive.
+
 The header's inbox lists what waits on the operator: a pull request ready to
 merge, a review that ended unresolved, a recent failed task, a goal over its
 budget or stopped by it, a stalled goal, and the kill switch. It refreshes every 30 seconds and,
