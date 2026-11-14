@@ -2868,6 +2868,13 @@ and the HTTP client collapses dot segments when it forwards. It refuses the
 calls only a control-plane service makes (403): appending an event, and
 setting a task's status, recovery or drive.
 
+The services hold the same rules themselves, so the edge is not the only
+check. The event service takes a control-plane service key on every route but
+`/health`, and does not start without `MH_SERVICE_KEYS`; the event client
+sends `MH_SERVICE_KEY`. The users routes, the configuration writes and the
+kill switch's change refuse a request the edge marks as a regular user's
+(`X-MH-Role`, `auth.admin_only`).
+
 The header's inbox lists what waits on the operator: a pull request ready to
 merge, a review that ended unresolved, a recent failed task, a goal over its
 budget or stopped by it, a stalled goal, and the kill switch. It refreshes every 30 seconds and,

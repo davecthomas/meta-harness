@@ -24,6 +24,30 @@ def migrated():
         pytest.skip(f"no Postgres at {db.database_url()}: {err}")
 
 
+KEYS = {"test-service-key": "test"}
+AUTH = {"Authorization": "Bearer test-service-key"}
+
+
+@pytest.fixture(autouse=True)
+def _service_key(monkeypatch) -> None:
+    """The event client sends the service key from its environment."""
+    monkeypatch.setenv("MH_SERVICE_KEY", "test-service-key")
+
+
+def test_every_route_but_health_takes_a_service_key(monkeypatch):
+    """Events hold run prompts, and an appended event is taken as fact by the audit record and a goal's spend."""
+    with TestClient(create_app(service_keys=KEYS)) as http:
+        assert http.get("/health").status_code == 200
+        wrong = {"Authorization": "Bearer not-a-key"}
+        for headers in ({}, wrong):
+            assert http.get("/v1/events", headers=headers).status_code == 401
+            assert http.post("/v1/events", json={"events": []}, headers=headers).status_code == 401
+            assert http.get("/v1/events/tail", headers=headers).status_code == 401
+    monkeypatch.delenv("MH_SERVICE_KEYS", raising=False)
+    with pytest.raises(RuntimeError, match="MH_SERVICE_KEYS is not set"):
+        create_app()
+
+
 @pytest.fixture
 def run_id() -> str:
     return f"test-run-{uuid.uuid4().hex[:8]}"
@@ -34,7 +58,7 @@ def _ping(run_id: str, n: int, **fields) -> dict:
 
 
 def test_append_is_idempotent_on_event_id(run_id):
-    with TestClient(create_app()) as http:
+    with TestClient(create_app(service_keys=KEYS), headers=AUTH) as http:
         event = _ping(run_id, 1)
         first = http.post("/v1/events", json={"events": [event]}).json()["positions"]
         again = http.post("/v1/events", json={"events": [event]}).json()["positions"]
@@ -44,7 +68,7 @@ def test_append_is_idempotent_on_event_id(run_id):
 
 
 def test_an_unknown_type_or_bad_payload_is_rejected_whole(run_id):
-    with TestClient(create_app()) as http:
+    with TestClient(create_app(service_keys=KEYS), headers=AUTH) as http:
         unknown = new_event("no_such_type", "test", {}, run_id=run_id)
         bad = new_event("debug_ping", "test", {"n": "one"}, run_id=run_id)
         assert http.post("/v1/events", json={"events": [_ping(run_id, 1), unknown]}).status_code == 422
@@ -53,7 +77,7 @@ def test_an_unknown_type_or_bad_payload_is_rejected_whole(run_id):
 
 
 def test_read_filters_and_pages_in_position_order(run_id):
-    with TestClient(create_app()) as http:
+    with TestClient(create_app(service_keys=KEYS), headers=AUTH) as http:
         http.post("/v1/events", json={"events": [_ping(run_id, n) for n in range(1, 6)]})
         http.post("/v1/events", json={"events": [_ping("someone-else", 99)]})
         page = http.get("/v1/events", params={"run_id": run_id, "limit": 3}).json()
@@ -122,7 +146,7 @@ class _Server:
         self.port = port or _free_port()
         self.url = f"http://127.0.0.1:{self.port}"
         self.server = uvicorn.Server(
-            uvicorn.Config(create_app(), host="127.0.0.1", port=self.port, log_level="warning")
+            uvicorn.Config(create_app(service_keys=KEYS), host="127.0.0.1", port=self.port, log_level="warning")
         )
         self.thread = threading.Thread(target=self.server.run, daemon=True)
 

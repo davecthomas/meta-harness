@@ -333,6 +333,11 @@ def test_the_kill_switch_api_takes_a_mode(repo):
             off = client.post("/v1/kill-switch", json={"mode": "off"}, headers=headers).json()
             assert off["draining"] is False and off["engaged"] is False
             assert client.post("/v1/kill-switch", json={}, headers=headers).status_code == 422
+            # The edge names the role of who it acts for: a regular console user is refused here too.
+            user = {**headers, "X-MH-Role": "user"}
+            refused = client.post("/v1/kill-switch", json={"mode": "stop"}, headers=user)
+            assert refused.status_code == 403 and "only an admin" in refused.json()["detail"]
+            assert client.get("/v1/kill-switch", headers=user).json()["engaged"] is False
     finally:
         set_draining(False, "test", "reset")
         set_kill_switch(False, "test", "reset")

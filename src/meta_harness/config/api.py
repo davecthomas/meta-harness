@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
+from meta_harness import auth
 from meta_harness.config import skills, store
 from meta_harness.config.kinds import KINDS, ConfigError, sandbox_ceiling
 from meta_harness.config.models import catalog
@@ -107,7 +108,7 @@ def router(
         """Every priced completions model a tier candidate can name, as <engine>:<model>."""
         return {"models": catalog()}
 
-    @api.post("/v1/config/skills/read")
+    @api.post("/v1/config/skills/read", dependencies=[Depends(auth.admin_only)])
     def read_skill(body: SkillIn, who: str = Depends(operator)) -> dict:
         """A skill as an import would take it, for an admin to read before saving: its name, description,
         source and every file. Saving is a new version of the skills kind (PUT /v1/config/skills)."""
@@ -133,7 +134,7 @@ def router(
             store.active(conn, kind_or_404(kind))
             return {"versions": store.versions(conn, kind)}
 
-    @api.put("/v1/config/{kind}")
+    @api.put("/v1/config/{kind}", dependencies=[Depends(auth.admin_only)])
     def save(kind: str, body: SaveIn, who: str = Depends(operator)) -> dict:
         refuse_extra(kind_or_404(kind), body.document)
         try:
@@ -144,7 +145,7 @@ def router(
         changed(kind, saved, who)
         return saved
 
-    @api.post("/v1/config/{kind}/rollback")
+    @api.post("/v1/config/{kind}/rollback", dependencies=[Depends(auth.admin_only)])
     def rollback(kind: str, body: RollbackIn, who: str = Depends(operator)) -> dict:
         try:
             with pool().connection() as conn:
