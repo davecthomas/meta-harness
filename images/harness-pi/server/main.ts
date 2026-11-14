@@ -46,6 +46,8 @@ if (!SERVER_TOKEN) {
 	console.error("Set HARNESS_SERVER_TOKEN. Every request must send it as a bearer token.");
 	process.exit(2);
 }
+// pi's bash tool inherits this environment: the agent must not read the token that commands this server.
+delete process.env.HARNESS_SERVER_TOKEN;
 
 // The sandbox holds no provider keys. Drop any the environment passed in, so pi's
 // built-in providers have nothing to authenticate with.
