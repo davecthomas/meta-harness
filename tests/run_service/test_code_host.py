@@ -97,6 +97,41 @@ async def test_publish_never_runs_what_pi_wrote_into_the_workspace(origin: Path,
     assert not list((git_dir / "hooks").glob("pre-commit")), "the real git directory took no hook"
 
 
+async def test_publish_refuses_a_workspace_with_a_repository_inside_it(origin: Path, run_dir: Path, tmp_path: Path):
+    """pi makes a repository inside the workspace whose configuration names a command. git reads a nested
+    repository's configuration when status or diff looks at it, so the host would run the command."""
+    workspace, git_dir = run_dir / "workspace", run_dir / "git"
+    await code_host.clone(str(origin), workspace, git_dir)
+    marker = tmp_path / "pwned"
+    sub = workspace / "sub"
+    sub.mkdir()
+    _git("init", "--quiet", cwd=sub)
+    _git(
+        "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "--allow-empty", "-m", "x", cwd=sub
+    )
+    _git("config", "core.fsmonitor", f"touch {marker}", cwd=sub)
+
+    with pytest.raises(code_host.CodeHostError, match="git repository inside its workspace, at sub") as refused:
+        await code_host.publish(
+            repo=str(origin), workspace=workspace, git_dir=git_dir, branch="mh/task", title="t", body="b",
+            commit_message="m", pr_record=run_dir / "pull-request.md",
+        )  # fmt: skip
+    assert not refused.value.retryable and "Retry the task" in str(refused.value)
+    assert not marker.exists(), "the host ran the nested repository's file monitor command"
+
+    # Should a nested repository get past the check, status and diff still do not look inside it.
+    await code_host._run(
+        "git", f"--git-dir={git_dir}", f"--work-tree={workspace}", "-c", "core.hooksPath=/dev/null", "add", "--all"
+    )  # fmt: skip
+    original, code_host.refuse_nested_repos = code_host.refuse_nested_repos, lambda workspace: None
+    try:
+        await code_host._git(git_dir, workspace, "status", "--porcelain")
+        await code_host._git(git_dir, workspace, "diff", "HEAD")
+    finally:
+        code_host.refuse_nested_repos = original
+    assert not marker.exists(), "status or diff ran the nested repository's file monitor command"
+
+
 async def test_publish_reports_nothing_when_pi_changed_nothing(origin: Path, run_dir: Path):
     workspace, git_dir = run_dir / "workspace", run_dir / "git"
     await code_host.clone(str(origin), workspace, git_dir)
