@@ -21,12 +21,12 @@ from datetime import datetime
 from typing import Any
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from meta_harness import db
+from meta_harness import auth, db
 from meta_harness.events import store
 
 POLL_SECONDS = 5.0
@@ -95,8 +95,22 @@ class CommitSignal:
                 await asyncio.sleep(1)
 
 
-def create_app(database_url: str | None = None) -> FastAPI:
+def create_app(database_url: str | None = None, service_keys: dict[str, str] | None = None) -> FastAPI:
+    """The event service. Every route but /health takes a control-plane service key (MH_SERVICE_KEYS): events
+    hold run prompts and operator messages, and an appended event is taken as fact by the audit record and by
+    a goal's counted spend, so neither is open to whatever can reach the port."""
     url = database_url or db.database_url()
+    keys = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
+    if not keys:
+        raise RuntimeError(
+            "MH_SERVICE_KEYS is not set: the event service takes no request without a service key. "
+            "Set it to label:key pairs, the same value the task service has."
+        )
+
+    def service(key: str = Depends(auth.bearer)) -> str:
+        if label := auth.label_for(key, keys):
+            return label
+        raise HTTPException(status_code=401, detail="unknown API key: send a control-plane service key")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -126,7 +140,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/v1/events")
-    def append(body: AppendRequest) -> dict[str, list[int]]:
+    def append(body: AppendRequest, who: str = Depends(service)) -> dict[str, list[int]]:
         events = [store.NewEvent(**e.model_dump()) for e in body.events]
         try:
             with app.state.pool.connection() as conn:
@@ -143,6 +157,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         from_position: int = 0,
         before_position: int | None = None,
         limit: int = Query(500, ge=1, le=5000),
+        who: str = Depends(service),
     ) -> dict[str, Any]:
         """A comma-separated filter value matches any of its parts. before_position returns the last
         `limit` events before it, for paging back."""
@@ -161,6 +176,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         event_type: str | None = None,
         source: str | None = None,
         from_position: int = 0,
+        who: str = Depends(service),
     ) -> StreamingResponse:
         last_event_id = request.headers.get("last-event-id")
         cursor = int(last_event_id) if last_event_id and last_event_id.isdigit() else from_position
