@@ -221,8 +221,24 @@ def test_a_change_from_another_origin_is_refused_even_when_signed_in(tmp_path):
         ).status_code
         == 403
     )
+    # A change that does not say where it comes from is not known to be the console's.
+    unnamed = client.post("/v1/goals", json={})
+    assert unnamed.status_code == 403 and "open the console there" in unnamed.json()["detail"]
+    assert client.post("/v1/goals", json={}, headers={"sec-fetch-site": "cross-site"}).status_code == 403
     assert seen == []
     assert client.post("/v1/goals", json={}, headers={"origin": ORIGIN}).status_code == 200
+    assert client.post("/v1/goals", json={}, headers={"sec-fetch-site": "same-origin"}).status_code == 200
+    assert client.get("/v1/goals").status_code == 200, "a read needs no origin"
+
+
+def test_google_sign_in_does_not_start_without_the_consoles_origin(tmp_path):
+    import pytest
+
+    with pytest.raises(RuntimeError, match="MH_CONSOLE_ORIGIN"):
+        create_app(
+            dist=tmp_path, google_client_id="client.apps.googleusercontent.com", session_key="k" * 32,
+            console_origin="", service_key="key", operators={"dave@example.com"},
+        )  # fmt: skip
 
 
 def test_signing_out_ends_the_session(tmp_path):

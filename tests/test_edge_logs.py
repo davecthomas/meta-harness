@@ -50,3 +50,12 @@ def test_an_empty_line_a_service_printed_is_left_out():
     assert blank_line({"jsonPayload": {"_SYSTEMD_UNIT": "mh-worker.service", "MESSAGE": "  "}})
     assert not blank_line({"jsonPayload": {"_SYSTEMD_UNIT": "mh-worker.service", "MESSAGE": "x"}})
     assert not blank_line({"httpRequest": {"status": 200}})
+
+
+def test_a_stream_ticket_in_a_logged_request_is_hidden():
+    """The event stream's ticket rides in its query string, so Cloud Run logs it; the logs page does not show it."""
+    url = "https://mh-edge-abc.a.run.app/v1/events/tail?task_id=t-1&ticket=eyJhbGciOi.abc.def&from_position=3"
+    row = entry_row({"severity": "INFO", "httpRequest": {"requestMethod": "GET", "requestUrl": url, "status": 200}})
+
+    assert row["message"] == "GET /v1/events/tail?task_id=t-1&ticket=(hidden)&from_position=3 200"
+    assert "eyJhbGciOi" not in str(row)
