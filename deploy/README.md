@@ -37,6 +37,18 @@ The VM has no public address. `gcloud compute ssh mh-vm --zone us-central1-a
 --project meta-harness-prod --tunnel-through-iap` reaches it; the boot log is
 `/var/log/mh-boot.log`.
 
+## What stays out of the repo
+
+The repo is public, so nothing that identifies a person or an account is in
+it. Who may sign in to the console (`operators` in the platform stack) has no
+default: CI reads it from the repo secret `MH_OPERATORS`, a JSON list
+(`gh secret set MH_OPERATORS --body '["you@example.com"]'`), and `make
+platform` and `deploy/shutdown.sh` read `deploy/.env`, which git ignores
+(copy `deploy/.env.example`). Terraform marks the list sensitive, so plans and
+logs show `(sensitive value)`. The billing account is read from Google Cloud
+when a command needs it, never written down. Database backups (`*.sql.gz`)
+are ignored by git too.
+
 ## Pausing or leaving the project
 
 One command each, from the repo root on a machine signed in to gcloud (a

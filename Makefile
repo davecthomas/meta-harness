@@ -82,10 +82,15 @@ lint:
 	uv run ruff format --check .
 
 STATE_BUCKET := meta-harness-prod-terraform
+# deploy/.env holds what stays out of the public repo, such as who may sign in (deploy/.env.example).
+-include deploy/.env
+export TF_VAR_operators
+
 # Terraform acts as the account gcloud is signed in as, rather than whatever application default
 # credentials happen to hold (often another account).
 platform: export GOOGLE_OAUTH_ACCESS_TOKEN = $(shell gcloud auth print-access-token)
 platform:
+	@[ -n "$$TF_VAR_operators" ] || { echo "error: who may sign in is not set. Copy deploy/.env.example to deploy/.env and fill in TF_VAR_operators." >&2; exit 1; }
 	gcloud storage buckets describe gs://$(STATE_BUCKET) --project meta-harness-prod >/dev/null 2>&1 || \
 	  gcloud storage buckets create gs://$(STATE_BUCKET) --project meta-harness-prod --location us-central1 \
 	    --uniform-bucket-level-access --public-access-prevention
