@@ -17,8 +17,10 @@ whatever its source does later.
 This module checks a document and reads a skill from a directory or from a git repository. Nothing here saves.
 """
 
+import ipaddress
 import os
 import re
+import socket
 import subprocess
 import tempfile
 from pathlib import Path, PurePosixPath
@@ -174,6 +176,20 @@ def seed_skills() -> dict[str, Any]:
     return {"skills": found}
 
 
+def _private_address(host: str) -> str | None:
+    """An address the host's name resolves to that is not a public one (private, loopback, link-local, such as
+    the cloud's metadata server), or None. A name that does not resolve is left for git to report."""
+    try:
+        found = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return None
+    for *_, sockaddr in found:
+        address = ipaddress.ip_address(sockaddr[0])
+        if not address.is_global:
+            return str(address)
+    return None
+
+
 def from_git(url: str, ref: str | None, path: str | None) -> tuple[str, dict[str, Any]]:
     """A skill read from a directory of a git repository at a branch, tag or commit, as of now. The commit it
     was read at is kept in its source, so the import says exactly what was taken.
@@ -186,9 +202,16 @@ def from_git(url: str, ref: str | None, path: str | None) -> tuple[str, dict[str
     private = not re.search(r"[a-z]", host) or "." not in host or host.endswith((".internal", ".local", ".localhost"))
     if not host or private:
         raise SkillError("a skill is imported from an https:// git URL on a public host")
+    if inside := _private_address(host):
+        raise SkillError(
+            f"{host} is at {inside}, an address inside a private network: a skill is imported from a public "
+            "git host, such as github.com"
+        )
     if path and not _safe(path):
         raise SkillError("the path is relative to the repository and stays inside it")
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true"}
+    # No redirects: a public host must not send the clone on to an address inside the network.
+    env |= {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.followRedirects", "GIT_CONFIG_VALUE_0": "false"}
     with tempfile.TemporaryDirectory(prefix="mh-skill-") as work:
         clone = Path(work) / "repo"
         command = ["git", "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch"]

@@ -60,8 +60,11 @@ GATEWAY_API_KEY ?= local-dev-key
 # The gateway as the egress proxy reaches it: host.docker.internal is this machine.
 SANDBOX_GATEWAY_URL ?= http://host.docker.internal:$(GATEWAY_PORT)
 # host:port patterns a per-run sandbox may reach through the egress proxy: the HTTP Gateway,
-# the code host and package registries. `*` is a wildcard.
-EGRESS_ALLOW ?= host.docker.internal:$(GATEWAY_PORT),github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443,temporal.download:443
+# the code host and package registries. `*` is a wildcard. Of GitHub, only what a package install reads:
+# github.com for a dependency pinned to a git commit, codeload and githubusercontent for archives and release
+# files. Not api.github.com, gist.github.com or uploads.github.com: a sandbox holds no GitHub credential, and
+# those are where a misled agent with a token of someone else's would most easily copy a workspace out.
+EGRESS_ALLOW ?= host.docker.internal:$(GATEWAY_PORT),github.com:443,codeload.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443,temporal.download:443
 # The gateway keeps run grants here. Not 6379, so a Redis you run yourself is left alone.
 REDIS_PORT ?= 6390
 REDIS_URL ?= redis://127.0.0.1:$(REDIS_PORT)/0

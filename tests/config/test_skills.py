@@ -98,6 +98,7 @@ def test_a_skill_is_imported_from_a_git_repository_at_a_ref_and_says_the_commit(
         return real_run(command, **kwargs)
 
     monkeypatch.setattr(skills.subprocess, "run", run)
+    monkeypatch.setattr(skills, "_private_address", lambda host: None)
 
     name, skill = skills.from_git("https://github.com/acme/skills", "main", "skills/tidy-notes")
 
@@ -119,6 +120,19 @@ def test_a_skill_is_imported_from_a_git_repository_at_a_ref_and_says_the_commit(
 def test_a_skill_is_imported_only_from_an_https_url_on_a_public_host(url: str):
     with pytest.raises(skills.SkillError, match="https:// git URL on a public host"):
         skills.from_git(url, None, None)
+
+
+def test_a_public_name_that_resolves_inside_the_network_is_refused(monkeypatch):
+    """A name anyone can register may point at the metadata server or a private address."""
+    cloned = []
+    monkeypatch.setattr(skills.subprocess, "run", lambda command, **kwargs: cloned.append(command))
+    monkeypatch.setattr(
+        skills.socket, "getaddrinfo", lambda host, port, **kwargs: [(2, 1, 6, "", ("169.254.169.254", port))]
+    )
+
+    with pytest.raises(skills.SkillError, match="169.254.169.254, an address inside a private network"):
+        skills.from_git("https://skills.example.com/acme/skills", None, None)
+    assert cloned == []
 
 
 def test_a_run_is_sent_the_skills_its_profile_names_with_their_files(monkeypatch):
