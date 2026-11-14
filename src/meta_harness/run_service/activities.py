@@ -1144,6 +1144,20 @@ async def goal_auto_merge(goal_id: str) -> bool:
     return bool(goal.get("auto_merge"))
 
 
+# Paths whose changes run with the control plane's own authority once merged: CI workflows run with the repo's
+# secrets, and a deploy applies its Terraform as the project's owner and its scripts as root on the VM. A pull
+# request that changes one is never merged on a model's review alone: an operator asks for the merge.
+OPERATOR_MERGE_PATHS = (".github/", "deploy/")
+HELD_FOR_OPERATOR = "held for an operator"
+
+
+async def operator_merge_paths(repo: str, number: int) -> list[str]:
+    """The paths a pull request changes that only an operator merges, renamed files' old paths included."""
+    files = await code_host.pull_request_files(repo, number)
+    paths = {p for f in files for p in (f.get("path"), f.get("previous_path")) if p}
+    return sorted(p for p in paths if p.startswith(OPERATOR_MERGE_PATHS))
+
+
 # How long a merge waits for another merge on its repo before the activity tries again.
 MERGE_LOCK_WAIT_SECONDS = 40
 
@@ -1190,6 +1204,16 @@ async def merge_pr(request: MergeRequest) -> MergeResult:
                 state, sha, head, detail = await code_host.merge_local(request.repo, request.base, request.head_sha)
             else:
                 repo, number = code_host.pr_number(request.pr_url)
+                if not request.asked_for and (held := await operator_merge_paths(repo, number)):
+                    shown = ", ".join(held[:5]) + (f" and {len(held) - 5} more" if len(held) > 5 else "")
+                    return MergeResult(
+                        state="blocked",
+                        detail=(
+                            f"{HELD_FOR_OPERATOR}: it changes {shown}, which run with the control plane's own "
+                            "authority once merged, so no pull request that changes them merges on a review "
+                            "alone. Read the change, then use Merge on the task's page."
+                        ),
+                    )
                 state, sha, head, detail = await code_host.merge_pull_request(
                     repo, number, request.head_sha, request.base, request.kind
                 )

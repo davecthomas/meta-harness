@@ -468,6 +468,8 @@ async def pull_request_files(repo: str, number: int) -> list[dict]:
         files += [
             {
                 "path": f["filename"],
+                # A renamed file's old path: a change that moves a file out of a path still changed that path.
+                "previous_path": f.get("previous_filename"),
                 "status": f.get("status", "modified"),
                 "additions": f.get("additions", 0),
                 "deletions": f.get("deletions", 0),

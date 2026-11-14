@@ -283,6 +283,39 @@ async def test_a_diff_that_cannot_be_read_whole_is_never_called_the_same(monkeyp
     assert not await code_host.same_diff("o/r", "main", "old", "new")
 
 
+async def test_merge_pr_holds_a_change_to_ci_or_deploy_files_for_an_operator(monkeypatch):
+    """A workflow runs with the repo's secrets and a deploy applies as the project's owner, so a pull request
+    that changes one does not merge on a model's review alone; an operator's own merge goes through."""
+    merges = []
+
+    async def merge_pull_request(repo, number, head_sha, base, kind=""):
+        merges.append(number)
+        return "merged", "m1", head_sha, ""
+
+    async def pull_request_files(repo, number):
+        return [
+            {"path": "src/app.py", "previous_path": None},
+            {"path": "docs/moved.sh", "previous_path": "deploy/vm/boot.sh"},
+            {"path": ".github/workflows/deploy.yml", "previous_path": None},
+        ]
+
+    monkeypatch.setattr(code_host, "merge_pull_request", merge_pull_request)
+    monkeypatch.setattr(code_host, "pull_request_files", pull_request_files)
+    monkeypatch.setattr(activities.events, "emit", lambda *a, **k: None)
+    request = MergeRequest(
+        task_id="t-1", repo="o/r", pr_url="https://github.com/o/r/pull/7", branch="mh/t-1", base="main", head_sha="abc"
+    )
+
+    held = await ActivityEnvironment().run(activities.merge_pr, request)
+
+    assert held.state == "blocked" and merges == []
+    assert held.detail.startswith("held for an operator: it changes .github/workflows/deploy.yml, deploy/vm/boot.sh")
+    assert "use Merge on the task's page" in held.detail
+
+    request.asked_for = True
+    assert (await ActivityEnvironment().run(activities.merge_pr, request)).state == "merged" and merges == [7]
+
+
 async def test_merge_pr_says_when_the_base_came_in_without_changing_the_diff(monkeypatch):
     async def merge_pull_request(repo, number, head_sha, base, kind=""):
         return "head_changed", "", "new", "brought in 2 new commits from main"
@@ -290,7 +323,11 @@ async def test_merge_pr_says_when_the_base_came_in_without_changing_the_diff(mon
     async def same_diff(repo, base, before, after):
         return (base, before, after) == ("main", "abc", "new")
 
+    async def pull_request_files(repo, number):
+        return [{"path": "src/app.py", "previous_path": None}]
+
     monkeypatch.setattr(code_host, "merge_pull_request", merge_pull_request)
+    monkeypatch.setattr(code_host, "pull_request_files", pull_request_files)
     monkeypatch.setattr(code_host, "same_diff", same_diff)
     request = MergeRequest(
         task_id="t-1", repo="o/r", pr_url="https://github.com/o/r/pull/7", branch="mh/t-1", base="main", head_sha="abc"
