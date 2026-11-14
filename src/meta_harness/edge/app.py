@@ -250,6 +250,11 @@ def create_app(
     stream_base = (stream_origin if stream_origin is not None else os.environ.get("MH_STREAM_ORIGIN", "")).rstrip("/")
     if client_id and not signing_key:
         raise RuntimeError("MH_GOOGLE_CLIENT_ID is set without MH_SESSION_KEY: sessions could not be signed")
+    if client_id and not origin:
+        raise RuntimeError(
+            "MH_GOOGLE_CLIENT_ID is set without MH_CONSOLE_ORIGIN: a change could not be told from another "
+            "site's. Set MH_CONSOLE_ORIGIN to the console's address, such as https://meta-harness.web.app"
+        )
     verify = verify_google or (google_verifier(client_id) if client_id else None)
     client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None), transport=transport)
     # The planner's users decide who may sign in and who is an admin. With a stand-in transport (a test) and no
@@ -287,9 +292,15 @@ def create_app(
 
     def foreign(request: Request) -> JSONResponse | None:
         """A change from a page that is not the console's: refused, whatever cookie it carries."""
+        if not origin or request.method not in WRITE_METHODS:
+            return None
         sent = request.headers.get("origin", "").rstrip("/")
-        if origin and request.method in WRITE_METHODS and sent and sent != origin:
-            return private(JSONResponse({"detail": f"changes come only from {origin}"}, status_code=403))
+        # A browser names the page a change comes from, in Origin or, for a same-origin request some send
+        # without it, in Sec-Fetch-Site. A change that names neither is not known to be the console's.
+        same = sent == origin or (not sent and request.headers.get("sec-fetch-site") == "same-origin")
+        if not same:
+            detail = f"changes come only from {origin}: open the console there and make the change in it"
+            return private(JSONResponse({"detail": detail}, status_code=403))
         return None
 
     @app.get("/auth/config")
