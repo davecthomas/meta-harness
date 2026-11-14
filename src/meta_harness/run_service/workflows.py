@@ -80,6 +80,7 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 
 with workflow.unsafe.imports_passed_through():
     from meta_harness.run_service.activities import (
+        HELD_FOR_OPERATOR,
         cleanup_run,
         deliver_message,
         goal_auto_merge,
@@ -1296,12 +1297,13 @@ class RunTask:
                 base=loop.published.base,
                 head_sha=loop.head,
                 kind=version_kind(loop.request.task_type) if loop.merge_fix is False else "fix",
+                asked_for=asked_for,
             ),
             start_to_close_timeout=CODE_HOST_TIMEOUT,
             retry_policy=CODE_HOST_RETRY,
         )
         workflow.logger.info("%s: merge at %s: %s", workflow.info().workflow_id, loop.head[:12], merged.state)
-        if merged.state in ("blocked", "conflict"):
+        if merged.state in ("blocked", "conflict") and not merged.detail.startswith(HELD_FOR_OPERATOR):
             workflow.logger.warning(
                 "%s: the merge of %s at %s was %s: %s",
                 self._where(),
@@ -1312,6 +1314,8 @@ class RunTask:
             )
         if merged.state == "merged":
             merged.detail = f"{clean}; merged as {merged.merge_sha[:12]}"
+        elif merged.state == "blocked" and merged.detail.startswith(HELD_FOR_OPERATOR):
+            merged.detail = f"{clean}; {merged.detail}"
         elif merged.state == "blocked":
             merged.detail = f"{clean}; GitHub would not merge it: {merged.detail}"
         return merged

@@ -1068,7 +1068,12 @@ ends `ready` and unreviewed, with the reason, and never merges.
 The merge (#86) reads the goal's `auto_merge` from the planner when it is
 due, so a change made while the task runs applies. It squash-merges with
 `sha` set to the reviewed head commit. A commit that landed after the review
-goes back to the checks and a new review. Merges are one at a time per repo:
+goes back to the checks and a new review. A pull request that changes a file
+under `.github/` or `deploy/` is never merged on a review alone, whatever
+`auto_merge` says: a workflow runs with the repo's secrets, and a deploy
+applies its Terraform as the project's owner and its scripts as root on the
+VM. The task ends `ready`, naming the paths, and an operator's Merge takes it
+through. Merges are one at a time per repo:
 the run service's merge activity holds the repo's merge lock, a Postgres
 advisory lock, from checking the branch to merging it. A branch that lacks the
 base's newest commits, because another task's pull request merged while it

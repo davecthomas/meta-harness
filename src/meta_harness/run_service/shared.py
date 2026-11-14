@@ -455,6 +455,9 @@ class MergeRequest:
     # What kind of change the merge is, for a version worked out from history: fix, feature, none, or "" to
     # leave the merge commit's message as the code host writes it.
     kind: str = ""
+    # An operator asked for this merge. One the goal's auto_merge allows by itself is held when the pull request
+    # changes a path only an operator merges (activities.OPERATOR_MERGE_PATHS).
+    asked_for: bool = False
 
 
 @dataclass
