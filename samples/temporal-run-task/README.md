@@ -333,7 +333,7 @@ while the server runs.
 | `HARNESS_IMAGE` | `harness-pi:dev` |
 | `RUNS_DIR` | `runs` in this directory: under `runs/<REF>/run-<n>/`, each run's workspace and harness server log |
 | `SANDBOX_GATEWAY_URL` | `http://host.docker.internal:8080`, the gateway as the egress proxy reaches it |
-| `EGRESS_ALLOW` | `host.docker.internal:8080,github.com:443,*.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443`: the `host:port` patterns a per-run sandbox may reach, `*` as a wildcard |
+| `EGRESS_ALLOW` | `host.docker.internal:8080,github.com:443,codeload.github.com:443,*.githubusercontent.com:443,registry.npmjs.org:443,pypi.org:443,files.pythonhosted.org:443,temporal.download:443`: the `host:port` patterns a per-run sandbox may reach, `*` as a wildcard |
 | `EGRESS_IMAGE` | `mh-egress-proxy:dev` |
 | `GATEWAY` | `real`: ai-api-unified-http from `GATEWAY_DIR`. `fake`: `src/meta_harness/run_service/fake_gateway.py`, which makes no model calls and needs no Redis |
 | `FAKE_GATEWAY_HOST`, `FAKE_TURN_SECONDS` | `127.0.0.1`, `2`: where the fake listens, and how long each scripted turn takes |
