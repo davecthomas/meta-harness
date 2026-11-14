@@ -4,7 +4,7 @@ Each repo owner has one GitHub App, which an operator creates and installs on
 that owner's repos. MH_GITHUB_APPS lists them as `owner=app_id:key_file`
 pairs separated by commas, for example
 
-    MH_GITHUB_APPS=davecthomas=5659485:~/.config/meta-harness/github-app.pem
+    MH_GITHUB_APPS=owner=123456:~/.config/meta-harness/github-app.pem
 
 A call asks for an installation token scoped to one repo and the permissions
 it needs: a run's clone gets `contents: read` only, and a push gets
