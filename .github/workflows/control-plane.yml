@@ -36,13 +36,13 @@ jobs:
     env:
       MH_DATABASE_URL: postgresql://mh:mh@127.0.0.1:5444/mh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - name: a pull request sets no version
         if: github.event_name == 'pull_request'
         run: python3 src/meta_harness/versioning.py --check "origin/${{ github.base_ref }}"
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           version: "0.12.5"
       - run: uv sync --locked
@@ -60,8 +60,8 @@ jobs:
       run:
         working-directory: console
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
