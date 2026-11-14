@@ -5,6 +5,8 @@ __pycache__/
 stack/
 runs/
 .env
+# Database backups (deploy/shutdown.sh): they hold everything the database does.
+*.sql.gz
 config/repos.local.json
 
 # Terraform
