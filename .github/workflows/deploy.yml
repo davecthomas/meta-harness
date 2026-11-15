@@ -142,9 +142,13 @@ jobs:
           vm='[.resource_changes[] | select(.address == "google_compute_instance.vm")]'
           deleted=$(terraform show -json release.tfplan | jq -r "$vm"' | [.[].change.actions[]] | index("delete") != null')
           resized=$(terraform show -json release.tfplan | jq -r "$vm"' | any(.[]; .change.before != null and .change.before.machine_type != .change.after.machine_type)')
+          # A VM the plan creates, with none to delete (the first deploy to a project), boots the commit too.
+          created=$(terraform show -json release.tfplan | jq -r "$vm"' | any(.[]; .change.actions == ["create"])')
           replaced=$([ "$deleted" = true ] || [ "$resized" = true ] && echo true || echo false)
+          boots=$([ "$replaced" = true ] || [ "$created" = true ] && echo true || echo false)
           echo "replaced=$replaced" >> "$GITHUB_OUTPUT"
-          echo "the VM is $([ "$deleted" = true ] && echo replaced || ([ "$resized" = true ] && echo "stopped, resized and started" || echo updated in place))"
+          echo "boots=$boots" >> "$GITHUB_OUTPUT"
+          echo "the VM is $([ "$deleted" = true ] && echo replaced || ([ "$resized" = true ] && echo "stopped, resized and started" || ([ "$created" = true ] && echo created || echo updated in place)))"
       - name: drain running tasks before the VM is replaced
         # Replacing or restarting the VM stops every sandbox on it. So no new task starts, and the deploy waits
         # for running ones to finish, up to the longest harness profile's max_minutes plus ten. Past that it
@@ -174,7 +178,7 @@ jobs:
         working-directory: deploy/terraform/release
         run: terraform apply -input=false release.tfplan
       - name: update the running VM in place
-        if: steps.release_plan.outputs.replaced == 'false'
+        if: steps.release_plan.outputs.boots == 'false'
         run: |
           # First a login that does nothing, tried until it works: this job's SSH key is new each run, and the
           # VM refuses it (Permission denied (publickey)) until the key has reached it, which can take a while.
