@@ -23,7 +23,10 @@ export interface ConsoleUser {
 export const adminApi = {
   logs: (params: { unit?: string; severity?: string; minutes?: number; q?: string }) =>
     call<{ entries: LogEntry[]; units: string[] }>("/v1/admin/logs" + query(params)),
-  deploys: () => call<{ version: string; commit: string | null; revision: string | null; project?: string | null }>("/v1/admin/deploys"),
+  deploys: () =>
+    call<{ version: string; commit: string | null; revision: string | null; project?: string | null; region?: string | null; zone?: string | null }>(
+      "/v1/admin/deploys",
+    ),
   // The console's users: list them, invite one, set a role, end one's access.
   users: () => call<{ users: ConsoleUser[] }>("/v1/admin/users").then((r) => r.users),
   inviteUser: (email: string, role: string) => call<ConsoleUser>("/v1/admin/users", { method: "POST", body: JSON.stringify({ email, role }) }),

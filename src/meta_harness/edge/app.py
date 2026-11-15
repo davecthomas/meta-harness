@@ -9,7 +9,7 @@
   every /v1 path.
 
 In the cloud the edge runs on Cloud Run, and the console's address is
-Firebase Hosting's https://meta-harness.web.app, which forwards every request
+a Firebase Hosting site, https://<console_site>.web.app (deploy/environment.json), which forwards every request
 here. The edge signs operators in itself, with Google:
 
 - The console shows Google's sign-in button (Google Identity Services). Its ID
@@ -253,7 +253,7 @@ def create_app(
     if client_id and not origin:
         raise RuntimeError(
             "MH_GOOGLE_CLIENT_ID is set without MH_CONSOLE_ORIGIN: a change could not be told from another "
-            "site's. Set MH_CONSOLE_ORIGIN to the console's address, such as https://meta-harness.web.app"
+            "site's. Set MH_CONSOLE_ORIGIN to the console's address, such as https://<console_site>.web.app"
         )
     verify = verify_google or (google_verifier(client_id) if client_id else None)
     client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None), transport=transport)
@@ -407,6 +407,8 @@ def create_app(
                     "commit": deployed_commit(),
                     "revision": os.environ.get("K_REVISION") or None,
                     "project": os.environ.get("MH_PROJECT") or None,
+                    "region": os.environ.get("MH_REGION") or None,
+                    "zone": os.environ.get("MH_ZONE") or None,
                 }
             )
         )

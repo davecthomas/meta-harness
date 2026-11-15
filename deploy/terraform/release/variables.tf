@@ -1,3 +1,8 @@
+variable "state_bucket" {
+  description = "deploy/environment.json's state_bucket, where the platform stack's outputs are read."
+  type        = string
+}
+
 variable "commit" {
   description = "The meta-harness commit the VM runs. A new value replaces the VM."
   type        = string

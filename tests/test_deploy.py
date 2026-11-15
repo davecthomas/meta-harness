@@ -81,7 +81,8 @@ def test_the_deploy_workflow_signs_in_with_what_the_platform_stack_creates():
     deploy = (WORKFLOWS / "deploy.yml").read_text()
     assert "workloadIdentityPools/github/providers/github" in deploy
     assert 'workload_identity_pool_provider_id = "github"' in platform
-    assert 'account_id   = "mh-deploy-sa"' in platform and "mh-deploy-sa@meta-harness-prod" in deploy
+    assert 'account_id   = "mh-deploy-sa"' in platform and "mh-deploy-sa@${{ env.PROJECT }}" in deploy
+    assert "projects/${{ env.PROJECT_NUMBER }}/locations/global/workloadIdentityPools" in deploy
     assert "assertion.ref=='refs/heads/main'" in platform
 
 
@@ -89,7 +90,7 @@ def test_the_release_stack_gets_the_commit_and_the_image_the_workflow_built():
     deploy = (WORKFLOWS / "deploy.yml").read_text()
     release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
     assert '-var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE"' in deploy
-    assert "edge:${{ github.sha }}" in deploy
+    assert '/mh/edge"\' "$settings"):${{ github.sha }}' in deploy
     # A deploy keeps the VM: no -replace, so running tasks survive a merge.
     assert "-replace=" not in deploy
     assert re.search(r'startup-script\s+= file\("\$\{path.module\}/../../vm/startup.sh"\)', release)
@@ -116,7 +117,7 @@ def test_the_console_address_forwards_everything_to_the_edge_and_nothing_else_si
     release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
     platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
     variables = (ROOT / "deploy" / "terraform" / "platform" / "variables.tf").read_text()
-    assert 'default     = "meta-harness"' in variables
+    assert 'variable "console_site"' in variables
     assert 'resource "google_firebase_hosting_site" "console"' in platform
     assert 'glob = "**"' in release and "service_id = google_cloud_run_v2_service.edge.name" in release
     # Firebase Hosting calls without credentials: Cloud Run is open, IAP is off, and the edge's session decides.
@@ -225,7 +226,12 @@ def test_the_vm_holds_every_sandbox_the_running_limit_allows():
 def test_terraform_init_is_tried_again_after_a_passing_storage_error():
     """A deploy failed once on 'Failed to get existing workspaces: querying Cloud Storage failed'."""
     deploy = (WORKFLOWS / "deploy.yml").read_text()
-    assert deploy.count("for try in 1 2 3; do terraform init -input=false && break;") == 2
+    assert (
+        deploy.count(
+            'for try in 1 2 3; do terraform init -input=false -backend-config="bucket=$STATE_BUCKET" && break;'
+        )
+        == 2
+    )
 
 
 def test_each_plan_is_tried_again_when_reading_the_state_fails():
@@ -260,3 +266,64 @@ def test_a_deploy_that_replaces_the_vm_drains_running_tasks_first():
     assert "$GITHUB_STEP_SUMMARY" in deploy[drain:apply], "tasks interrupted past the ceiling are named"
     boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
     assert 'drain.sh" off' in boot, "the new VM's boot ends the drain"
+
+
+SETTINGS = ROOT / "deploy" / "environment.json"
+# Projects the deployment ran in before. Nothing may name them again.
+RETIRED = ("meta-harness-prod", "57473592166")
+
+
+def _deploy_files() -> list[Path]:
+    """What deploys, runs or shows the deployment: everything but tests, which may use any name as data."""
+    files = [ROOT / "Makefile", *WORKFLOWS.glob("*.yml")]
+    for folder, patterns in (
+        ("deploy", ("*.tf", "*.sh", "*.py", "*.md", "*.example", "*.json", "*.yaml", "*.service")),
+        ("src", ("*.py",)),
+        ("console/src", ("*.ts", "*.tsx")),
+        ("docs", ("*.md",)),
+    ):
+        for pattern in patterns:
+            files += (ROOT / folder).rglob(pattern)
+    return [f for f in files if f != SETTINGS and "node_modules" not in f.parts]
+
+
+def test_only_the_settings_file_names_the_project():
+    """Moving the deployment is a change to deploy/environment.json alone: no stack, script, workflow, page or
+    doc names a project, its number or its state bucket, and none names a project it used to run in."""
+    settings = json.loads(SETTINGS.read_text())
+    names = (settings["project"], settings["project_number"], settings["state_bucket"], *RETIRED)
+    found = [(f.relative_to(ROOT), n) for f in _deploy_files() for n in names if n in f.read_text()]
+    assert found == []
+
+
+def test_the_settings_file_is_exactly_the_platform_stacks_settings():
+    """It is passed to the platform stack with -var-file, so each key is a variable there, and none of
+    those variables has a default that could stand in for a missing setting."""
+    settings = json.loads(SETTINGS.read_text())
+    variables = (ROOT / "deploy" / "terraform" / "platform" / "variables.tf").read_text()
+    for key in settings:
+        block = re.search(rf'variable "{key}" \{{(.*?)\n\}}', variables, re.S)
+        assert block, f"{key} is not a platform variable"
+        assert "default" not in block[1], f"{key} has a default"
+    assert {"project", "project_number", "region", "zone", "state_bucket", "console_site"} <= settings.keys()
+
+
+def test_both_stacks_take_their_state_bucket_from_the_settings_file():
+    for stack in ("platform", "release"):
+        main = (ROOT / "deploy" / "terraform" / stack / "main.tf").read_text()
+        backend = re.search(r'backend "gcs" \{(.*?)\}', main, re.S)[1]
+        assert "bucket" not in backend, stack
+    release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
+    assert "bucket = var.state_bucket" in release
+    makefile = (ROOT / "Makefile").read_text()
+    assert "-backend-config=bucket=$(STATE_BUCKET)" in makefile and "-var-file=$(CURDIR)/$(SETTINGS)" in makefile
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    assert (
+        '-var-file="$GITHUB_WORKSPACE/deploy/environment.json"' in deploy
+        and '-var "state_bucket=$STATE_BUCKET"' in deploy
+    )
+
+
+def test_the_platform_stack_checks_the_project_number_it_is_given():
+    platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
+    assert "self.number == var.project_number" in platform

@@ -3,38 +3,62 @@
 Every merge to main deploys itself: `.github/workflows/deploy.yml` waits for
 main's checks, applies the platform Terraform stack when it changed, builds
 the edge image, and applies the release Terraform stack.
-Two stacks, both under `deploy/terraform`, with state in the bucket
-`meta-harness-prod-terraform`:
+Two stacks, both under `deploy/terraform`, with state in the settings file's
+`state_bucket`:
 
 | Stack | Holds | Applied by |
 |---|---|---|
-| `platform` | network, NAT, firewall, the VM's address and data disk, service accounts and their roles, the GitHub sign-in, the secrets' containers and the generated session key, Artifact Registry, Firebase Hosting's `meta-harness` site | CI on every merge, when its plan shows a change and `deploy/platform_guard.py` allows it; by hand, `make platform`, for a new project or a plan the guard refuses |
+| `platform` | network, NAT, firewall, the VM's address and data disk, service accounts and their roles, the GitHub sign-in, the secrets' containers and the generated session key, Artifact Registry, the Firebase Hosting site | CI on every merge, when its plan shows a change and `deploy/platform_guard.py` allows it; by hand, `make platform`, for a new project or a plan the guard refuses |
 | `release` | the VM at a commit, the edge on Cloud Run from that commit's image, and the Hosting site's rewrite to it | CI on every merge; by hand, `make deploy` |
 
 A deploy replaces the VM. Its boot disk is new every time; the data disk
 (`mh-data`: Postgres, Temporal's history, run workspaces) moves to the new VM.
 `make deploy-status` shows the commit the VM last booted and the console's URL.
 
+## The settings file
+
+`deploy/environment.json` is the deployment's one settings file: `project`,
+`project_number`, `region`, `zone`, `state_bucket`, `console_site` (the
+Firebase Hosting site, so the console is `https://<console_site>.web.app`),
+`google_client_id` and `github_repo`. Both stacks, the deploy workflow, the
+Makefile and `deploy/shutdown.sh` read it, and nothing else names a project:
+`tests/test_deploy.py` fails when one does. Moving the deployment to another
+project is a change to this file, then "Setting up a project once" below. The
+state bucket and the Hosting site are unique across Google Cloud, so a new
+project needs new ones.
+
+The platform stack takes the file with `-var-file`, and none of those
+variables has a default. Both stacks take the state bucket at `terraform init
+-backend-config=bucket=...`, and the plan fails when `project_number` is not
+the project's.
+
 ## Setting up a project once
 
-1. `make platform`. It creates the state bucket when missing, then applies the
-   platform stack. The first apply adopts what `deploy/gcp.sh` had created.
+1. `deploy/environment.json` names the project. `make platform`, signed in
+   to gcloud as a project owner, creates the state bucket when missing, then
+   applies the platform stack and asks before it changes anything.
 2. Secret values, which Terraform never sees:
-   `gcloud secrets versions add <NAME> --data-file=- --project meta-harness-prod`
+   `gcloud secrets versions add <NAME> --data-file=- --project <project>`
    for each secret in `platform/variables.tf`. `MH_REPOS_CONFIG` is the repo
    registry JSON; `MH_GITHUB_APPS` is `owner=app_id` pairs, and each owner's
    private key is `MH_GITHUB_APP_KEY_<owner>`.
 3. The console's Google sign-in, once, in the Google Cloud console (Google
-   Auth Platform, Clients): the web client named in `platform/variables.tf`
-   as `google_client_id` lists `https://meta-harness.web.app` as an
-   authorized JavaScript origin. While the app is in testing, each operator
-   is a test user on its Audience page.
-4. Merge to main, or `make deploy`.
+   Auth Platform): its branding, its audience (Internal, in an organization,
+   lets the organization's accounts sign in; External needs each operator as
+   a test user while the app is in testing), and a web client whose
+   authorized JavaScript origin is `https://<console_site>.web.app`. Its id
+   goes in `deploy/environment.json` as `google_client_id`; the release stack
+   refuses to deploy while that is empty.
+4. The repo secret `MH_OPERATORS`, the console's Google accounts as a JSON
+   list, `MH_ADMINS`, those of them who are admins (unset: all of them), and
+   `deploy/.env` for `make platform` (below).
+5. Quota for the VM's machine type (`release/variables.tf`) in the region.
+6. Merge to main, or `make deploy`.
 
 ## Reading the VM
 
-The VM has no public address. `gcloud compute ssh mh-vm --zone us-central1-a
---project meta-harness-prod --tunnel-through-iap` reaches it; the boot log is
+The VM has no public address. `gcloud compute ssh mh-vm --zone <zone>
+--project <project> --tunnel-through-iap` reaches it; the boot log is
 `/var/log/mh-boot.log`.
 
 ## What stays out of the repo
@@ -42,7 +66,8 @@ The VM has no public address. `gcloud compute ssh mh-vm --zone us-central1-a
 The repo is public, so nothing that identifies a person or an account is in
 it. Who may sign in to the console (`operators` in the platform stack) has no
 default: CI reads it from the repo secret `MH_OPERATORS`, a JSON list
-(`gh secret set MH_OPERATORS --body '["you@example.com"]'`), and `make
+(`gh secret set MH_OPERATORS --body '["you@example.com"]'`), and who of
+them is an admin (`admins`) from `MH_ADMINS` the same way; `make
 platform` and `deploy/shutdown.sh` read `deploy/.env`, which git ignores
 (copy `deploy/.env.example`). Terraform marks the list sensitive, so plans and
 logs show `(sensitive value)`. The billing account is read from Google Cloud
@@ -56,7 +81,7 @@ project owner) and gh (a repo admin):
 
 | Command | Does | Undo |
 |---|---|---|
-| `make gcp-teardown` | backs up the database, stops the meta-harness, deletes the project | `gcloud projects undelete meta-harness-prod` within 30 days |
+| `make gcp-teardown` | backs up the database, stops the meta-harness, deletes the project | `gcloud projects undelete <project>` within 30 days |
 | `make gcp-disable` | backs up the database, stops the meta-harness once running tasks finish, turns billing off | relink billing (it prints how), then `make gcp-resume` |
 | `make gcp-pause` | turns the deploy workflow off, drains, waits up to an hour for running tasks, stops the VM | `make gcp-resume` |
 | `make gcp-resume` | starts the VM, ends the drain, turns the deploy workflow on | |

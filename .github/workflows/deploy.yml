@@ -6,7 +6,8 @@
 # (deploy/terraform/release), which reads the platform's outputs: the edge image this workflow builds
 # from the commit, and the commit itself, which the running VM is updated to in place. It signs in to
 # Google Cloud as mh-deploy-sa through workload identity federation, which only this repo's main branch
-# may use, so no key is stored here.
+# may use, so no key is stored here. Which project, region, state bucket and site: deploy/environment.json,
+# the deployment's one settings file.
 # Run it again from the Actions tab (Run workflow), or with make deploy.
 
 name: deploy
@@ -28,11 +29,10 @@ permissions:
   issues: write
 
 env:
-  PROJECT: meta-harness-prod
   # Who may sign in to the console, as a JSON list. A repo secret, so the public repo and its logs never hold it.
   TF_VAR_operators: ${{ secrets.MH_OPERATORS }}
-  REGION: us-central1
-  EDGE_IMAGE: us-central1-docker.pkg.dev/meta-harness-prod/mh/edge:${{ github.sha }}
+  # Who of them is an admin, the same way. Unset: every operator is an admin.
+  TF_VAR_admins: ${{ secrets.MH_ADMINS || '[]' }}
 
 jobs:
   deploy:
@@ -44,6 +44,20 @@ jobs:
         with:
           # The whole history: the commit's version is worked out from main's commits (versioning.py).
           fetch-depth: 0
+      - name: read the deployment's settings
+        run: |
+          settings=deploy/environment.json
+          for key in project project_number region zone state_bucket; do
+            [ -n "$(jq -r --arg k "$key" '.[$k] // empty' "$settings")" ] || { echo "::error::$settings has no $key"; exit 1; }
+          done
+          {
+            echo "PROJECT=$(jq -r .project "$settings")"
+            echo "PROJECT_NUMBER=$(jq -r .project_number "$settings")"
+            echo "REGION=$(jq -r .region "$settings")"
+            echo "ZONE=$(jq -r .zone "$settings")"
+            echo "STATE_BUCKET=$(jq -r .state_bucket "$settings")"
+            echo "EDGE_IMAGE=$(jq -r '"\(.region)-docker.pkg.dev/\(.project)/mh/edge"' "$settings"):${{ github.sha }}"
+          } >>"$GITHUB_ENV"
       - name: wait for main's checks to pass at this commit
         id: checks
         env:
@@ -70,8 +84,8 @@ jobs:
           exit 1
       - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
-          workload_identity_provider: projects/57473592166/locations/global/workloadIdentityPools/github/providers/github
-          service_account: mh-deploy-sa@meta-harness-prod.iam.gserviceaccount.com
+          workload_identity_provider: projects/${{ env.PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: mh-deploy-sa@${{ env.PROJECT }}.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
@@ -86,12 +100,12 @@ jobs:
             exit 1
           fi
           # Init reads the state bucket; a passing Cloud Storage error is tried again, three times in all.
-          for try in 1 2 3; do terraform init -input=false && break; [ "$try" = 3 ] && exit 1; sleep 20; done
+          for try in 1 2 3; do terraform init -input=false -backend-config="bucket=$STATE_BUCKET" && break; [ "$try" = 3 ] && exit 1; sleep 20; done
           # Exit code 0: the cloud matches the stack. 2: the plan has changes. Anything else: the plan failed.
           # The plan reads the state from Cloud Storage too, which fails now and then: an error is tried again.
           for try in 1 2 3; do
             code=0
-            terraform plan -input=false -detailed-exitcode -out=platform.tfplan || code=$?
+            terraform plan -input=false -detailed-exitcode -out=platform.tfplan -var-file="$GITHUB_WORKSPACE/deploy/environment.json" || code=$?
             [ "$code" != 1 ] && break
             [ "$try" != 3 ] && sleep 20
           done
@@ -115,13 +129,13 @@ jobs:
         working-directory: deploy/terraform/release
         run: |
           # Init reads the state bucket; a passing Cloud Storage error is tried again, three times in all.
-          for try in 1 2 3; do terraform init -input=false && break; [ "$try" = 3 ] && exit 1; sleep 20; done
+          for try in 1 2 3; do terraform init -input=false -backend-config="bucket=$STATE_BUCKET" && break; [ "$try" = 3 ] && exit 1; sleep 20; done
           # No -replace: the VM keeps running, and only its metadata (the commit) changes. Terraform
           # replaces it only when its definition changed, and stops and starts it for a new machine type;
           # either way it boots the commit by itself. The plan says which: a VM change that deletes is a
           # replacement, and one that changes the machine type is a restart.
           for try in 1 2 3; do
-            terraform plan -input=false -out=release.tfplan -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE" && break
+            terraform plan -input=false -out=release.tfplan -var "state_bucket=$STATE_BUCKET" -var "commit=${{ github.sha }}" -var "edge_image=$EDGE_IMAGE" && break
             [ "$try" = 3 ] && exit 1
             sleep 20
           done
@@ -137,7 +151,7 @@ jobs:
         # applies anyway and names the tasks it interrupts. The new VM's boot ends the drain.
         if: steps.release_plan.outputs.replaced == 'true'
         run: |
-          ssh() { timeout 120 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet --command "$1"; }
+          ssh() { timeout 120 gcloud compute ssh mh-vm --zone "$ZONE" --project "$PROJECT" --tunnel-through-iap --quiet --command "$1"; }
           ceiling=$(( $(jq '[.profiles[].max_minutes] | max' config/harness_profiles.json) + 10 ))
           if ! ssh "sudo bash /opt/meta-harness/deploy/vm/drain.sh on"; then
             echo "could not reach the VM to drain it; it may already be down, so the apply goes ahead"
@@ -166,7 +180,7 @@ jobs:
           # VM refuses it (Permission denied (publickey)) until the key has reached it, which can take a while.
           # The update itself then runs once, so a retry never starts it twice.
           for try in 1 2 3 4 5 6; do
-            timeout 120 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \
+            timeout 120 gcloud compute ssh mh-vm --zone "$ZONE" --project "$PROJECT" --tunnel-through-iap --quiet \
               --command true && break
             [ "$try" = 6 ] && { echo "could not log in to the VM in 6 tries"; exit 1; }
             echo "the VM refused the login (try $try); trying again in 20 seconds"
@@ -174,12 +188,12 @@ jobs:
           done
           # The startup script, from the metadata the apply just set, run as its own unit so a dropped SSH
           # connection cannot stop it. It checks the commit out and restarts the services one at a time.
-          timeout 1500 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \
+          timeout 1500 gcloud compute ssh mh-vm --zone "$ZONE" --project "$PROJECT" --tunnel-through-iap --quiet \
             --command "sudo systemd-run --wait --collect --unit mh-update-${GITHUB_RUN_ID} --setenv=MH_DEPLOY_MODE=update --setenv=HOME=/root bash -c 'curl -fs -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/attributes/startup-script > /run/mh-update.sh && bash /run/mh-update.sh'"
       - name: wait for the VM to boot the commit
         run: |
           for i in $(seq 1 120); do
-            result=$(gcloud compute instances get-guest-attributes mh-vm --zone "$REGION-a" --project "$PROJECT" \
+            result=$(gcloud compute instances get-guest-attributes mh-vm --zone "$ZONE" --project "$PROJECT" \
               --query-path mh/boot --format='value(value)' 2>/dev/null || true)
             case "$result" in
               "ok ${{ github.sha }}") echo "the VM runs ${{ github.sha }}"; exit 0 ;;
@@ -196,12 +210,12 @@ jobs:
           # The step fails when the smoke command does, not when tee does: tee always succeeds.
           set -o pipefail
           for try in 1 2 3 4 5 6; do
-            timeout 120 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \
+            timeout 120 gcloud compute ssh mh-vm --zone "$ZONE" --project "$PROJECT" --tunnel-through-iap --quiet \
               --command true && break
             [ "$try" = 6 ] && { echo "could not log in to the VM in 6 tries"; exit 1; }
             sleep 20
           done
-          timeout 1500 gcloud compute ssh mh-vm --zone "$REGION-a" --project "$PROJECT" --tunnel-through-iap --quiet \
+          timeout 1500 gcloud compute ssh mh-vm --zone "$ZONE" --project "$PROJECT" --tunnel-through-iap --quiet \
             --command "sudo bash /opt/meta-harness/deploy/vm/smoke.sh ${{ github.sha }}" | tee smoke.txt
       - name: open an issue for the failed deploy
         # A failed deploy is work: the issue's label lets a goal pick it up and fix it.
@@ -221,7 +235,7 @@ jobs:
           Nothing changed on Google Cloud. Fix the check on main, and the next merge deploys."
             exit 0
           fi
-          result=$(gcloud compute instances get-guest-attributes mh-vm --zone "$REGION-a" --project "$PROJECT" \
+          result=$(gcloud compute instances get-guest-attributes mh-vm --zone "$ZONE" --project "$PROJECT" \
             --query-path mh/boot --format='value(value)' 2>/dev/null || true)
           gh issue create --repo "${{ github.repository }}" --label meta-harness:operations \
             --title "Deploy of ${GITHUB_SHA::7} failed" \

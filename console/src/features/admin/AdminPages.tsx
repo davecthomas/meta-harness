@@ -78,21 +78,32 @@ export function describeAudit(e: MhEvent): string {
 }
 
 export function CloudPage() {
-  const [project, setProject] = useState<string | null>(null);
+  // Where the deployment runs, as the edge reports it (deploy/environment.json, through the release stack).
+  const [where, setWhere] = useState<{ project: string; region: string | null; zone: string | null } | null>(null);
   useEffect(() => {
-    api.deploys().then((d) => setProject(d.project ?? null), () => setProject(null));
+    api.deploys().then(
+      (d) => setWhere(d.project ? { project: d.project, region: d.region ?? null, zone: d.zone ?? null } : null),
+      () => setWhere(null),
+    );
   }, []);
-  const p = project ?? "meta-harness-prod";
+  const p = where?.project;
   const links: [string, string, string][] = [
-    ["The VM", `https://console.cloud.google.com/compute/instancesDetail/zones/us-central1-a/instances/mh-vm?project=${p}`, "mh-vm, every control-plane service and the per-run sandboxes"],
-    ["The edge", `https://console.cloud.google.com/run/detail/us-central1/mh-edge?project=${p}`, "Cloud Run service mh-edge: the console and /v1 routing"],
-    ["Logs", `https://console.cloud.google.com/logs/query?project=${p}`, "Logs Explorer for the project"],
-    ["Secrets", `https://console.cloud.google.com/security/secret-manager?project=${p}`, "Secret Manager: provider keys, the service key, GitHub App keys"],
+    ...(p
+      ? ([
+          ...(where?.zone ? [["The VM", `https://console.cloud.google.com/compute/instancesDetail/zones/${where.zone}/instances/mh-vm?project=${p}`, "mh-vm, every control-plane service and the per-run sandboxes"]] : []),
+          ...(where?.region ? [["The edge", `https://console.cloud.google.com/run/detail/${where.region}/mh-edge?project=${p}`, "Cloud Run service mh-edge: the console and /v1 routing"]] : []),
+          ["Logs", `https://console.cloud.google.com/logs/query?project=${p}`, "Logs Explorer for the project"],
+          ["Secrets", `https://console.cloud.google.com/security/secret-manager?project=${p}`, "Secret Manager: provider keys, the service key, GitHub App keys"],
+        ] as [string, string, string][])
+      : []),
     ["Deploy runs", `${REPO_URL}/actions/workflows/deploy.yml`, "GitHub Actions: every deploy, its plan and its result"],
   ];
+  const description = p
+    ? `The project ${p}, in the Google Cloud console. Each link opens a new tab.`
+    : "The edge has not said which Google Cloud project it runs in, so only the deploy runs are linked.";
   return (
     <>
-      <PageHeader title="Google Cloud" description={`The project ${p}, in the Google Cloud console. Each link opens a new tab.`} />
+      <PageHeader title="Google Cloud" description={description} />
       <SimpleGrid cols={{ base: 1, md: 2 }}>
         {links.map(([title, href, what]) => (
           <Paper key={title} p="md" withBorder>
