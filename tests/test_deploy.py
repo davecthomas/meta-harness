@@ -130,9 +130,11 @@ def test_a_deploy_updates_the_running_vm_in_place_unless_terraform_replaced_it()
     deploy = (WORKFLOWS / "deploy.yml").read_text()
     release = (ROOT / "deploy" / "terraform" / "release" / "main.tf").read_text()
     platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
-    assert "if: steps.release_plan.outputs.replaced == 'false'" in deploy
-    # Whether the VM is replaced comes from Terraform's plan, so it is right on the first deploy too.
+    assert "if: steps.release_plan.outputs.boots == 'false'" in deploy
+    # Whether the VM boots by itself comes from Terraform's plan: replaced, or created by the first deploy to a
+    # project, when an update over SSH would run on top of its first boot.
     assert 'select(.address == "google_compute_instance.vm")' in deploy and 'index("delete") != null' in deploy
+    assert '.change.actions == ["create"]' in deploy
     # A new machine type stops and starts the VM, which boots the commit: no update over SSH on top of it.
     assert ".change.before.machine_type != .change.after.machine_type" in deploy
     assert "allow_stopping_for_update = true" in release
