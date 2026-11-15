@@ -9,7 +9,7 @@
 # Temporal's history and run workspaces across. The edge gets a new Cloud Run revision from the image,
 # which takes traffic once it is healthy.
 #
-# The console's address is the platform stack's Firebase Hosting site, https://meta-harness.web.app,
+# The console's address is the platform stack's Firebase Hosting site, https://<console_site>.web.app,
 # which forwards every request to the edge. The edge signs operators in with Google itself, so the
 # service is open to the internet at the Cloud Run level, and every /v1 request needs its session.
 
@@ -25,8 +25,8 @@ terraform {
       version = "~> 7.0"
     }
   }
+  # The bucket is deploy/environment.json's state_bucket, given at init (-backend-config), as for the platform.
   backend "gcs" {
-    bucket = "meta-harness-prod-terraform"
     prefix = "release"
   }
 }
@@ -34,7 +34,7 @@ terraform {
 data "terraform_remote_state" "platform" {
   backend = "gcs"
   config = {
-    bucket = "meta-harness-prod-terraform"
+    bucket = var.state_bucket
     prefix = "platform"
   }
 }
@@ -120,6 +120,13 @@ resource "google_cloud_run_v2_service" "edge" {
   iap_enabled         = false
   deletion_protection = false
 
+  lifecycle {
+    precondition {
+      condition     = local.platform.google_client_id != ""
+      error_message = "The console's Google sign-in has no OAuth client: create one in the project (deploy/README.md, Setting up a project once), put its id in deploy/environment.json as google_client_id, and apply the platform stack."
+    }
+  }
+
   template {
     service_account = local.platform.edge_service_account
     timeout         = "3600s"
@@ -157,6 +164,8 @@ resource "google_cloud_run_v2_service" "edge" {
           MH_CONSOLE_ADMINS = join(",", try(local.platform.admins, []))
           MH_COMMIT         = var.commit
           MH_PROJECT        = local.project
+          MH_REGION         = local.region
+          MH_ZONE           = local.platform.zone
         }
         content {
           name  = env.key

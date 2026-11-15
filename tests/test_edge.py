@@ -386,7 +386,7 @@ def test_a_service_that_stays_down_is_a_503_saying_the_meta_harness_is_updating(
 def test_an_admin_reads_logs_from_cloud_logging_with_the_edges_own_token(tmp_path, monkeypatch):
     import json
 
-    monkeypatch.setenv("MH_PROJECT", "meta-harness-prod")
+    monkeypatch.setenv("MH_PROJECT", "example-project")
     asked: list[httpx.Request] = []
 
     def google(request: httpx.Request) -> httpx.Response:

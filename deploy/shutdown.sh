@@ -12,7 +12,9 @@
 #   shutdown.sh disable           backs up, pauses, then unlinks the project's billing account: nothing more is billed.
 #                                 Google may delete what the project holds if billing stays off
 #   shutdown.sh delete            backs up, pauses (without waiting), then shuts the project down. Google keeps it 30 days, during which
-#                                 `gcloud projects undelete meta-harness-prod` brings it back; then it is gone
+#                                 `gcloud projects undelete <project>` brings it back; then it is gone
+#
+# The project and zone are deploy/environment.json's, unless MH_PROJECT and MH_ZONE say otherwise.
 #
 # disable and delete ask once, before anything changes, for the project's id typed out. The make targets
 # gcp-status, gcp-backup, gcp-pause, gcp-resume, gcp-disable and gcp-teardown run these.
@@ -27,8 +29,10 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
-P=${MH_PROJECT:-meta-harness-prod}
-Z=${MH_ZONE:-us-central1-a}
+SETTINGS="$(dirname "$0")/environment.json"
+P=${MH_PROJECT:-$(jq -r '.project // empty' "$SETTINGS")}
+Z=${MH_ZONE:-$(jq -r '.zone // empty' "$SETTINGS")}
+[ -n "$P" ] && [ -n "$Z" ] || { echo "error: $SETTINGS names no project or zone, and MH_PROJECT or MH_ZONE is not set." >&2; exit 1; }
 VM=mh-vm
 REPO=${MH_REPO:-davecthomas/meta-harness}
 WAIT_MINUTES=${MH_WAIT_MINUTES:-60}
@@ -191,7 +195,7 @@ case "${1:-}" in
     "$cmd" "$@"
     ;;
   *)
-    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac

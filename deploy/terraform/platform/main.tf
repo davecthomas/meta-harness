@@ -7,8 +7,11 @@
 # the services' ports. Identity: a service account each for the VM, the edge, and CI's deploys. CI
 # signs in through workload identity federation, limited to this repository's main branch, so GitHub
 # holds no key. Secrets: the containers only; an operator adds the values (deploy/README.md), except the
-# session key, which is generated here. The console: Firebase Hosting's site meta-harness, so its address
-# is https://meta-harness.web.app; the release stack points the site at the edge.
+# session key, which is generated here. The console: the Firebase Hosting site console_site, so its address
+# is https://<console_site>.web.app; the release stack points the site at the edge.
+#
+# Which project, region, bucket and site: deploy/environment.json, the deployment's one settings file,
+# passed with -var-file; its state bucket is given to terraform init with -backend-config.
 
 terraform {
   required_version = ">= 1.9"
@@ -26,8 +29,9 @@ terraform {
       version = "~> 3.6"
     }
   }
+  # The bucket is deploy/environment.json's state_bucket, given at init: terraform init -backend-config=bucket=...
+  # Terraform allows no variable here, and a bucket written in would tie every project to one state.
   backend "gcs" {
-    bucket = "meta-harness-prod-terraform"
     prefix = "platform"
   }
 }
@@ -47,7 +51,16 @@ provider "google-beta" {
   billing_project       = var.project
 }
 
-data "google_project" "this" {}
+# The settings file's project number must be this project's: CI signs in through the workload identity
+# provider it names, and a number from another project would send deploys there.
+data "google_project" "this" {
+  lifecycle {
+    postcondition {
+      condition     = self.number == var.project_number
+      error_message = "deploy/environment.json says project_number ${var.project_number}, but project ${var.project} is number ${self.number}. Fix the settings file."
+    }
+  }
+}
 
 locals {
   project_number = data.google_project.this.number
