@@ -50,6 +50,8 @@ class Directory:
         self.users: dict[str, dict[str, Any]] | None = None
         self.read_at = 0.0
         self.lock = threading.Lock()
+        # Sign-ins the planner could not be told of yet; told again after the next read that reaches it.
+        self.unrecorded: set[str] = set()
 
     def _read(self) -> None:
         if self.http is None or time.monotonic() - self.read_at < self.refresh_seconds:
@@ -74,6 +76,9 @@ class Directory:
                     self.users = {user["email"]: user for user in found}
             except Exception as err:  # noqa: BLE001 - the list last read goes on deciding
                 log.warning("could not read the console's users: %s", err)
+                return
+            for who in sorted(self.unrecorded):
+                self._record(who)
 
     def allowed(self, who: str) -> bool:
         """Whether this identity may use the console."""
@@ -90,13 +95,21 @@ class Directory:
         return self.allowed(who) and self.users[who]["role"] == "admin"
 
     def signed_in(self, who: str) -> None:
-        """Tells the planner of a sign-in, so an invited user becomes active. A failure only leaves that for later."""
+        """Tells the planner of a sign-in, so an invited user becomes active and the sign-in shows on the Users
+        page. A planner that cannot be reached is told after the next read that reaches it, since a session
+        lasts for days and its user may not sign in again until it ends."""
         if self.http is None:
             return
+        self._record(who)
+
+    def _record(self, who: str) -> None:
         try:
             self.http.post(f"/v1/admin/users/{who}/signed-in").raise_for_status()
         except Exception as err:  # noqa: BLE001
             log.warning("could not record %s's sign-in: %s", who, err)
+            self.unrecorded.add(who)
+        else:
+            self.unrecorded.discard(who)
 
     def changed(self) -> None:
         """An admin changed the users through this edge: read them again at the next request."""

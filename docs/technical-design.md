@@ -2071,7 +2071,9 @@ applies at once. The first time the edge finds no users, it hands the
 planner its first access list (every operator an admin when
 `MH_CONSOLE_ADMINS` is empty), and from then on the users decide. A planner
 the edge cannot reach changes nothing: the users last read go on deciding.
-An invited user becomes active at their first sign-in. The console sends no
+An invited user becomes active at their first sign-in. A sign-in the edge
+cannot report to the planner, as during a deploy, is reported after its next
+read of the users that reaches the planner. The console sends no
 email: an invitation is text the admin copies and sends. The rest of this
 section is the design for the GKE deployment.
 
