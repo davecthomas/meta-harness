@@ -81,21 +81,38 @@ lint:
 	uv run ruff check .
 	uv run ruff format --check .
 
-STATE_BUCKET := meta-harness-prod-terraform
+# The deployment's settings: one file names the project, region, zone, state bucket and console site.
+SETTINGS := deploy/environment.json
+setting = $(shell jq -r '.$(1) // empty' $(SETTINGS))
+PROJECT := $(call setting,project)
+REGION := $(call setting,region)
+ZONE := $(call setting,zone)
+STATE_BUCKET := $(call setting,state_bucket)
+CONSOLE_SITE := $(call setting,console_site)
 # deploy/.env holds what stays out of the public repo, such as who may sign in (deploy/.env.example).
 -include deploy/.env
-export TF_VAR_operators
+export TF_VAR_operators TF_VAR_admins
 
 # Terraform acts as the account gcloud is signed in as, rather than whatever application default
-# credentials happen to hold (often another account).
+# credentials happen to hold (often another account). Before anything is created, that account must be able
+# to read the settings file's project; Terraform shows the plan and asks before applying it.
 platform: export GOOGLE_OAUTH_ACCESS_TOKEN = $(shell gcloud auth print-access-token)
 platform:
+	@[ -n "$(PROJECT)" ] && [ -n "$(REGION)" ] && [ -n "$(STATE_BUCKET)" ] || { echo "error: $(SETTINGS) must name project, region and state_bucket." >&2; exit 1; }
 	@[ -n "$$TF_VAR_operators" ] || { echo "error: who may sign in is not set. Copy deploy/.env.example to deploy/.env and fill in TF_VAR_operators." >&2; exit 1; }
-	gcloud storage buckets describe gs://$(STATE_BUCKET) --project meta-harness-prod >/dev/null 2>&1 || \
-	  gcloud storage buckets create gs://$(STATE_BUCKET) --project meta-harness-prod --location us-central1 \
+	@gcloud projects describe $(PROJECT) --format="value(projectId)" >/dev/null 2>&1 || { echo "error: $$(gcloud config get-value account 2>/dev/null) cannot read project $(PROJECT). Sign in to gcloud as an owner of it." >&2; exit 1; }
+	@echo "platform: project $(PROJECT), state gs://$(STATE_BUCKET), as $$(gcloud config get-value account 2>/dev/null)"
+	# The stack enables the APIs it uses, but reading the project to plan needs these two first: in a new
+	# project they are off.
+	gcloud services enable cloudresourcemanager.googleapis.com serviceusage.googleapis.com --project $(PROJECT)
+	gcloud storage buckets describe gs://$(STATE_BUCKET) --project $(PROJECT) >/dev/null 2>&1 || \
+	  gcloud storage buckets create gs://$(STATE_BUCKET) --project $(PROJECT) --location $(REGION) \
 	    --uniform-bucket-level-access --public-access-prevention
-	terraform -chdir=deploy/terraform/platform init -input=false -reconfigure
-	terraform -chdir=deploy/terraform/platform apply -input=false
+	terraform -chdir=deploy/terraform/platform init -input=false -reconfigure -backend-config=bucket=$(STATE_BUCKET)
+	# The APIs first, on their own: the stack's resources do not wait for them, so in a new project they would
+	# be created before their API is on and fail. In a project that has them, this changes nothing.
+	terraform -chdir=deploy/terraform/platform apply -input=false -var-file=$(CURDIR)/$(SETTINGS) -target=google_project_service.this
+	terraform -chdir=deploy/terraform/platform apply -input=false -var-file=$(CURDIR)/$(SETTINGS)
 
 deploy:
 	gh workflow run deploy --ref main
@@ -103,8 +120,8 @@ deploy:
 	gh run watch $$(gh run list --workflow deploy --limit 1 --json databaseId --jq '.[0].databaseId') --exit-status
 
 deploy-status:
-	@echo "VM booted: $$(gcloud compute instances get-guest-attributes mh-vm --zone us-central1-a --project meta-harness-prod --query-path mh/boot --format='value(value)' 2>/dev/null || echo nothing yet)"
-	@echo "console:   https://meta-harness.web.app"
+	@echo "VM booted: $$(gcloud compute instances get-guest-attributes mh-vm --zone $(ZONE) --project $(PROJECT) --query-path mh/boot --format='value(value)' 2>/dev/null || echo nothing yet)"
+	@echo "console:   https://$(CONSOLE_SITE).web.app"
 
 # Leaving the Google Cloud project (deploy/shutdown.sh says what each does). gcp-disable and gcp-teardown each do
 # the whole job in one command: back up the database, stop the meta-harness, then turn billing off or delete

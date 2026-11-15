@@ -1,16 +1,22 @@
+# The deployment's settings come from deploy/environment.json, passed with -var-file: the project, its region
+# and zone, the state bucket, the console's site, the OAuth client and the repo that may deploy. None of them
+# has a default here, so a forgotten setting fails the plan instead of pointing at some other project.
+
 variable "project" {
-  type    = string
-  default = "meta-harness-prod"
+  type = string
+}
+
+variable "project_number" {
+  description = "The project's number. CI's sign-in names the workload identity provider by it, so the plan checks it against the project."
+  type        = string
 }
 
 variable "region" {
-  type    = string
-  default = "us-central1"
+  type = string
 }
 
 variable "zone" {
-  type    = string
-  default = "us-central1-a"
+  type = string
 }
 
 variable "subnet_range" {
@@ -33,13 +39,11 @@ variable "data_disk_gb" {
 variable "github_repo" {
   description = "The repository whose main branch may deploy."
   type        = string
-  default     = "davecthomas/meta-harness"
 }
 
 variable "state_bucket" {
   description = "The bucket holding both stacks' Terraform state (make platform creates it)."
   type        = string
-  default     = "meta-harness-prod-terraform"
 }
 
 variable "operators" {
@@ -65,13 +69,11 @@ variable "secrets" {
 }
 
 variable "console_site" {
-  description = "The Firebase Hosting site, and so the console's address: https://<console_site>.web.app."
+  description = "The Firebase Hosting site, and so the console's address: https://<console_site>.web.app. Unique across Firebase."
   type        = string
-  default     = "meta-harness"
 }
 
 variable "google_client_id" {
-  description = "The OAuth client the console's Google sign-in uses (a client id is public)."
+  description = "The OAuth client the console's Google sign-in uses (a client id is public). Made by hand in the project (deploy/README.md); empty until then, and the release stack refuses to deploy without it."
   type        = string
-  default     = "57473592166-7gaei6qjh7rp5p21j0fnmaaqtbr4ovqn.apps.googleusercontent.com"
 }

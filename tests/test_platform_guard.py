@@ -8,7 +8,7 @@ spec = importlib.util.spec_from_file_location("platform_guard", ROOT / "deploy" 
 guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guard)
 
-DEPLOY = "serviceAccount:mh-deploy-sa@meta-harness-prod.iam.gserviceaccount.com"
+DEPLOY = "serviceAccount:mh-deploy-sa@example-project.iam.gserviceaccount.com"
 
 
 def change(address: str, actions: list[str], before: dict | None = None) -> dict:
