@@ -76,6 +76,23 @@ def test_a_planner_that_cannot_be_reached_leaves_the_last_list_deciding():
     assert directory.allowed("pat@example.com"), "the users last read go on deciding"
 
 
+def test_a_sign_in_the_planner_could_not_be_told_of_is_told_once_it_can_be_reached():
+    """A sign-in during a deploy, with the planner down, would otherwise show as Never for the session's days."""
+    planner = Planner(down=True)
+    directory = _directory(planner)
+    directory.signed_in("dave@example.com")
+    assert directory.allowed("dave@example.com")
+
+    planner.down = False
+    planner.calls.clear()
+    assert directory.allowed("dave@example.com")
+    assert ("POST", "/v1/admin/users/dave@example.com/signed-in") in planner.calls
+
+    planner.calls.clear()
+    directory.allowed("dave@example.com")
+    assert ("POST", "/v1/admin/users/dave@example.com/signed-in") not in planner.calls, "told only once"
+
+
 def test_a_deprovisioned_users_next_request_is_refused_and_a_regular_user_opens_no_admin_path(tmp_path):
     planner = Planner(
         [
