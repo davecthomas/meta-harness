@@ -20,7 +20,8 @@ import { api, type GoalDraft, type LabelCount, type LabelIssue } from "../../api
 // An optional helper for the New goal form: pick a label, see its open issues, and have a model draft the
 // goal's title and description from them. onDraft fills the form below; nothing is saved here, and nothing
 // here chooses the goal's issues. The form's Label field and Pick issues do that.
-export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void }) {
+// tracker: which tracker's labels and issues; the default tracker's when left out.
+export function LabelStart({ onDraft, tracker }: { onDraft: (draft: GoalDraft) => void; tracker?: string }) {
   const [labels, setLabels] = useState<LabelCount[] | null>(null);
   const [repos, setRepos] = useState<string[]>([]);
   const [repo, setRepo] = useState<string | null>(null);
@@ -34,14 +35,17 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.labels().then(
+    setPicked(null);
+    setIssues(null);
+    api.labels(undefined, tracker).then(
       (r) => {
         setLabels(r.labels);
         setRepos(r.repos);
+        setError(null);
       },
       (err) => setError(err instanceof Error ? err.message : String(err)),
     );
-  }, []);
+  }, [tracker]);
 
   const shown = useMemo(
     () =>
@@ -59,7 +63,7 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
     try {
       const found = await Promise.all(
         Object.keys(row.repos).map(async (name) =>
-          (await api.labelIssues(name, row.label)).map((issue) => ({ ...issue, repo: name })),
+          (await api.labelIssues(name, row.label, tracker)).map((issue) => ({ ...issue, repo: name })),
         ),
       );
       const all = found.flat();
@@ -74,7 +78,7 @@ export function LabelStart({ onDraft }: { onDraft: (draft: GoalDraft) => void })
     setDrafting(true);
     setError(null);
     try {
-      const made = await api.draftGoal({ label: picked.label, repos: Object.keys(picked.repos), refs: free.map((i) => i.ref) });
+      const made = await api.draftGoal({ label: picked.label, repos: Object.keys(picked.repos), refs: free.map((i) => i.ref), tracker });
       setDraft(made);
       onDraft(made);
     } catch (err) {

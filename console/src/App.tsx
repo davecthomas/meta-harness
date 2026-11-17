@@ -29,6 +29,7 @@ import { Inbox } from "./components/Inbox";
 import { FEATURES } from "./features";
 import { CommandPalette } from "./components/CommandPalette";
 import { AdminMenu } from "./components/AdminMenu";
+import { loadTrackers } from "./features/trackers/refs";
 import { KillSwitchBanner, KillSwitchButton } from "./components/KillSwitch";
 import { TreeItem } from "./components/NavTree";
 
@@ -66,7 +67,9 @@ export function App() {
 
   useEffect(() => {
     api.me().then(
-      (me) => {
+      async (me) => {
+        // The trackers first, so every page can link an issue whichever tracker it is in.
+        await loadTrackers();
         setWho(me.identity);
         setAdmin((me.roles ?? []).includes("admin"));
       },
@@ -89,6 +92,7 @@ export function App() {
     setSignIn(false);
     setExpired(false);
     setWho(identity);
+    void loadTrackers();
     api.me().then((me) => setAdmin((me.roles ?? []).includes("admin")), () => setAdmin(false));
   }, []);
 

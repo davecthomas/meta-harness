@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Anchor, Button, Group, Text } from "@mantine/core";
 import { IconArrowBackUp } from "@tabler/icons-react";
-import { api, issueUrl, type Task } from "../../api";
+import { api, issueUrl, trackerTitle, type Task } from "../../api";
 import type { Diagnosis } from "./diagnosis";
 
 // The actions a diagnosis offers, where its message is shown: Retry for the tasks it covers (all of them at
@@ -62,7 +62,7 @@ export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, o
         <Anchor component={Link} to={`/tasks/${tasks[0].id}`} size="sm">Open the task</Anchor>
       )}
       {diagnosis.remedies.includes("issue") && url && (
-        <Anchor href={url} target="_blank" size="sm">Edit the issue on GitHub</Anchor>
+        <Anchor href={url} target="_blank" size="sm">Edit the issue in {trackerTitle(issueRef ? issueRef.split(":")[0] : "github")}</Anchor>
       )}
       {diagnosis.remedies.includes("config") && <Anchor component={Link} to="/config" size="sm">Configuration</Anchor>}
       {error && <Text size="xs" c="red">{error}</Text>}

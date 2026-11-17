@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Badge, Group, Paper, Text, Title, useMantineColorScheme } from "@mantine/core";
+import { Paper, Text, Title, useMantineColorScheme } from "@mantine/core";
 import { api, type UserSettings } from "../../api";
+import { ConnectedTrackers } from "../trackers/ConnectedTrackers";
 import { InlineField } from "../../components/InlineField";
 import { ErrorAlert, Facts, PageHeader } from "../../components/ui";
 
@@ -86,10 +87,7 @@ export function SettingsPage() {
       </Paper>
       <Paper p="md" withBorder maw={720} mb="lg">
         <Title order={4} mb="sm">Connected trackers</Title>
-        <Group justify="space-between">
-          <Text size="sm">GitHub, through the deployment's GitHub App</Text>
-          <Badge color="teal" variant="light">Connected</Badge>
-        </Group>
+        <ConnectedTrackers />
       </Paper>
       <Paper p="md" withBorder maw={720} mb="lg">
         <Title order={4} mb="sm">Appearance and notifications</Title>

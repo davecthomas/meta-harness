@@ -11,6 +11,7 @@ import { ProfilesView } from "./ProfilesView";
 import { SkillsView } from "./SkillsView";
 import { JsonDialog, ReviewDialog, StagedBar } from "./StagedChanges";
 import { TiersView } from "./TiersView";
+import { TrackersView } from "../trackers/TrackersView";
 import { countChanges, reasonTarget, setIn, shapeProblems } from "./staging";
 
 const ORIGIN_COLORS: Record<string, string> = { seed: "gray", edit: "indigo", rollback: "orange" };
@@ -238,6 +239,7 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
       {summary.kind === "profiles" && <ProfilesView staging={staging} skills={skillNames} />}
       {summary.kind === "skills" && <SkillsView staging={staging} profiles={profileDocs} />}
       {summary.kind === "repos" && <ReposView staging={staging} />}
+      {summary.kind === "trackers" && <TrackersView staging={staging} />}
       {summary.kind === "task_policy" && <TaskPolicyView policy={document} maxSandboxes={maxSandboxes} staging={staging} />}
 
       <SectionTitle>Version history</SectionTitle>
@@ -314,6 +316,7 @@ function RollbackButton({ version, onConfirm }: { version: number; onConfirm: ()
 // What each kind is called in a sentence.
 const KIND_NAMES: Record<ConfigKind, string> = {
   tiers: "router tiers",
+  trackers: "issue trackers",
   profiles: "harness profiles",
   repos: "repo registry",
   skills: "skills",

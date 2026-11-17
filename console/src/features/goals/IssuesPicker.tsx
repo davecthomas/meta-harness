@@ -23,6 +23,8 @@ export function IssuesPicker(props: {
   viaLabel?: string[];
   action: string;
   onPick: (refs: string[]) => Promise<void> | void;
+  // Which tracker's issues to browse: the goal's. The default tracker's when left out.
+  tracker?: string;
 }) {
   const [available, setAvailable] = useState<string[]>([]);
   const [repo, setRepo] = useState<string>("all");
@@ -50,7 +52,7 @@ export function IssuesPicker(props: {
     setError(null);
     Promise.all(
       repos.map(async (name) => {
-        const found = await api.repoIssues(name, { label: label.trim() || undefined, q: text.trim() || undefined, limit: 500 });
+        const found = await api.repoIssues(name, { label: label.trim() || undefined, q: text.trim() || undefined, limit: 500, tracker: props.tracker });
         return found.issues.map((issue) => ({ ...issue, repo: name }));
       }),
     ).then(

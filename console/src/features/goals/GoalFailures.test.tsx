@@ -56,7 +56,7 @@ test("issues that failed the same way are one message: what happened, why, and w
   expect(within(screen.getByTestId("failure-fix_rounds")).getByText("The review still asked for changes after 3 fix rounds")).toBeTruthy();
   const refused = within(screen.getByTestId("failure-refused_no_checks"));
   expect(refused.getByText(/Add an "## Acceptance checks" section/)).toBeTruthy();
-  expect(refused.getByRole("link", { name: "Edit the issue on GitHub" }).getAttribute("href")).toBe("https://github.com/o/r/issues/3");
+  expect(refused.getByRole("link", { name: "Edit the issue in GitHub" }).getAttribute("href")).toBe("https://github.com/o/r/issues/3");
   expect(refused.queryByRole("button", { name: /Retry/ })).toBeNull();
   expect(alert.textContent).not.toContain("o/r#4");
 });

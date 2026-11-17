@@ -2619,7 +2619,22 @@ GitHub. `Trackers` (`trackers/router.py`) is every supported tracker as one:
 a call that names a ref goes to the tracker the ref's first part names, a
 call made for a goal to the goal's tracker, and any other (the label and
 issue lists before there is a goal, which take `?tracker=`) to the default.
-The repo registry's `tracker` field decides nothing.
+The repo registry's `tracker` field decides nothing, and the console no
+longer shows it.
+
+In the console, Configuration has an Issue trackers page
+(`console/src/features/trackers/TrackersView.tsx`), drawn from `GET
+/v1/trackers`: every supported tracker with whether it is set up, whether its
+sign-in is there (a missing one is named by its secrets, with where to add
+them), Set up, Make default and Remove, and its settings edited in place:
+Jira's site, its projects as key and repo rows, its issue type and its status
+names. Edits stage and save as one checked version, like the other kinds.
+The New goal form offers the trackers that are set up when there is more
+than one, starting on the default; its label suggestions, the label's issues
+and the issue picker read from the tracker chosen. A goal's page shows its
+tracker. A ref reads without its tracker and links to its issue for any
+tracker (`features/trackers/refs.ts`): GitHub's address comes from the ref,
+another tracker's from the `issue_url_prefix` the tracker reports.
 
 As built, the GitHub adapter (`trackers/github.py`) has every operation but
 `webhook`: `done` closes an issue and `todo` opens it again, the statuses

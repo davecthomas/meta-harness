@@ -86,6 +86,7 @@ export function LabelEdit({ goal, readOnly, save }: FieldProps) {
           value={value}
           onChange={onChange}
           repos={goal.repos}
+          tracker={goal.tracker ?? "github"}
           required={!picked}
           fieldProps={{
             label: undefined,

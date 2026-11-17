@@ -77,7 +77,7 @@ export function Id({ children }: { children: ReactNode }) {
 
 export function IssueLink({ issueRef }: { issueRef: string }) {
   const url = issueUrl(issueRef);
-  return url ? <Anchor href={url} target="_blank" size="sm">{issueRef.replace(/^github:/, "")}</Anchor> : <Code>{issueRef}</Code>;
+  return url ? <Anchor href={url} target="_blank" size="sm">{issueRef.replace(/^[a-z]+:/, "")}</Anchor> : <Code>{issueRef}</Code>;
 }
 
 export function TitleLink(props: { to: string; title: string; id: string }) {

@@ -15,7 +15,7 @@ export function groups(issues: IssueProgress[], tasks: Record<string, Task> = {}
   return groupFailures(
     failures(issues).map((i) => ({
       key: i.ref,
-      name: (i.task_id && tasks[i.task_id]?.title) || i.title || i.ref.replace(/^github:/, ""),
+      name: (i.task_id && tasks[i.task_id]?.title) || i.title || i.ref.replace(/^[a-z]+:/, ""),
       taskId: i.task_id,
       issueRef: i.ref,
       status: i.task_status,

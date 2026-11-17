@@ -51,7 +51,7 @@ test("adding a repo saves the registry with it and its checks", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
 
   await waitFor(() => expect(saved).toHaveLength(1));
-  expect(saved[0].document.repos["o/b"]).toEqual({ tracker: "github", default_checks: ["uv sync", "uv run pytest -q"] });
+  expect(saved[0].document.repos["o/b"]).toEqual({ default_checks: ["uv sync", "uv run pytest -q"] });
   expect(saved[0].note).toBe("added o/b");
 });
 

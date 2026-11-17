@@ -58,7 +58,7 @@ export function layout(issues: IssueProgress[]): { column: Map<string, Column>; 
 }
 
 function shortRef(ref: string): string {
-  return ref.replace(/^github:/, "");
+  return ref.replace(/^[a-z]+:/, "");
 }
 
 function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; actions?: ReactNode }) {
