@@ -34,7 +34,7 @@ export function SizeBadge({ issue }: { issue: IssueProgress }) {
 }
 
 function shortRef(ref: string): string {
-  return ref.replace(/^github:/, "");
+  return ref.replace(/^[a-z]+:/, "");
 }
 
 // The drafts a Split starts from: one per suggested title, each saying where it came from, with the held issue's

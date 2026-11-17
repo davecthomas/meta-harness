@@ -1,4 +1,4 @@
-import { Alert, Badge, Stack, Table, Text } from "@mantine/core";
+import { Alert, Stack, Table, Text } from "@mantine/core";
 import { InlineField } from "../../components/InlineField";
 import { DataTable, Facts } from "../../components/ui";
 import { isChanged, type Path } from "./staging";
@@ -170,30 +170,15 @@ export function TaskPolicyView({ policy, maxSandboxes, staging }: { policy: Reco
   );
 }
 
-const TRACKERS = ["github"];
-
 export function ReposView({ staging: s }: { staging: Staging }) {
   const repos: Record<string, any> = s.document.repos ?? {};
   return (
-    <DataTable head={["Repo", "Tracker", "Default acceptance checks"]}>
+    <DataTable head={["Repo", "Default acceptance checks"]}>
       {Object.entries(repos).map(([name, r]) => (
         <Table.Tr key={name} data-testid={`repo-${name}`}>
           <Table.Td>
             <Text ff="monospace" size="sm">{name}</Text>
             <Reasons reasons={s.reasons(`repo:${name}`)} />
-          </Table.Td>
-          <Table.Td>
-            <InlineField
-              kind="select"
-              label={`Tracker of ${name}`}
-              value={r.tracker ?? "github"}
-              data={TRACKERS.includes(r.tracker ?? "github") ? TRACKERS : [r.tracker, ...TRACKERS]}
-              display={<Badge variant="light" tt="none">{r.tracker ?? "github"}</Badge>}
-              changed={changed(s, ["repos", name, "tracker"])}
-              reasons={s.reasons(`repo:${name}:tracker`)}
-              readOnly={s.readOnly}
-              onCommit={(v) => s.stage(["repos", name, "tracker"], v ?? "github")}
-            />
           </Table.Td>
           <Table.Td>
             <InlineField

@@ -115,6 +115,11 @@ export function reasonTarget(kind: ConfigKind, document: Record<string, any>, re
     const field = fieldOf(reason.slice(name.length + 1).trimStart(), REPO_FIELDS);
     return field ? `repo:${name}:${field}` : `repo:${name}`;
   }
+  if (kind === "trackers") {
+    if (reason.startsWith("default ")) return "default";
+    const scheme = Object.keys(document.trackers ?? {}).find((n) => reason.startsWith(`${n}:`));
+    return scheme ? `tracker:${scheme}` : null;
+  }
   if (reason.startsWith("max_parallel")) return "max_parallel";
   if (reason.startsWith("review.reviewers") || reason.startsWith("reviewer ")) return "reviewers";
   if (reason.startsWith("review.max_rounds")) return "max_rounds";

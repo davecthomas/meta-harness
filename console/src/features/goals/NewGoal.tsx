@@ -4,7 +4,7 @@ import { Button, Checkbox, Group, NativeSelect, NumberInput, Paper, SegmentedCon
 import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
-import { api, type GoalDraft, type LabelIssue } from "../../api";
+import { api, refLabel, type GoalDraft, type LabelIssue, type Tracker } from "../../api";
 import { LabelField } from "./LabelField";
 import { LabelStart } from "./LabelStart";
 import { ErrorAlert, PageHeader } from "../../components/ui";
@@ -27,7 +27,7 @@ export function LabelIssues({ label, issues }: { label: string; issues: LabeledI
       </Text>
       {free.slice(0, SHOWN).map((i) => (
         <Text key={i.ref} size="sm">
-          {i.title} <Text span size="xs" c="dimmed" ff="monospace">{i.repo}#{i.number}</Text>
+          {i.title} <Text span size="xs" c="dimmed" ff="monospace">{refLabel(i.ref)}</Text>
         </Text>
       ))}
       {free.length > SHOWN && <Text size="xs" c="dimmed">and {free.length - SHOWN} more</Text>}
@@ -46,6 +46,24 @@ export function NewGoal() {
   const [refs, setRefs] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
   const [label, setLabel] = useState("");
+  // The issue tracker the goal uses, one for all its issues: the default one, unless another that is set up is
+  // chosen. Empty until the trackers are read; the service then uses the default.
+  const [tracker, setTracker] = useState("");
+  const [trackers, setTrackers] = useState<Tracker[]>([]);
+  useEffect(() => {
+    api.trackers().then(
+      (found) => {
+        setTrackers(found.trackers.filter((t) => t.configured));
+        setTracker((now) => now || found.default);
+      },
+      () => undefined,
+    );
+  }, []);
+  // Another tracker's issues are other issues: the label's and the picked ones start again.
+  function chooseTracker(next: string) {
+    setTracker(next);
+    setRefs([]);
+  }
   const [budget, setBudget] = useState<string | number>("");
   // What the budget does when it is reached, and how far past it a goal that stops may go.
   const [budgetMode, setBudgetMode] = useState<"block" | "warn">("block");
@@ -86,7 +104,7 @@ export function NewGoal() {
     }
     let stale = false;
     const wait = setTimeout(() => {
-      Promise.all(chosen.map(async (repo) => (await api.labelIssues(repo, name)).map((issue) => ({ ...issue, repo })))).then(
+      Promise.all(chosen.map(async (repo) => (await api.labelIssues(repo, name, tracker || undefined)).map((issue) => ({ ...issue, repo })))).then(
         (found) => !stale && setLabeled(found.flat()),
         () => !stale && setLabeled(null),
       );
@@ -95,7 +113,7 @@ export function NewGoal() {
       stale = true;
       clearTimeout(wait);
     };
-  }, [label, chosen]);
+  }, [label, chosen, tracker]);
   const viaLabel = useMemo(() => (labeled ?? []).filter((i) => !i.held_by).map((i) => i.ref), [labeled]);
 
   // Whether the goal plans its own issues from its description (a feature goal) or runs issues that exist.
@@ -130,6 +148,7 @@ export function NewGoal() {
         statement,
         repos: chosen,
         ...(label.trim() ? { label: label.trim() } : {}),
+        ...(tracker ? { tracker } : {}),
         refs,
         max_usd: budget === "" ? null : String(budget),
         ...(budget === "" ? {} : { budget_mode: budgetMode, budget_overage_percent: Number(overage) || 0 }),
@@ -178,7 +197,7 @@ export function NewGoal() {
       <PageHeader title="New goal" description="A goal takes the open issues with its label, in its repos, and runs each one to a pull request." />
       <ErrorAlert error={error} />
       {unsaved.element}
-      <LabelStart onDraft={fromDraft} />
+      <LabelStart onDraft={fromDraft} tracker={tracker || undefined} />
       <Paper maw={720}>
         <form onSubmit={submit}>
           <Stack gap="lg">
@@ -203,6 +222,15 @@ export function NewGoal() {
                 {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
               </Stack>
             </Checkbox.Group>
+            {trackers.length > 1 && (
+              <NativeSelect
+                label="Issue tracker"
+                description="Where the goal's issues are. A goal uses one tracker for all its issues, and keeps it."
+                value={tracker}
+                onChange={(e) => chooseTracker(e.currentTarget.value)}
+                data={trackers.map((t) => ({ value: t.scheme, label: t.signed_in ? t.title : `${t.title} (not signed in)` }))}
+              />
+            )}
             <div>
               <Text size="sm" fw={500} mb={4}>Where its issues come from</Text>
               <SegmentedControl
@@ -224,6 +252,7 @@ export function NewGoal() {
               value={label}
               onChange={setLabel}
               repos={chosen}
+              tracker={tracker || undefined}
               required={!plans && !refs.length}
               fieldProps={plans ? { description: "Optional. Left empty, the goal gets a label of its own for the issues it creates." } : undefined}
             />
@@ -236,7 +265,7 @@ export function NewGoal() {
                 {refs.length ? `${refs.length} picked by hand: the goal takes these besides its label's, or instead of a label.` : "Optional: pick more open issues for the goal by hand."}
               </Text>
             </Group>
-            <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} />
+            <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} tracker={tracker || undefined} />
             <Group grow align="flex-start">
               <NumberInput
                 label="Budget"

@@ -97,7 +97,7 @@ test("Approve says what it will create, creates the issues and tells the page", 
   const { asked, approved } = show(planned());
   fireEvent.click(await screen.findByRole("button", { name: "Approve the plan" }));
   const dialog = await screen.findByRole("dialog", { name: "Approve the plan" });
-  expect(dialog.textContent).toContain("creates 3 issues on GitHub with the label meta-harness:goal-g-1");
+  expect(dialog.textContent).toContain("creates 3 issues in the goal's issue tracker with the label meta-harness:goal-g-1");
   fireEvent.click(within(dialog).getByRole("button", { name: "Create the issues and start" }));
   await waitFor(() => expect(approved).toHaveLength(1));
   expect(asked.at(-1)).toMatchObject({ url: "/v1/goals/g-1/approve", method: "POST" });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Anchor, Badge, Button, Group, List, Modal, Select, Stack, Table, Text, Textarea } from "@mantine/core";
+import { Alert, Anchor, Button, Group, List, Modal, Select, Stack, Table, Text, Textarea } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { api, ApiError, type ConfigVersion } from "../../api";
 import { InlineField } from "../../components/InlineField";
@@ -16,7 +16,7 @@ function lines(text: string): string[] {
 function AddRepoForm(props: { names: string[]; onClose: () => void; onSave: (name: string, spec: Repo) => Promise<boolean> }) {
   const [name, setName] = useState<string | null>(null);
   const [checks, setChecks] = useState("");
-  const save = () => (name ? props.onSave(name, { tracker: "github", default_checks: lines(checks) }) : Promise.resolve(false));
+  const save = () => (name ? props.onSave(name, { default_checks: lines(checks) }) : Promise.resolve(false));
   const unsaved = useUnsavedChanges({
     dirty: checks !== "" || name !== null,
     describe: name ? `the repository ${name}` : "the new repository",
@@ -36,7 +36,6 @@ function AddRepoForm(props: { names: string[]; onClose: () => void; onSave: (nam
           onChange={setName}
           nothingFoundMessage="No repo left: install the GitHub App on more"
         />
-        <Text size="sm">Tracker: GitHub</Text>
         <Textarea
           label="Default acceptance checks"
           description="One command per line. A task runs them when its issue names none."
@@ -134,11 +133,10 @@ export function ReposPage() {
           <List size="sm">{reasons.map((r) => <List.Item key={r}>{r}</List.Item>)}</List>
         </Alert>
       )}
-      <DataTable head={["Repository", "Tracker", "Default acceptance checks", ""]}>
+      <DataTable head={["Repository", "Default acceptance checks", ""]}>
         {Object.entries(repos).map(([name, spec]) => (
           <Table.Tr key={name}>
             <Table.Td><Anchor href={`https://github.com/${name}`} target="_blank" ff="monospace" size="sm">{name}</Anchor></Table.Td>
-            <Table.Td><Badge variant="light" tt="none">{spec.tracker ?? "github"}</Badge></Table.Td>
             <Table.Td>
               <InlineField
                 kind="tags"

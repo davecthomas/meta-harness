@@ -1,6 +1,6 @@
 import { call } from "../../client";
 
-export type ConfigKind = "tiers" | "profiles" | "repos" | "skills" | "task_policy";
+export type ConfigKind = "tiers" | "profiles" | "repos" | "trackers" | "skills" | "task_policy";
 
 // A skill as the skills configuration keeps it: what it is for, where it came from, and its files.
 export interface SkillEntry {

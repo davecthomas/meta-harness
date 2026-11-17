@@ -9,15 +9,18 @@ import { api, type LabelCount } from "../../api";
 // fieldProps: what the goal page's in-place edit changes on the input, such as no label of its own.
 // The labels to suggest for these repos, with each one's open-issue count, read once. Shared by the goal's
 // Label field and the issue picker's Label filter, so both suggest the same labels the same way.
-export function useLabelSuggestions(repos: string[]) {
+// tracker: which tracker's labels; the default tracker's when left out.
+export function useLabelSuggestions(repos: string[], tracker?: string) {
   const [labels, setLabels] = useState<LabelCount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    api.labels().then(
+    setLabels(null);
+    setError(null);
+    api.labels(undefined, tracker).then(
       (r) => setLabels(r.labels),
       (err) => setError(err instanceof Error ? err.message : String(err)),
     );
-  }, []);
+  }, [tracker]);
   const options = useMemo(() => suggestions(labels ?? [], repos), [labels, repos]);
   const byName = useMemo(() => new Map(options.map((o) => [o.label, o])), [options]);
   return { options, byName, error, loaded: labels !== null };
@@ -35,8 +38,8 @@ export function LabelOption({ row }: { row: LabelSuggestion }) {
   );
 }
 
-export function LabelField({ value, onChange, repos, required = true, fieldProps }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean; fieldProps?: Partial<AutocompleteProps> }) {
-  const { options, byName, error, loaded } = useLabelSuggestions(repos);
+export function LabelField({ value, onChange, repos, required = true, fieldProps, tracker }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean; fieldProps?: Partial<AutocompleteProps>; tracker?: string }) {
+  const { options, byName, error, loaded } = useLabelSuggestions(repos, tracker);
 
   const typed = value.trim();
   let hint: string | null = null;

@@ -23,7 +23,7 @@ export function RemoveIssue({ goalId, issueRef, task, onRemoved }: { goalId: str
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const effect = removeEffect(task);
-  const name = issueRef.replace(/^github:/, "");
+  const name = issueRef.replace(/^[a-z]+:/, "");
   async function remove() {
     setBusy(true);
     setError(null);
@@ -45,7 +45,7 @@ export function RemoveIssue({ goalId, issueRef, task, onRemoved }: { goalId: str
       <Modal opened={asking} onClose={() => setAsking(false)} title={`Remove ${name} from the goal`}>
         <Stack gap="md" data-testid="remove-issue">
           <Text size="sm">
-            The goal lets this issue go: it is not taken in again by the goal's label, it no longer counts toward the goal being met, and another goal may take it. Nothing changes on GitHub. Add issues brings it back.
+            The goal lets this issue go: it is not taken in again by the goal's label, it no longer counts toward the goal being met, and another goal may take it. Nothing changes on its tracker. Add issues brings it back.
           </Text>
           <Text size="sm">{effect.text}</Text>
           {error && <Text size="sm" c="red">{error}</Text>}

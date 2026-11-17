@@ -4,6 +4,7 @@
 import { ApiError, call, query } from "./client";
 import { adminApi } from "./features/admin/api";
 import { performanceApi } from "./features/performance/api";
+import { trackersApi } from "./features/trackers/api";
 import { configApi } from "./features/config/api";
 import { goalsApi } from "./features/goals/api";
 import { overviewApi } from "./features/overview/api";
@@ -15,6 +16,7 @@ export { ApiError, call, query };
 export * from "./features/admin/api";
 export * from "./features/config/api";
 export * from "./features/goals/api";
+export type { Tracker, TrackerSetting, Trackers } from "./features/trackers/api";
 export * from "./features/overview/api";
 export * from "./features/performance/api";
 export * from "./features/settings/api";
@@ -29,6 +31,8 @@ export interface Goal {
   repos: string[];
   // The label that queues an issue for the goal; null for a goal that takes only issues picked by ref.
   label: string | null;
+  // The issue tracker all the goal's issues are in, fixed when it was created. Null: GitHub, as before goals named one.
+  tracker?: string | null;
   modality: string;
   status: string;
   auto_merge: boolean;
@@ -221,6 +225,7 @@ export const api = {
     call<KillSwitch>("/v1/kill-switch", { method: "POST", body: JSON.stringify({ mode, reason }) }),
   ...adminApi,
   ...performanceApi,
+  ...trackersApi,
   ...configApi,
   ...goalsApi,
   ...overviewApi,
@@ -233,7 +238,5 @@ export function tailUrl(taskIds: string[], fromPosition: number, base = "", tick
   return base + "/v1/events/tail" + query({ task_id: taskIds.join(","), from_position: fromPosition, ticket: ticket ?? undefined });
 }
 
-export function issueUrl(ref: string): string | null {
-  const m = /^github:([\w.-]+\/[\w.-]+)#(\d+)$/.exec(ref);
-  return m ? `https://github.com/${m[1]}/issues/${m[2]}` : null;
-}
+// Where an issue is and what its ref reads as, for whichever tracker the ref names (features/trackers/refs.ts).
+export { issueUrl, refLabel, trackerTitle } from "./features/trackers/refs";

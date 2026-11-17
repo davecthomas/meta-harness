@@ -295,7 +295,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
       <Modal opened={asking === "approve"} onClose={() => setAsking(null)} title="Approve the plan">
         <Stack gap="md">
           <Text size="sm">
-            This creates {drafts.length} {drafts.length === 1 ? "issue" : "issues"} on GitHub with the label {shown.label}, in the order shown, and
+            This creates {drafts.length} {drafts.length === 1 ? "issue" : "issues"} in the goal's issue tracker with the label {shown.label}, in the order shown, and
             starts the goal: its tasks then run each issue to a pull request.
           </Text>
           <Group justify="flex-end">
