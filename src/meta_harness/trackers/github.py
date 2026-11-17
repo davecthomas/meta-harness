@@ -1,0 +1,144 @@
+"""GitHub Issues as a tracker. A repo's issues live in the repo itself.
+
+An issue's ref is `github:<owner>/<repo>#<number>`. Every call goes through the repo owner's GitHub App, with
+`issues: read` to read and `issues: write` to create, comment or close.
+"""
+
+import re
+
+from meta_harness.github_app import GitHubAppError, GitHubApps
+from meta_harness.run_service.code_host import acceptance_checks, issue_paths
+from meta_harness.trackers.base import DONE, TODO, Issue, TrackerError
+
+SCHEME = "github"
+READ_ISSUES = {"issues": "read"}
+# Creating a plan's issues and the goal's label for them, commenting, and closing.
+WRITE_ISSUES = {"issues": "write"}
+REF = re.compile(r"^github:(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$")
+# "Depends on: #12, owner/repo#13" lines in an issue body.
+DEPENDS_LINE = re.compile(r"^\s*depends on:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+DEPENDS_ITEM = re.compile(r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>\d+)")
+
+
+def ref_for(repo: str, number: int) -> str:
+    return f"github:{repo}#{number}"
+
+
+def parse_ref(ref: str) -> tuple[str, int]:
+    match = REF.match(ref)
+    if not match:
+        raise ValueError(f"{ref!r} is not github:<owner>/<repo>#<number>")
+    return match["repo"], int(match["number"])
+
+
+def depends_on(repo: str, body: str) -> list[str]:
+    """The issues a body's `Depends on:` lines name, as refs. A bare #12 is in the same repo."""
+    refs: list[str] = []
+    for line in DEPENDS_LINE.findall(body or ""):
+        for item in DEPENDS_ITEM.finditer(line):
+            ref = ref_for(item["repo"] or repo, int(item["number"]))
+            if ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def _issue(repo: str, data: dict) -> Issue:
+    body = data.get("body") or ""
+    return Issue(
+        ref=ref_for(repo, data["number"]),
+        repo=repo,
+        number=data["number"],
+        title=data["title"],
+        body=body,
+        labels=[label["name"] for label in data.get("labels", [])],
+        state=data["state"],
+        depends_on=depends_on(repo, body),
+        checks=acceptance_checks(body),
+        updated_at=data.get("updated_at") or "",
+        paths=issue_paths(body),
+        author=(data.get("user") or {}).get("login") or "",
+        author_association=data.get("author_association") or "",
+    )
+
+
+class GitHubTracker:
+    scheme = SCHEME
+
+    def __init__(self, apps: GitHubApps | None = None) -> None:
+        self.apps = apps or GitHubApps()
+
+    async def _call(self, repo: str, permissions: dict[str, str], method: str, path: str, **kwargs):
+        """One GitHub call, its failure as a TrackerError, so no caller needs to know the tracker is GitHub."""
+        try:
+            return await self.apps.call(repo, permissions, method, path, **kwargs)
+        except GitHubAppError as err:
+            raise TrackerError(str(err), retryable=err.retryable, status=err.status) from err
+
+    async def list_open(self, repo: str, label: str | None) -> list[Issue]:
+        issues: list[Issue] = []
+        page = 1
+        params: dict = {"state": "open", "per_page": 100}
+        if label is not None:
+            params["labels"] = label
+        while True:
+            batch = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues", params={**params, "page": page})
+            # The issues endpoint lists pull requests too.
+            issues += [_issue(repo, item) for item in batch if "pull_request" not in item]
+            if len(batch) < 100:
+                return issues
+            page += 1
+
+    async def read(self, ref: str) -> Issue:
+        repo, number = parse_ref(ref)
+        return _issue(repo, await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}"))
+
+    async def ensure_label(self, repo: str, label: str) -> None:
+        """Makes sure the repo has the label, so an issue created with it carries it."""
+        try:
+            await self._call(
+                repo,
+                WRITE_ISSUES,
+                "POST",
+                f"/repos/{repo}/labels",
+                json={"name": label, "color": "5319e7", "description": "A meta-harness goal's issues"},
+            )
+        except TrackerError as err:
+            # 422: the label is there already.
+            if err.status != 422:
+                raise
+
+    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
+        """Creates one issue. Only the planner calls it, and only for a plan an operator approved."""
+        created = await self._call(
+            repo, WRITE_ISSUES, "POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": labels}
+        )
+        return _issue(repo, created)
+
+    async def comment(self, ref: str, body: str) -> str:
+        repo, number = parse_ref(ref)
+        made = await self._call(
+            repo, WRITE_ISSUES, "POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body}
+        )
+        return str(made.get("html_url") or "")
+
+    async def set_status(self, ref: str, status: str) -> bool:
+        """A GitHub issue is open or closed, nothing between: done closes it, todo opens it again, and a status
+        in progress or in review changes nothing. A pull request's `Closes` line closes its issue by itself
+        when it merges; this is for an issue no merged pull request names."""
+        wanted = {DONE: "closed", TODO: "open"}.get(status)
+        if wanted is None:
+            return False
+        repo, number = parse_ref(ref)
+        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
+        if now["state"] == wanted:
+            return False
+        change = {"state": wanted, **({"state_reason": "completed"} if wanted == "closed" else {})}
+        await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json=change)
+        return True
+
+    async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
+        """Nothing to do: GitHub links a pull request to the issue its description's `Closes` line names."""
+
+    def url(self, ref: str) -> str | None:
+        match = REF.match(ref)
+        return f"https://github.com/{match['repo']}/issues/{match['number']}" if match else None

@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
 from meta_harness import db
-from meta_harness.github_app import GitHubAppError
+from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import plans, store
 from meta_harness.planner.drafting import PLANNER_CONFIG_PATH
 from meta_harness.planner.tracker import Issue, ref_for
@@ -290,7 +290,7 @@ async def approve(goal: dict, writer: IssueWriter, events: Events, who: str) -> 
                 actor=who,
                 tags={"goal_id": goal["id"]},
             )
-    except GitHubAppError as err:
+    except TrackerError as err:
         made = f" after creating {len(created)} of {len(plan['drafts'])} issues" if created else ""
         raise PlanError(f"GitHub refused{made}: {err}. Approve again to carry on") from err
     events.emit(

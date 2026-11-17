@@ -2568,20 +2568,35 @@ tracker, through one adapter interface:
 
 | Adapter operation | Purpose |
 |---|---|
-| `list_open(repo, label)` | The open issues with the goal's label in one repo |
+| `list_open(repo, label)` | The open issues with the goal's label for one repo |
 | `read(ref)` | One issue: title, body, labels, state, and the issues that block it |
-| `create(repo, draft)` | Create an issue from a planning run's draft: title, body, labels, dependencies. Returns its `ref` |
-| `comment(ref, text)` | Record a refusal, an outcome or a plan on the issue |
-| `label(ref, add, remove)` | `meta-harness:failed`, `meta-harness:operator`, the goal label |
-| `close(ref)` | Close an issue whose pull request merged without `Closes`, or an operator issue the operator console closed |
-| `update(ref, state)` | Write a task's state back to the issue, as labels or the tracker's status field, with the pull request link |
-| `webhook(payload)` | Turn a tracker's webhook into `issue_opened`, `issue_edited`, `issue_labeled`, `issue_closed` events, so the Inputs view and the goal loop never poll |
-| `sweep(repo, label, since)` | Issues changed since a time, for the reconciliation that catches a missed webhook |
+| `ensure_label(repo, label)` | Make sure an issue created for the repo can carry the label |
+| `create_issue(repo, title, body, labels)` | Create an issue, for an approved plan's draft or a split. Returns it with its `ref` |
+| `comment(ref, text)` | Add a comment to the issue. Returns the comment's address |
+| `set_status(ref, status)` | Move the issue to `todo`, `in_progress`, `in_review` or `done`, as far as the tracker has such a state. Returns whether it changed |
+| `link_pull_request(ref, pr_url, title)` | Record the pull request on the issue, where the tracker does not find it by itself |
+| `url(ref)` | Where a person reads the issue |
+| `webhook(payload)` | Planned: turn a tracker's webhook into `issue_opened`, `issue_edited`, `issue_labeled`, `issue_closed` events, so the Inputs view and the goal loop never poll |
 
-As built, the GitHub adapter has `list_open` and `read`, with an app token
-that only reads issues, and a sweep every `MH_PLANNER_SWEEP_SECONDS` stands
-in for the webhook. The writing operations and the Jira and Linear
-adapters are planned. The sweep also reads the pull requests of `ready` and
+The interface is `meta_harness.trackers.base.Tracker`, and each tracker is
+one adapter module beside it (`src/meta_harness/trackers/`). `repo` is always
+the code repo: an adapter whose issues live elsewhere maps the repo to that
+place itself. A failed call raises `TrackerError`, with whether to try again,
+so no caller knows which tracker it spoke to. `Trackers`
+(`trackers/router.py`) is every connected tracker as one: a call that names a
+repo goes to the adapter of the tracker the repo registry gives the repo, and
+a call that names a ref goes to the adapter the ref's first part names. A
+tracker that is not connected is refused by name, with what to do.
+Outside an adapter a ref is opaque: stored, compared and passed back.
+
+As built, the GitHub adapter (`trackers/github.py`) has every operation but
+`webhook`: `done` closes an issue and `todo` opens it again, the statuses
+between change nothing, since a GitHub issue is open or closed, and
+`link_pull_request` does nothing, since GitHub links a pull request to the
+issue its `Closes` line names. The planner calls `list_open`, `read`,
+`ensure_label` and `create_issue`; nothing calls `comment`, `set_status` or
+`link_pull_request` yet. A sweep every `MH_PLANNER_SWEEP_SECONDS` stands
+in for the webhook. The Jira and Linear adapters are planned. The sweep also reads the pull requests of `ready` and
 `review_unresolved` tasks and their checks (Review loop), and of `canceled`
 tasks that left one open, until it merges or closes, through the run
 service's code-host functions, with a token that has `pull_requests: read`,

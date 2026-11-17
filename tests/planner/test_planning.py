@@ -9,7 +9,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from meta_harness.github_app import GitHubAppError
+from meta_harness.trackers import TrackerError
 from meta_harness.planner.service import create_app
 from meta_harness.planner.tracker import Issue
 
@@ -35,7 +35,7 @@ class WritingTracker(FakeTracker):
     async def create_issue(self, repo, title, body, labels):
         if self.refuse_at == len(self.created) + 1:
             self.refuse_at = None
-            raise GitHubAppError("403 Resource not accessible by integration", retryable=False, status=403)
+            raise TrackerError("403 Resource not accessible by integration", retryable=False, status=403)
         self.next += 1
         ref = f"github:{repo}#{self.next}"
         issue = Issue(ref=ref, repo=repo, number=self.next, title=title, body=body, labels=list(labels), state="open")
