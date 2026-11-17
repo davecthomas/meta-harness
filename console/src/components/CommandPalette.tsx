@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Badge, Group, Kbd, Modal, Stack, Table, Text, TextInput, UnstyledButton } from "@mantine/core";
 import { IconSearch } from "@tabler/icons-react";
 import { api } from "../api";
+import { errorText, ReadFailed } from "./ReadFailed";
 
 // One thing the palette can do: open a page, a goal or a task, or run an action.
 export interface Command {
@@ -35,6 +36,7 @@ export function CommandPalette({ admin }: { admin: boolean }) {
   const [help, setHelp] = useState(false);
   const [q, setQ] = useState("");
   const [found, setFound] = useState<Command[]>([]);
+  const [searchFailed, setSearchFailed] = useState<string | null>(null);
   const [at, setAt] = useState(0);
   const pending = useRef<string | null>(null);
 
@@ -98,12 +100,17 @@ export function CommandPalette({ admin }: { admin: boolean }) {
       api.search(text).then(
         (r) => {
           if (stale) return;
+          setSearchFailed(null);
           setFound([
             ...r.goals.map((g) => ({ group: "Goals" as const, label: g.title, detail: g.status, run: go(`/goals/${g.id}`) })),
             ...r.tasks.map((t) => ({ group: "Tasks" as const, label: t.title, detail: t.status, run: go(`/tasks/${t.id}`) })),
           ]);
         },
-        () => !stale && setFound([]),
+        (err) => {
+          if (stale) return;
+          setFound([]);
+          setSearchFailed(errorText(err));
+        },
       );
     }, 200);
     return () => {
@@ -158,7 +165,8 @@ export function CommandPalette({ admin }: { admin: boolean }) {
               </Group>
             </UnstyledButton>
           ))}
-          {shown.length === 0 && <Text size="sm" c="dimmed">Nothing matches.</Text>}
+          {searchFailed && <ReadFailed what="the goals and tasks that match" error={searchFailed} retries="Type again to retry; the pages and actions above still work." />}
+          {shown.length === 0 && !searchFailed && <Text size="sm" c="dimmed">Nothing matches.</Text>}
         </Stack>
       </Modal>
       <Modal opened={help} onClose={() => setHelp(false)} title="Keyboard shortcuts">

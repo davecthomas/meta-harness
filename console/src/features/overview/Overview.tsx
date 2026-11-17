@@ -10,6 +10,7 @@ import { Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, TitleLi
 import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
 import { needsYouNote, useNeedsYou, type NeedsYouItem } from "./needsYou";
 import { SupervisorHealth } from "./SupervisorHealth";
+import { errorText, ReadFailed } from "../../components/ReadFailed";
 
 // A goal that is open: taking in issues, planning them, or waiting on someone. The same list the Goals page's
 // Open filter uses.
@@ -132,9 +133,11 @@ function Stat(props: { label: string; value: number | null; note?: string; to?: 
 // Today's spend across every goal, and the five tasks that cost the most today, from today's attempts.
 export function TodaySpend() {
   const [attempts, setAttempts] = useState<MhEvent[] | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
-    api.recentEvents(["attempt_finished"], 2000).then(setAttempts, () => setAttempts(null));
+    api.recentEvents(["attempt_finished"], 2000).then(setAttempts, (err) => setFailed(errorText(err)));
   }, []);
+  if (failed) return <ReadFailed what="today's spend" error={failed} />;
   if (!attempts) return null;
   const today = new Date().toISOString().slice(0, 10);
   const byTask: Record<string, number> = {};

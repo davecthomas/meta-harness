@@ -27,6 +27,7 @@ import { ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusB
 import { statusLabel } from "../../components/status";
 import { shownStatus } from "./shownStatus";
 import { moneyText } from "../../money";
+import { errorText, ReadFailed } from "../../components/ReadFailed";
 
 const FIRST = 400;
 
@@ -85,6 +86,7 @@ export function TaskPage() {
     setParams(kept);
   };
   const [rounds, setRounds] = useState<ReviewRound[] | null>(null);
+  const [reviewsFailed, setReviewsFailed] = useState<string | null>(null);
   // The task's goal's name, for the link back to it. Null until read, or when the task has no goal.
   const [goalName, setGoalName] = useState<string | null>(null);
   const oldest = useRef<number | null>(null);
@@ -135,7 +137,14 @@ export function TaskPage() {
   const prUrl = task?.pr_url ?? null;
   useEffect(() => {
     if (!prUrl) return;
-    api.reviews(taskId).then(setRounds, () => setRounds([]));
+    api.reviews(taskId).then(
+      (read) => {
+        setRounds(read);
+        setReviewsFailed(null);
+      },
+      // A failed read is not "no review yet": the tab says it could not be read.
+      (err) => setReviewsFailed(errorText(err)),
+    );
   }, [taskId, prUrl, facts.status]);
 
   const onEvent = useCallback((e: MhEvent) => {
@@ -246,7 +255,9 @@ export function TaskPage() {
         ]}
       />
       {tab === "reviews" && task.pr_url ? (
-        rounds ? (
+        reviewsFailed && !rounds ? (
+          <ReadFailed what="this task's reviews" error={reviewsFailed} />
+        ) : rounds ? (
           <Reviews
             task={{ ...task, status }}
             rounds={rounds}

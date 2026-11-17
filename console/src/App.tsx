@@ -7,6 +7,7 @@ import {
   AppShell,
   Avatar,
   Burger,
+  Button,
   Center,
   Group,
   Loader,
@@ -51,6 +52,7 @@ export function App() {
   const [who, setWho] = useState<string | null>(null);
   const [admin, setAdmin] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  const [notAllowed, setNotAllowed] = useState(false);
   const [signIn, setSignIn] = useState(false);
   // Why the sign-in screen shows, when it is not the first visit: the session ended while the console was open.
   const [expired, setExpired] = useState(false);
@@ -76,7 +78,11 @@ export function App() {
       },
       (err) => {
         if (err instanceof ApiError && err.status === 401) setSignIn(true);
-        else setRefused(err instanceof ApiError ? err.detail : String(err));
+        else {
+          // Refused (403) is not the same as unreachable: each says what to do.
+          setNotAllowed(err instanceof ApiError && err.status === 403);
+          setRefused(err instanceof ApiError ? err.detail : String(err));
+        }
       },
     );
   }, []);
@@ -169,7 +175,20 @@ export function App() {
 
       <AppShell.Main>
         {refused ? (
-          <Alert color="red" title="Not allowed" maw={640}>{refused}</Alert>
+          <Alert color="red" title={notAllowed ? "This account may not open the console" : "The console could not be reached"} maw={640} data-testid="refused">
+            <Text size="sm" mb="sm">{refused}</Text>
+            {notAllowed ? (
+              <Group gap="sm">
+                <Text size="sm">Ask an admin to invite this Google account, or sign in with one that is invited.</Text>
+                <Button size="compact-sm" variant="white" color="red" onClick={() => void signOut()}>Sign out and use another account</Button>
+              </Group>
+            ) : (
+              <Group gap="sm">
+                <Text size="sm">This is the console's fault, not your account's. It may be restarting for a deploy.</Text>
+                <Button size="compact-sm" variant="white" color="red" onClick={() => window.location.reload()}>Try again</Button>
+              </Group>
+            )}
+          </Alert>
         ) : who === null ? (
           <Center h={240}><Loader /></Center>
         ) : (

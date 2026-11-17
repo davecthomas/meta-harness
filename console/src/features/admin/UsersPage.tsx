@@ -3,6 +3,7 @@ import { Badge, Button, Group, NativeSelect, Paper, Stack, Table, Text, TextInpu
 import { IconUserPlus } from "@tabler/icons-react";
 import { api, type ConsoleUser } from "../../api";
 import { DataTable, Empty, ErrorAlert, PageHeader, when } from "../../components/ui";
+import { errorText } from "../../components/ReadFailed";
 
 // The console's users, for an admin: invite one, set each one's role, and end one's access. There is always an
 // admin: the last one's row says why it cannot be changed, and the server refuses it too.
@@ -53,9 +54,17 @@ export function UsersPage() {
       setEmail("");
       setRole("user");
     });
-  const copy = (u: ConsoleUser) => {
-    void navigator.clipboard?.writeText(inviteText(u.email, u.invited_by, window.location.origin));
-    setCopied(u.email);
+  // "Copied" only once the invite is on the clipboard: a browser may refuse, and then the text is shown to
+  // copy by hand.
+  const copy = async (u: ConsoleUser) => {
+    const text = inviteText(u.email, u.invited_by, window.location.origin);
+    try {
+      if (!navigator.clipboard) throw new Error("this browser gives pages no clipboard");
+      await navigator.clipboard.writeText(text);
+      setCopied(u.email);
+    } catch (err) {
+      window.prompt(`The invite could not be copied (${errorText(err)}). Copy it from here:`, text);
+    }
   };
 
   return (

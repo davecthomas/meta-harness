@@ -3334,6 +3334,13 @@ if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
 the switch every 15 seconds.
 
+A section that could not read what it lists says so, with why and what to do
+(`console/src/components/ReadFailed.tsx`): it never shows nothing, or its
+empty state, in place of a failure, so "none" means there are none. An
+action that failed says it did not happen and that nothing changed. The
+shell tells an account that is refused (ask an admin for an invite, or sign
+out and use another) from a console that cannot be reached (try again).
+
 A status has one label, one meaning and one color, wherever it shows
 (`console/src/components/status.ts`): the service's names never reach a page.
 A task reads Queued, Blocked, Working, In review, Taken over, Ready to merge,

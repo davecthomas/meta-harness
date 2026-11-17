@@ -4,6 +4,7 @@ import { Box, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import { api } from "../../api";
 import { SectionTitle, when } from "../../components/ui";
 import type { PullRequestCell, PullRequests } from "./api";
+import { errorText, ReadFailed } from "../../components/ReadFailed";
 
 // What each pull request state means, and its color: the two that need an operator are the strongest.
 export const PR_STATES = [
@@ -47,9 +48,11 @@ function Cell({ pr, open }: { pr: PullRequestCell; open: (pr: PullRequestCell) =
 export function PullRequestsRow() {
   const navigate = useNavigate();
   const [found, setFound] = useState<PullRequests | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
-    api.pullRequests().then(setFound, () => setFound(null));
+    api.pullRequests().then(setFound, (err) => setFailed(errorText(err)));
   }, []);
+  if (failed) return <ReadFailed what="the pull requests" error={failed} />;
   if (!found || !found.prs.length) return null;
   const open = (pr: PullRequestCell) =>
     navigate(`/tasks/${pr.task_id}` + (pr.latest_run_id ? `?run=${encodeURIComponent(pr.latest_run_id)}` : ""));
