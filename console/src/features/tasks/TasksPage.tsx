@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Alert, Badge, Button, Checkbox, Group, SegmentedControl, Table, Text } from "@mantine/core";
+import { type ReactNode, useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Anchor, Alert, Badge, Button, Checkbox, Group, SegmentedControl, Table, Text } from "@mantine/core";
 import { api } from "../../api";
 import { useInfinite } from "../../hooks";
 import { TileGrid, type TileSize } from "../../components/TileGrid";
@@ -32,6 +32,15 @@ const VIEWS = [
 const STREAM_COLORS: Record<string, string> = { live: "teal", connecting: "yellow", reconnecting: "orange", idle: "gray" };
 
 // Tasks as a list or as terminal tiles, 4, 16 or 32 up. Both read ahead as you scroll.
+// What each tab says when it has no task: why there is none, and where tasks come from.
+const NONE: Record<string, ReactNode> = {
+  running: <>No task is being worked on. A task starts when an active goal has an open issue and a free place to run. <Anchor component={Link} to="/goals">Goals</Anchor></>,
+  waiting: "No task waits to start. One waits here when every place to run is taken, or when it depends on an issue that is not done.",
+  ready: "No pull request waits on anyone. A task comes here when its review is clean and it waits for a merge, or when its review left findings for a person.",
+  ended: "No task has ended yet. A task ends when its pull request merges, it fails, or it is canceled.",
+  all: <>No task yet. A task is made for each open issue of an active goal. <Anchor component={Link} to="/goals/new">New goal</Anchor></>,
+};
+
 export function TasksPage() {
   const [params, setParams] = useSearchParams();
   const tiles = params.get("view") === "tiles";
@@ -142,7 +151,7 @@ export function TasksPage() {
       {unclear.length > 0 && (
         <Alert color="red" mb="sm" title="Not cleared">{unclear.map((u) => <Text key={u} size="sm">{u}</Text>)}</Alert>
       )}
-      {tasks.total === 0 && <Empty>No {filter[1].toLowerCase()} tasks.</Empty>}
+      {tasks.total === 0 && <Empty>{NONE[filter[0]] ?? "No task here."}</Empty>}
 
       {tiles ? (
         <>

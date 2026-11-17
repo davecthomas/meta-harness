@@ -41,7 +41,7 @@ export function AuditPage() {
     <>
       <PageHeader title="Audit" description="Configuration changes and kill switch changes, newest first, with who made them." />
       <ErrorAlert error={error} />
-      {events && events.length === 0 && <Empty>Nothing recorded yet.</Empty>}
+      {events && events.length === 0 && <Empty>No change has been made yet. A change to the configuration, the kill switch or a user's access is recorded here, with who made it.</Empty>}
       {events && events.length > 0 && (
         <DataTable head={["When", "Who", "What"]}>
           {events.map((e) => (

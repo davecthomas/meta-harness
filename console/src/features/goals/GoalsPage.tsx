@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Link } from "react-router-dom";
-import { Badge, Button, Group, Progress, SegmentedControl, Select, Stack, Table, Text, Tooltip } from "@mantine/core";
+import { Anchor, Badge, Button, Group, Progress, SegmentedControl, Select, Stack, Table, Text, Tooltip } from "@mantine/core";
 import { IconPlus } from "@tabler/icons-react";
 import { goalTitle, api, goalStatus } from "../../api";
 import { useInfinite } from "../../hooks";
@@ -105,7 +105,13 @@ export function GoalsPage() {
         </Text>
         </>
       ) : (
-        goals.total !== null && <Empty>No {FILTERS[show].label.toLowerCase()} goals.</Empty>
+        goals.total !== null && (
+          <Empty>
+            {show === "open" || show === "all"
+              ? <>No {show === "open" ? "open " : ""}goal yet. A goal says which repositories to work in and which issues are its work. <Anchor component={Link} to="/goals/new">New goal</Anchor></>
+              : `No goal is ${FILTERS[show].label.toLowerCase()} yet. A goal is met when every issue it holds is done, and ended when it is met or canceled.`}
+          </Empty>
+        )
       )}
       <div ref={goals.sentinel} />
     </>

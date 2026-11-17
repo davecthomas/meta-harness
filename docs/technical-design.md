@@ -3334,6 +3334,16 @@ if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
 the switch every 15 seconds.
 
+A new deployment says what it needs before any work runs
+(`console/src/features/overview/GettingStarted.tsx`): on the Overview, four
+steps in order, each ticked once it is done and linking to where it is done:
+add a repository, check the default issue tracker is signed in, create a
+goal, give it an issue. The next step has its button; a step only an admin
+can do tells anyone else to ask one. Once all four are done the checklist is
+gone. An empty list says why it is empty and what fills it, with a link
+where there is one: each Tasks tab, the Goals list, a task's timeline, the
+Audit, Users and Logs pages, and Skills.
+
 A section that could not read what it lists says so, with why and what to do
 (`console/src/components/ReadFailed.tsx`): it never shows nothing, or its
 empty state, in place of a failure, so "none" means there are none. An
