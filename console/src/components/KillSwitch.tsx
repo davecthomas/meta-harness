@@ -1,5 +1,4 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Link } from "react-router-dom";
 import { Alert, Button, Group, Modal, Stack, Text, TextInput, Tooltip } from "@mantine/core";
 import { IconAlertTriangle, IconHourglass, IconPlayerPlay, IconPlayerStop } from "@tabler/icons-react";
 import { api, type KillSwitch } from "../api";
@@ -164,7 +163,7 @@ export function KillSwitchBanner({ admin }: { admin: boolean }) {
             </Button>
           ) : (
             <Text size="sm">
-              An admin can lift it. <Link to="/admin/kill-switch">More</Link>
+              An admin can lift it.
             </Text>
           )}
         </Group>

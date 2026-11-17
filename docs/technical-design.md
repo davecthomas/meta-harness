@@ -2125,7 +2125,7 @@ credential.
 | GET, POST | `/v1/goals` | Planner | List goals, or create one from `statement`, `repos` and `label`; the planner sets the rest. Each listed goal carries `cost_usd`, what its tasks' runs spent, the same total as `/v1/goals/{id}/spend` (`planner/goal_costs.py`, one read of every task and every `attempt_finished` for the whole list, kept 30 seconds); null with `cost_unknown` saying why when the Task API or event service did not answer, never 0. The goal row's own `spent_usd` is written only by a budget check, so it is not the goal's cost. `start` (default `true`) creates it `active` and sweeps it at once; `start: false` saves it `paused`, not started (`started_at` null), and takes in no issue until its first `/resume` | built |
 | GET, PATCH | `/v1/goals/{id}` | Planner | The goal with its issues, plan or phases, criteria and spend, or change its modality, latitude, `auto_merge`, priority or budget. Built: the goal with its issues, and changes to its title, statement, `label`, `repos`, `auto_merge`, priority, budget (`max_usd`, null for none), `budget_mode`, `budget_overage_percent`, `max_parallel` (null to inherit) and `strict_issues`, each sent alone by the Goal page's in-place edits and recorded as `goal_changed` with the fields changed. A repo must be registered; `label` may be null only when the goal holds issues an operator picked by ref (`picked` on its issues; ones its label swept in do not count) in its repos, else 409. Tasks the goal already made keep their issues, and its next sweep takes in issues by the new label and repos; an issue it holds with no task yet in a repo it no longer names is let go, recorded as `issue_dropped`, and never becomes a task there | partly built |
 | GET | `/v1/repos` | Planner | The repo registry: the repos a goal may name | built |
-| GET | `/v1/repos/available` | Planner | The repos the deployment's GitHub Apps are installed on that the registry does not list yet, and each app's page for installing it on more. The console's Repositories page adds from it | built |
+| GET | `/v1/repos/available` | Planner | The repos the deployment's GitHub Apps are installed on that the registry does not list yet, and each app's page for installing it on more. Configuration, Repositories adds from it | built |
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo, and how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
 | GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues, newest first, with a `label` and text `q` in the title when given, a page at a time from `cursor`, each with the open goal that holds it, if any | built |
 | POST | `/v1/goals/draft` | Planner | A goal a model drafts from a label's open issues (or the `refs` chosen): title, statement, theme and modality, through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. Saves nothing | built |
@@ -3069,11 +3069,13 @@ change stay read-only.
   applying it stages what it holds, once its shape is one the view can show
   (a kind's lists are lists and its named entries objects); otherwise it says
   what is wrong and stages nothing.
-- Repositories: each repo's default acceptance checks edit in place as a tag
-  list, and each commit saves a new registry version with the note
-  `changed <repo>`. Add repository and Remove stay. Saves run one at a time,
-  each built on the registry the one before saved, so quick edits to
-  different repos all persist.
+- Repositories is a Configuration kind like the others, and the one place a
+  repository is added, removed and edited
+  (`console/src/features/config/ReposView.tsx`): Add repository chooses from
+  the repos the GitHub App is installed on that are not listed yet, with a
+  link to install the App on more; Remove and the default acceptance checks,
+  a tag list, edit in place. Each stages, and all are reviewed and saved as
+  one version. With no repository it says nothing can run until there is one.
 - Settings: each field saves when it is committed and shows "Saved" beside
   it for a moment; there is no Save button. Saves run one at a time, each
   built on the settings the one before stored, so quick commits all persist.
@@ -3331,6 +3333,12 @@ banner says so; an admin may end the drain by hand, and is told to do so only
 if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
 the switch every 15 seconds.
+
+Each thing is set in one place. A page never shows a setting it cannot
+change that another page can: there is no Repositories or Kill switch page
+under Admin (their old addresses lead to Configuration, Repositories and to
+the Overview), and a person's Settings page does not repeat the deployment's
+trackers.
 
 | View | Shows | Actions |
 |---|---|---|

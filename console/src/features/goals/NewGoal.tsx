@@ -251,7 +251,7 @@ export function NewGoal() {
                 {reposRead && repos.length === 0 && (
                   <Text size="sm" c="orange" data-testid="no-repos">
                     No repository is registered yet, so a goal has nothing to change. An admin adds one under{" "}
-                    <Anchor component={Link} to="/admin/repos" size="sm">Admin, Repositories</Anchor>.
+                    <Anchor component={Link} to="/config?kind=repos" size="sm">Configuration, Repositories</Anchor>.
                   </Text>
                 )}
                 {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}

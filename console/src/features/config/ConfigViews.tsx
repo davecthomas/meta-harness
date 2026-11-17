@@ -1,8 +1,6 @@
-import { Link } from "react-router-dom";
-import { Alert, Button, Group, Paper, Stack, Table, Text } from "@mantine/core";
-import { IconPlus } from "@tabler/icons-react";
+import { Alert, Stack, Text } from "@mantine/core";
 import { InlineField } from "../../components/InlineField";
-import { DataTable, Facts } from "../../components/ui";
+import { Facts } from "../../components/ui";
 import { isChanged, type Path } from "./staging";
 
 // A kind's view edits in place against a staged copy of its document. Every commit stages; nothing saves
@@ -169,57 +167,5 @@ export function TaskPolicyView({ policy, maxSandboxes, staging }: { policy: Reco
         ],
       ]}
     />
-  );
-}
-
-export function ReposView({ staging: s }: { staging: Staging }) {
-  const repos: Record<string, any> = s.document.repos ?? {};
-  // Adding a repo is choosing one the GitHub App is installed on, which the Repositories page lists: this
-  // view edits the repos already here and keeps their history.
-  const add = !s.readOnly && (
-    <Button component={Link} to="/admin/repos" leftSection={<IconPlus size={16} />} variant={Object.keys(repos).length ? "default" : "filled"}>
-      Add a repository
-    </Button>
-  );
-  if (!Object.keys(repos).length) {
-    return (
-      <Paper p="lg" data-testid="no-repos">
-        <Stack gap="sm" align="flex-start">
-          <Text fw={600}>No repository yet</Text>
-          <Text size="sm" c="dimmed">
-            A goal changes code in a registered repo, so nothing can run until there is one. Add one from the repos the
-            GitHub App is installed on; if yours is not listed there, that page has the link to install the App on it.
-          </Text>
-          {add}
-        </Stack>
-      </Paper>
-    );
-  }
-  return (
-    <>
-    <Group justify="flex-end" mb="sm">{add}</Group>
-    <DataTable head={["Repo", "Default acceptance checks"]}>
-      {Object.entries(repos).map(([name, r]) => (
-        <Table.Tr key={name} data-testid={`repo-${name}`}>
-          <Table.Td>
-            <Text ff="monospace" size="sm">{name}</Text>
-            <Reasons reasons={s.reasons(`repo:${name}`)} />
-          </Table.Td>
-          <Table.Td>
-            <InlineField
-              kind="tags"
-              label={`Default acceptance checks of ${name}`}
-              value={r.default_checks ?? []}
-              monospace
-              changed={changed(s, ["repos", name, "default_checks"])}
-              reasons={s.reasons(`repo:${name}:default_checks`)}
-              readOnly={s.readOnly}
-              onCommit={(v) => s.stage(["repos", name, "default_checks"], v)}
-            />
-          </Table.Td>
-        </Table.Tr>
-      ))}
-    </DataTable>
-    </>
   );
 }

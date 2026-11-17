@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Paper, Text, Title, useMantineColorScheme } from "@mantine/core";
 import { api, type UserSettings } from "../../api";
-import { ConnectedTrackers } from "../trackers/ConnectedTrackers";
 import { InlineField } from "../../components/InlineField";
 import { ErrorAlert, Facts, PageHeader } from "../../components/ui";
 
@@ -16,7 +15,7 @@ const APPEARANCES = [
   { value: "system", label: "System" },
 ];
 
-// The signed-in user's own settings: what New goal starts from, connected trackers, appearance and notifications.
+// The signed-in user's own settings: what New goal starts from, appearance and notifications.
 // Each field edits in place and saves when it is committed.
 export function SettingsPage() {
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -84,10 +83,6 @@ export function SettingsPage() {
             ["Auto-merge", <InlineField kind="switch" label="Auto-merge" switchLabel="Merge pull requests without me" value={planner.auto_merge} showSaved onCommit={(v) => savePlanner({ auto_merge: v })} />],
           ]}
         />
-      </Paper>
-      <Paper p="md" withBorder maw={720} mb="lg">
-        <Title order={4} mb="sm">Connected trackers</Title>
-        <ConnectedTrackers />
       </Paper>
       <Paper p="md" withBorder maw={720} mb="lg">
         <Title order={4} mb="sm">Appearance and notifications</Title>

@@ -159,19 +159,3 @@ test("a refused save's reason goes to the tracker it is about, or to the default
   expect(reasonTarget("trackers", document, "default must be one of the trackers set up (github), not 'jira'")).toBe("default");
   expect(reasonTarget("trackers", document, "linear: not a supported tracker")).toBeNull();
 });
-
-test("the repo registry with no repo says nothing can run yet and where a repo is added", async () => {
-  const { ReposView } = await import("../config/ConfigViews");
-  const { MemoryRouter } = await import("react-router-dom");
-  const staging = { document: { repos: {} }, original: { repos: {} }, stage: () => undefined, reasons: () => [] };
-  render(
-    <MantineProvider theme={theme}>
-      <MemoryRouter>
-        <ReposView staging={staging} />
-      </MemoryRouter>
-    </MantineProvider>,
-  );
-
-  expect(within(screen.getByTestId("no-repos")).getByText(/nothing can run until there is one/)).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Add a repository" }).getAttribute("href")).toBe("/admin/repos");
-});
