@@ -55,6 +55,8 @@ class Tracker(Protocol):
 
     # The first part of every ref this tracker's issues have.
     scheme: str
+    # Whether the planner tells the tracker how an issue's task is going (planner/tracker_progress.py).
+    writes_progress: bool
 
     async def list_open(self, repo: str, label: str | None) -> list[Issue]:
         """The repo's open issues carrying the label; every open issue when label is None."""

@@ -65,6 +65,9 @@ variable "secrets" {
     "MH_POSTGRES_PASSWORD", "MH_SERVICE_KEY", "MH_GATEWAY_API_KEY",
     "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_GEMINI_API_KEY",
     "MH_REPOS_CONFIG", "MH_GITHUB_APPS", "MH_GITHUB_APP_KEY_davecthomas",
+    # The Jira account the Jira tracker signs in as: its email, and an API token of that account. Optional: a
+    # deployment with no value in them has no Jira sign-in, and the console says so.
+    "MH_JIRA_EMAIL", "MH_JIRA_TOKEN",
   ]
 }
 

@@ -63,6 +63,8 @@ def _issue(repo: str, data: dict) -> Issue:
 
 class GitHubTracker:
     scheme = SCHEME
+    # A pull request's `Closes` line links it to its issue and closes the issue on merge: nothing to tell.
+    writes_progress = False
 
     def __init__(self, apps: GitHubApps | None = None) -> None:
         self.apps = apps or GitHubApps()
