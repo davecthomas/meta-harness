@@ -7,7 +7,8 @@
 # from the commit, and the commit itself, which the running VM is updated to in place. It signs in to
 # Google Cloud as mh-deploy-sa through workload identity federation, which only this repo's main branch
 # may use, so no key is stored here. Which project, region, state bucket and site: deploy/environment.json,
-# the deployment's one settings file.
+# the deployment's one settings file. The repo is public and so are its Actions logs, so the file is not in
+# the repo: the MH_ENVIRONMENT secret holds it, and every value in it is masked in the logs.
 # Run it again from the Actions tab (Run workflow), or with make deploy.
 
 name: deploy
@@ -45,8 +46,23 @@ jobs:
           # The whole history: the commit's version is worked out from main's commits (versioning.py).
           fetch-depth: 0
       - name: read the deployment's settings
+        env:
+          MH_ENVIRONMENT: ${{ secrets.MH_ENVIRONMENT }}
         run: |
           settings=deploy/environment.json
+          if [ -z "$MH_ENVIRONMENT" ]; then
+            echo "::error::The MH_ENVIRONMENT secret is not set. Set it from your local settings file: gh secret set MH_ENVIRONMENT < deploy/environment.json (deploy/environment.example.json shows its shape), then run the deploy again."
+            exit 1
+          fi
+          printf '%s' "$MH_ENVIRONMENT" >"$settings"
+          jq -e 'type == "object"' "$settings" >/dev/null || { echo "::error::The MH_ENVIRONMENT secret is not a JSON object like deploy/environment.example.json. Set it again: gh secret set MH_ENVIRONMENT < deploy/environment.json"; exit 1; }
+          # What names the deployment, and the names made from it, is hidden in the public logs.
+          for key in project project_number state_bucket console_site google_client_id; do
+            value=$(jq -r --arg k "$key" '.[$k] // empty' "$settings")
+            [ -n "$value" ] && echo "::add-mask::$value"
+          done
+          echo "::add-mask::$(jq -r '"mh-deploy-sa@\(.project).iam.gserviceaccount.com"' "$settings")"
+          echo "::add-mask::$(jq -r '"https://\(.console_site).web.app"' "$settings")"
           for key in project project_number region zone state_bucket; do
             [ -n "$(jq -r --arg k "$key" '.[$k] // empty' "$settings")" ] || { echo "::error::$settings has no $key"; exit 1; }
           done

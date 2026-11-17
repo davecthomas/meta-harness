@@ -7,6 +7,7 @@ environment file therefore never sets AI_MODELS_CONFIG; the worker unit does.
 """
 
 import json
+import subprocess
 import re
 from pathlib import Path
 
@@ -270,7 +271,11 @@ def test_a_deploy_that_replaces_the_vm_drains_running_tasks_first():
     assert 'drain.sh" off' in boot, "the new VM's boot ends the drain"
 
 
-SETTINGS = ROOT / "deploy" / "environment.json"
+# The deployment's settings are local (git-ignored): the repo is public. The example stands in where the real
+# file is missing, as in CI, which writes it from the MH_ENVIRONMENT secret only for a deploy.
+EXAMPLE = ROOT / "deploy" / "environment.example.json"
+REAL = ROOT / "deploy" / "environment.json"
+SETTINGS = REAL if REAL.exists() else EXAMPLE
 # Projects the deployment ran in before. Nothing may name them again.
 RETIRED = ("meta-harness-prod", "57473592166")
 
@@ -286,7 +291,7 @@ def _deploy_files() -> list[Path]:
     ):
         for pattern in patterns:
             files += (ROOT / folder).rglob(pattern)
-    return [f for f in files if f != SETTINGS and "node_modules" not in f.parts]
+    return [f for f in files if f not in (REAL, EXAMPLE) and "node_modules" not in f.parts]
 
 
 def test_only_the_settings_file_names_the_project():
@@ -296,6 +301,23 @@ def test_only_the_settings_file_names_the_project():
     names = (settings["project"], settings["project_number"], settings["state_bucket"], *RETIRED)
     found = [(f.relative_to(ROOT), n) for f in _deploy_files() for n in names if n in f.read_text()]
     assert found == []
+
+
+def test_the_real_settings_are_never_in_the_repo():
+    """The repo is public: which project, bucket and site production is stays on the machines that deploy, and
+    in the MH_ENVIRONMENT secret. The example has the same keys, so it shows the whole shape."""
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    assert "deploy/environment.json" not in tracked.splitlines()
+    ignored = subprocess.run(["git", "check-ignore", "-q", "deploy/environment.json"], cwd=ROOT)
+    assert ignored.returncode == 0, ".gitignore must keep deploy/environment.json out"
+    assert json.loads(EXAMPLE.read_text()).keys() == json.loads(SETTINGS.read_text()).keys()
+    if REAL.exists():
+        values = [str(v) for k, v in json.loads(REAL.read_text()).items() if k not in ("region", "zone", "github_repo")]
+        files = [ROOT / f for f in tracked.splitlines() if (ROOT / f).is_file()]
+        found = [(str(f.relative_to(ROOT)), v) for f in files for v in values if v in f.read_text(errors="ignore")]
+        assert found == [], "a tracked file names the deployment"
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    assert "secrets.MH_ENVIRONMENT" in deploy and "::add-mask::" in deploy
 
 
 def test_the_settings_file_is_exactly_the_platform_stacks_settings():

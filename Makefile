@@ -37,7 +37,7 @@ export MH_SERVICE_KEY ?= local-service-key
 export MH_OPERATOR_KEYS ?= local-operator:local-operator-key
 export MH_OPERATOR_KEY ?= local-operator-key
 
-.PHONY: up down clean-db migrate serve stop test lint console console-dev platform deploy deploy-status \
+.PHONY: up down clean-db migrate serve stop test lint console console-dev platform deploy deploy-status need-settings \
 	gcp-status gcp-backup gcp-pause gcp-resume gcp-disable gcp-teardown
 
 up:
@@ -82,8 +82,12 @@ lint:
 	uv run ruff format --check .
 
 # The deployment's settings: one file names the project, region, zone, state bucket and console site.
+# The file is local: the repo is public, so it is git-ignored (deploy/environment.example.json shows its shape).
 SETTINGS := deploy/environment.json
-setting = $(shell jq -r '.$(1) // empty' $(SETTINGS))
+setting = $(shell [ -f $(SETTINGS) ] && jq -r '.$(1) // empty' $(SETTINGS))
+# The targets that act on the deployment stop when the file is missing, saying how to make it.
+need-settings:
+	@[ -f $(SETTINGS) ] || { echo "error: $(SETTINGS) is missing. Copy deploy/environment.example.json to it and fill in the deployment's project, or ask whoever runs the deployment for theirs." >&2; exit 1; }
 PROJECT := $(call setting,project)
 REGION := $(call setting,region)
 ZONE := $(call setting,zone)
@@ -97,7 +101,7 @@ export TF_VAR_operators TF_VAR_admins
 # credentials happen to hold (often another account). Before anything is created, that account must be able
 # to read the settings file's project; Terraform shows the plan and asks before applying it.
 platform: export GOOGLE_OAUTH_ACCESS_TOKEN = $(shell gcloud auth print-access-token)
-platform:
+platform: need-settings
 	@[ -n "$(PROJECT)" ] && [ -n "$(REGION)" ] && [ -n "$(STATE_BUCKET)" ] || { echo "error: $(SETTINGS) must name project, region and state_bucket." >&2; exit 1; }
 	@[ -n "$$TF_VAR_operators" ] || { echo "error: who may sign in is not set. Copy deploy/.env.example to deploy/.env and fill in TF_VAR_operators." >&2; exit 1; }
 	@gcloud projects describe $(PROJECT) --format="value(projectId)" >/dev/null 2>&1 || { echo "error: $$(gcloud config get-value account 2>/dev/null) cannot read project $(PROJECT). Sign in to gcloud as an owner of it." >&2; exit 1; }
@@ -119,16 +123,16 @@ deploy:
 	sleep 5
 	gh run watch $$(gh run list --workflow deploy --limit 1 --json databaseId --jq '.[0].databaseId') --exit-status
 
-deploy-status:
+deploy-status: need-settings
 	@echo "VM booted: $$(gcloud compute instances get-guest-attributes mh-vm --zone $(ZONE) --project $(PROJECT) --query-path mh/boot --format='value(value)' 2>/dev/null || echo nothing yet)"
 	@echo "console:   https://$(CONSOLE_SITE).web.app"
 
 # Leaving the Google Cloud project (deploy/shutdown.sh says what each does). gcp-disable and gcp-teardown each do
 # the whole job in one command: back up the database, stop the meta-harness, then turn billing off or delete
 # the project. Both ask once for the project id before changing anything.
-gcp-status gcp-backup gcp-pause gcp-resume:
+gcp-status gcp-backup gcp-pause gcp-resume: need-settings
 	deploy/shutdown.sh $(@:gcp-%=%)
-gcp-disable:
+gcp-disable: need-settings
 	deploy/shutdown.sh disable
-gcp-teardown:
+gcp-teardown: need-settings
 	deploy/shutdown.sh delete
