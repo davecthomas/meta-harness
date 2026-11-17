@@ -40,7 +40,9 @@ LINK_COLUMNS = (
     "labels, dropped, "
     # The issue's size and what its sizing found, why it is held if it is, whether an operator ran it anyway, and
     # the issues an operator split it into.
-    "size, sizing, held_reason, run_anyway, split_into"
+    "size, sizing, held_reason, run_anyway, split_into, "
+    # What the planner last told the issue's tracker about its task (tracker_progress.py).
+    "progress"
 )
 
 
@@ -455,6 +457,11 @@ def save_sizing(
             (ref, goal_id, repo, depends_on, title, labels, size, Jsonb(sizing)),
         )
         return saved.rowcount == 1
+
+
+def set_link_progress(conn: psycopg.Connection, ref: str, progress: str) -> None:
+    """Note what the issue's tracker was last told about its task."""
+    conn.execute("UPDATE planner.issue_link SET progress = %s WHERE ref = %s", (progress, ref))
 
 
 def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> None:

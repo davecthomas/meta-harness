@@ -2655,8 +2655,24 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
 - `link_pull_request` adds a remote link whose id is the pull request's
   address, so adding it twice changes the one link.
 - A label with a space is refused before any issue is made.
-The planner calls `list_open`, `read`, `ensure_label` and `create_issue`;
-nothing calls `comment`, `set_status` or `link_pull_request` yet. A sweep
+**Telling a tracker how a task goes** (`planner/tracker_progress.py`) is
+only for an adapter that asks for it (`writes_progress`). Each sweep, and
+each follow-up of a goal no sweep covers, works out what each issue with a
+task should now say and writes only when that differs from what was last
+written (`issue_link.progress`):
+
+| The task | The issue's status | Comment |
+|---|---|---|
+| running | in progress | that work started, with the task's id; or that work is going on again on its pull request |
+| ready or review unresolved, with a pull request | in review | the pull request, and whether it is ready to merge or its review left findings |
+| closed | done | that the pull request merged |
+| failed or canceled | unchanged | why |
+
+With a pull request, its link is recorded on the issue. The status goes
+first and the comment last: the status and the link are safe to repeat, so a
+write that failed is made again by the next sweep without doubling a comment.
+For Jira, done is what closes the issue, and so what lets its goal be met. A
+sweep's result lists the refs it told (`told`). A sweep
 every `MH_PLANNER_SWEEP_SECONDS` stands in for the webhook. The Linear
 adapter is planned. The sweep also reads the pull requests of `ready` and
 `review_unresolved` tasks and their checks (Review loop), and of `canceled`

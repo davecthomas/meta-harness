@@ -108,6 +108,8 @@ def depends_on(issue: dict[str, Any], body: str) -> list[str]:
 
 class JiraTracker:
     scheme = SCHEME
+    # Nothing in Jira shows a task's progress, or closes its issue, unless the planner says.
+    writes_progress = True
 
     def __init__(
         self,

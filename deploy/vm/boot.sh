@@ -99,6 +99,8 @@ done
 
 log "secrets from Secret Manager into $ETC/env"
 secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT"; }
+# A secret a deployment may leave without a value: nothing, and no failure, when it has none.
+optional_secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT" 2>/dev/null || true; }
 umask 077
 {
   pw=$(secret MH_POSTGRES_PASSWORD)
@@ -118,6 +120,13 @@ umask 077
   done
   echo "MH_GITHUB_APPS=$apps"
   echo "MH_REPOS_CONFIG=$ETC/repos.json"
+  # The Jira tracker's sign-in, when the deployment has one: both or neither, since one alone signs in nothing.
+  jira_email=$(optional_secret MH_JIRA_EMAIL)
+  jira_token=$(optional_secret MH_JIRA_TOKEN)
+  if [ -n "$jira_email" ] && [ -n "$jira_token" ]; then
+    echo "MH_JIRA_EMAIL=$jira_email"
+    echo "MH_JIRA_TOKEN=$jira_token"
+  fi
   # The most per-run sandboxes the VM holds: the ceiling on the task policy's max_parallel.
   # The commit's version, worked out from main's history (versioning.py), for every service.
   echo "MH_VERSION=$(python3 "$MH/src/meta_harness/versioning.py" 2>/dev/null || cat "$MH/VERSION")"

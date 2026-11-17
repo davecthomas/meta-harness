@@ -70,6 +70,21 @@ The VM has no public address. `gcloud compute ssh mh-vm --zone <zone>
 --project <project> --tunnel-through-iap` reaches it; the boot log is
 `/var/log/mh-boot.log`.
 
+## The Jira sign-in
+
+The Jira tracker signs in as one Jira account, from two secrets the platform
+stack creates empty: `MH_JIRA_EMAIL`, the account's email, and
+`MH_JIRA_TOKEN`, an API token of that account (made at
+id.atlassian.com, Security, API tokens). Give each a value, then deploy, and
+the VM's next boot or update puts them in the planner's environment:
+
+    printf '%s' 'bot@example.com' | gcloud secrets versions add MH_JIRA_EMAIL --data-file=- --project <project>
+    pbpaste | tr -d '\n' | gcloud secrets versions add MH_JIRA_TOKEN --data-file=- --project <project>
+
+The second reads the token from the clipboard, so it is never typed or
+shown. With no value in either, the deployment has no Jira sign-in, and
+Configuration, Issue trackers says which is missing.
+
 ## What stays out of the repo
 
 The repo is public, so nothing that identifies a person or an account is in

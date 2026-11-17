@@ -87,7 +87,7 @@ from meta_harness import db
 from meta_harness.config import store as config_store
 from meta_harness.events.client import stable_event_id
 from meta_harness.trackers.base import TrackerError
-from meta_harness.planner import budget_api, cost_facts, repos, sizing, store
+from meta_harness.planner import budget_api, cost_facts, repos, sizing, store, tracker_progress
 from meta_harness.planner.tracker import Issue, Tracker, outside_author, task_text
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CheckRun, CodeHostError, PullRequest
@@ -136,6 +136,8 @@ class SweepResult:
     # Task ids, canceled with their pull request open, whose pull request the sweep found merged or closed.
     ended: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Refs whose tracker was told how their task is going (tracker_progress.py).
+    told: list[str] = field(default_factory=list)
     # Task ids of open issues whose task was canceled, sent back to the queue.
     retaken: list[str] = field(default_factory=list)
     met: bool = False
@@ -178,6 +180,8 @@ async def sweep_goal(
     await _record_closed(goal, seen, tracker, events, result)
     await _cancel_for_closed_issues(goal, tasks, result)
     await _release_unblocked(goal, tracker, tasks, events, result)
+    # Before the goal is looked at for being met: for a tracker that is told, done is what closes an issue.
+    result.told = await tracker_progress.write(goal, goal_tracker(tracker, goal), tasks, result.errors)
     if not result.errors:
         await _complete_if_met(goal, tracker, tasks, events, result)
     try:
@@ -192,7 +196,8 @@ async def follow_up_goal(
 ) -> SweepResult:
     """For a goal no sweep covers any more: refresh the title and labels of each issue it holds that has a
     task, record each open one that has closed, and record the end of each pull request its canceled tasks
-    left open. Nothing is taken in, and no task or goal changes status."""
+    left open. A tracker that is told how tasks go is told what changed. Nothing is taken in, and no task or
+    goal changes status."""
     result = SweepResult(goal["id"])
     for link in await asyncio.to_thread(_links, goal["id"]):
         if not link["task_id"]:
@@ -204,6 +209,8 @@ async def follow_up_goal(
             result.errors.append(f"{link['ref']}: {err}")
             continue
         await _refresh(link, issue)
+    # A task that ended after its goal did (a merge, a cancel) is still told to its issue's tracker.
+    result.told = await tracker_progress.write(goal, goal_tracker(tracker, goal), tasks, result.errors)
     result.errors.extend(await refresh_states(goal, tracker, events, result))
     await _watch_canceled_pull_requests(goal, tasks, events, host or code_host, result)
     return result
