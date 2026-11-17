@@ -241,7 +241,8 @@ def create_app(
 
     name = titler or drafting.title_goal
     # The GitHub Apps, to list the repos they are installed on: the tracker's, else the environment's.
-    apps = apps or getattr(tracker, "apps", None) or GitHubApps()
+    github = tracker.adapter("github") if hasattr(tracker, "adapter") else tracker
+    apps = apps or getattr(github, "apps", None) or GitHubApps()
 
     async def title_one(goal: dict) -> None:
         """Give a goal with no title one its model writes. A failure leaves it untitled, and the console shows

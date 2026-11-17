@@ -230,10 +230,10 @@ def _planner_parts():
     import os
 
     from meta_harness.events.client import EventClient
-    from meta_harness.planner.tracker import GitHubTracker
+    from meta_harness import trackers
     from meta_harness.tasks.client import TaskClient
 
-    return EventClient(source="planner"), GitHubTracker(), TaskClient(api_key=os.environ.get("MH_SERVICE_KEY"))
+    return EventClient(source="planner"), trackers.connected(), TaskClient(api_key=os.environ.get("MH_SERVICE_KEY"))
 
 
 @planner.command("serve")

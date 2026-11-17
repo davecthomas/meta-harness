@@ -86,7 +86,7 @@ from typing import Any, Protocol
 from meta_harness import db
 from meta_harness.config import store as config_store
 from meta_harness.events.client import stable_event_id
-from meta_harness.github_app import GitHubAppError
+from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import budget_api, cost_facts, repos, sizing, store
 from meta_harness.planner.tracker import Issue, Tracker, outside_author, task_text
 from meta_harness.run_service import code_host
@@ -166,7 +166,7 @@ async def sweep_goal(
     for repo in goal["repos"] if goal["label"] else []:
         try:
             issues = await tracker.list_open(repo, goal["label"])
-        except GitHubAppError as err:
+        except TrackerError as err:
             result.errors.append(f"{repo}: {err}")
             continue
         for issue in issues:
@@ -199,7 +199,7 @@ async def follow_up_goal(
             continue
         try:
             issue = await tracker.read(link["ref"])
-        except (GitHubAppError, ValueError) as err:
+        except (TrackerError, ValueError) as err:
             # One that cannot be read keeps the labels it had.
             result.errors.append(f"{link['ref']}: {err}")
             continue
@@ -219,7 +219,7 @@ async def refresh_states(goal: dict, tracker: Tracker, events: Events, result: S
             continue
         try:
             issue = await tracker.read(link["ref"])
-        except (GitHubAppError, ValueError) as err:
+        except (TrackerError, ValueError) as err:
             errors.append(f"{link['ref']}: {err}")
             continue
         if issue.state != "closed":
@@ -295,7 +295,7 @@ async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, even
     for repo in goal["repos"] if goal["label"] else []:
         try:
             issues = await tracker.list_open(repo, goal["label"])
-        except GitHubAppError as err:
+        except TrackerError as err:
             result.errors.append(f"{repo}: {err}")
             return
         for issue in issues:
@@ -346,7 +346,7 @@ async def _take_in_added(
             continue
         try:
             issue = await tracker.read(link["ref"])
-        except (GitHubAppError, ValueError) as err:
+        except (TrackerError, ValueError) as err:
             result.errors.append(f"{link['ref']}: {err}")
             continue
         seen.add(issue.ref)
@@ -580,7 +580,7 @@ async def _record_closed(goal: dict, seen: set[str], tracker: Tracker, events: E
             continue
         try:
             issue = await tracker.read(link["ref"])
-        except GitHubAppError as err:
+        except TrackerError as err:
             # A closed issue is read only for its labels: one that cannot be read keeps those it had.
             if link["state"] == "open":
                 result.errors.append(f"{link['ref']}: {err}")
@@ -797,7 +797,7 @@ async def _is_open(ref: str, tracker: Tracker) -> bool:
         return False
     try:
         return (await tracker.read(ref)).state == "open"
-    except (GitHubAppError, ValueError):
+    except (TrackerError, ValueError):
         # An issue the app cannot read still blocks, so a typo never lets work run early.
         return True
 

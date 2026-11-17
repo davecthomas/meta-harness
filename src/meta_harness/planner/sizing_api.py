@@ -25,7 +25,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from meta_harness import db
-from meta_harness.github_app import GitHubAppError
+from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import sizing, store
 from meta_harness.run_service.code_host import issue_paths
 
@@ -77,7 +77,7 @@ def register(
         tracker cannot be read. The sweep makes no task of a closed issue, so neither answer would take effect."""
         try:
             issue = await tracker.read(ref)
-        except GitHubAppError as err:
+        except TrackerError as err:
             raise HTTPException(status_code=502, detail=f"could not read {ref}: {err}") from err
         if issue.state != "open":
 
@@ -170,7 +170,7 @@ def register(
             for issue in body.issues:
                 made = await tracker.create_issue(repo, issue.title.strip(), issue.body, [label] if label else [])
                 created.append(made.ref)
-        except GitHubAppError as err:
+        except TrackerError as err:
             # What was created is recorded as the split, so a retry never creates it twice; none: it may be split again.
             audit(created, await asyncio.to_thread(record, created))
             done = f"; created before it refused: {', '.join(created)}" if created else ""
