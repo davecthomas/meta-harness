@@ -2597,13 +2597,13 @@ one module and one line in the registry.
 **Which trackers are set up, and the default**, is the `trackers`
 configuration, versioned and checked like the other kinds
 (`config/trackers.json` ships GitHub alone; `config/trackers.local.json`,
-which git ignores, replaces it):
+which git ignores, replaces it). It holds what is true of a whole tracker,
+never of one goal:
 
 ```json
 {"default": "jira",
  "trackers": {"github": {},
               "jira": {"site": "https://example.atlassian.net",
-                       "projects": [{"key": "PROJ", "repo": "owner/name"}],
                        "issue_type": "Task",
                        "statuses": {"in_review": "In Review"}}}}
 ```
@@ -2612,39 +2612,60 @@ A sign-in is never in it: Jira's is the secrets `MH_JIRA_EMAIL` and
 `MH_JIRA_TOKEN`. `GET /v1/trackers` lists every supported tracker with its
 settings' description, whether it is set up and signed in, and the default.
 
-**A goal uses one tracker** (`goal.tracker`): the default when it is created,
-unless it names another that is set up, and it keeps it. Every ref it holds
-is that tracker's (422 otherwise). A goal from before goals named one uses
-GitHub. `Trackers` (`trackers/router.py`) is every supported tracker as one:
-a call that names a ref goes to the tracker the ref's first part names, a
-call made for a goal to the goal's tracker, and any other (the label and
-issue lists before there is a goal, which take `?tracker=`) to the default.
-The repo registry's `tracker` field decides nothing, and the console no
-longer shows it.
+**A goal says where its issues are**: its repos, as every goal does; its
+tracker (`goal.tracker`), the default unless it names another that is set up;
+and what that tracker asks of a goal (`goal.tracker_settings`), which the
+adapter declares in its `SPEC` as `goal_settings`. Jira asks for one thing,
+the project: one Jira site has many projects, and each goal names one.
+GitHub asks for nothing. All three are fixed when the goal is created, and
+every ref it holds is its tracker's, and for Jira its project's (422
+otherwise). A goal from before goals named a tracker uses GitHub. A `choice`
+setting's options come from `GET /v1/trackers/{scheme}/choices/{setting}`
+(Jira's projects, by name), so no form or route is written for one tracker.
+
+`Trackers` (`trackers/router.py`) is every supported tracker as one: a call
+that names a ref goes to the tracker the ref's first part names; a call made
+for a goal goes to the goal's tracker bound to its `Source`, its repos and
+tracker settings (`Tracker.bound`); any other (the label and issue lists
+before there is a goal, which take `?tracker=` and `?settings=`) to the
+default. The repo registry's `tracker` field decides nothing, and the console
+no longer shows it.
+
+**Which repo an issue's work is done in**, where the tracker's issues are not
+a repo's own (Jira): the goal's repo when it has one. A goal with several
+repos reads it from the issue, a `Repo: owner/name` line in its description
+or a `repo:<name>` label, by the repo's full name or its name alone. An issue
+that names none of the goal's repos is held, saying which repos and how to
+name one, and becomes a task once it does. An issue the planner creates for
+such a goal carries the `Repo:` line.
 
 In the console, Configuration has an Issue trackers page
 (`console/src/features/trackers/TrackersView.tsx`), drawn from `GET
 /v1/trackers`: every supported tracker with whether it is set up, whether its
 sign-in is there (a missing one is named by its secrets, with where to add
 them), Set up, Make default and Remove, and its settings edited in place:
-Jira's site, its projects as key and repo rows, its issue type and its status
-names. Edits stage and save as one checked version, like the other kinds.
-The New goal form offers the trackers that are set up when there is more
-than one, starting on the default; its label suggestions, the label's issues
-and the issue picker read from the tracker chosen. A goal's page shows its
-tracker. A ref reads without its tracker and links to its issue for any
-tracker (`features/trackers/refs.ts`): GitHub's address comes from the ref,
-another tracker's from the `issue_url_prefix` the tracker reports.
+Jira's site, its issue type and its status names. Edits stage and save as
+one checked version, like the other kinds. The New goal form offers the
+trackers that are set up when there is more than one, starting on the
+default, then asks what the chosen tracker asks of a goal
+(`features/trackers/GoalTrackerFields.tsx`): for Jira its project, chosen
+from the site's projects by name or typed by key. Its label suggestions, the
+label's issues and the issue picker read from that tracker and project, once
+the goal has said what the tracker asks. A goal's page shows its tracker and
+what it told it. A ref reads without its tracker and links to its issue for
+any tracker (`features/trackers/refs.ts`): GitHub's address comes from the
+ref, another tracker's from the `issue_url_prefix` the tracker reports.
 
 As built, the GitHub adapter (`trackers/github.py`) has every operation but
 `webhook`: `done` closes an issue and `todo` opens it again, the statuses
 between change nothing, since a GitHub issue is open or closed, and
 `link_pull_request` does nothing. The Jira adapter (`trackers/jira.py`)
 works with Jira Cloud's REST API version 2, whose descriptions are text:
-- An issue's ref is `jira:<KEY>`. One project goes to one repo, so the key's
-  project names the repo; a repo may have several projects.
-- `list_open` is the project's issues not in a Done status, with the label.
-  An issue in a Done-category status is closed.
+- An issue's ref is `jira:<KEY>`.
+- `list_open` is the goal's project's issues not in a Done status, with the
+  label, searched once for all the goal's repos. An issue in a Done-category
+  status is closed.
+- `choices("project")` lists the site's projects the Jira account sees.
 - What blocks an issue is its "is blocked by" links and the keys its
   `Depends on:` lines name.
 - `set_status` moves the issue through its workflow: to the status the
