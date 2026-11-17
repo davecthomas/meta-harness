@@ -34,6 +34,9 @@ function Refreshed({ at, error }: { at: number | null; error: string | null }) {
   return <Text size="xs" c="dimmed" data-testid="refreshed">updated {seconds < 2 ? "just now" : `${seconds} s ago`}</Text>;
 }
 
+// How the note of a refresh that failed starts, so the next one that works can take it away.
+const REFRESH_FAILED = "The goal could not be refreshed";
+
 export function GoalPage() {
   const { goalId = "" } = useParams();
   const navigate = useNavigate();
@@ -66,6 +69,8 @@ export function GoalPage() {
       setGoal(g);
       const page = await api.tasks({ goalId }, 0, 1000);
       setTasks(Object.fromEntries(page.items.map((t) => [t.id, t])));
+      // A refresh that worked ends the note of one that did not: a passing failure leaves no banner behind.
+      setError((now) => (now?.startsWith(REFRESH_FAILED) ? null : now));
       if (quiet) return;
       if (goalStatus(g) === "not_started" && g.label) {
         const found = await Promise.all(
@@ -76,7 +81,7 @@ export function GoalPage() {
         setWaiting(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(`${REFRESH_FAILED}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }, [goalId]);
 
@@ -151,7 +156,8 @@ export function GoalPage() {
       // The action changed what the goal's issues are doing: the board rereads at once, with the goal.
       await Promise.all([load(), loadProgress()]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // What was pressed did not happen: say so, since reloading would not do it either.
+      setError(`That did not happen: ${err instanceof Error ? err.message : String(err)}. Nothing changed; press it again, or fix what the message names first`);
     }
   }
 

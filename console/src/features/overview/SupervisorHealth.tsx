@@ -4,6 +4,7 @@ import { Alert, Anchor, List, Text } from "@mantine/core";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { api } from "../../api";
 import type { SupervisorState } from "../tasks/api";
+import { errorText, ReadFailed } from "../../components/ReadFailed";
 
 // The Needs you list is the supervisor's: what it found an operator to have. So the Overview says when the
 // supervisor itself is not keeping up (off, late, or failing), and when a goal's sweep cannot finish, since
@@ -25,12 +26,22 @@ export function supervisorTrouble(state: SupervisorState, now = Date.now()): str
 
 export function SupervisorHealth() {
   const [state, setState] = useState<SupervisorState | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
-    const load = () => api.supervisor().then(setState, () => setState(null));
+    const load = () =>
+      api.supervisor().then(
+        (read) => {
+          setState(read);
+          setFailed(null);
+        },
+        (err) => setFailed(errorText(err)),
+      );
     void load();
     const timer = setInterval(load, 60_000);
     return () => clearInterval(timer);
   }, []);
+  // The supervisor is what finds the tasks that need someone: when it cannot be read, the list may be missing some.
+  if (failed) return <ReadFailed what="how the supervisor is doing, so the list below may be missing something" error={failed} retries="It tries again within a minute." />;
   if (!state) return null;
   const trouble = supervisorTrouble(state);
   const sweeps = Object.entries(state.sweeps_failing ?? {});

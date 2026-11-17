@@ -42,8 +42,22 @@ test("an identity outside the access list sees why, and no page", async () => {
 
   renderAt("/");
 
-  expect(await screen.findByText("Not allowed")).toBeTruthy();
+  expect(await screen.findByText("This account may not open the console")).toBeTruthy();
   expect(screen.getByText(/not on the console's access list/)).toBeTruthy();
+  // The way out: ask to be invited, or use another account.
+  expect(screen.getByText(/Ask an admin to invite this Google account/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Sign out and use another account" })).toBeTruthy();
+});
+
+test("a console that cannot be reached says so, apart from an account that is refused", async () => {
+  vi.stubGlobal("fetch", () => respond({ detail: "the planner did not answer" }, 502));
+
+  renderAt("/");
+
+  expect(await screen.findByText("The console could not be reached")).toBeTruthy();
+  expect(screen.getByText("the planner did not answer")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  expect(screen.queryByText("This account may not open the console")).toBeNull();
 });
 
 test("without a session the console shows Google sign-in, and signing in opens the page", async () => {
