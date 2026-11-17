@@ -30,6 +30,8 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 SETTINGS="$(dirname "$0")/environment.json"
+# The settings file is local (git-ignored): without it, MH_PROJECT and MH_ZONE must say where to act.
+[ -f "$SETTINGS" ] || SETTINGS=/dev/null
 P=${MH_PROJECT:-$(jq -r '.project // empty' "$SETTINGS")}
 Z=${MH_ZONE:-$(jq -r '.zone // empty' "$SETTINGS")}
 [ -n "$P" ] && [ -n "$Z" ] || { echo "error: $SETTINGS names no project or zone, and MH_PROJECT or MH_ZONE is not set." >&2; exit 1; }

@@ -1,0 +1,10 @@
+{
+  "project": "my-project-id",
+  "project_number": "123456789012",
+  "region": "us-central1",
+  "zone": "us-central1-a",
+  "state_bucket": "my-project-id-terraform",
+  "console_site": "my-console-site",
+  "google_client_id": "123456789012-example.apps.googleusercontent.com",
+  "github_repo": "owner/repo"
+}

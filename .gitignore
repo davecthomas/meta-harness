@@ -19,3 +19,7 @@ config/repos.local.json
 # Credentials: private keys, and the file google-github-actions/auth writes into the workspace.
 *.pem
 gha-creds-*.json
+
+# The deployment's settings: which project, bucket and site production is. The repo is public, so they stay
+# local (CI reads them from the MH_ENVIRONMENT secret). deploy/environment.example.json shows the shape.
+deploy/environment.json

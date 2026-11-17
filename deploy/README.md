@@ -23,7 +23,16 @@ Firebase Hosting site, so the console is `https://<console_site>.web.app`),
 `google_client_id` and `github_repo`. Both stacks, the deploy workflow, the
 Makefile and `deploy/shutdown.sh` read it, and nothing else names a project:
 `tests/test_deploy.py` fails when one does. Moving the deployment to another
-project is a change to this file, then "Setting up a project once" below. The
+project is a change to this file, then "Setting up a project once" below.
+
+The repo is public, so the file is not in it: git ignores
+`deploy/environment.json`, and `deploy/environment.example.json` shows its
+shape. Each machine that deploys keeps its own copy. CI reads it from the
+repo secret `MH_ENVIRONMENT` (`gh secret set MH_ENVIRONMENT <
+deploy/environment.json`; set it again after changing the file), and masks
+the project, its number, the bucket, the site and the client id in the
+public Actions logs. The make targets that act on the deployment stop, saying
+how to make the file, when it is missing. The
 state bucket and the Hosting site are unique across Google Cloud, so a new
 project needs new ones.
 
