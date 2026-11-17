@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { theme } from "../theme";
 import { call, SIGNED_OUT } from "../client";
 import { SignIn } from "../features/auth/SignIn";
+import { AdminProvider } from "./Role";
 import { ErrorAlert } from "./ui";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -20,7 +21,21 @@ test("a failure says what to do: try again, and where to read why", () => {
   show(<ErrorAlert error="GitHub answered 502" />);
   expect(screen.getByText("GitHub answered 502")).toBeTruthy();
   expect(screen.getByText("Reload to try again")).toBeTruthy();
-  expect((screen.getByText("Logs") as HTMLAnchorElement).getAttribute("href")).toContain("/admin/logs?q=GitHub");
+  expect((screen.getByText("Admin, Logs") as HTMLAnchorElement).getAttribute("href")).toContain("/admin/logs?q=GitHub");
+});
+
+test("someone who is not an admin is told who can read the logs, not sent to a page that refuses them", () => {
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <AdminProvider value={false}>
+          <ErrorAlert error="GitHub answered 502" />
+        </AdminProvider>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  expect(screen.getByText(/ask an admin: the Logs page, which admins can open/)).toBeTruthy();
+  expect(screen.queryByRole("link")).toBeNull();
 });
 
 test("a page that knows the remedy gives its own", () => {

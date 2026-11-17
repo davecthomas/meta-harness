@@ -39,7 +39,7 @@ export function inboxItems(
     items.push({ key: `review-${review.run_id}`, text: `An agent is reviewing: ${task.title}`, to: reviewLink(task.id) });
   }
   if (kill?.engaged) {
-    items.push({ key: "kill", text: `The kill switch is on: ${kill.reason ?? "nothing runs"}`, to: "/", detail: "No task starts or runs. An admin lifts it from the banner at the top of any page, once it is safe to run again." });
+    items.push({ key: "kill", text: `The kill switch is on: ${kill.reason ?? "nothing runs"}`, to: "/tasks?show=waiting", detail: "No task starts or runs. An admin lifts it from the banner at the top of any page, once it is safe to run again." });
   }
   for (const g of goals) {
     // A goal past its budget, once: its key is the same whether it is over or stopped.

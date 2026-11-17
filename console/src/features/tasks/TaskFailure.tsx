@@ -2,6 +2,7 @@ import { Alert, Anchor, List, Stack, Text } from "@mantine/core";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import type { MhEvent, Task } from "../../api";
+import { useAdmin } from "../../components/Role";
 import { diagnose } from "./diagnosis";
 import { Remedies } from "./Remedies";
 
@@ -18,6 +19,7 @@ function unfinished(events: MhEvent[]): MhEvent[] {
 // A failed or unresolved task says so at the top of its page: why it ended, each run that did not finish, and
 // where its log lines are. Nothing for a task in any other status.
 export function TaskFailure({ task, status, events, onChanged }: { task: Task; status: string; events: MhEvent[]; onChanged?: () => void }) {
+  const admin = useAdmin();
   const title = TITLES[status];
   if (!title) return null;
   const runs = unfinished(events);
@@ -46,9 +48,13 @@ export function TaskFailure({ task, status, events, onChanged }: { task: Task; s
             ))}
           </List>
         )}
-        <Anchor component={Link} to={`/admin/logs?q=${encodeURIComponent(task.id)}&minutes=1440`} size="sm">
-          Warnings and errors logged for this task
-        </Anchor>
+        {admin ? (
+          <Anchor component={Link} to={`/admin/logs?q=${encodeURIComponent(task.id)}&minutes=1440`} size="sm">
+            Warnings and errors logged for this task
+          </Anchor>
+        ) : (
+          <Text size="sm" c="dimmed">An admin can read the warnings and errors logged for this task, on the Logs page.</Text>
+        )}
       </Stack>
     </Alert>
   );

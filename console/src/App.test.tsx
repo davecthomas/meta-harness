@@ -128,3 +128,16 @@ test("the header shows the version and the deployed commit, linked", async () =>
   expect((await screen.findByTestId("version")).textContent).toBe("v0.21.1 · 4a286e3");
   expect(screen.getByRole("link", { name: "4a286e3" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness/commit/4a286e3c0ffee");
 });
+
+test("an address that is no page's says so and offers the ways on", async () => {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/me") return respond({ identity: "operator@example.com", roles: ["operator"] });
+    return respond({});
+  });
+
+  renderAt("/goalz");
+
+  const missing = await screen.findByTestId("no-such-page");
+  expect(missing.textContent).toContain("Nothing is at /goalz");
+  expect(within(missing).getByRole("link", { name: "Goals" }).getAttribute("href")).toBe("/goals");
+});

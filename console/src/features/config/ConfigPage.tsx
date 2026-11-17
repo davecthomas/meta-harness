@@ -4,6 +4,7 @@ import { Alert, Badge, Button, Center, Code, Group, List, Loader, Modal, Paper, 
 import { notifications } from "@mantine/notifications";
 import { IconArrowBackUp, IconCode, IconInfoCircle } from "@tabler/icons-react";
 import { api, ApiError, type ConfigKind, type ConfigSummary, type ConfigVersion } from "../../api";
+import { useAdmin } from "../../components/Role";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { DataTable, ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
 import { TaskPolicyView, type Staging } from "./ConfigViews";
@@ -89,6 +90,7 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
   const [profileDocs, setProfileDocs] = useState<Record<string, { skills?: string[] }>>({});
   const [skillNames, setSkillNames] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const admin = useAdmin();
 
   const load = useCallback(async () => {
     try {
@@ -104,9 +106,10 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
     void load();
   }, [load]);
 
-  // A tier candidate names a harness profile and a model: the selects offer the active profiles and the priced models.
+  // What one kind's view offers from another: a tier candidate names a harness profile and a model, a profile
+  // names skills, and a skill says which profiles use it.
   useEffect(() => {
-    if (summary.kind !== "tiers") return;
+    if (!["tiers", "profiles", "skills"].includes(summary.kind)) return;
     api.config("profiles").then(
       (p) => {
         setProfileNames(Object.keys(p.document.profiles ?? {}));
@@ -207,6 +210,8 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
     original,
     stage: (path, value) => replace(setIn(document, path, value)),
     reasons: (target) => reasons.filter((r) => reasonTarget(summary.kind, document, r) === target),
+    // The service takes a change only from an admin: everyone else reads the configuration.
+    readOnly: !admin,
   };
   const loose = reasons.filter((r) => reasonTarget(summary.kind, document, r) === null);
 
@@ -222,7 +227,11 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
               {when(current.created_at)}{current.note ? `: ${current.note}` : ""}
             </Text>
           </Stack>
-          <Button variant="default" leftSection={<IconCode size={16} />} onClick={() => setEditingJson(true)}>Advanced: JSON</Button>
+          {admin ? (
+            <Button variant="default" leftSection={<IconCode size={16} />} onClick={() => setEditingJson(true)}>Advanced: JSON</Button>
+          ) : (
+            <Badge variant="light" color="gray" tt="none" data-testid="read-only">Only an admin changes this</Badge>
+          )}
         </Group>
       </Paper>
 

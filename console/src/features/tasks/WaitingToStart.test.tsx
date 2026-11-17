@@ -47,11 +47,11 @@ test("a task waiting for a repo area names the task holding it and the paths the
   expect(notice?.textContent).toContain("on src/api, which this task's src/api/tasks.py shares");
 });
 
-test("a task whose goal is paused links to the goal, and one stopped by the kill switch to the Overview", () => {
+test("a task whose goal is paused links to the goal, and one stopped by the kill switch points at the banner on the page", () => {
   show({ ...QUEUED, held: hold("goal_status", "goal g-1 is paused", { goal_id: "g-1", status: "paused" }) });
   expect(screen.getByRole("link", { name: "Open the goal" }).getAttribute("href")).toBe("/goals/g-1");
   show({ ...QUEUED, id: "t-2", held: hold("kill_switch", "the kill switch is on: no task may start") });
-  expect(screen.getByRole("link", { name: "See the Overview" }).getAttribute("href")).toBe("/");
+  expect(screen.getByText("The banner at the top of this page says why, and an admin can end it there.")).toBeTruthy();
 });
 
 test("a queued task nothing holds starts at the next pass, and a running task shows no notice", () => {

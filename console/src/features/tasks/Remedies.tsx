@@ -11,6 +11,15 @@ import type { Diagnosis } from "./diagnosis";
 const DEFAULT_LIMIT = 10;
 
 // The spend limit a retry gets: the task's own, doubled when the last one was used up.
+// Which Configuration tab holds what a failure's fix changes, and the tab's name: a link goes to the setting,
+// not to the first tab.
+const CONFIG_TAB: Record<string, [string, string]> = {
+  grant_refused: ["tiers", "Router tiers"],
+  config: ["profiles", "Harness profiles"],
+  limit: ["profiles", "Harness profiles"],
+  refused_no_checks: ["repos", "Repositories"],
+};
+
 export function retryLimit(task: Pick<Task, "max_usd">, more: boolean): number {
   const limit = Number(task.max_usd ?? DEFAULT_LIMIT) || DEFAULT_LIMIT;
   return more ? limit * 2 : limit;
@@ -64,7 +73,11 @@ export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, o
       {diagnosis.remedies.includes("issue") && url && (
         <Anchor href={url} target="_blank" size="sm">Edit the issue in {trackerTitle(issueRef ? issueRef.split(":")[0] : "github")}</Anchor>
       )}
-      {diagnosis.remedies.includes("config") && <Anchor component={Link} to="/config" size="sm">Configuration</Anchor>}
+      {diagnosis.remedies.includes("config") && (
+        <Anchor component={Link} to={`/config?kind=${CONFIG_TAB[diagnosis.kind]?.[0] ?? "tiers"}`} size="sm">
+          Configuration, {CONFIG_TAB[diagnosis.kind]?.[1] ?? "Router tiers"}
+        </Anchor>
+      )}
       {error && <Text size="xs" c="red">{error}</Text>}
     </Group>
   );
