@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Autocomplete, type AutocompleteProps, Group, Stack, Text } from "@mantine/core";
-import { api, type LabelCount } from "../../api";
+import { api, type IssueSource, type LabelCount } from "../../api";
 
 // A label for the goal, suggested from the labels on the open issues of the picked repos (every
 // registered repo when none is picked). Each suggestion shows its open-issue count, and is marked when
@@ -9,18 +9,20 @@ import { api, type LabelCount } from "../../api";
 // fieldProps: what the goal page's in-place edit changes on the input, such as no label of its own.
 // The labels to suggest for these repos, with each one's open-issue count, read once. Shared by the goal's
 // Label field and the issue picker's Label filter, so both suggest the same labels the same way.
-// tracker: which tracker's labels; the default tracker's when left out.
-export function useLabelSuggestions(repos: string[], tracker?: string) {
+// source: which tracker's labels, and what it asks of a goal; the default tracker's when left out.
+export function useLabelSuggestions(repos: string[], source?: IssueSource) {
   const [labels, setLabels] = useState<LabelCount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setLabels(null);
     setError(null);
-    api.labels(undefined, tracker).then(
+    api.labels(undefined, source).then(
       (r) => setLabels(r.labels),
       (err) => setError(err instanceof Error ? err.message : String(err)),
     );
-  }, [tracker]);
+    // The source by what it says, not by which object says it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(source ?? null)]);
   const options = useMemo(() => suggestions(labels ?? [], repos), [labels, repos]);
   const byName = useMemo(() => new Map(options.map((o) => [o.label, o])), [options]);
   return { options, byName, error, loaded: labels !== null };
@@ -38,8 +40,8 @@ export function LabelOption({ row }: { row: LabelSuggestion }) {
   );
 }
 
-export function LabelField({ value, onChange, repos, required = true, fieldProps, tracker }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean; fieldProps?: Partial<AutocompleteProps>; tracker?: string }) {
-  const { options, byName, error, loaded } = useLabelSuggestions(repos, tracker);
+export function LabelField({ value, onChange, repos, required = true, fieldProps, source }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean; fieldProps?: Partial<AutocompleteProps>; source?: IssueSource }) {
+  const { options, byName, error, loaded } = useLabelSuggestions(repos, source);
 
   const typed = value.trim();
   let hint: string | null = null;

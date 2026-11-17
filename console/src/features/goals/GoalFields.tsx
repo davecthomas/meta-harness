@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Badge, Checkbox, NumberInput, Stack, Text, TextInput, Textarea } from "@mantine/core";
 import { api, goalTitle, type Goal } from "../../api";
+import { goalSource } from "../trackers/refs";
 import { InlineEdit, InlineSwitch } from "./InlineEdit";
 import { LabelField } from "./LabelField";
 import { PARALLEL_HELP, parallelLabel } from "./parallel";
@@ -86,7 +87,7 @@ export function LabelEdit({ goal, readOnly, save }: FieldProps) {
           value={value}
           onChange={onChange}
           repos={goal.repos}
-          tracker={goal.tracker ?? "github"}
+          source={goalSource(goal)}
           required={!picked}
           fieldProps={{
             label: undefined,

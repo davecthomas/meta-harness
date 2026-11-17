@@ -115,6 +115,9 @@ class Other:
     def repo_of(self, ref):
         return "o/elsewhere"
 
+    def bound(self, source):
+        return self
+
 
 async def test_the_router_picks_by_ref_by_goal_and_else_the_default():
     apps, other = Apps({("GET", "/repos/o/r/issues/7"): ISSUE}), Other()
@@ -158,45 +161,48 @@ async def test_a_tracker_the_meta_harness_does_not_support_is_named_with_what_to
 
 
 def test_the_registry_is_each_adapters_own_description_and_checks_a_configuration():
-    """Supported trackers are code, one adapter module each; which are set up and the default are configuration."""
+    """Supported trackers are code, one adapter module each; which are set up and the default are configuration.
+    What a goal tells a tracker (Jira: its project) is the goal's, not the configuration's."""
     assert list(registry.SUPPORTED) == ["github", "jira"]
     jira = registry.SUPPORTED["jira"]
-    assert [s.name for s in jira.settings] == ["site", "projects", "issue_type", "statuses"]
+    assert [s.name for s in jira.settings] == ["site", "issue_type", "statuses"]
+    assert [(s.name, s.kind, s.required) for s in jira.goal_settings] == [("project", "choice", True)]
     assert jira.credentials == ["MH_JIRA_EMAIL", "MH_JIRA_TOKEN"] and jira.writes_progress
-    assert not registry.SUPPORTED["github"].writes_progress
+    assert registry.SUPPORTED["github"].goal_settings == [] and not registry.SUPPORTED["github"].writes_progress
     assert registry.check(registry.seed(), None) == [] and registry.seed()["default"] == "github"
 
-    good = {
-        "default": "jira",
-        "trackers": {
-            "github": {},
-            "jira": {"site": "https://example.atlassian.net", "projects": [{"key": "VL", "repo": "o/r"}]},
-        },
-    }
-    repos = {"repos": {"repos": {"o/r": {}}}}
-    assert registry.check(good, repos) == []
-    assert registry.check(good, {"repos": {"repos": {}}}) == [
-        "jira: project VL's repo o/r is not in the repo registry; add it there first"
-    ]
-    assert registry.check({"default": "jira", "trackers": {"github": {}}}, repos) == [
+    good = {"default": "jira", "trackers": {"github": {}, "jira": {"site": "https://example.atlassian.net"}}}
+    assert registry.check(good, None) == []
+    assert registry.check({"default": "jira", "trackers": {"github": {}}}, None) == [
         "default must be one of the trackers set up (github), not 'jira'"
     ]
     bad = {
         "default": "jira",
-        "trackers": {
-            "linear": {},
-            "jira": {
-                "site": "http://example.atlassian.net",
-                "projects": [{"key": "vl", "repo": "o/r"}, {"key": "AB", "repo": "o/r"}, {"key": "AB", "repo": "o/q"}],
-                "statuses": {"shipped": "Done"},
-            },
-        },
+        "trackers": {"linear": {}, "jira": {"site": "http://example.atlassian.net", "statuses": {"shipped": "Done"}}},
     }
     reasons = registry.check(bad, None)
     assert reasons[0].startswith("linear: not a supported tracker; supported: github, jira")
     assert any("site is the Jira site's address" in r for r in reasons)
-    assert any("'vl' is not a project key" in r for r in reasons)
-    assert any("project AB is listed for o/r and o/q; one project goes to one repo" in r for r in reasons)
-    assert any(
-        "statuses names the projects' status for any of todo, in_progress, in_review, done" in r for r in reasons
-    )
+    assert any("statuses names the site's status for any of todo, in_progress, in_review, done" in r for r in reasons)
+
+    assert jira.check_goal({"project": "VL"}) == [] and registry.SUPPORTED["github"].check_goal({}) == []
+    assert "names its project by its key" in jira.check_goal({})[0]
+    assert "names its project by its key" in jira.check_goal({"project": "voltron"})[0]
+
+
+def test_a_goals_tracker_is_bound_to_its_repos_and_what_it_told_the_tracker():
+    bound = []
+
+    class Asks(Other):
+        def bound(self, source):
+            bound.append(source)
+            return self
+
+    trackers = Trackers([GitHubTracker(Apps()), Asks()])
+    goal = {"id": "g-1", "tracker": "other", "repos": ["o/api", "o/web"], "tracker_settings": {"project": "VL"}}
+
+    trackers.for_goal(goal)
+
+    assert (bound[0].repos, bound[0].settings) == (("o/api", "o/web"), {"project": "VL"})
+    github = trackers.adapter("github")
+    assert trackers.for_goal({"id": "g-0", "tracker": None, "repos": ["o/r"]}) is github, "GitHub needs no binding"

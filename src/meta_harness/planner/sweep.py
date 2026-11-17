@@ -161,6 +161,8 @@ async def sweep_goal(
 ) -> SweepResult:
     """One sweep of a goal, as the module says. sizer sizes each issue before it becomes a task; None: none is
     sized, and every issue runs as it did before sizing."""
+    # The goal's tracker, for its repos and what it told the tracker (its Jira project): every call below is its.
+    tracker = goal_tracker(tracker, goal)
     result = SweepResult(goal["id"])
     seen: set[str] = set()
     # A goal with no label takes only the issues an operator added by ref: listing with no label would
@@ -198,6 +200,7 @@ async def follow_up_goal(
     task, record each open one that has closed, and record the end of each pull request its canceled tasks
     left open. A tracker that is told how tasks go is told what changed. Nothing is taken in, and no task or
     goal changes status."""
+    tracker = goal_tracker(tracker, goal)
     result = SweepResult(goal["id"])
     for link in await asyncio.to_thread(_links, goal["id"]):
         if not link["task_id"]:
@@ -220,6 +223,7 @@ async def refresh_states(goal: dict, tracker: Tracker, events: Events, result: S
     """Record each issue the goal holds as open that has closed on the tracker, as a sweep would, for a goal
     no sweep covers: without it the goal's record keeps the state its last sweep saw, and its page shows a
     closed issue as open. Returns what could not be read; those keep the state they had."""
+    tracker = goal_tracker(tracker, goal)
     errors: list[str] = []
     for link in await asyncio.to_thread(_links, goal["id"]):
         if link["state"] != "open":
@@ -391,6 +395,21 @@ async def _take_in(
         return
     if existing and existing.get("split_into") is not None and not existing.get("run_anyway"):
         # Split by an operator: it stays held, saying what it was split into, and is neither sized nor split again.
+        result.held.append(issue.ref)
+        return
+    # A goal with several repos needs each issue to say which one its work is done in, where the tracker does
+    # not say by itself (a Jira project is not a repo's).
+    if not issue.repo:
+        reason = (
+            f"it names none of the goal's repos ({', '.join(goal['repos'])}): add a line `Repo: <owner/name>` to "
+            "its description, or the label `repo:<name>`"
+        )
+        if not existing:
+            await asyncio.to_thread(
+                _save, issue.ref, goal["id"], goal["repos"][0], "open", issue.depends_on, None, None, title, labels
+            )
+        if reason != (existing or {}).get("held_reason"):
+            await asyncio.to_thread(_hold, issue.ref, reason)
         result.held.append(issue.ref)
         return
     # An outsider's issue waits for an operator to read it: anyone may open an issue, and its text becomes an

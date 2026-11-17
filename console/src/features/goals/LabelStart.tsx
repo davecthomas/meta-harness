@@ -15,13 +15,13 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconSearch, IconSparkles } from "@tabler/icons-react";
-import { api, type GoalDraft, type LabelCount, type LabelIssue } from "../../api";
+import { api, type IssueSource, type GoalDraft, type LabelCount, type LabelIssue } from "../../api";
 
 // An optional helper for the New goal form: pick a label, see its open issues, and have a model draft the
 // goal's title and description from them. onDraft fills the form below; nothing is saved here, and nothing
 // here chooses the goal's issues. The form's Label field and Pick issues do that.
-// tracker: which tracker's labels and issues; the default tracker's when left out.
-export function LabelStart({ onDraft, tracker }: { onDraft: (draft: GoalDraft) => void; tracker?: string }) {
+// source: which tracker's labels and issues, and what it asks of a goal; the default tracker's when left out.
+export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) => void; source?: IssueSource }) {
   const [labels, setLabels] = useState<LabelCount[] | null>(null);
   const [repos, setRepos] = useState<string[]>([]);
   const [repo, setRepo] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export function LabelStart({ onDraft, tracker }: { onDraft: (draft: GoalDraft) =
   useEffect(() => {
     setPicked(null);
     setIssues(null);
-    api.labels(undefined, tracker).then(
+    api.labels(undefined, source).then(
       (r) => {
         setLabels(r.labels);
         setRepos(r.repos);
@@ -45,7 +45,8 @@ export function LabelStart({ onDraft, tracker }: { onDraft: (draft: GoalDraft) =
       },
       (err) => setError(err instanceof Error ? err.message : String(err)),
     );
-  }, [tracker]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(source ?? null)]);
 
   const shown = useMemo(
     () =>
@@ -63,7 +64,7 @@ export function LabelStart({ onDraft, tracker }: { onDraft: (draft: GoalDraft) =
     try {
       const found = await Promise.all(
         Object.keys(row.repos).map(async (name) =>
-          (await api.labelIssues(name, row.label, tracker)).map((issue) => ({ ...issue, repo: name })),
+          (await api.labelIssues(name, row.label, source)).map((issue) => ({ ...issue, repo: name })),
         ),
       );
       const all = found.flat();
@@ -78,7 +79,7 @@ export function LabelStart({ onDraft, tracker }: { onDraft: (draft: GoalDraft) =
     setDrafting(true);
     setError(null);
     try {
-      const made = await api.draftGoal({ label: picked.label, repos: Object.keys(picked.repos), refs: free.map((i) => i.ref), tracker });
+      const made = await api.draftGoal({ label: picked.label, repos: Object.keys(picked.repos), refs: free.map((i) => i.ref), tracker: source?.tracker, tracker_settings: source?.settings });
       setDraft(made);
       onDraft(made);
     } catch (err) {

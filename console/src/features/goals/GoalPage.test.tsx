@@ -52,7 +52,7 @@ test("a saved goal shows Not started with its label's open issues, and Start res
     }
     if (url === "/v1/goals/g-1") return respond({ ...goal, issues: [] });
     if (url.startsWith("/v1/tasks")) return respond({ tasks: [], total: 0 });
-    if (url === "/v1/repos/o/a/issues?label=bug")
+    if (url === "/v1/repos/o/a/issues?label=bug&tracker=github")
       return respond({
         issues: [
           { ref: "github:o/a#1", number: 1, title: "Crash on save", labels: ["bug"], updated_at: "2026-11-08T20:00:00Z", held_by: null },

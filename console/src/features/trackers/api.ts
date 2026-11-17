@@ -4,8 +4,9 @@ import { call } from "../../client";
 export interface TrackerSetting {
   name: string;
   label: string;
-  // text; projects: a list of { key, repo }; statuses: a name for each of todo, in_progress, in_review, done.
-  kind: "text" | "projects" | "statuses";
+  // text; statuses: a name for each of todo, in_progress, in_review, done; choice: one of what the tracker
+  // lists for it (GET /v1/trackers/{scheme}/choices/{setting}).
+  kind: "text" | "statuses" | "choice";
   required: boolean;
   help: string;
 }
@@ -16,6 +17,8 @@ export interface Tracker {
   title: string;
   description: string;
   settings: TrackerSetting[];
+  // What a goal that uses it says besides its repos, such as the Jira project its issues are in.
+  goal_settings: TrackerSetting[];
   // The secrets its sign-in comes from; never in the configuration.
   credentials: string[];
   // Set up: the trackers configuration holds its settings.
@@ -34,6 +37,22 @@ export interface Trackers {
   trackers: Tracker[];
 }
 
+// Which issues a goal's are, or a goal to be's: its tracker, and what that tracker asks of a goal. Left out, the
+// default tracker's.
+export interface IssueSource {
+  tracker?: string;
+  settings?: Record<string, string>;
+}
+
+// A source as the label and issue lists take it in their query.
+export function sourceQuery(source?: IssueSource): { tracker?: string; settings?: string } {
+  const settings = Object.fromEntries(Object.entries(source?.settings ?? {}).filter(([, v]) => v));
+  return { tracker: source?.tracker || undefined, settings: Object.keys(settings).length ? JSON.stringify(settings) : undefined };
+}
+
 export const trackersApi = {
   trackers: () => call<Trackers>("/v1/trackers"),
+  // What a goal may choose for one of a tracker's goal settings: Jira's projects, by name.
+  trackerChoices: (scheme: string, setting: string) =>
+    call<{ choices: { value: string; label: string }[] }>(`/v1/trackers/${scheme}/choices/${setting}`).then((r) => r.choices),
 };

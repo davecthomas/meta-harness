@@ -4,6 +4,7 @@ import { Anchor, Badge, Button, Center, Group, Loader, SegmentedControl, Stack, 
 import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlayerPause, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { api, trackerTitle, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
+import { goalSource } from "../trackers/refs";
 import { CancelGoal } from "./CancelGoal";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { GoalStanding } from "./GoalStanding";
@@ -68,7 +69,7 @@ export function GoalPage() {
       if (quiet) return;
       if (goalStatus(g) === "not_started" && g.label) {
         const found = await Promise.all(
-          g.repos.map(async (repo) => (await api.labelIssues(repo, g.label!, g.tracker ?? undefined)).map((issue) => ({ ...issue, repo }))),
+          g.repos.map(async (repo) => (await api.labelIssues(repo, g.label!, goalSource(g))).map((issue) => ({ ...issue, repo }))),
         );
         setWaiting(found.flat());
       } else {
@@ -231,7 +232,7 @@ export function GoalPage() {
         repos={goal.repos}
         chosen={issues.map((i) => i.ref)}
         goalId={goal.id}
-        tracker={goal.tracker ?? "github"}
+        source={goalSource(goal)}
         action="Add to goal"
         onPick={async (refs) => {
           const held = new Set(issues.map((i) => i.ref));
@@ -245,7 +246,13 @@ export function GoalPage() {
         items={[
           ["Modality", <Text size="sm">{goal.modality}</Text>],
           // One tracker for all the goal's issues, fixed when it was created.
-          ["Issue tracker", <Text size="sm">{trackerTitle(goal.tracker ?? "github")}</Text>],
+          [
+            "Issue tracker",
+            <Text size="sm">
+              {trackerTitle(goal.tracker ?? "github")}
+              {Object.entries(goal.tracker_settings ?? {}).map(([name, value]) => `, ${name} ${value}`).join("")}
+            </Text>,
+          ],
           ["Label", <LabelEdit {...editable} />],
           ["Repos", <ReposEdit {...editable} />],
           ["Auto-merge", <AutoMergeEdit {...editable} />],

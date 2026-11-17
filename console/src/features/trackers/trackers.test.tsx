@@ -3,7 +3,8 @@ import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
 import { TrackersView } from "./TrackersView";
 import { issueUrl, refLabel, setTrackers, trackerOf, trackerTitle } from "./refs";
-import type { Tracker } from "./api";
+import { sourceQuery, type Tracker, type TrackerSetting } from "./api";
+import { GoalTrackerFields } from "./GoalTrackerFields";
 import { reasonTarget } from "../config/staging";
 import { theme } from "../../theme";
 
@@ -14,7 +15,7 @@ afterEach(() => {
   setTrackers(null);
 });
 
-const base = { credentials: [] as string[], missing_credentials: [] as string[], signed_in: true, writes_progress: false, issue_url_prefix: null };
+const base = { goal_settings: [] as TrackerSetting[], credentials: [] as string[], missing_credentials: [] as string[], signed_in: true, writes_progress: false, issue_url_prefix: null };
 const GITHUB: Tracker = { ...base, scheme: "github", title: "GitHub Issues", description: "Each repo's own issues.", settings: [], configured: true };
 const JIRA: Tracker = {
   ...base,
@@ -23,10 +24,10 @@ const JIRA: Tracker = {
   description: "Issues live in Jira Cloud projects.",
   settings: [
     { name: "site", label: "Site", kind: "text", required: true, help: "The Jira site's address" },
-    { name: "projects", label: "Projects", kind: "projects", required: true, help: "Each project and its repo" },
     { name: "issue_type", label: "Issue type", kind: "text", required: false, help: "Task when empty" },
     { name: "statuses", label: "Status names", kind: "statuses", required: false, help: "The projects' own names" },
   ],
+  goal_settings: [{ name: "project", label: "Jira project", kind: "choice", required: true, help: "The project the goal's issues are in." }],
   credentials: ["MH_JIRA_EMAIL", "MH_JIRA_TOKEN"],
   missing_credentials: ["MH_JIRA_TOKEN"],
   signed_in: false,
@@ -73,33 +74,69 @@ test("every supported tracker is listed, and one that is not set up is set up wi
   expect(jira.queryByText("Site")).toBeNull();
 
   fireEvent.click(jira.getByRole("button", { name: "Set up Jira" }));
-  expect(staged).toEqual([[["trackers", "jira"], { site: "", projects: [] }]]);
+  expect(staged).toEqual([[["trackers", "jira"], { site: "" }]]);
 });
 
 test("a tracker that is set up shows its settings, its missing sign-in by name, and becomes the default", async () => {
-  const document = {
-    default: "github",
-    trackers: { github: {}, jira: { site: "https://example.atlassian.net", projects: [{ key: "VL", repo: "o/r" }], statuses: { done: "Shipped" } } },
-  };
-  const staged = show(document, ["jira: project VL's repo o/r is not in the repo registry; add it there first"]);
+  const document = { default: "github", trackers: { github: {}, jira: { site: "https://example.atlassian.net", statuses: { done: "Shipped" } } } };
+  const staged = show(document, ["jira: site is the Jira site's address, such as https://example.atlassian.net"]);
 
   const jira = within(await screen.findByTestId("tracker-jira"));
   expect(jira.getByText("Sign-in missing")).toBeTruthy();
   expect(jira.getByText("MH_JIRA_TOKEN")).toBeTruthy();
   expect(jira.getByText(/add each as a secret of the deployment/)).toBeTruthy();
   expect(jira.getByText("https://example.atlassian.net")).toBeTruthy();
-  expect(within(jira.getByTestId("project-0")).getByText("VL")).toBeTruthy();
   expect(jira.getByText("Shipped")).toBeTruthy();
-  expect(jira.getByText(/is not in the repo registry; add it there first/)).toBeTruthy();
+  expect(jira.getByText(/site is the Jira site's address/)).toBeTruthy();
+  // The project is each goal's to say, not the site's configuration.
+  expect(jira.getByText(/Each goal that uses Jira says its own jira project/)).toBeTruthy();
+  expect(jira.queryByText("Projects")).toBeNull();
 
   fireEvent.click(jira.getByRole("button", { name: "Make default" }));
-  fireEvent.click(jira.getByRole("button", { name: "Add a project" }));
-  fireEvent.click(jira.getByRole("button", { name: "Remove project VL" }));
-  expect(staged).toEqual([
-    [["default"], "jira"],
-    [["trackers", "jira", "projects"], [{ key: "VL", repo: "o/r" }, { key: "", repo: "o/r" }]],
-    [["trackers", "jira", "projects"], []],
-  ]);
+  expect(staged).toEqual([[["default"], "jira"]]);
+});
+
+test("the New goal form asks what the chosen tracker asks of a goal, and lists the choices by name", async () => {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/trackers/jira/choices/project") {
+      return respond({ choices: [{ value: "OPS", label: "Operations (OPS)" }, { value: "VL", label: "Voltron (VL)" }] });
+    }
+    return respond({});
+  });
+  const changes: unknown[] = [];
+  function Form({ tracker, settings }: { tracker: string; settings: Record<string, string> }) {
+    return (
+      <MantineProvider theme={theme}>
+        <GoalTrackerFields
+          trackers={[GITHUB, { ...JIRA, configured: true }]}
+          tracker={tracker}
+          onTracker={(scheme) => changes.push(["tracker", scheme])}
+          settings={settings}
+          onSettings={(next) => changes.push(["settings", next])}
+        />
+      </MantineProvider>
+    );
+  }
+  const { rerender } = render(<Form tracker="github" settings={{}} />);
+  expect(screen.queryByPlaceholderText("Choose one, or type its key")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Issue tracker"), { target: { value: "jira" } });
+  expect(changes).toEqual([["tracker", "jira"]]);
+
+  rerender(<Form tracker="jira" settings={{}} />);
+  const project = await screen.findByPlaceholderText("Choose one, or type its key");
+  fireEvent.change(project, { target: { value: "vl" } });
+  expect(changes.at(-1)).toEqual(["settings", { project: "VL" }]);
+
+  rerender(<Form tracker="jira" settings={{ project: "VL" }} />);
+  expect((await screen.findAllByText("Voltron (VL)")).length).toBeGreaterThan(0);
+  rerender(<Form tracker="jira" settings={{ project: "XX" }} />);
+  expect(await screen.findByText("No jira project has the key XX.")).toBeTruthy();
+});
+
+test("the label and issue lists are asked for a goal's tracker and what it told it", () => {
+  expect(sourceQuery(undefined)).toEqual({ tracker: undefined, settings: undefined });
+  expect(sourceQuery({ tracker: "github" })).toEqual({ tracker: "github", settings: undefined });
+  expect(sourceQuery({ tracker: "jira", settings: { project: "VL", other: "" } })).toEqual({ tracker: "jira", settings: '{"project":"VL"}' });
 });
 
 test("a ref reads without its tracker and links to its issue, whichever tracker it names", () => {

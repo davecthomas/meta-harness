@@ -5,11 +5,12 @@ import json
 import httpx
 import pytest
 
-from meta_harness.trackers import DONE, IN_PROGRESS, IN_REVIEW, TODO, TrackerError
-from meta_harness.trackers.jira import JiraTracker, Place, markdown
+from meta_harness.trackers import DONE, IN_PROGRESS, IN_REVIEW, TODO, Source, TrackerError
+from meta_harness.trackers.jira import JiraTracker, Site, markdown, repo_for
 
 SITE = "https://example.atlassian.net"
-PLACES = [Place(repo="o/r", site=SITE, project="VL"), Place(repo="o/r", site=SITE, project="OPS")]
+# A goal with one repo, whose issues are in the project VL.
+GOAL = Source(repos=("o/r",), settings={"project": "VL"})
 
 
 def status(name: str, category: str) -> dict:
@@ -40,9 +41,12 @@ class Jira:
         return httpx.Response(200, json=answer)
 
 
-def tracker(jira: Jira, places=PLACES, **sign_in) -> JiraTracker:
+def tracker(jira: Jira, source: Source | None = GOAL, statuses: dict | None = None, **sign_in) -> JiraTracker:
+    """The adapter for a goal (source), or with no goal (None), against the fake Jira."""
     sign_in = {"email": "bot@example.com", "token": "t", **sign_in}
-    return JiraTracker(places=lambda: places, transport=httpx.MockTransport(jira), **sign_in)
+    site = Site(site=SITE, statuses=statuses or {})
+    adapter = JiraTracker(site=lambda: site, transport=httpx.MockTransport(jira), **sign_in)
+    return adapter.bound(source) if source else adapter
 
 
 DESCRIPTION = "Make it so.\n\nh2. Acceptance checks\n* {{uv run pytest -q}}\n\nPaths: console\nDepends on: VL-3, OPS-9"
@@ -55,7 +59,7 @@ async def test_open_issues_are_read_by_project_and_label_a_page_at_a_time():
     }
     jira = Jira({("POST", "/rest/api/2/search/jql"): lambda body: pages[body.get("nextPageToken")]})
 
-    found = await tracker(jira, places=PLACES[:1]).list_open("o/r", 'goal "a"')
+    found = await tracker(jira).list_open("o/r", 'goal "a"')
 
     assert [i.ref for i in found] == ["jira:VL-7", "jira:VL-8"]
     first = found[0]
@@ -82,14 +86,44 @@ async def test_an_issue_is_read_with_what_blocks_it_and_done_is_closed():
 
     assert (read.state, read.depends_on, read.repo) == ("closed", ["jira:VL-2"], "o/r")
     assert adapter.url("jira:VL-7") == f"{SITE}/browse/VL-7" and adapter.url("github:o/r#1") is None
-    assert adapter.repo_of("jira:OPS-1") == "o/r" and adapter.issue_url_prefix() == f"{SITE}/browse/"
+    assert adapter.repo_of("jira:VL-1") == "o/r" and adapter.issue_url_prefix() == f"{SITE}/browse/"
     with pytest.raises(ValueError, match="is not jira:<PROJECT>-<number>"):
         adapter.repo_of("jira:vl-7")
-    with pytest.raises(TrackerError, match="the Jira project XX is not set up: list it with its repo"):
-        await adapter.read("jira:XX-1")
+    with pytest.raises(ValueError, match="OPS-1 is not in VL, the goal's Jira project"):
+        adapter.repo_of("jira:OPS-1")
+
+    # With no goal, an issue is still read by its ref, for its state; which repo it is for is its goal's to say.
+    alone = tracker(jira, source=None)
+    assert (await alone.read("jira:VL-7")).repo == ""
+    with pytest.raises(ValueError, match="a Jira issue's repo is its goal's"):
+        alone.repo_of("jira:VL-7")
+    with pytest.raises(TrackerError, match="no Jira project is named: a goal that uses Jira names its project"):
+        await alone.list_open("o/r", None)
 
 
-async def test_an_issue_is_created_in_the_repos_first_project_and_a_label_with_a_space_is_refused():
+async def test_a_goal_with_several_repos_reads_each_issues_repo_from_the_issue_and_holds_one_that_names_none():
+    """One Jira project can hold work for several repos: the issue says which, by a Repo: line or a repo: label."""
+    several = Source(repos=("o/api", "o/web"), settings={"project": "VL"})
+    found = [
+        issue("VL-1", description="Fix it.\n\nRepo: o/web"),
+        issue("VL-2", labels=["mh", "repo:api"]),
+        issue("VL-3", description="Which repo?"),
+        issue("VL-4", description="Repo: o/elsewhere"),
+    ]
+    jira = Jira({("POST", "/rest/api/2/search/jql"): {"issues": found}})
+    adapter = tracker(jira, source=several)
+
+    api, web = await adapter.list_open("o/api", "mh"), await adapter.list_open("o/web", "mh")
+
+    assert [(i.ref, i.repo) for i in api] == [("jira:VL-2", "o/api"), ("jira:VL-3", ""), ("jira:VL-4", "")]
+    assert [(i.ref, i.repo) for i in web] == [("jira:VL-1", "o/web")]
+    assert len(jira.asked) == 1, "one search of the project serves every repo of the goal"
+    assert repo_for(("o/r",), "", []) == "o/r", "a goal with one repo needs nothing from the issue"
+    assert repo_for(("o/api", "x/api"), "Repo: api", []) == "", "a name two repos share settles nothing"
+    assert repo_for(("o/api", "x/api"), "Repo: x/api", []) == "x/api"
+
+
+async def test_an_issue_is_created_in_the_goals_project_and_a_label_with_a_space_is_refused():
     jira = Jira(
         {("POST", "/rest/api/2/issue"): {"key": "VL-9"}, ("GET", "/rest/api/2/issue/VL-9"): issue("VL-9", "Split 1")}
     )
@@ -110,8 +144,31 @@ async def test_an_issue_is_created_in_the_repos_first_project_and_a_label_with_a
     await adapter.ensure_label("o/r", "meta-harness:goal-1")
     with pytest.raises(TrackerError, match="a Jira label has no spaces"):
         await adapter.ensure_label("o/r", "my goal")
-    with pytest.raises(TrackerError, match="no Jira project's issues go to o/other"):
-        await adapter.list_open("o/other", None)
+
+    # A goal with several repos: the new issue says which one it is for, as it is read back.
+    several = tracker(jira, source=Source(repos=("o/api", "o/web"), settings={"project": "VL"}))
+    await several.create_issue("o/web", "Split 2", "Body.", ["mh"])
+    posted = [body for method, path, body in jira.asked if (method, path) == ("POST", "/rest/api/2/issue")]
+    assert posted[-1]["fields"]["description"] == "Body.\n\nRepo: o/web\n"
+
+
+async def test_the_sites_projects_are_listed_for_a_goal_to_choose_from():
+    pages = {
+        "0": {"values": [{"key": "VL", "name": "Voltron"}, {"key": "OPS", "name": "Operations"}], "isLast": False},
+        "2": {"values": [{"key": "AB", "name": "Abacus"}], "isLast": True},
+    }
+
+    def projects(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=pages[request.url.params["startAt"]])
+
+    adapter = JiraTracker("bot@example.com", "t", site=lambda: Site(site=SITE), transport=httpx.MockTransport(projects))
+
+    assert await adapter.choices("project") == [
+        {"value": "AB", "label": "Abacus (AB)"},
+        {"value": "OPS", "label": "Operations (OPS)"},
+        {"value": "VL", "label": "Voltron (VL)"},
+    ]
+    assert await adapter.choices("anything else") == []
 
 
 async def test_a_comment_and_a_pull_requests_link_are_added_to_the_issue():
@@ -184,10 +241,11 @@ async def test_a_workflow_with_no_review_status_leaves_an_issue_in_progress_and_
     jira = workflow(("In Progress", "indeterminate"), plain)
     assert await tracker(jira).set_status("jira:VL-7", IN_REVIEW) is False and moved(jira) == []
 
-    named = [Place(repo="o/r", site=SITE, project="VL", statuses={"done": "Shipped"})]
     odd = {"transitions": [{"id": "41", "to": status("Done", "done")}, {"id": "51", "to": status("Shipped", "done")}]}
     jira = workflow(("In Review", "indeterminate"), odd)
-    assert await tracker(jira, places=named).set_status("jira:VL-7", DONE) is True and moved(jira) == ["51"]
+    assert await tracker(jira, statuses={"done": "Shipped"}).set_status("jira:VL-7", DONE) is True and moved(jira) == [
+        "51"
+    ]
 
 
 async def test_a_workflow_with_no_way_there_says_where_the_issue_can_go_and_what_to_do():
