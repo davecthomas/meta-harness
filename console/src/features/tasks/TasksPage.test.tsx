@@ -51,7 +51,7 @@ test("Running lists every task a workflow is working on, a running one with a pu
   renderAt("/tasks?show=running&view=list", asked);
 
   expect(await screen.findByText("Add a root README")).toBeTruthy();
-  expect(screen.getByText("in review")).toBeTruthy();
+  expect(screen.getByText("In review")).toBeTruthy();
   expect(asked[0]).toContain("status=running%2Ctaken_over");
   expect(asked[0]).not.toContain("pr=");
   expect(screen.getByRole("link", { name: "#104" }).getAttribute("href")).toBe("https://github.com/o/r/pull/104");

@@ -84,7 +84,7 @@ test("the Goals list tells a goal not started from one paused after running", as
   renderAt("/goals", <GoalsPage />);
 
   expect(await screen.findByText("Not started")).toBeTruthy();
-  expect(screen.getByText("paused")).toBeTruthy();
+  expect(screen.getByText("Paused")).toBeTruthy();
 });
 
 function goal(status: string) {

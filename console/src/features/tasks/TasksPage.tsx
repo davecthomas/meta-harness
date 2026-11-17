@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Alert, Badge, Button, Checkbox, Group, SegmentedControl, Table, Text } from "@mantine/core";
-import { api, type Task } from "../../api";
+import { api } from "../../api";
 import { useInfinite } from "../../hooks";
 import { TileGrid, type TileSize } from "../../components/TileGrid";
 import { VerdictBadge } from "./Reviews";
 import { waitReason } from "./WaitingToStart";
 import { useRowKeys } from "../../components/CommandPalette";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, StatusBadge, TitleLink, when } from "../../components/ui";
+import { shownStatus } from "./shownStatus";
+export { shownStatus };
 
 // Each tab: its key, its label, the statuses it shows, and whether the tasks have a pull request.
 // "Running" is every task whose workflow is working on it, first run or review loop (a running task with a
@@ -15,7 +17,7 @@ import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, StatusBadg
 // review_unresolved, with no workflow left. A task is under one tab, not both.
 const FILTERS: [string, string, string[], boolean | undefined][] = [
   ["running", "Running", ["running", "taken_over"], undefined],
-  ["waiting", "Queued and blocked", ["queued", "blocked"], undefined],
+  ["waiting", "Queued or blocked", ["queued", "blocked"], undefined],
   ["ready", "Pull request open", ["ready", "review_unresolved"], undefined],
   ["ended", "Ended", ["closed", "failed", "canceled"], undefined],
   ["all", "All", [], undefined],
@@ -197,11 +199,6 @@ export function TasksPage() {
       </div>
     </>
   );
-}
-
-// A running task with a pull request is in its review loop: checks, review, fixes.
-export function shownStatus(task: Task): string {
-  return task.status === "running" && task.pr_url ? "in_review" : task.status;
 }
 
 // The tile size Auto picks from how many tasks there are: one fills the page, a few share it.

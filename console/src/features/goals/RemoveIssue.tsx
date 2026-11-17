@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Anchor, Button, Group, Modal, Stack, Text } from "@mantine/core";
 import { api, type Task } from "../../api";
+import { statusLabel } from "../../components/status";
 
 // Remove an issue from its goal, after saying what that stops. The goal lets the issue go for good: it is not
 // taken in again by the goal's label, it no longer counts toward the goal being met, and another goal may
@@ -12,7 +13,7 @@ const LIVE = ["queued", "blocked", "running", "taken_over", "ready", "review_unr
 // What removing the issue does to its task, as a sentence, and whether its pull request is left open.
 export function removeEffect(task: Pick<Task, "status" | "pr_url"> | undefined): { text: string; leavesPullRequest: boolean } {
   if (!task) return { text: "It has no task yet, so nothing is stopped.", leavesPullRequest: false };
-  if (!LIVE.includes(task.status)) return { text: `Its task already ended (${task.status.replace(/_/g, " ")}), so nothing is stopped.`, leavesPullRequest: false };
+  if (!LIVE.includes(task.status)) return { text: `Its task already ended (${statusLabel(task.status).toLowerCase()}), so nothing is stopped.`, leavesPullRequest: false };
   if (task.pr_url) return { text: "Its task is canceled. Its pull request is open with work done: it stays open on GitHub, for you to merge or close there.", leavesPullRequest: true };
   if (task.status === "running") return { text: "Its task is running: the run is stopped and the task canceled. No pull request was opened.", leavesPullRequest: false };
   return { text: "Its task has not started: it is canceled.", leavesPullRequest: false };
