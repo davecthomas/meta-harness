@@ -120,7 +120,8 @@ function Action({ task, onChanged }: { task: Task; onChanged?: () => void }) {
       );
     case "kill_switch":
     case "draining":
-      return <Anchor component={Link} to="/" size="sm">See the Overview</Anchor>;
+      // The banner at the top of every page says who stopped the work, when and why, and how it ends.
+      return <Text size="sm">The banner at the top of this page says why, and an admin can end it there.</Text>;
     default:
       return null;
   }

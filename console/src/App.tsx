@@ -29,6 +29,7 @@ import { Inbox } from "./components/Inbox";
 import { FEATURES } from "./features";
 import { CommandPalette } from "./components/CommandPalette";
 import { AdminMenu } from "./components/AdminMenu";
+import { AdminProvider } from "./components/Role";
 import { loadTrackers } from "./features/trackers/refs";
 import { KillSwitchBanner, KillSwitchButton } from "./components/KillSwitch";
 import { TreeItem } from "./components/NavTree";
@@ -172,26 +173,51 @@ export function App() {
         ) : who === null ? (
           <Center h={240}><Loader /></Center>
         ) : (
-          <>
+          <AdminProvider value={admin}>
           <KillSwitchBanner admin={admin} />
           <Routes>
             {FEATURES.flatMap((f) => f.routes).map((r) => (
               <Route key={r.path} path={r.path} element={r.element} />
             ))}
+            <Route path="*" element={<NoSuchPage />} />
           </Routes>
-          </>
+          </AdminProvider>
         )}
       </AppShell.Main>
     </AppShell>
   );
 }
 
+// An address that is no page's: a mistyped or old link says so, with the ways on, where it once showed nothing.
+function NoSuchPage() {
+  const location = useLocation();
+  return (
+    <Alert color="yellow" title="No such page" maw={640} data-testid="no-such-page">
+      <Text size="sm" mb="xs">
+        Nothing is at <Text span ff="monospace">{location.pathname}</Text>. The link may be old, or the address mistyped.
+      </Text>
+      <Group gap="md">
+        <Anchor component={RouterLink} to="/" size="sm">Overview</Anchor>
+        <Anchor component={RouterLink} to="/goals" size="sm">Goals</Anchor>
+        <Anchor component={RouterLink} to="/tasks" size="sm">Tasks</Anchor>
+      </Group>
+    </Alert>
+  );
+}
+
+// The theme, changed here or under Settings, Appearance: both keep it in the person's settings, so it is the
+// same on the next visit and on another machine.
 function ColorSchemeToggle() {
   const { setColorScheme } = useMantineColorScheme();
   const dark = useComputedColorScheme("light", { getInitialValueInEffect: true }) === "dark";
+  function choose(next: "light" | "dark") {
+    setColorScheme(next);
+    // Saved on what the settings hold now; a failed save leaves the theme changed for this visit only.
+    api.settings().then((now) => api.saveSettings({ ...now, appearance: next }), () => undefined).catch(() => undefined);
+  }
   return (
     <Tooltip label={dark ? "Light theme" : "Dark theme"}>
-      <ActionIcon variant="default" size="lg" onClick={() => setColorScheme(dark ? "light" : "dark")} aria-label="Toggle theme">
+      <ActionIcon variant="default" size="lg" onClick={() => choose(dark ? "light" : "dark")} aria-label="Toggle theme">
         {dark ? <IconSun size={18} stroke={1.6} /> : <IconMoon size={18} stroke={1.6} />}
       </ActionIcon>
     </Tooltip>

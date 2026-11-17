@@ -4,6 +4,7 @@ import { Alert, Anchor, Badge, Button, Code, Group, Stack, Table, Text, Title } 
 import { issueUrl } from "../api";
 import { SIGNED_OUT } from "../client";
 import { statusColor } from "../theme";
+import { useAdmin } from "./Role";
 
 // Small pieces every page shares, so each page reads as layout and data.
 
@@ -44,6 +45,7 @@ export function StatusBadge({ status }: { status: string }) {
 // the general one: try again, and where to read why when it fails again. A lost session sends the operator
 // to sign in again.
 export function ErrorAlert({ error, remedy }: { error: string | null; remedy?: ReactNode }) {
+  const admin = useAdmin();
   if (!error) return null;
   const signedOut = /not signed in|nobody is signed in/i.test(error);
   return (
@@ -59,10 +61,14 @@ export function ErrorAlert({ error, remedy }: { error: string | null; remedy?: R
           ) : (
             <Group gap="xs">
               <Button size="compact-sm" variant="white" color="red" onClick={() => window.location.reload()}>Reload to try again</Button>
-              <Text size="xs">
-                If it fails again, the <Anchor component={Link} to={`/admin/logs?q=${encodeURIComponent(error.slice(0, 60))}&minutes=60`} size="xs">Logs</Anchor> page
-                has the warning that names it (admins), or ask an admin to look there.
-              </Text>
+              {admin ? (
+                <Text size="xs">
+                  If it fails again, <Anchor component={Link} to={`/admin/logs?q=${encodeURIComponent(error.slice(0, 60))}&minutes=60`} size="xs">Admin, Logs</Anchor>{" "}
+                  has the warning that names it.
+                </Text>
+              ) : (
+                <Text size="xs">If it fails again, ask an admin: the Logs page, which admins can open, has the warning that names it.</Text>
+              )}
             </Group>
           )
         )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Anchor, Button, Group, Modal, Paper, Select, Stack, Table, Text, Textarea } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { api } from "../../api";
@@ -48,7 +49,8 @@ export function ReposView({ staging: s }: { staging: Staging }) {
       {unlisted && (
         <Text size="sm" c="orange">
           The GitHub App's repositories could not be listed, so none can be added now: {unlisted}. Reload to try again; if it
-          keeps failing, check the App's key under Admin, Logs.
+          keeps failing, <Anchor component={Link} to="/admin/logs?q=GitHub%20App&minutes=60" size="sm">Admin, Logs</Anchor> has
+          the warning that says why.
         </Text>
       )}
       {names.length === 0 ? (

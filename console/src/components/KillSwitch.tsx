@@ -60,7 +60,7 @@ const ASK: Record<Change, { title: string; says: string; button: string; color: 
   },
   "end-drain": {
     title: "End the drain?",
-    says: "A deploy drains while it replaces the VM and ends the drain itself. End it by hand only if no deploy is running (Admin → Deploys).",
+    says: "A deploy drains while it replaces the VM and ends the drain itself. End it by hand only if no deploy is running: the deploy runs are linked from Admin, Deploys.",
     button: "End the drain",
     color: "teal",
     fallback: "drain ended from the console",
@@ -90,7 +90,7 @@ function Confirm(props: { change: Change | null; onClose: () => void }) {
       publish({ state, error: null });
       props.onClose();
     } catch (err) {
-      setError(`${err instanceof Error ? err.message : String(err)}. Try again; if it keeps failing, use Admin → Kill switch or check Admin → Logs.`);
+      setError(`${err instanceof Error ? err.message : String(err)}. Try again; if it keeps failing, Admin, Logs has the warning that says why.`);
     } finally {
       setBusy(false);
     }
