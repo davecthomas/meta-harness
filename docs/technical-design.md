@@ -3334,6 +3334,19 @@ if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
 the switch every 15 seconds.
 
+What needs the operator is one list with one count
+(`console/src/features/overview/needsYou.ts`): the tasks the supervisor found
+an operator to have, and the open goals past their budget or with nothing
+moving. Each item leads with what it asks for ("Merge", "Retry or fix",
+"Raise the budget", "Decide on the review"), then says why and what to do.
+The Overview shows all of it directly under its tiles, the failed and
+unresolved tasks grouped by what went wrong and the rest one row each, with
+Raise budget inline; the header's inbox shows its count and first six with a
+link to the rest. Nothing ages out of it. An agent's review in progress is
+listed under the inbox as "Also happening" and is not counted, and the kill
+switch has its banner. A read that fails says so and keeps the list as last
+read: an empty list means nothing needs the operator.
+
 Each thing is set in one place. A page never shows a setting it cannot
 change that another page can: there is no Repositories or Kill switch page
 under Admin (their old addresses lead to Configuration, Repositories and to

@@ -1,166 +1,114 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Table, Text } from "@mantine/core";
-import { goalTitle, api, goalStatus, type Goal, type MhEvent, type Task } from "../../api";
+import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Text } from "@mantine/core";
+import { api, type MhEvent } from "../../api";
 import { PullRequestsRow } from "./PullRequestsRow";
 import { ReviewsInProgress } from "../tasks/reviewing";
-import { BudgetMark, ResumeBudget, budgetStanding, budgetStops, budgetWords } from "../goals/budget";
+import { ResumeBudget, budgetStops, budgetWords } from "../goals/budget";
 import { useInfinite } from "../../hooks";
-import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, TitleLink, when } from "../../components/ui";
-import { moneyText } from "../../money";
-import { diagnose } from "../tasks/diagnosis";
+import { Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, TitleLink, when } from "../../components/ui";
 import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
-import { needsYouNote } from "./needsYou";
+import { needsYouNote, useNeedsYou, type NeedsYouItem } from "./needsYou";
 import { SupervisorHealth } from "./SupervisorHealth";
-import { standingNote } from "../goals/GoalStanding";
-import { standingLine } from "../tasks/Standing";
 
-const OPEN_GOALS = ["active", "paused", "stalled", "budget_exhausted"];
+// A goal that is open: taking in issues, planning them, or waiting on someone. The same list the Goals page's
+// Open filter uses.
+const OPEN_GOALS = ["planning", "active", "paused", "stalled", "budget_exhausted"];
 
 export function Overview() {
-  // Counted up by each action taken here, so the lists reread.
-  const [resumed, setResumed] = useState(0);
-  const goals = useInfinite((offset, limit) => api.goals(OPEN_GOALS, offset, limit), 25, "open-goals");
-  // Every task the supervisor found an operator to have, longest waiting first: failed, ready to merge,
-  // held for budget or a review, stuck behind another task. One list, from the supervisor's own record.
-  const waiting = useInfinite((offset, limit) => api.tasks({ hasIt: "operator" }, offset, limit), 25, `needs-you-${resumed}`);
-  const held = { items: [] as Task[], total: 0 };
+  // Counted up by each action taken here, so the list rereads.
+  const [acted, setActed] = useState(0);
+  // What needs the operator: the one list, which the header's inbox counts too (needsYou.ts).
+  const { items, error } = useNeedsYou(acted);
+  const goals = useInfinite((offset, limit) => api.goals(OPEN_GOALS, offset, limit), 1, "open-goals");
   const running = useInfinite((offset, limit) => api.tasks({ statuses: ["running"] }, offset, limit), 1, "running");
   const queued = useInfinite((offset, limit) => api.tasks({ statuses: ["queued", "blocked"] }, offset, limit), 1, "queued");
-  // A goal past its budget waits on an operator too: to raise it, or to let it stand.
-  const [pastBudget, setPastBudget] = useState<Goal[]>([]);
-  useEffect(() => {
-    api.goals(["active", "budget_exhausted"], 0, 200).then(
-      (page) => setPastBudget(page.items.filter((g) => budgetStanding(g) !== "ok")),
-      () => setPastBudget([]),
-    );
-  }, [resumed]);
 
   const needsYou = useRef<HTMLDivElement | null>(null);
-  const needing = waiting.total === null ? null : waiting.total + (held.total ?? 0) + pastBudget.length;
-  // The failed and unresolved tasks by what went wrong, so the same failure is said, and fixed, once.
+  const count = items?.length ?? null;
+  // The failed and unresolved tasks by what went wrong, so the same failure is said, and fixed, once. The
+  // rest of the list follows, each item once.
+  const broken = (items ?? []).filter((i) => i.task && ["failed", "review_unresolved"].includes(i.task.status) && !i.task.waiting_on);
   const failed = groupFailures(
-    waiting.items
-      .filter((t) => t.status !== "ready")
-      .map((t) => ({ key: t.id, name: t.title, taskId: t.id, issueRef: t.external_ref, status: t.status, reason: t.status_reason, max_usd: t.max_usd })),
+    broken.map(({ task }) => ({ key: task!.id, name: task!.title, taskId: task!.id, issueRef: task!.external_ref, status: task!.status, reason: task!.status_reason, max_usd: task!.max_usd })),
   );
+  const rest = (items ?? []).filter((i) => !broken.includes(i));
 
   return (
     <>
-      <PageHeader title="Overview" description="What is running, what waits on you, and the goals in flight." />
+      <PageHeader title="Overview" description="What needs you, what is running, and what waits to start." />
 
       <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} mb="lg">
+        <Stat label="Needs you" value={count} link={count ? "See what to do" : undefined} alert={!!count}
+          onClick={count ? () => needsYou.current?.scrollIntoView({ behavior: "smooth", block: "start" }) : undefined}
+          note={needsYouNote(items)} />
         <Stat label="Running" value={running.total} to="/tasks?view=tiles" link="Watch them"
-          note={running.total ? "Tasks an agent is working on now." : "No agent is working. A task starts when a goal has an open issue and a free place."} />
+          note={running.total === null ? "" : running.total ? "Tasks an agent is working on now." : "No agent is working. A task starts when a goal has an open issue and a free place."} />
         <Stat label="Queued or blocked" value={queued.total} to="/tasks?show=waiting" link="See why each waits"
-          note={queued.total ? "Tasks that have not started: each says what holds it." : "Nothing waits to start."} />
-        <Stat label="Needs you" value={needing} link={needing ? "See what to do" : undefined} alert={!!needing}
-          onClick={needing ? () => needsYou.current?.scrollIntoView({ behavior: "smooth", block: "start" }) : undefined}
-          note={needsYouNote(waiting.items, held.total ?? 0, pastBudget.length, needing)} />
-        <Stat label="Open goals" value={goals.total} to="/goals" link="All goals"
-          note={goals.total ? "Goals taking in issues or waiting on you." : "No goal is open: create one to start work."} />
+          note={queued.total === null ? "" : queued.total ? "Tasks that have not started: each says what holds it." : "Nothing waits to start."} />
+        <Stat label="Open goals" value={goals.total} to="/goals?show=open" link="All goals"
+          note={goals.total === null ? "" : goals.total ? "Goals taking in issues or waiting on you." : "No goal is open: create one to start work."} />
       </SimpleGrid>
-
-      <ReviewsInProgress />
-      <TodaySpend />
-      <PullRequestsRow />
 
       <div ref={needsYou} />
       <SectionTitle>Needs you</SectionTitle>
       <SupervisorHealth />
-      <ErrorAlert error={waiting.error} />
+      {error && (
+        <ErrorAlert
+          error={`Could not read what needs you: ${error}`}
+          remedy={<Text size="xs">It tries again in 30 seconds. What shows below is as it was last read, so it may be out of date.</Text>}
+        />
+      )}
       {failed.length > 0 && (
         <Paper withBorder p="md" mb="md" data-testid="needs-you-failures" style={{ borderColor: "var(--mantine-color-red-6)" }}>
-          <FailureGroups groups={failed} onChanged={() => setResumed((n) => n + 1)} />
+          <FailureGroups groups={failed} onChanged={() => setActed((n) => n + 1)} />
         </Paper>
       )}
-      {waiting.items.length + held.items.length + pastBudget.length ? (
-        <DataTable head={["Task", "Status", "Issue", "Pull request", "What to do"]}>
-          {pastBudget.map((g) => (
-            <Table.Tr key={g.id} data-testid={`past-budget-${g.id}`}>
-              <Table.Td><TitleLink to={`/goals/${g.id}`} title={goalTitle(g)} id={g.id} /></Table.Td>
-              <Table.Td><BudgetMark goal={g} /></Table.Td>
-              <Table.Td />
-              <Table.Td />
-              <Table.Td>
-                <Group gap="sm" wrap="nowrap">
-                  <Text size="sm">The goal has spent ${Number(g.spent_usd ?? 0).toFixed(2)} of ${Number(g.max_usd).toFixed(2)}: {budgetWords(g)}</Text>
-                  {budgetStops(g) && <ResumeBudget goalId={g.id} goal={g} size="xs" variant="light" onResumed={() => setResumed((n) => n + 1)} />}
-                </Group>
-              </Table.Td>
-            </Table.Tr>
-          ))}
-          {[...held.items, ...waiting.items].map((t) => (
-            <Table.Tr key={t.id}>
-              <Table.Td><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
-              <Table.Td>{t.waiting_on === "budget" ? (
-                  <Badge color="orange" variant="light" tt="none">out of budget</Badge>
-                ) : t.waiting_on === "operator_review" ? (
-                  <Badge color="violet" variant="light" tt="none">waits for {t.review_claimed_by ?? "an operator"}'s review</Badge>
-                ) : t.waiting_on === "review" ? (
-                  <Badge color="orange" variant="light" tt="none">review waits</Badge>
-                ) : (
-                  <StatusBadge status={t.status} />
-                )}</Table.Td>
-              <Table.Td><IssueLink issueRef={t.external_ref} /></Table.Td>
-              <Table.Td>{t.pr_url && <PrLink url={t.pr_url} />}</Table.Td>
-              <Table.Td>
-                <Group gap="sm" wrap="nowrap">
-                  <Stack gap={0}>
-                    <Text size="sm">{whatToDo(t)}</Text>
-                    {t.standing && <Text size="xs" c="dimmed">Waiting on you since {when(t.standing.since)}</Text>}
-                  </Stack>
-                  {t.waiting_on === "budget" && t.goal_id && (t.status_reason ?? "").includes("goal's budget") && (
-                    <ResumeBudget goalId={t.goal_id} size="xs" variant="light" onResumed={() => setResumed((n) => n + 1)} />
-                  )}
-                </Group>
-              </Table.Td>
-            </Table.Tr>
-          ))}
-        </DataTable>
-      ) : (
-        waiting.total !== null && <Empty>Nothing waits on you.</Empty>
+      {rest.length > 0 && (
+        <Stack gap="xs" mb="lg" data-testid="needs-you-list">
+          {rest.map((item) => <NeedsYouRow key={item.key} item={item} onActed={() => setActed((n) => n + 1)} />)}
+        </Stack>
       )}
-      <div ref={waiting.sentinel} />
+      {items !== null && items.length === 0 && !error && (
+        <Empty>Nothing needs you. A task shows here when it is ready to merge, fails, or waits for a decision; a goal when it passes its budget or stops moving.</Empty>
+      )}
+      {items === null && !error && <Text size="sm" c="dimmed" mb="lg">Loading…</Text>}
 
-      <SectionTitle right={<Button component={Link} to="/goals/new" size="xs" variant="light">New goal</Button>}>Open goals</SectionTitle>
-      <ErrorAlert error={goals.error} />
-      {goals.items.length ? (
-        <DataTable head={["Goal", "Status", "Label", "Repos", "Auto-merge", "Created"]}>
-          {goals.items.map((g) => (
-            <Table.Tr key={g.id}>
-              <Table.Td maw={420}><TitleLink to={`/goals/${g.id}`} title={goalTitle(g)} id={g.id} /></Table.Td>
-              <Table.Td>
-                <Stack gap={2}>
-                  <StatusBadge status={goalStatus(g)} />
-                  {standingNote(g.standing) && <Text size="xs" c="orange">{standingNote(g.standing)}</Text>}
-                </Stack>
-              </Table.Td>
-              <Table.Td>{g.label ? <Badge variant="outline" tt="none" radius="sm">{g.label}</Badge> : <Text size="xs" c="dimmed">Picked issues</Text>}</Table.Td>
-              <Table.Td>{g.repos.map((r) => <Text ff="monospace" size="xs" key={r}>{r}</Text>)}</Table.Td>
-              <Table.Td><Text size="sm">{g.auto_merge ? "On" : "Off"}</Text></Table.Td>
-              <Table.Td><Text size="sm" c="dimmed">{when(g.created_at)}</Text></Table.Td>
-            </Table.Tr>
-          ))}
-        </DataTable>
-      ) : (
-        goals.total !== null && <Empty>No open goals. <Anchor component={Link} to="/goals/new">Create one.</Anchor></Empty>
-      )}
-      <div ref={goals.sentinel} />
+      <ReviewsInProgress />
+      <PullRequestsRow />
+      <TodaySpend />
     </>
   );
 }
 
-// What a task in the Needs you list waits for, as an instruction.
-function whatToDo(t: Task): string {
-  if (t.waiting_on === "budget") return `${moneyText(t.status_reason) ?? "It reached its spend limit"}. Open it to raise the limit or end it.`;
-  if (t.waiting_on === "operator_review") return "An operator's review is in progress: open it to finish the review.";
-  if (t.waiting_on === "review") return "Its review asks for changes and waits for you: open it to dismiss findings or let the fix run start.";
-  if (t.status === "ready") return "Its review is clean and its pull request is open: merge it.";
-  const diagnosis = diagnose({ status: t.status, reason: t.status_reason });
-  if (diagnosis) return `${diagnosis.summary}. ${diagnosis.fix}`;
-  // Anything else the supervisor found to be an operator's says why and what to do in its standing.
-  return t.standing ? standingLine(t.standing) : moneyText(t.status_reason) ?? t.status;
+// One thing that needs the operator: what it asks for, what it is about, why, and the action where there is one
+// to take from here.
+function NeedsYouRow({ item, onActed }: { item: NeedsYouItem; onActed: () => void }) {
+  const { goal, task } = item;
+  const raisesGoal = (goal && budgetStops(goal) && item.key === `goal-${goal.id}`) || (task?.waiting_on === "budget" && !!task.goal_id && (task.status_reason ?? "").includes("goal's budget"));
+  return (
+    <Paper p="sm" data-testid={`needs-you-${item.key}`}>
+      <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
+        <Stack gap={2} style={{ flex: "1 1 420px", minWidth: 0 }}>
+          <Group gap="xs" wrap="wrap">
+            <Badge color="red" variant="light" tt="none" miw="max-content">{item.action}</Badge>
+            <TitleLink to={item.to} title={item.title} id={(task ?? goal)?.id ?? ""} />
+          </Group>
+          <Text size="sm">{item.detail}</Text>
+          <Group gap="md">
+            {task && <IssueLink issueRef={task.external_ref} />}
+            {task?.pr_url && <PrLink url={task.pr_url} />}
+            {goal && budgetWords(goal) && <Text size="xs" c="dimmed">Spent ${Number(goal.spent_usd ?? 0).toFixed(2)} of ${Number(goal.max_usd).toFixed(2)}: {budgetWords(goal)}</Text>}
+            {item.since && <Text size="xs" c="dimmed">Waiting on you since {when(item.since)}</Text>}
+          </Group>
+        </Stack>
+        <Group gap="xs">
+          {raisesGoal && <ResumeBudget goalId={(goal?.id ?? task?.goal_id)!} goal={goal} size="xs" variant="light" onResumed={onActed} />}
+          <Button component={Link} to={item.to} size="xs" variant="default">Open</Button>
+        </Group>
+      </Group>
+    </Paper>
+  );
 }
 
 // A number on the Overview with what it means and where to act on it. The whole tile is the link.
