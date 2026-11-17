@@ -3334,6 +3334,14 @@ if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
 the switch every 15 seconds.
 
+A status has one label, one meaning and one color, wherever it shows
+(`console/src/components/status.ts`): the service's names never reach a page.
+A task reads Queued, Blocked, Working, In review, Taken over, Ready to merge,
+Review unresolved, Done, Failed or Canceled; a goal Planning, Active, Paused,
+Not started, Stalled, Out of budget, Met or Canceled. A badge says its
+meaning on hover and to a screen reader. A working task with a pull request
+open is In review on its page, in every list and in the left pane.
+
 What needs the operator is one list with one count
 (`console/src/features/overview/needsYou.ts`): the tasks the supervisor found
 an operator to have, and the open goals past their budget or with nothing

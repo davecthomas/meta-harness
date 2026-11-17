@@ -3,6 +3,7 @@ import { NavLink as RouterLink, useLocation } from "react-router-dom";
 import { ActionIcon, Box, Collapse, Group, NavLink, Text } from "@mantine/core";
 import { IconChevronRight } from "@tabler/icons-react";
 import { statusColor } from "../theme";
+import { statusWords } from "./status";
 
 // The pieces of the left pane's history: rows that link to a page and open to show what is under them, as other
 // agent consoles list their conversations.
@@ -16,8 +17,8 @@ export function StatusDot({ status }: { status: string }) {
     <Box
       component="span"
       role="img"
-      aria-label={status.replace(/_/g, " ")}
-      title={status.replace(/_/g, " ")}
+      aria-label={statusWords(status).label}
+      title={statusWords(status).meaning ? `${statusWords(status).label}: ${statusWords(status).meaning}` : statusWords(status).label}
       w={8}
       h={8}
       display="inline-block"

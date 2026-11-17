@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api, goalStatus, goalTitle, type Goal } from "../../api";
 import { LeafItem, PastGroup, readFailed, StatusDot, TreeItem, TreeNote, useRows } from "../../components/NavTree";
+import { shownStatus } from "../tasks/shownStatus";
 
 // Every goal, current and past, under Goals in the left pane. Each one opens to show its tasks.
 
@@ -55,7 +56,7 @@ function GoalTasks({ goalId }: { goalId: string }) {
     <>
       {error && <TreeNote error>{readFailed("its tasks", error)}</TreeNote>}
       {rows.length === 0 && <TreeNote>No tasks yet.</TreeNote>}
-      {rows.map((t) => <LeafItem key={t.id} label={t.title} to={`/tasks/${t.id}`} status={t.status} />)}
+      {rows.map((t) => <LeafItem key={t.id} label={t.title} to={`/tasks/${t.id}`} status={shownStatus(t)} />)}
     </>
   );
 }

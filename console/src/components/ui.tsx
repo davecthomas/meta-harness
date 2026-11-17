@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Alert, Anchor, Badge, Button, Code, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { Tooltip, Alert, Anchor, Badge, Button, Code, Group, Stack, Table, Text, Title } from "@mantine/core";
 import { issueUrl } from "../api";
 import { SIGNED_OUT } from "../client";
-import { statusColor } from "../theme";
+import { statusWords } from "./status";
 import { useAdmin } from "./Role";
 
 // Small pieces every page shares, so each page reads as layout and data.
@@ -30,15 +30,16 @@ export function SectionTitle(props: { children: ReactNode; right?: ReactNode }) 
   );
 }
 
-// A status whose badge reads otherwise than its name.
-const STATUS_LABELS: Record<string, string> = { not_started: "Not started" };
-
+// Where a task or goal stands, in the console's words for it, with what that means on hover and for a screen
+// reader (components/status.ts).
 export function StatusBadge({ status }: { status: string }) {
-  return (
-    <Badge color={statusColor(status)} variant="light" radius="sm" tt="none" miw="max-content">
-      {STATUS_LABELS[status] ?? status.replace(/_/g, " ")}
+  const words = statusWords(status);
+  const badge = (
+    <Badge color={words.color} variant="light" radius="sm" tt="none" miw="max-content" data-status={status} aria-label={words.meaning ? `${words.label}: ${words.meaning}` : words.label}>
+      {words.label}
     </Badge>
   );
+  return words.meaning ? <Tooltip label={words.meaning} multiline maw={300} withArrow>{badge}</Tooltip> : badge;
 }
 
 // A failure, with what to do about it. A page that knows the remedy passes it; otherwise the banner gives

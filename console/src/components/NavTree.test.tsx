@@ -45,7 +45,7 @@ test("goals list current ones first and past ones folded away, and a goal opens 
 
   fireEvent.click(screen.getByRole("button", { name: "Open Console UX" }));
   expect((await screen.findByRole("link", { name: /Fix the badge/ })).getAttribute("href")).toBe("/tasks/t-1");
-  expect(screen.getByRole("img", { name: "running" })).toBeTruthy();
+  expect(screen.getByRole("img", { name: "Working" })).toBeTruthy();
 
   fireEvent.click(screen.getByRole("button", { name: "Past goals (1)" }));
   expect(await screen.findByRole("link", { name: /Old work/ })).toBeTruthy();

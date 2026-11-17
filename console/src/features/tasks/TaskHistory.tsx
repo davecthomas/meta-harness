@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@mantine/core";
 import { api } from "../../api";
 import { LeafItem, PastGroup, readFailed, TreeNote, useRows } from "../../components/NavTree";
+import { shownStatus } from "./shownStatus";
 
 // Every task, current and past, under Tasks in the left pane: the ones still going first, then the finished
 // ones, read a page at a time when that list is opened.
@@ -18,7 +19,7 @@ export function TaskHistory() {
     <>
       {error && <TreeNote error>{readFailed("the tasks", error)}</TreeNote>}
       {rows.length === 0 && <TreeNote>No tasks running or waiting.</TreeNote>}
-      {rows.map((t) => <LeafItem key={t.id} label={t.title} to={`/tasks/${t.id}`} status={t.status} />)}
+      {rows.map((t) => <LeafItem key={t.id} label={t.title} to={`/tasks/${t.id}`} status={shownStatus(t)} />)}
       <PastGroup label="Past tasks">
         <PastTasks />
       </PastGroup>
@@ -39,7 +40,7 @@ function PastTasks() {
     <>
       {error && <TreeNote error>{readFailed("the past tasks", error)}</TreeNote>}
       {found.items.length === 0 && <TreeNote>No finished tasks.</TreeNote>}
-      {found.items.map((t) => <LeafItem key={t.id} label={t.title} to={`/tasks/${t.id}`} status={t.status} />)}
+      {found.items.map((t) => <LeafItem key={t.id} label={t.title} to={`/tasks/${t.id}`} status={shownStatus(t)} />)}
       {found.items.length < found.total && (
         <Button variant="subtle" size="compact-xs" ml="sm" onClick={() => setPages(pages + 1)}>
           Show more ({found.total - found.items.length} left)

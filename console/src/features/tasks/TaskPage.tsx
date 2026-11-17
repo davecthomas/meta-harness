@@ -24,6 +24,8 @@ import { useEventStream } from "../../hooks";
 import { describe, fold, type Line, type TileFacts } from "../../terminal";
 import { Terminal } from "../../components/Terminal";
 import { ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge } from "../../components/ui";
+import { statusLabel } from "../../components/status";
+import { shownStatus } from "./shownStatus";
 import { moneyText } from "../../money";
 
 const FIRST = 400;
@@ -174,6 +176,8 @@ export function TaskPage() {
 
   if (!task) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const status = facts.status ?? task.status;
+  // As every list shows it: a working task with a pull request open is in review.
+  const shown = shownStatus({ ...task, status });
   const cancellable = ["queued", "blocked", "running"].includes(status);
   async function cancel() {
     try {
@@ -187,7 +191,7 @@ export function TaskPage() {
     <>
       <PageHeader
         title={task.title}
-        description={<Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{task.id}</Text></Group>}
+        description={<Group gap="xs"><StatusBadge status={shown} /><Text size="sm" c="dimmed" ff="monospace">{task.id}</Text></Group>}
         actions={
           <>
             {cancellable && <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={cancel}>Cancel task</Button>}
@@ -211,7 +215,7 @@ export function TaskPage() {
         items={[
           ["Status", (
             <Text size="sm">
-              {status}{task.status_reason && `: ${moneyText(task.status_reason)}`}
+              {statusLabel(shown)}{task.status_reason && `: ${moneyText(task.status_reason)}`}
               {task.cancel_requested && status === "running" && " (cancel requested)"}
             </Text>
           )],
