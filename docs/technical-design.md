@@ -2582,21 +2582,68 @@ The interface is `meta_harness.trackers.base.Tracker`, and each tracker is
 one adapter module beside it (`src/meta_harness/trackers/`). `repo` is always
 the code repo: an adapter whose issues live elsewhere maps the repo to that
 place itself. A failed call raises `TrackerError`, with whether to try again,
-so no caller knows which tracker it spoke to. `Trackers`
-(`trackers/router.py`) is every connected tracker as one: a call that names a
-repo goes to the adapter of the tracker the repo registry gives the repo, and
-a call that names a ref goes to the adapter the ref's first part names. A
-tracker that is not connected is refused by name, with what to do.
-Outside an adapter a ref is opaque: stored, compared and passed back.
+so no caller knows which tracker it spoke to. Outside an adapter a ref is
+opaque: stored, compared and passed back. `repo_of(ref)` is the one more
+operation: the code repo an issue's work is done in.
+
+**The registry of supported trackers** (`trackers/registry.py`) is the list
+of adapter modules. Each describes itself in a `SPEC`: its name and title, its
+settings (for the console to draw its form), the secrets its sign-in needs,
+a check of its settings, how to build it, and whether the planner tells it
+how an issue's task is going (`writes_progress`: Jira yes; GitHub no, since a
+pull request's `Closes` line links and closes its issue). A new tracker is
+one module and one line in the registry.
+
+**Which trackers are set up, and the default**, is the `trackers`
+configuration, versioned and checked like the other kinds
+(`config/trackers.json` ships GitHub alone; `config/trackers.local.json`,
+which git ignores, replaces it):
+
+```json
+{"default": "jira",
+ "trackers": {"github": {},
+              "jira": {"site": "https://example.atlassian.net",
+                       "projects": [{"key": "PROJ", "repo": "owner/name"}],
+                       "issue_type": "Task",
+                       "statuses": {"in_review": "In Review"}}}}
+```
+
+A sign-in is never in it: Jira's is the secrets `MH_JIRA_EMAIL` and
+`MH_JIRA_TOKEN`. `GET /v1/trackers` lists every supported tracker with its
+settings' description, whether it is set up and signed in, and the default.
+
+**A goal uses one tracker** (`goal.tracker`): the default when it is created,
+unless it names another that is set up, and it keeps it. Every ref it holds
+is that tracker's (422 otherwise). A goal from before goals named one uses
+GitHub. `Trackers` (`trackers/router.py`) is every supported tracker as one:
+a call that names a ref goes to the tracker the ref's first part names, a
+call made for a goal to the goal's tracker, and any other (the label and
+issue lists before there is a goal, which take `?tracker=`) to the default.
+The repo registry's `tracker` field decides nothing.
 
 As built, the GitHub adapter (`trackers/github.py`) has every operation but
 `webhook`: `done` closes an issue and `todo` opens it again, the statuses
 between change nothing, since a GitHub issue is open or closed, and
-`link_pull_request` does nothing, since GitHub links a pull request to the
-issue its `Closes` line names. The planner calls `list_open`, `read`,
-`ensure_label` and `create_issue`; nothing calls `comment`, `set_status` or
-`link_pull_request` yet. A sweep every `MH_PLANNER_SWEEP_SECONDS` stands
-in for the webhook. The Jira and Linear adapters are planned. The sweep also reads the pull requests of `ready` and
+`link_pull_request` does nothing. The Jira adapter (`trackers/jira.py`)
+works with Jira Cloud's REST API version 2, whose descriptions are text:
+- An issue's ref is `jira:<KEY>`. One project goes to one repo, so the key's
+  project names the repo; a repo may have several projects.
+- `list_open` is the project's issues not in a Done status, with the label.
+  An issue in a Done-category status is closed.
+- What blocks an issue is its "is blocked by" links and the keys its
+  `Depends on:` lines name.
+- `set_status` moves the issue through its workflow: to the status the
+  settings name for ours, else to one of the matching Jira category (To Do,
+  In Progress, Done). For `in_review` it takes a status with "review" in its
+  name when the workflow has one, else leaves an issue in progress as it is.
+  A workflow with no such move is an error that lists where the issue can go.
+- `link_pull_request` adds a remote link whose id is the pull request's
+  address, so adding it twice changes the one link.
+- A label with a space is refused before any issue is made.
+The planner calls `list_open`, `read`, `ensure_label` and `create_issue`;
+nothing calls `comment`, `set_status` or `link_pull_request` yet. A sweep
+every `MH_PLANNER_SWEEP_SECONDS` stands in for the webhook. The Linear
+adapter is planned. The sweep also reads the pull requests of `ready` and
 `review_unresolved` tasks and their checks (Review loop), and of `canceled`
 tasks that left one open, until it merges or closes, through the run
 service's code-host functions, with a token that has `pull_requests: read`,

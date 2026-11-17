@@ -26,6 +26,7 @@ from typing import Any, Callable
 from ai_api_unified.routing.router_config import load_router_config
 
 from meta_harness.config.skills import check_skills, seed_skills
+from meta_harness.trackers import registry as tracker_registry
 from meta_harness.run_service.routing import replaced_engine_reason
 
 from meta_harness.run_service.paths import REPO_ROOT
@@ -318,6 +319,13 @@ KINDS: dict[str, Kind] = {
         "The repos goals may change, with each one's tracker and default acceptance checks.",
         seed_repos,
         check_repos,
+    ),
+    "trackers": Kind(
+        "trackers",
+        "Issue trackers",
+        "Which issue trackers are set up, each with its settings, and which one a new goal uses.",
+        tracker_registry.seed,
+        tracker_registry.check,
     ),
     "skills": Kind(
         "skills",

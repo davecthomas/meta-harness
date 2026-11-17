@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from meta_harness import db
 from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import sizing, store
+from meta_harness.planner.sweep import goal_tracker
 from meta_harness.run_service.code_host import issue_paths
 
 MAX_SPLIT_ISSUES = 20
@@ -166,9 +167,11 @@ def register(
         created: list[str] = []
         try:
             if label:
-                await tracker.ensure_label(repo, label)
+                await goal_tracker(tracker, goal).ensure_label(repo, label)
             for issue in body.issues:
-                made = await tracker.create_issue(repo, issue.title.strip(), issue.body, [label] if label else [])
+                made = await goal_tracker(tracker, goal).create_issue(
+                    repo, issue.title.strip(), issue.body, [label] if label else []
+                )
                 created.append(made.ref)
         except TrackerError as err:
             # What was created is recorded as the split, so a retry never creates it twice; none: it may be split again.

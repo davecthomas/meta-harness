@@ -165,7 +165,7 @@ async def sweep_goal(
     # list every open issue in the repo.
     for repo in goal["repos"] if goal["label"] else []:
         try:
-            issues = await tracker.list_open(repo, goal["label"])
+            issues = await goal_tracker(tracker, goal).list_open(repo, goal["label"])
         except TrackerError as err:
             result.errors.append(f"{repo}: {err}")
             continue
@@ -294,7 +294,7 @@ async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, even
     # The label may have picked up an issue since the sweep listed it: look once more before closing the goal.
     for repo in goal["repos"] if goal["label"] else []:
         try:
-            issues = await tracker.list_open(repo, goal["label"])
+            issues = await goal_tracker(tracker, goal).list_open(repo, goal["label"])
         except TrackerError as err:
             result.errors.append(f"{repo}: {err}")
             return
@@ -789,6 +789,12 @@ def _emit_end(goal: dict | None, task: dict, pull: PullRequest, events: Events) 
         tags={"goal_id": goal["id"]} if goal else {},
         event_id=stable_event_id(task["id"], event_type),
     )
+
+
+def goal_tracker(tracker: Tracker, goal: dict) -> Tracker:
+    """The tracker a goal's issues are in. A goal uses one, and the connected trackers pick it by the goal; a
+    single tracker given in their place is every goal's."""
+    return tracker.for_goal(goal) if hasattr(tracker, "for_goal") else tracker
 
 
 async def _is_open(ref: str, tracker: Tracker) -> bool:

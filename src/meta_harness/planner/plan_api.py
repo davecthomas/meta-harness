@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import db
 from meta_harness.planner import planning, plans, store
+from meta_harness.planner.sweep import goal_tracker
 
 
 class DraftIn(BaseModel):
@@ -108,7 +109,7 @@ def register(
             await asyncio.to_thread(label)
             goal = load(goal_id)
         try:
-            await planning.approve(goal, tracker, events, who)
+            await planning.approve(goal, goal_tracker(tracker, goal), events, who)
         except planning.PlanError as err:
             code = 502 if "GitHub refused" in str(err) else 409
             raise HTTPException(status_code=code, detail=str(err)) from err

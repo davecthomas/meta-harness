@@ -230,9 +230,12 @@ def issue_body(draft: dict[str, Any], created: dict[str, str]) -> str:
     """A draft's body as its issue's: with a Depends on: line naming the issues its dependencies became."""
     names = []
     for dep in draft["depends_on"]:
-        if dep in created:
+        if dep in created and created[dep].startswith("github:"):
             repo, _, number = created[dep].removeprefix("github:").partition("#")
             names.append(f"#{number}" if repo.lower() == draft["repo"].lower() else f"{repo}#{number}")
+        elif dep in created:
+            # Another tracker's issue is named by its key: jira:PROJ-12 as PROJ-12.
+            names.append(created[dep].partition(":")[2])
         else:
             names.append(dep)
     body = draft["body"].rstrip()

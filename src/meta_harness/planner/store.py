@@ -32,7 +32,7 @@ GOAL_MOVES = {
 GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
     "status, created_at, updated_at, started_at, closed_at, title, max_parallel, plan_task_id, plan_approved_at, "
-    "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to, strict_issues"
+    "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to, strict_issues, tracker"
 )
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
@@ -73,6 +73,8 @@ class NewGoal:
     budget_overage_percent: int = budget.DEFAULT_OVERAGE_PERCENT
     # True: an issue missing acceptance checks, paths or a testable outcome is held, not run (sizing.py).
     strict_issues: bool = False
+    # The issue tracker the goal uses. None: GitHub, as before goals named one.
+    tracker: str | None = None
 
 
 def _check_budget(mode: str | None, overage_percent: int | None) -> None:
@@ -96,9 +98,9 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
         cur.execute(
             f"INSERT INTO planner.goal (id, created_by, statement, repos, label, modality, modality_source, "
             f"auto_merge, max_usd, priority, status, started_at, title, max_parallel, budget_mode, "
-            f"budget_overage_percent, strict_issues) "
+            f"budget_overage_percent, strict_issues, tracker) "
             f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, %s, "
-            f"%s, %s, %s) "
+            f"%s, %s, %s, %s) "
             f"RETURNING {GOAL_COLUMNS}",
             (
                 new_goal_id(),
@@ -117,6 +119,7 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
                 goal.budget_mode,
                 goal.budget_overage_percent,
                 goal.strict_issues,
+                goal.tracker,
             ),
         )
         return _goal(cur.fetchone())
