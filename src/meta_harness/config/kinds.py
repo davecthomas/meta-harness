@@ -316,7 +316,7 @@ KINDS: dict[str, Kind] = {
     "repos": Kind(
         "repos",
         "Repo registry",
-        "The repos goals may change, with each one's tracker and default acceptance checks.",
+        "The repos goals may change, with each one's default acceptance checks. Repos are added and removed under Admin, Repositories.",
         seed_repos,
         check_repos,
     ),

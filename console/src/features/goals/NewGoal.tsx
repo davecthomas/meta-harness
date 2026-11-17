@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { Button, Checkbox, Group, NativeSelect, NumberInput, Paper, SegmentedControl, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
+import { Link, useNavigate } from "react-router-dom";
+import { Anchor, Button, Checkbox, Group, NativeSelect, NumberInput, Paper, SegmentedControl, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
 import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
@@ -40,6 +40,8 @@ export function LabelIssues({ label, issues }: { label: string; issues: LabeledI
 export function NewGoal() {
   const navigate = useNavigate();
   const [repos, setRepos] = useState<string[]>([]);
+  // Whether the registered repos have been read: only then does "none" mean there are none.
+  const [reposRead, setReposRead] = useState(false);
   const [title, setTitle] = useState("");
   const [statement, setStatement] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
@@ -97,7 +99,13 @@ export function NewGoal() {
   const start = useRef(true);
 
   useEffect(() => {
-    api.repos().then((r) => setRepos(r.map((x) => x.name)), (err) => setError(String(err.message ?? err)));
+    api.repos().then(
+      (r) => {
+        setRepos(r.map((x) => x.name));
+        setReposRead(true);
+      },
+      (err) => setError(String(err.message ?? err)),
+    );
     // The form starts from the user's planner defaults, filling only what they haven't touched yet.
     api.settings().then(
       (s) => {
@@ -240,6 +248,12 @@ export function NewGoal() {
             />
             <Checkbox.Group label="Repos" description="The registered repos the goal may change." withAsterisk value={chosen} onChange={setChosen}>
               <Stack gap="xs" mt="xs">
+                {reposRead && repos.length === 0 && (
+                  <Text size="sm" c="orange" data-testid="no-repos">
+                    No repository is registered yet, so a goal has nothing to change. An admin adds one under{" "}
+                    <Anchor component={Link} to="/admin/repos" size="sm">Admin, Repositories</Anchor>.
+                  </Text>
+                )}
                 {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
               </Stack>
             </Checkbox.Group>

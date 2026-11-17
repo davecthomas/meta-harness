@@ -1,4 +1,6 @@
-import { Alert, Stack, Table, Text } from "@mantine/core";
+import { Link } from "react-router-dom";
+import { Alert, Button, Group, Paper, Stack, Table, Text } from "@mantine/core";
+import { IconPlus } from "@tabler/icons-react";
 import { InlineField } from "../../components/InlineField";
 import { DataTable, Facts } from "../../components/ui";
 import { isChanged, type Path } from "./staging";
@@ -172,7 +174,30 @@ export function TaskPolicyView({ policy, maxSandboxes, staging }: { policy: Reco
 
 export function ReposView({ staging: s }: { staging: Staging }) {
   const repos: Record<string, any> = s.document.repos ?? {};
+  // Adding a repo is choosing one the GitHub App is installed on, which the Repositories page lists: this
+  // view edits the repos already here and keeps their history.
+  const add = !s.readOnly && (
+    <Button component={Link} to="/admin/repos" leftSection={<IconPlus size={16} />} variant={Object.keys(repos).length ? "default" : "filled"}>
+      Add a repository
+    </Button>
+  );
+  if (!Object.keys(repos).length) {
+    return (
+      <Paper p="lg" data-testid="no-repos">
+        <Stack gap="sm" align="flex-start">
+          <Text fw={600}>No repository yet</Text>
+          <Text size="sm" c="dimmed">
+            A goal changes code in a registered repo, so nothing can run until there is one. Add one from the repos the
+            GitHub App is installed on; if yours is not listed there, that page has the link to install the App on it.
+          </Text>
+          {add}
+        </Stack>
+      </Paper>
+    );
+  }
   return (
+    <>
+    <Group justify="flex-end" mb="sm">{add}</Group>
     <DataTable head={["Repo", "Default acceptance checks"]}>
       {Object.entries(repos).map(([name, r]) => (
         <Table.Tr key={name} data-testid={`repo-${name}`}>
@@ -195,5 +220,6 @@ export function ReposView({ staging: s }: { staging: Staging }) {
         </Table.Tr>
       ))}
     </DataTable>
+    </>
   );
 }
