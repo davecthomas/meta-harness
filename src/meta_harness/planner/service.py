@@ -77,7 +77,8 @@ from meta_harness.planner.sweep import (
     sweep_goal,
     swept_goals,
 )
-from meta_harness.planner.tracker import Tracker, parse_ref
+from meta_harness.planner.tracker import Tracker, TrackerError, parse_ref
+from meta_harness.trackers import registry as tracker_registry
 from meta_harness.supervisor.goals import goal_standing
 from meta_harness.supervisor.loop import Supervisor, TemporalWorkflows, Workflows
 from meta_harness.supervisor.rules import OPEN_STATUSES
@@ -113,6 +114,8 @@ class GoalIn(BaseModel):
     priority: int = 0
     # True: an issue missing acceptance checks, paths or a testable outcome is held, not run (sizing.py).
     strict_issues: bool = False
+    # The issue tracker the goal uses, one for all its issues. Left out: the default tracker.
+    tracker: str | None = Field(default=None, min_length=1, max_length=40)
     # False: save the goal paused and never started; resume starts it.
     start: bool = True
 
@@ -134,6 +137,8 @@ class DraftIn(BaseModel):
     repos: list[str] = Field(default_factory=list)
     # The issues to draft from, as refs. Empty: every open issue with the label.
     refs: list[str] = Field(default_factory=list)
+    # Which tracker's issues. Left out: the default tracker's.
+    tracker: str | None = Field(default=None, min_length=1, max_length=40)
 
 
 class GoalPatch(BaseModel):
@@ -466,27 +471,38 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"not in the repo registry: {', '.join(unknown)}")
         return [repos.get(name).name for name in names]
 
-    def checked_refs(refs: list[str], goal_repos: list[str]) -> list[tuple[str, str]]:
-        """Each ref with its repo's registry name. 422 for a malformed ref or one outside the goal's repos."""
+    def checked_refs(refs: list[str], goal_repos: list[str], scheme: str | None = None) -> list[tuple[str, str]]:
+        """Each ref with its repo's registry name. 422 for a malformed ref, one outside the goal's repos, or one
+        of another tracker than the goal's (scheme): a goal's issues are all in one tracker."""
         allowed = {name.lower(): name for name in goal_repos}
         pairs, wrong = [], []
         for ref in dict.fromkeys(refs):
+            if scheme and hasattr(tracker, "named") and not ref.startswith(f"{scheme}:"):
+                wrong.append(f"{ref} is not a {scheme} issue, and the goal's tracker is {scheme}")
+                continue
             try:
-                repo, number = parse_ref(ref)
-            except ValueError:
-                wrong.append(f"{ref} is not github:<owner>/<repo>#<number>")
+                # The tracker the ref names says which repo the issue's work is done in.
+                repo = tracker.repo_of(ref) if hasattr(tracker, "repo_of") else parse_ref(ref)[0]
+            except (ValueError, TrackerError) as err:
+                wrong.append(
+                    f"{ref} is not an issue's ref ({err}): a ref is github:<owner>/<repo>#<number>, or "
+                    "jira:<PROJECT>-<number>"
+                )
                 continue
             if repo.lower() not in allowed:
                 wrong.append(f"{ref} is in {repo}, which is not one of the goal's repos")
                 continue
-            pairs.append((f"github:{allowed[repo.lower()]}#{number}", allowed[repo.lower()]))
+            # The repo's name as the registry spells it, so one issue has one ref whatever case was typed.
+            if ref.startswith("github:"):
+                ref = f"github:{allowed[repo.lower()]}#{parse_ref(ref)[1]}"
+            pairs.append((ref, allowed[repo.lower()]))
         if wrong:
             raise HTTPException(status_code=422, detail="; ".join(wrong))
         return pairs
 
     def add(goal: dict, who: str, refs: list[str]) -> list[str]:
         """Hold refs for the goal, and record each one held as issue_added. 409 for a ref another goal holds."""
-        pairs = checked_refs(refs, goal["repos"])
+        pairs = checked_refs(refs, goal["repos"], goal.get("tracker") or "github")
         try:
             with app.state.pool.connection() as conn:
                 added = store.add_refs(conn, goal["id"], pairs)
@@ -496,8 +512,30 @@ def create_app(
             events.emit("issue_added", {"ref": ref, "goal_id": goal["id"]}, actor=who, tags={"goal_id": goal["id"]})
         return added
 
-    async def open_issues(names: list[str], label: str | None) -> dict[str, list]:
-        found = await asyncio.gather(*(tracker.list_open(name, label) for name in names))
+    def tracker_named(scheme: str | None):
+        """The tracker by name, the default when none is named; the one tracker given, for a planner built
+        with a single one. 422, saying which are set up, for one that is not."""
+        if not hasattr(tracker, "named"):
+            return tracker
+        chosen = scheme or tracker_registry.default()
+        if tracker_registry.settings(chosen) is None:
+            set_up = ", ".join(sorted(tracker_registry.document().get("trackers") or {})) or "none"
+            raise HTTPException(
+                status_code=422,
+                detail=f"the tracker {chosen!r} is not set up (set up: {set_up}). Set it up under Configuration, "
+                "Issue trackers, or choose one of those.",
+            )
+        try:
+            return tracker.named(chosen)
+        except TrackerError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
+
+    async def open_issues(names: list[str], label: str | None, scheme: str | None = None) -> dict[str, list]:
+        source = tracker_named(scheme)
+        try:
+            found = await asyncio.gather(*(source.list_open(name, label) for name in names))
+        except TrackerError as err:
+            raise HTTPException(status_code=502 if err.retryable else 422, detail=str(err)) from err
         return dict(zip(names, found, strict=True))
 
     # The configuration API, for every kind, until the run service has an HTTP API of its own.
@@ -662,11 +700,42 @@ def create_app(
             "install_urls": sorted({r["install_url"] for r in installed}),
         }
 
+    @app.get("/v1/trackers")
+    def list_trackers(who: str = Depends(operator)) -> dict:
+        """Every tracker the meta-harness supports, as its adapter describes it: its settings, for the console's
+        form; whether it is set up and signed in; and where its issues are read, for a link to one. `default` is
+        the tracker a new goal uses when it names none."""
+        document = tracker_registry.document()
+        set_up = document.get("trackers") or {}
+        found = []
+        for scheme, spec in tracker_registry.SUPPORTED.items():
+            adapter = tracker.adapter(scheme) if hasattr(tracker, "adapter") else None
+            missing = [name for name in spec.credentials if not os.environ.get(name)]
+            found.append(
+                {
+                    "scheme": scheme,
+                    "title": spec.title,
+                    "description": spec.description,
+                    "settings": [asdict(setting) for setting in spec.settings],
+                    "credentials": spec.credentials,
+                    "configured": scheme in set_up,
+                    # Signed in: every secret its sign-in needs is in the planner's environment.
+                    "signed_in": not missing,
+                    "missing_credentials": missing,
+                    "writes_progress": spec.writes_progress,
+                    # The start of an issue's address, when the tracker's issues have one place: the console
+                    # adds the issue's key. Null for a tracker whose address depends on the repo.
+                    "issue_url_prefix": getattr(adapter, "issue_url_prefix", lambda: None)(),
+                }
+            )
+        return {"default": document.get("default") or "github", "trackers": found}
+
     @app.get("/v1/labels")
-    async def labels(repo: str | None = None, who: str = Depends(operator)) -> dict:
-        """Every label on the open issues of the registered repos, or of one, with its issue counts and how many an open goal holds."""
+    async def labels(repo: str | None = None, tracker: str | None = None, who: str = Depends(operator)) -> dict:
+        """Every label on the open issues of the registered repos, or of one, with its issue counts and how many an
+        open goal holds. tracker: which tracker's issues; the default's when left out."""
         names = registered([repo] if repo else [])
-        issues = await open_issues(names, None)
+        issues = await open_issues(names, None, tracker)
         with app.state.pool.connection() as conn:
             held = store.holders(conn, [i.ref for found in issues.values() for i in found])
         return {"repos": names, "labels": drafting.count_labels(issues, held)}
@@ -679,12 +748,14 @@ def create_app(
         q: str | None = None,
         cursor: int = Query(0, ge=0),
         limit: int = Query(100, ge=1, le=500),
+        tracker: str | None = None,
         who: str = Depends(operator),
     ):
         """A registered repo's open issues, with the label if given and the text q in their titles if given,
-        newest first, a page at a time from cursor. Each names the open goal that holds it, if any."""
+        newest first, a page at a time from cursor. Each names the open goal that holds it, if any. tracker:
+        which tracker's issues; the default's when left out."""
         [repo] = registered([f"{owner}/{name}"])
-        issues = (await open_issues([repo], label))[repo]
+        issues = (await open_issues([repo], label, tracker))[repo]
         if q:
             issues = [i for i in issues if q.lower() in i.title.lower()]
         issues = sorted(issues, key=lambda i: i.number, reverse=True)
@@ -714,7 +785,7 @@ def create_app(
     async def draft_goal(body: DraftIn, who: str = Depends(operator)) -> dict:
         """A goal drafted by a model from a label's open issues. Nothing is saved: the operator edits it first."""
         names = registered(body.repos)
-        issues = [i for found in (await open_issues(names, body.label)).values() for i in found]
+        issues = [i for found in (await open_issues(names, body.label, body.tracker)).values() for i in found]
         if body.refs:
             wanted = set(body.refs)
             issues = [i for i in issues if i.ref in wanted]
@@ -747,8 +818,10 @@ def create_app(
             raise HTTPException(status_code=422, detail="a goal needs a label, or issues picked by ref, or both")
         if why := parallel_reason(body.max_parallel):
             raise HTTPException(status_code=422, detail=why)
-        pairs = checked_refs(body.refs, names)
-        fields = body.model_dump(exclude={"refs"})
+        # One tracker for all the goal's issues: the one it names, else the default, fixed from here on.
+        scheme = getattr(tracker_named(body.tracker), "scheme", "") or None
+        pairs = checked_refs(body.refs, names, scheme)
+        fields = {**body.model_dump(exclude={"refs"}), "tracker": scheme}
         try:
             with app.state.pool.connection() as conn:
                 goal = store.create(conn, who, store.NewGoal(**{**fields, "repos": names}))
@@ -768,6 +841,7 @@ def create_app(
                 "modality": goal["modality"],
                 "auto_merge": goal["auto_merge"],
                 "strict_issues": goal["strict_issues"],
+                "tracker": goal["tracker"],
                 "start": body.start,
             },
             actor=who,

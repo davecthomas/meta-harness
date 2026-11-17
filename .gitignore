@@ -8,6 +8,7 @@ runs/
 # Database backups (deploy/shutdown.sh): they hold everything the database does.
 *.sql.gz
 config/repos.local.json
+config/trackers.local.json
 
 # Terraform
 *.tfvars

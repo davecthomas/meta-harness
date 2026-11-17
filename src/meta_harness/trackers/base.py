@@ -8,8 +8,9 @@ An issue's ref names its tracker by its first part, the scheme: `github:<owner>/
 outside an adapter treats the rest of a ref as opaque: it is stored, compared and passed back, never parsed.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 # Where an issue stands, in the words every tracker's adapter maps to its own: an issue no one has started,
 # one whose task is running, one whose pull request is open for review, and one that is done.
@@ -88,8 +89,50 @@ class Tracker(Protocol):
         """Where a person reads the issue, or None for a ref that is not this tracker's."""
         ...
 
+    def repo_of(self, ref: str) -> str:
+        """The code repo the issue's work is done in, owner/name.
+
+        Raises:
+            ValueError: The ref is not one of this tracker's.
+            TrackerError: The tracker cannot say which repo the issue belongs to.
+        """
+        ...
+
 
 def scheme_of(ref: str) -> str:
     """The tracker a ref names: its part before the first colon. "" for a ref with none."""
     scheme, colon, _ = ref.partition(":")
     return scheme if colon else ""
+
+
+@dataclass(frozen=True)
+class Setting:
+    """One setting of a tracker, as the console's form shows it."""
+
+    name: str
+    label: str
+    # text, or projects: a list of {"key": <project key>, "repo": <owner/name>}; statuses: a name for each status.
+    kind: str = "text"
+    required: bool = False
+    help: str = ""
+
+
+@dataclass(frozen=True)
+class Supported:
+    """One tracker the meta-harness supports, as its adapter module describes it (the module's SPEC). The
+    registry is the list of these: a new tracker is one module and one line there."""
+
+    scheme: str
+    title: str
+    description: str
+    settings: list[Setting] = field(default_factory=list)
+    # The environment variables its sign-in comes from, which are secrets and so not in the configuration.
+    credentials: list[str] = field(default_factory=list)
+    # Why settings cannot be used, given the registered repos' names in lower case (None: not known); empty
+    # when they can.
+    check: Callable[[dict[str, Any], set[str] | None], list[str]] = lambda settings, repos: []
+    # Builds the adapter.
+    build: Callable[[], "Tracker"] | None = None
+    # Whether the planner tells the tracker how an issue's task is going (comments, status, the pull request's
+    # link). False for a tracker that shows all that by itself, as GitHub does for an issue its pull request names.
+    writes_progress: bool = False

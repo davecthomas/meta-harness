@@ -8,7 +8,7 @@ import re
 
 from meta_harness.github_app import GitHubAppError, GitHubApps
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
-from meta_harness.trackers.base import DONE, TODO, Issue, TrackerError
+from meta_harness.trackers.base import DONE, TODO, Issue, Supported, TrackerError
 
 SCHEME = "github"
 READ_ISSUES = {"issues": "read"}
@@ -139,6 +139,17 @@ class GitHubTracker:
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Nothing to do: GitHub links a pull request to the issue its description's `Closes` line names."""
 
+    def repo_of(self, ref: str) -> str:
+        return parse_ref(ref)[0]
+
     def url(self, ref: str) -> str | None:
         match = REF.match(ref)
         return f"https://github.com/{match['repo']}/issues/{match['number']}" if match else None
+
+
+SPEC = Supported(
+    SCHEME,
+    "GitHub Issues",
+    "Each repo's issues are its own GitHub issues, read and written through the repo owner's GitHub App.",
+    build=GitHubTracker,
+)

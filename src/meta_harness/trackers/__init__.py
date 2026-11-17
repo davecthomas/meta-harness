@@ -3,6 +3,7 @@ router that picks the adapter for a repo or a ref (`router`)."""
 
 from meta_harness.trackers.base import DONE, IN_PROGRESS, IN_REVIEW, STATUSES, TODO, Issue, Tracker, TrackerError
 from meta_harness.trackers.github import GitHubTracker
+from meta_harness.trackers.jira import JiraTracker
 from meta_harness.trackers.router import Trackers
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "TODO",
     "GitHubTracker",
     "Issue",
+    "JiraTracker",
     "Tracker",
     "TrackerError",
     "Trackers",
@@ -20,5 +22,8 @@ __all__ = [
 
 
 def connected() -> Trackers:
-    """Every tracker this deployment is connected to."""
-    return Trackers([GitHubTracker()])
+    """Every tracker the meta-harness supports, as one. Which of them a goal uses is the goal's choice, and one
+    whose sign-in is missing says so when it is called."""
+    from meta_harness.trackers import registry
+
+    return Trackers([spec.build() for spec in registry.SUPPORTED.values() if spec.build])
