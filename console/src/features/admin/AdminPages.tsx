@@ -2,18 +2,8 @@ import { useEffect, useState } from "react";
 import { Anchor, Code, Paper, SimpleGrid, Stack, Table, Text } from "@mantine/core";
 import { api, type MhEvent } from "../../api";
 import { DataTable, Empty, ErrorAlert, Facts, PageHeader, when } from "../../components/ui";
-import { KillSwitchPanel } from "../overview/Overview";
 
 const REPO_URL = "https://github.com/davecthomas/meta-harness";
-
-export function KillSwitchPage() {
-  return (
-    <>
-      <PageHeader title="Kill switch" description="Stops every running task and admits none until it is lifted. Every change is recorded with who made it and why." />
-      <KillSwitchPanel canChange />
-    </>
-  );
-}
 
 export function DeploysPage() {
   const [deployed, setDeployed] = useState<{ version: string; commit: string | null; revision: string | null } | null>(null);

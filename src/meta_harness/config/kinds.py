@@ -315,8 +315,8 @@ KINDS: dict[str, Kind] = {
     ),
     "repos": Kind(
         "repos",
-        "Repo registry",
-        "The repos goals may change, with each one's tracker and default acceptance checks.",
+        "Repositories",
+        "The repositories goals may change, each with its default acceptance checks. Add one from those the GitHub App is installed on.",
         seed_repos,
         check_repos,
     ),

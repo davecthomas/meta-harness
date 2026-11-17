@@ -27,16 +27,6 @@ test("each field saves when it is committed and says Saved, with no Save setting
     }
     if (url === "/v1/me/settings") return respond(SAVED);
     if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }, { name: "o/b" }] });
-    if (url === "/v1/trackers") {
-      const tracker = { settings: [], credentials: [], configured: true, missing_credentials: [], writes_progress: false, issue_url_prefix: null };
-      return respond({
-        default: "jira",
-        trackers: [
-          { ...tracker, scheme: "github", title: "GitHub Issues", description: "", signed_in: true },
-          { ...tracker, scheme: "jira", title: "Jira", description: "", signed_in: false, missing_credentials: ["MH_JIRA_TOKEN"] },
-        ],
-      });
-    }
     return respond({});
   });
   render(
@@ -68,10 +58,8 @@ test("each field saves when it is committed and says Saved, with no Save setting
   fireEvent.keyDown(screen.getByLabelText("Budget"), { key: "Enter" });
   await waitFor(() => expect(put).toHaveLength(4));
   expect(put[3].planner.max_usd).toBe("25");
-  // The trackers that are set up, the default one, and a sign-in that is missing by its secret's name.
-  expect(screen.getByText("Connected")).toBeTruthy();
-  expect(screen.getByText("Jira, the default for new goals")).toBeTruthy();
-  expect(screen.getByText("Sign-in missing: MH_JIRA_TOKEN")).toBeTruthy();
+  // Trackers are the deployment's, set up under Configuration: a person's own settings do not repeat them.
+  expect(screen.queryByText("Connected trackers")).toBeNull();
 });
 
 test("two fields committed before the first save returns both persist", async () => {

@@ -108,9 +108,11 @@ test.each([
     await screen.findAllByRole("menuitem");
   }
   const items = screen.queryAllByRole("menuitem", { hidden: true }).map((item) => item.textContent);
-  for (const name of ["Configuration", "Kill switch", "Deploys", "Audit", "Google Cloud"]) {
+  for (const name of ["Configuration", "Users", "Deploys", "Audit", "Google Cloud"]) {
     expect(items.includes(name)).toBe(shown);
   }
+  // One place for each thing: repositories are under Configuration, and the kill switch is in the header.
+  expect(items.includes("Repositories") || items.includes("Kill switch")).toBe(false);
 });
 
 test("the header shows the version and the deployed commit, linked", async () => {

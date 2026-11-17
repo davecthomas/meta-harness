@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Table, Text, TextInput } from "@mantine/core";
-import { IconAlertTriangle, IconPlayerStop, IconPlayerPlay } from "@tabler/icons-react";
-import { goalTitle, api, goalStatus, type Goal, type KillSwitch, type MhEvent, type Task } from "../../api";
-import { read as readKillSwitch } from "../../components/KillSwitch";
+import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Table, Text } from "@mantine/core";
+import { goalTitle, api, goalStatus, type Goal, type MhEvent, type Task } from "../../api";
 import { PullRequestsRow } from "./PullRequestsRow";
 import { ReviewsInProgress } from "../tasks/reviewing";
 import { BudgetMark, ResumeBudget, budgetStanding, budgetStops, budgetWords } from "../goals/budget";
@@ -181,68 +179,6 @@ function Stat(props: { label: string; value: number | null; note?: string; to?: 
   if (props.to) return <Card withBorder padding="lg" component={Link} to={props.to} style={style} aria-label={`${props.label}: ${props.value ?? "loading"}. ${props.link ?? ""}`}>{body}</Card>;
   if (props.onClick) return <Card withBorder padding="lg" component="button" type="button" onClick={props.onClick} style={style} aria-label={`${props.label}: ${props.value ?? "loading"}. ${props.link ?? ""}`}>{body}</Card>;
   return <Card withBorder padding="lg">{body}</Card>;
-}
-
-// The kill switch's state, and for an admin the control that flips it.
-export function KillSwitchPanel({ canChange = false }: { canChange?: boolean }) {
-  const [state, setState] = useState<KillSwitch | null>(null);
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    api.killSwitch().then(setState, (err) => setError(String(err.message ?? err)));
-  }, []);
-
-  async function flip() {
-    if (!state) return;
-    setBusy(true);
-    try {
-      setState(await api.setKillSwitch(!state.engaged, reason || (state.engaged ? "lifted" : "stopped from the console")));
-      readKillSwitch();
-      setReason("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (error) return <ErrorAlert error={`Kill switch: ${error}`} />;
-  if (!state) return null;
-  return (
-    <Paper mb="lg" p="md" style={state.engaged ? { borderColor: "var(--mantine-color-red-6)" } : undefined}>
-      <Group justify="space-between" wrap="wrap" gap="md">
-        <Group gap="sm" wrap="nowrap">
-          {state.engaged && <IconAlertTriangle color="var(--mantine-color-red-6)" />}
-          <div>
-            <Text fw={600}>
-              {state.engaged
-                ? "Kill switch is on: nothing runs"
-                : state.draining
-                  ? "Draining for a deploy: no new task starts, and running ones finish"
-                  : "Kill switch is off"}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {state.changed_by}, {when(state.changed_at)}{state.reason ? `: ${state.reason}` : ""}
-            </Text>
-          </div>
-        </Group>
-        {canChange && <Group gap="sm" wrap="wrap" style={{ flex: "1 1 360px", justifyContent: "flex-end" }}>
-          <TextInput placeholder="Reason" value={reason} onChange={(e) => setReason(e.currentTarget.value)} style={{ flex: "1 1 200px", maxWidth: 360 }} />
-          <Button
-            color={state.engaged ? "teal" : "red"}
-            variant={state.engaged ? "filled" : "light"}
-            leftSection={state.engaged ? <IconPlayerPlay size={16} /> : <IconPlayerStop size={16} />}
-            loading={busy}
-            onClick={flip}
-          >
-            {state.engaged ? "Lift the kill switch" : "Stop everything"}
-          </Button>
-        </Group>}
-      </Group>
-    </Paper>
-  );
 }
 
 // Today's spend across every goal, and the five tasks that cost the most today, from today's attempts.

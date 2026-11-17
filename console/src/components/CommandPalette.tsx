@@ -52,12 +52,12 @@ export function CommandPalette({ admin }: { admin: boolean }) {
       ...(admin
         ? ([
             { group: "Pages", label: "Configuration", run: go("/config") },
-            { group: "Pages", label: "Repositories", run: go("/admin/repos") },
+            { group: "Pages", label: "Repositories", run: go("/config?kind=repos") },
+            { group: "Pages", label: "Issue trackers", run: go("/config?kind=trackers") },
             { group: "Pages", label: "Logs", run: go("/admin/logs") },
           ] as Command[])
         : []),
       { group: "Actions", label: "New goal", run: go("/goals/new") },
-      { group: "Actions", label: "Kill switch", detail: "stop everything, or lift it", run: go(admin ? "/admin/kill-switch" : "/") },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [admin],
