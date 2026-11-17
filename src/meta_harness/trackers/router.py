@@ -4,7 +4,7 @@ the repo's issues live in, or the one the ref names."""
 from collections.abc import Callable
 
 from meta_harness.trackers import registry
-from meta_harness.trackers.base import Issue, Tracker, TrackerError, scheme_of
+from meta_harness.trackers.base import Issue, Source, Tracker, TrackerError, scheme_of
 
 
 class Trackers:
@@ -39,7 +39,8 @@ class Trackers:
 
     def for_goal(self, goal: dict) -> Tracker:
         """The goal's tracker: the one it was created with, GitHub for a goal from before goals named one."""
-        return self.named(goal.get("tracker") or "github", f"goal {goal.get('id', '')}".strip())
+        adapter = self.named(goal.get("tracker") or "github", f"goal {goal.get('id', '')}".strip())
+        return adapter.bound(Source(tuple(goal.get("repos") or ()), dict(goal.get("tracker_settings") or {})))
 
     def for_repo(self, repo: str) -> Tracker:
         """With no goal to say, a repo's issues are read from the default tracker."""

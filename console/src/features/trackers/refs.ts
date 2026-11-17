@@ -1,4 +1,4 @@
-import { trackersApi, type Trackers } from "./api";
+import { trackersApi, type IssueSource, type Trackers } from "./api";
 
 // An issue's ref names its tracker by its first part: github:owner/repo#12, jira:PROJ-12. These say what a ref
 // reads as and where its issue is, for any tracker, from what GET /v1/trackers says of each.
@@ -46,4 +46,9 @@ export function issueUrl(ref: string): string | null {
   if (github) return `https://github.com/${github[1]}/issues/${github[2]}`;
   const prefix = known?.trackers.find((t) => t.scheme === trackerOf(ref))?.issue_url_prefix;
   return prefix ? `${prefix}${encodeURIComponent(refLabel(ref))}` : null;
+}
+
+// Which issues are a goal's: its tracker (GitHub for a goal from before goals named one) and what it told it.
+export function goalSource(goal: { tracker?: string | null; tracker_settings?: Record<string, string> | null }): IssueSource {
+  return { tracker: goal.tracker ?? "github", settings: goal.tracker_settings ?? undefined };
 }

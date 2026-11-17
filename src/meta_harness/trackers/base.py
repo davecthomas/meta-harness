@@ -49,17 +49,34 @@ class Issue:
     author_association: str = ""
 
 
+@dataclass(frozen=True)
+class Source:
+    """Where a goal's issues come from within its tracker: the goal's repos, which its issues' work is done
+    in, and the settings the tracker asks of a goal (for Jira, its project)."""
+
+    repos: tuple[str, ...] = ()
+    settings: dict = field(default_factory=dict)
+
+
 class Tracker(Protocol):
-    """One issue tracker. `repo` is always the code repo, owner/name: an adapter whose issues live elsewhere
-    (a project in another system) maps the repo to that place itself."""
+    """One issue tracker. `repo` is always the code repo, owner/name. A tracker whose issues live somewhere a
+    repo does not name (a project in another system) is told where by the goal: `bound` gives the adapter
+    for one goal's Source, and the calls that name a repo are made on that."""
 
     # The first part of every ref this tracker's issues have.
     scheme: str
     # Whether the planner tells the tracker how an issue's task is going (planner/tracker_progress.py).
     writes_progress: bool
 
+    def bound(self, source: Source) -> "Tracker":
+        """This tracker for one goal: its repos and the settings it gave. A tracker that needs neither
+        answers itself."""
+        ...
+
     async def list_open(self, repo: str, label: str | None) -> list[Issue]:
-        """The repo's open issues carrying the label; every open issue when label is None."""
+        """The repo's open issues carrying the label; every open issue when label is None. An issue whose
+        repo the tracker cannot tell, among several the goal has, comes with the first repo's and `repo`
+        empty: it is held until it names one."""
         ...
 
     async def read(self, ref: str) -> Issue:
@@ -92,11 +109,11 @@ class Tracker(Protocol):
         ...
 
     def repo_of(self, ref: str) -> str:
-        """The code repo the issue's work is done in, owner/name.
+        """A code repo of the goal's for the issue, owner/name: the one its work is done in when the ref says,
+        else one to hold it under until the issue is read.
 
         Raises:
-            ValueError: The ref is not one of this tracker's.
-            TrackerError: The tracker cannot say which repo the issue belongs to.
+            ValueError: The ref is not one of this tracker's, or not one this goal's source covers.
         """
         ...
 
@@ -113,7 +130,7 @@ class Setting:
 
     name: str
     label: str
-    # text, or projects: a list of {"key": <project key>, "repo": <owner/name>}; statuses: a name for each status.
+    # text; statuses: a name for each status; choice: one of what the adapter's `choices` lists for it.
     kind: str = "text"
     required: bool = False
     help: str = ""
@@ -133,6 +150,10 @@ class Supported:
     # Why settings cannot be used, given the registered repos' names in lower case (None: not known); empty
     # when they can.
     check: Callable[[dict[str, Any], set[str] | None], list[str]] = lambda settings, repos: []
+    # What a goal that uses the tracker says besides its repos, such as the project its issues are in, for the
+    # New goal form to draw; and why a goal's answers cannot be used, empty when they can.
+    goal_settings: list[Setting] = field(default_factory=list)
+    check_goal: Callable[[dict[str, Any]], list[str]] = lambda settings: []
     # Builds the adapter.
     build: Callable[[], "Tracker"] | None = None
     # Whether the planner tells the tracker how an issue's task is going (comments, status, the pull request's

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActionIcon, Alert, Badge, Button, Group, Paper, Stack, Table, Text, Tooltip } from "@mantine/core";
-import { IconPlus, IconTrash } from "@tabler/icons-react";
+import { Alert, Badge, Button, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import { api, type Tracker, type TrackerSetting } from "../../api";
 import { InlineField } from "../../components/InlineField";
 import { ErrorAlert } from "../../components/ui";
@@ -20,11 +19,9 @@ const STATUSES: [string, string][] = [
 
 export function TrackersView({ staging: s }: { staging: Staging }) {
   const [supported, setSupported] = useState<Tracker[] | null>(null);
-  const [repos, setRepos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     api.trackers().then((found) => setSupported(found.trackers), (err) => setError(err instanceof Error ? err.message : String(err)));
-    api.repos().then((found) => setRepos(found.map((r) => r.name)), () => setRepos([]));
   }, []);
 
   if (error) return <ErrorAlert error={`The supported trackers could not be read: ${error}`} />;
@@ -84,6 +81,12 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
               </Alert>
             )}
             <Reasons reasons={s.reasons(`tracker:${tracker.scheme}`)} />
+            {isSetUp && tracker.goal_settings.length > 0 && (
+              <Text size="sm" c="dimmed" mt="sm">
+                Each goal that uses {tracker.title} says its own {tracker.goal_settings.map((g) => g.label.toLowerCase()).join(" and ")},
+                when it is created.
+              </Text>
+            )}
             {isSetUp && tracker.settings.length > 0 && (
               <Stack gap="sm" mt="md">
                 {tracker.settings.map((setting) => (
@@ -93,7 +96,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
                       {setting.required && <Text span c="red"> *</Text>}
                     </Text>
                     <Text size="xs" c="dimmed" mb={4}>{setting.help}</Text>
-                    <SettingField staging={s} tracker={tracker} setting={setting} value={settings?.[setting.name]} repos={repos} />
+                    <SettingField staging={s} tracker={tracker} setting={setting} value={settings?.[setting.name]} />
                   </div>
                 ))}
               </Stack>
@@ -109,78 +112,14 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
 function blank(tracker: Tracker): Record<string, unknown> {
   const start: Record<string, unknown> = {};
   for (const setting of tracker.settings) {
-    if (setting.required) start[setting.name] = setting.kind === "projects" ? [] : "";
+    if (setting.required) start[setting.name] = "";
   }
   return start;
 }
 
-function SettingField(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; value: any; repos: string[] }) {
-  const { staging: s, tracker, setting, value, repos } = props;
+function SettingField(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; value: any }) {
+  const { staging: s, tracker, setting, value } = props;
   const path = ["trackers", tracker.scheme, setting.name];
-  if (setting.kind === "projects") {
-    const projects: { key?: string; repo?: string }[] = Array.isArray(value) ? value : [];
-    const put = (next: unknown[]) => s.stage(path, next);
-    return (
-      <Stack gap="xs">
-        {projects.length > 0 && (
-          <Table withTableBorder maw={640}>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Project key</Table.Th>
-                <Table.Th>Repo its issues are worked on in</Table.Th>
-                <Table.Th />
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {projects.map((project, i) => (
-                <Table.Tr key={i} data-testid={`project-${i}`}>
-                  <Table.Td>
-                    <InlineField
-                      kind="text"
-                      label={`Key of project ${i + 1}`}
-                      value={project.key ?? ""}
-                      empty={<Text size="sm" c="dimmed">Set the key, such as PROJ</Text>}
-                      monospace
-                      placeholder="PROJ"
-                      readOnly={s.readOnly}
-                      onCommit={(v) => put(projects.map((p, at) => (at === i ? { ...p, key: v.trim().toUpperCase() } : p)))}
-                    />
-                  </Table.Td>
-                  <Table.Td>
-                    <InlineField
-                      kind="select"
-                      label={`Repo of project ${i + 1}`}
-                      value={project.repo || null}
-                      data={project.repo && !repos.includes(project.repo) ? [project.repo, ...repos] : repos}
-                      empty={<Text size="sm" c="dimmed">Choose a repo</Text>}
-                      monospace
-                      searchable
-                      readOnly={s.readOnly}
-                      onCommit={(v) => put(projects.map((p, at) => (at === i ? { ...p, repo: v ?? "" } : p)))}
-                    />
-                  </Table.Td>
-                  <Table.Td w={40}>
-                    {!s.readOnly && (
-                      <ActionIcon variant="subtle" color="red" aria-label={`Remove project ${project.key || i + 1}`} onClick={() => put(projects.filter((_, at) => at !== i))}>
-                        <IconTrash size={16} />
-                      </ActionIcon>
-                    )}
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        )}
-        {!s.readOnly && (
-          <div>
-            <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => put([...projects, { key: "", repo: repos.length === 1 ? repos[0] : "" }])}>
-              Add a project
-            </Button>
-          </div>
-        )}
-      </Stack>
-    );
-  }
   if (setting.kind === "statuses") {
     const names: Record<string, string> = value && typeof value === "object" ? value : {};
     return (

@@ -50,14 +50,30 @@ class FakeJira(FakeTracker):
         )  # fmt: skip
         return ref
 
+    async def list_open(self, repo, label):
+        # As the adapter does: an issue that names none of the goal's repos comes with the first repo's.
+        first = repo == self.source.repos[0]
+        return [
+            i
+            for i in self.issues.values()
+            if (i.repo == repo or (first and not i.repo)) and i.state == "open" and (label is None or label in i.labels)
+        ]
+
+    def bound(self, source):
+        self.source = source
+        return self
+
     def repo_of(self, ref: str) -> str:
-        if not ref.startswith("jira:VL-"):
-            raise ValueError(f"{ref!r} is not jira:<PROJECT>-<number>")
-        return REPO
+        if not ref.startswith(f"jira:{self.source.settings['project']}-"):
+            raise ValueError(f"{ref} is not in {self.source.settings['project']}, the goal's Jira project")
+        return self.source.repos[0]
 
 
 class FakeGitHub(FakeTracker):
     scheme = "github"
+
+    def bound(self, source):
+        return self
 
     def repo_of(self, ref: str) -> str:
         from meta_harness.trackers.github import parse_ref
@@ -70,7 +86,7 @@ def world(monkeypatch):
     """A planner with GitHub and Jira, both set up, and Jira the default."""
     document = {
         "default": "jira",
-        "trackers": {"github": {}, "jira": {"site": "https://example.atlassian.net", "projects": [{"key": "VL", "repo": REPO}]}},
+        "trackers": {"github": {}, "jira": {"site": "https://example.atlassian.net"}},
     }  # fmt: skip
     monkeypatch.setattr(tracker_registry, "document", lambda: document)
     github, jira, tasks = FakeGitHub(), FakeJira(), FakeTasks()
@@ -86,6 +102,9 @@ def world(monkeypatch):
 def _goal(client, **fields) -> dict:
     label = f"mh:{uuid.uuid4().hex[:8]}"
     body = {"statement": "Fix bugs", "repos": [REPO], "label": label, "start": False, **fields}
+    if body.get("tracker", "jira") == "jira":
+        # A goal that uses Jira says which of the site's projects its issues are in.
+        body.setdefault("tracker_settings", {"project": "VL"})
     made = client.post("/v1/goals", json=body, headers=OPERATOR)
     assert made.status_code == 201, made.text
     return made.json()
@@ -94,7 +113,7 @@ def _goal(client, **fields) -> dict:
 def test_a_new_goal_takes_the_default_tracker_and_reads_its_issues_from_it(world):
     client, github, jira, tasks, _ = world
     goal = _goal(client)
-    assert goal["tracker"] == "jira"
+    assert (goal["tracker"], goal["tracker_settings"]) == ("jira", {"project": "VL"})
     key = f"VL-{1_000_000 + uuid.uuid4().int % 10**12}"
     ref = jira.add_key(key, [goal["label"]])
     github.add(REPO, 1_000_000 + uuid.uuid4().int % 10**12, labels=[goal["label"]])
@@ -115,12 +134,16 @@ def test_a_goal_may_name_another_tracker_that_is_set_up_and_holds_only_its_issue
 
     wrong = client.post(f"/v1/goals/{goal['id']}/issues", json={"refs": ["jira:VL-5"]}, headers=OPERATOR)
     assert wrong.status_code == 422 and "is not a github issue, and the goal's tracker is github" in wrong.text
-    mixed = client.post(
-        "/v1/goals",
-        json={"statement": "Mixed", "repos": [REPO], "refs": [f"github:{REPO}#5"], "start": False},
-        headers=OPERATOR,
-    )
+    jira_goal = {"statement": "Mixed", "repos": [REPO], "tracker_settings": {"project": "VL"}, "start": False}
+    mixed = client.post("/v1/goals", json={**jira_goal, "refs": [f"github:{REPO}#5"]}, headers=OPERATOR)
     assert mixed.status_code == 422 and "is not a jira issue, and the goal's tracker is jira" in mixed.text
+    other = client.post("/v1/goals", json={**jira_goal, "refs": ["jira:OPS-5"]}, headers=OPERATOR)
+    assert other.status_code == 422 and "is not in VL, the goal's Jira project" in other.text
+    # What the tracker asks of a goal is asked before the goal exists.
+    unnamed = client.post(
+        "/v1/goals", json={"statement": "x", "repos": [REPO], "label": "mh:x", "start": False}, headers=OPERATOR
+    )
+    assert unnamed.status_code == 422 and "a goal that uses Jira names its project by its key" in unnamed.text
 
     del document["trackers"]["github"]
     refused = client.post(
@@ -149,14 +172,16 @@ def test_the_trackers_are_listed_as_their_adapters_describe_them_and_issue_lists
     by = {t["scheme"]: t for t in listed["trackers"]}
     assert list(by) == ["github", "jira"]
     assert by["github"]["configured"] and by["github"]["signed_in"] and not by["github"]["writes_progress"]
-    assert [s["name"] for s in by["jira"]["settings"]] == ["site", "projects", "issue_type", "statuses"]
+    assert [s["name"] for s in by["jira"]["settings"]] == ["site", "issue_type", "statuses"]
     assert by["jira"]["configured"] and not by["jira"]["signed_in"]
     assert by["jira"]["missing_credentials"] == ["MH_JIRA_TOKEN"] and by["jira"]["writes_progress"]
 
     label = f"mh:{uuid.uuid4().hex[:8]}"
     jira.add_key("VL-77", [label])
     github.add(REPO, 78, labels=[label])
-    default = client.get(f"/v1/repos/{REPO}/issues", params={"label": label}, headers=OPERATOR).json()
+    assert [s["name"] for s in by["jira"]["goal_settings"]] == ["project"] and by["github"]["goal_settings"] == []
+    asking = {"label": label, "settings": '{"project": "VL"}'}
+    default = client.get(f"/v1/repos/{REPO}/issues", params=asking, headers=OPERATOR).json()
     assert [i["ref"] for i in default["issues"]] == ["jira:VL-77"], "the default tracker's, when none is named"
     named = client.get(f"/v1/repos/{REPO}/issues", params={"label": label, "tracker": "github"}, headers=OPERATOR)
     assert [i["ref"] for i in named.json()["issues"]] == [f"github:{REPO}#78"]
@@ -227,3 +252,24 @@ def test_what_a_task_tells_its_issue():
     assert again.status == "in_progress" and again.key != told_for({"id": "t-1", "status": "running"}).key
     unresolved = told_for({"id": "t-1", "status": "review_unresolved", "pr_url": "https://github.com/o/r/pull/9"})
     assert "its review left findings for a person to settle" in unresolved.comment
+
+
+def test_a_goal_with_several_repos_holds_a_jira_issue_until_it_names_its_repo(world):
+    """One Jira project can hold work for several repos, so the issue says which one; until it does it waits."""
+    client, _, jira, tasks, _ = world
+    other = "davecthomas/ai-api-unified"
+    goal = _goal(client, repos=[REPO, other], start=True)
+    ref = jira.add_key(f"VL-{1_000_000 + uuid.uuid4().int % 10**12}", [goal["label"]])
+    jira.issues[ref].repo = ""
+
+    swept = client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).json()
+
+    assert swept["held"] == [ref] and not [t for t in tasks.tasks.values() if t["goal_id"] == goal["id"]]
+    [card] = client.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR).json()["issues"]
+    assert card["held_reason"].startswith(f"it names none of the goal's repos ({REPO}, {other})")
+    assert "add a line `Repo: <owner/name>`" in card["held_reason"]
+
+    jira.issues[ref].repo = other
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    [task] = [t for t in tasks.tasks.values() if t["goal_id"] == goal["id"]]
+    assert (task["external_ref"], task["repo"]) == (ref, other)

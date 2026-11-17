@@ -31,6 +31,7 @@ their end (sweep.follow_up_goal), and so are the canceled tasks of no goal
 
 import asyncio
 import logging
+import json
 import os
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -79,6 +80,7 @@ from meta_harness.planner.sweep import (
 )
 from meta_harness.planner.tracker import Tracker, TrackerError, parse_ref
 from meta_harness.trackers import registry as tracker_registry
+from meta_harness.trackers.base import Source
 from meta_harness.supervisor.goals import goal_standing
 from meta_harness.supervisor.loop import Supervisor, TemporalWorkflows, Workflows
 from meta_harness.supervisor.rules import OPEN_STATUSES
@@ -116,6 +118,8 @@ class GoalIn(BaseModel):
     strict_issues: bool = False
     # The issue tracker the goal uses, one for all its issues. Left out: the default tracker.
     tracker: str | None = Field(default=None, min_length=1, max_length=40)
+    # What the tracker asks of a goal besides its repos (GET /v1/trackers, goal_settings): for Jira, its project.
+    tracker_settings: dict[str, str] = Field(default_factory=dict)
     # False: save the goal paused and never started; resume starts it.
     start: bool = True
 
@@ -137,8 +141,9 @@ class DraftIn(BaseModel):
     repos: list[str] = Field(default_factory=list)
     # The issues to draft from, as refs. Empty: every open issue with the label.
     refs: list[str] = Field(default_factory=list)
-    # Which tracker's issues. Left out: the default tracker's.
+    # Which tracker's issues, and what that tracker asks of a goal. Left out: the default tracker's.
     tracker: str | None = Field(default=None, min_length=1, max_length=40)
+    tracker_settings: dict[str, str] = Field(default_factory=dict)
 
 
 class GoalPatch(BaseModel):
@@ -471,10 +476,14 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"not in the repo registry: {', '.join(unknown)}")
         return [repos.get(name).name for name in names]
 
-    def checked_refs(refs: list[str], goal_repos: list[str], scheme: str | None = None) -> list[tuple[str, str]]:
+    def checked_refs(
+        refs: list[str], goal_repos: list[str], scheme: str | None = None, settings: dict | None = None
+    ) -> list[tuple[str, str]]:
         """Each ref with its repo's registry name. 422 for a malformed ref, one outside the goal's repos, or one
-        of another tracker than the goal's (scheme): a goal's issues are all in one tracker."""
+        of another tracker than the goal's (scheme): a goal's issues are all in one tracker. settings: what
+        the goal told its tracker, which says whether an issue is one of its (a Jira issue of its project)."""
         allowed = {name.lower(): name for name in goal_repos}
+        source = bound_tracker(scheme, goal_repos, settings) if hasattr(tracker, "named") else tracker
         pairs, wrong = [], []
         for ref in dict.fromkeys(refs):
             if scheme and hasattr(tracker, "named") and not ref.startswith(f"{scheme}:"):
@@ -482,11 +491,11 @@ def create_app(
                 continue
             try:
                 # The tracker the ref names says which repo the issue's work is done in.
-                repo = tracker.repo_of(ref) if hasattr(tracker, "repo_of") else parse_ref(ref)[0]
+                repo = source.repo_of(ref) if hasattr(source, "repo_of") else parse_ref(ref)[0]
             except (ValueError, TrackerError) as err:
                 wrong.append(
-                    f"{ref} is not an issue's ref ({err}): a ref is github:<owner>/<repo>#<number>, or "
-                    "jira:<PROJECT>-<number>"
+                    f"{ref} cannot be one of the goal's issues: {err}. A ref is github:<owner>/<repo>#<number>, "
+                    "or jira:<PROJECT>-<number>"
                 )
                 continue
             if repo.lower() not in allowed:
@@ -502,7 +511,7 @@ def create_app(
 
     def add(goal: dict, who: str, refs: list[str]) -> list[str]:
         """Hold refs for the goal, and record each one held as issue_added. 409 for a ref another goal holds."""
-        pairs = checked_refs(refs, goal["repos"], goal.get("tracker") or "github")
+        pairs = checked_refs(refs, goal["repos"], goal.get("tracker") or "github", goal.get("tracker_settings"))
         try:
             with app.state.pool.connection() as conn:
                 added = store.add_refs(conn, goal["id"], pairs)
@@ -511,6 +520,18 @@ def create_app(
         for ref in added:
             events.emit("issue_added", {"ref": ref, "goal_id": goal["id"]}, actor=who, tags={"goal_id": goal["id"]})
         return added
+
+    def goal_settings(given: str | None) -> dict:
+        """A tracker's goal settings from a query string's JSON. 422 for anything but an object."""
+        if not given:
+            return {}
+        try:
+            parsed = json.loads(given)
+        except ValueError:
+            parsed = None
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=422, detail='settings is a JSON object, such as {"project": "PROJ"}')
+        return parsed
 
     def tracker_named(scheme: str | None):
         """The tracker by name, the default when none is named; the one tracker given, for a planner built
@@ -530,8 +551,21 @@ def create_app(
         except TrackerError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
 
-    async def open_issues(names: list[str], label: str | None, scheme: str | None = None) -> dict[str, list]:
-        source = tracker_named(scheme)
+    def bound_tracker(scheme: str | None, names: list[str], settings: dict | None):
+        """The tracker by name for a goal, or a goal to be: its repos and what it tells the tracker. 422 when
+        what it tells cannot be used, saying why."""
+        chosen = tracker_named(scheme)
+        if not hasattr(chosen, "bound"):
+            return chosen
+        spec = tracker_registry.SUPPORTED.get(getattr(chosen, "scheme", ""))
+        if spec and (reasons := spec.check_goal(dict(settings or {}))):
+            raise HTTPException(status_code=422, detail="; ".join(reasons))
+        return chosen.bound(Source(tuple(names), dict(settings or {})))
+
+    async def open_issues(
+        names: list[str], label: str | None, scheme: str | None = None, settings: dict | None = None
+    ) -> dict[str, list]:
+        source = bound_tracker(scheme, names, settings)
         try:
             found = await asyncio.gather(*(source.list_open(name, label) for name in names))
         except TrackerError as err:
@@ -717,6 +751,8 @@ def create_app(
                     "title": spec.title,
                     "description": spec.description,
                     "settings": [asdict(setting) for setting in spec.settings],
+                    # What a goal that uses it says besides its repos, for the New goal form.
+                    "goal_settings": [asdict(setting) for setting in spec.goal_settings],
                     "credentials": spec.credentials,
                     "configured": scheme in set_up,
                     # Signed in: every secret its sign-in needs is in the planner's environment.
@@ -730,12 +766,31 @@ def create_app(
             )
         return {"default": document.get("default") or "github", "trackers": found}
 
+    @app.get("/v1/trackers/{scheme}/choices/{setting}")
+    async def tracker_choices(scheme: str, setting: str, who: str = Depends(operator)) -> dict:
+        """What a goal may choose for one of a tracker's goal settings, as value and label: Jira's projects.
+        Empty for a setting with nothing to list. 422 when the tracker is not set up, 502 when it cannot be
+        read, each saying why."""
+        adapter = tracker_named(scheme)
+        if not hasattr(adapter, "choices"):
+            return {"choices": []}
+        try:
+            return {"choices": await adapter.choices(setting)}
+        except TrackerError as err:
+            raise HTTPException(status_code=502 if err.retryable else 422, detail=str(err)) from err
+
     @app.get("/v1/labels")
-    async def labels(repo: str | None = None, tracker: str | None = None, who: str = Depends(operator)) -> dict:
+    async def labels(
+        repo: str | None = None,
+        tracker: str | None = None,
+        settings: str | None = None,
+        who: str = Depends(operator),
+    ) -> dict:
         """Every label on the open issues of the registered repos, or of one, with its issue counts and how many an
-        open goal holds. tracker: which tracker's issues; the default's when left out."""
+        open goal holds. tracker: which tracker's issues, the default's when left out; settings: what that
+        tracker asks of a goal, as JSON (for Jira, {"project": "PROJ"})."""
         names = registered([repo] if repo else [])
-        issues = await open_issues(names, None, tracker)
+        issues = await open_issues(names, None, tracker, goal_settings(settings))
         with app.state.pool.connection() as conn:
             held = store.holders(conn, [i.ref for found in issues.values() for i in found])
         return {"repos": names, "labels": drafting.count_labels(issues, held)}
@@ -749,13 +804,14 @@ def create_app(
         cursor: int = Query(0, ge=0),
         limit: int = Query(100, ge=1, le=500),
         tracker: str | None = None,
+        settings: str | None = None,
         who: str = Depends(operator),
     ):
         """A registered repo's open issues, with the label if given and the text q in their titles if given,
         newest first, a page at a time from cursor. Each names the open goal that holds it, if any. tracker:
         which tracker's issues; the default's when left out."""
         [repo] = registered([f"{owner}/{name}"])
-        issues = (await open_issues([repo], label, tracker))[repo]
+        issues = (await open_issues([repo], label, tracker, goal_settings(settings)))[repo]
         if q:
             issues = [i for i in issues if q.lower() in i.title.lower()]
         issues = sorted(issues, key=lambda i: i.number, reverse=True)
@@ -785,7 +841,11 @@ def create_app(
     async def draft_goal(body: DraftIn, who: str = Depends(operator)) -> dict:
         """A goal drafted by a model from a label's open issues. Nothing is saved: the operator edits it first."""
         names = registered(body.repos)
-        issues = [i for found in (await open_issues(names, body.label, body.tracker)).values() for i in found]
+        issues = [
+            i
+            for found in (await open_issues(names, body.label, body.tracker, body.tracker_settings)).values()
+            for i in found
+        ]
         if body.refs:
             wanted = set(body.refs)
             issues = [i for i in issues if i.ref in wanted]
@@ -820,8 +880,14 @@ def create_app(
             raise HTTPException(status_code=422, detail=why)
         # One tracker for all the goal's issues: the one it names, else the default, fixed from here on.
         scheme = getattr(tracker_named(body.tracker), "scheme", "") or None
-        pairs = checked_refs(body.refs, names, scheme)
-        fields = {**body.model_dump(exclude={"refs"}), "tracker": scheme}
+        # What the tracker asks of a goal is checked before the goal exists: a Jira goal names its project.
+        bound_tracker(scheme, names, body.tracker_settings)
+        pairs = checked_refs(body.refs, names, scheme, body.tracker_settings)
+        fields = {
+            **body.model_dump(exclude={"refs"}),
+            "tracker": scheme,
+            "tracker_settings": body.tracker_settings or None,
+        }
         try:
             with app.state.pool.connection() as conn:
                 goal = store.create(conn, who, store.NewGoal(**{**fields, "repos": names}))
@@ -842,6 +908,7 @@ def create_app(
                 "auto_merge": goal["auto_merge"],
                 "strict_issues": goal["strict_issues"],
                 "tracker": goal["tracker"],
+                "tracker_settings": goal["tracker_settings"],
                 "start": body.start,
             },
             actor=who,

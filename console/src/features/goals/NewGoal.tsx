@@ -4,7 +4,8 @@ import { Button, Checkbox, Group, NativeSelect, NumberInput, Paper, SegmentedCon
 import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
-import { api, refLabel, type GoalDraft, type LabelIssue, type Tracker } from "../../api";
+import { api, refLabel, type GoalDraft, type IssueSource, type LabelIssue, type Tracker } from "../../api";
+import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
 import { LabelStart } from "./LabelStart";
 import { ErrorAlert, PageHeader } from "../../components/ui";
@@ -59,11 +60,26 @@ export function NewGoal() {
       () => undefined,
     );
   }, []);
-  // Another tracker's issues are other issues: the label's and the picked ones start again.
+  // What the tracker asks of a goal besides its repos, such as the Jira project its issues are in.
+  const [trackerSettings, setTrackerSettings] = useState<Record<string, string>>({});
+  // Another tracker's issues, or another project's, are other issues: the picked ones start again.
   function chooseTracker(next: string) {
     setTracker(next);
+    setTrackerSettings({});
     setRefs([]);
   }
+  function chooseSettings(next: Record<string, string>) {
+    setTrackerSettings(next);
+    setRefs([]);
+  }
+  const asked = trackers.find((t) => t.scheme === tracker)?.goal_settings ?? [];
+  const missing = asked.filter((s) => s.required && !(trackerSettings[s.name] ?? "").trim());
+  // Which issues the form reads: none until the tracker has what it asks of a goal.
+  const source = useMemo<IssueSource | undefined>(
+    () => (tracker ? { tracker, settings: trackerSettings } : undefined),
+    [tracker, trackerSettings],
+  );
+  const readable = missing.length === 0;
   const [budget, setBudget] = useState<string | number>("");
   // What the budget does when it is reached, and how far past it a goal that stops may go.
   const [budgetMode, setBudgetMode] = useState<"block" | "warn">("block");
@@ -98,13 +114,13 @@ export function NewGoal() {
   const [labeled, setLabeled] = useState<LabeledIssue[] | null>(null);
   useEffect(() => {
     const name = label.trim();
-    if (!name || !chosen.length) {
+    if (!name || !chosen.length || !readable) {
       setLabeled(null);
       return;
     }
     let stale = false;
     const wait = setTimeout(() => {
-      Promise.all(chosen.map(async (repo) => (await api.labelIssues(repo, name, tracker || undefined)).map((issue) => ({ ...issue, repo })))).then(
+      Promise.all(chosen.map(async (repo) => (await api.labelIssues(repo, name, source)).map((issue) => ({ ...issue, repo })))).then(
         (found) => !stale && setLabeled(found.flat()),
         () => !stale && setLabeled(null),
       );
@@ -113,7 +129,7 @@ export function NewGoal() {
       stale = true;
       clearTimeout(wait);
     };
-  }, [label, chosen, tracker]);
+  }, [label, chosen, source, readable]);
   const viaLabel = useMemo(() => (labeled ?? []).filter((i) => !i.held_by).map((i) => i.ref), [labeled]);
 
   // Whether the goal plans its own issues from its description (a feature goal) or runs issues that exist.
@@ -136,6 +152,10 @@ export function NewGoal() {
       setError("Describe the goal.");
       return null;
     }
+    if (missing.length) {
+      setError(`Choose the goal's ${missing.map((s) => s.label).join(" and ")}.`);
+      return null;
+    }
     if (!plans && !label.trim() && !refs.length) {
       setError("Give the goal a label, or pick its issues.");
       return null;
@@ -149,6 +169,7 @@ export function NewGoal() {
         repos: chosen,
         ...(label.trim() ? { label: label.trim() } : {}),
         ...(tracker ? { tracker } : {}),
+        ...(Object.keys(trackerSettings).length ? { tracker_settings: trackerSettings } : {}),
         refs,
         max_usd: budget === "" ? null : String(budget),
         ...(budget === "" ? {} : { budget_mode: budgetMode, budget_overage_percent: Number(overage) || 0 }),
@@ -197,7 +218,7 @@ export function NewGoal() {
       <PageHeader title="New goal" description="A goal takes the open issues with its label, in its repos, and runs each one to a pull request." />
       <ErrorAlert error={error} />
       {unsaved.element}
-      <LabelStart onDraft={fromDraft} tracker={tracker || undefined} />
+      {readable && <LabelStart onDraft={fromDraft} source={source} />}
       <Paper maw={720}>
         <form onSubmit={submit}>
           <Stack gap="lg">
@@ -222,15 +243,7 @@ export function NewGoal() {
                 {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
               </Stack>
             </Checkbox.Group>
-            {trackers.length > 1 && (
-              <NativeSelect
-                label="Issue tracker"
-                description="Where the goal's issues are. A goal uses one tracker for all its issues, and keeps it."
-                value={tracker}
-                onChange={(e) => chooseTracker(e.currentTarget.value)}
-                data={trackers.map((t) => ({ value: t.scheme, label: t.signed_in ? t.title : `${t.title} (not signed in)` }))}
-              />
-            )}
+            <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} />
             <div>
               <Text size="sm" fw={500} mb={4}>Where its issues come from</Text>
               <SegmentedControl
@@ -252,7 +265,7 @@ export function NewGoal() {
               value={label}
               onChange={setLabel}
               repos={chosen}
-              tracker={tracker || undefined}
+              source={readable ? source : undefined}
               required={!plans && !refs.length}
               fieldProps={plans ? { description: "Optional. Left empty, the goal gets a label of its own for the issues it creates." } : undefined}
             />
@@ -265,7 +278,7 @@ export function NewGoal() {
                 {refs.length ? `${refs.length} picked by hand: the goal takes these besides its label's, or instead of a label.` : "Optional: pick more open issues for the goal by hand."}
               </Text>
             </Group>
-            <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} tracker={tracker || undefined} />
+            <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} source={source} />
             <Group grow align="flex-start">
               <NumberInput
                 label="Budget"

@@ -16,7 +16,7 @@ export { ApiError, call, query };
 export * from "./features/admin/api";
 export * from "./features/config/api";
 export * from "./features/goals/api";
-export type { Tracker, TrackerSetting, Trackers } from "./features/trackers/api";
+export type { IssueSource, Tracker, TrackerSetting, Trackers } from "./features/trackers/api";
 export * from "./features/overview/api";
 export * from "./features/performance/api";
 export * from "./features/settings/api";
@@ -33,6 +33,8 @@ export interface Goal {
   label: string | null;
   // The issue tracker all the goal's issues are in, fixed when it was created. Null: GitHub, as before goals named one.
   tracker?: string | null;
+  // What the goal told its tracker besides its repos: for Jira, { project }. Null when the tracker asks nothing.
+  tracker_settings?: Record<string, string> | null;
   modality: string;
   status: string;
   auto_merge: boolean;
