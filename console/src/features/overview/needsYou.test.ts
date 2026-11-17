@@ -1,12 +1,64 @@
 import { expect, test } from "vitest";
-import { needsYouNote } from "./needsYou";
+import type { Goal, Task } from "../../api";
+import { needsYouItems, needsYouNote } from "./needsYou";
 
-test("the Needs you number says what it is made of", () => {
-  const tasks = [{ status: "failed" }, { status: "failed" }, { status: "ready" }, { status: "review_unresolved" }];
-  expect(needsYouNote(tasks, 1, 1, 6)).toBe(
-    "2 failed, 1 with an unresolved review, 1 ready to merge, 1 held for budget or review, 1 goal past its budget. Each says what to do.",
+// One list of what needs the operator, for the Overview and the header's inbox, each item named by what it asks.
+
+const task = (id: string, status: string, more: Partial<Task> = {}) => ({ id, status, title: `Task ${id}`, updated_at: "2026-11-10T10:00:00Z", ...more }) as Task;
+const waiting = { owner: "operator", situation: "blocked_on_stuck", reason: "it waits on o/r#7, whose task is not moving", ask: "Open that issue's task and retry or fix it.", since: "2026-11-10T09:00:00Z", checked_at: "", attempts: 0, last_error: null };
+
+test("each thing that needs the operator is named by what it asks for, goals first", () => {
+  const items = needsYouItems(
+    [
+      task("a", "ready", { pr_url: "https://github.com/o/r/pull/9" }),
+      task("b", "review_unresolved"),
+      task("c", "failed", { updated_at: "2026-10-01T00:00:00Z" }),
+      task("d", "running", { waiting_on: "budget", status_reason: "it spent $5.00 of its $5.00 limit" }),
+      task("e", "running", { waiting_on: "review" }),
+      task("f", "running", { waiting_on: "operator_review", review_claimed_by: "pat@example.com" }),
+      task("g", "blocked", { standing: waiting } as Partial<Task>),
+      task("h", "running"),
+    ],
+    [
+      { id: "g-1", status: "budget_exhausted", title: "Saves", statement: "x" } as Goal,
+      { id: "g-2", status: "active", budget_state: "over", title: "Exports", statement: "x" } as Goal,
+      { id: "g-3", status: "active", budget_state: "ok", title: "Quiet", statement: "x" } as Goal,
+      { id: "g-4", status: "active", title: "Stuck", statement: "x", standing: { state: "needs_you", reason: "nothing in it is moving: 2 tasks wait on you", ask: "", yours: [], moving: 0 } } as unknown as Goal,
+    ],
   );
-  expect(needsYouNote(tasks.slice(0, 2), 0, 0, 30)).toBe("2 failed, 28 more. Each says what to do.");
-  expect(needsYouNote([], 0, 0, 0)).toBe("Nothing waits on you.");
-  expect(needsYouNote([], 0, 0, null)).toBe("");
+
+  expect(items.map((i) => `${i.action}: ${i.title}`)).toEqual([
+    "Raise the budget: Saves",
+    "Over budget: Exports",
+    "Unstick the goal: Stuck",
+    "Merge: Task a",
+    "Settle the review: Task b",
+    "Retry or fix: Task c",
+    "Raise the spend limit: Task d",
+    "Decide on the review: Task e",
+    "Finish the review: Task f",
+    "Look at: Task g",
+  ]);
+  const by = Object.fromEntries(items.map((i) => [i.key, i]));
+  expect(by["task-a"].href).toBe("https://github.com/o/r/pull/9");
+  expect(by["task-a"].detail).toContain("Merge it with Merge on the task's page");
+  expect(by["task-c"].detail).toBeTruthy(), "an old failure still needs someone: nothing ages out of the list";
+  expect(by["task-f"].detail).toBe("pat@example.com took its review over: the task waits for that verdict.");
+  expect(by["task-g"].detail).toBe("It waits on o/r#7, whose task is not moving. Open that issue's task and retry or fix it.");
+  expect(by["task-g"].since).toBe("2026-11-10T09:00:00Z");
+  expect(by["goal-waits-g-4"].to).toBe("/goals/g-4");
+});
+
+test("a failure says its fix in plain words, not the raw error", () => {
+  const grant = "TaskFailed: run 1 on harness:pi-lean/claude:claude-sonnet-5 ended for good: run_harness failed (HarnessConfigError): HarnessConfigError: the HTTP Gateway refused the run grant (422): [{'type': 'string_pattern_mismatch', 'loc': ['body', 'spend_limit_usd'], 'msg': \"String should match pattern\", 'input': '1000000.00'}]";
+  const [item] = needsYouItems([task("c", "failed", { status_reason: grant })], []);
+  expect(item.detail).toContain("Retry the task");
+  expect(item.detail).not.toContain("string_pattern_mismatch");
+});
+
+test("the count says what it is made of", () => {
+  const items = needsYouItems([task("a", "ready"), task("b", "ready"), task("c", "failed")], [{ id: "g-1", status: "budget_exhausted", title: "Saves", statement: "x" } as Goal]);
+  expect(needsYouNote(items)).toBe("1 to raise the budget, 2 to merge, 1 to retry or fix.");
+  expect(needsYouNote([])).toBe("Nothing needs you.");
+  expect(needsYouNote(null)).toBe("");
 });

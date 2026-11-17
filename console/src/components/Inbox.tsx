@@ -1,148 +1,110 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ActionIcon, Anchor, Indicator, Popover, Stack, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Anchor, Divider, Indicator, Popover, Stack, Text, Tooltip } from "@mantine/core";
 import { IconInbox } from "@tabler/icons-react";
-import { api, goalTitle, type Goal, type KillSwitch, type Task } from "../api";
+import { api, type Task } from "../api";
+import { NEEDS_YOU_POLL_MS, useNeedsYou, type NeedsYouItem } from "../features/overview/needsYou";
 import { reviewLink, reviewsInProgress, type ReviewRun } from "../features/tasks/reviewing";
-import { diagnose, oneLine } from "../features/tasks/diagnosis";
-import { standingLine } from "../features/tasks/Standing";
 
-// One thing waiting on the operator, with where it is resolved.
-export interface InboxItem {
+// The header's inbox: the count of what needs the operator and the first few, from the same list the
+// Overview shows in full (features/overview/needsYou.ts), so the two never disagree. Below it, and not
+// counted, the reviews agents have in progress: the operator may join one, and need not.
+
+// How many of the list the popover shows before it sends the reader to all of it.
+const SHOWN = 6;
+
+export interface ReviewNote {
   key: string;
   text: string;
   to: string;
-  // What to do about it, and why it is here, under the item.
-  detail?: string;
-  // A page outside the console that settles it, such as the pull request to merge: opened in a new tab.
-  href?: string;
-  hrefLabel?: string;
 }
 
-const POLL_MS = 30_000;
-// A failed task stays in the inbox this long: nothing resolves a failure, so it ages out.
-const FAILED_DAYS = 3;
-
-// What the operator should know of: an agent's review in progress, which they may join; a pull request ready to merge, a review that ended unresolved, a failed task,
-// a goal past its budget or stalled, and the kill switch. An item leaves when what it names is resolved.
-export function inboxItems(
-  tasks: Task[],
-  goals: Goal[],
-  kill: KillSwitch | null,
-  now = Date.now(),
-  reviews: { review: ReviewRun; task: Task }[] = [],
-): InboxItem[] {
-  const items: InboxItem[] = [];
-  // An agent's review in progress: the operator may review the pull request too. Keyed by the run, so each
-  // review is announced once.
-  for (const { review, task } of reviews) {
-    items.push({ key: `review-${review.run_id}`, text: `An agent is reviewing: ${task.title}`, to: reviewLink(task.id) });
-  }
-  if (kill?.engaged) {
-    items.push({ key: "kill", text: `The kill switch is on: ${kill.reason ?? "nothing runs"}`, to: "/tasks?show=waiting", detail: "No task starts or runs. An admin lifts it from the banner at the top of any page, once it is safe to run again." });
-  }
-  for (const g of goals) {
-    // A goal past its budget, once: its key is the same whether it is over or stopped.
-    if (g.status === "budget_exhausted" || g.budget_state === "blocked") items.push({ key: `goal-${g.id}`, text: `Stopped by its budget: ${goalTitle(g)}`, to: `/goals/${g.id}`, detail: "None of its tasks starts until it has more to spend. Raise the budget on the goal's page." });
-    else if (g.budget_state === "over") items.push({ key: `goal-${g.id}`, text: `Over budget: ${goalTitle(g)}`, to: `/goals/${g.id}`, detail: "It keeps running. Raise the budget on the goal's page, or pause the goal." });
-    // A goal with work left and none of it moving: everything it has left waits on the operator.
-    if (g.standing?.state === "needs_you") {
-      items.push({ key: `goal-waits-${g.id}`, text: `Going nowhere: ${goalTitle(g)}`, to: `/goals/${g.id}`, detail: `${g.standing.reason.charAt(0).toUpperCase()}${g.standing.reason.slice(1)}. Its page says what each one needs.` });
-    }
-  }
-  for (const t of tasks) {
-    if (t.status === "ready") {
-      items.push({
-        key: `task-${t.id}`,
-        text: `Ready to merge: ${t.title}`,
-        to: `/tasks/${t.id}`,
-        detail: "Its review is clean and its pull request is open. Merge it on GitHub, or with Merge on the task's page.",
-        href: t.pr_url && /^https?:/.test(t.pr_url) ? t.pr_url : undefined,
-        hrefLabel: "Open the pull request",
-      });
-    }
-    const failed = t.status === "failed" && now - Date.parse(t.updated_at) < FAILED_DAYS * 86_400_000;
-    if (t.status === "review_unresolved" || failed) {
-      const diagnosis = diagnose({ status: t.status, reason: t.status_reason });
-      items.push({
-        key: `task-${t.id}`,
-        text: `${failed ? "Failed" : "Review unresolved"}: ${t.title}`,
-        to: `/tasks/${t.id}`,
-        detail: diagnosis ? oneLine(diagnosis) : undefined,
-      });
-    }
-    // Anything else the supervisor found to be an operator's: held for budget or a review, stuck behind
-    // another task, waiting with no goal to move it. Its standing says why and what to do.
-    if (!["ready", "review_unresolved", "failed"].includes(t.status) && t.standing?.owner === "operator") {
-      items.push({ key: `task-${t.id}`, text: `Needs you: ${t.title}`, to: `/tasks/${t.id}`, detail: standingLine(t.standing) });
-    }
-  }
-  return items;
+// Each review an agent has in progress, with the way into it. Keyed by the run, so each is one line.
+export function reviewNotes(reviews: { review: ReviewRun; task: Task }[]): ReviewNote[] {
+  return reviews.map(({ review, task }) => ({ key: `review-${review.run_id}`, text: `An agent is reviewing: ${task.title}`, to: reviewLink(task.id) }));
 }
 
-// The header's inbox: its count, the list on a click, and a browser notification for each new item when the
-// operator turned notifications on in Settings and the browser allows them.
 export function Inbox() {
-  const [items, setItems] = useState<InboxItem[]>([]);
+  const { items, error } = useNeedsYou();
+  const [reviews, setReviews] = useState<ReviewNote[]>([]);
   const seen = useRef<Set<string> | null>(null);
   const notify = useRef(false);
 
-  const load = useCallback(async () => {
-    try {
-      const [tasks, goals, kill, events, running] = await Promise.all([
-        // Every task the supervisor found an operator to have.
-        api.tasks({ hasIt: "operator" }, 0, 200),
-        api.goals(["active", "budget_exhausted", "stalled"], 0, 100),
-        api.killSwitch().catch(() => null),
-        api.recentEvents(["run_prompt", "attempt_finished"], 500).catch(() => []),
-        api.tasks({ statuses: ["running"] }, 0, 200).catch(() => ({ items: [] as Task[], total: 0 })),
-      ]);
-      const byId = new Map(running.items.map((t) => [t.id, t]));
-      const reviews = reviewsInProgress(events).flatMap((review) => (byId.has(review.task_id) ? [{ review, task: byId.get(review.task_id)! }] : []));
-      const found = inboxItems(tasks.items, goals.items, kill, Date.now(), reviews);
-      if (seen.current && notify.current && typeof Notification !== "undefined" && Notification.permission === "granted") {
-        for (const item of found) if (!seen.current.has(item.key)) new Notification("Meta-harness", { body: item.text, tag: item.key });
-      }
-      seen.current = new Set(found.map((i) => i.key));
-      setItems(found);
-    } catch {
-      // The inbox is a convenience: the pages it links to show the same things.
-    }
-  }, []);
-
   useEffect(() => {
     api.settings().then((s) => (notify.current = s.notifications), () => (notify.current = false));
-    void load();
-    const timer = setInterval(() => void load(), POLL_MS);
+    const read = async () => {
+      try {
+        const [events, running] = await Promise.all([api.recentEvents(["run_prompt", "attempt_finished"], 500), api.tasks({ statuses: ["running"] }, 0, 200)]);
+        const byId = new Map(running.items.map((t) => [t.id, t]));
+        setReviews(reviewNotes(reviewsInProgress(events).flatMap((review) => (byId.has(review.task_id) ? [{ review, task: byId.get(review.task_id)! }] : []))));
+      } catch {
+        // The reviews are an extra: each task's page shows its own. What needs the operator says when it fails.
+      }
+    };
+    void read();
+    const timer = setInterval(() => void read(), NEEDS_YOU_POLL_MS);
     return () => clearInterval(timer);
-  }, [load]);
+  }, []);
 
+  // A browser notification for each new item, when the operator turned them on and the browser allows them:
+  // only for what needs them, never for a review an agent started.
+  useEffect(() => {
+    if (!items) return;
+    if (seen.current && notify.current && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      for (const item of items) if (!seen.current.has(item.key)) new Notification("Meta-harness", { body: `${item.action}: ${item.title}`, tag: item.key });
+    }
+    seen.current = new Set(items.map((i) => i.key));
+  }, [items]);
+
+  const count = items?.length ?? 0;
   return (
     <Popover position="bottom-end" width={440} shadow="md">
       <Popover.Target>
-        <Tooltip label="What needs you">
-          <Indicator label={items.length} size={16} disabled={!items.length} color="red" offset={4}>
-            <ActionIcon variant="default" size="lg" aria-label={`Inbox, ${items.length} items`}>
+        <Tooltip label={count ? `${count} need you` : "Nothing needs you"}>
+          <Indicator label={count} size={16} disabled={!count} color="red" offset={4}>
+            <ActionIcon variant="default" size="lg" aria-label={`Needs you, ${count} items`}>
               <IconInbox size={18} />
             </ActionIcon>
           </Indicator>
         </Tooltip>
       </Popover.Target>
-      <Popover.Dropdown>
-        {items.length === 0 ? (
-          <Text size="sm" c="dimmed">Nothing needs you.</Text>
-        ) : (
-          <Stack gap="sm" mah="70vh" style={{ overflowY: "auto" }}>
-            {items.map((i) => (
-              <Stack key={i.key} gap={2} data-testid={`inbox-${i.key}`}>
-                <Anchor component={Link} to={i.to} size="sm" fw={500}>{i.text}</Anchor>
-                {i.detail && <Text size="xs" c="dimmed">{i.detail}</Text>}
-                {i.href && <Anchor href={i.href} target="_blank" size="xs">{i.hrefLabel ?? "Open"}</Anchor>}
-              </Stack>
-            ))}
-          </Stack>
-        )}
+      <Popover.Dropdown maw="calc(100vw - 32px)">
+        <Stack gap="sm" mah="70vh" style={{ overflowY: "auto" }}>
+          {error && (
+            <Text size="sm" c="red" data-testid="inbox-error">
+              Could not read what needs you: {error}. It tries again in 30 seconds; the list below is as it was last read.
+            </Text>
+          )}
+          {items === null && !error && <Text size="sm" c="dimmed">Loading…</Text>}
+          {items !== null && count === 0 && <Text size="sm" c="dimmed">Nothing needs you.</Text>}
+          {(items ?? []).slice(0, SHOWN).map((item) => <Item key={item.key} item={item} />)}
+          {count > SHOWN && (
+            <Anchor component={Link} to="/" size="sm" data-testid="inbox-all">
+              See all {count} on the Overview
+            </Anchor>
+          )}
+          {reviews.length > 0 && (
+            <>
+              <Divider label="Also happening, nothing to do" labelPosition="left" />
+              {reviews.map((r) => (
+                <Anchor key={r.key} component={Link} to={r.to} size="sm" c="dimmed" data-testid={`inbox-${r.key}`}>{r.text}</Anchor>
+              ))}
+            </>
+          )}
+        </Stack>
       </Popover.Dropdown>
     </Popover>
+  );
+}
+
+function Item({ item }: { item: NeedsYouItem }) {
+  return (
+    <Stack gap={2} data-testid={`inbox-${item.key}`}>
+      <Anchor component={Link} to={item.to} size="sm" fw={500}>
+        {item.action}: {item.title}
+      </Anchor>
+      <Text size="xs" c="dimmed">{item.detail}</Text>
+      {item.href && <Anchor href={item.href} target="_blank" size="xs">{item.hrefLabel ?? "Open"}</Anchor>}
+    </Stack>
   );
 }

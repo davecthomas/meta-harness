@@ -3,7 +3,7 @@ import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { expect, test } from "vitest";
 import type { MhEvent, Task } from "../../api";
-import { inboxItems } from "../../components/Inbox";
+import { reviewNotes } from "../../components/Inbox";
 import { theme } from "../../theme";
 import { ReviewBanner, ago, reviewsInProgress } from "./reviewing";
 
@@ -43,8 +43,8 @@ test("a task's page says an agent is reviewing its pull request, and offers the 
   expect(screen.queryByTestId("review-banner")).toBeNull();
 });
 
-test("the inbox announces each review in progress once, with the way into it", () => {
+test("the inbox lists each review in progress once, with the way into it, apart from what needs the operator", () => {
   const review = { task_id: "t-1", run_id: "t-1:run-2", since: "2026-11-11T14:00:00Z" };
-  const items = inboxItems([], [], null, Date.now(), [{ review, task: TASK }]);
+  const items = reviewNotes([{ review, task: TASK }]);
   expect(items).toEqual([{ key: "review-t-1:run-2", text: "An agent is reviewing: Fix it", to: "/tasks/t-1?tab=changes" }]);
 });
