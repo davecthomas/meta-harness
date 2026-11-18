@@ -278,6 +278,19 @@ export function steps(events: MhEvent[]): Step[] {
   out.forEach((step, i) => {
     if (!step.end && i < out.length - 1) step.end = out[i + 1].start;
   });
+  // The code host runs the repo's checks on each new commit, for minutes, and records nothing until they end.
+  // So a task whose newest step is a finished one that checks always follow is waiting for them, and the path
+  // says so: otherwise it shows a finished run and nothing happening.
+  const newest = out.at(-1);
+  if (newest?.end) {
+    const pushed = newest.kind === "pull_request" || (newest.kind === "run" && newest.tone === "ok" && pull !== "");
+    const waiting = pushed
+      ? { title: "Waiting for the pull request's checks", detail: "The code host is running the repo's checks on the new commit. Its review starts when they pass.", column: 2, kind: "checks" as StepKind }
+      : newest.kind === "merged"
+        ? { title: "Waiting for the merge commit's checks", detail: "The code host is running the repo's checks on the merge. The task closes when they pass.", column: 4, kind: "merge_checks" as StepKind }
+        : null;
+    if (waiting) out.push({ ...waiting, key: `after-${newest.key}`, tone: "plain", start: newest.end, end: null, url: pull ? `${pull}/checks` : undefined, notes: [], now: false });
+  }
   const last = out.at(-1);
   if (last && !(last.kind === "end" && last.title !== "Pull request closed")) last.now = true;
   return out;

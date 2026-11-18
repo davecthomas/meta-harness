@@ -3235,6 +3235,15 @@ stage in one row stack in its cell: a second candidate's run under the
 first's, the checks under the pull request, the merge commit's checks and
 the task's end under the merge.
 
+The code host runs the repo's checks on each new commit for several minutes,
+and the workflow records nothing until they end. So while a task's newest step
+is one that checks always follow (its pull request opening, a finished fix run,
+its merge), the path adds a step that is still going: "Waiting for the pull
+request's checks", or "Waiting for the merge commit's checks". A step still
+going counts its time by the second, in the browser. The Terminal tab, which
+prints nothing during such a wait, shows the same step and its time above the
+terminal ("Now: ...").
+
 | Step | From | It shows |
 |---|---|---|
 | A wait: Queued, Held by the scheduler, Blocked, Held for budget, Held for an operator, Review taken by an operator, Queued again | `task_created`, `task_held`, `budget_hold`, `review_hold`, `operator_review_claimed`, `task_retried`, `task_driven`, `task_recovered`, a status change to `queued` or `blocked` | Its reason and how long it lasted, drawn with a dashed edge. A retry, and a task the supervisor sent back, name who did it |
