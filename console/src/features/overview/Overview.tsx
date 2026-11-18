@@ -4,7 +4,7 @@ import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Text } fr
 import { api, type MhEvent } from "../../api";
 import { PullRequestsRow } from "./PullRequestsRow";
 import { ReviewsInProgress } from "../tasks/reviewing";
-import { ResumeBudget, budgetStops, budgetWords } from "../goals/budget";
+import { ResumeBudget, budgetStops, budgetWords, spentOf } from "../goals/budget";
 import { useInfinite } from "../../hooks";
 import { Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, TitleLink, when } from "../../components/ui";
 import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
@@ -101,7 +101,7 @@ function NeedsYouRow({ item, onActed }: { item: NeedsYouItem; onActed: () => voi
           <Group gap="md">
             {task && <IssueLink issueRef={task.external_ref} />}
             {task?.pr_url && <PrLink url={task.pr_url} />}
-            {goal && budgetWords(goal) && <Text size="xs" c="dimmed">Spent ${Number(goal.spent_usd ?? 0).toFixed(2)} of ${Number(goal.max_usd).toFixed(2)}: {budgetWords(goal)}</Text>}
+            {goal && budgetWords(goal) && <Text size="xs" c="dimmed">Spent ${spentOf(goal).toFixed(2)} of ${Number(goal.max_usd).toFixed(2)}: {budgetWords(goal)}</Text>}
             {item.since && <Text size="xs" c="dimmed">Waiting on you since {when(item.since)}</Text>}
           </Group>
         </Stack>

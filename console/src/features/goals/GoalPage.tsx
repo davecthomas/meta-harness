@@ -50,6 +50,7 @@ export function GoalPage() {
   // Each issue's progress and what each task spent, for the board, and the position the live stream starts from.
   const [progress, setProgress] = useState<IssueProgress[] | null>(null);
   const [spend, setSpend] = useState<Record<string, number>>({});
+  const [spentNow, setSpentNow] = useState<number | undefined>(undefined);
   const [from, setFrom] = useState<number | null>(null);
   // When the board last reread its issues, and why its latest reread failed, if it did.
   const [refreshed, setRefreshed] = useState<number | null>(null);
@@ -96,12 +97,14 @@ export function GoalPage() {
       const read = await api.goalIssuesChecked(goalId);
       const issues = read.issues;
       setStates(read.states_checked_at ? { at: read.states_checked_at, complete: read.states_complete !== false } : null);
-      const ids = issues.flatMap((i) => (i.task_id ? [i.task_id] : []));
-      const attempts = ids.length ? await api.taskEvents(ids, ["attempt_finished"]) : [];
+      // What each task's runs spent and the goal's total, from the one place that adds it up: the same read
+      // as the goal's Spend window, so the board, the budget line and that window never disagree.
+      const cost = issues.some((i) => i.task_id) ? await api.goalSpend(goalId) : null;
       const spent: Record<string, number> = {};
-      for (const e of attempts) if (e.task_id) spent[e.task_id] = (spent[e.task_id] ?? 0) + (Number(e.payload.spent_usd) || 0);
+      for (const task of cost?.tasks ?? []) spent[task.task_id] = Number(task.usd) || 0;
       setProgress(issues);
       setSpend(spent);
+      setSpentNow(cost ? Number(cost.usd) || 0 : 0);
       setRefreshed(Date.now());
       setRefreshError(null);
     } catch (err) {
@@ -188,7 +191,7 @@ export function GoalPage() {
   const shownView = view ?? (goal.status === "active" ? "board" : "table");
   const editable = { goal, readOnly: !open, save: saveField };
   // What the goal's runs have spent, once the board has added it up: newer than the planner's last look.
-  const spentNow = progress ? Object.values(spend).reduce((a, b) => a + b, 0) : undefined;
+  // (spentNow: read with the board, newer than the figure the goal came with.)
 
   return (
     <>

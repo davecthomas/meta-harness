@@ -30,6 +30,9 @@ def test_each_goal_lists_what_its_tasks_runs_spent_the_same_as_its_spend_section
     assert listed[idle["id"]]["cost_usd"] == "0" and listed[idle["id"]]["cost_unknown"] is None
     page = api.get(f"/v1/goals/{spent['id']}/spend", headers=OPERATOR).json()
     assert Decimal(page["usd"]) == Decimal(listed[spent["id"]]["cost_usd"]), "the list and the goal's page agree"
+    # The goal read alone carries the same figure, so every page shows one number for the goal.
+    alone = api.get(f"/v1/goals/{spent['id']}", headers=OPERATOR).json()
+    assert Decimal(alone["cost_usd"]) == Decimal("3.55") and alone["cost_unknown"] is None
 
 
 def test_a_cost_that_cannot_be_read_is_unknown_with_why_never_zero(api, parts):  # noqa: F811 - fixtures imported above

@@ -11,12 +11,18 @@ import { InlineEdit, InlineSwitch, refusal } from "./InlineEdit";
 // it is reached, the alert for a goal past it, and the one-step Resume that raises it.
 
 type Standing = "ok" | "over" | "blocked";
-type Budgeted = Pick<Goal, "status" | "max_usd" | "budget_mode" | "budget_block_at" | "budget_state" | "spent_usd">;
+type Budgeted = Pick<Goal, "status" | "max_usd" | "budget_mode" | "budget_block_at" | "budget_state" | "spent_usd" | "cost_usd">;
 
 const usd = (value: string | number | null | undefined) => `$${Number(value ?? 0).toFixed(2)}`;
 
 // Where the goal stands against its budget. spent: what the page has added up from the goal's runs, which is
 // newer than the planner's last look; without it, the planner's own answer.
+// What the goal has spent, the one figure every page shows for it: what its tasks' runs cost (cost_usd, the
+// total of its Spend window). Before that is read, the spend the planner recorded at its last look.
+export function spentOf(goal: Pick<Goal, "spent_usd" | "cost_usd">): number {
+  return Number(goal.cost_usd ?? goal.spent_usd ?? 0) || 0;
+}
+
 export function budgetStanding(goal: Budgeted, spent?: number): Standing {
   if (!goal.max_usd) return "ok";
   if (goal.status === "budget_exhausted" || goal.budget_state === "blocked") return "blocked";
@@ -137,7 +143,7 @@ export function ResumeBudget(props: {
   const [error, setError] = useState<string | null>(null);
   const from = Number(goal?.max_usd ?? 0);
   // What the planner worked out; before its first look at a goal past its budget, half as much again as is spent.
-  const suggested = (g: Goal) => Number(g.budget_resume_to ?? Math.ceil(Math.max(Number(g.spent_usd ?? 0), Number(g.max_usd ?? 0)) * 1.5));
+  const suggested = (g: Goal) => Number(g.budget_resume_to ?? Math.ceil(Math.max(spentOf(g), Number(g.max_usd ?? 0)) * 1.5));
 
   async function open() {
     setOpened(true);
@@ -178,7 +184,7 @@ export function ResumeBudget(props: {
           {goal && (
             <>
               <Text size="sm">
-                The goal has spent {usd(goal.spent_usd)} of its {usd(from)} budget. Raising the budget lets its tasks start and go on.
+                The goal has spent {usd(spentOf(goal))} of its {usd(from)} budget. Raising the budget lets its tasks start and go on.
               </Text>
               <NumberInput
                 label={`Raise the budget from ${usd(from)} to`}
@@ -215,7 +221,7 @@ export function RaiseGoalBudget(props: { goalId: string; onResumed?: (answer: Bu
     api.goal(props.goalId).then(
       (found) => {
         setGoal(found);
-        setTo(Number(found.budget_resume_to ?? Math.ceil(Math.max(Number(found.spent_usd ?? 0), Number(found.max_usd ?? 0)) * 1.5)));
+        setTo(Number(found.budget_resume_to ?? Math.ceil(Math.max(spentOf(found), Number(found.max_usd ?? 0)) * 1.5)));
       },
       (err) => setError(refusal(err)),
     );
@@ -242,7 +248,7 @@ export function RaiseGoalBudget(props: { goalId: string; onResumed?: (answer: Bu
       <Group gap="sm" align="flex-end">
         <NumberInput
           label="New goal budget"
-          description={`Now ${usd(from)}, and the goal has spent ${usd(goal.spent_usd)}${goal.budget_block_at ? `; it stops at ${usd(goal.budget_block_at)}` : ""}`}
+          description={`Now ${usd(from)}, and the goal has spent ${usd(spentOf(goal))}${goal.budget_block_at ? `; it stops at ${usd(goal.budget_block_at)}` : ""}`}
           prefix="$"
           min={0}
           decimalScale={2}
@@ -263,7 +269,7 @@ export function RaiseGoalBudget(props: { goalId: string; onResumed?: (answer: Bu
 export function BudgetAlert({ goal, spent, onResumed }: { goal: Goal; spent?: number; onResumed: () => void }) {
   const standing = budgetStanding(goal, spent);
   if (standing === "ok") return null;
-  const shown = usd(spent ?? goal.spent_usd);
+  const shown = usd(spent ?? spentOf(goal));
   const warns = !budgetStops(goal);
   return (
     <Alert
