@@ -3428,6 +3428,13 @@ marker "not saved". The review lists each change in words by where it is
 for each change counted (`staging.describeChanges`), with the JSON behind a
 button. A save the service refuses keeps the review open with its reasons and
 "Your changes are still here"; the reasons are beside their values too.
+A removed row leaves its view at once, so the view lists it under the table
+as "Removed, not saved yet" with Undo (`config/RemovedRows.tsx`): a
+repository, profile or skill is staged back as the active version has it,
+and a tier or a tier's candidate goes back in the place it had. A tier's
+and a candidate's removal is remembered when it is made, since a rename also
+takes a name out of the document, so their Undo lasts while that view stays
+open; Discard still drops every staged change.
 
 A new deployment says what it needs before any work runs
 (`console/src/features/overview/GettingStarted.tsx`): on the Overview, four
