@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink as RouterLink, useLocation } from "react-router-dom";
-import { ActionIcon, Box, Collapse, Group, NavLink, Text } from "@mantine/core";
+import { ActionIcon, Anchor, Box, Collapse, Group, NavLink, Text } from "@mantine/core";
 import { IconChevronRight } from "@tabler/icons-react";
 import { statusColor } from "../theme";
 import { statusWords } from "./status";
@@ -108,6 +108,15 @@ export function PastGroup(props: { label: string; defaultOpened?: boolean; child
       {/* Always a child, so the row has something to open; read only once it is open. */}
       <>{opened && props.children}</>
     </NavLink>
+  );
+}
+
+// The way from a list the pane cut short to the page that has all of it.
+export function MoreLink({ to, children }: { to: string; children: ReactNode }) {
+  return (
+    <Anchor component={RouterLink} to={to} size="xs" px="sm" py={4} display="block" data-testid="more-link">
+      {children}
+    </Anchor>
   );
 }
 

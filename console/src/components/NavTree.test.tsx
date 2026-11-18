@@ -65,7 +65,7 @@ test("the goal whose page is open starts open", async () => {
 test("tasks list the ones still going, and past ones a page at a time", async () => {
   vi.stubGlobal("fetch", (url: string) => {
     const offset = new URL(url, "http://x").searchParams;
-    if (offset.get("status")?.startsWith("queued")) return respond({ tasks: [task("t-1", "Running one", "running")], total: 1 });
+    if (offset.get("status")?.startsWith("running")) return respond({ tasks: [task("t-1", "Running one", "running")], total: 1 });
     const limit = Number(offset.get("limit"));
     const all = Array.from({ length: 60 }, (_, i) => task(`t-p${i}`, `Done ${i}`, "closed"));
     return respond({ tasks: all.slice(0, limit), total: all.length });
@@ -98,4 +98,29 @@ test("the admin pages are one entry that opens a menu on a click, highlighted wh
 
   show(<AdminMenu items={items} />, "/admin/users");
   expect(screen.getByRole("button", { name: "Admin" }).hasAttribute("data-active")).toBe(true);
+});
+
+test("the pane shows the first few of a long list and links to the page that has them all", async () => {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url.startsWith("/v1/goals")) {
+      const open = Array.from({ length: 14 }, (_, i) => goal(`g-${i}`, `Open goal ${i}`, "active"));
+      const past = Array.from({ length: 25 }, (_, i) => goal(`p-${i}`, `Past goal ${i}`, "met"));
+      return respond({ goals: [...open, ...past], total: 39 });
+    }
+    return respond({ tasks: Array.from({ length: 13 }, (_, i) => task(`t-${i}`, `Working ${i}`, "running")), total: 13 });
+  });
+  const { unmount } = show(<GoalHistory />);
+
+  expect(await screen.findByRole("link", { name: /Open goal 9/ })).toBeTruthy();
+  expect(screen.queryByRole("link", { name: /Open goal 10/ })).toBeNull();
+  expect(screen.getByRole("link", { name: "All 14 open goals" }).getAttribute("href")).toBe("/goals?show=open");
+  fireEvent.click(screen.getByRole("button", { name: "Past goals (25)" }));
+  expect((await screen.findByRole("link", { name: "All 25 past goals" })).getAttribute("href")).toBe("/goals?show=ended");
+  expect(screen.queryByRole("link", { name: /Past goal 20/ })).toBeNull();
+  unmount();
+
+  show(<TaskHistory />);
+  expect(await screen.findByRole("link", { name: /Working 9/ })).toBeTruthy();
+  expect(screen.queryByRole("link", { name: /Working 10/ })).toBeNull();
+  expect(screen.getByRole("link", { name: "All 13 in progress" }).getAttribute("href")).toBe("/tasks");
 });
