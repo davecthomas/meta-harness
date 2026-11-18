@@ -558,8 +558,8 @@ sequenceDiagram
     WF->>RT: run service route activity: classify-only call to the ai-api-unified router (task spec as latest user message, route_floor)
     RT->>CL: classifier model call: classify(task spec)
     CL-->>RT: tier standard, confidence 0.82
-    RT-->>WF: tier standard, tier candidates pi-lean with claude-sonnet-5, then pi-lean with gpt-5.6-luna
-    WF->>SB: run service run activity: pool manager lease, HTTP Gateway run grant, harness server start run (pi-lean, claude-sonnet-5)
+    RT-->>WF: tier standard, tier candidates pi-lean with claude-sonnet-5-5, then pi-lean with gpt-5.6-luna
+    WF->>SB: run service run activity: pool manager lease, HTTP Gateway run grant, harness server start run (pi-lean, claude-sonnet-5-5)
     SB-->>WF: harness server run ended ERROR model_error (provider outage)
     Note over WF: an infrastructure failure, so the RunTask workflow tries the next tier candidate
     WF->>SB: run service run activity: pool manager lease, HTTP Gateway run grant, harness server start run (pi-lean, gpt-5.6-luna)
@@ -624,7 +624,7 @@ candidates, in order.
 "router": {
   "tiers": [
     {"name": "standard", "description": "A feature or fix inside one module, with clear acceptance checks, or anything smaller: config, copy, a one-file edit.",
-     "models": ["harness:pi-lean/claude:claude-sonnet-5", "harness:pi-lean/openai-responses:gpt-5.6-luna"],
+     "models": ["harness:pi-lean/claude:claude-sonnet-5-5", "harness:pi-lean/openai-responses:gpt-5.6-luna"],
      "thinking": "medium"},
     {"name": "complex", "description": "Cross-module changes, migrations, concurrency, security-sensitive code, or vague requirements.",
      "models": ["harness:pi-careful/claude:claude-opus-5-5", "harness:pi-careful/openai-responses:gpt-6-sol"],
