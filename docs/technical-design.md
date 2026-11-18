@@ -2670,13 +2670,26 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
 - What blocks an issue is its "is blocked by" links and the keys its
   `Depends on:` lines name.
 - `set_status` moves the issue through its workflow: to the status the
-  settings name for ours, else to one of the matching Jira category (To Do,
-  In Progress, Done). For `in_review` it takes a status with "review" in its
-  name when the workflow has one, else leaves an issue in progress as it is.
-  A workflow with no such move is an error that lists where the issue can go.
+  settings name for ours; else to one with the usual name for it (In
+  Progress or In Dev, Done or Closed, any name with "review"); else to one of
+  the matching Jira category. The name comes before the category because a
+  workflow's categories do not always say what its statuses mean: one may
+  class "Ready for Development" as in progress and "In Code Review" as not
+  started. A workflow with no such move is an error that lists where the
+  issue can go.
 - `link_pull_request` adds a remote link whose id is the pull request's
   address, so adding it twice changes the one link.
 - A label with a space is refused before any issue is made.
+An issue is one task, by its ref, so what the task was made from can fall
+behind the issue. A task that ended canceled or failed with no pull request
+is made over when a control-plane service submits its issue again
+(`tasks.store.renew`): its title, description, acceptance checks, paths, goal,
+repo, size and spend limit become the submitted ones and it goes back to the
+queue for a new first run. One with a pull request, or still running, is
+left as it is. An issue held by a goal that has ended (met or canceled) is
+released for a new goal with its label to take
+(`planner.store.release_from_ended_goal`); an open goal's issue stays its.
+
 **Telling a tracker how a task goes** (`planner/tracker_progress.py`) is
 only for an adapter that asks for it (`writes_progress`). Each sweep, and
 each follow-up of a goal no sweep covers, works out what each issue with a

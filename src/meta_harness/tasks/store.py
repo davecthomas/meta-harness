@@ -141,6 +141,51 @@ def create(conn: psycopg.Connection, caller: str, task: NewTask, *, internal: bo
         return _jsonable(cur.fetchone()), False
 
 
+# A task in one of these, with no pull request, did no work that stands: what is submitted for its issue again
+# replaces what it was made from.
+RENEWABLE = ("canceled", "failed")
+
+
+def renew(conn: psycopg.Connection, task_id: str, task: NewTask, actor: str) -> tuple[dict, str] | None:
+    """Make an ended task with no pull request over from what its issue says now, and send it back to the queue
+    for a new first run: its title, description, acceptance checks, paths, goal, repo, priority, size and spend
+    limit are the submitted ones. Returns (task, previous status), or None when the task is not one to renew (it
+    is running, done, or has a pull request, whose work the new text must not orphan).
+
+    An issue is one task, by its ref. So an issue edited after its first task ended, or taken in by another
+    goal, would otherwise run again from the text it had the first time."""
+    status = "blocked" if task.depends_on else "queued"
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT status, pr_url FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
+        row = cur.fetchone()
+        if row is None or row["status"] not in RENEWABLE or row["pr_url"]:
+            return None
+        cur.execute(
+            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = NULL, retries = retries + 1, "
+            "cancel_requested = false, waiting_on = NULL, updated_at = now(), status_changed_at = now(), "
+            "spent_carried_usd = 0, drives = 0, title = %s, description = %s, acceptance_checks = %s, paths = %s, "
+            "goal_id = %s, repo = %s, task_type = %s, priority = %s, complexity = %s, max_usd = %s, depends_on = %s "
+            f"WHERE id = %s RETURNING {COLUMNS}",
+            (
+                status,
+                f"{actor} made it over from its issue as it is now",
+                task.title,
+                task.description,
+                Jsonb(task.acceptance_checks),
+                task.paths or [],
+                task.goal_id,
+                task.repo,
+                task.task_type,
+                task.priority,
+                task.complexity,
+                task.max_usd,
+                task.depends_on or [],
+                task_id,
+            ),
+        )
+        return _jsonable(cur.fetchone()), row["status"]
+
+
 def get(conn: psycopg.Connection, task_id: str) -> dict:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(f"SELECT {COLUMNS} FROM tasks.task WHERE id = %s", (task_id,))

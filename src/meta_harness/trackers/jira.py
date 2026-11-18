@@ -49,6 +49,13 @@ DEPENDS_KEY = re.compile(r"\b[A-Z][A-Z0-9_]+-\d+\b")
 # "Repo: owner/name" in a description, and a "repo:<name>" label: which of the goal's repos the issue is for.
 REPO_LINE = re.compile(r"^\s*repo:\s*`?([\w.-]+(?:/[\w.-]+)?)`?\s*$", re.IGNORECASE | re.MULTILINE)
 REPO_LABEL = re.compile(r"^repo:([\w.-]+(?:/[\w.-]+)?)$", re.IGNORECASE)
+# What a workflow most often calls each status of ours, most usual first. In review is any status with "review"
+# in its name.
+USUAL = {
+    TODO: ("to do", "todo", "open", "backlog"),
+    IN_PROGRESS: ("in progress", "in dev", "in development", "doing"),
+    DONE: ("done", "closed", "resolved", "complete", "completed"),
+}
 # Jira's three status categories, which every workflow's statuses belong to, for each status of ours.
 CATEGORY = {TODO: "new", IN_PROGRESS: "indeterminate", IN_REVIEW: "indeterminate", DONE: "done"}
 
@@ -300,9 +307,9 @@ class JiraTracker:
         return f"{self._site().site}/browse/{key}?focusedCommentId={made['id']}" if made.get("id") else ""
 
     async def set_status(self, ref: str, status: str) -> bool:
-        """Moves the issue through its workflow to the status the project names for ours, or, with no name
-        given, to a status of the matching Jira category (To Do, In Progress, Done). For in_review a status
-        with "review" in its name is taken when the workflow has one; else an issue already in progress stays.
+        """Moves the issue through its workflow: to the status the site's settings name for ours; else to one
+        with the usual name for it (In Progress, Done, any name with "review"); else to one of the matching
+        Jira category. An issue already there stays.
 
         Raises:
             TrackerError: The issue's workflow has no move to such a status from where it is.
@@ -326,18 +333,23 @@ class JiraTracker:
         if named:
             chosen = [m for m in moves if to(m)[0] == named]
         else:
-            if status == IN_REVIEW:
-                if "review" in here:
+            # The status's usual name first, then Jira's category. A workflow's categories do not always say
+            # what its statuses mean: one may class "Ready for Development" as in progress, and "In Code Review"
+            # as not started.
+            def is_it(name: str) -> bool:
+                return "review" in name if status == IN_REVIEW else name in USUAL[status]
+
+            if is_it(here):
+                return False
+            order = {name: i for i, name in enumerate(USUAL.get(status, ()))}
+            chosen = sorted((m for m in moves if is_it(to(m)[0])), key=lambda m: order.get(to(m)[0], 0))
+            if not chosen:
+                # No status of the usual names: one of the right category will do, and an issue already in it stays.
+                if category == CATEGORY[status] and (status == IN_REVIEW or "review" not in here):
                     return False
-                chosen = [m for m in moves if "review" in to(m)[0]]
-                if not chosen and category == "indeterminate":
-                    return False
-            else:
-                chosen = []
-                if category == CATEGORY[status] and not (status == IN_PROGRESS and "review" in here):
-                    return False
-            chosen = chosen or [m for m in moves if to(m)[1] == CATEGORY[status] and "review" not in to(m)[0]]
-            chosen = chosen or [m for m in moves if to(m)[1] == CATEGORY[status]]
+                if status != IN_REVIEW:
+                    chosen = [m for m in moves if to(m)[1] == CATEGORY[status] and "review" not in to(m)[0]]
+                    chosen = chosen or [m for m in moves if to(m)[1] == CATEGORY[status]]
         if not chosen:
             can = ", ".join(sorted(m.get("to", {}).get("name", "?") for m in moves)) or "nowhere"
             raise TrackerError(

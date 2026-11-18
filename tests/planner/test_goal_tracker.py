@@ -273,3 +273,23 @@ def test_a_goal_with_several_repos_holds_a_jira_issue_until_it_names_its_repo(wo
     client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
     [task] = [t for t in tasks.tasks.values() if t["goal_id"] == goal["id"]]
     assert (task["external_ref"], task["repo"]) == (ref, other)
+
+
+def test_an_issue_a_canceled_goal_still_holds_is_taken_by_a_new_goal_with_its_label(world):
+    """Nothing moves an issue held by a goal that has ended, so a new goal with its label takes it."""
+    client, _, jira, tasks, _ = world
+    first = _goal(client, start=True)
+    ref = jira.add_key(f"VL-{1_000_000 + uuid.uuid4().int % 10**12}", [first["label"]])
+    client.post(f"/v1/goals/{first['id']}/sweep", headers=OPERATOR)
+    assert client.post(f"/v1/goals/{first['id']}/cancel", headers=OPERATOR).status_code == 200
+
+    held = lambda goal: [i["ref"] for i in client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["issues"]]  # noqa: E731
+    # Creating a started goal sweeps it; the sweep asked for here waits that one out.
+    second = _goal(client, label=first["label"], start=True)
+    swept = client.post(f"/v1/goals/{second['id']}/sweep", headers=OPERATOR).json()
+    assert held(second) == [ref], swept
+
+    # An open goal's issue stays that goal's.
+    third = _goal(client, label=first["label"], start=True)
+    client.post(f"/v1/goals/{third['id']}/sweep", headers=OPERATOR)
+    assert held(third) == [] and held(second) == [ref]

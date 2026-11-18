@@ -219,11 +219,34 @@ def create_app(
     @app.post("/v1/tasks", status_code=201)
     def submit(body: TaskIn, response: Response, who: Caller = Depends(caller)) -> dict:
         within_ceiling(body.max_usd)
+        renewed = None
         try:
             with app.state.pool.connection() as conn:
-                task, created = store.create(conn, who.label, store.NewTask(**body.model_dump()), internal=who.service)
+                new = store.NewTask(**body.model_dump())
+                task, created = store.create(conn, who.label, new, internal=who.service)
+                # The issue has a task already. One that ended with no pull request is made over from what
+                # is submitted now, for a control-plane service (the planner taking the issue in again).
+                if not created and who.service:
+                    renewed = store.renew(conn, task["id"], new, who.actor)
         except store.TaskError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
+        if renewed:
+            task, previous = renewed
+            emit_status(task, previous, who.actor)
+            events.emit(
+                "task_retried",
+                {
+                    "action": "retry",
+                    "resume": None,
+                    "max_usd": task["max_usd"],
+                    "retries": task["retries"],
+                    "renewed": True,
+                },
+                task_id=task["id"],
+                actor=who.actor,
+            )
+            response.status_code = 200
+            return task
         if created:
             events.emit(
                 "task_created",
