@@ -13,7 +13,7 @@ import { OperatorReview } from "./OperatorReview";
 import { TaskActions } from "./TaskActions";
 import { TaskFailure } from "./TaskFailure";
 import { Standing } from "./Standing";
-import { TaskPath } from "./TaskPath";
+import { NowLine, TaskPath } from "./TaskPath";
 import { STEP_EVENTS } from "./path";
 import { Plan } from "./Plan";
 import { SteerBox } from "./SteerBox";
@@ -314,6 +314,7 @@ export function TaskPage() {
           <Button size="compact-xs" variant="subtle" onClick={() => setParams({ tab })}>Show every run</Button>
         </Group>
       )}
+      {!onlyRun && <NowLine events={events} />}
       <Paper p={0} style={{ overflow: "hidden" }}>
         <Terminal lines={onlyRun ? lines.filter((l) => l.run === onlyRun) : lines} className="tall" onScrollTop={loadOlder} />
       </Paper>

@@ -47,7 +47,8 @@ test("each review that asks for changes sends the task back to a new row, with w
   expect(all.map((r) => r.steps.map((s) => s.title))).toEqual([
     ["Queued", "Task run", "Pull request #257 opened", "Checks passed", "Review round 1"],
     ["Fix run", "Checks passed", "Review round 2"],
-    ["Fix run"],
+    // The fix run is done and pushed: the code host is checking it.
+    ["Fix run", "Waiting for the pull request's checks"],
   ]);
   expect(all.map((r) => r.back)).toEqual(["", "3 findings to fix", "1 finding to fix"]);
   expect(path.at(-1)!.now).toBe(true);
@@ -126,4 +127,34 @@ test("lengths of time and candidates read short", () => {
   expect([4_000, 372_000, 3_720_000, 183_600_000].map(span)).toEqual(["4s", "6m 12s", "1h 2m", "2d 3h"]);
   expect(candidateName("harness:pi-careful/claude:claude-opus-5-5")).toBe("pi-careful · claude-opus-5-5");
   expect(candidateName("someone")).toBe("someone");
+});
+
+test("a task waiting for the code host's checks says so, after its pull request opens and after each fix run", () => {
+  const opened = [
+    ev("task_created", { status: "queued" }),
+    ev("task_admitted", {}, 5),
+    ...run(1, "task", "standard", 60, "0.05"),
+    ev("pull_request_opened", { pr_url: "https://github.com/o/r/pull/9", files: ["a"] }, 4),
+  ];
+  const waiting = steps(opened).at(-1)!;
+  expect([waiting.title, waiting.kind, waiting.end, waiting.now]).toEqual(["Waiting for the pull request's checks", "checks", null, true]);
+  expect(waiting.url).toBe("https://github.com/o/r/pull/9/checks");
+  // A first run that has just finished has no pull request yet: it is being published, not checked.
+  expect(steps(opened.slice(0, -1)).at(-1)!.kind).toBe("run");
+
+  const reviewed = [
+    ...opened,
+    ev("pull_request_checks", { state: "passed", failed: [] }, 300),
+    ...run(2, "review", "review", 30, "0.1"),
+    ev("pull_request_reviewed", { round: 1, verdict: "changes", findings: 1 }, 1),
+  ];
+  expect(steps(reviewed).at(-1)!.kind).toBe("review");
+  const fixed = [...reviewed, ...run(3, "fix", "fix", 90, "0.1")];
+  expect(steps(fixed).at(-1)!.title).toBe("Waiting for the pull request's checks");
+  expect(steps([...fixed, ev("pull_request_checks", { state: "passed", failed: [] }, 300)]).at(-1)!.title).toBe("Checks passed");
+
+  const merged = [...fixed, ev("pull_request_merged", { pr_url: "https://github.com/o/r/pull/9", merge_sha: "58e544902fca" }, 400)];
+  expect(steps(merged).at(-1)!.title).toBe("Waiting for the merge commit's checks");
+  const closed = [...merged, ev("task_status_changed", { from: "running", to: "closed", reason: "merged" }, 300)];
+  expect(steps(closed).at(-1)!.kind).toBe("end");
 });

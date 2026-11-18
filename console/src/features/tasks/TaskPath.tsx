@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Anchor, Badge, Box, Button, Group, Paper, Stack, Text, Tooltip, UnstyledButton } from "@mantine/core";
 import {
   IconArrowBackUp, IconChecks, IconCircleCheck, IconClock, IconEye, IconFlag, IconGitMerge, IconGitPullRequest, IconNote, IconPlayerPlay,
@@ -105,6 +105,27 @@ function Picked({ step, events, onOpenRun, onOpenReviews }: { step: Step; events
     </Stack>
   );
 }
+
+// What the task is doing now and for how long, counted by the second: the newest step of its path while that
+// step is still going. For a place with no timeline on show, such as above the terminal, which prints nothing
+// while a task waits for the code host's checks.
+export function NowLine({ events }: { events: MhEvent[] }) {
+  const step = useMemo(() => steps(events).at(-1), [events]);
+  const going = !!step && step.now && !step.end;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!going) return;
+    const timer = setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => clearInterval(timer);
+  }, [going]);
+  if (!step || !going) return null;
+  return (
+    <Text size="sm" mb="xs" data-testid="now-line">
+      <Text span fw={600}>Now: {step.title}</Text>, {span(took(step, now))} so far{step.detail ? `. ${step.detail}` : ""}
+    </Text>
+  );
+}
+
 
 // A task's path as a picture. Stages are columns and time runs left to right; each time the task goes
 // back to an earlier stage (a review's findings to a fix run, a retry, a merge the supervisor asked for
