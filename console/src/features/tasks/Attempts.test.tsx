@@ -35,7 +35,13 @@ test("attempts show side by side, and Pick this one sends the operator's choice"
     </MantineProvider>,
   );
   const first = await screen.findByTestId("attempt-1");
-  expect(within(first).getByText("$1.20 · 1 files · +3 −1")).toBeTruthy();
+  // How it ended, who ran it and what it changed read in words, not as the service names them.
+  expect(within(first).getByText("Finished")).toBeTruthy();
+  expect(within(first).getByTestId("candidate-name").textContent).toBe("sonnet, profile pi-lean");
+  expect(within(first).getByText("$1.20 spent · 1 file changed · 3 lines added, 1 removed")).toBeTruthy();
+  const second = screen.getByTestId("attempt-2");
+  expect(within(second).getByText("Did not finish, the last try")).toBeTruthy();
+  expect(within(second).getByTestId("attempt-why").textContent).toContain("Recorded: max_turns");
   expect(within(screen.getByTestId("attempt-2")).queryByRole("button")).toBeNull();
   fireEvent.click(within(first).getByRole("button", { name: "Pick this one" }));
   await waitFor(() => expect(posted).toEqual([{ text: "1", when: "choose" }]));

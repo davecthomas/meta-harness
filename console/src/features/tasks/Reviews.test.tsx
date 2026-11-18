@@ -28,7 +28,11 @@ test("each round shows its verdict, findings linked at the reviewed commit, and 
     </MantineProvider>,
   );
   const first = screen.getByTestId("review-1");
-  expect(within(first).getByText("changes")).toBeTruthy();
+  // The verdict and the reviewer read in words, not as the service names them.
+  expect(within(first).getByText("Changes asked for")).toBeTruthy();
+  expect(within(first).getByTestId("candidate-name").textContent).toBe("claude-opus-5-5, profile pi-review");
+  expect(within(first).getByTestId("candidate-name").getAttribute("title")).toBe("harness:pi-review/claude:claude-opus-5-5");
+  expect(within(screen.getByTestId("review-2")).getByText("Clean")).toBeTruthy();
   expect(within(first).getByText("a.py:3").getAttribute("href")).toBe("https://github.com/o/r/blob/abc1234ff/a.py#L3");
   expect(within(first).getByText(/fix run 3/)).toBeTruthy();
   expect(within(screen.getByTestId("review-2")).getByText(/Waiting for an operator/)).toBeTruthy();

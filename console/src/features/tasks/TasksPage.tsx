@@ -4,7 +4,7 @@ import { Anchor, Alert, Badge, Button, Checkbox, Group, SegmentedControl, Table,
 import { api } from "../../api";
 import { useInfinite } from "../../hooks";
 import { TileGrid, type TileSize } from "../../components/TileGrid";
-import { VerdictBadge } from "./Reviews";
+import { VerdictBadge } from "./words";
 import { waitReason } from "./WaitingToStart";
 import { useRowKeys } from "../../components/CommandPalette";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, StatusBadge, TitleLink, when } from "../../components/ui";

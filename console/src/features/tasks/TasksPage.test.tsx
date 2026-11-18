@@ -98,5 +98,5 @@ test("Pull request open shows each task's latest review verdict", async () => {
       </MemoryRouter>
     </MantineProvider>,
   );
-  expect(await screen.findByText("clean")).toBeTruthy();
+  expect(await screen.findByText("Clean")).toBeTruthy();
 });
