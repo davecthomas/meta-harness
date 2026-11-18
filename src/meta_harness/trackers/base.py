@@ -165,7 +165,8 @@ class Setting:
     name: str
     label: str
     # text; statuses: a name for each status; choice: one of what the adapter's `choices` lists for it; switch:
-    # on or off, "yes" when on.
+    # on or off, "yes" when on. A setting whose values the tracker can list is a choice, never text: the
+    # console offers the list, so a name is picked and not mistyped.
     kind: str = "text"
     required: bool = False
     help: str = ""

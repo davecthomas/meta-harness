@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Badge, Button, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
+import { Alert, Autocomplete, Badge, Button, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import { api, type Tracker, type TrackerSetting } from "../../api";
 import { InlineField } from "../../components/InlineField";
 import { ErrorAlert } from "../../components/ui";
@@ -103,8 +103,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
             <Reasons reasons={s.reasons(`tracker:${tracker.scheme}`)} />
             {isSetUp && tracker.goal_settings.length > 0 && (
               <Text size="sm" c="dimmed" mt="sm">
-                Each goal that uses {tracker.title} says its own {tracker.goal_settings.map((g) => g.label.toLowerCase()).join(" and ")},
-                when it is created.
+                Each goal that uses {tracker.title} sets its own when it is created: {tracker.goal_settings.map((g) => g.label).join("; ")}.
               </Text>
             )}
             {isSetUp && tracker.settings.length > 0 && (
@@ -140,31 +139,8 @@ function blank(tracker: Tracker): Record<string, unknown> {
 function SettingField(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; value: any }) {
   const { staging: s, tracker, setting, value } = props;
   const path = ["trackers", tracker.scheme, setting.name];
-  if (setting.kind === "statuses") {
-    const names: Record<string, string> = value && typeof value === "object" ? value : {};
-    return (
-      <Group gap="lg" align="flex-start">
-        {STATUSES.map(([status, label]) => (
-          <div key={status}>
-            <Text size="xs" c="dimmed">{label}</Text>
-            <InlineField
-              kind="text"
-              label={`${tracker.title}'s status for ${label.toLowerCase()}`}
-              value={names[status] ?? ""}
-              empty={<Text size="sm" c="dimmed">The usual</Text>}
-              changed={changed(s, [...path, status])}
-              readOnly={s.readOnly}
-              onCommit={(v) => {
-                const next = { ...names, [status]: v.trim() };
-                if (!v.trim()) delete next[status];
-                stageOptional(s, path, Object.keys(next).length ? next : undefined);
-              }}
-            />
-          </div>
-        ))}
-      </Group>
-    );
-  }
+  if (setting.kind === "statuses") return <StatusNames staging={s} tracker={tracker} path={path} value={value} />;
+  if (setting.kind === "choice") return <ChoiceSetting staging={s} tracker={tracker} setting={setting} path={path} value={value} />;
   return (
     <InlineField
       kind="text"
@@ -175,5 +151,147 @@ function SettingField(props: { staging: Staging; tracker: Tracker; setting: Trac
       readOnly={s.readOnly}
       onCommit={(v) => (setting.required ? s.stage(path, v.trim()) : stageOptional(s, path, v.trim()))}
     />
+  );
+}
+
+// What the tracker's site has for a setting (GET /v1/trackers/{scheme}/choices/{setting}), read once when the
+// page opens: null until it arrives. The list needs the tracker's saved settings and its sign-in, so it can fail.
+function useChoices(scheme: string, setting: string): { known: string[] | null; error: string | null } {
+  const [known, setKnown] = useState<string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    api.trackerChoices(scheme, setting).then(
+      (found) => !stale && setKnown((found ?? []).map((c) => c.value)),
+      (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [scheme, setting]);
+  return { known, error };
+}
+
+// The site's own spelling of a name, whatever capitals it was typed in; undefined when the site has none.
+function onSite(known: string[] | null, name: string): string | undefined {
+  return (known ?? []).find((k) => k.toLowerCase() === name.trim().toLowerCase());
+}
+
+// A name the tracker's site must have, such as a status or an issue type: picked from the site's own list, so it
+// is not mistyped. A mistyped one fails only later, when an issue does not move or cannot be created. A name the
+// list lacks is refused, and one already saved is marked. When the list cannot be read (unreadable: why), or is
+// empty, the name can still be typed.
+function PickedName(props: {
+  staging: Staging;
+  tracker: Tracker;
+  label: string;
+  what: string;
+  value: string;
+  empty: string;
+  path: string[];
+  known: string[] | null;
+  unreadable: string | null;
+  testId: string;
+  onCommit: (name: string) => void;
+}) {
+  const { staging: s, tracker, known } = props;
+  const listed = !!known?.length;
+  return (
+    <div>
+      <InlineField
+        kind="custom"
+        label={props.label}
+        value={props.value}
+        display={props.value ? <Text size="sm">{props.value}</Text> : undefined}
+        empty={<Text size="sm" c="dimmed">{props.empty}</Text>}
+        changed={changed(s, props.path)}
+        readOnly={s.readOnly}
+        check={(draft: string) =>
+          listed && draft.trim() && !onSite(known, draft) ? `${tracker.title} has no ${props.what} named ${draft.trim()}: pick one from the list, or leave it empty for the usual` : null
+        }
+        input={(draft) => (
+          <Autocomplete
+            aria-label={props.label}
+            size="xs"
+            w={220}
+            placeholder={known === null && !props.unreadable ? "Loading…" : listed ? `Pick ${/^[aeiou]/i.test(props.what) ? "an" : "a"} ${props.what}` : "Type its name"}
+            value={draft.value}
+            onChange={draft.onChange}
+            data={known ?? []}
+            error={draft.invalid}
+            maxDropdownHeight={260}
+          />
+        )}
+        onCommit={(v: string) => props.onCommit(onSite(known, v) ?? v.trim())}
+      />
+      {listed && props.value && !onSite(known, props.value) ? (
+        <Text size="xs" c="orange" data-testid={props.testId}>{tracker.title} has no {props.what} named {props.value}</Text>
+      ) : null}
+    </div>
+  );
+}
+
+function Unreadable({ what, error }: { what: string; error: string | null }) {
+  return error ? <Text size="xs" c="orange">The site's {what} could not be listed, so type each exactly: {error}</Text> : null;
+}
+
+// One setting the site lists the choices for, such as Jira's issue type.
+function ChoiceSetting(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; path: string[]; value: any }) {
+  const { staging: s, tracker, setting } = props;
+  const { known, error } = useChoices(tracker.scheme, setting.name);
+  const what = setting.label.toLowerCase();
+  return (
+    <Stack gap={6}>
+      <PickedName
+        staging={s}
+        tracker={tracker}
+        label={`${tracker.title}: ${setting.label}`}
+        what={what}
+        value={typeof props.value === "string" ? props.value : ""}
+        empty={setting.required ? "Not set yet" : "The usual"}
+        path={props.path}
+        known={known}
+        unreadable={error}
+        testId={`choice-unknown-${setting.name}`}
+        onCommit={(name) => (setting.required ? s.stage(props.path, name) : stageOptional(s, props.path, name || undefined))}
+      />
+      <Unreadable what={`${what}s`} error={error} />
+    </Stack>
+  );
+}
+
+// The site's own name for each status of ours.
+function StatusNames(props: { staging: Staging; tracker: Tracker; path: string[]; value: any }) {
+  const { staging: s, tracker, path } = props;
+  const names: Record<string, string> = props.value && typeof props.value === "object" ? props.value : {};
+  const { known, error } = useChoices(tracker.scheme, "statuses");
+  return (
+    <Stack gap={6}>
+      <Group gap="lg" align="flex-start">
+        {STATUSES.map(([status, label]) => (
+          <div key={status}>
+            <Text size="xs" c="dimmed">{label}</Text>
+            <PickedName
+              staging={s}
+              tracker={tracker}
+              label={`${tracker.title}'s status for ${label.toLowerCase()}`}
+              what="status"
+              value={names[status] ?? ""}
+              empty="The usual"
+              path={[...path, status]}
+              known={known}
+              unreadable={error}
+              testId={`status-unknown-${status}`}
+              onCommit={(name) => {
+                const next = { ...names, [status]: name };
+                if (!name) delete next[status];
+                stageOptional(s, path, Object.keys(next).length ? next : undefined);
+              }}
+            />
+          </div>
+        ))}
+      </Group>
+      <Unreadable what="status names" error={error} />
+    </Stack>
   );
 }
