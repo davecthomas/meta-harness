@@ -17,7 +17,7 @@ issue's `## Acceptance checks`, `Paths:` and `Depends on:` lines from.
 
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -401,19 +401,37 @@ class JiraTracker:
         await self.mark(ref)
         await self._call("POST", f"/issue/{key}/remotelink", json=link)
 
-    async def choices(self, setting: str) -> list[dict[str, str]]:
+    async def choices(self, setting: str, used: Sequence[dict] = ()) -> list[dict[str, str]]:
         """What the console offers for a setting, so a name is picked and not typed: for a goal's `project`,
-        the site's projects the Jira account sees, by name; for the site's `statuses`, every status name its
-        workflows use; for its `issue_type`, every issue type but the sub-task ones, which need a parent."""
-        if setting in ("statuses", "issue_type"):
-            listed = await self._call("GET", "/status" if setting == "statuses" else "/issuetype")
-            # One site has a status or type of the same name in several projects.
-            names = {
-                str(entry.get("name") or "").strip().lower(): str(entry.get("name") or "").strip()
-                for entry in listed or []
-                if not entry.get("subtask")
-            }
-            return [{"value": name, "label": name} for key, name in sorted(names.items()) if key]
+        the site's projects the Jira account sees, by name; for the site's `statuses`, its status names; for
+        its `issue_type`, every issue type but the sub-task ones, which need a parent.
+
+        used: the settings of the goals on this tracker. One site holds many projects, each with its own
+        workflows, and most of the site's statuses are in none of a given project's. So the statuses of the
+        projects the goals name come first, each under its project as `group`, and the site's other statuses
+        after them under "Other projects": a name from there moves no issue of those goals."""
+
+        def named(entries: Any) -> dict[str, str]:
+            # One site has a status or type of the same name in several projects and issue types.
+            names = {str(e.get("name") or "").strip() for e in entries or [] if not e.get("subtask")}
+            return {name.lower(): name for name in sorted(names) if name}
+
+        if setting == "statuses":
+            found: list[dict[str, str]] = []
+            seen: set[str] = set()
+            for project in sorted({str(s.get("project") or "").strip().upper() for s in used} - {""}):
+                try:
+                    types = await self._call("GET", f"/project/{project}/statuses")
+                except TrackerError:
+                    continue  # A project that is gone or closed to the account lists nothing; the rest still do.
+                mine = named(status for issue_type in types or [] for status in issue_type.get("statuses") or [])
+                found += [{"value": n, "label": n, "group": project} for key, n in mine.items() if key not in seen]
+                seen |= set(mine)
+            rest = named(await self._call("GET", "/status"))
+            group = {"group": "Other projects"} if found else {}
+            return found + [{"value": n, "label": n, **group} for key, n in rest.items() if key not in seen]
+        if setting == "issue_type":
+            return [{"value": n, "label": n} for n in named(await self._call("GET", "/issuetype")).values()]
         if setting != "project":
             return []
         found: list[dict[str, str]] = []
