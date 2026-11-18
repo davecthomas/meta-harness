@@ -92,7 +92,9 @@ def test_a_size_limit_above_the_task_ceiling_or_infinite_is_refused():
 
 def test_the_shipped_sizing_settings_pass_their_check():
     sizing.check_settings()
-    assert sizing.settings()["engine"] == "openai-decisions", "the classifier's engine"
+    # A completions engine the HTTP Gateway serves on /v1/structured. The router classifier's own engine
+    # (openai-decisions) is a classifier, which /v1/structured refuses: every issue then waited unsized.
+    assert sizing.settings()["engine"] == "openai-responses"
 
 
 async def test_sizing_is_one_structured_call_with_the_configured_model(monkeypatch):
