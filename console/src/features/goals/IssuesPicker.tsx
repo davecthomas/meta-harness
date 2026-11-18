@@ -76,7 +76,8 @@ export function IssuesPicker(props: {
   const pickable = shown.filter((row) => free(row) && !labeled.has(row.ref));
   // The picker's Label filter suggests the labels of the repo it shows, as the goal's Label field does.
   const filterRepos = useMemo(() => (repo === "all" ? available : [repo]), [repo, available]);
-  const suggested = useLabelSuggestions(filterRepos);
+  // From the tracker it browses, and only once it is open: the picker sits closed on every goal form.
+  const suggested = useLabelSuggestions(filterRepos, props.opened ? props.source : null);
   const allOnPage = pickable.length > 0 && pickable.every((r) => picked.has(r.ref));
 
   function toggle(ref: string, on: boolean) {

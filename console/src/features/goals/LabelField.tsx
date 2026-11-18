@@ -9,8 +9,9 @@ import { api, type IssueSource, type LabelCount } from "../../api";
 // fieldProps: what the goal page's in-place edit changes on the input, such as no label of its own.
 // The labels to suggest for these repos, with each one's open-issue count, read once. Shared by the goal's
 // Label field and the issue picker's Label filter, so both suggest the same labels the same way.
-// source: which tracker's labels, and what it asks of a goal; the default tracker's when left out.
-export function useLabelSuggestions(repos: string[], source?: IssueSource) {
+// source: which tracker's labels, and what it asks of a goal; the default tracker's when left out. null: not
+// known yet, so nothing is read.
+export function useLabelSuggestions(repos: string[], source?: IssueSource | null) {
   const [labels, setLabels] = useState<LabelCount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -18,6 +19,7 @@ export function useLabelSuggestions(repos: string[], source?: IssueSource) {
     let stale = false;
     setLabels(null);
     setError(null);
+    if (source === null) return;
     api.labels(undefined, source).then(
       (r) => !stale && setLabels(r.labels),
       (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
@@ -45,7 +47,7 @@ export function LabelOption({ row }: { row: LabelSuggestion }) {
   );
 }
 
-export function LabelField({ value, onChange, repos, required = true, fieldProps, source }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean; fieldProps?: Partial<AutocompleteProps>; source?: IssueSource }) {
+export function LabelField({ value, onChange, repos, required = true, fieldProps, source }: { value: string; onChange: (label: string) => void; repos: string[]; required?: boolean; fieldProps?: Partial<AutocompleteProps>; source?: IssueSource | null }) {
   const { options, byName, error, loaded } = useLabelSuggestions(repos, source);
 
   const typed = value.trim();

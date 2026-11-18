@@ -289,7 +289,7 @@ export function NewGoal() {
                 value={label}
                 onChange={setLabel}
                 repos={chosen}
-                source={readable ? source : undefined}
+                source={readable ? source : null}
                 required={false}
                 fieldProps={{ description: "Optional. Left empty, the goal gets a label of its own for the issues it creates." }}
               />
@@ -297,7 +297,7 @@ export function NewGoal() {
               // Which issues, for a goal that runs issues that exist: those with its label, ones picked by hand, or both.
               <Stack gap="md" pl="md" style={{ borderLeft: "2px solid var(--mantine-color-default-border)" }} data-testid="existing-issues">
                 <Text size="sm" c="dimmed">Give the goal a label, pick issues by hand, or both. It needs at least one of the two.</Text>
-                <LabelField value={label} onChange={setLabel} repos={chosen} source={readable ? source : undefined} required={false} />
+                <LabelField value={label} onChange={setLabel} repos={chosen} source={readable ? source : null} required={false} />
                 <LabelIssues label={label} issues={labeled} />
                 <Group gap="sm">
                   <Button variant="default" leftSection={<IconListCheck size={16} />} disabled={!chosen.length || !readable} onClick={() => setPicking(true)}>
