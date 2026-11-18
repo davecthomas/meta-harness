@@ -3,6 +3,7 @@ import { Anchor, Badge, Center, Group, Loader, Progress, Stack, Table, Text } fr
 import { Link } from "react-router-dom";
 import { api, type TaskSpend } from "../../api";
 import { DataTable, Empty, ErrorAlert } from "../../components/ui";
+import { usd as money } from "../../money";
 
 const KIND_NAMES: Record<string, string> = { task: "the task's own run", review: "review", fix: "fix" };
 
@@ -34,6 +35,7 @@ export function SpendReport({ taskId, status }: { taskId: string; status: string
   if (!spend.runs.length) return <Empty>No run has finished yet, so nothing is spent.</Empty>;
   const total = Number(spend.totals.usd);
   const limit = spend.max_usd ? Number(spend.max_usd) : null;
+  const writing = Number(spend.totals.writing_usd ?? 0);
   const costliest = Math.max(...spend.runs.map((r) => Number(r.usd)));
   return (
     <Stack gap="md">
@@ -49,6 +51,11 @@ export function SpendReport({ taskId, status }: { taskId: string; status: string
             {KIND_NAMES[kind] ?? kind}: ${Number(usd).toFixed(2)}
           </Text>
         ))}
+        {writing > 0 && (
+          <Text size="sm" c="dimmed" data-testid="spend-writing">
+            writing pass: {money(writing)}, outside the spend limit, so {money(Number(spend.totals.all_usd ?? total + writing))} in all, as the Costs page counts it
+          </Text>
+        )}
         <Text size="sm" c="dimmed">
           {tokens(spend.totals.input_tokens)} tokens in ({cachedShare(spend.totals.input_tokens, spend.totals.cached_input_tokens) || "0%"} from the cache), {tokens(spend.totals.output_tokens)} out
         </Text>

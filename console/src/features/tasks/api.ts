@@ -42,8 +42,13 @@ export interface AttemptsCompare {
 }
 
 // What runs spent, in all and by kind (the task's own runs, reviews, fixes), with their turns and tokens.
+// input_tokens: every input token the model read, cache writes included.
 export interface SpendTotals {
   usd: string;
+  // A task's report only: what the writing pass's rewrites of its posts cost, which no spend limit counts,
+  // and that added to usd, the figure the Costs page gives for the task.
+  writing_usd?: string;
+  all_usd?: string;
   by_kind: Record<string, string>;
   runs: number;
   turns: number;

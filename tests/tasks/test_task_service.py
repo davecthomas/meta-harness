@@ -442,6 +442,7 @@ def test_a_tasks_spend_lists_its_runs_and_totals_against_its_limit(api, events):
     events.emit("attempt_finished", first, task_id=tid, run_id=f"{tid}:run-1")
     review = {"attempt": 2, "tier": "review", "candidate": "harness:r/x:y", "spent_usd": "0.25", "status": "FINISHED"}
     events.emit("attempt_finished", review, task_id=tid, run_id=f"{tid}:run-2")
+    events.emit("writing_checked", {"usd_cost": "0.02"}, task_id=tid)
     for position, event in enumerate(events.events, start=1):
         event[2]["position"] = position
 
@@ -450,6 +451,7 @@ def test_a_tasks_spend_lists_its_runs_and_totals_against_its_limit(api, events):
     assert Decimal(shown["max_usd"]) == Decimal("10") and Decimal(shown["totals"]["usd"]) == Decimal("1.50")
     assert [(r["kind"], r["turns"], r["usd"]) for r in shown["runs"]] == [("task", 8, "1.25"), ("review", None, "0.25")]
     assert shown["totals"]["by_kind"] == {"task": "1.25", "review": "0.25", "fix": "0"}
+    assert (shown["totals"]["writing_usd"], shown["totals"]["all_usd"]) == ("0.02", "1.52")
     assert api.get("/v1/tasks/t-none/spend", headers=_as(CALLER_KEY)).status_code == 404
 
 

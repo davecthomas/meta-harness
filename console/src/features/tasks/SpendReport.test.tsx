@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
@@ -52,6 +52,19 @@ test("the spend tab shows each run's kind, turns, tokens and cost, marks the mos
   expect(totals).toContain("review: $0.24");
   expect(totals).toContain("fix: $0.85");
   expect(totals).toContain("8.7M tokens in (86% from the cache)");
+});
+
+test("the writing pass's cost is named beside the runs', with the total the Costs page gives", async () => {
+  show(SPEND);
+  await screen.findByTestId("spend-run-1");
+  expect(screen.queryByTestId("spend-writing")).toBeNull();
+  cleanup();
+
+  show({ ...SPEND, totals: { ...SPEND.totals, writing_usd: "0.015051", all_usd: "5.111951" } });
+
+  const writing = (await screen.findByTestId("spend-writing")).textContent ?? "";
+  expect(writing).toContain("writing pass: $0.02, outside the spend limit, so $5.11 in all");
+  expect(screen.getByTestId("spend-totals").textContent).toContain("$5.10 spent of $10.00");
 });
 
 test("a task with no finished run says nothing is spent", async () => {
