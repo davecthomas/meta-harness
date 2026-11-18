@@ -2622,36 +2622,53 @@ never of one goal:
 {"default": "jira",
  "trackers": {"github": {},
               "jira": {"site": "https://example.atlassian.net",
-                       "issue_type": "Task",
-                       "statuses": {"in_review": "In Review"}}}}
+                       "default_project": "PROJ",
+                       "projects": {"PROJ": {"issue_type": "Task",
+                                             "statuses": {"in_review": "In Review"}}}}}}
 ```
+
+One Jira site holds many projects, and a workflow belongs to a project. So
+Jira's setup lists the projects the meta-harness works in (`projects`), and
+what depends on a workflow is set for each: the type of an issue the planner
+creates (`issue_type`) and the project's own name for a status (`statuses`).
+`default_project` is required and is one of those listed: the project a new
+goal starts with. A save without one is refused. A configuration saved
+before projects were listed holds `issue_type` and `statuses` for the whole
+site and no `projects`; it keeps working, any project allowed, until its next
+save, when the console moves both under the first project added.
 
 A sign-in is never in it: Jira's is the secrets `MH_JIRA_EMAIL` and
 `MH_JIRA_TOKEN`. `GET /v1/trackers` lists every supported tracker with its
-settings' description, whether it is set up and signed in, and the default.
+settings' description, whether it is set up and signed in, the default, and
+`goal_defaults`, what a new goal on it starts with (Jira's default project).
 
 **A goal says where its issues are**: its repos, as every goal does; its
 tracker (`goal.tracker`), the default unless it names another that is set up;
 and what that tracker asks of a goal (`goal.tracker_settings`), which the
-adapter declares in its `SPEC` as `goal_settings`. Jira asks for one thing,
-the project: one Jira site has many projects, and each goal names one.
-GitHub asks for nothing. All three are fixed when the goal is created, and
-every ref it holds is its tracker's, and for Jira its project's (422
-otherwise). A goal from before goals named a tracker uses GitHub. A `choice`
-setting's options come from `GET /v1/trackers/{scheme}/choices/{setting}`
-(Jira's projects, by name), so no form or route is written for one tracker.
-The same call lists what a site's own settings can name: Jira's issue types
-(`issue_type`, a `choice` setting; sub-task types left out, since they need a
-parent) and its status names (`statuses`). One site holds many projects, each
-with its own workflows, so the planner gives the adapter the settings of the
-goals on the tracker, and the statuses of the projects they name
-(`GET /project/{key}/statuses`) come first, grouped by project, with the
-site's other statuses after them under "Other projects". A saved name that
-only another project has is marked: it moves no issue of those goals. The Issue trackers page offers
-each list as the operator types, refuses a name the site lacks, takes the
-site's spelling of one typed in other capitals, and marks a saved name the
-site no longer has. When the list cannot be read it says why and takes a
-typed name. This is the console's rule for any value a service can list
+adapter declares in its `SPEC` as `goal_settings`. Jira asks for the project:
+one of those its setup lists (422 for another, naming the listed ones), and
+the default project when the goal names none. GitHub asks for nothing. All
+three are fixed when the goal is created, and every ref it holds is its
+tracker's, and for Jira its project's (422 otherwise). A goal from before
+goals named a tracker uses GitHub. A project an open goal uses cannot be
+removed from the list: the save is refused, naming the goal, as for a repo.
+
+**Names are picked, not typed.** A setting's options come from
+`GET /v1/trackers/{scheme}/choices/{setting}`, so no form or route is written
+for one tracker. The query says what the setting belongs to. For Jira:
+`projects` is every project of the site the account sees, for the setup's
+list; `project` is the listed projects, for a goal; `issue_type` and
+`statuses` take `project` and list that project's own issue types (sub-task
+types left out, since they need a parent) and the status names of its
+workflows (`GET /project/{key}/statuses`), and no other project's, since a
+status of another workflow moves none of its issues. An adapter describes a
+list of entries with settings of their own as a setting of kind `entries`
+(Jira's projects) and a pick among them as `entry_of` (the default project),
+and the Issue trackers page draws both from that description. Each field
+offers its list as the operator types, refuses a name the list lacks, takes
+the list's spelling of one typed in other capitals, and marks a saved name the
+list no longer has. When the list cannot be read it says why and takes a typed
+name. This is the console's rule for any value a service can list
 (`AGENTS.md`, Console).
 
 `Trackers` (`trackers/router.py`) is every supported tracker as one: a call

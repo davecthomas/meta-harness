@@ -58,6 +58,9 @@ export function NewGoal() {
       (found) => {
         setTrackers(found.trackers.filter((t) => t.configured));
         setTracker((now) => now || found.default);
+        // A goal starts with what its tracker's setup says a new one does: Jira's default project.
+        const defaults = found.trackers.find((t) => t.scheme === found.default)?.goal_defaults ?? {};
+        setTrackerSettings((now) => (Object.keys(now).length ? now : { ...defaults }));
       },
       () => undefined,
     );
@@ -67,7 +70,7 @@ export function NewGoal() {
   // Another tracker's issues, or another project's, are other issues: the picked ones start again.
   function chooseTracker(next: string) {
     setTracker(next);
-    setTrackerSettings({});
+    setTrackerSettings({ ...(trackers.find((t) => t.scheme === next)?.goal_defaults ?? {}) });
     setRefs([]);
   }
   function chooseSettings(next: Record<string, string>) {

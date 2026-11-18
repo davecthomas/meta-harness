@@ -167,9 +167,15 @@ class Setting:
     # text; statuses: a name for each status; choice: one of what the adapter's `choices` lists for it; switch:
     # on or off, "yes" when on. A setting whose values the tracker can list is a choice, never text: the
     # console offers the list, so a name is picked and not mistyped.
+    # entries: a list the operator adds to, each entry chosen from what `choices` lists for the setting and
+    # holding the settings in `settings`; `entry` is what one entry is (a project), the name its choices are
+    # asked by. entry_of: one of the entries of the setting named in `of`.
     kind: str = "text"
     required: bool = False
     help: str = ""
+    settings: list["Setting"] = field(default_factory=list)
+    entry: str = ""
+    of: str = ""
 
 
 @dataclass(frozen=True)
@@ -189,7 +195,10 @@ class Supported:
     # What a goal that uses the tracker says besides its repos, such as the project its issues are in, for the
     # New goal form to draw; and why a goal's answers cannot be used, empty when they can.
     goal_settings: list[Setting] = field(default_factory=list)
-    check_goal: Callable[[dict[str, Any]], list[str]] = lambda settings: []
+    # site: the tracker's own settings to check against; None reads the active configuration's.
+    check_goal: Callable[..., list[str]] = lambda settings, site=None: []
+    # What a new goal starts with for its goal settings, from the tracker's settings: Jira's default project.
+    goal_defaults: Callable[[dict[str, Any] | None], dict[str, str]] = lambda site: {}
     # Whether a goal with these settings takes the issues assigned to the meta-harness's account in the
     # tracker (`Tracker.list_assigned`): such a goal has issues to take in with no label and none picked.
     takes_assigned: Callable[[dict[str, Any]], bool] = lambda settings: False

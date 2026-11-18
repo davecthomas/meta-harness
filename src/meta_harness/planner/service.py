@@ -39,7 +39,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from meta_harness import auth, db
@@ -573,8 +573,24 @@ def create_app(
         return dict(zip(names, found, strict=True))
 
     # The configuration API, for every kind, until the run service has an HTTP API of its own.
-    def repos_in_use(kind: str, document: dict[str, Any]) -> list[str]:
-        """A repo an open goal names stays in the registry: the refusal names the goals."""
+    def in_use(kind: str, document: dict[str, Any]) -> list[str]:
+        """What an open goal names stays in the configuration, and the refusal names the goals: a repo in the
+        registry, and in the trackers what the goal told its tracker, such as its Jira project."""
+        if kind == "trackers":
+            with app.state.pool.connection() as conn:
+                goals = store.list_goals(conn, list(store.OPEN_GOAL_STATUSES))
+            reasons = []
+            for goal in goals:
+                scheme = goal.get("tracker") or "github"
+                spec, site = tracker_registry.SUPPORTED.get(scheme), (document.get("trackers") or {}).get(scheme)
+                if spec is None or not isinstance(site, dict):
+                    continue  # A tracker that is not set up is refused by the document's own check.
+                name = f"open goal {goal['id']} ({goal.get('title') or goal['statement'][:60]})"
+                reasons += [
+                    f"{scheme}: {why}: {name} uses it"
+                    for why in spec.check_goal(goal.get("tracker_settings") or {}, site)
+                ]
+            return reasons
         if kind != "repos":
             return []
         kept = {name.lower() for name in (document.get("repos") or {})}
@@ -589,7 +605,7 @@ def create_app(
                     )
         return reasons
 
-    app.include_router(config_api.router(lambda: app.state.pool, operator, events, repos_in_use))
+    app.include_router(config_api.router(lambda: app.state.pool, operator, events, in_use))
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -753,6 +769,8 @@ def create_app(
                     "settings": [asdict(setting) for setting in spec.settings],
                     # What a goal that uses it says besides its repos, for the New goal form.
                     "goal_settings": [asdict(setting) for setting in spec.goal_settings],
+                    # What a new goal starts with for them, from the tracker's settings: Jira's default project.
+                    "goal_defaults": spec.goal_defaults(set_up.get(scheme)) if scheme in set_up else {},
                     "credentials": spec.credentials,
                     "configured": scheme in set_up,
                     # Signed in: every secret its sign-in needs is in the planner's environment.
@@ -767,24 +785,17 @@ def create_app(
         return {"default": document.get("default") or "github", "trackers": found}
 
     @app.get("/v1/trackers/{scheme}/choices/{setting}")
-    async def tracker_choices(scheme: str, setting: str, who: str = Depends(operator)) -> dict:
-        """What the console offers for one of a tracker's settings, as value and label: Jira's projects for a
-        goal, and the status names and issue types of its site for the site's own. The adapter is given the
-        settings of the goals on the tracker, so it can put what they use first: Jira's statuses come grouped,
-        the goals' projects' own before the rest of the site's. Empty for a setting with nothing to list. 422
+    async def tracker_choices(scheme: str, setting: str, request: Request, who: str = Depends(operator)) -> dict:
+        """What the console offers for one of a tracker's settings, as value and label, so a name is picked and
+        not typed. The query says what the setting belongs to, which the adapter reads: Jira's `projects` (every
+        project of the site) and `project` (the listed ones, for a goal) take none; its `issue_type` and
+        `statuses` take `project`, and list that project's own. Empty for a setting with nothing to list. 422
         when the tracker is not set up, 502 when it cannot be read, each saying why."""
         adapter = tracker_named(scheme)
         if not hasattr(adapter, "choices"):
             return {"choices": []}
-        with app.state.pool.connection() as conn:
-            goals = store.list_goals(conn)
-        used = [
-            g["tracker_settings"]
-            for g in goals
-            if (g.get("tracker") or "github") == scheme and g.get("tracker_settings")
-        ]
         try:
-            return {"choices": await adapter.choices(setting, used)}
+            return {"choices": await adapter.choices(setting, dict(request.query_params))}
         except TrackerError as err:
             raise HTTPException(status_code=502 if err.retryable else 422, detail=str(err)) from err
 
@@ -884,7 +895,12 @@ def create_app(
         planned = body.modality in store.PLANNED_MODALITIES
         # A goal that plans its own issues needs neither: its plan's issues get a label of the goal's own. Nor
         # does one that takes the issues assigned to the meta-harness in its tracker.
-        spec = tracker_registry.SUPPORTED.get(body.tracker or tracker_registry.default())
+        chosen_tracker = body.tracker or tracker_registry.default()
+        spec = tracker_registry.SUPPORTED.get(chosen_tracker)
+        if spec:
+            # What the goal does not say starts as its tracker's default: Jira's default project.
+            defaults = spec.goal_defaults(tracker_registry.settings(chosen_tracker))
+            body.tracker_settings = {**defaults, **body.tracker_settings}
         assigned = bool(spec and spec.takes_assigned(body.tracker_settings))
         if not body.label and not body.refs and not planned and not assigned:
             raise HTTPException(

@@ -1,10 +1,19 @@
 """Jira Cloud as a tracker. One Jira site holds many projects, and a goal says which project its issues are in.
 
-An issue's ref is `jira:<KEY>`, such as `jira:PROJ-123`. The `trackers` configuration holds what is true of
-the whole site: `"jira": {"site": "https://example.atlassian.net"}`, with optional `issue_type` (the type of an
-issue the planner creates; Task when unset) and `statuses` (the site's own name for todo, in_progress,
-in_review or done, where its workflows' names are not the usual). A goal that uses Jira names its project
-(its tracker setting `project`), and its repos as every goal does.
+An issue's ref is `jira:<KEY>`, such as `jira:PROJ-123`. The `trackers` configuration holds the site and the
+projects the meta-harness works in:
+
+    "jira": {"site": "https://example.atlassian.net", "default_project": "PROJ",
+             "projects": {"PROJ": {"issue_type": "Story", "statuses": {"in_review": "In Code Review"}}}}
+
+A workflow belongs to a project, so what depends on one is set for each project: `issue_type` (the type of an
+issue the planner creates; Task when unset) and `statuses` (the project's own name for todo, in_progress,
+in_review or done, where its workflow's names are not the usual). `default_project` is required and is one of
+`projects`: the project a new goal starts with. A goal that uses Jira names one of the listed projects (its
+tracker setting `project`), and its repos as every goal does.
+
+A configuration saved before projects were listed has `issue_type` and `statuses` for the whole site and no
+`projects`. It keeps working as it did, any project allowed, until its next save, which needs the projects.
 
 Which repo an issue's work is done in: the goal's repo when it has one. A goal with several reads it from the
 issue, a `Repo: owner/name` line in its description or a `repo:<name>` label; an issue that names none of
@@ -17,7 +26,7 @@ issue's `## Acceptance checks`, `Paths:` and `Depends on:` lines from.
 
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -67,8 +76,19 @@ class Site:
     """The Jira site, as the trackers configuration describes it."""
 
     site: str
+    # For the whole site, from before projects were listed: what a project that sets none of its own uses.
     issue_type: str = "Task"
     statuses: dict[str, str] = field(default_factory=dict)
+    # Each listed project's own issue_type and statuses, by its key.
+    projects: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def issue_type_of(self, project: str) -> str:
+        """The type of an issue the planner creates in the project."""
+        return str((self.projects.get(project) or {}).get("issue_type") or self.issue_type)
+
+    def statuses_of(self, project: str) -> dict[str, str]:
+        """The project's own names for our statuses."""
+        return dict((self.projects.get(project) or {}).get("statuses") or self.statuses)
 
 
 def ref_for(key: str) -> str:
@@ -92,6 +112,7 @@ def configured_site() -> Site:
         site=str(jira.get("site", "")).rstrip("/"),
         issue_type=str(jira.get("issue_type") or "Task"),
         statuses=dict(jira.get("statuses") or {}),
+        projects={key: dict(spec or {}) for key, spec in (jira.get("projects") or {}).items()},
     )
 
 
@@ -320,7 +341,7 @@ class JiraTracker:
                     "project": {"key": self._project()},
                     "summary": title,
                     "description": f"{body.rstrip()}\n\nRepo: {repo}\n" if several else body,
-                    "issuetype": {"name": self._site().issue_type},
+                    "issuetype": {"name": self._site().issue_type_of(self._project())},
                     "labels": list(dict.fromkeys([*labels, self.label()])),
                 }
             },
@@ -348,7 +369,7 @@ class JiraTracker:
         key = parse_ref(ref)
         site = self._site()
         now = (await self._call("GET", f"/issue/{key}", params={"fields": "status"}))["fields"]["status"]
-        named = site.statuses.get(status, "").strip().lower()
+        named = site.statuses_of(key.rsplit("-", 1)[0]).get(status, "").strip().lower()
         category = (now.get("statusCategory") or {}).get("key")
         here = now.get("name", "").lower()
         if named and here == named:
@@ -384,7 +405,8 @@ class JiraTracker:
             raise TrackerError(
                 f"{key} is {now.get('name')!r} and its workflow has no move to "
                 f"{named or status.replace('_', ' ')!r} from there (it can go to: {can}). Name the site's "
-                f"status for {status} under Configuration, Issue trackers, Jira, or move the issue in Jira.",
+                f"status for {status} under Configuration, Issue trackers, Jira, in the issue's project, or move the "
+                "issue in Jira.",
                 retryable=False,
             )
         await self.mark(ref)
@@ -401,39 +423,31 @@ class JiraTracker:
         await self.mark(ref)
         await self._call("POST", f"/issue/{key}/remotelink", json=link)
 
-    async def choices(self, setting: str, used: Sequence[dict] = ()) -> list[dict[str, str]]:
-        """What the console offers for a setting, so a name is picked and not typed: for a goal's `project`,
-        the site's projects the Jira account sees, by name; for the site's `statuses`, its status names; for
-        its `issue_type`, every issue type but the sub-task ones, which need a parent.
+    async def choices(self, setting: str, scope: dict[str, str] | None = None) -> list[dict[str, str]]:
+        """What the console offers for a setting, so a name is picked and not typed.
 
-        used: the settings of the goals on this tracker. One site holds many projects, each with its own
-        workflows, and most of the site's statuses are in none of a given project's. So the statuses of the
-        projects the goals name come first, each under its project as `group`, and the site's other statuses
-        after them under "Other projects": a name from there moves no issue of those goals."""
-
-        def named(entries: Any) -> dict[str, str]:
-            # One site has a status or type of the same name in several projects and issue types.
-            names = {str(e.get("name") or "").strip() for e in entries or [] if not e.get("subtask")}
-            return {name.lower(): name for name in sorted(names) if name}
-
-        if setting == "statuses":
-            found: list[dict[str, str]] = []
-            seen: set[str] = set()
-            for project in sorted({str(s.get("project") or "").strip().upper() for s in used} - {""}):
-                try:
-                    types = await self._call("GET", f"/project/{project}/statuses")
-                except TrackerError:
-                    continue  # A project that is gone or closed to the account lists nothing; the rest still do.
-                mine = named(status for issue_type in types or [] for status in issue_type.get("statuses") or [])
-                found += [{"value": n, "label": n, "group": project} for key, n in mine.items() if key not in seen]
-                seen |= set(mine)
-            rest = named(await self._call("GET", "/status"))
-            group = {"group": "Other projects"} if found else {}
-            return found + [{"value": n, "label": n, **group} for key, n in rest.items() if key not in seen]
-        if setting == "issue_type":
-            return [{"value": n, "label": n} for n in named(await self._call("GET", "/issuetype")).values()]
-        if setting != "project":
+        - `projects`: every project of the site the Jira account sees, by name, for the list of those the
+          meta-harness works in.
+        - `project`: the listed projects, for a goal to name one; every project while none is listed.
+        - `issue_type` and `statuses`, with scope's `project`: that project's own issue types (but the sub-task
+          ones, which need a parent) and the status names of its workflows. A workflow belongs to a project, so
+          another project's statuses move none of its issues, and they are not offered. Empty with no project.
+        """
+        project = str((scope or {}).get("project") or "").strip().upper()
+        if setting in ("statuses", "issue_type"):
+            if not PROJECT.match(project):
+                return []
+            # Each of the project's issue types, with the statuses of that type's workflow.
+            types = [t for t in await self._call("GET", f"/project/{project}/statuses") or [] if not t.get("subtask")]
+            found = types if setting == "issue_type" else [status for t in types for status in t.get("statuses") or []]
+            # Once each, whatever its capitals: two issue types' workflows share most of their statuses.
+            names: dict[str, str] = {}
+            for name in sorted({str(entry.get("name") or "").strip() for entry in found} - {""}):
+                names.setdefault(name.lower(), name)
+            return [{"value": name, "label": name} for _, name in sorted(names.items())]
+        if setting not in ("project", "projects"):
             return []
+        listed = set(self.site().projects) if setting == "project" else set()
         found: list[dict[str, str]] = []
         start = 0
         while True:
@@ -442,6 +456,7 @@ class JiraTracker:
             found += [{"value": p["key"], "label": f"{p.get('name') or p['key']} ({p['key']})"} for p in values]
             start += len(values)
             if page.get("isLast", True) or not values:
+                found = [choice for choice in found if not listed or choice["value"] in listed]
                 return sorted(found, key=lambda choice: choice["label"].lower())
 
     def issue_url_prefix(self) -> str | None:
@@ -470,20 +485,49 @@ def _why(response: httpx.Response) -> str:
     return ("; ".join(said) or body.get("message") or "no reason given")[:300]
 
 
+def _check_names(where: str, spec: dict[str, Any]) -> list[str]:
+    """Why an issue type and status names cannot be used, for the site or one of its projects."""
+    reasons = []
+    if "issue_type" in spec and (not isinstance(spec["issue_type"], str) or not spec["issue_type"].strip()):
+        reasons.append(f"{where}issue_type is the name of one of the project's issue types, such as Task")
+    statuses = spec.get("statuses", {})
+    if not isinstance(statuses, dict) or any(
+        k not in STATUSES or not isinstance(v, str) or not v.strip() for k, v in statuses.items()
+    ):
+        reasons.append(f"{where}statuses names the project's status for any of {', '.join(STATUSES)}")
+    return reasons
+
+
 def check_settings(jira: dict[str, Any], repos: set[str] | None) -> list[str]:
     """Why the site's settings cannot be used; empty when they can."""
     reasons = []
     site = jira.get("site")
     if not isinstance(site, str) or not re.fullmatch(r"https://[a-z0-9.-]+\.[a-z]{2,}/?", site):
         reasons.append("site is the Jira site's address, such as https://example.atlassian.net")
-    if "issue_type" in jira and (not isinstance(jira["issue_type"], str) or not jira["issue_type"].strip()):
-        reasons.append("issue_type is the name of an issue type of the site's projects, such as Task")
-    statuses = jira.get("statuses", {})
-    if not isinstance(statuses, dict) or any(
-        k not in STATUSES or not isinstance(v, str) or not v.strip() for k, v in statuses.items()
+    # For the whole site, from before projects were listed; still read, so an earlier version can be rolled back to.
+    reasons += _check_names("", jira)
+    projects = jira.get("projects", {})
+    if not isinstance(projects, dict) or any(
+        not isinstance(key, str) or not PROJECT.match(key) or not isinstance(spec, dict)
+        for key, spec in projects.items()
     ):
-        reasons.append(f"statuses names the site's status for any of {', '.join(STATUSES)}")
+        reasons.append("projects lists the Jira projects the meta-harness works in, each by its key, such as PROJ")
+        projects = {}
+    for key, spec in projects.items():
+        reasons += _check_names(f"project {key}: ", spec)
+    chosen = jira.get("default_project")
+    if not chosen or chosen not in projects:
+        listed = ", ".join(sorted(projects)) or "none yet: add one under Projects first"
+        reasons.append(
+            f"default_project is required: the project a new goal starts with, one of the projects listed ({listed})"
+        )
     return reasons
+
+
+def goal_defaults(jira: dict[str, Any] | None) -> dict[str, str]:
+    """What a new goal on Jira starts with: the default project."""
+    chosen = (jira or {}).get("default_project")
+    return {"project": chosen} if isinstance(chosen, str) and chosen else {}
 
 
 def takes_assigned(settings: dict[str, Any]) -> bool:
@@ -491,13 +535,25 @@ def takes_assigned(settings: dict[str, Any]) -> bool:
     return settings.get("assigned") == "yes"
 
 
-def check_goal(settings: dict[str, Any]) -> list[str]:
-    """Why a goal's Jira settings cannot be used; empty when they can."""
+def check_goal(settings: dict[str, Any], site: dict[str, Any] | None = None) -> list[str]:
+    """Why a goal's Jira settings cannot be used; empty when they can. site: Jira's own settings to check the
+    project against, the active configuration's when None. A goal names one of the projects listed there; a
+    configuration from before projects were listed allows any."""
+    if site is None:
+        from meta_harness.trackers import registry
+
+        site = registry.settings(SCHEME) or {}
     reasons = []
     project = settings.get("project")
+    listed = site.get("projects") if isinstance(site.get("projects"), dict) else {}
     if not isinstance(project, str) or not PROJECT.match(project):
         reasons.append(
             "a goal that uses Jira names its project by its key, the capitals before an issue's number, such as PROJ"
+        )
+    elif listed and project not in listed:
+        reasons.append(
+            f"{project} is not one of the Jira projects the meta-harness works in ({', '.join(sorted(listed))}): "
+            "choose one of those, or add it under Configuration, Issue trackers, Jira, Projects"
         )
     if settings.get("assigned", "") not in ("", "yes"):
         reasons.append('assigned is "yes" for a goal that takes the issues assigned to the meta-harness, else left out')
@@ -507,17 +563,39 @@ def check_goal(settings: dict[str, Any]) -> list[str]:
 SPEC = Supported(
     SCHEME,
     "Jira",
-    "Issues live in the projects of one Jira Cloud site. Each goal says which project its issues are in.",
+    "Issues live in the projects of one Jira Cloud site. Each goal says which of the listed projects its issues are in.",
     settings=[
         Setting("site", "Site", required=True, help="The Jira site's address, such as https://example.atlassian.net"),
         Setting(
-            "issue_type", "Issue type", kind="choice", help="The type of an issue the planner creates. Task when empty."
+            "projects",
+            "Projects",
+            kind="entries",
+            entry="project",
+            required=True,
+            help="The Jira projects the meta-harness works in. A goal names one of them. A workflow belongs to a "
+            "project, so each has its own issue type and status names.",
+            settings=[
+                Setting(
+                    "issue_type",
+                    "Issue type",
+                    kind="choice",
+                    help="The type of an issue the planner creates in the project. Task when empty.",
+                ),
+                Setting(
+                    "statuses",
+                    "Status names",
+                    kind="statuses",
+                    help="The project's own name for a status, where its workflow does not use the usual ones.",
+                ),
+            ],
         ),
         Setting(
-            "statuses",
-            "Status names",
-            kind="statuses",
-            help="The site's own name for a status, where its workflows do not use the usual ones.",
+            "default_project",
+            "Default project",
+            kind="entry_of",
+            of="projects",
+            required=True,
+            help="The project a new goal starts with. A goal may name another of the projects listed.",
         ),
     ],
     credentials=["MH_JIRA_EMAIL", "MH_JIRA_TOKEN"],
@@ -541,5 +619,6 @@ SPEC = Supported(
         ),
     ],
     check_goal=check_goal,
+    goal_defaults=goal_defaults,
     takes_assigned=takes_assigned,
 )

@@ -192,7 +192,10 @@ def test_the_registry_is_each_adapters_own_description_and_checks_a_configuratio
     What a goal tells a tracker (Jira: its project) is the goal's, not the configuration's."""
     assert list(registry.SUPPORTED) == ["github", "jira"]
     jira = registry.SUPPORTED["jira"]
-    assert [s.name for s in jira.settings] == ["site", "issue_type", "statuses"]
+    assert [s.name for s in jira.settings] == ["site", "projects", "default_project"]
+    assert [s.name for s in jira.settings[1].settings] == ["issue_type", "statuses"] and jira.settings[
+        2
+    ].of == "projects"
     assert [(s.name, s.kind, s.required) for s in jira.goal_settings] == [
         ("project", "choice", True),
         ("assigned", "switch", False),
@@ -203,8 +206,28 @@ def test_the_registry_is_each_adapters_own_description_and_checks_a_configuratio
     assert registry.SUPPORTED["github"].goal_settings == [] and not registry.SUPPORTED["github"].writes_progress
     assert registry.check(registry.seed(), None) == [] and registry.seed()["default"] == "github"
 
-    good = {"default": "jira", "trackers": {"github": {}, "jira": {"site": "https://example.atlassian.net"}}}
+    site = {"site": "https://example.atlassian.net"}
+    listed = {**site, "default_project": "VL", "projects": {"VL": {"issue_type": "Story"}, "OPS": {}}}
+    good = {"default": "jira", "trackers": {"github": {}, "jira": listed}}
     assert registry.check(good, None) == []
+    # The default project is required, and is one of the projects listed.
+    for jira_settings in (site, {**listed, "default_project": ""}, {**listed, "default_project": "AB"}):
+        [reason] = registry.check({"default": "jira", "trackers": {"jira": jira_settings}}, None)
+        assert reason.startswith("jira: default_project is required: the project a new goal starts with")
+    assert (
+        "none yet: add one under Projects first"
+        in registry.check({"default": "jira", "trackers": {"jira": site}}, None)[0]
+    )
+    wrong = {**listed, "projects": {"VL": {"statuses": {"shipped": "Done"}}, "vl": {}}}
+    reasons = registry.check({"default": "jira", "trackers": {"jira": wrong}}, None)
+    assert any("projects lists the Jira projects the meta-harness works in, each by its key" in r for r in reasons)
+    just = {**listed, "projects": {"VL": {"statuses": {"shipped": "Done"}, "issue_type": " "}}}
+    reasons = registry.check({"default": "jira", "trackers": {"jira": just}}, None)
+    assert any(r.startswith("jira: project VL: statuses names the project's status") for r in reasons)
+    assert any(r.startswith("jira: project VL: issue_type is the name") for r in reasons)
+    assert jira.goal_defaults(listed) == {"project": "VL"} and jira.goal_defaults(site) == {} == jira.goal_defaults(
+        None
+    )
     assert registry.check({"default": "jira", "trackers": {"github": {}}}, None) == [
         "default must be one of the trackers set up (github), not 'jira'"
     ]
@@ -215,11 +238,18 @@ def test_the_registry_is_each_adapters_own_description_and_checks_a_configuratio
     reasons = registry.check(bad, None)
     assert reasons[0].startswith("linear: not a supported tracker; supported: github, jira")
     assert any("site is the Jira site's address" in r for r in reasons)
-    assert any("statuses names the site's status for any of todo, in_progress, in_review, done" in r for r in reasons)
+    assert any(
+        "statuses names the project's status for any of todo, in_progress, in_review, done" in r for r in reasons
+    )
 
     assert jira.check_goal({"project": "VL"}) == [] and registry.SUPPORTED["github"].check_goal({}) == []
     assert "names its project by its key" in jira.check_goal({})[0]
     assert "names its project by its key" in jira.check_goal({"project": "voltron"})[0]
+    # A goal names one of the listed projects; a configuration from before projects were listed allows any.
+    assert jira.check_goal({"project": "VL"}, listed) == [] == jira.check_goal({"project": "AB"}, site)
+    [unlisted] = jira.check_goal({"project": "AB"}, listed)
+    assert unlisted.startswith("AB is not one of the Jira projects the meta-harness works in (OPS, VL)")
+    assert "add it under Configuration, Issue trackers, Jira, Projects" in unlisted
 
 
 def test_a_goals_tracker_is_bound_to_its_repos_and_what_it_told_the_tracker():

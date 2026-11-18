@@ -24,8 +24,14 @@ const JIRA: Tracker = {
   description: "Issues live in Jira Cloud projects.",
   settings: [
     { name: "site", label: "Site", kind: "text", required: true, help: "The Jira site's address" },
-    { name: "issue_type", label: "Issue type", kind: "choice", required: false, help: "Task when empty" },
-    { name: "statuses", label: "Status names", kind: "statuses", required: false, help: "The projects' own names" },
+    {
+      name: "projects", label: "Projects", kind: "entries", entry: "project", required: true, help: "The projects the meta-harness works in",
+      settings: [
+        { name: "issue_type", label: "Issue type", kind: "choice", required: false, help: "Task when empty" },
+        { name: "statuses", label: "Status names", kind: "statuses", required: false, help: "The project's own names" },
+      ],
+    },
+    { name: "default_project", label: "Default project", kind: "entry_of", of: "projects", required: true, help: "The project a new goal starts with" },
   ],
   goal_settings: [{ name: "project", label: "Jira project", kind: "choice", required: true, help: "The project the goal's issues are in." }],
   credentials: ["MH_JIRA_EMAIL", "MH_JIRA_TOKEN"],
@@ -43,8 +49,9 @@ function respond(body: unknown) {
 function show(document: Record<string, any>, reasons: string[] = [], statuses: string[] | Error = []) {
   const staged: [string[], unknown][] = [];
   vi.stubGlobal("fetch", (url: string) => {
-    if (url === "/v1/trackers/jira/choices/issue_type") return respond({ choices: ["Bug", "Story", "Task"].map((name) => ({ value: name, label: name })) });
-    if (url === "/v1/trackers/jira/choices/statuses") {
+    if (url === "/v1/trackers/jira/choices/projects") return respond({ choices: [{ value: "OPS", label: "Operations (OPS)" }, { value: "VL", label: "Voltron (VL)" }] });
+    if (url === "/v1/trackers/jira/choices/issue_type?project=VL") return respond({ choices: ["Bug", "Story", "Task"].map((name) => ({ value: name, label: name })) });
+    if (url === "/v1/trackers/jira/choices/statuses?project=VL") {
       if (statuses instanceof Error) return Promise.resolve(new Response(JSON.stringify({ detail: statuses.message }), { status: 422 }));
       return respond({ choices: statuses.map((name) => ({ value: name, label: name })) });
     }
@@ -79,11 +86,11 @@ test("every supported tracker is listed, and one that is not set up is set up wi
   expect(jira.queryByText("Site")).toBeNull();
 
   fireEvent.click(jira.getByRole("button", { name: "Set up Jira" }));
-  expect(staged).toEqual([[["trackers", "jira"], { site: "" }]]);
+  expect(staged).toEqual([[["trackers", "jira"], { site: "", projects: {}, default_project: "" }]]);
 });
 
 test("a tracker that is set up shows its settings, its missing sign-in by name, and becomes the default", async () => {
-  const document = { default: "github", trackers: { github: {}, jira: { site: "https://example.atlassian.net", statuses: { done: "Shipped" } } } };
+  const document = { default: "github", trackers: { github: {}, jira: { site: "https://example.atlassian.net", default_project: "VL", projects: { VL: { statuses: { done: "Shipped" } } } } } };
   const staged = show(document, ["jira: site is the Jira site's address, such as https://example.atlassian.net"]);
 
   const jira = within(await screen.findByTestId("tracker-jira"));
@@ -93,90 +100,118 @@ test("a tracker that is set up shows its settings, its missing sign-in by name, 
   expect(jira.getByText("https://example.atlassian.net")).toBeTruthy();
   expect(jira.getByText("Shipped")).toBeTruthy();
   expect(jira.getByText(/site is the Jira site's address/)).toBeTruthy();
-  // The project is each goal's to say, not the site's configuration.
   expect(jira.getByText(/Each goal that uses Jira sets its own when it is created: Jira project/)).toBeTruthy();
-  expect(jira.queryByText("Projects")).toBeNull();
+  // The projects the meta-harness works in are the site's setup; which of them a goal uses is the goal's.
+  expect(jira.getByText("Projects")).toBeTruthy();
+  expect(within(jira.getByTestId("entry-VL")).getByText("Default")).toBeTruthy();
 
   fireEvent.click(jira.getByRole("button", { name: "Make default" }));
   expect(staged).toEqual([[["default"], "jira"]]);
 });
 
 const SITE_STATUSES = ["Draft", "In Dev", "In Code Review", "Done"];
-const WITH_JIRA = (statuses: Record<string, string>) => ({ default: "github", trackers: { github: {}, jira: { site: "https://example.atlassian.net", statuses } } });
+const WITH_JIRA = (vl: Record<string, unknown>, more: Record<string, unknown> = {}) => ({
+  default: "github",
+  trackers: { github: {}, jira: { site: "https://example.atlassian.net", default_project: "VL", projects: { VL: vl }, ...more } },
+});
 
-test("a status name is picked from the site's own, in the site's spelling, and a name the site lacks is refused", async () => {
+test("a project's status name is picked from that project's own, in its spelling, and one it lacks is refused", async () => {
   const staged = show(WITH_JIRA({}), [], SITE_STATUSES);
-  const jira = within(await screen.findByTestId("tracker-jira"));
+  const vl = within(await screen.findByTestId("entry-VL"));
+  expect(await vl.findByText("Voltron (VL)")).toBeTruthy();
+  expect(vl.getByText("Default")).toBeTruthy();
 
-  fireEvent.click(jira.getByRole("button", { name: "Edit Jira's status for in review" }));
-  const input = await jira.findByRole("combobox", { name: "Jira's status for in review" });
+  fireEvent.click(vl.getByRole("button", { name: "Edit VL's status for in review" }));
+  const input = await vl.findByRole("combobox", { name: "VL's status for in review" });
   // The list is read when the page opens; a name typed before it arrives would not be checked.
   await waitFor(() => expect(input.getAttribute("placeholder")).toBe("Pick a status"));
   fireEvent.change(input, { target: { value: "In Code Reveiw" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  expect(await jira.findByText(/Jira has no status named In Code Reveiw: pick one from the list/)).toBeTruthy();
+  expect(await vl.findByText(/VL has no status named In Code Reveiw: pick one from the list/)).toBeTruthy();
   expect(staged).toEqual([]);
 
   fireEvent.change(input, { target: { value: "in code review" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "statuses"], { in_review: "In Code Review" }]]));
+  await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "projects", "VL", "statuses"], { in_review: "In Code Review" }]]));
 });
 
-test("the statuses of the projects goals use are grouped first, and a saved name from another project is marked", async () => {
-  vi.stubGlobal("fetch", (url: string) => {
-    if (url === "/v1/trackers") return respond({ default: "github", trackers: [GITHUB, JIRA] });
-    if (url === "/v1/trackers/jira/choices/statuses") {
-      const mine = ["Draft", "In Dev", "Done"].map((name) => ({ value: name, label: name, group: "VL" }));
-      const rest = ["Adobe Approved", "Backlog"].map((name) => ({ value: name, label: name, group: "Other projects" }));
-      return respond({ choices: [...mine, ...rest] });
-    }
-    return respond({ choices: [] });
-  });
-  const document = WITH_JIRA({ done: "Done", todo: "Backlog" });
-  render(
-    <MantineProvider theme={theme}>
-      <TrackersView staging={{ document, original: document, stage: () => undefined, reasons: () => [] }} />
-    </MantineProvider>,
-  );
-  const jira = within(await screen.findByTestId("tracker-jira"));
-
-  expect((await jira.findByTestId("status-elsewhere-todo")).textContent).toBe("Not a status of VL");
-  expect(jira.queryByTestId("status-elsewhere-done")).toBeNull();
-  expect(jira.queryByTestId("status-unknown-todo")).toBeNull();
-  expect(jira.getByText(/The statuses of VL, the project your goals use, are listed first/)).toBeTruthy();
-});
-
-test("an issue type is picked from the site's own too", async () => {
+test("a project's issue type is picked from that project's own too", async () => {
   const staged = show(WITH_JIRA({}), [], SITE_STATUSES);
-  const jira = within(await screen.findByTestId("tracker-jira"));
+  const vl = within(await screen.findByTestId("entry-VL"));
 
-  fireEvent.click(jira.getByRole("button", { name: "Edit Jira: Issue type" }));
-  const input = await jira.findByRole("combobox", { name: "Jira: Issue type" });
+  fireEvent.click(vl.getByRole("button", { name: "Edit VL: Issue type" }));
+  const input = await vl.findByRole("combobox", { name: "VL: Issue type" });
   await waitFor(() => expect(input.getAttribute("placeholder")).toBe("Pick an issue type"));
   fireEvent.change(input, { target: { value: "Stroy" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  expect(await jira.findByText(/Jira has no issue type named Stroy/)).toBeTruthy();
+  expect(await vl.findByText(/VL has no issue type named Stroy/)).toBeTruthy();
 
   fireEvent.change(input, { target: { value: "story" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "issue_type"], "Story"]]));
+  await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "projects", "VL", "issue_type"], "Story"]]));
 });
 
-test("a saved status name the site does not have is marked, and an unreadable list leaves typing open", async () => {
-  show(WITH_JIRA({ done: "Shipped", todo: "draft" }), [], SITE_STATUSES);
-  const jira = within(await screen.findByTestId("tracker-jira"));
-  expect((await jira.findByTestId("status-unknown-done")).textContent).toBe("Jira has no status named Shipped");
-  expect(jira.queryByTestId("status-unknown-todo")).toBeNull();
+test("a saved status name the project does not have is marked, and an unreadable list leaves typing open", async () => {
+  show(WITH_JIRA({ statuses: { done: "Shipped", todo: "draft" } }), [], SITE_STATUSES);
+  const vl = within(await screen.findByTestId("entry-VL"));
+  expect((await vl.findByTestId("status-unknown-done")).textContent).toBe("VL has no status named Shipped");
+  expect(vl.queryByTestId("status-unknown-todo")).toBeNull();
   cleanup();
 
   const staged = show(WITH_JIRA({}), [], new Error("Jira is not signed in: set MH_JIRA_TOKEN"));
-  const unread = within(await screen.findByTestId("tracker-jira"));
-  expect((await unread.findByText(/could not be listed, so type each exactly/)).textContent).toContain("set MH_JIRA_TOKEN");
-  fireEvent.click(unread.getByRole("button", { name: "Edit Jira's status for done" }));
-  const input = await unread.findByRole("combobox", { name: "Jira's status for done" });
+  const unread = within(await screen.findByTestId("entry-VL"));
+  expect((await unread.findByText(/status names could not be listed, so type each exactly/)).textContent).toContain("set MH_JIRA_TOKEN");
+  fireEvent.click(unread.getByRole("button", { name: "Edit VL's status for done" }));
+  const input = await unread.findByRole("combobox", { name: "VL's status for done" });
   fireEvent.change(input, { target: { value: "Shipped" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "statuses"], { done: "Shipped" }]]));
+  await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "projects", "VL", "statuses"], { done: "Shipped" }]]));
+});
+
+test("a project is added by picking it from the site's, the first becomes the default, and the default is not removed", async () => {
+  const none = { default: "github", trackers: { github: {}, jira: { site: "https://example.atlassian.net", projects: {}, default_project: "" } } };
+  const staged = show(none);
+  const jira = within(await screen.findByTestId("tracker-jira"));
+  expect(jira.getByText("None yet. Add the first below.")).toBeTruthy();
+  expect(jira.getByText("Add one above first")).toBeTruthy();
+
+  const input = jira.getByRole("combobox", { name: "Add a project" });
+  await waitFor(() => expect(input.getAttribute("placeholder")).toBe("Pick a project to add"));
+  fireEvent.change(input, { target: { value: "ZZ" } });
+  fireEvent.click(jira.getByRole("button", { name: "Add project" }));
+  expect(await jira.findByText(/Jira has no project ZZ that its sign-in can see/)).toBeTruthy();
+  expect(staged).toEqual([]);
+
+  fireEvent.change(input, { target: { value: "Voltron (VL)" } });
+  fireEvent.click(jira.getByRole("button", { name: "Add project" }));
+  expect(staged).toEqual([[["trackers", "jira", "projects", "VL"], {}], [["trackers", "jira", "default_project"], "VL"]]);
+  cleanup();
+
+  const two = WITH_JIRA({}, { projects: { VL: {}, OPS: {} } });
+  const removed = show(two);
+  const listed = within(await screen.findByTestId("tracker-jira"));
+  expect((listed.getByRole("button", { name: "Remove VL" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(listed.getByRole("button", { name: "Remove OPS" }));
+  expect(removed).toEqual([[["trackers", "jira", "projects", "OPS"], undefined]]);
+});
+
+test("a setup from before projects were listed hands its issue type and status names to the first project added", async () => {
+  const before = { default: "github", trackers: { github: {}, jira: { site: "https://example.atlassian.net", issue_type: "Story", statuses: { done: "Done" } } } };
+  const staged = show(before);
+  const jira = within(await screen.findByTestId("tracker-jira"));
+  expect((await jira.findByTestId("entries-before-projects")).textContent).toContain("its issue type and status names apply to every project");
+
+  const input = jira.getByRole("combobox", { name: "Add a project" });
+  await waitFor(() => expect(input.getAttribute("placeholder")).toBe("Pick a project to add"));
+  fireEvent.change(input, { target: { value: "vl" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  expect(staged).toEqual([
+    [["trackers", "jira", "projects", "VL"], { issue_type: "Story", statuses: { done: "Done" } }],
+    [["trackers", "jira", "issue_type"], undefined],
+    [["trackers", "jira", "statuses"], undefined],
+    [["trackers", "jira", "default_project"], "VL"],
+  ]);
 });
 
 test("the New goal form asks what the chosen tracker asks of a goal, and lists the choices by name", async () => {

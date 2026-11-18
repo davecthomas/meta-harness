@@ -5,10 +5,16 @@ export interface TrackerSetting {
   name: string;
   label: string;
   // text; statuses: a name for each of todo, in_progress, in_review, done; choice: one of what the tracker
-  // lists for it (GET /v1/trackers/{scheme}/choices/{setting}); switch: on or off, "yes" when on.
-  kind: "text" | "statuses" | "choice" | "switch";
+  // lists for it (GET /v1/trackers/{scheme}/choices/{setting}); switch: on or off, "yes" when on. entries: a
+  // list the operator adds to, each entry one of what the tracker lists for the setting (Jira's projects) and
+  // holding `settings` of its own; `entry` is what one entry is, the name its settings' choices are asked by.
+  // entry_of: one of the entries of the setting named in `of` (Jira's default project).
+  kind: "text" | "statuses" | "choice" | "switch" | "entries" | "entry_of";
   required: boolean;
   help: string;
+  settings?: TrackerSetting[];
+  entry?: string;
+  of?: string;
 }
 
 // A tracker the meta-harness supports, from GET /v1/trackers.
@@ -19,6 +25,8 @@ export interface Tracker {
   settings: TrackerSetting[];
   // What a goal that uses it says besides its repos, such as the Jira project its issues are in.
   goal_settings: TrackerSetting[];
+  // What a new goal starts with for them, from the tracker's settings: Jira's default project.
+  goal_defaults?: Record<string, string>;
   // The secrets its sign-in comes from; never in the configuration.
   credentials: string[];
   // Set up: the trackers configuration holds its settings.
@@ -54,6 +62,9 @@ export const trackersApi = {
   trackers: () => call<Trackers>("/v1/trackers"),
   // What the console offers for one of a tracker's settings: Jira's projects, by name, its issue types, and its
   // status names. group: what a choice belongs to, when the choices come in groups (a status's project).
-  trackerChoices: (scheme: string, setting: string) =>
-    call<{ choices: { value: string; label: string; group?: string }[] }>(`/v1/trackers/${scheme}/choices/${setting}`).then((r) => r.choices),
+  // scope: what the setting belongs to, such as the Jira project whose statuses are asked for.
+  trackerChoices: (scheme: string, setting: string, scope?: Record<string, string>) => {
+    const query = scope && Object.keys(scope).length ? `?${new URLSearchParams(scope)}` : "";
+    return call<{ choices: { value: string; label: string }[] }>(`/v1/trackers/${scheme}/choices/${setting}${query}`).then((r) => r.choices);
+  },
 };
