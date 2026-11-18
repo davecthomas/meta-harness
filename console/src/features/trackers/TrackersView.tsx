@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Autocomplete, Badge, Button, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
+import { getIn } from "../config/staging";
 import { api, type Tracker, type TrackerSetting } from "../../api";
 import { InlineField } from "../../components/InlineField";
 import { ErrorAlert } from "../../components/ui";
@@ -115,7 +116,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
                       {setting.required && <Text span c="red"> *</Text>}
                     </Text>
                     <Text size="xs" c="dimmed" mb={4}>{setting.help}</Text>
-                    <SettingField staging={s} tracker={tracker} setting={setting} value={settings?.[setting.name]} />
+                    <SettingField staging={s} tracker={tracker} setting={setting} path={["trackers", tracker.scheme, setting.name]} value={settings?.[setting.name]} />
                   </div>
                 ))}
               </Stack>
@@ -131,16 +132,19 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
 function blank(tracker: Tracker): Record<string, unknown> {
   const start: Record<string, unknown> = {};
   for (const setting of tracker.settings) {
-    if (setting.required) start[setting.name] = "";
+    if (setting.required) start[setting.name] = setting.kind === "entries" ? {} : "";
   }
   return start;
 }
 
-function SettingField(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; value: any }) {
-  const { staging: s, tracker, setting, value } = props;
-  const path = ["trackers", tracker.scheme, setting.name];
-  if (setting.kind === "statuses") return <StatusNames staging={s} tracker={tracker} path={path} value={value} />;
-  if (setting.kind === "choice") return <ChoiceSetting staging={s} tracker={tracker} setting={setting} path={path} value={value} />;
+// One setting, at its place in the document. scope: what it belongs to, such as the project whose setting it
+// is, which the tracker's list of choices for it is asked by.
+function SettingField(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; path: string[]; value: any; scope?: Record<string, string> }) {
+  const { staging: s, tracker, setting, value, path } = props;
+  if (setting.kind === "entries") return <EntriesSetting staging={s} tracker={tracker} setting={setting} path={path} value={value} />;
+  if (setting.kind === "entry_of") return <EntryOfSetting staging={s} tracker={tracker} setting={setting} path={path} value={value} />;
+  if (setting.kind === "statuses") return <StatusNames staging={s} tracker={tracker} path={path} value={value} scope={props.scope} />;
+  if (setting.kind === "choice") return <ChoiceSetting staging={s} tracker={tracker} setting={setting} path={path} value={value} scope={props.scope} />;
   return (
     <InlineField
       kind="text"
@@ -154,62 +158,56 @@ function SettingField(props: { staging: Staging; tracker: Tracker; setting: Trac
   );
 }
 
-// What the tracker's site has for a setting (GET /v1/trackers/{scheme}/choices/{setting}), read once when the
-// page opens: null until it arrives. The list needs the tracker's saved settings and its sign-in, so it can fail.
-// groups: the same names under what each belongs to, in the order given, when the tracker groups them.
-type Grouped = { group: string; items: string[] }[];
-
-function useChoices(scheme: string, setting: string): { known: string[] | null; groups: Grouped | null; error: string | null } {
+// What the tracker's site has for a setting (GET /v1/trackers/{scheme}/choices/{setting}), read when the page
+// opens: null until it arrives. labels: each one's name, for a choice shown by more than its value (a project's
+// name beside its key). The list needs the tracker's saved settings and its sign-in, so it can fail.
+function useChoices(scheme: string, setting: string, scope?: Record<string, string>): { known: string[] | null; labels: Record<string, string>; error: string | null } {
   const [known, setKnown] = useState<string[] | null>(null);
-  const [groups, setGroups] = useState<Grouped | null>(null);
+  const [labels, setLabels] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const asked = JSON.stringify(scope ?? {});
   useEffect(() => {
     let stale = false;
-    api.trackerChoices(scheme, setting).then(
+    setKnown(null);
+    setError(null);
+    api.trackerChoices(scheme, setting, JSON.parse(asked)).then(
       (found) => {
         if (stale) return;
         setKnown((found ?? []).map((c) => c.value));
-        const by: Grouped = [];
-        for (const c of found ?? []) {
-          if (!c.group) continue;
-          const at = by.find((g) => g.group === c.group) ?? by[by.push({ group: c.group, items: [] }) - 1];
-          at.items.push(c.value);
-        }
-        setGroups(by.length ? by : null);
+        setLabels(Object.fromEntries((found ?? []).map((c) => [c.value, c.label])));
       },
       (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
     );
     return () => {
       stale = true;
     };
-  }, [scheme, setting]);
-  return { known, groups, error };
+  }, [scheme, setting, asked]);
+  return { known, labels, error };
 }
 
-// The site's own spelling of a name, whatever capitals it was typed in; undefined when the site has none.
+// The list's own spelling of a name, whatever capitals it was typed in; undefined when the list has none.
 function onSite(known: string[] | null, name: string): string | undefined {
   return (known ?? []).find((k) => k.toLowerCase() === name.trim().toLowerCase());
 }
 
-// A name the tracker's site must have, such as a status or an issue type: picked from the site's own list, so it
-// is not mistyped. A mistyped one fails only later, when an issue does not move or cannot be created. A name the
-// list lacks is refused, and one already saved is marked. When the list cannot be read (unreadable: why), or is
-// empty, the name can still be typed.
+// A name the tracker must have, such as a status or an issue type of a project: picked from the tracker's own
+// list, so it is not mistyped. A mistyped one fails only later, when an issue does not move or cannot be
+// created. A name the list lacks is refused, and one already saved is marked. When the list cannot be read
+// (unreadable: why), or is empty, the name can still be typed. where: whose list it is, such as the project.
 function PickedName(props: {
   staging: Staging;
-  tracker: Tracker;
   label: string;
   what: string;
+  where: string;
   value: string;
   empty: string;
   path: string[];
   known: string[] | null;
-  groups?: Grouped | null;
   unreadable: string | null;
   testId: string;
   onCommit: (name: string) => void;
 }) {
-  const { staging: s, tracker, known } = props;
+  const { staging: s, known } = props;
   const listed = !!known?.length;
   return (
     <div>
@@ -222,7 +220,7 @@ function PickedName(props: {
         changed={changed(s, props.path)}
         readOnly={s.readOnly}
         check={(draft: string) =>
-          listed && draft.trim() && !onSite(known, draft) ? `${tracker.title} has no ${props.what} named ${draft.trim()}: pick one from the list, or leave it empty for the usual` : null
+          listed && draft.trim() && !onSite(known, draft) ? `${props.where} has no ${props.what} named ${draft.trim()}: pick one from the list, or leave it empty for the usual` : null
         }
         input={(draft) => (
           <Autocomplete
@@ -232,7 +230,7 @@ function PickedName(props: {
             placeholder={known === null && !props.unreadable ? "Loading…" : listed ? `Pick ${/^[aeiou]/i.test(props.what) ? "an" : "a"} ${props.what}` : "Type its name"}
             value={draft.value}
             onChange={draft.onChange}
-            data={props.groups ?? known ?? []}
+            data={known ?? []}
             error={draft.invalid}
             maxDropdownHeight={260}
           />
@@ -240,28 +238,34 @@ function PickedName(props: {
         onCommit={(v: string) => props.onCommit(onSite(known, v) ?? v.trim())}
       />
       {listed && props.value && !onSite(known, props.value) ? (
-        <Text size="xs" c="orange" data-testid={props.testId}>{tracker.title} has no {props.what} named {props.value}</Text>
+        <Text size="xs" c="orange" data-testid={props.testId}>{props.where} has no {props.what} named {props.value}</Text>
       ) : null}
     </div>
   );
 }
 
 function Unreadable({ what, error }: { what: string; error: string | null }) {
-  return error ? <Text size="xs" c="orange">The site's {what} could not be listed, so type each exactly: {error}</Text> : null;
+  return error ? <Text size="xs" c="orange">The {what} could not be listed, so type each exactly: {error}</Text> : null;
 }
 
-// One setting the site lists the choices for, such as Jira's issue type.
-function ChoiceSetting(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; path: string[]; value: any }) {
+// Whose list a scoped setting's choices are: the project it belongs to, else the tracker.
+function whose(tracker: Tracker, scope?: Record<string, string>): string {
+  return Object.values(scope ?? {})[0] ?? tracker.title;
+}
+
+// One setting the tracker lists the choices for, such as a project's issue type.
+function ChoiceSetting(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; path: string[]; value: any; scope?: Record<string, string> }) {
   const { staging: s, tracker, setting } = props;
-  const { known, error } = useChoices(tracker.scheme, setting.name);
+  const { known, error } = useChoices(tracker.scheme, setting.name, props.scope);
   const what = setting.label.toLowerCase();
+  const where = whose(tracker, props.scope);
   return (
     <Stack gap={6}>
       <PickedName
         staging={s}
-        tracker={tracker}
-        label={`${tracker.title}: ${setting.label}`}
+        label={`${where}: ${setting.label}`}
         what={what}
+        where={where}
         value={typeof props.value === "string" ? props.value : ""}
         empty={setting.required ? "Not set yet" : "The usual"}
         path={props.path}
@@ -275,15 +279,12 @@ function ChoiceSetting(props: { staging: Staging; tracker: Tracker; setting: Tra
   );
 }
 
-// The site's own name for each status of ours.
-function StatusNames(props: { staging: Staging; tracker: Tracker; path: string[]; value: any }) {
+// A project's own name for each status of ours, each picked from the statuses of that project's workflows.
+function StatusNames(props: { staging: Staging; tracker: Tracker; path: string[]; value: any; scope?: Record<string, string> }) {
   const { staging: s, tracker, path } = props;
   const names: Record<string, string> = props.value && typeof props.value === "object" ? props.value : {};
-  const { known, groups, error } = useChoices(tracker.scheme, "statuses");
-  // The projects the goals use, whose own statuses are offered first.
-  const projects = (groups ?? []).slice(0, -1).map((g) => g.group);
-  // A saved name that only another project's workflow has: it moves no issue of these goals.
-  const elsewhere = (name: string) => !!name && projects.length > 0 && groups![groups!.length - 1].items.some((k) => k.toLowerCase() === name.trim().toLowerCase());
+  const { known, error } = useChoices(tracker.scheme, "statuses", props.scope);
+  const where = whose(tracker, props.scope);
   return (
     <Stack gap={6}>
       <Group gap="lg" align="flex-start">
@@ -292,14 +293,13 @@ function StatusNames(props: { staging: Staging; tracker: Tracker; path: string[]
             <Text size="xs" c="dimmed">{label}</Text>
             <PickedName
               staging={s}
-              tracker={tracker}
-              label={`${tracker.title}'s status for ${label.toLowerCase()}`}
+              label={`${where}'s status for ${label.toLowerCase()}`}
               what="status"
+              where={where}
               value={names[status] ?? ""}
               empty="The usual"
               path={[...path, status]}
               known={known}
-              groups={groups}
               unreadable={error}
               testId={`status-unknown-${status}`}
               onCommit={(name) => {
@@ -308,16 +308,131 @@ function StatusNames(props: { staging: Staging; tracker: Tracker; path: string[]
                 stageOptional(s, path, Object.keys(next).length ? next : undefined);
               }}
             />
-            {elsewhere(names[status] ?? "") && (
-              <Text size="xs" c="orange" data-testid={`status-elsewhere-${status}`}>Not a status of {projects.join(" or ")}</Text>
-            )}
           </div>
         ))}
       </Group>
-      {projects.length > 0 && (
-        <Text size="xs" c="dimmed">The statuses of {projects.join(", ")}, the {projects.length === 1 ? "project your goals use" : "projects your goals use"}, are listed first.</Text>
-      )}
       <Unreadable what="status names" error={error} />
+    </Stack>
+  );
+}
+
+// A list the operator adds to, each entry picked from what the tracker lists and holding settings of its own:
+// the Jira projects the meta-harness works in, each with its issue type and status names. An entry is added by
+// picking it, never by typing a key the tracker does not have. The first added becomes the default, since one
+// is required; the default cannot be removed until another is.
+function EntriesSetting(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; path: string[]; value: any }) {
+  const { staging: s, tracker, setting, path } = props;
+  const entries: Record<string, any> = props.value && typeof props.value === "object" ? props.value : {};
+  const { known, labels, error } = useChoices(tracker.scheme, setting.name);
+  const [adding, setAdding] = useState("");
+  const [refused, setRefused] = useState<string | null>(null);
+  const one = setting.entry || "entry";
+  // The setting that names one of these entries as the default, and what it holds now.
+  const picks = tracker.settings.find((other) => other.kind === "entry_of" && other.of === setting.name);
+  const base = path.slice(0, -1);
+  const chosen = picks ? getIn(s.document, [...base, picks.name]) : undefined;
+  // Settings for the whole tracker from before entries were listed, which a first entry takes over.
+  const before = Object.fromEntries((setting.settings ?? []).map((sub) => [sub.name, getIn(s.document, [...base, sub.name])]).filter(([, v]) => v !== undefined));
+
+  function add() {
+    const typed = adding.trim();
+    const key = known?.find((k) => labels[k] === typed) ?? onSite(known, typed) ?? typed.toUpperCase();
+    if (!key) return;
+    if (entries[key] !== undefined) return setRefused(`${key} is already listed`);
+    if (known?.length && !known.includes(key)) return setRefused(`${tracker.title} has no ${one} ${key} that its sign-in can see: pick one from the list`);
+    const first = Object.keys(entries).length === 0;
+    s.stage([...path, key], first ? before : {});
+    if (first) for (const name of Object.keys(before)) s.stage([...base, name], undefined);
+    if (picks && !chosen) s.stage([...base, picks.name], key);
+    setAdding("");
+    setRefused(null);
+  }
+
+  return (
+    <Stack gap="sm">
+      {Object.keys(before).length > 0 && (
+        <Text size="xs" c="orange" data-testid={`entries-before-${setting.name}`}>
+          This setup is from before {setting.label.toLowerCase()} were listed: its {(setting.settings ?? []).filter((sub) => before[sub.name] !== undefined).map((sub) => sub.label.toLowerCase()).join(" and ")} apply to every {one}. The first {one} you add takes them over.
+        </Text>
+      )}
+      {Object.keys(entries).length === 0 && <Text size="sm" c="dimmed">None yet. Add the first below.</Text>}
+      {Object.entries(entries).map(([key, entry]) => (
+        <Paper key={key} p="sm" withBorder data-testid={`entry-${key}`}>
+          <Group justify="space-between" align="center" mb="xs">
+            <Group gap="xs">
+              <Text fw={600} size="sm">{labels[key] ?? key}</Text>
+              {chosen === key && <Badge size="sm" variant="light" tt="none">Default</Badge>}
+              {known?.length && !known.includes(key) ? <Text size="xs" c="orange">{tracker.title} has no {one} {key} that its sign-in can see</Text> : null}
+            </Group>
+            {!s.readOnly && (
+              <Tooltip label={chosen === key ? `The default ${one} stays: make another the default first` : `Stop working in ${key}. A goal that uses it must be closed first.`}>
+                <Button size="xs" variant="subtle" color="red" disabled={chosen === key} onClick={() => s.stage([...path, key], undefined)} aria-label={`Remove ${key}`}>
+                  Remove
+                </Button>
+              </Tooltip>
+            )}
+          </Group>
+          <Stack gap="sm">
+            {(setting.settings ?? []).map((sub) => (
+              <div key={sub.name}>
+                <Text size="sm" fw={500}>{sub.label}</Text>
+                <Text size="xs" c="dimmed" mb={4}>{sub.help}</Text>
+                <SettingField staging={s} tracker={tracker} setting={sub} path={[...path, key, sub.name]} value={entry?.[sub.name]} scope={{ [one]: key }} />
+              </div>
+            ))}
+          </Stack>
+        </Paper>
+      ))}
+      {!s.readOnly && (
+        <Stack gap={4}>
+          <Group gap="xs" align="flex-end">
+            <Autocomplete
+              aria-label={`Add a ${one}`}
+              size="xs"
+              w={320}
+              placeholder={known === null && !error ? "Loading…" : known?.length ? `Pick a ${one} to add` : `Type the ${one}'s key`}
+              value={adding}
+              onChange={(v) => {
+                setAdding(v);
+                setRefused(null);
+              }}
+              data={(known ?? []).filter((k) => entries[k] === undefined).map((k) => labels[k] ?? k)}
+              error={!!refused}
+              maxDropdownHeight={260}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") add();
+              }}
+            />
+            <Button size="xs" variant="light" onClick={add} disabled={!adding.trim()}>Add {one}</Button>
+          </Group>
+          {refused && <Text size="xs" c="red" role="alert">{refused}</Text>}
+          <Unreadable what={`${one}s`} error={error} />
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+// One of the entries of another setting, such as the default project among the projects listed. It is chosen
+// from them, so it cannot name one that is not there, and it is never cleared: one is required.
+function EntryOfSetting(props: { staging: Staging; tracker: Tracker; setting: TrackerSetting; path: string[]; value: any }) {
+  const { staging: s, tracker, setting, path } = props;
+  const listed = Object.keys(getIn(s.document, [...path.slice(0, -1), setting.of ?? ""]) ?? {});
+  const value = typeof props.value === "string" && props.value ? props.value : null;
+  const data = value && !listed.includes(value) ? [...listed, value] : listed;
+  return (
+    <Stack gap={4}>
+      <InlineField
+        kind="select"
+        label={`${tracker.title}: ${setting.label}`}
+        value={value}
+        data={data}
+        empty={<Text size="sm" c={setting.required ? "red" : "dimmed"}>{listed.length ? "Not chosen yet" : "Add one above first"}</Text>}
+        changed={changed(s, path)}
+        readOnly={s.readOnly}
+        onCommit={(v) => (v ? s.stage(path, v) : undefined)}
+      />
+      {value && !listed.includes(value) && <Text size="xs" c="orange">{value} is not one of those listed: choose one that is</Text>}
     </Stack>
   );
 }

@@ -172,62 +172,60 @@ async def test_the_sites_projects_are_listed_for_a_goal_to_choose_from():
     assert await adapter.choices("anything else") == []
 
 
-async def test_the_sites_status_names_are_listed_once_each_for_the_console_to_offer():
-    def statuses(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/rest/api/2/status"
-        names = ["In Dev", "Draft", "Done", "In Code Review", "done", " ", "Draft"]
-        return httpx.Response(200, json=[{"name": name, "statusCategory": {"key": "new"}} for name in names])
-
-    adapter = JiraTracker("bot@example.com", "t", site=lambda: Site(site=SITE), transport=httpx.MockTransport(statuses))
-
-    found = await adapter.choices("statuses")
-
-    assert [choice["value"] for choice in found] == ["done", "Draft", "In Code Review", "In Dev"]
-    assert all(choice["label"] == choice["value"] for choice in found)
-
-
-async def test_the_statuses_of_the_projects_goals_use_come_first_and_the_rest_of_the_sites_after():
-    site_wide = ["Draft", "In Dev", "Done", "Adobe Approved", "Client Review", "Backlog"]
+async def test_a_projects_own_statuses_and_issue_types_are_listed_and_no_other_projects():
     asked: list[str] = []
 
-    def statuses(request: httpx.Request) -> httpx.Response:
+    def project(request: httpx.Request) -> httpx.Response:
         asked.append(request.url.path)
-        if request.url.path == "/rest/api/2/project/VL/statuses":
-            story = {"name": "Story", "statuses": [{"name": "Draft"}, {"name": "In Dev"}, {"name": "Done"}]}
-            bug = {"name": "Bug", "statuses": [{"name": "Draft"}, {"name": "Done"}]}
-            return httpx.Response(200, json=[story, bug])
-        if request.url.path == "/rest/api/2/project/GONE/statuses":
-            return httpx.Response(404, json={"errorMessages": ["No project could be found with key 'GONE'."]})
-        return httpx.Response(200, json=[{"name": name} for name in site_wide])
+        story = {
+            "name": "Story",
+            "subtask": False,
+            "statuses": [{"name": "Draft"}, {"name": "In Dev"}, {"name": "Done"}],
+        }
+        bug = {"name": "Bug", "subtask": False, "statuses": [{"name": "Draft"}, {"name": "done"}, {"name": " "}]}
+        sub = {"name": "Sub-task", "subtask": True, "statuses": [{"name": "Sub Only"}]}
+        return httpx.Response(200, json=[story, bug, sub])
 
-    adapter = JiraTracker("bot@example.com", "t", site=lambda: Site(site=SITE), transport=httpx.MockTransport(statuses))
+    adapter = JiraTracker("bot@example.com", "t", site=lambda: Site(site=SITE), transport=httpx.MockTransport(project))
 
-    found = await adapter.choices(
-        "statuses", [{"project": "vl"}, {"project": "VL", "assigned": "yes"}, {"project": "GONE"}]
+    statuses = await adapter.choices("statuses", {"project": "vl"})
+    types = await adapter.choices("issue_type", {"project": "VL"})
+
+    assert [c["value"] for c in statuses] == ["Done", "Draft", "In Dev"], "each name once, and none of a sub-task's"
+    assert [c["value"] for c in types] == ["Bug", "Story"], "a sub-task type needs a parent, so it is not offered"
+    assert set(asked) == {"/rest/api/2/project/VL/statuses"}
+    # A status belongs to a project's workflow: with no project there is nothing to list.
+    assert await adapter.choices("statuses") == [] == await adapter.choices("issue_type", {"project": "not a key"})
+
+
+async def test_a_goal_is_offered_the_listed_projects_and_the_setup_every_project():
+    def projects(request: httpx.Request) -> httpx.Response:
+        values = [
+            {"key": "VL", "name": "Voltron"},
+            {"key": "OPS", "name": "Operations"},
+            {"key": "AB", "name": "Abacus"},
+        ]
+        return httpx.Response(200, json={"values": values, "isLast": True})
+
+    site = Site(site=SITE, projects={"VL": {}, "AB": {}})
+    adapter = JiraTracker("bot@example.com", "t", site=lambda: site, transport=httpx.MockTransport(projects))
+
+    assert [c["value"] for c in await adapter.choices("project")] == ["AB", "VL"]
+    assert [c["value"] for c in await adapter.choices("projects")] == ["AB", "OPS", "VL"]
+
+
+def test_a_projects_own_issue_type_and_statuses_are_used_and_the_sites_where_it_sets_none():
+    site = Site(
+        site=SITE,
+        issue_type="Bug",
+        statuses={"done": "Closed"},
+        projects={"VL": {"issue_type": "Story", "statuses": {"in_review": "In Code Review"}}, "OPS": {}},
     )
 
-    assert [(c["value"], c["group"]) for c in found] == [
-        ("Done", "VL"),
-        ("Draft", "VL"),
-        ("In Dev", "VL"),
-        ("Adobe Approved", "Other projects"),
-        ("Backlog", "Other projects"),
-        ("Client Review", "Other projects"),
-    ]
-    assert asked.count("/rest/api/2/project/VL/statuses") == 1, "a project several goals use is read once"
-    # With no goal on Jira yet there is no project to put first, and nothing is grouped.
-    assert all("group" not in c for c in await adapter.choices("statuses"))
-
-
-async def test_the_sites_issue_types_are_listed_without_the_sub_task_ones():
-    def types(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/rest/api/2/issuetype"
-        listed = [("Task", False), ("Bug", False), ("Sub-task", True), ("Story", False), ("Task", False)]
-        return httpx.Response(200, json=[{"name": name, "subtask": sub} for name, sub in listed])
-
-    adapter = JiraTracker("bot@example.com", "t", site=lambda: Site(site=SITE), transport=httpx.MockTransport(types))
-
-    assert [choice["value"] for choice in await adapter.choices("issue_type")] == ["Bug", "Story", "Task"]
+    assert (site.issue_type_of("VL"), site.statuses_of("VL")) == ("Story", {"in_review": "In Code Review"})
+    # From before projects were listed: the site's, for a project that sets none of its own.
+    assert (site.issue_type_of("OPS"), site.statuses_of("OPS")) == ("Bug", {"done": "Closed"})
+    assert Site(site=SITE).issue_type_of("VL") == "Task"
 
 
 async def test_a_comment_and_a_pull_requests_link_are_added_to_the_issue():

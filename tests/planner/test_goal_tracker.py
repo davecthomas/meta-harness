@@ -118,6 +118,54 @@ def _goal(client, **fields) -> dict:
     return made.json()
 
 
+def test_a_goal_starts_with_jiras_default_project_and_names_only_a_listed_one(world):
+    client, _, _, _, document = world
+    document["trackers"]["jira"] = {
+        "site": "https://example.atlassian.net",
+        "default_project": "VL",
+        "projects": {"VL": {"issue_type": "Story"}, "OPS": {}},
+    }
+    listed = {t["scheme"]: t for t in client.get("/v1/trackers", headers=OPERATOR).json()["trackers"]}
+    assert listed["jira"]["goal_defaults"] == {"project": "VL"} and listed["github"]["goal_defaults"] == {}
+    projects = listed["jira"]["settings"][1]
+    assert (projects["kind"], projects["entry"]) == ("entries", "project")
+    assert [s["name"] for s in projects["settings"]] == ["issue_type", "statuses"]
+
+    # A goal that names no project takes the default; one may name another listed project.
+    assert _goal(client, tracker_settings={})["tracker_settings"] == {"project": "VL"}
+    assert _goal(client, tracker_settings={"project": "OPS"})["tracker_settings"] == {"project": "OPS"}
+    body = {
+        "statement": "Fix bugs",
+        "repos": [REPO],
+        "label": "mh:x",
+        "start": False,
+        "tracker_settings": {"project": "AB"},
+    }
+    refused = client.post("/v1/goals", json=body, headers=OPERATOR)
+    assert refused.status_code == 422
+    assert "AB is not one of the Jira projects the meta-harness works in (OPS, VL)" in refused.json()["detail"]
+
+
+def test_a_project_an_open_goal_uses_cannot_leave_the_trackers_configuration(world):
+    client, _, _, _, document = world
+    jira_settings = {
+        "site": "https://example.atlassian.net",
+        "default_project": "VL",
+        "projects": {"VL": {}, "OPS": {}},
+    }
+    document["trackers"]["jira"] = jira_settings
+    goal = _goal(client, tracker_settings={"project": "OPS"})
+
+    without = {**document, "trackers": {"github": {}, "jira": {**jira_settings, "projects": {"VL": {}}}}}
+    refused = client.put("/v1/config/trackers", json={"document": without}, headers=OPERATOR)
+
+    assert refused.status_code == 422
+    [reason] = [r for r in refused.json()["detail"]["reasons"] if goal["id"] in r]
+    assert reason.startswith("jira: OPS is not one of the Jira projects the meta-harness works in (VL)")
+    assert reason.endswith("uses it")
+    client.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
+
+
 def test_a_new_goal_takes_the_default_tracker_and_reads_its_issues_from_it(world):
     client, github, jira, tasks, _ = world
     goal = _goal(client)
@@ -180,7 +228,7 @@ def test_the_trackers_are_listed_as_their_adapters_describe_them_and_issue_lists
     by = {t["scheme"]: t for t in listed["trackers"]}
     assert list(by) == ["github", "jira"]
     assert by["github"]["configured"] and by["github"]["signed_in"] and not by["github"]["writes_progress"]
-    assert [s["name"] for s in by["jira"]["settings"]] == ["site", "issue_type", "statuses"]
+    assert [s["name"] for s in by["jira"]["settings"]] == ["site", "projects", "default_project"]
     assert by["jira"]["configured"] and not by["jira"]["signed_in"]
     assert by["jira"]["missing_credentials"] == ["MH_JIRA_TOKEN"] and by["jira"]["writes_progress"]
 
