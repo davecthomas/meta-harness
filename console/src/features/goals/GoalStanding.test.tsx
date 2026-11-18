@@ -17,9 +17,27 @@ const waiting: Standing = {
   moving: 0,
 };
 
-function show(standing: Standing | null) {
-  return render(<MantineProvider theme={theme}><MemoryRouter><GoalStanding standing={standing} /></MemoryRouter></MantineProvider>);
+function show(standing: Standing | null, more: { explained?: Set<string>; budgetShown?: boolean } = {}) {
+  return render(<MantineProvider theme={theme}><MemoryRouter><GoalStanding standing={standing} {...more} /></MemoryRouter></MantineProvider>);
 }
+
+test("one alert per cause: a task the failures alert explains is not listed again, and a budget is the budget alert's", () => {
+  const some = show(waiting, { explained: new Set(["t-1"]) });
+  const shown = screen.getByTestId("goal-standing").textContent ?? "";
+  expect(shown).toContain("Size issues");
+  expect(shown).not.toContain("Record prompts");
+  some.unmount();
+
+  const all = show(waiting, { explained: new Set(["t-1", "t-2"]) });
+  expect(screen.queryByTestId("goal-standing")).toBeNull();
+  all.unmount();
+
+  const budget = show({ ...waiting, yours: [] }, { budgetShown: true });
+  expect(screen.queryByTestId("goal-standing")).toBeNull();
+  budget.unmount();
+  show({ ...waiting, yours: [] });
+  expect(screen.getByTestId("goal-standing")).toBeTruthy();
+});
 
 test("a goal with nothing moving says it waits on you, and what each task needs", () => {
   show(waiting);

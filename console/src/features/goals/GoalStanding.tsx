@@ -15,14 +15,20 @@ export function standingNote(standing: Standing | null | undefined): string {
   return standing?.state === "needs_you" ? `Waits on you: ${standing.reason}` : "";
 }
 
-export function GoalStanding({ standing }: { standing: Standing | null | undefined }) {
+// One alert per cause: a task the failures alert above the board already explains (explained) is not listed here
+// again, and a goal that waits only on its budget is the budget alert's to say (budgetShown). With nothing left
+// of its own to say, this shows nothing.
+export function GoalStanding({ standing, explained, budgetShown }: { standing: Standing | null | undefined; explained?: Set<string>; budgetShown?: boolean }) {
   if (!standing || standing.state !== "needs_you") return null;
+  const yours = standing.yours.filter((mine) => !explained?.has(mine.task_id));
+  if (standing.yours.length > 0 && yours.length === 0) return null;
+  if (standing.yours.length === 0 && budgetShown) return null;
   return (
     <Alert color="orange" title="This goal waits on you" icon={<IconHandStop size={18} />} mb="md" data-testid="goal-standing">
       <Text size="sm">{sentence(standing.reason)}. {standing.ask}</Text>
-      {standing.yours.length > 0 && (
+      {yours.length > 0 && (
         <List size="sm" spacing={4} mt="xs">
-          {standing.yours.map((mine) => (
+          {yours.map((mine) => (
             <List.Item key={mine.task_id}>
               <Anchor component={Link} to={`/tasks/${mine.task_id}`} size="sm">{mine.title}</Anchor>
               <Text span size="sm">: {mine.ask || sentence(mine.reason)} </Text>
