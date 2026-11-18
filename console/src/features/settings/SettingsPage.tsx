@@ -4,11 +4,6 @@ import { api, type UserSettings } from "../../api";
 import { InlineField } from "../../components/InlineField";
 import { ErrorAlert, Facts, PageHeader } from "../../components/ui";
 
-const MODALITIES = [
-  { value: "fix", label: "Fix" },
-  { value: "feature", label: "Feature" },
-  { value: "new-system", label: "New system" },
-];
 const APPEARANCES = [
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
@@ -66,21 +61,16 @@ export function SettingsPage() {
       <PageHeader title="Settings" description="Yours alone: they follow you to any browser you sign in on. Each saves as you change it." />
       <ErrorAlert error={error} />
       <Paper p="md" withBorder maw={720} mb="lg">
-        <Title order={4} mb="sm">Planner defaults</Title>
-        <Text size="sm" c="dimmed" mb="md">New goal starts from these.</Text>
+        <Title order={4} mb="sm">New goal defaults</Title>
+        <Text size="sm" c="dimmed" mb="md">The New goal form starts from these. Each goal can still say otherwise.</Text>
         <Facts
           items={[
-            ["Repositories", <InlineField kind="checkboxes" label="Repositories" value={planner.repos} data={repos} empty="No repository is registered" showSaved onCommit={(v) => savePlanner({ repos: v })} />],
-            ["Modality", <InlineField kind="select" label="Modality" value={planner.modality} data={MODALITIES} showSaved onCommit={(v) => savePlanner({ modality: (v ?? "fix") as UserSettings["planner"]["modality"] })} />],
-            [
-              "Latitude",
-              <InlineField kind="number" label="Latitude" value={planner.latitude} min={0} max={1} step={0.25} decimalScale={2} allowEmpty empty="The modality's default" placeholder="0 to 1" showSaved onCommit={(v) => savePlanner({ latitude: v })} />,
-            ],
+            ["Repositories", <InlineField kind="checkboxes" label="Repositories" value={planner.repos} data={repos} empty="No repository is registered yet: an admin adds one under Configuration, Repositories" showSaved onCommit={(v) => savePlanner({ repos: v })} />],
             [
               "Budget",
               <InlineField kind="number" label="Budget" value={planner.max_usd === null ? null : Number(planner.max_usd)} min={0} decimalScale={2} prefix="$" allowEmpty empty="None" showSaved onCommit={(v) => savePlanner({ max_usd: v === null ? null : String(v) })} />,
             ],
-            ["Auto-merge", <InlineField kind="switch" label="Auto-merge" switchLabel="Merge pull requests without me" value={planner.auto_merge} showSaved onCommit={(v) => savePlanner({ auto_merge: v })} />],
+            ["Merging", <InlineField kind="switch" label="Merge pull requests without me" switchLabel="Merge pull requests without me" value={planner.auto_merge} showSaved onCommit={(v) => savePlanner({ auto_merge: v })} />],
           ]}
         />
       </Paper>

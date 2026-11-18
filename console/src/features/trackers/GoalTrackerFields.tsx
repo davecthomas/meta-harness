@@ -16,7 +16,7 @@ export function GoalTrackerFields(props: {
   const chosen = props.trackers.find((t) => t.scheme === props.tracker);
   return (
     <Stack gap="lg">
-      {props.trackers.length > 1 && (
+      {props.trackers.length > 1 ? (
         <NativeSelect
           label="Issue tracker"
           description="Where the goal's issues are. A goal uses one tracker for all its issues, and keeps it."
@@ -24,6 +24,20 @@ export function GoalTrackerFields(props: {
           onChange={(e) => props.onTracker(e.currentTarget.value)}
           data={props.trackers.map((t) => ({ value: t.scheme, label: t.signed_in ? t.title : `${t.title} (not signed in)` }))}
         />
+      ) : (
+        // One tracker set up: still said, so the form never leaves where the issues are unsaid.
+        <div data-testid="one-tracker">
+          <Text size="sm" fw={500}>Issue tracker</Text>
+          <Text size="sm">{chosen?.title ?? "None is set up"}</Text>
+          <Text size="xs" c="dimmed">
+            {chosen ? "The only one set up. An admin sets up others under Configuration, Issue trackers." : "A goal reads its issues from an issue tracker: an admin sets one up under Configuration, Issue trackers."}
+          </Text>
+        </div>
+      )}
+      {chosen && !chosen.signed_in && (
+        <Text size="sm" c="orange" data-testid="tracker-signed-out">
+          {chosen.title} has no sign-in yet, so a goal that uses it reads no issues until an admin adds one (Configuration, Issue trackers says which is missing).
+        </Text>
       )}
       {(chosen?.goal_settings ?? []).map((setting) =>
         setting.kind === "choice" ? (

@@ -6,6 +6,7 @@ import { IconPlus } from "@tabler/icons-react";
 import { goalTitle, api, goalStatus } from "../../api";
 import { useInfinite } from "../../hooks";
 import { useRowKeys } from "../../components/CommandPalette";
+import { issueSourceLabel } from "./issueSource";
 import { budgetColor, budgetStanding } from "./budget";
 import { budgetLine, costOf, money, sortGoals, totals, usedPercent, type SortKey } from "./goalCost";
 import { DataTable, Empty, ErrorAlert, PageHeader, StatusBadge, TitleLink, when } from "../../components/ui";
@@ -62,7 +63,7 @@ export function GoalsPage() {
       <ErrorAlert error={goals.error} />
       {goals.items.length ? (
         <>
-        <DataTable head={["Goal", "Status", "Cost", "Budget", "Modality", "Label", "Repos", "Created"]} minWidth={980}>
+        <DataTable head={["Goal", "Status", "Cost", "Budget", "Its issues", "Label", "Repos", "Created"]} minWidth={980}>
           {shown.map((g, i) => (
             <Table.Tr key={g.id} data-picked={picked === i || undefined} bg={picked === i ? "var(--mantine-color-default-hover)" : undefined}>
               <Table.Td maw={420}><TitleLink to={`/goals/${g.id}`} title={goalTitle(g)} id={g.id} /></Table.Td>
@@ -91,7 +92,7 @@ export function GoalsPage() {
                   <Text size="xs" c="dimmed">no budget</Text>
                 )}
               </Table.Td>
-              <Table.Td><Text size="sm">{g.modality}</Text></Table.Td>
+              <Table.Td><Text size="sm">{issueSourceLabel(g.modality)}</Text></Table.Td>
               <Table.Td>{g.label ? <Badge variant="outline" tt="none" radius="sm" miw="max-content">{g.label}</Badge> : <Text size="xs" c="dimmed">Picked issues</Text>}</Table.Td>
               <Table.Td>{g.repos.map((r) => <Text ff="monospace" size="xs" key={r}>{r}</Text>)}</Table.Td>
               <Table.Td><Text size="sm" c="dimmed">{when(g.created_at)}</Text></Table.Td>

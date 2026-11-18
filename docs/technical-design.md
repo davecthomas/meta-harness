@@ -3334,6 +3334,21 @@ if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
 the switch every 15 seconds.
 
+The New goal form goes in the order a goal is thought of: title and
+description; its repositories; its issue tracker, always said, as a choice
+when more than one is set up and as plain text when one is, with a warning
+when it has no sign-in, then what that tracker asks of a goal; then where its
+issues come from. Under "Issues that exist" sit the label, the picked issues
+and the helper that drafts a goal from a label, with "it needs at least one
+of the two"; under "Plan them from the description" only an optional label.
+A goal that could not be saved says why beside the Save buttons, with where
+in the form to fix it and that nothing was created. How a goal gets its
+issues has one name on every page, the form's own: "Issues that exist" or
+"Planned from the description" (the service's word, modality, is never
+shown), and the goal page says it and the tracker were fixed when the goal
+was created. A person's Settings hold what the form starts from, in its
+words, and nothing the form ignores.
+
 A value that can be edited shows a pencil, dimmer until pointed at. In
 Configuration, where edits stage, the bar that says so stays in view as the
 page scrolls and reads "N changes not saved yet. Nothing applies until you

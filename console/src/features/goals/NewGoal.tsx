@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Anchor, Button, Checkbox, Group, NativeSelect, NumberInput, Paper, SegmentedControl, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
+import { Alert, Anchor, Button, Checkbox, Group, NativeSelect, NumberInput, Paper, SegmentedControl, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
 import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
@@ -8,7 +8,7 @@ import { api, refLabel, type GoalDraft, type IssueSource, type LabelIssue, type 
 import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
 import { LabelStart } from "./LabelStart";
-import { ErrorAlert, PageHeader } from "../../components/ui";
+import { PageHeader } from "../../components/ui";
 import { PARALLEL_HELP } from "./parallel";
 
 type LabeledIssue = LabelIssue & { repo: string };
@@ -153,11 +153,11 @@ export function NewGoal() {
   // Creates the goal, started or not. Returns its id, or null when it is refused (the form shows why).
   async function create(started: boolean): Promise<string | null> {
     if (!chosen.length) {
-      setError("Pick at least one repo.");
+      setError("Choose at least one repository, under Repositories.");
       return null;
     }
     if (!statement.trim()) {
-      setError("Describe the goal.");
+      setError("Describe the goal, under Description.");
       return null;
     }
     if (missing.length) {
@@ -165,7 +165,7 @@ export function NewGoal() {
       return null;
     }
     if (!plans && !label.trim() && !refs.length) {
-      setError("Give the goal a label, or pick its issues.");
+      setError("Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from.");
       return null;
     }
     setSaving(started);
@@ -223,10 +223,8 @@ export function NewGoal() {
 
   return (
     <>
-      <PageHeader title="New goal" description="A goal takes the open issues with its label, in its repos, and runs each one to a pull request." />
-      <ErrorAlert error={error} />
+      <PageHeader title="New goal" description="A goal says which repositories to work in and which issues are its work. Each issue becomes a task, and each task a pull request." />
       {unsaved.element}
-      {readable && <LabelStart onDraft={fromDraft} source={source} />}
       <Paper maw={720}>
         <form onSubmit={submit}>
           <Stack gap="lg">
@@ -246,7 +244,7 @@ export function NewGoal() {
               value={statement}
               onChange={(e) => setStatement(e.currentTarget.value)}
             />
-            <Checkbox.Group label="Repos" description="The registered repos the goal may change." withAsterisk value={chosen} onChange={setChosen}>
+            <Checkbox.Group label="Repositories" description="The repositories the goal may change." withAsterisk value={chosen} onChange={setChosen}>
               <Stack gap="xs" mt="xs">
                 {reposRead && repos.length === 0 && (
                   <Text size="sm" c="orange" data-testid="no-repos">
@@ -275,23 +273,38 @@ export function NewGoal() {
                   : "The goal runs the open issues with its label, and any you pick."}
               </Text>
             </div>
-            <LabelField
-              value={label}
-              onChange={setLabel}
-              repos={chosen}
-              source={readable ? source : undefined}
-              required={!plans && !refs.length}
-              fieldProps={plans ? { description: "Optional. Left empty, the goal gets a label of its own for the issues it creates." } : undefined}
-            />
-            <LabelIssues label={label} issues={labeled} />
-            <Group gap="sm">
-              <Button variant="default" leftSection={<IconListCheck size={16} />} disabled={!chosen.length} onClick={() => setPicking(true)}>
-                Pick issues
-              </Button>
-              <Text size="sm" c="dimmed">
-                {refs.length ? `${refs.length} picked by hand: the goal takes these besides its label's, or instead of a label.` : "Optional: pick more open issues for the goal by hand."}
-              </Text>
-            </Group>
+            {plans ? (
+              <LabelField
+                value={label}
+                onChange={setLabel}
+                repos={chosen}
+                source={readable ? source : undefined}
+                required={false}
+                fieldProps={{ description: "Optional. Left empty, the goal gets a label of its own for the issues it creates." }}
+              />
+            ) : (
+              // Which issues, for a goal that runs issues that exist: those with its label, ones picked by hand, or both.
+              <Stack gap="md" pl="md" style={{ borderLeft: "2px solid var(--mantine-color-default-border)" }} data-testid="existing-issues">
+                <Text size="sm" c="dimmed">Give the goal a label, pick issues by hand, or both. It needs at least one of the two.</Text>
+                <LabelField value={label} onChange={setLabel} repos={chosen} source={readable ? source : undefined} required={false} />
+                <LabelIssues label={label} issues={labeled} />
+                <Group gap="sm">
+                  <Button variant="default" leftSection={<IconListCheck size={16} />} disabled={!chosen.length || !readable} onClick={() => setPicking(true)}>
+                    Pick issues
+                  </Button>
+                  <Text size="sm" c="dimmed">
+                    {!chosen.length
+                      ? "Choose a repository above first: issues are picked from the goal's repositories."
+                      : !readable
+                        ? `Choose the goal's ${missing.map((s) => s.label).join(" and ")} above first.`
+                        : refs.length
+                          ? `${refs.length} picked by hand: the goal takes these besides its label's, or instead of a label.`
+                          : "Optional: pick open issues for the goal by hand."}
+                  </Text>
+                </Group>
+                {readable && <LabelStart onDraft={fromDraft} source={source} />}
+              </Stack>
+            )}
             <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} source={source} />
             <Group grow align="flex-start">
               <NumberInput
@@ -343,6 +356,13 @@ export function NewGoal() {
               checked={autoMerge}
               onChange={(e) => setAutoMerge(e.currentTarget.checked)}
             />
+            {/* Beside the buttons that were pressed: a refusal is never out of sight at the top of a long form. */}
+            {error && (
+              <Alert color="red" title="The goal was not saved" data-testid="goal-not-saved">
+                <Text size="sm">{error}</Text>
+                <Text size="sm" mt={4}>Nothing was created. Fix what it names, then save again.</Text>
+              </Alert>
+            )}
             <Group justify="flex-end">
               <Button variant="default" onClick={() => navigate(-1)}>Cancel</Button>
               <Button
