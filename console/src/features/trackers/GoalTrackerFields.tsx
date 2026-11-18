@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Autocomplete, NativeSelect, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { NativeSelect, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { api, type Tracker } from "../../api";
 
 // The New goal form's part about where the goal's issues are: which tracker, when more than one is set up, and
@@ -78,8 +78,9 @@ export function GoalTrackerFields(props: {
   );
 }
 
-// A setting chosen from what the tracker lists, such as the Jira site's projects by name. The value is the
-// choice's key (a project's key); when the list cannot be read the key can still be typed, and the field says why.
+// A setting chosen from what the tracker lists, such as the Jira projects the meta-harness works in. It is a
+// pick, never free text: nothing half-typed reaches the goal, or the calls that read its issues. Only when the
+// list cannot be read is the key typed, and then it counts once the field is left.
 function ChoiceField(props: { scheme: string; name: string; label: string; help: string; required: boolean; value: string; onChange: (value: string) => void }) {
   const [choices, setChoices] = useState<{ value: string; label: string }[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,24 +96,48 @@ function ChoiceField(props: { scheme: string; name: string; label: string; help:
       stale = true;
     };
   }, [props.scheme, props.name]);
-  const typed = props.value.trim();
-  const known = (choices ?? []).some((c) => c.value === typed);
+  const chosen = props.value.trim();
+  if (error) {
+    return (
+      <Stack gap={4}>
+        <TypedKey label={props.label} help={props.help} required={props.required} value={props.value} onChange={props.onChange} />
+        <Text size="xs" c="orange">The list could not be read, so type the key exactly: {error}</Text>
+      </Stack>
+    );
+  }
+  const known = (choices ?? []).some((c) => c.value === chosen);
   return (
     <Stack gap={4}>
-      <Autocomplete
+      <Select
         label={props.label}
         description={props.help}
         required={props.required}
-        placeholder={choices === null && !error ? "Loading…" : "Choose one, or type its key"}
-        value={props.value}
-        // Picking a choice gives its key; typing gives what was typed, in capitals as keys are.
-        onChange={(value) => props.onChange((choices ?? []).find((c) => c.label === value)?.value ?? value.toUpperCase())}
-        data={(choices ?? []).map((c) => c.label)}
+        searchable
+        allowDeselect={false}
+        disabled={choices === null}
+        placeholder={choices === null ? "Loading…" : "Choose one"}
+        nothingFoundMessage="None matches"
+        value={known ? chosen : null}
+        onChange={(value) => value && props.onChange(value)}
+        data={choices ?? []}
         maxDropdownHeight={280}
       />
-      {error && <Text size="xs" c="orange">The list could not be read, so type the key exactly: {error}</Text>}
-      {!error && choices !== null && typed && !known && <Text size="xs" c="orange">No {props.label.toLowerCase()} has the key {typed}.</Text>}
-      {known && <Text size="xs" c="dimmed">{choices!.find((c) => c.value === typed)!.label}</Text>}
+      {choices !== null && chosen && !known && <Text size="xs" c="orange">{chosen} is not one of these: choose one that is.</Text>}
     </Stack>
+  );
+}
+
+// A key typed by hand, in capitals as keys are, which counts once the field is left.
+function TypedKey(props: { label: string; help: string; required: boolean; value: string; onChange: (value: string) => void }) {
+  const [draft, setDraft] = useState(props.value);
+  return (
+    <TextInput
+      label={props.label}
+      description={props.help}
+      required={props.required}
+      value={draft}
+      onChange={(e) => setDraft(e.currentTarget.value.toUpperCase())}
+      onBlur={() => draft.trim() !== props.value && props.onChange(draft.trim())}
+    />
   );
 }

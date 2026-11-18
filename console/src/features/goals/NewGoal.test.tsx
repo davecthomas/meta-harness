@@ -40,6 +40,41 @@ function fillAndPress(button: string, created: Record<string, unknown>[]) {
   })();
 }
 
+test("a Jira goal starts on the default project, and its issues are read only for a real one", async () => {
+  const asked: string[] = [];
+  const jira = {
+    scheme: "jira", title: "Jira", description: "", settings: [], credentials: [], missing_credentials: [], signed_in: true, configured: true,
+    writes_progress: true, issue_url_prefix: null, goal_defaults: { project: "VL" },
+    goal_settings: [{ name: "project", label: "Jira project", kind: "choice", required: true, help: "" }],
+  };
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url.startsWith("/v1/labels")) {
+      asked.push(url);
+      return respond({ repos: ["o/a"], labels: [{ label: "bug", total: 1, repos: { "o/a": 1 } }] });
+    }
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/trackers") return respond({ default: "jira", trackers: [jira] });
+    if (url === "/v1/trackers/jira/choices/project") return respond({ choices: [{ value: "VL", label: "Voltron (VL)" }, { value: "OPS", label: "Operations (OPS)" }] });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/new"]}>
+        <Routes><Route path="/goals/new" element={<NewGoal />} /></Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  const project = await screen.findByDisplayValue("Voltron (VL)");
+  fireEvent.change(project, { target: { value: "V" } });
+  fireEvent.click(screen.getByRole("button", { name: "Draft from a label (optional)" }));
+  expect((await screen.findAllByText("bug")).length).toBeGreaterThan(0);
+
+  expect(asked.length).toBeGreaterThan(0);
+  for (const url of asked) expect(decodeURIComponent(url)).toContain('"project":"VL"');
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 test("Save creates the goal without starting it and opens its page", async () => {
   const created: Record<string, unknown>[] = [];
   await fillAndPress("Save", created);

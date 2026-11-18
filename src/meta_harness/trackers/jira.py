@@ -451,7 +451,13 @@ class JiraTracker:
         found: list[dict[str, str]] = []
         start = 0
         while True:
-            page = await self._call("GET", "/project/search", params={"startAt": start, "maxResults": PAGE})
+            try:
+                page = await self._call("GET", "/project/search", params={"startAt": start, "maxResults": PAGE})
+            except TrackerError:
+                if not listed:
+                    raise
+                # Jira gives the projects' names. Their keys are the configuration's, so a goal can still be made.
+                return [{"value": key, "label": key} for key in sorted(listed)]
             values = page.get("values") or []
             found += [{"value": p["key"], "label": f"{p.get('name') or p['key']} ({p['key']})"} for p in values]
             start += len(values)
