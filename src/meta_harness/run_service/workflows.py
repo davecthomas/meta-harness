@@ -102,6 +102,7 @@ with workflow.unsafe.imports_passed_through():
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
     from meta_harness.run_service.resume_activities import resume_state
     from meta_harness.money import usd
+    from meta_harness import budget_request
     from meta_harness.run_service.shared import (
         FollowUpsRequest,
         Attempt,
@@ -357,7 +358,7 @@ class RunTask:
         held = False
         while True:
             left = limit - spent
-            why = "" if left >= need else f"the task has {usd(left)} left of its {usd(limit)} spend limit"
+            why = "" if left >= need else budget_request.task_why(left, limit)
             share = None
             if goal_id:
                 goal = await workflow.execute_activity(
@@ -365,22 +366,17 @@ class RunTask:
                 )
                 share = goal.share()
                 if not why and share is not None and share < need:
-                    why = (
-                        f"goal {goal_id} has spent {usd(goal.spent_usd)} of its {usd(goal.max_usd)} budget, which "
-                        f"leaves {usd(share)} for each of its {goal.running} running tasks"
-                    )
+                    why = budget_request.goal_why(goal_id, goal.spent_usd, goal.max_usd, share, goal.running)
             if not why:
                 if held:
                     await self._budget_hold(False, f"the budget was raised; carrying on with {what}")
                 return (left if share is None else min(left, share)), limit
-            for_goal = why.startswith("goal ")
+            for_goal = budget_request.for_goal(why)
             if not held:
                 held = True
                 self._budget_answer = None
-                raise_what = "the goal's budget" if for_goal else "the task's spend limit"
-                await self._budget_hold(
-                    True, f"{what} needs about {usd(need)}, and {why}. Raise {raise_what}, or end the task"
-                )
+                # Written by budget_request, which the Task API reads it back with to serve the request's amounts.
+                await self._budget_hold(True, budget_request.hold_reason(what, need, why))
                 workflow.logger.warning("%s is held for budget before %s: %s", self._where(), what, why)
             wait = min(BUDGET_RECHECK, BUDGET_HOLD - waited) if for_goal else BUDGET_HOLD - waited
             try:

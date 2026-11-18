@@ -62,3 +62,17 @@ test("the count says what it is made of", () => {
   expect(needsYouNote([])).toBe("Nothing needs you.");
   expect(needsYouNote(null)).toBe("");
 });
+
+test("a task held for budget is named by the amount it asks for when the service says it", () => {
+  const request = { for: "task" as const, what: "fix run 2", needs_usd: "1.65", left_usd: "0.40", limit_usd: "3.00", add_usd: "2", to_usd: "5.00" };
+  const [own, goals] = needsYouItems(
+    [
+      task("a", "running", { waiting_on: "budget", status_reason: "fix run 2 needs about $1.65", budget_request: request }),
+      task("b", "running", { waiting_on: "budget", status_reason: "the review needs about $0.30", budget_request: { for: "goal", what: "the review", needs_usd: "0.30", goal_id: "g-1" } }),
+    ],
+    [],
+  );
+  expect(own.action).toBe("Grant $2.00 more");
+  expect(own.detail).toContain("grant the $2.00 in one click, set another limit, or end it");
+  expect(goals.action).toBe("Raise the goal's budget");
+});

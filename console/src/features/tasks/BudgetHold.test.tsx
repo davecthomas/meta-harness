@@ -56,3 +56,15 @@ test("a task that is not held shows nothing", () => {
   show({ ...HELD, waiting_on: null });
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+test("a hold that says what it asks for is granted in one click, and another limit can still be set", async () => {
+  const request = { for: "task" as const, what: "fix run 4", needs_usd: "1.00", left_usd: "0.20", limit_usd: "10.00", add_usd: "1", to_usd: "11.00" };
+  const { asked, answered } = show({ ...HELD, budget_request: request });
+  expect(screen.getByRole("alert").textContent).toContain("this task asks for $1.00 more");
+  // The other limit starts at what the request asks for, not at a guess.
+  expect((screen.getByLabelText(/Or set another limit/) as HTMLInputElement).value).toBe("$11");
+
+  fireEvent.click(screen.getByRole("button", { name: "Grant $1.00: its limit becomes $11.00" }));
+  await waitFor(() => expect(answered).toHaveLength(1));
+  expect(asked[0]).toEqual({ url: "/v1/tasks/t-1/budget", body: { action: "raise", max_usd: 11 } });
+});

@@ -25,7 +25,7 @@ from typing import Any, Literal, Protocol
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from meta_harness import auth, db
+from meta_harness import auth, budget_request, db
 from meta_harness.scheduler import holds
 from meta_harness.supervisor import standing
 from meta_harness.tasks import reviews, spend, store
@@ -142,6 +142,13 @@ class BudgetIn(BaseModel):
     # raise: carry on, with max_usd as the task's new spend limit when given. end: end the task as it would have.
     action: Literal["raise", "end"]
     max_usd: Decimal | None = Field(default=None, gt=0)
+
+
+def requested(task: dict) -> dict | None:
+    """What a task held for budget asks for, as numbers (budget_request.parse); None for any other task."""
+    if task.get("status") != "running" or task.get("waiting_on") != "budget":
+        return None
+    return budget_request.parse(task.get("status_reason"))
 
 
 def create_app(
@@ -295,6 +302,7 @@ def create_app(
             for task in tasks:
                 task["held"] = held.get(task["id"])
                 task["standing"] = standings.get(task["id"])
+                task["budget_request"] = requested(task)
             return {"tasks": tasks, "total": total, "offset": offset, "limit": limit}
 
     @app.get("/v1/tasks/{task_id}")
@@ -306,6 +314,7 @@ def create_app(
                 task["held"] = holds.get(conn, task_id) if task["status"] == "queued" else None
                 # Who has the task, from the supervisor's own record of it.
                 task["standing"] = standing.get(conn, task_id) if task["status"] != "closed" else None
+                task["budget_request"] = requested(task)
                 return task
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such task") from err
