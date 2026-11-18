@@ -129,6 +129,6 @@ test("a value marked changed says so, and a read-only one has no pencil", () => 
       <InlineField kind="text" label="Id" value="y" readOnly onCommit={() => undefined} />
     </MantineProvider>,
   );
-  expect(screen.getByText("changed")).toBeTruthy();
+  expect(screen.getByText("not saved")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Edit Id" })).toBeNull();
 });

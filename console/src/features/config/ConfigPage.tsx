@@ -289,9 +289,11 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
           before={original}
           after={document}
           onClose={() => closeReview(false)}
+          reasons={reasons}
           onSave={async (note) => {
             const ok = await save(note);
-            closeReview(ok);
+            // A refused save keeps the review open, with why: the reasons are also beside their values behind it.
+            if (ok) closeReview(true);
             return ok;
           }}
         />

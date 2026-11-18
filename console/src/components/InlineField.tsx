@@ -180,7 +180,7 @@ export function InlineField(props: InlineFieldProps) {
   const shownReasons = [...errors, ...(props.reasons ?? []).filter((r) => !errors.includes(r))];
   const marks = (
     <>
-      {props.changed && <Badge size="xs" color="yellow" variant="light" tt="none">changed</Badge>}
+      {props.changed && <Badge size="xs" color="yellow" variant="light" tt="none">not saved</Badge>}
       {busy && <Loader size="xs" />}
       {saved && <Text size="xs" c="teal" fw={500}>Saved</Text>}
     </>
@@ -380,7 +380,8 @@ export function InlineField(props: InlineFieldProps) {
             color="gray"
             aria-label={`Edit ${props.label}`}
             onClick={start}
-            style={{ opacity: hover ? 1 : 0, transition: "opacity 120ms" }}
+            // Always there, dimmer until pointed at: a value that can be edited looks it, on a touch screen too.
+            style={{ opacity: hover ? 1 : 0.45, transition: "opacity 120ms" }}
           >
             <IconPencil size={14} />
           </ActionIcon>

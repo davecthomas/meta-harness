@@ -31,7 +31,7 @@ export function ProfilesView({ staging: s, skills = [] }: { staging: Staging; sk
             <Table.Td>
               <Group gap={6} wrap="nowrap">
                 <Text fw={600} size="sm">{name}</Text>
-                {s.original.profiles?.[name] === undefined && <Badge size="xs" color="yellow" variant="light" tt="none">new</Badge>}
+                {s.original.profiles?.[name] === undefined && <Badge size="xs" color="yellow" variant="light" tt="none">not saved</Badge>}
               </Group>
               <Reasons reasons={s.reasons(`profile:${name}`)} />
             </Table.Td>

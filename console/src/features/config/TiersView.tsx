@@ -201,7 +201,7 @@ function TierCard({ staging: s, tier, index, profiles, models }: { staging: Stag
           );
         })}
         <Reasons reasons={s.reasons(`${at}:candidates`)} />
-        {original.length > candidates.length && <Badge size="xs" color="yellow" variant="light" tt="none">changed: {original.length - candidates.length} removed</Badge>}
+        {original.length > candidates.length && <Badge size="xs" color="yellow" variant="light" tt="none">not saved: {original.length - candidates.length} removed</Badge>}
       </Stack>
       {!s.readOnly && (
         <Group mt="sm">

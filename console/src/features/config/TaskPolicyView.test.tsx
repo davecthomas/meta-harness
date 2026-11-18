@@ -45,7 +45,7 @@ test("the parallel limit edits in place, refused above the VM's ceiling and stag
   fireEvent.keyDown(screen.getByLabelText("Parallel tasks"), { key: "Enter" });
   expect(await screen.findByText("7, across every goal")).toBeTruthy();
   await waitFor(() => expect(screen.getByText("staged")).toBeTruthy());
-  expect(screen.getByText("changed")).toBeTruthy();
+  expect(screen.getByText("not saved")).toBeTruthy();
 });
 
 test("the budget policy is a switch: stop at budgets, or track spend only", async () => {

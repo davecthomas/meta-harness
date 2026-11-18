@@ -3334,6 +3334,16 @@ if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
 the switch every 15 seconds.
 
+A value that can be edited shows a pencil, dimmer until pointed at. In
+Configuration, where edits stage, the bar that says so stays in view as the
+page scrolls and reads "N changes not saved yet. Nothing applies until you
+review and save"; every value, row or item not yet saved carries the one
+marker "not saved". The review lists each change in words by where it is
+("tiers › fast › thinking: low to high", "repos › o/a: removed"), one line
+for each change counted (`staging.describeChanges`), with the JSON behind a
+button. A save the service refuses keeps the review open with its reasons and
+"Your changes are still here"; the reasons are beside their values too.
+
 A new deployment says what it needs before any work runs
 (`console/src/features/overview/GettingStarted.tsx`): on the Overview, four
 steps in order, each ticked once it is done and linking to where it is done:

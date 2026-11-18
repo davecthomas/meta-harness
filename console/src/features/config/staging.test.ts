@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { countChanges, getIn, isChanged, joinCandidate, lineDiff, reasonTarget, setIn, shapeProblems, splitCandidate } from "./staging";
+import { countChanges, describeChanges, getIn, isChanged, joinCandidate, lineDiff, reasonTarget, setIn, shapeProblems, splitCandidate } from "./staging";
 
 test("a candidate splits into its profile and model, and joins back", () => {
   expect(splitCandidate("harness:pi-lean/openai-responses:gpt-6-sol")).toEqual({ profile: "pi-lean", model: "openai-responses:gpt-6-sol" });
@@ -65,4 +65,19 @@ test("shapeProblems names each container a kind's view can't read, and passes a 
   ]);
   expect(shapeProblems("repos", { repos: [] })).toEqual(["repos is an object of named entries"]);
   expect(shapeProblems("task_policy", { review: { reviewers: "x" } })).toEqual(["review.reviewers is a list of candidates"]);
+});
+
+test("the review says each change in words, by where it is, one line for each change counted", () => {
+  const before = { default_tier: "fast", tiers: [{ name: "fast", thinking: "low", models: ["a", "b"] }], repos: { "o/a": { default_checks: ["make test"] } } };
+  const after = { default_tier: "fast", tiers: [{ name: "fast", thinking: "high", models: ["b", "c"] }], repos: { "o/b": { default_checks: [] } } };
+  const said = describeChanges(before, after);
+  expect(said).toEqual([
+    "tiers › fast › thinking: low to high",
+    "tiers › fast › models: added c; removed a",
+    "repos › o/a: removed",
+    "repos › o/b: added",
+  ]);
+  expect(said.length).toBe(countChanges(before, after));
+  expect(describeChanges(before, before)).toEqual([]);
+  expect(describeChanges({ models: ["a", "b"] }, { models: ["b", "a"] })).toEqual(["models: reordered"]);
 });

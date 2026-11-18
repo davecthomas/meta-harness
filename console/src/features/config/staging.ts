@@ -39,6 +39,37 @@ function isObject(v: unknown): v is Record<string, unknown> {
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
+// A value as the review shows it: short, and a long one cut.
+function shown(value: unknown): string {
+  if (value === undefined) return "nothing";
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text.length > 70 ? `${text.slice(0, 69)}…` : text;
+}
+
+// Each change between two documents, in words, by where it is: "repos › o/r: added", "tiers › fast › thinking:
+// low to high". Counted as countChanges counts, so the list has as many lines as the staged bar says.
+export function describeChanges(before: unknown, after: unknown, at: string[] = []): string[] {
+  if (same(before, after)) return [];
+  const where = at.join(" › ") || "the whole document";
+  const each = (keys: (string | number)[], name: (k: string | number) => string) =>
+    keys.flatMap((k) => describeChanges((before as any)?.[k], (after as any)?.[k], [...at, name(k)]));
+  if (isObject(before) && isObject(after)) return each([...new Set([...Object.keys(before), ...Object.keys(after)])], String);
+  const objects = (v: unknown) => Array.isArray(v) && v.some(isObject);
+  if (Array.isArray(before) && Array.isArray(after) && (objects(before) || objects(after))) {
+    const names = (k: string | number) => String(((after as any[])[k as number] ?? (before as any[])[k as number])?.name ?? `item ${Number(k) + 1}`);
+    return each(Array.from({ length: Math.max(before.length, after.length) }, (_, i) => i), names);
+  }
+  if (before === undefined) return [`${where}: added${isObject(after) ? "" : ` (${shown(after)})`}`];
+  if (after === undefined) return [`${where}: removed`];
+  if (Array.isArray(before) && Array.isArray(after)) {
+    const gone = before.filter((v) => !after.includes(v));
+    const come = after.filter((v) => !before.includes(v));
+    const parts = [come.length ? `added ${come.map(shown).join(", ")}` : "", gone.length ? `removed ${gone.map(shown).join(", ")}` : ""].filter(Boolean);
+    return [`${where}: ${parts.join("; ") || "reordered"}`];
+  }
+  return [`${where}: ${shown(before)} to ${shown(after)}`];
+}
+
 // How many values differ between two documents. A list of plain values (tools, checks, candidates) is one
 // value; a list of objects (tiers) and an object are compared by their entries; an added or removed entry is one.
 export function countChanges(before: unknown, after: unknown): number {
