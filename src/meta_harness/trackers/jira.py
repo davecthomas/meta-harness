@@ -31,10 +31,12 @@ from meta_harness.trackers.base import (
     STATUSES,
     TODO,
     Issue,
+    Marked,
     Setting,
     Source,
     Supported,
     TrackerError,
+    configured_label,
 )
 
 SCHEME = "jira"
@@ -137,6 +139,8 @@ class JiraTracker:
         site: Callable[[], Site] = configured_site,
         transport: httpx.AsyncBaseTransport | None = None,
         source: Source | None = None,
+        label: Callable[[], str] = configured_label,
+        marked: Marked | None = None,
     ) -> None:
         self.email = email if email is not None else os.environ.get("MH_JIRA_EMAIL", "")
         self.token = token if token is not None else os.environ.get("MH_JIRA_TOKEN", "")
@@ -148,9 +152,20 @@ class JiraTracker:
         # One search of the project for each label, shared by the calls that ask for each of the goal's repos.
         self._open: dict[str | None, list[Issue]] = {}
         self._assigned: list[Issue] | None = None
+        self.label = label
+        self.marked = marked or Marked()
 
     def bound(self, source: Source) -> "JiraTracker":
-        return JiraTracker(self.email, self.token, self.site, self.transport, source)
+        return JiraTracker(self.email, self.token, self.site, self.transport, source, self.label, self.marked)
+
+    async def mark(self, ref: str) -> None:
+        """Adds the meta-harness's label to the issue. Jira makes a label when an issue first carries it, and
+        adding one the issue has changes nothing."""
+        label = self.label()
+        if (ref, label) in self.marked.refs:
+            return
+        await self._call("PUT", f"/issue/{parse_ref(ref)}", json={"update": {"labels": [{"add": label}]}})
+        self.marked.refs.add((ref, label))
 
     @property
     def connected(self) -> bool:
@@ -306,15 +321,17 @@ class JiraTracker:
                     "summary": title,
                     "description": f"{body.rstrip()}\n\nRepo: {repo}\n" if several else body,
                     "issuetype": {"name": self._site().issue_type},
-                    "labels": labels,
+                    "labels": list(dict.fromkeys([*labels, self.label()])),
                 }
             },
         )
         self._open.clear()
+        self.marked.refs.add((ref_for(made["key"]), self.label()))
         return await self.read(ref_for(made["key"]))
 
     async def comment(self, ref: str, body: str) -> str:
         key = parse_ref(ref)
+        await self.mark(ref)
         made = await self._call("POST", f"/issue/{key}/comment", json={"body": body})
         return f"{self._site().site}/browse/{key}?focusedCommentId={made['id']}" if made.get("id") else ""
 
@@ -370,6 +387,7 @@ class JiraTracker:
                 f"status for {status} under Configuration, Issue trackers, Jira, or move the issue in Jira.",
                 retryable=False,
             )
+        await self.mark(ref)
         await self._call("POST", f"/issue/{key}/transitions", json={"transition": {"id": chosen[0]["id"]}})
         # What was read as open may now be done.
         self._open.clear()
@@ -380,6 +398,7 @@ class JiraTracker:
         changes the one link."""
         key = parse_ref(ref)
         link = {"globalId": pr_url, "object": {"url": pr_url, "title": title or pr_url}}
+        await self.mark(ref)
         await self._call("POST", f"/issue/{key}/remotelink", json=link)
 
     async def choices(self, setting: str) -> list[dict[str, str]]:

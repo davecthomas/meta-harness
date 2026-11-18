@@ -147,6 +147,7 @@ export function reasonTarget(kind: ConfigKind, document: Record<string, any>, re
     return field ? `repo:${name}:${field}` : `repo:${name}`;
   }
   if (kind === "trackers") {
+    if (reason.startsWith("label ")) return "label";
     if (reason.startsWith("default ")) return "default";
     const scheme = Object.keys(document.trackers ?? {}).find((n) => reason.startsWith(`${n}:`));
     return scheme ? `tracker:${scheme}` : null;

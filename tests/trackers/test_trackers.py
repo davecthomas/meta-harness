@@ -31,8 +31,35 @@ ISSUE = {"number": 7, "title": "Fix it", "body": "Depends on: #3", "state": "ope
 async def test_the_github_adapter_comments_on_an_issue_and_says_where():
     apps = Apps({("POST", "/repos/o/r/issues/7/comments"): {"html_url": "https://github.com/o/r/issues/7#c1"}})
 
-    assert await GitHubTracker(apps).comment(REF, "The task started.") == "https://github.com/o/r/issues/7#c1"
-    assert apps.calls == [({"issues": "write"}, "POST", "/repos/o/r/issues/7/comments", {"body": "The task started."})]
+    tracker = GitHubTracker(apps)
+    assert await tracker.comment(REF, "The task started.") == "https://github.com/o/r/issues/7#c1"
+    await tracker.comment(REF, "Again.")
+    # Labeled as the meta-harness's before its first write, and once for all of them.
+    assert apps.calls == [
+        ({"issues": "write"}, "POST", "/repos/o/r/issues/7/labels", {"labels": ["ai:meta-harness"]}),
+        ({"issues": "write"}, "POST", "/repos/o/r/issues/7/comments", {"body": "The task started."}),
+        ({"issues": "write"}, "POST", "/repos/o/r/issues/7/comments", {"body": "Again."}),
+    ]
+
+
+async def test_an_issue_the_github_adapter_creates_or_closes_carries_the_meta_harness_label():
+    apps = Apps({("POST", "/repos/o/r/issues"): ISSUE, ("GET", "/repos/o/r/issues/8"): {**ISSUE, "number": 8}})
+    tracker = GitHubTracker(apps, label=lambda: "bot")
+
+    made = await tracker.create_issue("o/r", "Fix it", "Body.", ["mh", "bot"])
+    assert apps.calls[0][3]["labels"] == ["mh", "bot"], "the label is carried once"
+    await tracker.mark(made.ref)
+    assert len(apps.calls) == 1, "an issue made with the label is not labeled again"
+
+    assert await tracker.set_status("github:o/r#8", DONE) is True
+    assert [call[2] for call in apps.calls[-2:]] == ["/repos/o/r/issues/8/labels", "/repos/o/r/issues/8"]
+
+
+def test_the_label_is_the_deployments_or_the_usual_one_and_a_label_no_tracker_could_hold_is_refused():
+    assert registry.check({"default": "github", "trackers": {"github": {}}}, None) == []
+    assert registry.check({"default": "github", "trackers": {"github": {}}, "label": "team-bot"}, None) == []
+    [reason] = registry.check({"default": "github", "trackers": {"github": {}}, "label": "meta harness"}, None)
+    assert reason.startswith("label is the label every issue the meta-harness creates or changes carries")
 
 
 async def test_done_closes_a_github_issue_once_and_a_status_it_has_no_state_for_changes_nothing():

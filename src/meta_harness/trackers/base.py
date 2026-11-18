@@ -18,6 +18,27 @@ TODO, IN_PROGRESS, IN_REVIEW, DONE = "todo", "in_progress", "in_review", "done"
 STATUSES = (TODO, IN_PROGRESS, IN_REVIEW, DONE)
 
 
+# The label every issue the meta-harness creates or changes carries, so a person in the tracker can tell its
+# work from anyone else's and list it. A deployment may name another (the trackers configuration's `label`).
+MARK_LABEL = "ai:meta-harness"
+
+
+def configured_label() -> str:
+    """The deployment's label for issues the meta-harness created or changed."""
+    from meta_harness.trackers import registry
+
+    return registry.mark_label()
+
+
+class Marked:
+    """The refs an adapter has labeled since the service started, so each issue is labeled with one call and
+    not one for every later write. Shared by an adapter and the copies of it bound to goals."""
+
+    def __init__(self) -> None:
+        # Each with the label it was given, so a changed label is added too.
+        self.refs: set[tuple[str, str]] = set()
+
+
 class TrackerError(RuntimeError):
     """A tracker call failed. `retryable` is False when repeating it would fail the same way; `status` is the
     tracker's HTTP status when it answered with one."""
@@ -99,6 +120,13 @@ class Tracker(Protocol):
 
     async def comment(self, ref: str, body: str) -> str:
         """Adds a comment to the issue. Returns the comment's address, or "" when the tracker gives none."""
+        ...
+
+    async def mark(self, ref: str) -> None:
+        """Makes the issue carry the meta-harness's label (MARK_LABEL, or the deployment's). An adapter calls
+        it itself before every write to an issue (a comment, a status, a pull request's link) and creates
+        every issue with the label, so no caller can change an issue and leave it unlabeled. Adding a label
+        the issue has changes nothing."""
         ...
 
     async def set_status(self, ref: str, status: str) -> bool:

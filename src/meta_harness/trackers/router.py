@@ -67,6 +67,9 @@ class Trackers:
     async def comment(self, ref: str, body: str) -> str:
         return await self.for_ref(ref).comment(ref, body)
 
+    async def mark(self, ref: str) -> None:
+        await self.for_ref(ref).mark(ref)
+
     async def set_status(self, ref: str, status: str) -> bool:
         return await self.for_ref(ref).set_status(ref, status)
 

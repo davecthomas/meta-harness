@@ -6,6 +6,9 @@ for a saved configuration to be checked against. Which are set up, and which one
 
     {"default": "jira", "trackers": {"github": {}, "jira": {"site": ..., "projects": [...]}}}
 
+It may also name the label every issue the meta-harness creates or changes carries, in any tracker
+(`"label": "ai:meta-harness"`, which is what it is when the configuration names none).
+
 A goal uses one tracker, the default when it is created unless it names another, and keeps it.
 """
 
@@ -14,7 +17,9 @@ from typing import Any
 
 from meta_harness.run_service.paths import REPO_ROOT
 from meta_harness.trackers import github, jira
-from meta_harness.trackers.base import Supported
+import re
+
+from meta_harness.trackers.base import MARK_LABEL, Supported
 
 # Every tracker the meta-harness supports. To add one: write its adapter module, with a SPEC, and list it here.
 SUPPORTED: dict[str, Supported] = {module.SPEC.scheme: module.SPEC for module in (github, jira)}
@@ -40,6 +45,11 @@ def default() -> str:
     return str(document().get("default") or "github")
 
 
+def mark_label() -> str:
+    """The label every issue the meta-harness creates or changes carries."""
+    return str(document().get("label") or MARK_LABEL)
+
+
 def settings(scheme: str) -> dict[str, Any] | None:
     """A tracker's settings, or None for one that is not set up."""
     found = (document().get("trackers") or {}).get(scheme)
@@ -60,6 +70,12 @@ def check(document: dict[str, Any], others: dict[str, dict[str, Any]] | None) ->
     chosen = document.get("default")
     if chosen not in trackers:
         reasons.append(f"default must be one of the trackers set up ({', '.join(sorted(trackers))}), not {chosen!r}")
+    label = document.get("label", MARK_LABEL)
+    if not isinstance(label, str) or not label or len(label) > 50 or re.search(r"[\s,]", label):
+        reasons.append(
+            "label is the label every issue the meta-harness creates or changes carries: up to 50 characters "
+            f"with no space or comma, such as {MARK_LABEL} (a Jira label has no spaces)"
+        )
     registered = (others or {}).get("repos", {}).get("repos")
     names = {name.lower() for name in registered} if isinstance(registered, dict) else None
     for scheme, spec in trackers.items():

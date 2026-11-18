@@ -31,6 +31,26 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
   return (
     <Stack gap="md">
       <Reasons reasons={s.reasons("default")} />
+      <Paper p="md" data-testid="tracker-label">
+        <Stack gap={4}>
+          <Text fw={600}>Label on the meta-harness's issues</Text>
+          <InlineField
+            kind="text"
+            label="Label on the meta-harness's issues"
+            value={s.document.label ?? ""}
+            monospace
+            empty={<Text size="sm" ff="monospace">ai:meta-harness</Text>}
+            placeholder="ai:meta-harness"
+            changed={changed(s, ["label"])}
+            reasons={s.reasons("label")}
+            readOnly={s.readOnly}
+            onCommit={(v) => stageOptional(s, ["label"], v.trim())}
+          />
+          <Text size="xs" c="dimmed">
+            Every issue the meta-harness creates, comments on or moves gets this label, in every tracker, so its work can be told apart and listed. No spaces. Empty: ai:meta-harness.
+          </Text>
+        </Stack>
+      </Paper>
       {supported.map((tracker) => {
         const settings = setUp[tracker.scheme];
         const isSetUp = settings !== undefined;

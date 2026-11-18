@@ -2590,6 +2590,7 @@ tracker, through one adapter interface:
 | `ensure_label(repo, label)` | Make sure an issue created for the repo can carry the label |
 | `create_issue(repo, title, body, labels)` | Create an issue, for an approved plan's draft or a split. Returns it with its `ref` |
 | `comment(ref, text)` | Add a comment to the issue. Returns the comment's address |
+| `mark(ref)` | Make the issue carry the meta-harness's label. The adapter calls it itself before every write |
 | `set_status(ref, status)` | Move the issue to `todo`, `in_progress`, `in_review` or `done`, as far as the tracker has such a state. Returns whether it changed |
 | `link_pull_request(ref, pr_url, title)` | Record the pull request on the issue, where the tracker does not find it by itself |
 | `url(ref)` | Where a person reads the issue |
@@ -2713,6 +2714,20 @@ as it is. The sweep does this for an open issue whose task was canceled
 An issue held by a goal that has ended (met or canceled) is
 released for a new goal with its label to take
 (`planner.store.release_from_ended_goal`); an open goal's issue stays its.
+
+**Every issue the meta-harness creates or changes carries its label**,
+`ai:meta-harness` unless the `trackers` configuration names another
+(`label`, set on the Issue trackers page; up to 50 characters, no space or
+comma, since a Jira label has none). The rule is the adapter's, not its
+callers': an adapter creates every issue with the label beside the ones it
+was given, and labels an issue (`mark`) before each write to it: a comment,
+a status that moves it, a pull request's link. So a plan's issues, a split's,
+a progress comment and a reply all leave the issue labeled, and a new call
+site cannot forget to. Both trackers make a label when an issue first
+carries it, and adding one an issue has changes nothing; an adapter
+remembers which issues it labeled since the service started, so the label
+costs one call an issue. An issue the meta-harness only reads is not
+labeled.
 
 **Handing an issue over in the tracker.** A person gives an issue to the
 meta-harness where they work. On every tracker the goal's label does it.
