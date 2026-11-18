@@ -361,7 +361,7 @@ export function GoalPage() {
             <Group gap="md">
             {states && (
               <Text size="xs" c="dimmed" data-testid="states-checked">
-                {states.complete ? "issue states read from GitHub" : "some issue states could not be read from GitHub; last tried"} {when(states.at)}
+                {states.complete ? "issue states read from " + trackerTitle(goal.tracker ?? "github") : "some issue states could not be read from " + trackerTitle(goal.tracker ?? "github") + "; last tried"} {when(states.at)}
               </Text>
             )}
             <Refreshed at={refreshed} error={refreshError} />
