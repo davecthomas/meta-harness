@@ -26,7 +26,7 @@ const COSTS: Costs = {
   scope: "all",
 };
 
-function show(costs: Costs, path = "/performance") {
+function show(costs: Costs, path = "/costs") {
   const asked: string[] = [];
   vi.stubGlobal("fetch", (url: string) => {
     asked.push(url);
@@ -85,7 +85,7 @@ test("an admin sees the totals, the chart with its trend, where the money went a
 });
 
 test("the cost category sets the source, and each category has its own breakdowns and filters", async () => {
-  const asked = show(COSTS, "/performance?category=ai&by=model&model=claude-opus-5-5&goal=g-a");
+  const asked = show(COSTS, "/costs?category=ai&by=model&model=claude-opus-5-5&goal=g-a");
   await screen.findByTestId("cost-stats");
   expect(asked[0]).toContain("group_by=model");
   expect(asked[0]).toContain("model=claude-opus-5-5");
@@ -113,7 +113,7 @@ test("the cost category sets the source, and each category has its own breakdown
 });
 
 test("the breakdown, bucket and filters are asked for from the URL", async () => {
-  const asked = show(COSTS, "/performance?range=7&bucket=week&category=ai&by=model&goal=g-a");
+  const asked = show(COSTS, "/costs?range=7&bucket=week&category=ai&by=model&goal=g-a");
   await screen.findByTestId("cost-stats");
   expect(asked[0]).toContain("bucket=week&group_by=model");
   expect(asked[0]).toContain("goal=g-a");
@@ -123,7 +123,7 @@ test("the breakdown, bucket and filters are asked for from the URL", async () =>
 });
 
 test("a regular user is told they see their own model costs, with no sources and no source breakdown", async () => {
-  show({ ...COSTS, scope: "own", group_by: "kind", series: [{ key: "task", usd: [0, 1, 0.25], total: 1.25 }], sources: { model: COSTS.sources.model } }, "/performance?by=run");
+  show({ ...COSTS, scope: "own", group_by: "kind", series: [{ key: "task", usd: [0, 1, 0.25], total: 1.25 }], sources: { model: COSTS.sources.model } }, "/costs?by=run");
   expect((await screen.findByTestId("own-scope")).textContent).toContain("the model cost of your own work");
   expect(screen.queryByTestId("cost-sources")).toBeNull();
   await waitFor(() => expect(screen.queryByRole("radio", { name: "Cloud" })).toBeNull());
@@ -138,7 +138,7 @@ test("AI costs are filtered and broken down by the issue's label and by what bec
     series: [{ key: "merged", usd: [0, 3.25, 0], total: 3.25 }, { key: "closed", usd: [0, 0, 1.25], total: 1.25 }],
     choices: { ...COSTS.choices, label: ["bug", "saves"], outcome: ["closed", "merged"] },
   };
-  const asked = show(byOutcome, "/performance?category=ai&by=outcome&label=bug&outcome=merged,closed");
+  const asked = show(byOutcome, "/costs?category=ai&by=outcome&label=bug&outcome=merged,closed");
   const breakdown = await screen.findByTestId("cost-breakdown");
   expect(asked[0]).toContain("group_by=outcome");
   expect(asked[0]).toContain("label=bug");
@@ -159,7 +159,7 @@ test("AI costs are filtered and broken down by the issue's label and by what bec
 
 test("the cloud category breaks the bill down by the service billed", async () => {
   const cloud = { ...COSTS, group_by: "kind", series: [{ key: "Compute Engine", usd: [1, 1.2, 1.1], total: 3.3 }, { key: "Cloud Run", usd: [0.1, 0.1, 0.1], total: 0.3 }] };
-  const asked = show(cloud, "/performance?category=cloud");
+  const asked = show(cloud, "/costs?category=cloud");
   const breakdown = await screen.findByTestId("cost-breakdown");
   expect(asked[0]).toContain("group_by=kind");
   expect(asked[0]).toContain("source=cloud");

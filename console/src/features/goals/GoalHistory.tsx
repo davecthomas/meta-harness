@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api, goalStatus, goalTitle, type Goal } from "../../api";
-import { LeafItem, PastGroup, readFailed, StatusDot, TreeItem, TreeNote, useRows } from "../../components/NavTree";
+import { LeafItem, MoreLink, PastGroup, readFailed, StatusDot, TreeItem, TreeNote, useRows } from "../../components/NavTree";
 import { shownStatus } from "../tasks/shownStatus";
 
 // Every goal, current and past, under Goals in the left pane. Each one opens to show its tasks.
 
-// The most goals the pane lists; the Goals page lists them all.
+// The most goals the pane reads, and the most of each kind it shows: the Goals page has them all.
 const MOST = 200;
+const SHOWN = 10;
+const PAST_SHOWN = 20;
 const ENDED = new Set(["met", "canceled"]);
 
 export function GoalHistory() {
@@ -19,10 +21,12 @@ export function GoalHistory() {
     <>
       {error && <TreeNote error>{readFailed("the goals", error)}</TreeNote>}
       {current.length === 0 && <TreeNote>No open goals.</TreeNote>}
-      {current.map((g) => <GoalItem key={g.id} goal={g} />)}
+      {current.slice(0, SHOWN).map((g) => <GoalItem key={g.id} goal={g} />)}
+      {current.length > SHOWN && <MoreLink to="/goals?show=open">All {current.length} open goals</MoreLink>}
       {past.length > 0 && (
         <PastGroup label={`Past goals (${past.length})`}>
-          {past.map((g) => <GoalItem key={g.id} goal={g} />)}
+          {past.slice(0, PAST_SHOWN).map((g) => <GoalItem key={g.id} goal={g} />)}
+          {past.length > PAST_SHOWN && <MoreLink to="/goals?show=ended">All {past.length} past goals</MoreLink>}
         </PastGroup>
       )}
     </>

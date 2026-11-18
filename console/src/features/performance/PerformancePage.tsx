@@ -163,7 +163,7 @@ export function PerformancePage() {
 
   return (
     <>
-      <PageHeader title="Performance" description="What the meta-harness costs over time, where the money goes, and where it is heading." />
+      <PageHeader title="Costs" description="What the meta-harness costs over time, where the money goes, and where it is heading." />
       <ErrorAlert error={error} />
       {own && (
         <Alert color="blue" mb="md" data-testid="own-scope">

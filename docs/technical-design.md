@@ -2937,7 +2937,8 @@ Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
-The Performance page (`console/src/features/performance`) is what the
+The Costs page (`console/src/features/performance`, at `/costs`; it was
+named Performance, and `/performance` still leads to it) is what the
 meta-harness costs over time. Four figures head it for the chosen range: the
 total, the daily average, the change from the same number of days before
 (no percentage when less than $1 was spent then, since a change from almost
@@ -3311,13 +3312,16 @@ states were read from GitHub. The rest
 of the table is planned.
 
 The console's left pane lists the plain pages first (Overview,
-Performance), then Goals and Tasks, each opening to its history
-(`console/src/components/NavTree.tsx`). Goals lists every open goal, with the
-met and canceled ones under a closed "Past goals" row; each goal opens to its
-tasks, read only once it is opened, and the goal whose page is showing starts
-open. Tasks lists the tasks still going (queued, blocked, running, taken over,
-ready, review unresolved), with the closed, failed and canceled ones under
-"Past tasks", fifty at a time with Show more. Every row has a dot in its
+Costs), then Goals and Tasks, each opening to its history
+(`console/src/components/NavTree.tsx`). Goals lists the open goals, the first
+ten with a link to all of them, and the met and canceled ones under a closed
+"Past goals" row, the first twenty with a link; each goal opens to its tasks,
+read only once it is opened, and the goal whose page is showing starts open.
+Tasks lists what is in progress across every goal, the tasks an agent is
+working on and the ones whose pull request waits on someone, the first ten
+with a link to the Tasks page; a task that has not started is under its goal.
+The closed, failed and canceled ones are under "Past tasks", fifty at a time
+with Show more. Every row has a dot in its
 status's color, and the lists read again on each page change and every 30
 seconds; a list that could not be read says why and to reload. The admin
 pages are one Admin entry at the bottom of the pane, under New goal: a click
