@@ -4,8 +4,8 @@ requires-python = "==3.12.*"
 
 [[package]]
 name = "ai-api-unified"
-version = "3.30.0"
-source = { git = "https://github.com/davecthomas/ai-api-unified?rev=ebf9d489cc02ad075dddd313e1146e5e2d9840fc#ebf9d489cc02ad075dddd313e1146e5e2d9840fc" }
+version = "3.31.0"
+source = { git = "https://github.com/davecthomas/ai-api-unified?rev=06bdc45970eb9055a622df1a2c7e48174f267ffa#06bdc45970eb9055a622df1a2c7e48174f267ffa" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
@@ -347,7 +347,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ai-api-unified", extras = ["openai"], git = "https://github.com/davecthomas/ai-api-unified?rev=ebf9d489cc02ad075dddd313e1146e5e2d9840fc" },
+    { name = "ai-api-unified", extras = ["openai"], git = "https://github.com/davecthomas/ai-api-unified?rev=06bdc45970eb9055a622df1a2c7e48174f267ffa" },
     { name = "click", specifier = "==8.1.8" },
     { name = "fastapi", specifier = "==0.115.12" },
     { name = "httpx", specifier = "==0.28.1" },
