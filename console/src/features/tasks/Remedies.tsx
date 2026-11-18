@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { Anchor, Button, Group, Text } from "@mantine/core";
 import { IconArrowBackUp } from "@tabler/icons-react";
 import { api, issueUrl, trackerTitle, type Task } from "../../api";
+import { ConfirmButton } from "../../components/ConfirmButton";
+import { usd } from "../../money";
 import type { Diagnosis } from "./diagnosis";
 
 // The actions a diagnosis offers, where its message is shown: Retry for the tasks it covers (all of them at
@@ -60,9 +62,25 @@ export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, o
   }
 
   const label = tasks.length > 1 ? `Retry all ${tasks.length}` : more ? `Retry with $${retryLimit(tasks[0] ?? {}, true).toFixed(2)}` : "Retry";
+  const raisesManyLimits = more && tasks.length > 1;
+  const total = raisesManyLimits ? tasks.reduce((sum, task) => sum + retryLimit(task, true), 0) : 0;
   return (
     <Group gap="sm" onClick={(e) => e.stopPropagation()}>
-      {retries && (
+      {retries && raisesManyLimits && (
+        <ConfirmButton
+          size="compact-sm"
+          variant="filled"
+          loading={busy}
+          disabled={done === tasks.length}
+          leftSection={<IconArrowBackUp size={14} />}
+          label={done === tasks.length ? "Sent back to the queue" : label}
+          title="Retry with higher spend limits?"
+          says={`Retry ${tasks.length} tasks with spend limits that add up to ${usd(total)}, double what they had.`}
+          confirm={label}
+          onConfirm={() => retry()}
+        />
+      )}
+      {retries && !raisesManyLimits && (
         <Button size="compact-sm" variant="filled" loading={busy} disabled={done === tasks.length} leftSection={<IconArrowBackUp size={14} />} onClick={() => void retry()}>
           {done === tasks.length ? "Sent back to the queue" : label}
         </Button>
