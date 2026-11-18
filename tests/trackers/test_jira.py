@@ -214,6 +214,18 @@ async def test_a_goal_is_offered_the_listed_projects_and_the_setup_every_project
     assert [c["value"] for c in await adapter.choices("projects")] == ["AB", "OPS", "VL"]
 
 
+async def test_a_goal_can_still_choose_a_listed_project_while_jira_cannot_be_reached():
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("no answer", request=request)
+
+    site = Site(site=SITE, projects={"VL": {}, "AB": {}})
+    adapter = JiraTracker("bot@example.com", "t", site=lambda: site, transport=httpx.MockTransport(down))
+
+    assert await adapter.choices("project") == [{"value": "AB", "label": "AB"}, {"value": "VL", "label": "VL"}]
+    with pytest.raises(TrackerError):
+        await adapter.choices("projects")
+
+
 def test_a_projects_own_issue_type_and_statuses_are_used_and_the_sites_where_it_sets_none():
     site = Site(
         site=SITE,

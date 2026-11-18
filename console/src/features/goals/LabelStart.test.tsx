@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
+import { LabelStart } from "./LabelStart";
 import { NewGoal } from "./NewGoal";
 import { theme } from "../../theme";
 
@@ -131,4 +132,23 @@ test("the label list filters by text and by repo", async () => {
   fireEvent.change(screen.getByLabelText("Find a label"), { target: { value: "bu" } });
   expect(screen.queryByRole("button", { name: "Label docs" })).toBeNull();
   expect(screen.getByRole("button", { name: "Label bug" })).toBeTruthy();
+});
+
+test("an answer for a project no longer asked about, even a refusal arriving last, is dropped", async () => {
+  const answers: Record<string, (r: Response) => void> = {};
+  vi.stubGlobal("fetch", (url: string) => new Promise<Response>((done) => { answers[decodeURIComponent(url).includes('"AB"') ? "AB" : "V"] = done; }));
+  const view = (project: string) => (
+    <MantineProvider theme={theme}><LabelStart onDraft={() => undefined} source={{ tracker: "jira", settings: { project } }} /></MantineProvider>
+  );
+  const { rerender } = render(view("V"));
+  fireEvent.click(screen.getByRole("button", { name: "Draft from a label (optional)" }));
+  rerender(view("AB"));
+  await waitFor(() => expect(Object.keys(answers).sort()).toEqual(["AB", "V"]));
+
+  answers.AB(new Response(JSON.stringify({ repos: ["o/a"], labels: [{ label: "bug", total: 1, repos: { "o/a": 1 } }] }), { status: 200 }));
+  expect(await screen.findByText("bug")).toBeTruthy();
+  answers.V(new Response(JSON.stringify({ detail: "names its project by its key" }), { status: 422 }));
+  await new Promise((r) => setTimeout(r, 20));
+
+  expect(screen.queryByText("names its project by its key")).toBeNull();
 });

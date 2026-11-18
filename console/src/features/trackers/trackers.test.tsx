@@ -74,6 +74,23 @@ function show(document: Record<string, any>, reasons: string[] = [], statuses: s
   return staged;
 }
 
+test("a goal's project is typed only when the list cannot be read, and counts once the field is left", async () => {
+  vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify({ detail: "Jira did not answer" }), { status: 502 })));
+  const changes: unknown[] = [];
+  render(
+    <MantineProvider theme={theme}>
+      <GoalTrackerFields trackers={[{ ...JIRA, configured: true }]} tracker="jira" onTracker={() => undefined} settings={{}} onSettings={(next) => changes.push(next)} />
+    </MantineProvider>,
+  );
+  expect(await screen.findByText(/The list could not be read, so type the key exactly: Jira did not answer/)).toBeTruthy();
+  const key = screen.getByLabelText(/Jira project/);
+  fireEvent.change(key, { target: { value: "v" } });
+  fireEvent.change(key, { target: { value: "vl" } });
+  expect(changes).toEqual([]);
+  fireEvent.blur(key);
+  expect(changes).toEqual([{ project: "VL" }]);
+});
+
 test("every supported tracker is listed, and one that is not set up is set up with its required settings empty", async () => {
   const staged = show({ default: "github", trackers: { github: {} } });
 
@@ -241,14 +258,17 @@ test("the New goal form asks what the chosen tracker asks of a goal, and lists t
   expect(changes).toEqual([["tracker", "jira"]]);
 
   rerender(<Form tracker="jira" settings={{}} />);
-  const project = await screen.findByPlaceholderText("Choose one, or type its key");
-  fireEvent.change(project, { target: { value: "vl" } });
+  // A pick, so nothing half-typed becomes the goal's project.
+  const project = await screen.findByPlaceholderText("Choose one");
+  fireEvent.change(project, { target: { value: "V" } });
+  expect(changes).toEqual([["tracker", "jira"]]);
+  fireEvent.click(await screen.findByText("Voltron (VL)"));
   expect(changes.at(-1)).toEqual(["settings", { project: "VL" }]);
 
   rerender(<Form tracker="jira" settings={{ project: "VL" }} />);
-  expect((await screen.findAllByText("Voltron (VL)")).length).toBeGreaterThan(0);
+  expect(await screen.findByDisplayValue("Voltron (VL)")).toBeTruthy();
   rerender(<Form tracker="jira" settings={{ project: "XX" }} />);
-  expect(await screen.findByText("No jira project has the key XX.")).toBeTruthy();
+  expect(await screen.findByText("XX is not one of these: choose one that is.")).toBeTruthy();
 });
 
 test("with one tracker set up the form still says which, and one with no sign-in says no issues will be read", () => {

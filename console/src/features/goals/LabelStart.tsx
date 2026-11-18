@@ -35,16 +35,23 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // What was shown, and any error, belonged to the source before. An answer for that one is dropped.
+    let stale = false;
     setPicked(null);
     setIssues(null);
+    setLabels(null);
+    setError(null);
     api.labels(undefined, source).then(
       (r) => {
+        if (stale) return;
         setLabels(r.labels);
         setRepos(r.repos);
-        setError(null);
       },
-      (err) => setError(err instanceof Error ? err.message : String(err)),
+      (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
     );
+    return () => {
+      stale = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(source ?? null)]);
 

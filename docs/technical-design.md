@@ -2668,7 +2668,10 @@ and the Issue trackers page draws both from that description. Each field
 offers its list as the operator types, refuses a name the list lacks, takes
 the list's spelling of one typed in other capitals, and marks a saved name the
 list no longer has. When the list cannot be read it says why and takes a typed
-name. This is the console's rule for any value a service can list
+name. On the New goal form a `choice` setting is a pick from the list and never
+free text, so nothing half-typed reaches the calls that read the goal's
+issues; Jira's listed projects stay offered, by key, while Jira cannot be
+reached. This is the console's rule for any value a service can list
 (`AGENTS.md`, Console).
 
 `Trackers` (`trackers/router.py`) is every supported tracker as one: a call

@@ -53,16 +53,19 @@ export function NewGoal() {
   // chosen. Empty until the trackers are read; the service then uses the default.
   const [tracker, setTracker] = useState("");
   const [trackers, setTrackers] = useState<Tracker[]>([]);
+  // Until the trackers are read, what the goal's tracker asks of it is not known, so no issues are read for it.
+  const [trackersRead, setTrackersRead] = useState(false);
   useEffect(() => {
     api.trackers().then(
       (found) => {
+        setTrackersRead(true);
         setTrackers(found.trackers.filter((t) => t.configured));
         setTracker((now) => now || found.default);
         // A goal starts with what its tracker's setup says a new one does: Jira's default project.
         const defaults = found.trackers.find((t) => t.scheme === found.default)?.goal_defaults ?? {};
         setTrackerSettings((now) => (Object.keys(now).length ? now : { ...defaults }));
       },
-      () => undefined,
+      () => setTrackersRead(true),
     );
   }, []);
   // What the tracker asks of a goal besides its repos, such as the Jira project its issues are in.
@@ -89,7 +92,7 @@ export function NewGoal() {
     () => (tracker ? { tracker, settings: trackerSettings } : undefined),
     [tracker, trackerSettings],
   );
-  const readable = missing.length === 0;
+  const readable = trackersRead && missing.length === 0;
   const [budget, setBudget] = useState<string | number>("");
   // What the budget does when it is reached, and how far past it a goal that stops may go.
   const [budgetMode, setBudgetMode] = useState<"block" | "warn">("block");
@@ -286,7 +289,7 @@ export function NewGoal() {
                 value={label}
                 onChange={setLabel}
                 repos={chosen}
-                source={readable ? source : undefined}
+                source={readable ? source : null}
                 required={false}
                 fieldProps={{ description: "Optional. Left empty, the goal gets a label of its own for the issues it creates." }}
               />
@@ -294,7 +297,7 @@ export function NewGoal() {
               // Which issues, for a goal that runs issues that exist: those with its label, ones picked by hand, or both.
               <Stack gap="md" pl="md" style={{ borderLeft: "2px solid var(--mantine-color-default-border)" }} data-testid="existing-issues">
                 <Text size="sm" c="dimmed">Give the goal a label, pick issues by hand, or both. It needs at least one of the two.</Text>
-                <LabelField value={label} onChange={setLabel} repos={chosen} source={readable ? source : undefined} required={false} />
+                <LabelField value={label} onChange={setLabel} repos={chosen} source={readable ? source : null} required={false} />
                 <LabelIssues label={label} issues={labeled} />
                 <Group gap="sm">
                   <Button variant="default" leftSection={<IconListCheck size={16} />} disabled={!chosen.length || !readable} onClick={() => setPicking(true)}>
@@ -303,7 +306,9 @@ export function NewGoal() {
                   <Text size="sm" c="dimmed">
                     {!chosen.length
                       ? "Choose a repository above first: issues are picked from the goal's repositories."
-                      : !readable
+                      : !trackersRead
+                        ? "Reading the issue tracker…"
+                        : !readable
                         ? `Choose the goal's ${missing.map((s) => s.label).join(" and ")} above first.`
                         : refs.length
                           ? `${refs.length} picked by hand: the goal takes these besides its label's, or instead of a label.`
