@@ -11,7 +11,9 @@ import { moneyText } from "../../money";
 // the task to look again; the task also looks again by itself within five minutes, or at once with Look again now.
 export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task: Task) => void }) {
   const current = Number(task.max_usd ?? 0);
-  const [limit, setLimit] = useState<number | string>(Math.ceil(current * 1.5) || 10);
+  // What the hold asks for, when the service could say: enough for the run that cannot start.
+  const asked = task.budget_request?.for === "task" && task.budget_request.to_usd ? task.budget_request : null;
+  const [limit, setLimit] = useState<number | string>(asked ? Number(asked.to_usd) : Math.ceil(current * 1.5) || 10);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (task.status !== "running" || task.waiting_on !== "budget") return null;
@@ -30,7 +32,13 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
   }
 
   return (
-    <Alert color="orange" title="Waiting on you: this task is out of budget" icon={<IconCoin size={18} />} mb="md" role="alert">
+    <Alert
+      color="orange"
+      title={asked ? `Waiting on you: this task asks for $${Number(asked.add_usd).toFixed(2)} more` : "Waiting on you: this task is out of budget"}
+      icon={<IconCoin size={18} />}
+      mb="md"
+      role="alert"
+    >
       <Stack gap="sm">
         <Text size="sm">{moneyText(task.status_reason)}</Text>
         {forGoal ? (
@@ -45,8 +53,14 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
           </Stack>
         ) : (
           <Group gap="sm" align="flex-end">
+            {asked && (
+              // The request itself, granted in one click: enough for the run that cannot start, in whole dollars.
+              <Button loading={busy} data-testid="grant-request" onClick={() => void answer("raise", Number(asked.to_usd))}>
+                Grant ${Number(asked.add_usd).toFixed(2)}: its limit becomes ${Number(asked.to_usd).toFixed(2)}
+              </Button>
+            )}
             <NumberInput
-              label="New spend limit"
+              label={asked ? "Or set another limit" : "New spend limit"}
               description={`Now $${current.toFixed(2)}, for all the task's runs`}
               prefix="$"
               min={0}
@@ -55,7 +69,7 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
               onChange={setLimit}
               w={220}
             />
-            <Button loading={busy} disabled={!(Number(limit) > current)} onClick={() => void answer("raise", Number(limit))}>
+            <Button variant={asked ? "default" : "filled"} loading={busy} disabled={!(Number(limit) > current)} onClick={() => void answer("raise", Number(limit))}>
               Raise the limit and carry on
             </Button>
             <Button variant="light" color="red" loading={busy} onClick={() => void answer("end")}>End the task</Button>

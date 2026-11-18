@@ -1050,6 +1050,21 @@ on its page lets its tasks go on by themselves, and a budget resume
 hours ends as if ended. The hold and the answer are recorded as `budget_hold`
 and `budget_decision`.
 
+A hold is a request with an amount. Its status reason is a sentence written
+and read back by one module (`meta_harness/budget_request.py`), so the Task
+API serves the same hold as numbers: a task that waits on budget carries
+`budget_request`, null on any other task. For the task's own spend limit it
+has `for: task`, the run that cannot start (`what`), what that run needs and
+what the task has left of its limit, and the request itself: `add_usd`,
+enough for the run in whole dollars and at least $1, and `to_usd`, the limit
+that grants it. For the goal's budget it has `for: goal` and the goal's id,
+and the amount is the goal's own budget resume's. The Task page's alert reads
+"this task asks for $2.00 more" and grants it in one click ("Grant $2.00: its
+limit becomes $5.00"), with another limit still to be set and End beside it;
+the needs-you list names the item by the amount ("Grant $2.00 more"). A hold
+whose reason is not that sentence has no amounts, and the page asks for a
+new limit as before.
+
 Two parts are built differently (#85), each until what it waits on exists:
 
 - A fix run starts a new pi session on a fresh clone of the pull request's
@@ -2106,7 +2121,7 @@ credential.
 | POST | `/v1/tasks/{id}/messages` | Task service | An operator's message to a running task (`when`: `next_turn`, `after_stop`), or `stop` after the current turn, recorded as `operator_message`. The scheduler hands each to the task's RunTask workflow as an `operator_message` signal, and the workflow's `deliver_message` activity gives it to the harness server of the run in progress (behind the `operator-messages` patch) | built |
 | GET | `/v1/tasks/{id}/reviews` | Task service | The task's review rounds, oldest first: verdict, reviewer, reviewed commit, summary, findings (each numbered from 1, with who dismissed it and why when an operator did) and review URL, from the `review_submitted`, `pull_request_reviewed` and `finding_dismissed` events, each with what came next, read from the events before the next round: its own fix run, the merge, another review when the head changed before it could merge, waiting, or the loop's end. The Task page's Reviews tab | built |
 | POST | `/v1/tasks/{id}/reviews/{round}/findings/{n}/dismiss`, `/v1/tasks/{id}/reviews/{round}/proceed` | Task service | An operator's word on a review its task holds for them (`waiting_on: review`): dismiss finding `n` (from 1) with a `reason`, or end the wait now. 409 unless the task holds a review. The scheduler hands each to the task's workflow | built |
-| POST | `/v1/tasks/{id}/budget` | Task service | An operator's answer to a running task held for budget (`waiting_on: budget`): `{"action": "raise", "max_usd": ...}` saves the task's new spend limit (above the old one; left out, the task only looks at its budget again) and `{"action": "end"}` ends it. The scheduler hands the answer to the task's workflow. `GET /v1/tasks?waiting=true` lists the tasks waiting on an operator | built |
+| POST | `/v1/tasks/{id}/budget` | Task service | An operator's answer to a running task held for budget (`waiting_on: budget`): `{"action": "raise", "max_usd": ...}` saves the task's new spend limit (above the old one; left out, the task only looks at its budget again) and `{"action": "end"}` ends it. The scheduler hands the answer to the task's workflow. `GET /v1/tasks?waiting=true` lists the tasks waiting on an operator, each held for budget with its `budget_request`: what it asks for, as numbers | built |
 | GET | `/v1/tasks/{id}/spend` | Task service | Where the task's money went: each of its runs, oldest first, with its kind (the task's own run, review or fix), candidate, turns, model calls, input, cached-input and output tokens, cost, and how it ended, from its `attempt_finished` and `run_finished` events, and their totals in all and by kind against the task's `max_usd`. The Task page's Spend tab | built |
 | GET | `/v1/goals/{id}/spend` | Planner | Where the goal's money went: each of its tasks with what its runs spent in all and by kind of run, and its runs and turns, most expensive first, and the goal's total and its split by kind against its budget. Opened from the Goal page's spend line | built |
 | POST | `/v1/tasks/{id}/retry` | Task service | Send a `review_unresolved`, `failed` or `canceled` task back to `queued`, with `max_usd` as its new spend limit when given; its `retries` counts up and `task_retried` is recorded. The scheduler starts a new RunTask workflow for it (the one case a task id runs a second workflow, after the first has ended). With an open pull request the workflow resumes at the review loop, on the pull request's head, with fix rounds and spend counted from nothing and its runs numbered after the earlier ones; a pull request that has merged ends the task `closed`; with none, or one closed unmerged, it makes a new first run | built |

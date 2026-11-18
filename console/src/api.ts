@@ -88,6 +88,23 @@ export interface IssueLink {
   refused_reason: string | null;
 }
 
+// A budget hold as a request (the Task API's budget_request). For the task's own spend limit it carries the
+// amount: add_usd is enough for the run, in whole dollars, and to_usd is the limit that grants it. For the
+// goal's budget the goal's own resume works the amount out.
+export interface BudgetRequest {
+  for: "task" | "goal";
+  // The run that cannot start: "fix run 2", "the review".
+  what: string;
+  needs_usd: string;
+  left_usd?: string;
+  limit_usd?: string;
+  add_usd?: string;
+  to_usd?: string;
+  goal_id?: string;
+  share_usd?: string;
+  running?: number;
+}
+
 export interface Task {
   id: string;
   external_ref: string;
@@ -108,6 +125,8 @@ export interface Task {
   max_usd?: string | null;
   // What the running task waits on an operator for: "budget" while it is held for budget.
   waiting_on?: string | null;
+  // What a task held for budget asks for, as numbers; null for any other task and for a hold with no amounts.
+  budget_request?: BudgetRequest | null;
   // The operator who took the task's review over; the round waits for their verdict. Null: no one has.
   review_claimed_by?: string | null;
   // The issues a blocked task waits on, as refs.

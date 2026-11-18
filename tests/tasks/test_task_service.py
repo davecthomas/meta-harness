@@ -226,6 +226,28 @@ def test_a_task_held_for_budget_stays_running_is_listed_as_waiting_and_records_t
     assert ended["waiting_on"] is None
 
 
+def test_a_task_held_for_budget_is_read_with_what_it_asks_for_and_any_other_task_with_none(api):
+    from meta_harness import budget_request
+
+    task = _held(api)
+    # A hold whose reason is not the workflow's sentence has no amounts to offer.
+    assert api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["budget_request"] is None
+
+    reason = budget_request.hold_reason("fix run 4", "2.5", budget_request.task_why("0.75", "10"))
+    api.post(
+        f"/v1/tasks/{task['id']}/status",
+        json={"status": "running", "reason": reason, "waiting_on": "budget"},
+        headers=_as(SERVICE_KEY),
+    )
+    asked = api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["budget_request"]
+    assert (asked["for"], asked["add_usd"], asked["to_usd"]) == ("task", "2", "12.00")
+    listed = api.get("/v1/tasks", params={"waiting": "true"}, headers=_as(CALLER_KEY)).json()["tasks"]
+    assert [t["budget_request"] for t in listed if t["id"] == task["id"]] == [asked]
+
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running", "waiting_on": ""}, headers=_as(SERVICE_KEY))
+    assert api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["budget_request"] is None
+
+
 def test_raising_a_held_tasks_limit_saves_it_and_queues_the_answer_for_its_workflow(api, events):
     task = _held(api)
 

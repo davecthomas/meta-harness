@@ -55,7 +55,13 @@ function goalItems(g: Goal): NeedsYouItem[] {
 function taskItem(t: Task): NeedsYouItem | null {
   const base = { key: `task-${t.id}`, title: t.title, to: `/tasks/${t.id}`, task: t, since: t.standing?.since };
   if (t.waiting_on === "budget") {
-    return { ...base, action: "Raise the spend limit", detail: `${moneyText(t.status_reason) ?? "It reached its spend limit"}. Open it to raise the limit or end it.` };
+    const asked = t.budget_request?.for === "task" && t.budget_request.add_usd ? `$${Number(t.budget_request.add_usd).toFixed(2)}` : null;
+    return {
+      ...base,
+      // Named by the amount when the service could say what the next run needs.
+      action: asked ? `Grant ${asked} more` : t.budget_request?.for === "goal" ? "Raise the goal's budget" : "Raise the spend limit",
+      detail: `${moneyText(t.status_reason) ?? "It reached its spend limit"}. Open it to ${asked ? `grant the ${asked} in one click, set another limit,` : "raise the limit"} or end it.`,
+    };
   }
   if (t.waiting_on === "operator_review") {
     return { ...base, action: "Finish the review", detail: `${t.review_claimed_by ?? "An operator"} took its review over: the task waits for that verdict.` };
