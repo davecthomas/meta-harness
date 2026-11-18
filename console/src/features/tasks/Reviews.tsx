@@ -2,12 +2,9 @@ import { useState } from "react";
 import { Alert, Anchor, Badge, Button, Card, Group, Modal, Stack, Text, Textarea } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { api, type ReviewRound, type Task } from "../../api";
-import { Empty } from "../../components/ui";
+import { Empty, when } from "../../components/ui";
+import { CandidateName, VerdictBadge } from "./words";
 import { moneyText } from "../../money";
-
-export function VerdictBadge({ verdict }: { verdict: string }) {
-  return <Badge color={verdict === "clean" ? "teal" : "orange"} variant="light">{verdict}</Badge>;
-}
 
 function repoOf(prUrl: string | null): string | null {
   const m = /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(prUrl ?? "");
@@ -80,10 +77,11 @@ export function Reviews({ task, rounds, onAnswered }: { task: Task; rounds: Revi
               <Group gap="xs">
                 <Text fw={650}>Round {r.round}</Text>
                 <VerdictBadge verdict={r.verdict} />
-                <Text size="xs" c="dimmed">{(r.reviewer ?? "").replace(/^harness:/, "")}</Text>
+                <CandidateName pair={r.reviewer} />
+                {r.reviewed_at && <Text size="xs" c="dimmed">{when(r.reviewed_at)}</Text>}
               </Group>
               {r.head_sha && repo && (
-                <Anchor href={`https://github.com/${repo}/commit/${r.head_sha}`} target="_blank" ff="monospace" size="xs">{r.head_sha.slice(0, 7)}</Anchor>
+                <Text size="xs" c="dimmed">at commit <Anchor href={`https://github.com/${repo}/commit/${r.head_sha}`} target="_blank" ff="monospace" size="xs">{r.head_sha.slice(0, 7)}</Anchor></Text>
               )}
             </Group>
             {r.summary && (

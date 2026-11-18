@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Badge, Button, Group, Paper, ScrollArea, Select, SimpleGrid, Stack, Text } from "@mantine/core";
+import { Button, Group, Paper, ScrollArea, Select, SimpleGrid, Stack, Text } from "@mantine/core";
 import { IconCheck, IconCopy } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 import { api, type AttemptsCompare } from "../../api";
 import { ErrorAlert } from "../../components/ui";
+import { CandidateName, DecisionBadge } from "./words";
+import { diagnose } from "./diagnosis";
 
 // On a task that has not started: run it as several attempts at once, for an operator to compare and pick one.
 export function RunAttempts({ taskId, attempts, onSet }: { taskId: string; attempts: number; onSet: () => void }) {
@@ -32,6 +34,19 @@ export function RunAttempts({ taskId, attempts, onSet }: { taskId: string; attem
       </Group>
       <ErrorAlert error={error} />
     </Paper>
+  );
+}
+
+// Why an attempt did not finish: what happened in words where the recorded reason is one the console knows,
+// with the reason as recorded under it.
+function WhyNot({ detail }: { detail: string }) {
+  const known = diagnose({ status: "failed", reason: detail });
+  const named = known && !known.kind.startsWith("other:");
+  return (
+    <Stack gap={0} data-testid="attempt-why">
+      {named && <Text size="xs" c="red">{known.summary}</Text>}
+      <Text size="xs" c={named ? "dimmed" : "red"}>Recorded: {detail}</Text>
+    </Stack>
   );
 }
 
@@ -80,11 +95,13 @@ export function CompareAttempts({ taskId }: { taskId: string }) {
               <Stack gap={6}>
                 <Group justify="space-between">
                   <Text fw={650}>Attempt {a.attempt}</Text>
-                  <Badge variant="light" color={a.decision === "finished" ? "teal" : "red"}>{a.decision}</Badge>
+                  <DecisionBadge decision={a.decision} />
                 </Group>
-                <Text size="xs" ff="monospace">{(a.candidate ?? "").replace(/^harness:/, "")}</Text>
-                <Text size="xs" c="dimmed">${Number(a.spent_usd ?? 0).toFixed(2)} · {a.files.length} files · +{added} −{removed}</Text>
-                {a.decision !== "finished" && a.detail && <Text size="xs" c="red">{a.detail}</Text>}
+                <CandidateName pair={a.candidate} />
+                <Text size="xs" c="dimmed">
+                  ${Number(a.spent_usd ?? 0).toFixed(2)} spent · {a.files.length} {a.files.length === 1 ? "file" : "files"} changed · {added} {added === 1 ? "line" : "lines"} added, {removed} removed
+                </Text>
+                {a.decision !== "finished" && a.detail && <WhyNot detail={a.detail} />}
                 {a.patch && <PatchView patch={a.patch} />}
                 {compare.waiting && a.decision === "finished" && (
                   <Button

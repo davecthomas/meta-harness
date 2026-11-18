@@ -3461,7 +3461,14 @@ A status has one label, one meaning and one color, wherever it shows
 A task reads Queued, Blocked, Working, In review, Taken over, Ready to merge,
 Review unresolved, Done, Failed or Canceled; a goal Planning, Active, Paused,
 Not started, Stalled, Out of budget, Met or Canceled. A badge says its
-meaning on hover and to a screen reader. A working task with a pull request
+meaning on hover and to a screen reader. The same holds on a task's Reviews and
+Attempts tabs (`features/tasks/words.tsx`): a review's verdict reads Clean or
+Changes asked for; an attempt's ending reads Finished, Did not finish, or Did
+not finish, the last try; who reviewed or ran it reads as its model and its
+harness profile, with the pair as the configuration writes it on hover; a
+review round says when it was made and at which commit; and an attempt that
+did not finish says what happened in words where the console knows the
+recorded reason, with the reason under it. A working task with a pull request
 open is In review on its page, in every list and in the left pane.
 
 What needs the operator is one list with one count
