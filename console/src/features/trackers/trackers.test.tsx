@@ -133,6 +133,24 @@ test("the New goal form asks what the chosen tracker asks of a goal, and lists t
   expect(await screen.findByText("No jira project has the key XX.")).toBeTruthy();
 });
 
+test("with one tracker set up the form still says which, and one with no sign-in says no issues will be read", () => {
+  const fields = (trackers: Tracker[], tracker: string) => (
+    <MantineProvider theme={theme}>
+      <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={() => undefined} settings={{}} onSettings={() => undefined} />
+    </MantineProvider>
+  );
+  const { rerender } = render(fields([GITHUB], "github"));
+  expect(screen.getByTestId("one-tracker").textContent).toContain("GitHub Issues");
+  expect(screen.getByTestId("one-tracker").textContent).toContain("The only one set up");
+  expect(screen.queryByTestId("tracker-signed-out")).toBeNull();
+
+  rerender(fields([{ ...GITHUB, signed_in: false }], "github"));
+  expect(screen.getByTestId("tracker-signed-out").textContent).toContain("reads no issues until an admin adds one");
+
+  rerender(fields([], ""));
+  expect(screen.getByTestId("one-tracker").textContent).toContain("None is set up");
+});
+
 test("the label and issue lists are asked for a goal's tracker and what it told it", () => {
   expect(sourceQuery(undefined)).toEqual({ tracker: undefined, settings: undefined });
   expect(sourceQuery({ tracker: "github" })).toEqual({ tracker: "github", settings: undefined });

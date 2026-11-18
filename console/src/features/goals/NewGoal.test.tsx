@@ -146,3 +146,35 @@ test("a goal that plans its issues from the description needs no label and is cr
   expect(created[0]).toMatchObject({ statement: "Let users export their data", modality: "feature", start: true });
   expect(created[0].label).toBeUndefined();
 });
+
+test("a goal that cannot be saved says why beside the buttons, and where to fix it", async () => {
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
+    if (url === "/v1/goals" && init?.method === "POST") return respond({ detail: "the label mh:x is held by goal g-9" }, 422);
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/new"]}>
+        <Routes>
+          <Route path="/goals/new" element={<NewGoal />} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
+
+  // Neither a label nor a picked issue: the form says which part of it to fill in.
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  const missing = await screen.findByTestId("goal-not-saved");
+  expect(missing.textContent).toContain("give it a label, or pick issues by hand, under Where its issues come from");
+  expect(within(screen.getByTestId("existing-issues")).getByText(/It needs at least one of the two/)).toBeTruthy();
+
+  // A refusal by the service is said in the same place, with that nothing was created.
+  fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "mh:x" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByTestId("goal-not-saved").textContent).toContain("the label mh:x is held by goal g-9"));
+  expect(screen.getByTestId("goal-not-saved").textContent).toContain("Nothing was created");
+});

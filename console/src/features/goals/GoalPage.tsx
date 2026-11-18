@@ -5,6 +5,7 @@ import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlay
 import { IssuesPicker } from "./IssuesPicker";
 import { api, trackerTitle, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
 import { goalSource } from "../trackers/refs";
+import { issueSourceLabel } from "./issueSource";
 import { CancelGoal } from "./CancelGoal";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { GoalStanding } from "./GoalStanding";
@@ -250,13 +251,20 @@ export function GoalPage() {
       />
       <Facts
         items={[
-          ["Modality", <Text size="sm">{goal.modality}</Text>],
+          [
+            "Where its issues come from",
+            <Stack gap={0}>
+              <Text size="sm">{issueSourceLabel(goal.modality)}</Text>
+              <Text size="xs" c="dimmed">Fixed when the goal was created.</Text>
+            </Stack>,
+          ],
           // One tracker for all the goal's issues, fixed when it was created.
           [
             "Issue tracker",
             <Text size="sm">
               {trackerTitle(goal.tracker ?? "github")}
               {Object.entries(goal.tracker_settings ?? {}).map(([name, value]) => `, ${name} ${value}`).join("")}
+              <Text span size="xs" c="dimmed" display="block">Fixed when the goal was created.</Text>
             </Text>,
           ],
           ["Label", <LabelEdit {...editable} />],
