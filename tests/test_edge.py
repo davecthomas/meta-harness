@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import httpx
 from fastapi.testclient import TestClient
 
@@ -35,6 +38,22 @@ def test_v1_paths_go_to_their_owning_service_as_the_signed_in_operator(tmp_path)
     assert all(r.headers["authorization"] == "Bearer svc-key" for r in seen)
     assert all(r.headers["x-mh-actor"] == "dave@example.com" for r in seen)
     assert seen[0].url.query == b"offset=25"
+
+
+def test_every_path_the_console_calls_has_a_route(tmp_path):
+    """The console's source names each API path it calls. One the edge has no route for answers 404 in
+    production only, since the console's own tests fake the API: /v1/supervisor was missing this way."""
+    source = Path(__file__).parent.parent / "console" / "src"
+    called: set[str] = set()
+    for file in [*source.rglob("*.ts"), *source.rglob("*.tsx")]:
+        if ".test." not in file.name:
+            called.update(re.findall(r"/v1/[a-z-]+(?:/[a-z-]+)?", file.read_text()))
+    assert "/v1/supervisor" in called and len(called) > 15, "the console's paths were not found"
+    client, _ = _edge(tmp_path)
+
+    unrouted = sorted(path for path in called if client.get(path).status_code == 404)
+
+    assert unrouted == [], "add each to ROUTES in meta_harness/edge/app.py, with the service that owns it"
 
 
 def test_an_identity_outside_the_access_list_gets_403(tmp_path):
