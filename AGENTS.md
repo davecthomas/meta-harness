@@ -93,3 +93,13 @@ from colliding:
 - US English in code, comments and docs.
 - Type hints on every parameter and return value.
 - Docstrings say what a function does and why, not how.
+
+## Console
+
+- A value that must match something a service can list (a status, an issue
+  type, a project, a label, a profile, a model, a repo) is picked from that
+  list, never only typed. The field offers the list as the operator types,
+  refuses a name the list lacks, and marks a saved one that no longer
+  matches. When the list cannot be read, the field says why and still takes
+  a typed value. A new such setting comes with the call that lists its
+  choices (for a tracker, the adapter's `choices`).

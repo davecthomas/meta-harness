@@ -172,6 +172,31 @@ async def test_the_sites_projects_are_listed_for_a_goal_to_choose_from():
     assert await adapter.choices("anything else") == []
 
 
+async def test_the_sites_status_names_are_listed_once_each_for_the_console_to_offer():
+    def statuses(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/rest/api/2/status"
+        names = ["In Dev", "Draft", "Done", "In Code Review", "done", " ", "Draft"]
+        return httpx.Response(200, json=[{"name": name, "statusCategory": {"key": "new"}} for name in names])
+
+    adapter = JiraTracker("bot@example.com", "t", site=lambda: Site(site=SITE), transport=httpx.MockTransport(statuses))
+
+    found = await adapter.choices("statuses")
+
+    assert [choice["value"] for choice in found] == ["done", "Draft", "In Code Review", "In Dev"]
+    assert all(choice["label"] == choice["value"] for choice in found)
+
+
+async def test_the_sites_issue_types_are_listed_without_the_sub_task_ones():
+    def types(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/rest/api/2/issuetype"
+        listed = [("Task", False), ("Bug", False), ("Sub-task", True), ("Story", False), ("Task", False)]
+        return httpx.Response(200, json=[{"name": name, "subtask": sub} for name, sub in listed])
+
+    adapter = JiraTracker("bot@example.com", "t", site=lambda: Site(site=SITE), transport=httpx.MockTransport(types))
+
+    assert [choice["value"] for choice in await adapter.choices("issue_type")] == ["Bug", "Story", "Task"]
+
+
 async def test_a_comment_and_a_pull_requests_link_are_added_to_the_issue():
     jira = Jira({("POST", "/rest/api/2/issue/VL-7/comment"): {"id": "10042"}})
     adapter = tracker(jira)

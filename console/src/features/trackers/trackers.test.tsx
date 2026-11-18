@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
 import { TrackersView } from "./TrackersView";
@@ -24,7 +24,7 @@ const JIRA: Tracker = {
   description: "Issues live in Jira Cloud projects.",
   settings: [
     { name: "site", label: "Site", kind: "text", required: true, help: "The Jira site's address" },
-    { name: "issue_type", label: "Issue type", kind: "text", required: false, help: "Task when empty" },
+    { name: "issue_type", label: "Issue type", kind: "choice", required: false, help: "Task when empty" },
     { name: "statuses", label: "Status names", kind: "statuses", required: false, help: "The projects' own names" },
   ],
   goal_settings: [{ name: "project", label: "Jira project", kind: "choice", required: true, help: "The project the goal's issues are in." }],
@@ -40,9 +40,14 @@ function respond(body: unknown) {
   return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
 }
 
-function show(document: Record<string, any>, reasons: string[] = []) {
+function show(document: Record<string, any>, reasons: string[] = [], statuses: string[] | Error = []) {
   const staged: [string[], unknown][] = [];
   vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/trackers/jira/choices/issue_type") return respond({ choices: ["Bug", "Story", "Task"].map((name) => ({ value: name, label: name })) });
+    if (url === "/v1/trackers/jira/choices/statuses") {
+      if (statuses instanceof Error) return Promise.resolve(new Response(JSON.stringify({ detail: statuses.message }), { status: 422 }));
+      return respond({ choices: statuses.map((name) => ({ value: name, label: name })) });
+    }
     if (url === "/v1/trackers") return respond({ default: document.default, trackers: [GITHUB, JIRA] });
     if (url === "/v1/repos") return respond({ repos: [{ name: "o/r" }] });
     return respond({});
@@ -89,11 +94,65 @@ test("a tracker that is set up shows its settings, its missing sign-in by name, 
   expect(jira.getByText("Shipped")).toBeTruthy();
   expect(jira.getByText(/site is the Jira site's address/)).toBeTruthy();
   // The project is each goal's to say, not the site's configuration.
-  expect(jira.getByText(/Each goal that uses Jira says its own jira project/)).toBeTruthy();
+  expect(jira.getByText(/Each goal that uses Jira sets its own when it is created: Jira project/)).toBeTruthy();
   expect(jira.queryByText("Projects")).toBeNull();
 
   fireEvent.click(jira.getByRole("button", { name: "Make default" }));
   expect(staged).toEqual([[["default"], "jira"]]);
+});
+
+const SITE_STATUSES = ["Draft", "In Dev", "In Code Review", "Done"];
+const WITH_JIRA = (statuses: Record<string, string>) => ({ default: "github", trackers: { github: {}, jira: { site: "https://example.atlassian.net", statuses } } });
+
+test("a status name is picked from the site's own, in the site's spelling, and a name the site lacks is refused", async () => {
+  const staged = show(WITH_JIRA({}), [], SITE_STATUSES);
+  const jira = within(await screen.findByTestId("tracker-jira"));
+
+  fireEvent.click(jira.getByRole("button", { name: "Edit Jira's status for in review" }));
+  const input = await jira.findByRole("combobox", { name: "Jira's status for in review" });
+  // The list is read when the page opens; a name typed before it arrives would not be checked.
+  await waitFor(() => expect(input.getAttribute("placeholder")).toBe("Pick a status"));
+  fireEvent.change(input, { target: { value: "In Code Reveiw" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(await jira.findByText(/Jira has no status named In Code Reveiw: pick one from the list/)).toBeTruthy();
+  expect(staged).toEqual([]);
+
+  fireEvent.change(input, { target: { value: "in code review" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "statuses"], { in_review: "In Code Review" }]]));
+});
+
+test("an issue type is picked from the site's own too", async () => {
+  const staged = show(WITH_JIRA({}), [], SITE_STATUSES);
+  const jira = within(await screen.findByTestId("tracker-jira"));
+
+  fireEvent.click(jira.getByRole("button", { name: "Edit Jira: Issue type" }));
+  const input = await jira.findByRole("combobox", { name: "Jira: Issue type" });
+  await waitFor(() => expect(input.getAttribute("placeholder")).toBe("Pick an issue type"));
+  fireEvent.change(input, { target: { value: "Stroy" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(await jira.findByText(/Jira has no issue type named Stroy/)).toBeTruthy();
+
+  fireEvent.change(input, { target: { value: "story" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "issue_type"], "Story"]]));
+});
+
+test("a saved status name the site does not have is marked, and an unreadable list leaves typing open", async () => {
+  show(WITH_JIRA({ done: "Shipped", todo: "draft" }), [], SITE_STATUSES);
+  const jira = within(await screen.findByTestId("tracker-jira"));
+  expect((await jira.findByTestId("status-unknown-done")).textContent).toBe("Jira has no status named Shipped");
+  expect(jira.queryByTestId("status-unknown-todo")).toBeNull();
+  cleanup();
+
+  const staged = show(WITH_JIRA({}), [], new Error("Jira is not signed in: set MH_JIRA_TOKEN"));
+  const unread = within(await screen.findByTestId("tracker-jira"));
+  expect((await unread.findByText(/could not be listed, so type each exactly/)).textContent).toContain("set MH_JIRA_TOKEN");
+  fireEvent.click(unread.getByRole("button", { name: "Edit Jira's status for done" }));
+  const input = await unread.findByRole("combobox", { name: "Jira's status for done" });
+  fireEvent.change(input, { target: { value: "Shipped" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "statuses"], { done: "Shipped" }]]));
 });
 
 test("the New goal form asks what the chosen tracker asks of a goal, and lists the choices by name", async () => {

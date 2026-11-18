@@ -402,8 +402,18 @@ class JiraTracker:
         await self._call("POST", f"/issue/{key}/remotelink", json=link)
 
     async def choices(self, setting: str) -> list[dict[str, str]]:
-        """What a goal may choose for one of its settings: for `project`, the site's projects the Jira account
-        sees, by name."""
+        """What the console offers for a setting, so a name is picked and not typed: for a goal's `project`,
+        the site's projects the Jira account sees, by name; for the site's `statuses`, every status name its
+        workflows use; for its `issue_type`, every issue type but the sub-task ones, which need a parent."""
+        if setting in ("statuses", "issue_type"):
+            listed = await self._call("GET", "/status" if setting == "statuses" else "/issuetype")
+            # One site has a status or type of the same name in several projects.
+            names = {
+                str(entry.get("name") or "").strip().lower(): str(entry.get("name") or "").strip()
+                for entry in listed or []
+                if not entry.get("subtask")
+            }
+            return [{"value": name, "label": name} for key, name in sorted(names.items()) if key]
         if setting != "project":
             return []
         found: list[dict[str, str]] = []
@@ -482,7 +492,9 @@ SPEC = Supported(
     "Issues live in the projects of one Jira Cloud site. Each goal says which project its issues are in.",
     settings=[
         Setting("site", "Site", required=True, help="The Jira site's address, such as https://example.atlassian.net"),
-        Setting("issue_type", "Issue type", help="The type of an issue the planner creates. Task when empty."),
+        Setting(
+            "issue_type", "Issue type", kind="choice", help="The type of an issue the planner creates. Task when empty."
+        ),
         Setting(
             "statuses",
             "Status names",

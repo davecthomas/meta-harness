@@ -768,8 +768,8 @@ def create_app(
 
     @app.get("/v1/trackers/{scheme}/choices/{setting}")
     async def tracker_choices(scheme: str, setting: str, who: str = Depends(operator)) -> dict:
-        """What a goal may choose for one of a tracker's goal settings, as value and label: Jira's projects.
-        Empty for a setting with nothing to list. 422 when the tracker is not set up, 502 when it cannot be
+        """What the console offers for one of a tracker's settings, as value and label: Jira's projects for a
+        goal, and the status names and issue types of its site for the site's own. Empty for a setting with nothing to list. 422 when the tracker is not set up, 502 when it cannot be
         read, each saying why."""
         adapter = tracker_named(scheme)
         if not hasattr(adapter, "choices"):

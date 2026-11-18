@@ -2640,6 +2640,14 @@ every ref it holds is its tracker's, and for Jira its project's (422
 otherwise). A goal from before goals named a tracker uses GitHub. A `choice`
 setting's options come from `GET /v1/trackers/{scheme}/choices/{setting}`
 (Jira's projects, by name), so no form or route is written for one tracker.
+The same call lists what a site's own settings can name: Jira's issue types
+(`issue_type`, a `choice` setting; sub-task types left out, since they need a
+parent) and its status names (`statuses`). The Issue trackers page offers
+each list as the operator types, refuses a name the site lacks, takes the
+site's spelling of one typed in other capitals, and marks a saved name the
+site no longer has. When the list cannot be read it says why and takes a
+typed name. This is the console's rule for any value a service can list
+(`AGENTS.md`, Console).
 
 `Trackers` (`trackers/router.py`) is every supported tracker as one: a call
 that names a ref goes to the tracker the ref's first part names; a call made
