@@ -49,8 +49,8 @@ test("with no repository it says nothing can run yet, and one is added here from
 test("a listed repository is removed here, one already listed is not offered again, and a staged one says so", async () => {
   const staged = show({ "o/a": { default_checks: ["make test"] }, "o/b": { default_checks: [] } }, { "o/a": { default_checks: ["make test"] } });
 
-  expect(within(screen.getByTestId("repo-o/b")).getByText("Added, not saved yet")).toBeTruthy();
-  expect(within(screen.getByTestId("repo-o/a")).queryByText("Added, not saved yet")).toBeNull();
+  expect(within(screen.getByTestId("repo-o/b")).getAllByText("not saved").length).toBeGreaterThan(0);
+  expect(within(screen.getByTestId("repo-o/a")).queryByText("not saved")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Remove o/a" }));
   expect(staged).toEqual([[["repos", "o/a"], undefined]]);
 

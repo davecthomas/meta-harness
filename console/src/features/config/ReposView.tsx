@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Anchor, Button, Group, Modal, Paper, Select, Stack, Table, Text, Textarea } from "@mantine/core";
+import { Anchor, Badge, Button, Group, Modal, Paper, Select, Stack, Table, Text, Textarea } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { api } from "../../api";
 import { InlineField } from "../../components/InlineField";
@@ -76,7 +76,7 @@ export function ReposView({ staging: s }: { staging: Staging }) {
               <Table.Tr key={name} data-testid={`repo-${name}`}>
                 <Table.Td>
                   <Anchor href={`https://github.com/${name}`} target="_blank" ff="monospace" size="sm">{name}</Anchor>
-                  {s.original.repos?.[name] === undefined && <Text size="xs" c="indigo">Added, not saved yet</Text>}
+                  {s.original.repos?.[name] === undefined && <Badge size="xs" color="yellow" variant="light" tt="none">not saved</Badge>}
                   <Reasons reasons={s.reasons(`repo:${name}`)} />
                 </Table.Td>
                 <Table.Td>

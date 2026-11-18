@@ -161,7 +161,8 @@ export function InlineEdit<T>(props: {
       <IconPencil
         aria-hidden
         size={props.heading ? 18 : 14}
-        style={{ opacity: hover ? 0.6 : 0, flex: "none", marginLeft: props.heading ? 8 : 0, marginTop: 3, transition: "opacity 120ms" }}
+        // Always there, dimmer until pointed at: a value that can be edited looks it.
+        style={{ opacity: hover ? 0.7 : 0.35, flex: "none", marginLeft: props.heading ? 8 : 0, marginTop: 3, transition: "opacity 120ms" }}
       />
     </Box>
   );

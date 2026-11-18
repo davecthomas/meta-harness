@@ -78,15 +78,20 @@ test("an edit in place is staged and marked, and Review and save saves every cha
   fireEvent.change(description, { target: { value: "One module, clear checks." } });
   fireEvent.keyDown(description, { key: "Enter", ctrlKey: true });
 
-  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
-  expect(screen.getByText("changed")).toBeTruthy();
+  expect(await screen.findByText("1 change not saved yet")).toBeTruthy();
+  expect(screen.getByText("not saved")).toBeTruthy();
   expect(saved).toHaveLength(0);
 
   fireEvent.click(screen.getByRole("button", { name: "Edit Model of candidate 1 in standard" }));
   fireEvent.click(await screen.findByText("openai-responses:gpt-6-sol"));
-  expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
+  expect(await screen.findByText("2 changes not saved yet")).toBeTruthy();
 
   fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+  // The review says each change in words, by where it is; the JSON is behind a button.
+  const changes = (await screen.findByTestId("review-changes")).textContent ?? "";
+  expect(changes).toContain("tiers › standard › models: added harness:pi-lean/openai-responses:gpt-6-sol");
+  expect(changes).toContain("tiers › standard › description");
+  fireEvent.click(screen.getByRole("button", { name: "Show the JSON" }));
   expect(await screen.findByText(/\+ .*harness:pi-lean\/openai-responses:gpt-6-sol/)).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Sol first" } });
   fireEvent.click(screen.getByRole("button", { name: "Save as version 2" }));
@@ -103,15 +108,20 @@ test("a refused save shows each reason beside the value it is about, the rest on
   renderPage();
 
   fireEvent.click(await screen.findByRole("button", { name: "Remove candidate 1 in standard" }));
-  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+  expect(await screen.findByText("1 change not saved yet")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
   fireEvent.click(await screen.findByRole("button", { name: "Save as version 2" }));
 
+  // The review stays open on a refusal and says why; the reasons are beside their values behind it too.
+  const refused = await screen.findByTestId("review-refused");
+  expect(refused.textContent).toContain("the router does not parse: x");
+  expect(refused.textContent).toContain("Your changes are still here");
+  fireEvent.click(screen.getByRole("button", { name: "Back to editing" }));
   expect(await screen.findByText("Not saved: the service would refuse this version")).toBeTruthy();
   expect(screen.getByText("the router does not parse: x")).toBeTruthy();
   expect(within(screen.getByTestId("tier-standard")).getByText("tier standard has no candidates")).toBeTruthy();
   expect(screen.getByText("default_tier is required: the router needs a tier")).toBeTruthy();
-  expect(screen.getByText("1 change to version 1")).toBeTruthy();
+  expect(screen.getByText("1 change not saved yet")).toBeTruthy();
 });
 
 test("Discard drops the staged changes, and Advanced: JSON opens the document with them", async () => {
@@ -120,7 +130,7 @@ test("Discard drops the staged changes, and Advanced: JSON opens the document wi
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit When a tier is used up" }));
   fireEvent.click(await screen.findByRole("option", { name: "Fail", hidden: true }));
-  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+  expect(await screen.findByText("1 change not saved yet")).toBeTruthy();
 
   fireEvent.click(screen.getByRole("button", { name: "Advanced: JSON" }));
   const json = (await screen.findByLabelText(/JSON/, { selector: "textarea" })) as HTMLTextAreaElement;
@@ -128,7 +138,7 @@ test("Discard drops the staged changes, and Advanced: JSON opens the document wi
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
   fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-  await waitFor(() => expect(screen.queryByText("1 change to version 1")).toBeNull());
+  await waitFor(() => expect(screen.queryByText("1 change not saved yet")).toBeNull());
   expect(screen.getByText("Escalate one tier up")).toBeTruthy();
 });
 
@@ -158,7 +168,7 @@ test("making another version active with changes staged asks first, and Discard 
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit When a tier is used up" }));
   fireEvent.click(await screen.findByRole("option", { name: "Fail", hidden: true }));
-  expect(await screen.findByText("1 change to version 2")).toBeTruthy();
+  expect(await screen.findByText("1 change not saved yet")).toBeTruthy();
 
   fireEvent.click(screen.getByRole("button", { name: "Make active" }));
   const ask = (await screen.findByText(/Make version 1 active again/)).parentElement as HTMLElement;
@@ -204,7 +214,7 @@ test("Save in the prompt before a rollback opens the review, and the rollback go
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit When a tier is used up" }));
   fireEvent.click(await screen.findByRole("option", { name: "Fail", hidden: true }));
-  expect(await screen.findByText("1 change to version 2")).toBeTruthy();
+  expect(await screen.findByText("1 change not saved yet")).toBeTruthy();
 
   fireEvent.click(screen.getByRole("button", { name: "Make active" }));
   const ask = (await screen.findByText(/Make version 1 active again/)).parentElement as HTMLElement;
@@ -216,7 +226,7 @@ test("Save in the prompt before a rollback opens the review, and the rollback go
   const prompt = await screen.findByRole("dialog", { name: "Save your changes?" });
   expect(saved).toHaveLength(0);
   expect(rolledBack).toHaveLength(0);
-  expect(screen.getByText("1 change to version 2")).toBeTruthy();
+  expect(screen.getByText("1 change not saved yet")).toBeTruthy();
 
   fireEvent.click(within(prompt).getByRole("button", { name: "Save" }));
   const review = await screen.findByRole("dialog", { name: "Save version 3" });
@@ -237,17 +247,20 @@ test("a refused save shows a profile field's reason beside that field, not under
   const cpu = screen.getByLabelText("vCPU of pi-lean");
   fireEvent.change(cpu, { target: { value: "2" } });
   fireEvent.keyDown(cpu, { key: "Enter" });
-  expect(await screen.findByText("1 change to version 1")).toBeTruthy();
+  expect(await screen.findByText("1 change not saved yet")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
   fireEvent.click(await screen.findByRole("button", { name: "Save as version 2" }));
 
-  const reason = await screen.findByText("pi-lean: resources.memory_gb must be a positive number");
+  // The review says why it was refused; behind it the reason sits beside the value it is about.
+  await screen.findByTestId("review-refused");
+  const row = within(screen.getByTestId("profile-pi-lean"));
+  const reason = row.getByText("pi-lean: resources.memory_gb must be a positive number");
   const cells = within(screen.getByTestId("profile-pi-lean")).getAllByRole("cell");
   // Profile, Tools, Skills, Limits, Resources: the reason sits in the Resources cell.
   expect(cells[4].contains(reason)).toBe(true);
   expect(cells[0].contains(reason)).toBe(false);
   expect(within(cells[0]).getByText("pi-lean: a reason about the whole profile")).toBeTruthy();
-  expect(screen.getByText("1 change to version 1")).toBeTruthy();
+  expect(screen.getByText("1 change not saved yet")).toBeTruthy();
 });
 
 test("a profile is added and removed from the table, each staged", async () => {
@@ -260,7 +273,7 @@ test("a profile is added and removed from the table, each staged", async () => {
   expect(await screen.findByTestId("profile-pi-fast")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Remove profile pi-careful" }));
 
-  expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
+  expect(await screen.findByText("2 changes not saved yet")).toBeTruthy();
   expect(screen.queryByTestId("profile-pi-careful")).toBeNull();
 });
 
@@ -273,7 +286,7 @@ test("a tier's name edits in place, and a rename carries the default tier with i
   fireEvent.change(name, { target: { value: "small" } });
   fireEvent.keyDown(name, { key: "Enter" });
 
-  expect(await screen.findByText("2 changes to version 1")).toBeTruthy();
+  expect(await screen.findByText("2 changes not saved yet")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Advanced: JSON" }));
   const json = (await screen.findByLabelText(/JSON/, { selector: "textarea" })) as HTMLTextAreaElement;
   expect(JSON.parse(json.value)).toMatchObject({ default_tier: "small", tiers: [{ name: "small" }] });

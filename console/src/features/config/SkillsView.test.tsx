@@ -59,6 +59,6 @@ test("a skill imported from git is read in full before it is added, then staged 
   expect(screen.queryByTestId("skill-tidy-notes")).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "Add the skill" }));
-  await waitFor(() => expect(screen.getByTestId("skill-tidy-notes").textContent).toContain("new"));
+  await waitFor(() => expect(screen.getByTestId("skill-tidy-notes").textContent).toContain("not saved"));
   expect(screen.getByTestId("skill-tidy-notes").textContent).toContain("No profile yet");
 });

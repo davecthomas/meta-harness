@@ -148,7 +148,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
                 <Table.Td>
                   <Group gap={6} wrap="nowrap">
                     <Anchor component="button" type="button" fw={600} size="sm" onClick={() => setReading(name)}>{name}</Anchor>
-                    {s.original.skills?.[name] === undefined && <Badge size="xs" color="yellow" variant="light" tt="none">new</Badge>}
+                    {s.original.skills?.[name] === undefined && <Badge size="xs" color="yellow" variant="light" tt="none">not saved</Badge>}
                   </Group>
                   <Text size="xs" c="dimmed">{Object.keys(skill.files).length} files, {kb(skill.files)} KB</Text>
                 </Table.Td>
