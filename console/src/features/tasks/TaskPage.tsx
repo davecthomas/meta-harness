@@ -264,7 +264,7 @@ export function TaskPage() {
       {["queued", "blocked"].includes(status) && (
         <RunAttempts taskId={task.id} attempts={task.attempts ?? 1} onSet={() => void api.task(task.id).then(setTask)} />
       )}
-      <Plan events={events} />
+      <Plan events={events} running={status === "running"} />
       <SegmentedControl
         mb="md"
         value={tab}
