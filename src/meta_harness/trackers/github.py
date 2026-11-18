@@ -8,7 +8,9 @@ import re
 
 from meta_harness.github_app import GitHubAppError, GitHubApps
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
-from meta_harness.trackers.base import DONE, TODO, Issue, Source, Supported, TrackerError
+from collections.abc import Callable
+
+from meta_harness.trackers.base import DONE, TODO, Issue, Marked, Source, Supported, TrackerError, configured_label
 
 SCHEME = "github"
 READ_ISSUES = {"issues": "read"}
@@ -66,8 +68,20 @@ class GitHubTracker:
     # A pull request's `Closes` line links it to its issue and closes the issue on merge: nothing to tell.
     writes_progress = False
 
-    def __init__(self, apps: GitHubApps | None = None) -> None:
+    def __init__(self, apps: GitHubApps | None = None, label: Callable[[], str] = configured_label) -> None:
         self.apps = apps or GitHubApps()
+        self.label = label
+        self.marked = Marked()
+
+    async def mark(self, ref: str) -> None:
+        """Adds the meta-harness's label to the issue. GitHub makes a label the repo lacks when an issue first
+        carries it, and adding one the issue has changes nothing."""
+        label = self.label()
+        if (ref, label) in self.marked.refs:
+            return
+        repo, number = parse_ref(ref)
+        await self._call(repo, WRITE_ISSUES, "POST", f"/repos/{repo}/issues/{number}/labels", json={"labels": [label]})
+        self.marked.refs.add((ref, label))
 
     async def _call(self, repo: str, permissions: dict[str, str], method: str, path: str, **kwargs):
         """One GitHub call, its failure as a TrackerError, so no caller needs to know the tracker is GitHub."""
@@ -116,13 +130,17 @@ class GitHubTracker:
 
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
         """Creates one issue. Only the planner calls it, and only for a plan an operator approved."""
+        carried = list(dict.fromkeys([*labels, self.label()]))
         created = await self._call(
-            repo, WRITE_ISSUES, "POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": labels}
+            repo, WRITE_ISSUES, "POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": carried}
         )
-        return _issue(repo, created)
+        made = _issue(repo, created)
+        self.marked.refs.add((made.ref, self.label()))
+        return made
 
     async def comment(self, ref: str, body: str) -> str:
         repo, number = parse_ref(ref)
+        await self.mark(ref)
         made = await self._call(
             repo, WRITE_ISSUES, "POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body}
         )
@@ -139,6 +157,7 @@ class GitHubTracker:
         now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
         if now["state"] == wanted:
             return False
+        await self.mark(ref)
         change = {"state": wanted, **({"state_reason": "completed"} if wanted == "closed" else {})}
         await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json=change)
         return True

@@ -138,7 +138,8 @@ async def test_an_issue_is_created_in_the_goals_project_and_a_label_with_a_space
             "summary": "Split 1",
             "description": "Body.",
             "issuetype": {"name": "Task"},
-            "labels": ["mh"],
+            # Its goal's label, and the one that says the meta-harness made it.
+            "labels": ["mh", "ai:meta-harness"],
         }
     }
     await adapter.ensure_label("o/r", "meta-harness:goal-1")
@@ -178,8 +179,11 @@ async def test_a_comment_and_a_pull_requests_link_are_added_to_the_issue():
     assert await adapter.comment("jira:VL-7", "The task started.") == f"{SITE}/browse/VL-7?focusedCommentId=10042"
     await adapter.link_pull_request("jira:VL-7", "https://github.com/o/r/pull/9", "Fix it")
 
-    assert jira.asked[0][2] == {"body": "The task started."}
-    assert jira.asked[1] == (
+    # The issue is labeled as the meta-harness's before its first write, and once for all of them.
+    assert jira.asked[0] == ("PUT", "/rest/api/2/issue/VL-7", {"update": {"labels": [{"add": "ai:meta-harness"}]}})
+    assert [path for _, path, _ in jira.asked].count("/rest/api/2/issue/VL-7") == 1
+    assert jira.asked[1][2] == {"body": "The task started."}
+    assert jira.asked[2] == (
         "POST",
         "/rest/api/2/issue/VL-7/remotelink",
         {
@@ -327,3 +331,27 @@ def test_a_goals_assigned_setting_is_yes_or_left_out():
     assert check_goal({"project": "VL", "assigned": "yes"}) == [] and check_goal({"project": "VL"}) == []
     [reason] = check_goal({"project": "VL", "assigned": "true"})
     assert 'assigned is "yes"' in reason
+
+
+async def test_a_moved_issue_is_labeled_first_one_left_where_it_is_is_not_and_a_goals_copies_share_what_is_labeled():
+    jira = Jira(
+        {
+            ("GET", "/rest/api/2/issue/VL-7"): issue("VL-7"),
+            ("GET", "/rest/api/2/issue/VL-7/transitions"): MOVES,
+        }
+    )
+    site = Site(site=SITE)
+    adapter = JiraTracker(
+        "bot@example.com", "t", site=lambda: site, transport=httpx.MockTransport(jira), label=lambda: "bot"
+    )
+
+    assert await adapter.bound(GOAL).set_status("jira:VL-7", IN_PROGRESS) is True
+    writes = [(method, path, body) for method, path, body in jira.asked if method != "GET"]
+    assert writes[0] == ("PUT", "/rest/api/2/issue/VL-7", {"update": {"labels": [{"add": "bot"}]}})
+    assert writes[1][1] == "/rest/api/2/issue/VL-7/transitions"
+
+    # Another goal's copy of the adapter knows the issue is labeled; an issue already there is not written to.
+    jira.asked.clear()
+    assert await adapter.bound(GOAL).set_status("jira:VL-7", TODO) is False
+    await adapter.bound(GOAL).mark("jira:VL-7")
+    assert [method for method, _, _ in jira.asked if method != "GET"] == []
