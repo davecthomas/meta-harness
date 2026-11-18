@@ -103,6 +103,10 @@ class FakeTasks:
     def create(self, **task):
         for existing in self.tasks.values():
             if existing["external_ref"] == task["external_ref"]:
+                # As the Task API does: a canceled task is made over from what is submitted, and queued.
+                if existing["status"] == "canceled":
+                    existing.update({k: v for k, v in task.items() if v is not None}, status="queued")
+                    self.renewed = [*getattr(self, "renewed", []), existing["id"]]
                 return existing
         task_id = f"t-{uuid.uuid4().hex[:6]}"
         self.tasks[task_id] = {**task, "id": task_id, "status": "blocked" if task.get("depends_on") else "queued"}

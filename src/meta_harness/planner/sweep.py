@@ -395,7 +395,7 @@ async def _take_in(
             return
         existing = None
     if existing and existing["task_id"]:
-        await _retake(existing["task_id"], issue, tasks, result)
+        await _retake(existing["task_id"], goal, issue, tasks, result)
         return
     if existing and existing.get("split_into") is not None and not existing.get("run_anyway"):
         # Split by an operator: it stays held, saying what it was split into, and is neither sized nor split again.
@@ -522,9 +522,11 @@ async def _take_in(
     result.joined.append(issue.ref)
 
 
-async def _retake(task_id: str, issue: Issue, tasks: TaskClient, result: SweepResult) -> None:
-    """An open issue the goal still holds whose task was canceled goes back to work: its task is retried, so
-    the goal does not wait on an issue nothing works on. An operator who wants it left alone removes it from
+async def _retake(task_id: str, goal: dict, issue: Issue, tasks: TaskClient, result: SweepResult) -> None:
+    """An open issue the goal still holds whose task was canceled goes back to work, so the goal does not wait
+    on an issue nothing works on. Its task is submitted again as the issue is now, which makes the task over
+    (the Task API's renew): an issue edited since its task was made runs from what it says today, and for this
+    goal. Its size and spend limit stay. An operator who wants it left alone removes it from
     the goal instead (Remove from goal), which this sweep never takes in again. A failed task is not retaken:
     the supervisor retries a failure that was the system's, and any other is an operator's, since running it
     again unasked could fail the same way at the same cost."""
@@ -532,7 +534,20 @@ async def _retake(task_id: str, issue: Issue, tasks: TaskClient, result: SweepRe
         task = await asyncio.to_thread(tasks.get, task_id)
         if task["status"] != "canceled":
             return
-        await asyncio.to_thread(tasks.retry, task_id, None, "planner")
+        repo = issue.repo or task["repo"]
+        registered = repos.get(repo)
+        await asyncio.to_thread(
+            tasks.create,
+            external_ref=issue.ref,
+            repo=repo,
+            task_type=task_type_for(issue),
+            priority=goal["priority"],
+            title=task_text(issue.title)[:300],
+            description=task_text(issue.body).strip() or task_text(issue.title),
+            acceptance_checks=issue.checks or (registered.default_checks if registered else []),
+            goal_id=goal["id"],
+            paths=issue.paths or None,
+        )
     except TaskApiError as err:
         result.errors.append(f"{issue.ref}: its canceled task {task_id} could not be sent back to work: {err}")
         return

@@ -2681,12 +2681,16 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
   address, so adding it twice changes the one link.
 - A label with a space is refused before any issue is made.
 An issue is one task, by its ref, so what the task was made from can fall
-behind the issue. A task that ended canceled or failed with no pull request
-is made over when a control-plane service submits its issue again
-(`tasks.store.renew`): its title, description, acceptance checks, paths, goal,
-repo, size and spend limit become the submitted ones and it goes back to the
-queue for a new first run. One with a pull request, or still running, is
-left as it is. An issue held by a goal that has ended (met or canceled) is
+behind the issue. A task that ended canceled or failed is made over when a
+control-plane service submits its issue again (`tasks.store.renew`): its
+title, description, acceptance checks, paths, goal and repo become the
+submitted ones, its size and spend limit too when submitted, and it goes
+back to the queue. One with a pull request keeps it and resumes at its
+review: the workflow goes on with one still open and starts a new first run
+when it was closed unmerged. A task still running, waiting or done is left
+as it is. The sweep does this for an open issue whose task was canceled
+(`_retake`), so the task goes back to work from what the issue says today.
+An issue held by a goal that has ended (met or canceled) is
 released for a new goal with its label to take
 (`planner.store.release_from_ended_goal`); an open goal's issue stays its.
 
