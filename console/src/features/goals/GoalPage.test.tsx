@@ -156,7 +156,11 @@ test("a budget-exhausted goal offers no Complete goal", async () => {
 test("Complete goal sets the goal met, and Reopen goal makes it active again", async () => {
   const posted = renderGoal("active", { complete: "met", reopen: "active" });
 
+  // Completing asks first, saying what happens to the goal's tasks.
   fireEvent.click(await screen.findByRole("button", { name: "Complete goal" }));
+  expect(await screen.findByText(/Tasks already running go on to their pull requests/)).toBeTruthy();
+  expect(posted).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Mark it met" }));
   fireEvent.click(await screen.findByRole("button", { name: "Reopen goal" }));
 
   await waitFor(() => expect(screen.getByRole("button", { name: "Complete goal" })).toBeTruthy());

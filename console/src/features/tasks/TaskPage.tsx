@@ -28,6 +28,7 @@ import { statusLabel } from "../../components/status";
 import { shownStatus } from "./shownStatus";
 import { moneyText } from "../../money";
 import { errorText, ReadFailed } from "../../components/ReadFailed";
+import { ConfirmButton } from "../../components/ConfirmButton";
 
 const FIRST = 400;
 
@@ -188,13 +189,11 @@ export function TaskPage() {
   // As every list shows it: a working task with a pull request open is in review.
   const shown = shownStatus({ ...task, status });
   const cancellable = ["queued", "blocked", "running"].includes(status);
-  async function cancel() {
-    try {
-      setTask(await api.cancelTask(task!.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
+  // What stopping it does, by where it is: said before it is stopped.
+  const cancelSays =
+    status === "running"
+      ? "The agent's run is stopped and the task is canceled. What the run changed so far stays in its workspace and is not published. A pull request already open stays open. You can retry the task later."
+      : "The task is canceled before it starts. Its issue stays open; retry the task later, or remove the issue from its goal.";
 
   return (
     <>
@@ -203,7 +202,18 @@ export function TaskPage() {
         description={<Group gap="xs"><StatusBadge status={shown} /><Text size="sm" c="dimmed" ff="monospace">{task.id}</Text></Group>}
         actions={
           <>
-            {cancellable && <Button color="red" variant="light" leftSection={<IconX size={16} />} onClick={cancel}>Cancel task</Button>}
+            {cancellable && (
+              <ConfirmButton
+                label="Cancel task"
+                title="Cancel this task?"
+                says={cancelSays}
+                cancel="Keep the task"
+                color="red"
+                variant="light"
+                leftSection={<IconX size={16} />}
+                onConfirm={async () => setTask(await api.cancelTask(task!.id))}
+              />
+            )}
             <TaskActions
               task={task}
               status={status}

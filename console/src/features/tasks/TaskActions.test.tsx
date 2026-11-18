@@ -46,7 +46,12 @@ test("Retry says what it will do, takes a spend limit and sends the task back", 
 test("Merge asks for the merge, and a merged pull request offers Mark done in place of Cancel and Merge", async () => {
   const { asked } = show({ ...TASK, status: "ready" });
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  // Merge asks first, saying what it does, and merges only from its dialog.
   fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  expect(dialog.getByText(/cannot be taken back from here/)).toBeTruthy();
+  expect(asked).toHaveLength(0);
+  fireEvent.click(dialog.getByRole("button", { name: "Merge" }));
   await waitFor(() => expect(asked).toHaveLength(1));
   expect(asked[0].url).toBe("/v1/tasks/t-1/merge");
 });

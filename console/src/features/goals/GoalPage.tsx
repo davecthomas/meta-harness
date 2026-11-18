@@ -18,6 +18,7 @@ import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit,
 import { HeldActions, StrictIssuesEdit } from "./sizing";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
+import { ConfirmButton } from "../../components/ConfirmButton";
 
 // How often an open goal's page rereads its issues.
 const REFRESH_MS = 5000;
@@ -218,7 +219,19 @@ export function GoalPage() {
               <ResumeBudget goalId={goal.id} goal={goal} onResumed={() => void act(async () => undefined)} />
             )}
             {["active", "paused", "stalled"].includes(goal.status) && (
-              <Button color="teal" variant="light" leftSection={<IconCircleCheck size={16} />} onClick={() => act(() => api.goalAction(goal.id, "complete"))}>Complete goal</Button>
+              <ConfirmButton
+                label="Complete goal"
+                title="Mark this goal met?"
+                says="The goal is marked met and takes in no more issues. Tasks already running go on to their pull requests; tasks that have not started stay queued and are not canceled. Use Cancel goal to stop its work. You can reopen the goal later."
+                confirm="Mark it met"
+                color="teal"
+                variant="light"
+                leftSection={<IconCircleCheck size={16} />}
+                onConfirm={async () => {
+                  await api.goalAction(goal.id, "complete");
+                  await Promise.all([load(), loadProgress()]);
+                }}
+              />
             )}
             {!open && (
               <Button leftSection={<IconArrowBackUp size={16} />} onClick={() => act(() => api.goalAction(goal.id, "reopen"))}>Reopen goal</Button>
