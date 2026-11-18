@@ -23,6 +23,9 @@ const ICONS: Record<StepKind, typeof IconClock> = {
 const COLORS: Record<Tone, string> = { ok: "teal", bad: "red", warn: "yellow", plain: "gray" };
 
 // A step's numbers on one line: how long, what it cost, how many turns.
+// How often a step that is still going shows its time again.
+const TICK_MS = 1000;
+
 export function numbers(step: Step, now: number): string {
   const parts: string[] = [];
   if (step.start !== step.end) parts.push(`${span(took(step, now))}${step.end ? "" : " so far"}`);
@@ -111,12 +114,13 @@ export function TaskPath(props: { events: MhEvent[]; usd?: number; pick?: string
   const path = steps(props.events);
   // A link that names a run opens on that run's step.
   const [picked, setPicked] = useState<string | null>(props.pick ?? null);
-  // Steps still going show their time so far, so the picture is read again as time passes.
+  // Steps still going show their time so far, counted by the second, so the page is seen to be alive while a
+  // run or a wait goes on. Nothing is read from the service for it.
   const [now, setNow] = useState(() => Date.now());
   const going = path.some((s) => !s.end);
   useEffect(() => {
     if (!going) return;
-    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    const timer = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(timer);
   }, [going]);
   if (!path.length) return <Text size="sm" c="dimmed">Nothing has happened yet: the task has not started. Each step shows here as it happens.</Text>;

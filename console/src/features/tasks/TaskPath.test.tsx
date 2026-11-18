@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { MhEvent } from "../../api";
 import { theme } from "../../theme";
 import { TaskPath } from "./TaskPath";
@@ -76,4 +76,19 @@ test("a link that names a run opens on that run's step, and no events is said pl
 test("the path's cost is the task's spend total when the page gives it one", () => {
   show({ usd: 12.34 });
   expect(screen.getByTestId("path-totals").textContent).toContain("$12.34");
+});
+
+afterEach(() => vi.useRealTimers());
+
+test("a step that is still going counts its time by the second", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-11-11T18:16:05Z"));
+  show();
+  const going = () => screen.getAllByText(/so far$/).map((e) => e.textContent);
+  expect(going()).toContain("5s so far");
+
+  act(() => void vi.advanceTimersByTime(3000));
+  expect(going()).toContain("8s so far");
+  act(() => void vi.advanceTimersByTime(60_000));
+  expect(going()).toContain("1m 8s so far");
 });
