@@ -6,6 +6,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+
+from meta_harness import retrying
 from temporalio.client import WorkflowQueryFailedError
 from temporalio.service import RPCError
 
@@ -18,7 +20,10 @@ EVENT_READ_TIMEOUT_SECONDS = 30.0
 def client(box: sandbox.Sandbox) -> httpx.AsyncClient:
     """An HTTP client for the harness server in a per-run sandbox, through the egress proxy's control listener."""
     return httpx.AsyncClient(
-        base_url=box.url, headers={"authorization": f"Bearer {box.token}"}, proxy=box.proxy, timeout=10.0
+        base_url=box.url,
+        headers={"authorization": f"Bearer {box.token}"},
+        timeout=10.0,
+        transport=retrying.async_transport(httpx.AsyncHTTPTransport(proxy=box.proxy)),
     )
 
 

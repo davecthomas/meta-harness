@@ -36,6 +36,13 @@ and what is planned.
   those. A new Google Cloud role the deploy needs goes in the platform stack
   in a pull request before the one that uses it.
 - Code names no model and no harness profile: they live in `config/`.
+- A transient failure is retried before anything reports it. Every HTTP client
+  is built with `retrying.transport()` or `retrying.async_transport()`
+  (`src/meta_harness/retrying.py`): exponential backoff with jitter, a bounded
+  deadline, `Retry-After` honored, each retry logged as a warning and each final
+  failure as an error. A request that may have been acted on is repeated only
+  when that is harmless. The console's `call` does the same. A test fails a
+  client built without it. Never report a transient failure after one try.
 - Every new or changed setting is checked at service startup, so a bad one
   stops the service with its name.
 - Only the control plane writes to a code host. Nothing in a per-run sandbox

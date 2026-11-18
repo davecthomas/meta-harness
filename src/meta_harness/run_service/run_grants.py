@@ -16,6 +16,8 @@ from typing import Any
 
 import httpx
 
+from meta_harness import retrying
+
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8080")
 REQUEST_TIMEOUT_SECONDS = 10.0
 
@@ -37,6 +39,7 @@ def _client() -> httpx.AsyncClient:
         base_url=GATEWAY_URL,
         headers={"Authorization": f"Bearer {gateway_key() or ''}"},
         timeout=REQUEST_TIMEOUT_SECONDS,
+        transport=retrying.async_transport(),
     )
 
 

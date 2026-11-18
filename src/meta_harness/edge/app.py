@@ -46,6 +46,7 @@ VM's services' and the edge's logs from Cloud Logging (meta_harness.edge.logs).
 """
 
 import asyncio
+import logging
 import os
 import subprocess
 import time
@@ -58,10 +59,12 @@ from fastapi import Body, FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
-from meta_harness import __version__
+from meta_harness import __version__, retrying
 from meta_harness.edge.directory import Directory
 from meta_harness.edge.logs import EDGE, UNITS, LogsError, read_logs
 from meta_harness.run_service.paths import REPO_ROOT
+
+log = logging.getLogger("meta_harness.edge")
 
 # Path prefix to the env var holding the owning service's URL, and its local default.
 ROUTES: list[tuple[str, str, str]] = [
@@ -466,15 +469,26 @@ def create_app(
             try:
                 response = await client.send(upstream, stream=True)
                 break
-            except httpx.ConnectError as err:
+            except httpx.TransportError as err:
+                # A request that never arrived can always go again; one that may have, only if that is harmless.
+                never_arrived = isinstance(err, retrying.NOT_SENT)
+                why = f"{type(err).__name__}: {err}" if str(err) else type(err).__name__
+                if not never_arrived and request.method not in retrying.SAFE_METHODS:
+                    log.error("%s %s failed and is not safe to repeat: %s", request.method, request.url.path, why)
+                    return JSONResponse(
+                        {"detail": f"{base} did not finish answering ({why}): check whether it took effect"},
+                        status_code=502,
+                    )
                 if waited >= restart_wait_seconds:
+                    log.error("%s %s gave up after %.1fs: %s", request.method, request.url.path, waited, why)
                     return private(
                         JSONResponse(
-                            {"detail": f"the meta-harness is updating and {base} is not back yet: {err}"},
+                            {"detail": f"the meta-harness is updating and {base} is not back yet: {why}"},
                             status_code=503,
                             headers={"Retry-After": "5"},
                         )
                     )
+                log.warning("%s %s: %s; trying again in %.2fs", request.method, request.url.path, why, pause)
                 await asyncio.sleep(pause)
                 waited += pause
                 pause = min(pause * 2, 2.0)

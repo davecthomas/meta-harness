@@ -17,6 +17,8 @@ from typing import Any
 
 import httpx
 
+from meta_harness import retrying
+
 log = logging.getLogger("meta_harness.edge")
 # How long a read of the users serves requests before the edge reads again.
 REFRESH_SECONDS = 10.0
@@ -40,7 +42,7 @@ class Directory:
             httpx.Client(
                 base_url=base_url,
                 timeout=TIMEOUT_SECONDS,
-                transport=transport,
+                transport=retrying.transport(transport, retrying.QUICK),
                 headers={"Authorization": f"Bearer {service_key}", "X-MH-Actor": "edge"},
             )
             if base_url

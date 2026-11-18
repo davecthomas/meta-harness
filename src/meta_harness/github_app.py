@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+from meta_harness import retrying
 import jwt
 
 API = "https://api.github.com"
@@ -91,8 +93,8 @@ class GitHubApps:
     def _client(self, auth: str) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             base_url=API,
-            timeout=30,
-            transport=self._transport,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            transport=retrying.async_transport(self._transport),
             headers={
                 "Authorization": auth,
                 "Accept": "application/vnd.github+json",

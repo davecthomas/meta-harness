@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from meta_harness import retrying
 from meta_harness.planner.tracker import Issue
 from meta_harness.run_service.paths import REPO_ROOT
 
@@ -168,7 +169,7 @@ async def _structured(
         "response_schema": schema,
         "max_response_tokens": int(config["max_response_tokens"]),
     }
-    async with httpx.AsyncClient(timeout=60, transport=transport) as http:
+    async with httpx.AsyncClient(timeout=60, transport=retrying.async_transport(transport)) as http:
         try:
             response = await http.post(f"{url}/v1/structured", json=body, headers={"Authorization": f"Bearer {key}"})
         except httpx.HTTPError as err:
