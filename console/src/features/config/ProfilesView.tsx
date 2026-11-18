@@ -4,6 +4,7 @@ import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { InlineField } from "../../components/InlineField";
 import { DataTable } from "../../components/ui";
 import { changed, Reasons, stageOptional, type Staging } from "./ConfigViews";
+import { RemovedRows, removedEntries } from "./RemovedRows";
 
 // The tools the harness server knows; a profile names some of them.
 const TOOLS = ["read", "write", "edit", "ls", "find", "grep", "bash", "submit_review", "update_plan"];
@@ -23,6 +24,7 @@ export function ProfilesView({ staging: s, skills = [] }: { staging: Staging; sk
     s.stage(["profiles", name, "resources"], Object.keys(next).length ? next : undefined);
   };
   return (
+    <>
     <DataTable head={["Profile", "Tools", "Skills", "Limits", "Resources", "Bash allowlist", "Image", ""]} minWidth={1120}>
       {Object.entries(profiles).map(([name, p]) => {
         const at = (...keys: string[]) => ["profiles", name, ...keys];
@@ -108,6 +110,8 @@ export function ProfilesView({ staging: s, skills = [] }: { staging: Staging; sk
       })}
       {!s.readOnly && <AddProfileRow names={Object.keys(profiles)} onAdd={(name) => s.stage(["profiles", name], NEW_PROFILE)} />}
     </DataTable>
+    {!s.readOnly && <RemovedRows what="profile" rows={removedEntries(s, "profiles")} />}
+    </>
   );
 }
 

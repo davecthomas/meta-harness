@@ -4,6 +4,7 @@ import { IconDownload, IconTrash } from "@tabler/icons-react";
 import { api, type SkillEntry } from "../../api";
 import { DataTable, Empty } from "../../components/ui";
 import type { Staging } from "./ConfigViews";
+import { RemovedRows, removedEntries } from "./RemovedRows";
 
 // The skills a harness profile's runs may load. An admin imports one from a git repository or from files on
 // their machine, reads all of it, and stages it like any other change; the save makes it a new version.
@@ -171,6 +172,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
       ) : (
         <Empty>No skill yet. A skill is packaged instructions an agent loads for a kind of work. Import one above, from a git repository or from files, then name it on a harness profile.</Empty>
       )}
+      {!s.readOnly && <RemovedRows what="skill" rows={removedEntries(s, "skills")} />}
       {!s.readOnly && (
         <Paper p="sm" withBorder>
           <Group justify="space-between">

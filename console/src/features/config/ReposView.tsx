@@ -6,6 +6,7 @@ import { api } from "../../api";
 import { InlineField } from "../../components/InlineField";
 import { DataTable } from "../../components/ui";
 import { changed, Reasons, type Staging } from "./ConfigViews";
+import { RemovedRows, removedEntries } from "./RemovedRows";
 
 // The repositories goals may change: the one place they are added, removed and edited. A repository is added
 // from those the deployment's GitHub App is installed on. Every change stages, like the other kinds, and is
@@ -114,6 +115,7 @@ export function ReposView({ staging: s }: { staging: Staging }) {
           </DataTable>
         </>
       )}
+      {!s.readOnly && <RemovedRows what="repository" rows={removedEntries(s, "repos")} />}
       {adding && (
         <AddRepo
           names={addable}
