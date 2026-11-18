@@ -24,8 +24,10 @@ REST API version 2, whose descriptions and comments are text (wiki markup), whic
 issue's `## Acceptance checks`, `Paths:` and `Depends on:` lines from.
 """
 
+import asyncio
 import os
 import re
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -56,6 +58,10 @@ FIELDS = ["summary", "description", "labels", "status", "updated", "reporter", "
 PAGE = 100
 TIMEOUT_SECONDS = 30.0
 CONNECT_SECONDS = 10.0
+# Reused for every call. All of Jira is one address, and the VM reaches it through Cloud NAT, which has a limited
+# number of ports for one destination and holds each for a while after its connection closes: a connection per
+# call, and a labels read is one call per hundred issues, runs them out, and new connections then time out.
+CONNECTIONS = httpx.Limits(max_connections=10, max_keepalive_connections=5, keepalive_expiry=60.0)
 # "Depends on: PROJ-12, PROJ-13" lines in a description, beside the issue's own "is blocked by" links.
 DEPENDS_LINE = re.compile(r"^\s*depends on:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 DEPENDS_KEY = re.compile(r"\b[A-Z][A-Z0-9_]+-\d+\b")
@@ -91,6 +97,25 @@ class Site:
     def statuses_of(self, project: str) -> dict[str, str]:
         """The project's own names for our statuses."""
         return dict((self.projects.get(project) or {}).get("statuses") or self.statuses)
+
+
+class Connections:
+    """The adapter's HTTP client, one per event loop, shared by every copy bound to a goal."""
+
+    def __init__(self) -> None:
+        self.clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient] = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def client(self, transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:
+        loop = asyncio.get_running_loop()
+        if loop not in self.clients:
+            self.clients[loop] = httpx.AsyncClient(
+                timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=CONNECT_SECONDS),
+                limits=CONNECTIONS,
+                transport=retrying.async_transport(transport, safe=_only_reads),
+            )
+        return self.clients[loop]
 
 
 def _only_reads(request: httpx.Request) -> bool:
@@ -169,6 +194,7 @@ class JiraTracker:
         source: Source | None = None,
         label: Callable[[], str] = configured_label,
         marked: Marked | None = None,
+        connections: Connections | None = None,
     ) -> None:
         self.email = email if email is not None else os.environ.get("MH_JIRA_EMAIL", "")
         self.token = token if token is not None else os.environ.get("MH_JIRA_TOKEN", "")
@@ -182,9 +208,12 @@ class JiraTracker:
         self._assigned: list[Issue] | None = None
         self.label = label
         self.marked = marked or Marked()
+        self.connections = connections or Connections()
 
     def bound(self, source: Source) -> "JiraTracker":
-        return JiraTracker(self.email, self.token, self.site, self.transport, source, self.label, self.marked)
+        return JiraTracker(
+            self.email, self.token, self.site, self.transport, source, self.label, self.marked, self.connections
+        )
 
     async def mark(self, ref: str) -> None:
         """Adds the meta-harness's label to the issue. Jira makes a label when an issue first carries it, and
@@ -248,13 +277,9 @@ class JiraTracker:
                 retryable=False,
             )
         try:
-            async with httpx.AsyncClient(
-                base_url=site.site,
-                auth=(self.email, self.token),
-                timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=CONNECT_SECONDS),
-                transport=retrying.async_transport(self.transport, safe=_only_reads),
-            ) as http:
-                response = await http.request(method, f"/rest/api/2{path}", **kwargs)
+            response = await self.connections.client(self.transport).request(
+                method, f"{site.site}/rest/api/2{path}", auth=(self.email, self.token), **kwargs
+            )
         except httpx.HTTPError as err:
             raise TrackerError(
                 f"Jira did not answer {method} {path} after several tries ({type(err).__name__}: {err or 'no reply'}). "

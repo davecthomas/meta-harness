@@ -2939,6 +2939,11 @@ a service restarts, and the console's `call` retries the same way, logging to
 the browser's console. `tests/test_retrying.py` fails a client built without the
 transport.
 
+The VM reaches the internet through Cloud NAT, which limits the ports open to one
+destination. The platform stack allocates them dynamically (1,024 to 16,384) and
+frees a closed one after 30 seconds, and the Jira adapter keeps one pool of
+reused connections, since all of Jira is one address.
+
 Meta-harness domain events go to the event service, and logs, traces and
 metrics go to OpenTelemetry. Every domain event has its trace id, so the
 two join.
