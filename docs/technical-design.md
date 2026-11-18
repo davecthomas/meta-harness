@@ -2702,7 +2702,7 @@ written (`issue_link.progress`):
 
 | The task | The issue's status | Comment |
 |---|---|---|
-| running | in progress | that work started, with the task's id; or that work is going on again on its pull request |
+| running | in progress | that work started, with the task's id, said once; or, after a review a person was waiting on, that work is going on again on its pull request. The agents' own review of a new pull request, and a merge an operator asked for, say nothing and leave the issue where it is |
 | ready or review unresolved, with a pull request | in review | the pull request, and whether it is ready to merge or its review left findings |
 | closed | done | that the pull request merged |
 | failed or canceled | unchanged | why |
