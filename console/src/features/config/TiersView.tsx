@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Button, Card, Code, Group, SimpleGrid, Stack, Text } from "@mantine/core";
+import { ActionIcon, Badge, Button, Card, Code, Group, SimpleGrid, Stack, Text, Tooltip } from "@mantine/core";
 import { IconArrowDown, IconArrowUp, IconPlus, IconTrash } from "@tabler/icons-react";
 import { InlineField } from "../../components/InlineField";
 import { Facts } from "../../components/ui";
@@ -32,8 +32,21 @@ export function TiersView({ staging: s, profiles, models }: { staging: Staging; 
     s.stage(["classifier"], Object.keys(next).length ? next : undefined);
   };
   const exhausted = router.on_exhausted ?? "fail";
+  // A new tier goes last, the hardest work's place, named so no two share a name, with nothing to try yet:
+  // the save is refused until it has a candidate, and says so on its card.
+  const addTier = () => {
+    const names = new Set(tiers.map((t) => t.name));
+    let n = tiers.length + 1;
+    while (names.has(`tier-${n}`)) n += 1;
+    s.stage(["tiers"], [...tiers, { name: `tier-${n}`, description: "", thinking: "medium", models: [] }]);
+  };
   return (
     <>
+      <Text size="sm" c="dimmed" mb="md" maw={860}>
+        A task is sent to a tier by how hard it looks, and tried on that tier's candidates in order: each is a harness
+        profile (the agent's tools and limits) with a model. Tiers go from the easiest work to the hardest, which is
+        the order "Escalate one tier up" follows, so their order matters.
+      </Text>
       <Facts
         items={[
           [
@@ -87,14 +100,27 @@ export function TiersView({ staging: s, profiles, models }: { staging: Staging; 
       />
       <SimpleGrid cols={{ base: 1, md: 2 }} mt="lg">
         {tiers.map((tier, index) => (
-          <TierCard key={`${index}-${tier.name}`} staging={s} tier={tier} index={index} profiles={profiles} models={models} />
+          <TierCard key={`${index}-${tier.name}`} staging={s} tier={tier} index={index} count={tiers.length} profiles={profiles} models={models} />
         ))}
       </SimpleGrid>
+      {tiers.length === 0 && (
+        <Text size="sm" c="dimmed" mt="md" data-testid="no-tiers">
+          No tier yet, so no task can be routed. Add one, give it a candidate, and make it the default tier.
+        </Text>
+      )}
+      {!s.readOnly && (
+        <Button mt="md" variant="default" leftSection={<IconPlus size={16} />} onClick={addTier}>Add a tier</Button>
+      )}
     </>
   );
 }
 
-function TierCard({ staging: s, tier, index, profiles, models }: { staging: Staging; tier: any; index: number; profiles: string[]; models: string[] }) {
+function TierCard({ staging: s, tier, index, count, profiles, models }: { staging: Staging; tier: any; index: number; count: number; profiles: string[]; models: string[] }) {
+  const all: any[] = s.document.tiers ?? [];
+  const isDefault = s.document.default_tier === tier.name;
+  // Moving a tier changes which is easier and which harder: one staged change, the list in its new order.
+  const moveTier = (to: number) => s.stage(["tiers"], move(all, index, to));
+  const removeTier = () => s.stage(["tiers"], all.filter((_, i) => i !== index));
   const candidates: string[] = tier.models ?? [];
   const path = ["tiers", index];
   const setCandidates = (next: string[]) => s.stage([...path, "models"], next);
@@ -118,6 +144,7 @@ function TierCard({ staging: s, tier, index, profiles, models }: { staging: Stag
       <Group justify="space-between" mb="xs" wrap="nowrap">
         <Group gap="xs">
           <Badge variant="light" radius="sm">Tier {index + 1}</Badge>
+          {isDefault && <Badge variant="light" color="indigo" radius="sm" tt="none">Default</Badge>}
           <InlineField
             kind="text"
             label={`Name of tier ${index + 1}`}
@@ -142,6 +169,26 @@ function TierCard({ staging: s, tier, index, profiles, models }: { staging: Stag
           onCommit={(v) => stageOptional(s, [...path, "thinking"], v)}
         />
       </Group>
+      {!s.readOnly && (
+        <Group gap={4} mb="xs" data-testid={`tier-controls-${tier.name}`}>
+          <Tooltip label="Easier work: move this tier earlier">
+            <ActionIcon variant="subtle" color="gray" size="sm" disabled={index === 0} aria-label={`Move ${tier.name} earlier`} onClick={() => moveTier(index - 1)}>
+              <IconArrowUp size={14} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Harder work: move this tier later">
+            <ActionIcon variant="subtle" color="gray" size="sm" disabled={index === count - 1} aria-label={`Move ${tier.name} later`} onClick={() => moveTier(index + 1)}>
+              <IconArrowDown size={14} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label={isDefault ? "This is the default tier: make another tier the default before removing it" : "Remove this tier"} multiline maw={260}>
+            <ActionIcon variant="subtle" color="red" size="sm" disabled={isDefault} aria-label={`Remove ${tier.name}`} onClick={removeTier}>
+              <IconTrash size={14} />
+            </ActionIcon>
+          </Tooltip>
+          {getIn(s.original, ["tiers"])?.every((t: any) => t.name !== tier.name) && <Badge size="xs" color="yellow" variant="light" tt="none">not saved</Badge>}
+        </Group>
+      )}
       <InlineField
         kind="textarea"
         label={`Description of ${tier.name}`}
