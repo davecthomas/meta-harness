@@ -797,3 +797,52 @@ def test_an_uncounted_drive_is_none_of_the_tasks_tries_and_tasks_are_listed_by_w
     assert yours["tasks"][0]["standing"]["ask"] == "Retry it."
     assert api.get("/v1/tasks?has_it=scheduler", headers=_as(CALLER_KEY)).json()["total"] == 1
     assert api.get("/v1/tasks?has_it=nobody", headers=_as(CALLER_KEY)).status_code == 422
+
+
+def test_an_ended_task_with_no_pull_request_is_made_over_from_what_its_issue_says_now(api) -> None:
+    """An issue is one task, by its ref. An issue edited after its first task was canceled, or taken in by
+    another goal, must not run again from the text it had the first time."""
+    ref = f"jira:VL-{uuid.uuid4().int % 10**9}"
+    first = api.post(
+        "/v1/tasks",
+        json=_task(external_ref=ref, title="Placeholder", description="Placeholder"),
+        headers=_as(SERVICE_KEY),
+    )
+    task = first.json()
+    assert first.status_code == 201
+
+    # While it has not ended, the same issue submitted again changes nothing.
+    again = _task(
+        external_ref=ref,
+        title="Retry all states its total",
+        description="Make the button ask first.",
+        acceptance_checks=["npm test"],
+    )
+    same = api.post("/v1/tasks", json=again, headers=_as(SERVICE_KEY)).json()
+    assert (same["id"], same["title"], same["status"]) == (task["id"], "Placeholder", "queued")
+
+    assert (
+        api.post(
+            f"/v1/tasks/{task['id']}/cancel", json={"reason": "started too early"}, headers=_as(SERVICE_KEY)
+        ).status_code
+        == 200
+    )
+    renewed = api.post("/v1/tasks", json=again, headers=_as(SERVICE_KEY))
+
+    made = renewed.json()
+    assert renewed.status_code == 200 and made["id"] == task["id"], "the same task, not a second one for the issue"
+    assert (made["status"], made["title"], made["description"]) == (
+        "queued",
+        "Retry all states its total",
+        "Make the button ask first.",
+    )
+    assert made["acceptance_checks"] == ["npm test"] and made["retries"] == task["retries"] + 1
+    assert "made it over from its issue as it is now" in made["status_reason"]
+
+    # A caller that is not a control-plane service gets its existing task back as it is.
+    mine = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{mine['id']}/cancel", json={"reason": "x"}, headers=_as(CALLER_KEY))
+    untouched = api.post(
+        "/v1/tasks", json=_task(external_ref=mine["external_ref"], title="Other words"), headers=_as(CALLER_KEY)
+    ).json()
+    assert (untouched["status"], untouched["title"]) == ("canceled", mine["title"])

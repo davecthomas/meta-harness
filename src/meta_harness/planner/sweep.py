@@ -389,7 +389,11 @@ async def _take_in(
     if existing and existing["goal_id"] == goal["id"] and existing.get("labels") != labels:
         await asyncio.to_thread(_set_labels, issue.ref, labels)
     if existing and existing["goal_id"] != goal["id"]:
-        return
+        # An open goal's issue is that goal's. One held by a goal that was canceled or met is free: nothing
+        # will move it there, and its label is this goal's now.
+        if not await asyncio.to_thread(_release_from_ended_goal, issue.ref):
+            return
+        existing = None
     if existing and existing["task_id"]:
         await _retake(existing["task_id"], issue, tasks, result)
         return
@@ -867,6 +871,11 @@ def _bind(ref, goal_id, repo, depends_on, task_id, title, labels) -> bool:
 def _release(ref: str, goal_id: str, linked: bool) -> str:
     with db.connect(autocommit=True) as conn:
         return store.release_for_task(conn, ref, goal_id, linked)
+
+
+def _release_from_ended_goal(ref: str) -> bool:
+    with db.connect(autocommit=True) as conn:
+        return store.release_from_ended_goal(conn, ref)
 
 
 def _forget_link(ref: str) -> None:

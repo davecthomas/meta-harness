@@ -423,6 +423,18 @@ def drop_ref(conn: psycopg.Connection, goal_id: str, ref: str) -> str | None:
         return row[0]
 
 
+def release_from_ended_goal(conn: psycopg.Connection, ref: str) -> bool:
+    """Delete an issue's link when the goal that holds it has ended (met or canceled), so another goal takes the
+    issue as one it has not seen. Returns whether it was released; a link an open goal holds stays."""
+    with conn.transaction():
+        done = conn.execute(
+            "DELETE FROM planner.issue_link l USING planner.goal g "
+            "WHERE l.ref = %s AND g.id = l.goal_id AND NOT (g.status = ANY(%s))",
+            (ref, list(OPEN_GOAL_STATUSES)),
+        )
+        return done.rowcount > 0
+
+
 def forget_link(conn: psycopg.Connection, ref: str) -> None:
     """Delete the mark a goal left on an issue it removed, when another goal takes the issue."""
     with conn.transaction():

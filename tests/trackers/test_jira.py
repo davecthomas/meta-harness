@@ -248,6 +248,32 @@ async def test_a_workflow_with_no_review_status_leaves_an_issue_in_progress_and_
     ]
 
 
+async def test_a_status_is_found_by_its_usual_name_where_the_workflows_categories_mislead():
+    """A real workflow: Ready for Development is classed as in progress, In Code Review as not started, and two
+    statuses are classed done. The usual names decide before the categories do."""
+    odd = {
+        "transitions": [
+            {"id": "1", "to": status("Ready for Development", "indeterminate")},
+            {"id": "2", "to": status("In Code Review", "new")},
+            {"id": "3", "to": status("In Dev", "indeterminate")},
+            {"id": "4", "to": status("Won't Do", "done")},
+            {"id": "5", "to": status("Done", "done")},
+            {"id": "6", "to": status("In Progress", "indeterminate")},
+        ]
+    }
+    for now, wanted, move in (
+        (("Ready for Development", "indeterminate"), IN_PROGRESS, ["6"]),
+        (("In Progress", "indeterminate"), IN_REVIEW, ["2"]),
+        (("In Code Review", "new"), IN_REVIEW, []),
+        (("In Code Review", "new"), IN_PROGRESS, ["6"]),
+        (("In Code Review", "new"), DONE, ["5"]),
+        (("In Dev", "indeterminate"), IN_PROGRESS, []),
+    ):
+        jira = workflow(now, odd)
+        assert await tracker(jira).set_status("jira:VL-7", wanted) is bool(move), (now, wanted)
+        assert moved(jira) == move, (now, wanted)
+
+
 async def test_a_workflow_with_no_way_there_says_where_the_issue_can_go_and_what_to_do():
     stuck = {"transitions": [{"id": "11", "to": status("To Do", "new")}]}
 
