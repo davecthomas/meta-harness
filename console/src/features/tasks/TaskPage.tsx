@@ -201,7 +201,8 @@ export function TaskPage() {
   const status = facts.status ?? task.status;
   // As every list shows it: a working task with a pull request open is in review.
   const shown = shownStatus({ ...task, status });
-  // An ended task has no run under way, so its stream is not live.
+  // Only a running task has a run under way; an ended one's output is the record of its runs.
+  const running = status === "running";
   const ended = ["closed", "failed", "canceled"].includes(status);
   const cancellable = ["queued", "blocked", "running"].includes(status);
   // What stopping it does, by where it is: said before it is stopped.
@@ -310,9 +311,9 @@ export function TaskPage() {
       ) : (
       <>
       <SectionTitle
-        right={ended
-          ? <Text size="xs" c="dimmed">Output is the record of this task's runs</Text>
-          : <Badge variant="dot" color={STREAM_COLORS[state] ?? "gray"} tt="none">{state}</Badge>}
+        right={running
+          ? <Badge variant="dot" color={STREAM_COLORS[state] ?? "gray"} tt="none">{state}</Badge>
+          : ended ? <Text size="xs" c="dimmed">Output is the record of this task's runs</Text> : undefined}
       >Run</SectionTitle>
       {onlyRun && (
         <Group gap="xs" mb="xs">
