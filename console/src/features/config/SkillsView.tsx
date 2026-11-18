@@ -169,7 +169,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
           })}
         </DataTable>
       ) : (
-        <Empty>No skills yet.</Empty>
+        <Empty>No skill yet. A skill is packaged instructions an agent loads for a kind of work. Import one above, from a git repository or from files, then name it on a harness profile.</Empty>
       )}
       {!s.readOnly && (
         <Paper p="sm" withBorder>

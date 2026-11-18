@@ -70,5 +70,5 @@ test("a link that names a run opens on that run's step, and no events is said pl
   show({ pick: "t:run-1" });
   expect(within(screen.getByTestId("picked")).getByText("I changed the file.")).toBeTruthy();
   show({ events: [] });
-  expect(screen.getByText("Nothing recorded yet.")).toBeTruthy();
+  expect(screen.getByText(/Nothing has happened yet: the task has not started/)).toBeTruthy();
 });

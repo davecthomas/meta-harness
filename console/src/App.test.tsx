@@ -34,7 +34,7 @@ test("the shell signs in, shows the navigation, and opens the page for the path"
   for (const name of ["Overview", "Goals", "Tasks", "New goal"]) {
     expect(screen.getAllByRole("link", { name }).length).toBeGreaterThan(0);
   }
-  expect(within(screen.getByRole("main")).getByText("No open goals.")).toBeTruthy();
+  expect(within(screen.getByRole("main")).getByText(/No open goal yet\./)).toBeTruthy();
 });
 
 test("an identity outside the access list sees why, and no page", async () => {

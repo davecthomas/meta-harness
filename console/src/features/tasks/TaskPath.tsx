@@ -118,7 +118,7 @@ export function TaskPath(props: { events: MhEvent[]; pick?: string | null; onOpe
     const timer = setInterval(() => setNow(Date.now()), 15_000);
     return () => clearInterval(timer);
   }, [going]);
-  if (!path.length) return <Text size="sm" c="dimmed">Nothing recorded yet.</Text>;
+  if (!path.length) return <Text size="sm" c="dimmed">Nothing has happened yet: the task has not started. Each step shows here as it happens.</Text>;
   const sum = totals(path, now);
   const chosen = path.find((s) => s.key === picked) ?? null;
   const all = rows(path);
