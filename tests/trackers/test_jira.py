@@ -214,6 +214,26 @@ async def test_a_goal_is_offered_the_listed_projects_and_the_setup_every_project
     assert [c["value"] for c in await adapter.choices("projects")] == ["AB", "OPS", "VL"]
 
 
+async def test_every_call_and_every_goals_copy_share_one_jira_client(monkeypatch):
+    built = []
+    real = httpx.AsyncClient
+
+    def counted(*args, **kwargs):
+        built.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("meta_harness.trackers.jira.httpx.AsyncClient", counted)
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"values": [], "isLast": True}))
+    adapter = JiraTracker("bot@example.com", "t", site=lambda: Site(site=SITE), transport=transport)
+    bound = adapter.bound(Source(("o/r",), {"project": "VL"}))
+
+    await adapter.choices("projects")
+    await adapter.choices("projects")
+    await bound.choices("projects")
+
+    assert len(built) == 1, "a connection per call runs out the NAT's ports for Jira's one address"
+
+
 async def test_a_goal_can_still_choose_a_listed_project_while_jira_cannot_be_reached():
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("no answer", request=request)

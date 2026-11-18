@@ -108,6 +108,14 @@ resource "google_compute_router_nat" "nat" {
   region                             = var.region
   nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  # The defaults (64 ports for each destination, each held 120 seconds after it closes) are too few for one VM
+  # calling Jira, GitHub and the model providers: new connections to a busy address time out.
+  enable_dynamic_port_allocation      = true
+  enable_endpoint_independent_mapping = false
+  min_ports_per_vm                    = 1024
+  max_ports_per_vm                    = 16384
+  tcp_time_wait_timeout_sec           = 30
 }
 
 resource "google_compute_firewall" "iap_ssh" {
