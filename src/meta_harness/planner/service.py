@@ -997,6 +997,8 @@ def create_app(
         # When the planner last swept the goal, and what that sweep could not do: empty when it did all of it.
         goal["sweep"] = app.state.sweeps.get(goal_id)
         await asyncio.to_thread(standings, [goal])
+        # What the goal has cost, the one figure every page shows for it: the same as on the goal list.
+        goal_costs.give([goal], *await asyncio.to_thread(app.state.goal_costs.get))
         return goal
 
     @app.get("/v1/goals/{goal_id}/issues")

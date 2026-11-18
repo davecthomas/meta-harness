@@ -177,6 +177,8 @@ test("a row with a task opens the task, and its links open GitHub instead", asyn
     created_at: "2026-11-08T20:41:00Z", updated_at: "2026-11-08T20:42:00Z" };
   vi.stubGlobal("fetch", (url: string) => {
     if (url.startsWith("/v1/tasks")) return respond({ tasks: [task], total: 1 });
+    // The board's spend is the goal's Spend read: each task's cost and the total, from one place.
+    if (url.endsWith("/spend")) return respond({ goal_id: "g-1", max_usd: null, usd: "1.25", by_kind: {}, tasks: [{ task_id: "t-7", title: "Fix the crash", status: "running", usd: "1.25", by_kind: {}, runs: 1, turns: 3 }] });
     return respond(running);
   });
   render(
@@ -191,7 +193,10 @@ test("a row with a task opens the task, and its links open GitHub instead", asyn
   );
 
   expect(await screen.findByText("Fix the crash")).toBeTruthy();
-  expect(screen.getByTestId("issue-row-github:o/r#8").getAttribute("role")).toBeNull();
+  // An active goal opens on its board, whose cards show what the goal's Spend read says each task cost.
+  expect((await screen.findAllByText("$1.25")).length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByText("Table"));
+  expect((await screen.findByTestId("issue-row-github:o/r#8")).getAttribute("role")).toBeNull();
   fireEvent.click(screen.getByText("#9"));
   expect(screen.queryByText("task page")).toBeNull();
 
