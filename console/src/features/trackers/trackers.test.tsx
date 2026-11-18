@@ -177,3 +177,21 @@ test("a refused save's reason goes to the tracker it is about, or to the default
   expect(reasonTarget("trackers", document, "default must be one of the trackers set up (github), not 'jira'")).toBe("default");
   expect(reasonTarget("trackers", document, "linear: not a supported tracker")).toBeNull();
 });
+
+test("a goal's switch setting is on as yes, and off leaves it out", () => {
+  const assigned: TrackerSetting = { name: "assigned", label: "Take issues assigned to the meta-harness", kind: "switch", required: false, help: "Assigning an issue there hands it over." };
+  const jira = { ...JIRA, configured: true, signed_in: true, goal_settings: [assigned] };
+  const changes: Record<string, string>[] = [];
+  const fields = (settings: Record<string, string>) => (
+    <MantineProvider theme={theme}>
+      <GoalTrackerFields trackers={[jira]} tracker="jira" onTracker={() => undefined} settings={settings} onSettings={(next) => changes.push(next)} />
+    </MantineProvider>
+  );
+  const { rerender } = render(fields({ project: "VL" }));
+  fireEvent.click(screen.getByRole("switch", { name: /Take issues assigned to the meta-harness/ }));
+  expect(changes).toEqual([{ project: "VL", assigned: "yes" }]);
+
+  rerender(fields({ project: "VL", assigned: "yes" }));
+  fireEvent.click(screen.getByRole("switch", { name: /Take issues assigned to the meta-harness/ }));
+  expect(changes[1]).toEqual({ project: "VL" });
+});

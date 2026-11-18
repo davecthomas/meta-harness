@@ -25,6 +25,9 @@ class Tracker:
     async def list_open(self, repo, label):
         return self.open
 
+    async def list_assigned(self, repo):
+        return []
+
 
 class Tasks:
     def __init__(self, unfinished=()):

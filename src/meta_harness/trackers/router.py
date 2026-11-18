@@ -52,6 +52,9 @@ class Trackers:
     async def list_open(self, repo: str, label: str | None) -> list[Issue]:
         return await self.for_repo(repo).list_open(repo, label)
 
+    async def list_assigned(self, repo: str) -> list[Issue]:
+        return await self.for_repo(repo).list_assigned(repo)
+
     async def read(self, ref: str) -> Issue:
         return await self.for_ref(ref).read(ref)
 

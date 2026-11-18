@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Autocomplete, NativeSelect, Stack, Text, TextInput } from "@mantine/core";
+import { Autocomplete, NativeSelect, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { api, type Tracker } from "../../api";
 
 // The New goal form's part about where the goal's issues are: which tracker, when more than one is set up, and
@@ -50,6 +50,18 @@ export function GoalTrackerFields(props: {
             required={setting.required}
             value={props.settings[setting.name] ?? ""}
             onChange={(value) => props.onSettings({ ...props.settings, [setting.name]: value })}
+          />
+        ) : setting.kind === "switch" ? (
+          // On is "yes"; off leaves the setting out, as a goal that never had it.
+          <Switch
+            key={`${chosen!.scheme}:${setting.name}`}
+            label={setting.label}
+            description={setting.help}
+            checked={props.settings[setting.name] === "yes"}
+            onChange={(e) => {
+              const { [setting.name]: _off, ...rest } = props.settings;
+              props.onSettings(e.currentTarget.checked ? { ...rest, [setting.name]: "yes" } : rest);
+            }}
           />
         ) : (
           <TextInput

@@ -43,7 +43,9 @@ LINK_COLUMNS = (
     # the issues an operator split it into.
     "size, sizing, held_reason, run_anyway, split_into, "
     # What the planner last told the issue's tracker about its task (tracker_progress.py).
-    "progress"
+    "progress, "
+    # The reason the planner last gave the issue's tracker for not starting it (tracker_replies.py).
+    "replied"
 )
 
 
@@ -478,6 +480,11 @@ def save_sizing(
 def set_link_progress(conn: psycopg.Connection, ref: str, progress: str) -> None:
     """Note what the issue's tracker was last told about its task."""
     conn.execute("UPDATE planner.issue_link SET progress = %s WHERE ref = %s", (progress, ref))
+
+
+def set_link_replied(conn: psycopg.Connection, ref: str, reason: str) -> None:
+    """Note the reason the issue's tracker was last given for the issue not being started."""
+    conn.execute("UPDATE planner.issue_link SET replied = %s WHERE ref = %s", (reason, ref))
 
 
 def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> None:

@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from meta_harness.trackers import DONE, IN_PROGRESS, IN_REVIEW, TODO, Source, TrackerError
-from meta_harness.trackers.jira import JiraTracker, Site, markdown, repo_for
+from meta_harness.trackers.jira import JiraTracker, Site, check_goal, markdown, repo_for
 
 SITE = "https://example.atlassian.net"
 # A goal with one repo, whose issues are in the project VL.
@@ -305,3 +305,25 @@ def test_a_jira_description_reads_as_the_markdown_the_planner_parses():
     assert markdown("h2. Acceptance checks\n* {{make test}}\n{code:bash}\nls\n{code}") == (
         "## Acceptance checks\n* `make test`\n```\nls\n```"
     )
+
+
+async def test_a_goal_that_asks_takes_the_issues_assigned_to_the_meta_harness_and_any_other_reads_none():
+    jira = Jira({("POST", "/rest/api/2/search/jql"): {"issues": [issue("VL-7", labels=[])]}})
+    asks = Source(repos=("o/r",), settings={"project": "VL", "assigned": "yes"})
+
+    found = await tracker(jira, asks).list_assigned("o/r")
+
+    assert [i.ref for i in found] == ["jira:VL-7"]
+    assert (
+        jira.asked[0][2]["jql"]
+        == 'project = "VL" AND statusCategory != Done AND assignee = currentUser() ORDER BY created ASC'
+    )
+
+    quiet = Jira()
+    assert await tracker(quiet).list_assigned("o/r") == [] and quiet.asked == []
+
+
+def test_a_goals_assigned_setting_is_yes_or_left_out():
+    assert check_goal({"project": "VL", "assigned": "yes"}) == [] and check_goal({"project": "VL"}) == []
+    [reason] = check_goal({"project": "VL", "assigned": "true"})
+    assert 'assigned is "yes"' in reason

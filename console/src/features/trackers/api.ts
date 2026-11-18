@@ -5,8 +5,8 @@ export interface TrackerSetting {
   name: string;
   label: string;
   // text; statuses: a name for each of todo, in_progress, in_review, done; choice: one of what the tracker
-  // lists for it (GET /v1/trackers/{scheme}/choices/{setting}).
-  kind: "text" | "statuses" | "choice";
+  // lists for it (GET /v1/trackers/{scheme}/choices/{setting}); switch: on or off, "yes" when on.
+  kind: "text" | "statuses" | "choice" | "switch";
   required: boolean;
   help: string;
 }

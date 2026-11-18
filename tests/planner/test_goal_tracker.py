@@ -26,6 +26,8 @@ class FakeJira(FakeTracker):
         super().__init__()
         self.told: list[tuple] = []
         self.refuse_comments = False
+        # The refs assigned to the meta-harness's Jira account.
+        self.assigned: set[str] = set()
 
     async def set_status(self, ref: str, status: str) -> bool:
         self.told.append(("status", ref, status))
@@ -58,6 +60,12 @@ class FakeJira(FakeTracker):
             for i in self.issues.values()
             if (i.repo == repo or (first and not i.repo)) and i.state == "open" and (label is None or label in i.labels)
         ]
+
+    async def list_assigned(self, repo):
+        # As the adapter does: only for a goal that asked, and whatever the issues' labels.
+        if self.source.settings.get("assigned") != "yes":
+            return []
+        return [i for i in self.issues.values() if i.repo == repo and i.state == "open" and i.ref in self.assigned]
 
     def bound(self, source):
         self.source = source
@@ -179,7 +187,9 @@ def test_the_trackers_are_listed_as_their_adapters_describe_them_and_issue_lists
     label = f"mh:{uuid.uuid4().hex[:8]}"
     jira.add_key("VL-77", [label])
     github.add(REPO, 78, labels=[label])
-    assert [s["name"] for s in by["jira"]["goal_settings"]] == ["project"] and by["github"]["goal_settings"] == []
+    assert [s["name"] for s in by["jira"]["goal_settings"]] == ["project", "assigned"] and by["github"][
+        "goal_settings"
+    ] == []
     asking = {"label": label, "settings": '{"project": "VL"}'}
     default = client.get(f"/v1/repos/{REPO}/issues", params=asking, headers=OPERATOR).json()
     assert [i["ref"] for i in default["issues"]] == ["jira:VL-77"], "the default tracker's, when none is named"
@@ -302,3 +312,48 @@ def test_an_issue_a_canceled_goal_still_holds_is_taken_by_a_new_goal_with_its_la
     third = _goal(client, label=first["label"], start=True)
     client.post(f"/v1/goals/{third['id']}/sweep", headers=OPERATOR)
     assert held(third) == [] and held(second) == [ref]
+
+
+def test_a_goal_that_asks_takes_an_issue_assigned_to_the_meta_harness_with_no_label(world):
+    """Assigning an issue to the meta-harness in Jira hands it over: a goal that asked takes it, label or none."""
+    client, _, jira, tasks, _ = world
+    asks = {"project": "VL", "assigned": "yes"}
+    goal = _goal(client, label=None, tracker_settings=asks, start=True)
+    ref = jira.add_key(f"VL-{1_000_000 + uuid.uuid4().int % 10**12}", [])
+    other = jira.add_key(f"VL-{1_000_000 + uuid.uuid4().int % 10**12}", [])
+    jira.assigned.add(ref)
+
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+
+    # Only the assigned one: the other issue of the project is no one's.
+    assert other in jira.issues
+    assert [t["external_ref"] for t in tasks.tasks.values() if t["goal_id"] == goal["id"]] == [ref]
+    # With neither a label, picked issues nor assigned ones, a goal has nothing to take in.
+    refused = client.post(
+        "/v1/goals",
+        json={"statement": "Fix bugs", "repos": [REPO], "tracker_settings": {"project": "VL"}},
+        headers=OPERATOR,
+    )
+    assert refused.status_code == 422 and "assigned to the meta-harness" in refused.json()["detail"]
+
+
+def test_an_issue_that_is_not_started_is_told_why_in_its_tracker_once_for_each_reason(world):
+    """A person who handed an issue over reads in the tracker why no work started, and is not told twice."""
+    client, _, jira, _, _ = world
+    other = "davecthomas/ai-api-unified"
+    goal = _goal(client, repos=[REPO, other], start=True)
+    ref = jira.add_key(f"VL-{1_000_000 + uuid.uuid4().int % 10**12}", [goal["label"]])
+    jira.issues[ref].repo = ""
+
+    jira.refuse_comments = True
+    failed = client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).json()
+    assert failed["replied"] == [] and "could not tell its tracker why it is not started" in failed["errors"][0]
+
+    jira.refuse_comments = False
+    first = client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).json()
+    again = client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).json()
+
+    assert first["replied"] == [ref] and again["replied"] == []
+    [(_, _, said)] = [told for told in jira.told if told[0] == "comment" and told[1] == ref]
+    assert said.startswith("The meta-harness has not started work on this issue: it names none of the goal's repos")
+    assert "add a line `Repo: <owner/name>`" in said and "its goal's page in the meta-harness console" in said
