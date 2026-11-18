@@ -2,6 +2,7 @@ import { Alert, Stack, Text } from "@mantine/core";
 import { InlineField } from "../../components/InlineField";
 import { Facts } from "../../components/ui";
 import { isChanged, type Path } from "./staging";
+import { ReviewersField } from "./ReviewersField";
 
 // A kind's view edits in place against a staged copy of its document. Every commit stages; nothing saves
 // until the operator reviews the changes and saves them as one version.
@@ -49,7 +50,8 @@ function ceilingLine(maxSandboxes: number | null): string {
     : "This deployment sets no ceiling (MH_MAX_SANDBOXES). A goal can hold itself to fewer.";
 }
 
-export function TaskPolicyView({ policy, maxSandboxes, staging }: { policy: Record<string, any>; maxSandboxes: number | null; staging?: Staging }) {
+// profiles and models: the harness profiles and models the configuration has, which a reviewer is picked from.
+export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models }: { policy: Record<string, any>; maxSandboxes: number | null; staging?: Staging; profiles?: string[]; models?: string[] }) {
   const s = staging ?? viewOnly(policy);
   const doc = s.document;
   return (
@@ -153,17 +155,7 @@ export function TaskPolicyView({ policy, maxSandboxes, staging }: { policy: Reco
         ],
         [
           "Reviewers, in order",
-          <InlineField
-            kind="tags"
-            label="Reviewers"
-            value={doc.review?.reviewers ?? []}
-            monospace
-            placeholder="harness:<profile>/<engine>:<model>, Enter to add"
-            changed={changed(s, ["review", "reviewers"])}
-            reasons={s.reasons("reviewers")}
-            readOnly={s.readOnly}
-            onCommit={(v) => s.stage(["review", "reviewers"], v)}
-          />,
+          <ReviewersField staging={s} profiles={profiles ?? []} models={models ?? []} />,
         ],
       ]}
     />
