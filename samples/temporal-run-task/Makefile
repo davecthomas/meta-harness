@@ -112,7 +112,7 @@ restart-demo:
 spend-limit-demo:
 	@DEMO=spend-limit SPEND_LIMIT=0.001 ./stack.sh run
 
-# The fallback-demo entry in config/models.json: standard's candidates name a harness profile
+# The fallback-demo entry in fallback-demo.json, which stack.sh adds to copies of config/: standard's candidates name a harness profile
 # whose image does not exist, and complex has one that works.
 fallback-demo:
 	@DEMO=fallback MODELS_ENV=fallback-demo ./stack.sh run

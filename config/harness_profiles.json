@@ -54,12 +54,6 @@
         "cd", "pwd", "ls", "cat", "head", "tail", "wc", "grep", "rg", "fd", "fdfind", "find", "sort", "uniq",
         "cut", "git"
       ]
-    },
-    "pi-missing-image": {
-      "image": "harness-pi:no-such-image",
-      "tools": ["read", "write", "edit", "ls"],
-      "max_turns": 20,
-      "max_minutes": 10
     }
   }
 }
