@@ -24,6 +24,8 @@ from typing import Any
 
 import httpx
 
+from meta_harness import retrying
+
 log = logging.getLogger("meta_harness.events.client")
 
 DEFAULT_URL = "http://127.0.0.1:8301"
@@ -65,7 +67,13 @@ class EventClient:
         self.source = source
         # The event service takes a control-plane service key on every call.
         self.auth = {"Authorization": f"Bearer {key}"} if (key := os.environ.get("MH_SERVICE_KEY", "")) else {}
-        self.http = httpx.Client(base_url=self.base_url, timeout=timeout, headers=self.auth)
+        # An event carries its own id, so one sent twice is stored once.
+        self.http = httpx.Client(
+            base_url=self.base_url,
+            timeout=timeout,
+            headers=self.auth,
+            transport=retrying.transport(safe=retrying.always),
+        )
         self._outbox: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=OUTBOX_LIMIT)
         self._sender: threading.Thread | None = None
         self._stop = threading.Event()

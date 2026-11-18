@@ -32,6 +32,7 @@ from typing import Any
 
 import httpx
 
+from meta_harness import retrying
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 from meta_harness.trackers.base import (
     DONE,
@@ -54,6 +55,7 @@ PROJECT = re.compile(r"^[A-Z][A-Z0-9_]+$")
 FIELDS = ["summary", "description", "labels", "status", "updated", "reporter", "issuelinks"]
 PAGE = 100
 TIMEOUT_SECONDS = 30.0
+CONNECT_SECONDS = 10.0
 # "Depends on: PROJ-12, PROJ-13" lines in a description, beside the issue's own "is blocked by" links.
 DEPENDS_LINE = re.compile(r"^\s*depends on:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 DEPENDS_KEY = re.compile(r"\b[A-Z][A-Z0-9_]+-\d+\b")
@@ -89,6 +91,11 @@ class Site:
     def statuses_of(self, project: str) -> dict[str, str]:
         """The project's own names for our statuses."""
         return dict((self.projects.get(project) or {}).get("statuses") or self.statuses)
+
+
+def _only_reads(request: httpx.Request) -> bool:
+    """Jira's issue search is a POST that changes nothing, so it can be repeated like a GET."""
+    return request.url.path.endswith("/search/jql")
 
 
 def ref_for(key: str) -> str:
@@ -242,11 +249,17 @@ class JiraTracker:
             )
         try:
             async with httpx.AsyncClient(
-                base_url=site.site, auth=(self.email, self.token), timeout=TIMEOUT_SECONDS, transport=self.transport
+                base_url=site.site,
+                auth=(self.email, self.token),
+                timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=CONNECT_SECONDS),
+                transport=retrying.async_transport(self.transport, safe=_only_reads),
             ) as http:
                 response = await http.request(method, f"/rest/api/2{path}", **kwargs)
         except httpx.HTTPError as err:
-            raise TrackerError(f"Jira did not answer {method} {path}: {type(err).__name__}: {err}") from err
+            raise TrackerError(
+                f"Jira did not answer {method} {path} after several tries ({type(err).__name__}: {err or 'no reply'}). "
+                "Try again shortly; Admin, Logs shows each attempt.",
+            ) from err
         if response.status_code >= 400:
             hint = {
                 401: " Check MH_JIRA_EMAIL and MH_JIRA_TOKEN: the token may have expired or been revoked.",

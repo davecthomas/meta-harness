@@ -12,7 +12,7 @@ import psycopg
 import pytest
 from psycopg import sql
 
-from meta_harness import db
+from meta_harness import db, retrying
 
 
 def _test_database_url() -> str:
@@ -48,3 +48,14 @@ def conn():
         pytest.skip(f"no Postgres at {db.database_url()}: {err}")
     with connection:
         yield connection
+
+
+@pytest.fixture(autouse=True)
+def no_retry_waits(monkeypatch):
+    """Retries run in tests, against each test's fake service, without their backoff."""
+
+    async def no_wait(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(retrying, "_sleep", lambda seconds: None)
+    monkeypatch.setattr(retrying, "_async_sleep", no_wait)

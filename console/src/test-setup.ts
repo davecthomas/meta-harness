@@ -1,3 +1,8 @@
+import { retries } from "./client";
+
+// Retries run in tests, without their backoff.
+retries.baseMs = 0;
+
 // jsdom lacks the browser APIs Mantine's components read at render.
 Object.defineProperty(window, "matchMedia", {
   writable: true,

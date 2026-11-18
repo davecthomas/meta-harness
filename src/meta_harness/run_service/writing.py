@@ -35,6 +35,7 @@ from typing import Any
 
 import httpx
 
+from meta_harness import retrying
 from meta_harness.config import store as config_store
 from meta_harness.run_service.paths import REPO_ROOT
 
@@ -260,7 +261,7 @@ async def rewrite(
         "response_schema": REWRITE_SCHEMA,
         "max_response_tokens": int(config["max_response_tokens"]),
     }
-    async with httpx.AsyncClient(timeout=REWRITE_SECONDS, transport=transport) as http:
+    async with httpx.AsyncClient(timeout=REWRITE_SECONDS, transport=retrying.async_transport(transport)) as http:
         try:
             response = await http.post(f"{url}/v1/structured", json=body, headers={"Authorization": f"Bearer {key}"})
         except httpx.HTTPError as err:

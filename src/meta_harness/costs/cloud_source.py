@@ -20,6 +20,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import httpx
+
+from meta_harness import retrying
 import psycopg
 
 from meta_harness.costs import store
@@ -76,7 +78,7 @@ def harvest(conn: psycopg.Connection, today: date, transport: httpx.BaseTranspor
         return 0
     first = first_day(today)
     project = name.split(".", 1)[0]
-    with httpx.Client(timeout=60, transport=transport) as http:
+    with httpx.Client(timeout=60, transport=retrying.transport(transport, safe=retrying.always)) as http:
         headers = {"Authorization": f"Bearer {_token(http)}"}
         if name.count(".") == 1:
             name = _export_table(http, headers, name)

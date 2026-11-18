@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from meta_harness import retrying
+
 METADATA_TOKEN = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
 ENTRIES_LIST = "https://logging.googleapis.com/v2/entries:list"
 MAX_ENTRIES = 500
@@ -153,7 +155,9 @@ async def read_logs(
     if not project:
         raise LogsError("MH_PROJECT is not set here, so there is no project to read logs from")
     since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
-    async with httpx.AsyncClient(timeout=30, transport=transport) as http:
+    async with httpx.AsyncClient(
+        timeout=30, transport=retrying.async_transport(transport, safe=retrying.always)
+    ) as http:
         try:
             token = await http.get(METADATA_TOKEN, headers={"Metadata-Flavor": "Google"})
         except httpx.HTTPError as err:

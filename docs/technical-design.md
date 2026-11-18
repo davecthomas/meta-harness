@@ -2923,6 +2923,22 @@ spend counters.
 
 ## Observability
 
+**Transient failures are retried before anything reports them.** Every HTTP
+client the services build uses `meta_harness/retrying.py`, an httpx transport:
+up to five tries with exponential backoff and jitter, inside a 45-second
+deadline (below Firebase Hosting's 60), honoring `Retry-After` and GitHub's rate
+limit reset. A request that never reached the service, or was turned away with
+429 or 503, is always repeated. One that may have been acted on (a read timeout,
+a dropped reply, 500, 502, 504) is repeated only when that is harmless: GET,
+HEAD, OPTIONS, PUT, DELETE, and POSTs the client marks safe (Jira's issue search,
+event batches, which carry their own ids, and read-only Google Cloud queries).
+Each retry is logged as a warning, a recovery at info and a final failure as an
+error, by method, host and path, never the query string, so a recurring failure
+shows under Admin, Logs. The edge's forwarding loop follows the same rule while
+a service restarts, and the console's `call` retries the same way, logging to
+the browser's console. `tests/test_retrying.py` fails a client built without the
+transport.
+
 Meta-harness domain events go to the event service, and logs, traces and
 metrics go to OpenTelemetry. Every domain event has its trace id, so the
 two join.
