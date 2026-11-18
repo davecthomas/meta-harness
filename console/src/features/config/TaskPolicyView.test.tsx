@@ -16,7 +16,10 @@ test("the task policy shows its parallel limit beside the VM's ceiling", () => {
   );
   expect(screen.getByText("6, across every goal")).toBeTruthy();
   expect(screen.getByText(/the deployment's VM holds 8 sandboxes/)).toBeTruthy();
-  expect(screen.getByText("harness:pi-review/claude:claude-opus-5-5")).toBeTruthy();
+  // A reviewer reads as its two parts, and someone who only reads the policy gets no controls.
+  expect(screen.getByTestId("reviewers").textContent).toContain("pi-review");
+  expect(screen.getByText("claude:claude-opus-5-5")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Add a reviewer" })).toBeNull();
 });
 
 function Staged() {
@@ -24,7 +27,8 @@ function Staged() {
   const staging: Staging = { document, original: POLICY, stage: (path, value) => setDocument(setIn(document, path, value)), reasons: () => [] };
   return (
     <>
-      <TaskPolicyView policy={document} maxSandboxes={8} staging={staging} />
+      <TaskPolicyView policy={document} maxSandboxes={8} staging={staging} profiles={["pi-review", "pi-careful"]} models={["claude:claude-opus-5-5", "openai:gpt-5"]} />
+      <output data-testid="reviewers-staged">{JSON.stringify(document.review.reviewers)}</output>
       <span>{isChanged(POLICY, document, ["max_parallel"]) ? "staged" : "not staged"}</span>
     </>
   );
@@ -70,4 +74,24 @@ test("the writing pass is a switch, on unless the policy turns it off", async ()
   fireEvent.click(screen.getByRole("switch", { name: /Writing pass|Check what is posted/ }));
   expect(await screen.findByText("Post what a run wrote as it is")).toBeTruthy();
   expect(screen.getByText(/Nothing is scanned or rewritten before it is posted/)).toBeTruthy();
+});
+
+test("a reviewer is a profile and a model picked from what the configuration has, added, reordered and removed in place", async () => {
+  render(
+    <MantineProvider theme={theme}>
+      <Staged />
+    </MantineProvider>,
+  );
+  const stagedNow = () => JSON.parse(screen.getByTestId("reviewers-staged").textContent!);
+  // The only reviewer cannot be removed: a review needs one.
+  expect((screen.getByRole("button", { name: "Remove reviewer 1" }) as HTMLButtonElement).disabled).toBe(true);
+
+  fireEvent.click(screen.getByRole("button", { name: "Add a reviewer" }));
+  expect(stagedNow()).toEqual(["harness:pi-review/claude:claude-opus-5-5", "harness:pi-review/"]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Move reviewer 2 up" }));
+  expect(stagedNow()).toEqual(["harness:pi-review/", "harness:pi-review/claude:claude-opus-5-5"]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove reviewer 1" }));
+  expect(stagedNow()).toEqual(POLICY.review.reviewers);
 });

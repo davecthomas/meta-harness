@@ -3103,7 +3103,10 @@ change stay read-only.
   vCPU and memory, Bash allowlist and image, and a profile is added or
   removed from the table. Repo registry: each repo's tracker and default
   acceptance checks. Task policy: max parallel (with the VM's ceiling), fix
-  rounds and the reviewer pairs. An edit is staged, not saved, because a
+  rounds and the reviewer pairs, each a harness profile and a model picked
+  from what the configuration has, as a tier's candidate is, and added,
+  reordered and removed in place (`config/ReviewersField.tsx`; the last one
+  cannot be removed). An edit is staged, not saved, because a
   version is checked as a whole and recorded with a note: a changed value is
   marked, and a bar above the view says "N changes to version V" with Discard
   and Review and save, which opens the diff and note and saves version V+1.

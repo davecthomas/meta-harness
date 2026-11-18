@@ -250,7 +250,7 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
       {summary.kind === "skills" && <SkillsView staging={staging} profiles={profileDocs} />}
       {summary.kind === "repos" && <ReposView staging={staging} />}
       {summary.kind === "trackers" && <TrackersView staging={staging} />}
-      {summary.kind === "task_policy" && <TaskPolicyView policy={document} maxSandboxes={maxSandboxes} staging={staging} />}
+      {summary.kind === "task_policy" && <TaskPolicyView policy={document} maxSandboxes={maxSandboxes} staging={staging} profiles={profileNames} models={models} />}
 
       <SectionTitle>Version history</SectionTitle>
       <DataTable head={["Version", "Change", "By", "When", "Note", ""]} minWidth={760}>
