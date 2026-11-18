@@ -68,13 +68,13 @@ const TASK = {
 
 // Serves the task page with run-2's events alone as the first page; run-1's prompt is only found by
 // asking for every run_prompt. Returns the URLs asked for.
-function serveNewestOnly(): string[] {
+function serveNewestOnly(status = "running"): string[] {
   const newest = EVENTS.slice(4);
   const asked: string[] = [];
   vi.stubGlobal("EventSource", class { static CLOSED = 2; addEventListener() {} close() {} });
   vi.stubGlobal("fetch", (url: string) => {
     asked.push(url);
-    const body = url === "/v1/tasks/t" ? TASK
+    const body = url === "/v1/tasks/t" ? { ...TASK, status }
       : url.includes("event_type=run_prompt") ? { events: EVENTS.filter((e) => e.event_type === "run_prompt"), next_position: 99 }
       : url.startsWith("/v1/events") ? { events: newest, latest_position: newest.at(-1)!.position }
       : { base: "", ticket: null };
@@ -122,6 +122,35 @@ test("the task page's Terminal merges an older prompt in position order, each pr
   const summaries = [...log.querySelectorAll("summary")].map((s) => s.textContent);
   expect(summaries).toEqual(["10:00:00 prompt (repo-task-v1)", "10:00:00 prompt (review-v1)"]);
   expect([...log.children].map((c) => c.textContent).at(-1)).toContain("turn 1");
+});
+
+async function openTerminal(status: string) {
+  serveNewestOnly(status);
+  renderTaskPage("/tasks/t");
+  await screen.findByTestId("task-path");
+  fireEvent.click(screen.getByText("Terminal"));
+  await screen.findByRole("log");
+}
+
+const RECORD = "Output is the record of this task's runs";
+
+test("a closed task's Terminal says its output is the record of its runs, with no live badge", async () => {
+  await openTerminal("closed");
+  expect(screen.getByText(RECORD)).toBeTruthy();
+  expect(screen.queryByText("live")).toBeNull();
+  expect(screen.queryByText("connecting")).toBeNull();
+});
+
+test("a queued task's Terminal shows no live badge", async () => {
+  await openTerminal("queued");
+  expect(screen.queryByText("live")).toBeNull();
+  expect(screen.queryByText("connecting")).toBeNull();
+});
+
+test("a running task's Terminal still shows the stream badge", async () => {
+  await openTerminal("running");
+  expect(screen.queryByText(RECORD)).toBeNull();
+  expect(screen.getByText("connecting")).toBeTruthy();
 });
 
 test("the terminal shows the prompt as one collapsed line that expands to the full text", () => {
