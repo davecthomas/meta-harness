@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Anchor, Badge, Button, Center, Group, Loader, SegmentedControl, Stack, Table, Text } from "@mantine/core";
+import { Anchor, Badge, Button, Center, Collapse, Group, Loader, Paper, SegmentedControl, Stack, Table, Text } from "@mantine/core";
 import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlayerPause, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { api, trackerTitle, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
@@ -10,7 +10,8 @@ import { CancelGoal } from "./CancelGoal";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { GoalStanding } from "./GoalStanding";
 import { RemoveIssue } from "./RemoveIssue";
-import { GoalFailures } from "./GoalFailures";
+import { GoalFailures, failures } from "./GoalFailures";
+import { usd } from "../../money";
 import { GoalPlan } from "./GoalPlan";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
@@ -51,6 +52,8 @@ export function GoalPage() {
   const [progress, setProgress] = useState<IssueProgress[] | null>(null);
   const [spend, setSpend] = useState<Record<string, number>>({});
   const [spentNow, setSpentNow] = useState<number | undefined>(undefined);
+  // Whether the settings are shown: null until the operator says, then as they left it.
+  const [settingsOpen, setSettingsOpen] = useState<boolean | null>(null);
   const [from, setFrom] = useState<number | null>(null);
   // When the board last reread its issues, and why its latest reread failed, if it did.
   const [refreshed, setRefreshed] = useState<number | null>(null);
@@ -190,6 +193,10 @@ export function GoalPage() {
   // An active goal opens on its board; any other on the table, until the operator picks a view.
   const shownView = view ?? (goal.status === "active" ? "board" : "table");
   const editable = { goal, readOnly: !open, save: saveField };
+  // Settings are open until the goal has issues, then folded unless the operator opened them.
+  const showSettings = settingsOpen ?? issues.length === 0;
+  // The tasks the failures alert above the board already explains, so the standing alert does not list them again.
+  const explained = new Set(progress ? failures(progress).flatMap((i) => (i.task_id ? [i.task_id] : [])) : []);
   // What the goal's runs have spent, once the board has added it up: newer than the planner's last look.
   // (spentNow: read with the board, newer than the figure the goal came with.)
 
@@ -248,7 +255,7 @@ export function GoalPage() {
       />
       <ErrorAlert error={error} />
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
-      <GoalStanding standing={goal.standing} />
+      <GoalStanding standing={goal.standing} explained={explained} budgetShown={budgetStanding(goal, spentNow) !== "ok"} />
       <IssuesPicker
         opened={picking}
         onClose={() => setPicking(false)}
@@ -265,37 +272,59 @@ export function GoalPage() {
           await loadProgress();
         }}
       />
-      <Facts
-        items={[
-          [
-            "Where its issues come from",
-            <Stack gap={0}>
-              <Text size="sm">{issueSourceLabel(goal.modality)}</Text>
-              <Text size="xs" c="dimmed">Fixed when the goal was created.</Text>
-            </Stack>,
-          ],
-          // One tracker for all the goal's issues, fixed when it was created.
-          [
-            "Issue tracker",
-            <Text size="sm">
-              {trackerTitle(goal.tracker ?? "github")}
-              {Object.entries(goal.tracker_settings ?? {}).map(([name, value]) => `, ${name} ${value}`).join("")}
-              <Text span size="xs" c="dimmed" display="block">Fixed when the goal was created.</Text>
-            </Text>,
-          ],
-          ["Label", <LabelEdit {...editable} />],
-          ["Repos", <ReposEdit {...editable} />],
-          ["Auto-merge", <AutoMergeEdit {...editable} />],
-          // The amount, what happens when it is reached, and the allowed overage, in one row.
-          ["Budget", <BudgetRow {...editable} />],
-          ["Priority", <PriorityEdit {...editable} />],
-          ["Parallel tasks", <ParallelEdit {...editable} system={systemParallel} />],
-          ["Strict issues", <StrictIssuesEdit goal={goal} readOnly={!open} save={(fields) => saveField(fields as Partial<Goal>)} />],
-          ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
-          ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
-          ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),
-        ]}
-      />
+      {/* The goal's settings, folded away once it has work to show: the board is what the page is for, and
+          one line says what the settings are. Open on a goal with no issues yet, which is when they are set. */}
+      <Paper withBorder p="sm" mb="md" data-testid="goal-settings">
+        <Group justify="space-between" wrap="nowrap" gap="md">
+          <Text size="sm" c="dimmed" lineClamp={1} data-testid="goal-settings-summary">
+            <Text span fw={600} c="var(--mantine-color-text)">Settings</Text>
+            {" · "}{[
+              goal.label ? `label ${goal.label}` : "no label",
+              goal.repos.join(", "),
+              goal.max_usd ? `budget ${usd(goal.max_usd)}` : "no budget",
+              goal.auto_merge ? "auto-merge on" : "auto-merge off",
+            ].join(" · ")}
+          </Text>
+          <Button size="compact-sm" variant="subtle" onClick={() => setSettingsOpen(!showSettings)} aria-expanded={showSettings} aria-controls="goal-settings-body">
+            {showSettings ? "Hide settings" : "Show and edit settings"}
+          </Button>
+        </Group>
+        <Collapse expanded={showSettings} id="goal-settings-body">
+          <div style={{ marginTop: 12 }}>
+          <Facts
+            items={[
+              [
+                "Where its issues come from",
+                <Stack gap={0}>
+                  <Text size="sm">{issueSourceLabel(goal.modality)}</Text>
+                  <Text size="xs" c="dimmed">Fixed when the goal was created.</Text>
+                </Stack>,
+              ],
+              // One tracker for all the goal's issues, fixed when it was created.
+              [
+                "Issue tracker",
+                <Text size="sm">
+                  {trackerTitle(goal.tracker ?? "github")}
+                  {Object.entries(goal.tracker_settings ?? {}).map(([name, value]) => `, ${name} ${value}`).join("")}
+                  <Text span size="xs" c="dimmed" display="block">Fixed when the goal was created.</Text>
+                </Text>,
+              ],
+              ["Label", <LabelEdit {...editable} />],
+              ["Repos", <ReposEdit {...editable} />],
+              ["Auto-merge", <AutoMergeEdit {...editable} />],
+              // The amount, what happens when it is reached, and the allowed overage, in one row.
+              ["Budget", <BudgetRow {...editable} />],
+              ["Priority", <PriorityEdit {...editable} />],
+              ["Parallel tasks", <ParallelEdit {...editable} system={systemParallel} />],
+              ["Strict issues", <StrictIssuesEdit goal={goal} readOnly={!open} save={(fields) => saveField(fields as Partial<Goal>)} />],
+              ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
+              ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
+              ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),
+            ]}
+          />
+          </div>
+        </Collapse>
+      </Paper>
 
       {waiting && (
         <>

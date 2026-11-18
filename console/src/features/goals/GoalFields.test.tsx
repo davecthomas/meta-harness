@@ -139,6 +139,10 @@ test("a label its sweep's issues came from is kept, and one with a picked issue 
   const swept = { ref: "github:o/r#7", repo: "o/r", task_id: null, state: "open", depends_on: [], refused_reason: null, picked: false };
   const patched = renderGoal(goal("active", { issues: [swept] }));
 
+  // A goal with issues folds its settings into one line; they open to be edited.
+  expect((await screen.findByTestId("goal-settings-summary")).textContent).toBe("Settings · label mh:fix · o/r · budget $10.00 · auto-merge off");
+  expect(screen.queryByRole("button", { name: "Edit label" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Show and edit settings" }));
   fireEvent.click(await screen.findByRole("button", { name: "Edit label" }));
   let label = screen.getByRole("combobox", { name: "Label" });
   fireEvent.change(label, { target: { value: "" } });
@@ -148,6 +152,7 @@ test("a label its sweep's issues came from is kept, and one with a picked issue 
   cleanup();
 
   const picked = renderGoal(goal("active", { issues: [{ ...swept, picked: true }] }));
+  fireEvent.click(await screen.findByRole("button", { name: "Show and edit settings" }));
   fireEvent.click(await screen.findByRole("button", { name: "Edit label" }));
   label = screen.getByRole("combobox", { name: "Label" });
   fireEvent.change(label, { target: { value: "" } });
