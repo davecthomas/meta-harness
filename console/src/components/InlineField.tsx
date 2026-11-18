@@ -1,5 +1,5 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { ActionIcon, Badge, Checkbox, Code, Group, Loader, NumberInput, Select, Stack, Switch, TagsInput, Text, TextInput, Textarea } from "@mantine/core";
+import { type FocusEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { ActionIcon, Badge, Box, Checkbox, Code, Group, Loader, NumberInput, Select, Stack, Switch, TagsInput, Text, TextInput, Textarea } from "@mantine/core";
 import { IconPencil } from "@tabler/icons-react";
 
 // What a commit answers: nothing when the value is taken, or the reasons it is refused. A thrown error refuses too.
@@ -26,6 +26,13 @@ interface Base {
   placeholder?: string;
 }
 
+// What a custom kind's own input is given: the draft, how to change it, and whether it was last refused.
+export interface DraftProps<T> {
+  value: T;
+  onChange: (value: T) => void;
+  invalid: boolean;
+}
+
 type Kinds =
   | { kind: "text"; value: string | null; onCommit: Commit<string> }
   | { kind: "textarea"; value: string | null; onCommit: Commit<string> }
@@ -43,7 +50,21 @@ type Kinds =
       suffix?: string;
     }
   | { kind: "select"; value: string | null; data: FieldOption[]; onCommit: Commit<string | null>; clearable?: boolean; searchable?: boolean }
-  | { kind: "switch"; value: boolean; onCommit: Commit<boolean>; switchLabel?: ReactNode }
+  // nameByLabel: the switch's accessible name is `label` even with a switchLabel, whose words change with its value.
+  | { kind: "switch"; value: boolean; onCommit: Commit<boolean>; switchLabel?: ReactNode; nameByLabel?: boolean }
+  // A value with an input of its own (several inputs, a picker), drawn by `input` from the draft. Leaving the
+  // inputs or Enter commits; multiline: Ctrl/Cmd+Enter does. check: why the draft cannot be committed, asked
+  // before it is. heading: the value sits in a page heading, so it takes no button of its own there.
+  | {
+      kind: "custom";
+      value: any;
+      onCommit: Commit<any>;
+      input: (draft: DraftProps<any>) => ReactNode;
+      same?: (a: any, b: any) => boolean;
+      check?: (draft: any) => string | null;
+      multiline?: boolean;
+      heading?: boolean;
+    }
   | { kind: "checkboxes"; value: string[]; data: FieldOption[]; onCommit: Commit<string[]> }
   | { kind: "tags"; value: string[]; onCommit: Commit<string[]>; data?: string[] };
 
@@ -88,13 +109,19 @@ export function InlineField(props: InlineFieldProps) {
   const [pending, setPending] = useState<any>(undefined);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
+  // A custom kind's inputs are its own, so the field finds the first to focus when it opens.
+  const box = useRef<HTMLDivElement>(null);
+  const custom = props.kind === "custom";
+  useEffect(() => {
+    if (editing && custom) box.current?.querySelector<HTMLElement>("input, textarea")?.focus();
+  }, [editing, custom]);
 
   function start() {
     if (props.readOnly || editingRef.current) return;
     editingRef.current = true;
     setErrors([]);
     setSearch("");
-    setDraft(props.kind === "number" ? (props.value ?? "") : props.kind === "tags" ? [...props.value] : (props.value ?? (props.kind === "select" ? null : "")));
+    setDraft(props.kind === "custom" ? props.value : props.kind === "number" ? (props.value ?? "") : props.kind === "tags" ? [...props.value] : (props.value ?? (props.kind === "select" ? null : "")));
     setEditing(true);
   }
 
@@ -136,8 +163,13 @@ export function InlineField(props: InlineFieldProps) {
       setErrors([local.error]);
       return;
     }
-    if (same(local.value, props.value)) {
+    if (props.kind === "custom" && props.same ? props.same(local.value, props.value) : same(local.value, props.value)) {
       if (!opts.direct) close();
+      return;
+    }
+    const why = props.kind === "custom" ? (props.check?.(local.value) ?? null) : null;
+    if (why) {
+      setErrors([why]);
       return;
     }
     busyRef.current = true;
@@ -198,7 +230,7 @@ export function InlineField(props: InlineFieldProps) {
       <Stack gap={2}>
         <Group gap={6} wrap="nowrap">
           <Switch
-            aria-label={props.switchLabel ? undefined : props.label}
+            aria-label={props.switchLabel && !props.nameByLabel ? undefined : props.label}
             label={props.switchLabel}
             checked={checked}
             disabled={props.readOnly || busy}
@@ -227,6 +259,74 @@ export function InlineField(props: InlineFieldProps) {
         {props.data.length === 0 && <Text size="sm" c="dimmed">{props.empty ?? "None to choose from"}</Text>}
         {reasonsBlock}
       </Stack>
+    );
+  }
+
+  if (editing && props.kind === "custom") {
+    const multiline = props.multiline;
+    return (
+      // Focusable itself, so a click on a label or the space between its inputs stays within the field.
+      <Box
+        ref={box}
+        tabIndex={-1}
+        style={{ outline: "none" }}
+        onKeyDown={(e: KeyboardEvent) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          } else if (e.key === "Enter" && !e.defaultPrevented && !e.nativeEvent.isComposing) {
+            // A combobox that picks its highlighted option on Enter prevents the default, and that pick is not a commit.
+            if (multiline && !(e.ctrlKey || e.metaKey)) return;
+            e.preventDefault();
+            void commit(draft);
+          }
+        }}
+        onBlur={(e: FocusEvent<HTMLDivElement>) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) void commit(draft);
+        }}
+      >
+        <Stack gap={4}>
+          {props.input({ value: draft, onChange: setDraft, invalid: errors.length > 0 })}
+          {busy && (
+            <Group gap={6}>
+              <Loader size={12} />
+              <Text size="xs" c="dimmed">Saving…</Text>
+            </Group>
+          )}
+          {shownReasons.map((r) => <Text key={r} size="xs" c="red" role="alert">{r}</Text>)}
+          {!busy && !shownReasons.length && (
+            <Text size="xs" c="dimmed">{multiline ? "Ctrl+Enter or ⌘+Enter saves" : "Enter saves"}, Escape cancels.</Text>
+          )}
+        </Stack>
+      </Box>
+    );
+  }
+
+  // In a page heading the value names the heading: it opens on a click or Enter, with its pencil beside it and
+  // no button role, which would take the heading's name.
+  if (props.kind === "custom" && props.heading) {
+    if (props.readOnly) return <>{props.display}</>;
+    return (
+      <Box
+        component="span"
+        tabIndex={0}
+        title={`Edit ${props.label}`}
+        onClick={start}
+        onKeyDown={(e: KeyboardEvent) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            start();
+          }
+        }}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        onFocus={() => setHover(true)}
+        onBlur={() => setHover(false)}
+        style={{ cursor: "pointer", display: "inline", maxWidth: "100%" }}
+      >
+        {props.display}
+        <IconPencil aria-hidden size={18} style={{ opacity: hover ? 0.7 : 0.35, marginLeft: 8, marginTop: 3, transition: "opacity 120ms" }} />
+      </Box>
     );
   }
 
@@ -317,7 +417,7 @@ export function InlineField(props: InlineFieldProps) {
           comboboxProps={{ withinPortal: true }}
         />
       );
-    } else {
+    } else if (props.kind === "tags") {
       const add = search.trim();
       input = (
         <TagsInput
