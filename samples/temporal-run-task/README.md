@@ -125,7 +125,7 @@ The sample also shows four failure paths:
 - **Spend limit.** The run passes its grant's spend limit, the HTTP Gateway
   refuses the next turn with `402`, and the run ends `ERROR spend_limit`.
 - **Fallback.** `make fallback-demo` uses the `fallback-demo` entry in
-  `config/models.json`. Tier `standard`'s two candidates name the harness
+  `fallback-demo.json`, which the stack adds to copies of the configuration. Tier `standard`'s two candidates name the harness
   profile `pi-missing-image`, whose image does not exist, so neither gets a
   per-run sandbox. The workflow tries both, escalates to tier `complex`, and
   its candidate finishes the task.
@@ -218,7 +218,8 @@ history.
 | `src/meta_harness/run_service/code_host.py` | Reads a ticket, clones the repo into a run's workspace, and publishes: commit, push, pull request, through `git` and the GitHub App on this machine, or a local bare repo |
 | `src/meta_harness/run_service/prompts/repo-task-v1.txt` | The repo-task prompt template |
 | `src/meta_harness/run_service/routing.py` | Reads harness profiles, splits a `harness:` candidate, checks every tier candidate when the worker starts, and holds the worker's `AiRouteClassifier` |
-| `config/models.json` | The router's tiers, classifier and default tier, and the `zero-cost` and `fallback-demo` environments |
+| `config/models.json` | The router's tiers, classifier and default tier, and the `zero-cost` environment |
+| `samples/temporal-run-task/fallback-demo.json` | The `fallback-demo` environment and its harness profile `pi-missing-image`, added to copies of `config/models.json` and `config/harness_profiles.json` for `make fallback-demo`, so a deployment's configuration never holds them |
 | `config/harness_profiles.json` | Harness profiles: image, tools, turn and minute limits |
 | `src/meta_harness/run_service/sandbox.py` | The Docker executor backend: starts, finds and removes a run's per-run sandbox container and its network |
 | `src/meta_harness/run_service/fake_gateway.py` | The fake HTTP Gateway: run grants and scripted model turns, with no model calls |
@@ -811,7 +812,7 @@ make fallback-demo
 ```
 
 This runs the built-in task on the `fallback-demo` entry of
-`config/models.json`, which has no classifier, so the task takes the default
+`fallback-demo.json`, which has no classifier, so the task takes the default
 tier, `standard`. Both of `standard`'s candidates use the harness profile
 `pi-missing-image`, whose image `harness-pi:no-such-image` does not exist.
 Docker refuses each container at once (images are never pulled), so neither

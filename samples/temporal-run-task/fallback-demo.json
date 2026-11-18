@@ -1,0 +1,42 @@
+{
+  "about": "The fallback demo's configuration, which stack.sh adds to copies of config/models.json and config/harness_profiles.json when MODELS_ENV is fallback-demo. The profile's image does not exist, so it is kept out of config/, which seeds a deployment's configuration.",
+  "profiles": {
+    "pi-missing-image": {
+      "image": "harness-pi:no-such-image",
+      "tools": [
+        "read",
+        "write",
+        "edit",
+        "ls"
+      ],
+      "max_turns": 20,
+      "max_minutes": 10
+    }
+  },
+  "environments": {
+    "fallback-demo": {
+      "router": {
+        "tiers": [
+          {
+            "name": "standard",
+            "description": "A feature or fix inside one module, with clear acceptance checks, or anything smaller: config, copy, a one-file edit.",
+            "models": [
+              "harness:pi-missing-image/claude:claude-haiku-4-5",
+              "harness:pi-missing-image/openai:gpt-4o-mini"
+            ]
+          },
+          {
+            "name": "complex",
+            "description": "Cross-module changes, migrations, concurrency, security-sensitive code, or vague requirements.",
+            "models": [
+              "harness:pi-lean/claude:claude-haiku-4-5"
+            ]
+          }
+        ],
+        "classifier": {
+          "engine": "none"
+        }
+      }
+    }
+  }
+}

@@ -246,7 +246,23 @@ start_worker() {
   # The fake gateway's runs use the zero-cost entry, which turns the router's classifier off.
   local models_env=${MODELS_ENV:-}
   [ -n "$models_env" ] || [ "$GATEWAY" != fake ] || models_env=zero-cost
-  AI_MODELS_CONFIG="$ROUTER_CONFIG" AI_MODELS_ENV="$models_env" \
+  local router_config=$ROUTER_CONFIG profiles=${HARNESS_PROFILES:-$ROOT/config/harness_profiles.json}
+  if [ "$models_env" = fallback-demo ]; then
+    # The demo's tiers and its profile with no image live here, not in config/, which seeds a deployment.
+    mkdir -p "$RUNS_DIR/fallback-demo-config"
+    "$PY" - "$router_config" "$profiles" fallback-demo.json "$RUNS_DIR/fallback-demo-config" <<'MERGE'
+import json, pathlib, sys
+models, profiles, demo = (json.loads(pathlib.Path(p).read_text()) for p in sys.argv[1:4])
+models.setdefault("environments", {}).update(demo["environments"])
+profiles["profiles"].update(demo["profiles"])
+out = pathlib.Path(sys.argv[4])
+(out / "models.json").write_text(json.dumps(models, indent=2))
+(out / "harness_profiles.json").write_text(json.dumps(profiles, indent=2))
+MERGE
+    router_config=$RUNS_DIR/fallback-demo-config/models.json
+    profiles=$RUNS_DIR/fallback-demo-config/harness_profiles.json
+  fi
+  AI_MODELS_CONFIG="$router_config" AI_MODELS_ENV="$models_env" HARNESS_PROFILES="$profiles" \
     nohup "$PY" -m meta_harness.run_service.worker >>"$1" 2>&1 </dev/null &
   worker_pid=$!
   set +m
