@@ -156,20 +156,34 @@ function SettingField(props: { staging: Staging; tracker: Tracker; setting: Trac
 
 // What the tracker's site has for a setting (GET /v1/trackers/{scheme}/choices/{setting}), read once when the
 // page opens: null until it arrives. The list needs the tracker's saved settings and its sign-in, so it can fail.
-function useChoices(scheme: string, setting: string): { known: string[] | null; error: string | null } {
+// groups: the same names under what each belongs to, in the order given, when the tracker groups them.
+type Grouped = { group: string; items: string[] }[];
+
+function useChoices(scheme: string, setting: string): { known: string[] | null; groups: Grouped | null; error: string | null } {
   const [known, setKnown] = useState<string[] | null>(null);
+  const [groups, setGroups] = useState<Grouped | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let stale = false;
     api.trackerChoices(scheme, setting).then(
-      (found) => !stale && setKnown((found ?? []).map((c) => c.value)),
+      (found) => {
+        if (stale) return;
+        setKnown((found ?? []).map((c) => c.value));
+        const by: Grouped = [];
+        for (const c of found ?? []) {
+          if (!c.group) continue;
+          const at = by.find((g) => g.group === c.group) ?? by[by.push({ group: c.group, items: [] }) - 1];
+          at.items.push(c.value);
+        }
+        setGroups(by.length ? by : null);
+      },
       (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
     );
     return () => {
       stale = true;
     };
   }, [scheme, setting]);
-  return { known, error };
+  return { known, groups, error };
 }
 
 // The site's own spelling of a name, whatever capitals it was typed in; undefined when the site has none.
@@ -190,6 +204,7 @@ function PickedName(props: {
   empty: string;
   path: string[];
   known: string[] | null;
+  groups?: Grouped | null;
   unreadable: string | null;
   testId: string;
   onCommit: (name: string) => void;
@@ -217,7 +232,7 @@ function PickedName(props: {
             placeholder={known === null && !props.unreadable ? "Loading…" : listed ? `Pick ${/^[aeiou]/i.test(props.what) ? "an" : "a"} ${props.what}` : "Type its name"}
             value={draft.value}
             onChange={draft.onChange}
-            data={known ?? []}
+            data={props.groups ?? known ?? []}
             error={draft.invalid}
             maxDropdownHeight={260}
           />
@@ -264,7 +279,11 @@ function ChoiceSetting(props: { staging: Staging; tracker: Tracker; setting: Tra
 function StatusNames(props: { staging: Staging; tracker: Tracker; path: string[]; value: any }) {
   const { staging: s, tracker, path } = props;
   const names: Record<string, string> = props.value && typeof props.value === "object" ? props.value : {};
-  const { known, error } = useChoices(tracker.scheme, "statuses");
+  const { known, groups, error } = useChoices(tracker.scheme, "statuses");
+  // The projects the goals use, whose own statuses are offered first.
+  const projects = (groups ?? []).slice(0, -1).map((g) => g.group);
+  // A saved name that only another project's workflow has: it moves no issue of these goals.
+  const elsewhere = (name: string) => !!name && projects.length > 0 && groups![groups!.length - 1].items.some((k) => k.toLowerCase() === name.trim().toLowerCase());
   return (
     <Stack gap={6}>
       <Group gap="lg" align="flex-start">
@@ -280,6 +299,7 @@ function StatusNames(props: { staging: Staging; tracker: Tracker; path: string[]
               empty="The usual"
               path={[...path, status]}
               known={known}
+              groups={groups}
               unreadable={error}
               testId={`status-unknown-${status}`}
               onCommit={(name) => {
@@ -288,9 +308,15 @@ function StatusNames(props: { staging: Staging; tracker: Tracker; path: string[]
                 stageOptional(s, path, Object.keys(next).length ? next : undefined);
               }}
             />
+            {elsewhere(names[status] ?? "") && (
+              <Text size="xs" c="orange" data-testid={`status-elsewhere-${status}`}>Not a status of {projects.join(" or ")}</Text>
+            )}
           </div>
         ))}
       </Group>
+      {projects.length > 0 && (
+        <Text size="xs" c="dimmed">The statuses of {projects.join(", ")}, the {projects.length === 1 ? "project your goals use" : "projects your goals use"}, are listed first.</Text>
+      )}
       <Unreadable what="status names" error={error} />
     </Stack>
   );

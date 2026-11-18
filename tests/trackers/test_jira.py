@@ -186,6 +186,39 @@ async def test_the_sites_status_names_are_listed_once_each_for_the_console_to_of
     assert all(choice["label"] == choice["value"] for choice in found)
 
 
+async def test_the_statuses_of_the_projects_goals_use_come_first_and_the_rest_of_the_sites_after():
+    site_wide = ["Draft", "In Dev", "Done", "Adobe Approved", "Client Review", "Backlog"]
+    asked: list[str] = []
+
+    def statuses(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        if request.url.path == "/rest/api/2/project/VL/statuses":
+            story = {"name": "Story", "statuses": [{"name": "Draft"}, {"name": "In Dev"}, {"name": "Done"}]}
+            bug = {"name": "Bug", "statuses": [{"name": "Draft"}, {"name": "Done"}]}
+            return httpx.Response(200, json=[story, bug])
+        if request.url.path == "/rest/api/2/project/GONE/statuses":
+            return httpx.Response(404, json={"errorMessages": ["No project could be found with key 'GONE'."]})
+        return httpx.Response(200, json=[{"name": name} for name in site_wide])
+
+    adapter = JiraTracker("bot@example.com", "t", site=lambda: Site(site=SITE), transport=httpx.MockTransport(statuses))
+
+    found = await adapter.choices(
+        "statuses", [{"project": "vl"}, {"project": "VL", "assigned": "yes"}, {"project": "GONE"}]
+    )
+
+    assert [(c["value"], c["group"]) for c in found] == [
+        ("Done", "VL"),
+        ("Draft", "VL"),
+        ("In Dev", "VL"),
+        ("Adobe Approved", "Other projects"),
+        ("Backlog", "Other projects"),
+        ("Client Review", "Other projects"),
+    ]
+    assert asked.count("/rest/api/2/project/VL/statuses") == 1, "a project several goals use is read once"
+    # With no goal on Jira yet there is no project to put first, and nothing is grouped.
+    assert all("group" not in c for c in await adapter.choices("statuses"))
+
+
 async def test_the_sites_issue_types_are_listed_without_the_sub_task_ones():
     def types(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/rest/api/2/issuetype"

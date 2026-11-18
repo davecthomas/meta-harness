@@ -2642,7 +2642,12 @@ setting's options come from `GET /v1/trackers/{scheme}/choices/{setting}`
 (Jira's projects, by name), so no form or route is written for one tracker.
 The same call lists what a site's own settings can name: Jira's issue types
 (`issue_type`, a `choice` setting; sub-task types left out, since they need a
-parent) and its status names (`statuses`). The Issue trackers page offers
+parent) and its status names (`statuses`). One site holds many projects, each
+with its own workflows, so the planner gives the adapter the settings of the
+goals on the tracker, and the statuses of the projects they name
+(`GET /project/{key}/statuses`) come first, grouped by project, with the
+site's other statuses after them under "Other projects". A saved name that
+only another project has is marked: it moves no issue of those goals. The Issue trackers page offers
 each list as the operator types, refuses a name the site lacks, takes the
 site's spelling of one typed in other capitals, and marks a saved name the
 site no longer has. When the list cannot be read it says why and takes a

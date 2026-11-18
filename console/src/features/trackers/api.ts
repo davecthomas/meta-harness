@@ -52,7 +52,8 @@ export function sourceQuery(source?: IssueSource): { tracker?: string; settings?
 
 export const trackersApi = {
   trackers: () => call<Trackers>("/v1/trackers"),
-  // What a goal may choose for one of a tracker's goal settings: Jira's projects, by name.
+  // What the console offers for one of a tracker's settings: Jira's projects, by name, its issue types, and its
+  // status names. group: what a choice belongs to, when the choices come in groups (a status's project).
   trackerChoices: (scheme: string, setting: string) =>
-    call<{ choices: { value: string; label: string }[] }>(`/v1/trackers/${scheme}/choices/${setting}`).then((r) => r.choices),
+    call<{ choices: { value: string; label: string; group?: string }[] }>(`/v1/trackers/${scheme}/choices/${setting}`).then((r) => r.choices),
 };

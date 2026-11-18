@@ -122,6 +122,30 @@ test("a status name is picked from the site's own, in the site's spelling, and a
   await waitFor(() => expect(staged).toEqual([[["trackers", "jira", "statuses"], { in_review: "In Code Review" }]]));
 });
 
+test("the statuses of the projects goals use are grouped first, and a saved name from another project is marked", async () => {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/trackers") return respond({ default: "github", trackers: [GITHUB, JIRA] });
+    if (url === "/v1/trackers/jira/choices/statuses") {
+      const mine = ["Draft", "In Dev", "Done"].map((name) => ({ value: name, label: name, group: "VL" }));
+      const rest = ["Adobe Approved", "Backlog"].map((name) => ({ value: name, label: name, group: "Other projects" }));
+      return respond({ choices: [...mine, ...rest] });
+    }
+    return respond({ choices: [] });
+  });
+  const document = WITH_JIRA({ done: "Done", todo: "Backlog" });
+  render(
+    <MantineProvider theme={theme}>
+      <TrackersView staging={{ document, original: document, stage: () => undefined, reasons: () => [] }} />
+    </MantineProvider>,
+  );
+  const jira = within(await screen.findByTestId("tracker-jira"));
+
+  expect((await jira.findByTestId("status-elsewhere-todo")).textContent).toBe("Not a status of VL");
+  expect(jira.queryByTestId("status-elsewhere-done")).toBeNull();
+  expect(jira.queryByTestId("status-unknown-todo")).toBeNull();
+  expect(jira.getByText(/The statuses of VL, the project your goals use, are listed first/)).toBeTruthy();
+});
+
 test("an issue type is picked from the site's own too", async () => {
   const staged = show(WITH_JIRA({}), [], SITE_STATUSES);
   const jira = within(await screen.findByTestId("tracker-jira"));

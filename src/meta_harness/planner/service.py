@@ -769,13 +769,22 @@ def create_app(
     @app.get("/v1/trackers/{scheme}/choices/{setting}")
     async def tracker_choices(scheme: str, setting: str, who: str = Depends(operator)) -> dict:
         """What the console offers for one of a tracker's settings, as value and label: Jira's projects for a
-        goal, and the status names and issue types of its site for the site's own. Empty for a setting with nothing to list. 422 when the tracker is not set up, 502 when it cannot be
-        read, each saying why."""
+        goal, and the status names and issue types of its site for the site's own. The adapter is given the
+        settings of the goals on the tracker, so it can put what they use first: Jira's statuses come grouped,
+        the goals' projects' own before the rest of the site's. Empty for a setting with nothing to list. 422
+        when the tracker is not set up, 502 when it cannot be read, each saying why."""
         adapter = tracker_named(scheme)
         if not hasattr(adapter, "choices"):
             return {"choices": []}
+        with app.state.pool.connection() as conn:
+            goals = store.list_goals(conn)
+        used = [
+            g["tracker_settings"]
+            for g in goals
+            if (g.get("tracker") or "github") == scheme and g.get("tracker_settings")
+        ]
         try:
-            return {"choices": await adapter.choices(setting)}
+            return {"choices": await adapter.choices(setting, used)}
         except TrackerError as err:
             raise HTTPException(status_code=502 if err.retryable else 422, detail=str(err)) from err
 
