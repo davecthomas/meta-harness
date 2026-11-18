@@ -17,6 +17,9 @@ export const theme = createTheme({
   components: {
     Table: { defaultProps: { verticalSpacing: "sm", highlightOnHover: true } },
     Paper: { defaultProps: { withBorder: true, p: "lg" } },
+    // A badge shows its whole label. Mantine lets one shrink and end in "…", which a narrow table column or a
+    // full row does to it: "a…" for active, "WARNI…". A table too wide for its frame scrolls there instead.
+    Badge: { styles: { root: { minWidth: "max-content" } } },
     // A window's title reads as a title: larger and heavier than its body, over a rule that sets the header off.
     // Set here once, so every dialog and drawer in the console has it.
     Modal: { styles: WINDOW_TITLE },
