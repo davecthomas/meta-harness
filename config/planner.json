@@ -8,7 +8,7 @@
     "max_issues": 40
   },
   "issue_sizing": {
-    "engine": "openai-decisions",
+    "engine": "openai-responses",
     "model": "gpt-6-luna",
     "max_response_tokens": 800,
     "body_chars": 8000

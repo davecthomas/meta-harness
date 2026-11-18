@@ -3,8 +3,9 @@
 One issue became 2,100 changed lines across 22 files and a task that spent its
 whole limit unresolved. So the sweep sizes each issue the first time it sees
 one, with one cheap model call through the HTTP Gateway's /v1/structured: the
-classifier's engine, as config/planner.json's issue_sizing names it, never
-code. The model reads the issue's title and body and answers its size (small,
+engine and model config/planner.json's issue_sizing names, never code. The
+engine is one the gateway serves completions on; the router classifier's own
+(openai-decisions) is not, and the gateway answers it 503. The model reads the issue's title and body and answers its size (small,
 medium or large), its reasons, what it is missing (acceptance checks, paths, a
 testable outcome) and, for a large one, the smaller issues it would split
 into. What the planner can tell without a model, no `## Acceptance checks` or

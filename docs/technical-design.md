@@ -2296,7 +2296,8 @@ An issue that is too big for one task spends its whole limit and ends
 unresolved: one issue became 2,100 changed lines across 22 files. So the
 sweep sizes each issue the first time it sees one, before it becomes a task
 (`planner/sizing.py`). One model call through the HTTP Gateway's
-`/v1/structured`, with the classifier's engine and the model
+`/v1/structured`, with a completions engine the gateway serves (not the router
+classifier's `openai-decisions`, which it refuses there) and the model
 `config/planner.json`'s `issue_sizing` names (`engine` `none` turns sizing
 off), reads the issue's title and body as data and answers its `size`
 (`small`, `medium` or `large`), its `reasons`, what it is `missing`
