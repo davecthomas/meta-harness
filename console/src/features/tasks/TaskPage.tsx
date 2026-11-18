@@ -90,6 +90,19 @@ export function TaskPage() {
   const [reviewsFailed, setReviewsFailed] = useState<string | null>(null);
   // The task's goal's name, for the link back to it. Null until read, or when the task has no goal.
   const [goalName, setGoalName] = useState<string | null>(null);
+  // What the task's runs have spent, as the Task API's spend report counts it: the one figure the header, the
+  // Spend tab and the path show. Read again whenever a run finishes or the task's status changes.
+  const [spent, setSpent] = useState<number | undefined>(undefined);
+  const runsFinished = events.filter((e) => e.event_type === "attempt_finished").length;
+  const statusNow = facts.status ?? task?.status;
+  useEffect(() => {
+    if (!taskId) return;
+    // A read that fails, or says no total, leaves the live sum of the model calls on show.
+    api.taskSpend(taskId).then(
+      (report) => setSpent(report?.totals?.usd == null ? undefined : Number(report.totals.usd) || 0),
+      () => setSpent(undefined),
+    );
+  }, [taskId, runsFinished, statusNow]);
   const oldest = useRef<number | null>(null);
   const newest = useRef(0);
   const loadingOlder = useRef(false);
@@ -244,7 +257,7 @@ export function TaskPage() {
           ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
           ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
           ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
-          ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
+          ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
         ]}
       />
       {status === "running" && <SteerBox taskId={task.id} />}
@@ -286,6 +299,7 @@ export function TaskPage() {
       ) : tab === "timeline" ? (
         <TaskPath
           events={events}
+          usd={spent}
           pick={onlyRun}
           onOpenRun={(run) => setParams({ tab: "terminal", run })}
           onOpenReviews={() => setParams({ tab: "reviews" })}

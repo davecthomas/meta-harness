@@ -106,7 +106,8 @@ function Picked({ step, events, onOpenRun, onOpenReviews }: { step: Step; events
 // A task's path as a picture. Stages are columns and time runs left to right; each time the task goes
 // back to an earlier stage (a review's findings to a fix run, a retry, a merge the supervisor asked for
 // again) it starts a new row, so a loop shows as a return, not as a longer line.
-export function TaskPath(props: { events: MhEvent[]; pick?: string | null; onOpenRun: (runId: string) => void; onOpenReviews: () => void; onPickRun?: (runId: string) => void }) {
+// usd: what the task's runs have spent, as its Spend tab counts it; the path's own sum of its steps without it.
+export function TaskPath(props: { events: MhEvent[]; usd?: number; pick?: string | null; onOpenRun: (runId: string) => void; onOpenReviews: () => void; onPickRun?: (runId: string) => void }) {
   const path = steps(props.events);
   // A link that names a run opens on that run's step.
   const [picked, setPicked] = useState<string | null>(props.pick ?? null);
@@ -127,7 +128,7 @@ export function TaskPath(props: { events: MhEvent[]; pick?: string | null; onOpe
     <div data-testid="task-path">
       <Text size="sm" c="dimmed" mb="sm" data-testid="path-totals">
         {span(sum.elapsed)} from start to {path.at(-1)!.now ? "now" : "end"}, {span(sum.waited)} of it waiting
-        {" · "}{sum.runs} run{sum.runs === 1 ? "" : "s"}{sum.rounds ? ` · ${sum.rounds} review round${sum.rounds === 1 ? "" : "s"}` : ""} · {usd(sum.usd)}
+        {" · "}{sum.runs} run{sum.runs === 1 ? "" : "s"}{sum.rounds ? ` · ${sum.rounds} review round${sum.rounds === 1 ? "" : "s"}` : ""} · {usd(props.usd ?? sum.usd)}
       </Text>
       <div style={{ overflowX: "auto", paddingBottom: 8 }}>
         <div style={{ width, minWidth: width }}>
