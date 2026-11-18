@@ -65,7 +65,11 @@ test("Pull request open lists the tasks waiting on someone, and clears the ones 
   expect(await screen.findByText("Fix the crash")).toBeTruthy();
   expect(asked[0]).toContain("status=ready%2Creview_unresolved");
   fireEvent.click(screen.getByRole("checkbox", { name: "Clear Fix the crash" }));
+  // Clearing asks first, saying what happens to each task, and clears only from its dialog.
   fireEvent.click(screen.getByRole("button", { name: "Clear selected (1)" }));
+  expect(await screen.findByText(/one whose pull request merged is marked done, and any other is canceled/)).toBeTruthy();
+  expect(posted).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Clear 1" }));
 
   await waitFor(() => expect(posted).toEqual(["/v1/tasks/t-2/clear"]));
 });

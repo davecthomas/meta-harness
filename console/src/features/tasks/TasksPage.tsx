@@ -9,6 +9,7 @@ import { waitReason } from "./WaitingToStart";
 import { useRowKeys } from "../../components/CommandPalette";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, StatusBadge, TitleLink, when } from "../../components/ui";
 import { shownStatus } from "./shownStatus";
+import { ConfirmButton } from "../../components/ConfirmButton";
 export { shownStatus };
 
 // Each tab: its key, its label, the statuses it shows, and whether the tasks have a pull request.
@@ -142,9 +143,18 @@ export function TasksPage() {
       <ErrorAlert error={tasks.error} />
       {clearable && tasks.items.length > 0 && (
         <Group mb="sm" gap="sm">
-          <Button size="xs" variant="light" disabled={!picked.size} loading={clearing} onClick={() => void clearPicked()}>
-            Clear selected ({picked.size})
-          </Button>
+          <ConfirmButton
+            label={`Clear selected (${picked.size})`}
+            title={`Clear ${picked.size} ${picked.size === 1 ? "task" : "tasks"}?`}
+            says={`Each of the ${picked.size} checked ${picked.size === 1 ? "task" : "tasks"} is ended: one whose pull request merged is marked done, and any other is canceled. Their pull requests stay as they are on GitHub. A canceled task can be retried from its page.`}
+            confirm={`Clear ${picked.size}`}
+            cancel="Keep them"
+            size="xs"
+            variant="light"
+            disabled={!picked.size}
+            loading={clearing}
+            onConfirm={() => clearPicked()}
+          />
           <Text size="xs" c="dimmed">A merged pull request closes its task; any other cancels it. The pull request stays on GitHub.</Text>
         </Group>
       )}

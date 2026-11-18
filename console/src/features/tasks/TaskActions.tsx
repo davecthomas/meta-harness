@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Group, Modal, NumberInput, Stack, Text, Tooltip } from "@mantine/core";
 import { IconArrowBackUp, IconCheck, IconGitMerge, IconX } from "@tabler/icons-react";
 import { api, type Task } from "../../api";
+import { ConfirmButton } from "../../components/ConfirmButton";
 
 const RETRYABLE = ["review_unresolved", "failed", "canceled"];
 const MERGEABLE = ["ready", "review_unresolved"];
@@ -54,22 +55,27 @@ export function TaskActions({ task, status, merged, onChanged, onError }: {
         </Tooltip>
       )}
       {canMerge && (
-        <Tooltip label={describe("merge", task)} multiline w={320}>
-          <Button color="teal" variant="light" loading={busy} leftSection={<IconGitMerge size={16} />} onClick={() => void run(() => api.mergeTask(task.id))}>Merge</Button>
-        </Tooltip>
+        <ConfirmButton
+          label="Merge"
+          title="Merge this pull request?"
+          says={`${describe("merge", task)} A merge to the repository's main branch cannot be taken back from here.`}
+          color="teal"
+          variant="light"
+          leftSection={<IconGitMerge size={16} />}
+          onConfirm={async () => onChanged(await api.mergeTask(task.id))}
+        />
       )}
       {WAITING.includes(status) && (
-        <Tooltip label={describe(merged ? "done" : "cancel", task)} multiline w={320}>
-          <Button
-            color={merged ? undefined : "red"}
-            variant="light"
-            loading={busy}
-            leftSection={merged ? <IconCheck size={16} /> : <IconX size={16} />}
-            onClick={() => void run(() => api.clearTask(task.id))}
-          >
-            {merged ? "Mark done" : "Cancel task"}
-          </Button>
-        </Tooltip>
+        <ConfirmButton
+          label={merged ? "Mark done" : "Cancel task"}
+          title={merged ? "Mark this task done?" : "Cancel this task?"}
+          says={describe(merged ? "done" : "cancel", task)}
+          cancel={merged ? undefined : "Keep the task"}
+          color={merged ? undefined : "red"}
+          variant="light"
+          leftSection={merged ? <IconCheck size={16} /> : <IconX size={16} />}
+          onConfirm={async () => onChanged(await api.clearTask(task.id))}
+        />
       )}
       <Modal opened={retrying} onClose={() => setRetrying(false)} title="Retry the task">
         <Stack gap="md">

@@ -171,7 +171,7 @@ export function ResumeBudget(props: {
   return (
     <>
       <Button size={props.size} variant={props.variant} leftSection={<IconPlayerPlay size={16} />} onClick={() => void open()}>
-        Resume
+        Raise budget
       </Button>
       <Modal opened={opened} onClose={() => setOpened(false)} title="Raise the budget and carry on">
         <Stack gap="md">

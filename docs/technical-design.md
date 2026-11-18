@@ -3334,6 +3334,17 @@ if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
 the switch every 15 seconds.
 
+An action that stops or ships work, or cannot be taken back, asks first
+(`console/src/components/ConfirmButton.tsx`): its dialog says what will
+happen and what will not, the action runs only from the dialog's own button,
+and a failure keeps the dialog open with why and that nothing changed.
+Cancel task (a working task's run is stopped and its unpublished changes
+stay in its workspace; one not started is canceled), Merge, Mark done, an
+ended task's Cancel, Clear selected on the Tasks page, and Complete goal
+(running tasks go on, unstarted ones stay queued) all ask, as Cancel goal,
+Remove from goal and the kill switch already did. The button that raises a
+goal's budget reads "Raise budget"; "Resume" is only a paused goal's.
+
 The New goal form goes in the order a goal is thought of: title and
 description; its repositories; its issue tracker, always said, as a choice
 when more than one is set up and as plain text when one is, with a warning

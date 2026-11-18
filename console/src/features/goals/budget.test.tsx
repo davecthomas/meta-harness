@@ -61,7 +61,7 @@ test("a stopped goal's alert resumes it at the worked-out budget in one step", a
   inPage(<BudgetAlert goal={stopped} onResumed={resumed} />);
 
   expect(screen.getByTestId("budget-alert").textContent).toContain("$26.79 spent of $10.00: stopped by its budget");
-  fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+  fireEvent.click(screen.getByRole("button", { name: "Raise budget" }));
   fireEvent.click(await screen.findByRole("button", { name: "Raise to $45.00 and carry on" }));
 
   await waitFor(() => expect(resumed).toHaveBeenCalled());
@@ -79,7 +79,7 @@ test("resume sends the operator's own amount when they change it, and reads the 
   });
   inPage(<ResumeBudget goalId="g-1" />);
 
-  fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+  fireEvent.click(screen.getByRole("button", { name: "Raise budget" }));
   const input = await screen.findByLabelText("Raise the budget from $10.00 to");
   fireEvent.change(input, { target: { value: "60" } });
   fireEvent.click(await screen.findByRole("button", { name: "Raise to $60.00 and carry on" }));
@@ -91,7 +91,7 @@ test("resume sends the operator's own amount when they change it, and reads the 
 test("a goal whose budget only warns says it keeps going, and offers nothing to resume", () => {
   inPage(<BudgetAlert goal={goal({ budget_mode: "warn", budget_block_at: null, budget_state: "over", spent_usd: "12.5" })} onResumed={() => undefined} />);
   expect(screen.getByTestId("budget-alert").textContent).toContain("over budget, and it keeps going");
-  expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Raise budget" })).toBeNull();
 });
 
 test("the budget, what happens when it is reached, and the overage share one row", () => {
@@ -117,5 +117,5 @@ test("under the track budget policy a goal over its budget keeps going, with not
   );
   expect(container.textContent).toContain("The budget policy only tracks spend, so nothing is held.");
   expect(container.textContent).toContain("this budget stops nothing for now");
-  expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Raise budget" })).toBeNull();
 });
