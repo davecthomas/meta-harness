@@ -3334,6 +3334,13 @@ if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
 the switch every 15 seconds.
 
+Router tiers are added, removed and put in order in the view
+(`console/src/features/config/TiersView.tsx`), which opens by saying what a
+tier is and why the order matters. Add a tier puts one last, named so no two
+share a name, with no candidate yet; each tier has earlier and later
+buttons, each move one staged change, and Remove, which the default tier
+does not offer until another tier is the default.
+
 An action that stops or ships work, or cannot be taken back, asks first
 (`console/src/components/ConfirmButton.tsx`): its dialog says what will
 happen and what will not, the action runs only from the dialog's own button,
