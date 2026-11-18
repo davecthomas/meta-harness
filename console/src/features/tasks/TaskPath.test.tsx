@@ -72,3 +72,8 @@ test("a link that names a run opens on that run's step, and no events is said pl
   show({ events: [] });
   expect(screen.getByText(/Nothing has happened yet: the task has not started/)).toBeTruthy();
 });
+
+test("the path's cost is the task's spend total when the page gives it one", () => {
+  show({ usd: 12.34 });
+  expect(screen.getByTestId("path-totals").textContent).toContain("$12.34");
+});
