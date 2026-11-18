@@ -237,7 +237,7 @@ def create_app(
                 "task_retried",
                 {
                     "action": "retry",
-                    "resume": None,
+                    "resume": task["resume"],
                     "max_usd": task["max_usd"],
                     "retries": task["retries"],
                     "renewed": True,

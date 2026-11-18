@@ -1,5 +1,6 @@
 """Issue sizing: an issue is sized before it becomes a task, and a large one is held to split (sizing.py)."""
 
+import dataclasses
 import json
 import uuid
 
@@ -761,10 +762,13 @@ def test_an_open_issue_whose_task_was_canceled_goes_back_to_work(world):
     _sweep(client, goal)
     task = _task(tasks, ref)
     tasks.cancel(task["id"], "canceled from the console")
+    # The issue is edited while its task is canceled: the task goes back to work from what it says now.
+    tracker.issues[ref] = dataclasses.replace(tracker.issues[ref], title="Fix it properly")
 
     swept = _sweep(client, goal)
 
-    assert swept["retaken"] == [task["id"]] and tasks.retried == [(task["id"], "planner")]
+    assert swept["retaken"] == [task["id"]] and tasks.renewed == [task["id"]]
+    assert _task(tasks, ref)["title"] == "Fix it properly"
     assert _task(tasks, ref)["status"] == "queued" and len(tasks.tasks) == 1, "the same task, not a second one"
     assert _sweep(client, goal)["retaken"] == [], "a task back at work is left alone"
 

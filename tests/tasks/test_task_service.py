@@ -839,6 +839,21 @@ def test_an_ended_task_with_no_pull_request_is_made_over_from_what_its_issue_say
     assert made["acceptance_checks"] == ["npm test"] and made["retries"] == task["retries"] + 1
     assert "made it over from its issue as it is now" in made["status_reason"]
 
+    # One with a pull request keeps it and resumes at its review: the workflow starts over only if it was closed.
+    api.post(
+        f"/v1/tasks/{task['id']}/status",
+        json={"status": "running", "pr_url": "https://github.com/o/r/pull/9"},
+        headers=_as(SERVICE_KEY),
+    )
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
+    kept = api.post("/v1/tasks", json={**again, "title": "Third wording"}, headers=_as(SERVICE_KEY)).json()
+    assert (kept["status"], kept["title"], kept["resume"], kept["pr_url"]) == (
+        "queued",
+        "Third wording",
+        "review",
+        "https://github.com/o/r/pull/9",
+    )
+
     # A caller that is not a control-plane service gets its existing task back as it is.
     mine = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
     api.post(f"/v1/tasks/{mine['id']}/cancel", json={"reason": "x"}, headers=_as(CALLER_KEY))
