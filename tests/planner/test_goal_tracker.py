@@ -248,8 +248,17 @@ def test_what_a_task_tells_its_issue():
     failed = told_for({"id": "t-1", "status": "failed", "status_reason": "its checks never passed"})
     assert (failed.key, failed.status) == ("failed", None)
     assert failed.comment == "The task failed: its checks never passed. An operator can retry it."
-    again = told_for({"id": "t-1", "status": "running", "pr_url": "https://github.com/o/r/pull/9"})
-    assert again.status == "in_progress" and again.key != told_for({"id": "t-1", "status": "running"}).key
+    pr = "https://github.com/o/r/pull/9"
+    working = {"id": "t-1", "status": "running", "pr_url": pr}
+    assert told_for(working).key == "in_progress", "the first word is that work started, pull request or not"
+    assert told_for(working, "in_progress") is None, "the agents' own review of a new pull request says nothing"
+    again = told_for(working, f"in_review:ready:{pr}")
+    assert again.status == "in_progress" and again.key != "in_progress", "back at work after a person's review"
+    assert told_for({**working, "resume": "merge"}, f"in_review:ready:{pr}") is None, (
+        "a merge asked for is not new work"
+    )
+    assert told_for(working, again.key) is None
+    assert told_for(working, "canceled").key == "in_progress", "taken up again after it ended"
     unresolved = told_for({"id": "t-1", "status": "review_unresolved", "pr_url": "https://github.com/o/r/pull/9"})
     assert "its review left findings for a person to settle" in unresolved.comment
 

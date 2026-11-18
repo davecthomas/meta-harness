@@ -45,15 +45,22 @@ class Told:
     comment: str
 
 
-def told_for(task: dict) -> Told | None:
-    """What the task's state says to its issue's tracker; None for a task that has not started."""
+def told_for(task: dict, before: str | None = None) -> Told | None:
+    """What the task's state says to its issue's tracker, given what the tracker was last told (before); None
+    when there is nothing new to say: a task that has not started, or one at work that the tracker already
+    shows right."""
     status, pr_url = task["status"], task.get("pr_url") or ""
     why = (task.get("status_reason") or "").strip()
     if status in ("running", "taken_over"):
-        if pr_url:
-            # Back at work after a review, with its pull request open.
+        started = Told("in_progress", IN_PROGRESS, f"The meta-harness started work on this issue (task {task['id']}).")
+        if not before or before in ("failed", "canceled"):
+            return started
+        # At work with a pull request, the issue goes back to in progress only from a review a person was
+        # waiting on, and only when the work is more than the merge they asked for: the agents' own review of
+        # a new pull request, and a merge under way, leave the issue where it is.
+        if pr_url and before.startswith("in_review:") and task.get("resume") != "merge":
             return Told(f"in_progress:{pr_url}", IN_PROGRESS, f"Work is going on again on the pull request: {pr_url}")
-        return Told("in_progress", IN_PROGRESS, f"The meta-harness started work on this issue (task {task['id']}).")
+        return None
     if status in ("ready", "review_unresolved") and pr_url:
         waits = "it is ready to merge" if status == "ready" else "its review left findings for a person to settle"
         return Told(f"in_review:{status}:{pr_url}", IN_REVIEW, f"A pull request is open, and {waits}: {pr_url}")
@@ -78,7 +85,7 @@ async def write(goal: dict, tracker: Tracker, tasks, errors: list[str]) -> list[
     written = []
     for link in links:
         task = by_id.get(link["task_id"])
-        told = told_for(task) if task else None
+        told = told_for(task, link.get("progress")) if task else None
         if told is None or told.key == link.get("progress"):
             continue
         try:
