@@ -2200,7 +2200,7 @@ capacity by priority.
 | `title` | The goal's name in every list and header, at most 80 characters. The operator writes it, a goal drafted from a label takes the drafted one, and otherwise the planner's goal drafting model writes it from the statement after the goal is created (`goal_titled`), and at startup for any goal without one. Until then, the console shows the statement's start |
 | `statement` | What the goal is, in prose; the console calls it the goal's description. The planning task reads it |
 | `repos` | The registered repos the goal may change |
-| `label` | The GitHub issue label that queues an issue for this goal, in any of its repos. Optional: a goal also holds the issues an operator picks by ref (`POST /v1/goals/{id}/issues`, or `refs` when it is created), and its sweep takes those in beside its label's. A goal needs a label or picked issues |
+| `label` | The GitHub issue label that queues an issue for this goal, in any of its repos. Optional: a goal also holds the issues an operator picks by ref (`POST /v1/goals/{id}/issues`, or `refs` when it is created), and its sweep takes those in beside its label's. A goal needs a label or picked issues, unless it takes the issues assigned to the meta-harness in its tracker |
 | `modality` | `fix`, `feature` or `new-system`, which picks the goal's rules. The planner classifies it when it is unset |
 | `latitude` | 0 to 1: how far the planner may go beyond what the goal names. The modality's default when unset |
 | `success_criteria` | Checks the planner evaluates to decide the goal is met: commands against a repo, an issue query such as "no open issues with the label", or a check name. A goal that names none is met when every issue it holds is closed and none of its tasks is queued, blocked or running |
@@ -2570,6 +2570,7 @@ tracker, through one adapter interface:
 | Adapter operation | Purpose |
 |---|---|
 | `list_open(repo, label)` | The open issues with the goal's label for one repo |
+| `list_assigned(repo)` | The open issues a person assigned, in the tracker, to the account the meta-harness signs in as, for a goal that asked to take them. Empty for a tracker with no such way |
 | `read(ref)` | One issue: title, body, labels, state, and the issues that block it |
 | `ensure_label(repo, label)` | Make sure an issue created for the repo can carry the label |
 | `create_issue(repo, title, body, labels)` | Create an issue, for an approved plan's draft or a split. Returns it with its `ref` |
@@ -2666,6 +2667,10 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
 - `list_open` is the goal's project's issues not in a Done status, with the
   label, searched once for all the goal's repos. An issue in a Done-category
   status is closed.
+- `list_assigned` is the same project's open issues whose assignee is the
+  Jira account the meta-harness signs in as (`assignee = currentUser()`),
+  whatever their labels, for a goal whose tracker setting `assigned` is
+  `yes`; no call is made for any other goal.
 - `choices("project")` lists the site's projects the Jira account sees.
 - What blocks an issue is its "is blocked by" links and the keys its
   `Depends on:` lines name.
@@ -2693,6 +2698,31 @@ as it is. The sweep does this for an open issue whose task was canceled
 An issue held by a goal that has ended (met or canceled) is
 released for a new goal with its label to take
 (`planner.store.release_from_ended_goal`); an open goal's issue stays its.
+
+**Handing an issue over in the tracker.** A person gives an issue to the
+meta-harness where they work. On every tracker the goal's label does it.
+On Jira, assigning the issue to the meta-harness's account does it too, for
+a goal created with "Take issues assigned to the meta-harness" on (its
+tracker setting `assigned`, a `switch`, shown on the New goal form and on
+the goal's page, and fixed when the goal is created like its project). Each
+sweep lists the label's issues and the assigned ones (`list_assigned`) and
+takes both in the same way, so such a goal needs neither a label nor picked
+issues (`Supported.takes_assigned` tells goal creation so). GitHub has no
+assignment: the meta-harness acts there as a GitHub App, and GitHub assigns
+issues only to people. A comment that mentions the meta-harness is not
+read on either tracker: without webhooks, finding one would mean reading
+every issue's comments each sweep.
+
+**Telling a tracker why an issue is not started**
+(`planner/tracker_replies.py`). An issue handed over and then held or
+refused would otherwise show nothing in its tracker. Each sweep comments on
+each of the goal's open issues that has no task and a reason
+(`held_reason`, else `refused_reason`): the reason, which says what to do,
+that the issue is read again each sweep, and that an operator can act from
+the goal's page. It comments once for each reason: the reason last given
+is kept in `issue_link.replied`, and a comment that failed is tried again
+by the next sweep. Every tracker is told, GitHub too. A sweep's result
+lists the refs it commented on (`replied`).
 
 **Telling a tracker how a task goes** (`planner/tracker_progress.py`) is
 only for an adapter that asks for it (`writes_progress`). Each sweep, and

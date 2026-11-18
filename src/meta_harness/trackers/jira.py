@@ -147,6 +147,7 @@ class JiraTracker:
         self.source = source
         # One search of the project for each label, shared by the calls that ask for each of the goal's repos.
         self._open: dict[str | None, list[Issue]] = {}
+        self._assigned: list[Issue] | None = None
 
     def bound(self, source: Source) -> "JiraTracker":
         return JiraTracker(self.email, self.token, self.site, self.transport, source)
@@ -249,14 +250,25 @@ class JiraTracker:
         """The open issues of the goal's project that are for the repo. One that names none of the goal's
         repos comes with the first repo's, its `repo` empty, so it is seen once and held."""
         if label not in self._open:
-            self._open[label] = await self._search(label)
-        first = bool(self.source and self.source.repos and self.source.repos[0].lower() == repo.lower())
-        return [i for i in self._open[label] if i.repo.lower() == repo.lower() or (first and not i.repo)]
+            self._open[label] = await self._search("" if label is None else f" AND labels = {_quoted(label)}")
+        return self._for_repo(self._open[label], repo)
 
-    async def _search(self, label: str | None) -> list[Issue]:
-        jql = f'project = "{self._project()}" AND statusCategory != Done'
-        if label is not None:
-            jql += f" AND labels = {_quoted(label)}"
+    async def list_assigned(self, repo: str) -> list[Issue]:
+        """The open issues of the goal's project assigned to the Jira account the meta-harness signs in as,
+        for a goal that asked to take them (its setting `assigned`); none for any other goal."""
+        if not takes_assigned(self.source.settings if self.source else {}):
+            return []
+        if self._assigned is None:
+            self._assigned = await self._search(" AND assignee = currentUser()")
+        return self._for_repo(self._assigned, repo)
+
+    def _for_repo(self, issues: list[Issue], repo: str) -> list[Issue]:
+        first = bool(self.source and self.source.repos and self.source.repos[0].lower() == repo.lower())
+        return [i for i in issues if i.repo.lower() == repo.lower() or (first and not i.repo)]
+
+    async def _search(self, also: str) -> list[Issue]:
+        """The goal's project's issues not in a Done status that also match a JQL clause (" AND ...")."""
+        jql = f'project = "{self._project()}" AND statusCategory != Done{also}'
         issues: list[Issue] = []
         token: str | None = None
         while True:
@@ -427,14 +439,22 @@ def check_settings(jira: dict[str, Any], repos: set[str] | None) -> list[str]:
     return reasons
 
 
+def takes_assigned(settings: dict[str, Any]) -> bool:
+    """Whether a goal with these settings takes the issues assigned to the meta-harness's Jira account."""
+    return settings.get("assigned") == "yes"
+
+
 def check_goal(settings: dict[str, Any]) -> list[str]:
     """Why a goal's Jira settings cannot be used; empty when they can."""
+    reasons = []
     project = settings.get("project")
     if not isinstance(project, str) or not PROJECT.match(project):
-        return [
+        reasons.append(
             "a goal that uses Jira names its project by its key, the capitals before an issue's number, such as PROJ"
-        ]
-    return []
+        )
+    if settings.get("assigned", "") not in ("", "yes"):
+        reasons.append('assigned is "yes" for a goal that takes the issues assigned to the meta-harness, else left out')
+    return reasons
 
 
 SPEC = Supported(
@@ -462,7 +482,15 @@ SPEC = Supported(
             kind="choice",
             required=True,
             help="The project the goal's issues are in. One site has many projects; each goal names one.",
-        )
+        ),
+        Setting(
+            "assigned",
+            "Take issues assigned to the meta-harness",
+            kind="switch",
+            help="On: the goal also takes every open issue of the project that is assigned, in Jira, to the "
+            "account the meta-harness signs in as, whatever its labels. Assigning an issue there hands it over.",
+        ),
     ],
     check_goal=check_goal,
+    takes_assigned=takes_assigned,
 )

@@ -873,9 +873,16 @@ def create_app(
             raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
         names = [repos.get(name).name for name in body.repos]
         planned = body.modality in store.PLANNED_MODALITIES
-        # A goal that plans its own issues needs neither: its plan's issues get a label of the goal's own.
-        if not body.label and not body.refs and not planned:
-            raise HTTPException(status_code=422, detail="a goal needs a label, or issues picked by ref, or both")
+        # A goal that plans its own issues needs neither: its plan's issues get a label of the goal's own. Nor
+        # does one that takes the issues assigned to the meta-harness in its tracker.
+        spec = tracker_registry.SUPPORTED.get(body.tracker or tracker_registry.default())
+        assigned = bool(spec and spec.takes_assigned(body.tracker_settings))
+        if not body.label and not body.refs and not planned and not assigned:
+            raise HTTPException(
+                status_code=422,
+                detail="a goal needs issues to take in: give it a label, or pick issues by ref, or, where its "
+                "tracker has it, turn on taking the issues assigned to the meta-harness",
+            )
         if why := parallel_reason(body.max_parallel):
             raise HTTPException(status_code=422, detail=why)
         # One tracker for all the goal's issues: the one it names, else the default, fixed from here on.

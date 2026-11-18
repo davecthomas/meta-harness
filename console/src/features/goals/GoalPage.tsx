@@ -305,7 +305,7 @@ export function GoalPage() {
                 "Issue tracker",
                 <Text size="sm">
                   {trackerTitle(goal.tracker ?? "github")}
-                  {Object.entries(goal.tracker_settings ?? {}).map(([name, value]) => `, ${name} ${value}`).join("")}
+                  {Object.entries(goal.tracker_settings ?? {}).map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to the meta-harness" : `, ${name} ${value}`)).join("")}
                   <Text span size="xs" c="dimmed" display="block">Fixed when the goal was created.</Text>
                 </Text>,
               ],

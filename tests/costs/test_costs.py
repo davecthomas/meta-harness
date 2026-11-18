@@ -240,6 +240,9 @@ def api(clean, monkeypatch):
         async def list_open(self, repo, label):
             return []
 
+        async def list_assigned(self, repo):
+            return []
+
     async def _no_title(statement: str):
         from meta_harness.planner.drafting import DraftError
 

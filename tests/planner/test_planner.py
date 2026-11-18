@@ -92,8 +92,15 @@ class FakeTracker:
             if i.repo == repo and i.state == "open" and (label is None or label in i.labels)
         ]
 
+    async def list_assigned(self, repo):
+        return []
+
     async def read(self, ref):
         return self.issues[ref]
+
+    async def comment(self, ref, body):
+        self.comments = [*getattr(self, "comments", []), (ref, body)]
+        return ""
 
 
 class FakeTasks:

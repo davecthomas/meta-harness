@@ -87,7 +87,15 @@ from meta_harness import db
 from meta_harness.config import store as config_store
 from meta_harness.events.client import stable_event_id
 from meta_harness.trackers.base import TrackerError
-from meta_harness.planner import budget_api, cost_facts, repos, sizing, store, tracker_progress
+from meta_harness.planner import (
+    budget_api,
+    cost_facts,
+    repos,
+    sizing,
+    store,
+    tracker_progress,
+    tracker_replies,
+)
 from meta_harness.planner.tracker import Issue, Tracker, outside_author, task_text
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CheckRun, CodeHostError, PullRequest
@@ -138,6 +146,8 @@ class SweepResult:
     errors: list[str] = field(default_factory=list)
     # Refs whose tracker was told how their task is going (tracker_progress.py).
     told: list[str] = field(default_factory=list)
+    # Refs whose tracker was given, in a comment, the reason the issue was not started (tracker_replies.py).
+    replied: list[str] = field(default_factory=list)
     # Task ids of open issues whose task was canceled, sent back to the queue.
     retaken: list[str] = field(default_factory=list)
     met: bool = False
@@ -165,15 +175,19 @@ async def sweep_goal(
     tracker = goal_tracker(tracker, goal)
     result = SweepResult(goal["id"])
     seen: set[str] = set()
-    # A goal with no label takes only the issues an operator added by ref: listing with no label would
-    # list every open issue in the repo.
-    for repo in goal["repos"] if goal["label"] else []:
+    for repo in goal["repos"]:
         try:
-            issues = await goal_tracker(tracker, goal).list_open(repo, goal["label"])
+            # A goal with no label lists none by label: listing with no label would list every open issue in
+            # the repo. It takes the issues an operator added by ref, and those assigned to the meta-harness
+            # in the tracker when the goal asked for them.
+            issues = await tracker.list_open(repo, goal["label"]) if goal["label"] else []
+            issues += await tracker.list_assigned(repo)
         except TrackerError as err:
             result.errors.append(f"{repo}: {err}")
             continue
         for issue in issues:
+            if issue.ref in seen:
+                continue
             seen.add(issue.ref)
             await _take_in(goal, issue, tracker, tasks, events, result, sizer)
     await _take_in_added(goal, seen, tracker, tasks, events, result, sizer)
@@ -182,6 +196,7 @@ async def sweep_goal(
     await _record_closed(goal, seen, tracker, events, result)
     await _cancel_for_closed_issues(goal, tasks, result)
     await _release_unblocked(goal, tracker, tasks, events, result)
+    result.replied = await tracker_replies.write(goal, tracker, result.errors)
     # Before the goal is looked at for being met: for a tracker that is told, done is what closes an issue.
     result.told = await tracker_progress.write(goal, goal_tracker(tracker, goal), tasks, result.errors)
     if not result.errors:

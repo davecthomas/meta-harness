@@ -72,10 +72,15 @@ export function NewGoal() {
   }
   function chooseSettings(next: Record<string, string>) {
     setTrackerSettings(next);
-    setRefs([]);
+    // A switch changes which issues come in by themselves, not where issues are: the picked ones stay.
+    const places = asked.filter((s) => s.kind !== "switch");
+    if (places.some((s) => (next[s.name] ?? "") !== (trackerSettings[s.name] ?? ""))) setRefs([]);
   }
   const asked = trackers.find((t) => t.scheme === tracker)?.goal_settings ?? [];
   const missing = asked.filter((s) => s.required && !(trackerSettings[s.name] ?? "").trim());
+  // A goal that takes the issues assigned to the meta-harness in its tracker has issues to take in without a
+  // label or picked ones.
+  const takesAssigned = asked.some((s) => s.name === "assigned" && s.kind === "switch") && trackerSettings.assigned === "yes";
   // Which issues the form reads: none until the tracker has what it asks of a goal.
   const source = useMemo<IssueSource | undefined>(
     () => (tracker ? { tracker, settings: trackerSettings } : undefined),
@@ -164,8 +169,8 @@ export function NewGoal() {
       setError(`Choose the goal's ${missing.map((s) => s.label).join(" and ")}.`);
       return null;
     }
-    if (!plans && !label.trim() && !refs.length) {
-      setError("Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from.");
+    if (!plans && !label.trim() && !refs.length && !takesAssigned) {
+      setError(`Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to the meta-harness" : ""}.`);
       return null;
     }
     setSaving(started);

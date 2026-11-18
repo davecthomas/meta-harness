@@ -90,6 +90,11 @@ class GitHubTracker:
                 return issues
             page += 1
 
+    async def list_assigned(self, repo: str) -> list[Issue]:
+        """None: the meta-harness acts on GitHub as a GitHub App, and GitHub assigns issues only to people. On
+        GitHub the goal's label is how a person hands an issue over."""
+        return []
+
     async def read(self, ref: str) -> Issue:
         repo, number = parse_ref(ref)
         return _issue(repo, await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}"))

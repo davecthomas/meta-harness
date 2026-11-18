@@ -79,6 +79,12 @@ class Tracker(Protocol):
         empty: it is held until it names one."""
         ...
 
+    async def list_assigned(self, repo: str) -> list[Issue]:
+        """The repo's open issues a person handed to the meta-harness in the tracker itself, by assigning them
+        to the account it signs in as, whatever their labels. Empty for a tracker with no such way, and for a
+        goal that did not ask to take them."""
+        ...
+
     async def read(self, ref: str) -> Issue:
         """One issue as it is now, open or closed."""
         ...
@@ -130,7 +136,8 @@ class Setting:
 
     name: str
     label: str
-    # text; statuses: a name for each status; choice: one of what the adapter's `choices` lists for it.
+    # text; statuses: a name for each status; choice: one of what the adapter's `choices` lists for it; switch:
+    # on or off, "yes" when on.
     kind: str = "text"
     required: bool = False
     help: str = ""
@@ -154,6 +161,9 @@ class Supported:
     # New goal form to draw; and why a goal's answers cannot be used, empty when they can.
     goal_settings: list[Setting] = field(default_factory=list)
     check_goal: Callable[[dict[str, Any]], list[str]] = lambda settings: []
+    # Whether a goal with these settings takes the issues assigned to the meta-harness's account in the
+    # tracker (`Tracker.list_assigned`): such a goal has issues to take in with no label and none picked.
+    takes_assigned: Callable[[dict[str, Any]], bool] = lambda settings: False
     # Builds the adapter.
     build: Callable[[], "Tracker"] | None = None
     # Whether the planner tells the tracker how an issue's task is going (comments, status, the pull request's
