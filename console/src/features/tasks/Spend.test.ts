@@ -9,7 +9,7 @@ const ev = (event_type: string, payload: Record<string, unknown>): MhEvent => ({
 
 test("a task's spend adds its model calls by model, and lists each attempt's cost", () => {
   const spend = spendOf([
-    ev("model_call", { engine: "claude", model: "claude-sonnet-5", usd: 0.5, input_tokens: 1000, output_tokens: 10 }),
+    ev("model_call", { engine: "claude", model: "claude-sonnet-5", usd: 0.5, input_tokens: 800, cache_write_1h_tokens: 150, cache_write_5m_tokens: 50, output_tokens: 10 }),
     ev("model_call", { latency_ms: 4, error: "refused" }),
     ev("model_call", { engine: "openai-responses", model: "gpt-6-sol", usd: 0.25, input_tokens: 500, output_tokens: 5 }),
     ev("attempt_finished", { attempt: 1, candidate: "a", spent_usd: "0.50", decision: "next_candidate" }),

@@ -22,7 +22,8 @@ export function spendOf(events: MhEvent[]): TaskSpend {
       const name = p.engine ? `${p.engine}:${p.model}` : String(p.model);
       out.usd += usd;
       out.underWay += usd;
-      out.input += Number(p.input_tokens) || 0;
+      // Every input token the model read: the gateway's count leaves out what the turn wrote to the cache.
+      out.input += (Number(p.input_tokens) || 0) + (Number(p.cache_write_5m_tokens) || 0) + (Number(p.cache_write_1h_tokens) || 0);
       out.output += Number(p.output_tokens) || 0;
       out.byModel[name] = (out.byModel[name] ?? 0) + usd;
     }

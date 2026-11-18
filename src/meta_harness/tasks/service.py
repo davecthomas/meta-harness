@@ -555,7 +555,12 @@ def create_app(
         except Exception as err:  # noqa: BLE001 - the event service is the caller's 502
             raise HTTPException(status_code=502, detail=f"could not read the task's events: {err}") from err
         rows = spend.runs(recorded)
-        return {"task_id": task_id, "max_usd": task["max_usd"], "runs": rows, "totals": spend.totals(rows)}
+        return {
+            "task_id": task_id,
+            "max_usd": task["max_usd"],
+            "runs": rows,
+            "totals": spend.totals(rows, spend.writing(recorded)),
+        }
 
     @app.post("/v1/tasks/{task_id}/clear")
     def clear(task_id: str, who: Caller = Depends(caller)) -> dict:

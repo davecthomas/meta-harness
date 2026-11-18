@@ -55,6 +55,33 @@ def test_the_totals_add_the_runs_up_in_all_and_by_kind():
     assert totals["input_tokens"] == 8_687_354 and totals["cached_input_tokens"] == 7_500_000
 
 
+def test_a_runs_input_counts_what_it_wrote_to_the_prompt_cache():
+    # As production's runs report: nearly all input read from the cache, and more written to it each turn.
+    usage = {"input_tokens": 317_566, "cached_input_tokens": 317_528, "cache_write_1h_tokens": 24_457}
+    report = {"position": 1, "event_type": "run_finished", "run_id": "t:run-1", "payload": {"usage": usage}}
+    usage["cache_write_5m_tokens"] = 100
+
+    (run,) = spend.runs([report, _attempt(1, "t:run-1", "standard", "0.2182")])
+
+    assert run["input_tokens"] == 317_566 + 24_457 + 100, "the gateway's input count leaves cache writes out"
+    assert run["cached_input_tokens"] == 317_528
+
+
+def test_the_writing_pass_is_named_beside_the_runs_and_added_in_all():
+    checked = [
+        {"position": 5, "event_type": "writing_checked", "payload": {"usd_cost": "0.008436"}},
+        {"position": 6, "event_type": "writing_checked", "payload": {"usd_cost": "0.006615"}},
+        {"position": 7, "event_type": "writing_checked", "payload": {"usd_cost": None}},
+    ]
+    rows = spend.runs(EVENTS + checked)
+
+    totals = spend.totals(rows, spend.writing(EVENTS + checked))
+
+    assert len(rows) == 3 and totals["usd"] == "5.0969", "the runs' cost, which the spend limit counts, is as before"
+    assert totals["writing_usd"] == "0.015051" and totals["all_usd"] == "5.111951"
+    assert spend.totals(rows)["all_usd"] == "5.0969"
+
+
 def test_a_task_with_no_run_yet_spent_nothing():
     assert spend.runs([]) == []
     assert spend.totals([])["usd"] == "0" and spend.totals([])["by_kind"]["review"] == "0"
