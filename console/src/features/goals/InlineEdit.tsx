@@ -1,7 +1,9 @@
-import { type FocusEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { Box, Group, Loader, Stack, Switch, Text } from "@mantine/core";
-import { IconPencil } from "@tabler/icons-react";
+import type { ReactNode } from "react";
+import { Text } from "@mantine/core";
 import { ApiError } from "../../api";
+import { InlineField, type DraftProps } from "../../components/InlineField";
+
+export type { DraftProps };
 
 // Why a save was refused, in words: the API's reason, or each of a validation error's messages.
 export function refusal(err: unknown): string {
@@ -16,17 +18,21 @@ export function refusal(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export interface DraftProps<T> {
-  value: T;
-  onChange: (value: T) => void;
-  // Whether the last save or check was refused, for the input to show it.
-  invalid: boolean;
+// A commit for InlineField from a save that throws when refused: the refusal becomes the reason under the input.
+function saved<T>(save: (value: T) => Promise<unknown>) {
+  return async (value: T): Promise<string | undefined> => {
+    try {
+      await save(value);
+      return undefined;
+    } catch (err) {
+      return refusal(err);
+    }
+  };
 }
 
-// One field shown as its value that turns into its input where it is: on a click, on Enter when focused, or on
-// its pencil icon, shown on hover. Enter or leaving the field saves it, Escape cancels, and a multi-line field
-// saves with Ctrl/Cmd+Enter. A save that is the same as the value sends nothing. While it saves the field says
-// so; a refused save keeps the input open with the reason under it. Read-only, it is only its value.
+// A goal's field that saves to the API as soon as it is committed. It is the console's one click-to-edit
+// field (components/InlineField) with the goal's own input and a save that may be refused; how it opens,
+// commits, cancels and shows a refusal is that component's.
 export function InlineEdit<T>(props: {
   // What the field is, for its accessible name ("Edit budget").
   label: string;
@@ -42,129 +48,20 @@ export function InlineEdit<T>(props: {
   save: (draft: T) => Promise<unknown>;
   input: (draft: DraftProps<T>) => ReactNode;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<T>(props.value);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [hover, setHover] = useState(false);
-  // Refs, not state: a blur and a key press in the same moment must see one save, and none after a cancel.
-  const open = useRef(false);
-  const busy = useRef(false);
-  const box = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (editing) box.current?.querySelector<HTMLElement>("input, textarea")?.focus();
-  }, [editing]);
-
-  function begin() {
-    if (props.readOnly) return;
-    setDraft(props.value);
-    setError(null);
-    open.current = true;
-    setEditing(true);
-  }
-
-  function close() {
-    open.current = false;
-    setEditing(false);
-    setError(null);
-    setHover(false);
-  }
-
-  async function commit() {
-    if (!open.current || busy.current) return;
-    if ((props.same ?? Object.is)(draft, props.value)) return close();
-    const why = props.check?.(draft) ?? null;
-    if (why) return setError(why);
-    busy.current = true;
-    setSaving(true);
-    setError(null);
-    try {
-      await props.save(draft);
-      close();
-    } catch (err) {
-      setError(refusal(err));
-    } finally {
-      busy.current = false;
-      setSaving(false);
-    }
-  }
-
-  function keys(e: KeyboardEvent) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      if (!busy.current) close();
-    } else if (e.key === "Enter" && !e.defaultPrevented && !e.nativeEvent.isComposing) {
-      // A combobox that picks its highlighted option on Enter prevents the default, and that pick is not a save.
-      if (props.multiline && !(e.ctrlKey || e.metaKey)) return;
-      e.preventDefault();
-      void commit();
-    }
-  }
-
-  function left(e: FocusEvent<HTMLDivElement>) {
-    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) void commit();
-  }
-
-  if (props.readOnly) return <>{props.display}</>;
-
-  if (editing) {
-    return (
-      // Focusable itself, so a click on a label or the space between inputs stays within the field.
-      <Box ref={box} tabIndex={-1} onKeyDown={keys} onBlur={left} style={{ outline: "none" }}>
-        <Stack gap={4}>
-          {props.input({ value: draft, onChange: setDraft, invalid: Boolean(error) })}
-          {saving && (
-            <Group gap={6}>
-              <Loader size={12} />
-              <Text size="xs" c="dimmed">Saving…</Text>
-            </Group>
-          )}
-          {error && <Text size="xs" c="red" role="alert">{error}</Text>}
-          {!saving && !error && (
-            <Text size="xs" c="dimmed">
-              {props.multiline ? "Ctrl+Enter or ⌘+Enter saves" : "Enter saves"}, Escape cancels.
-            </Text>
-          )}
-        </Stack>
-      </Box>
-    );
-  }
-
   return (
-    <Box
-      component="span"
-      tabIndex={0}
-      role={props.heading ? undefined : "button"}
-      aria-label={props.heading ? undefined : `Edit ${props.label}`}
-      title={`Edit ${props.label}`}
-      onClick={begin}
-      onKeyDown={(e: KeyboardEvent) => {
-        if (e.key === "Enter" || (e.key === " " && !props.heading)) {
-          e.preventDefault();
-          begin();
-        }
-      }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onFocus={() => setHover(true)}
-      onBlur={() => setHover(false)}
-      style={{
-        cursor: "pointer",
-        display: props.heading ? "inline" : "flex",
-        alignItems: "flex-start",
-        gap: 6,
-        maxWidth: "100%",
-      }}
-    >
-      {props.display}
-      <IconPencil
-        aria-hidden
-        size={props.heading ? 18 : 14}
-        // Always there, dimmer until pointed at: a value that can be edited looks it.
-        style={{ opacity: hover ? 0.7 : 0.35, flex: "none", marginLeft: props.heading ? 8 : 0, marginTop: 3, transition: "opacity 120ms" }}
-      />
-    </Box>
+    <InlineField
+      kind="custom"
+      label={props.label}
+      value={props.value}
+      display={props.display}
+      readOnly={props.readOnly}
+      multiline={props.multiline}
+      heading={props.heading}
+      same={props.same ?? Object.is}
+      check={props.check}
+      input={props.input}
+      onCommit={saved(props.save)}
+    />
   );
 }
 
@@ -177,41 +74,7 @@ export function InlineSwitch(props: {
   readOnly?: boolean;
   save: (checked: boolean) => Promise<unknown>;
 }) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const text = props.checked ? props.onText : props.offText;
   if (props.readOnly) return <Text size="sm">{text}</Text>;
-
-  async function flip(checked: boolean) {
-    setSaving(true);
-    setError(null);
-    try {
-      await props.save(checked);
-    } catch (err) {
-      setError(refusal(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Stack gap={4}>
-      <Group gap="sm">
-        <Switch
-          aria-label={props.label}
-          label={text}
-          checked={props.checked}
-          disabled={saving}
-          onChange={(e) => void flip(e.currentTarget.checked)}
-        />
-        {saving && (
-          <Group gap={6}>
-            <Loader size={12} />
-            <Text size="xs" c="dimmed">Saving…</Text>
-          </Group>
-        )}
-      </Group>
-      {error && <Text size="xs" c="red" role="alert">{error}</Text>}
-    </Stack>
-  );
+  return <InlineField kind="switch" label={props.label} nameByLabel switchLabel={text} value={props.checked} onCommit={saved(props.save)} />;
 }

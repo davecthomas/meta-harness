@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
@@ -72,7 +72,9 @@ test("a cleared budget saves on leaving the field, sends only the budget, and sh
   fireEvent.blur(input);
 
   await waitFor(() => expect(patched).toEqual([{ max_usd: null }]));
-  expect(within(await screen.findByRole("button", { name: "Edit budget" })).getByText("None")).toBeTruthy();
+  // Back to its value, with its pencil beside it.
+  expect(await screen.findByRole("button", { name: "Edit budget" })).toBeTruthy();
+  expect(screen.getByText("None")).toBeTruthy();
 });
 
 test("Escape cancels an edit and sends nothing", async () => {

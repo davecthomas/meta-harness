@@ -132,3 +132,57 @@ test("a value marked changed says so, and a read-only one has no pencil", () => 
   expect(screen.getByText("not saved")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Edit Id" })).toBeNull();
 });
+
+test("a custom kind edits with its own input: its check refuses before a commit, a refused commit stays open, and Escape cancels", async () => {
+  const commits: string[] = [];
+  render(
+    <MantineProvider theme={theme}>
+      <Holder
+        // Omit over the kinds' union keeps only what every kind has, so the custom kind's own props go in as any.
+        {...({
+          kind: "custom",
+          label: "nickname",
+          display: <span>ann</span>,
+          check: (v: string) => (v.length > 1 ? null : "At least two letters"),
+          input: ({ value, onChange, invalid }: any) => <input aria-label="Nickname" aria-invalid={invalid} value={value} onChange={(e) => onChange(e.currentTarget.value)} />,
+        } as any)}
+        initial="ann"
+        onCommit={(v: string) => {
+          commits.push(v);
+          return v === "taken" ? "That name is taken" : null;
+        }}
+      />
+    </MantineProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit nickname" }));
+  const input = () => screen.getByLabelText("Nickname") as HTMLInputElement;
+  expect(screen.getByText("Enter saves, Escape cancels.")).toBeTruthy();
+
+  fireEvent.change(input(), { target: { value: "b" } });
+  fireEvent.keyDown(input(), { key: "Enter" });
+  expect((await screen.findByRole("alert")).textContent).toBe("At least two letters");
+  expect(commits).toEqual([]);
+
+  fireEvent.change(input(), { target: { value: "taken" } });
+  fireEvent.keyDown(input(), { key: "Enter" });
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("That name is taken"));
+  expect(input().value).toBe("taken");
+
+  fireEvent.keyDown(input(), { key: "Escape" });
+  expect(screen.queryByLabelText("Nickname")).toBeNull();
+  expect(commits).toEqual(["taken"]);
+});
+
+test("a custom value in a page heading opens on a click and takes no button of its own", () => {
+  render(
+    <MantineProvider theme={theme}>
+      <h2>
+        <InlineField kind="custom" heading label="title" value="Ship it" display={<span>Ship it</span>} input={() => <input aria-label="Title" />} onCommit={() => null} />
+      </h2>
+    </MantineProvider>,
+  );
+  expect(screen.getByRole("heading", { name: "Ship it" })).toBeTruthy();
+  expect(screen.queryByRole("button")).toBeNull();
+  fireEvent.click(screen.getByText("Ship it"));
+  expect(screen.getByLabelText("Title")).toBeTruthy();
+});

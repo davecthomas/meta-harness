@@ -3422,7 +3422,13 @@ shown), and the goal page says it and the tracker were fixed when the goal
 was created. A person's Settings hold what the form starts from, in its
 words, and nothing the form ignores.
 
-A value that can be edited shows a pencil, dimmer until pointed at. In
+A value that can be edited shows a pencil, dimmer until pointed at. One
+component draws every such value (`components/InlineField.tsx`): text, a
+number, a choice, tags, a switch, checkboxes, or `custom`, a value with an
+input of its own, which a goal's fields use (`goals/InlineEdit.tsx` adds only
+the save to the API, whose refusal becomes the reason under the input). So a
+value opens, commits (Enter or leaving it), cancels (Escape) and shows a
+refusal the same way in Configuration, Settings and on a goal's page. In
 Configuration, where edits stage, the bar that says so stays in view as the
 page scrolls and reads "N changes not saved yet. Nothing applies until you
 review and save"; every value, row or item not yet saved carries the one
