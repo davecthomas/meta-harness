@@ -2150,8 +2150,8 @@ credential.
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
 | GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its sizing (`size`, `size_reasons`, `missing`, `split`, its `paths` and `checks_named`; null and empty for an issue not sized), why it is held (`held_reason`) and what it was split into (`split_into`), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it. With them, the goal's status (`goal_status`), and for a goal no sweep covers, when its open issues' states were last read from the tracker (`states_checked_at`, at most a minute old) and whether every one could be read (`states_complete`); `GET /v1/goals/{id}` reads them the same way | built |
-| GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became), the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
-| POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve: create the newest plan's issues on the code host, in dependency order, with the goal's label, hold them for the goal, and make it `active`. Each draft's body goes through the writing pass before it becomes an issue. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
+| GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, its decisions on the goal's issues in `items`, those `issues`, its `summary` and `gaps`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became, `tracked`: where an approval put them). PUT takes `drafts` and, when given, `items`, the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
+| POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve (`track`, default true: whether the new tasks become issues in the goal's tracker or are kept in the meta-harness): apply the newest plan, settling each decision on the goal's issues, and create its new tasks' issues, in dependency order, with the goal's label, hold them for the goal, and make it `active`. Each draft's body goes through the writing pass before it becomes an issue. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or remove one from it, with or without a task. A ref another goal holds is refused, naming that goal. Removing an issue cancels its task when the task has not ended, and answers `{dropped, task_canceled}`; a task with a pull request open is refused (409) unless `force=true`, which cancels the task and leaves the pull request open. The goal keeps the ref marked `dropped`, so its label never sweeps the issue back in; adding it back by ref clears the mark, and another goal may take it meanwhile | built |
 | POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps, at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold or removed, 409 for one not held, closed (the route reads the issue from GitHub first and records it closed; 502 when it cannot be read), or a met or canceled goal. Records `issue_released` | built |
 | POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label; a goal with no label holds them by ref. Each body must name its paths on a `Paths:` line (422 names those that do not); a refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps; one split already is refused (409), as is a closed one; one the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
@@ -2861,8 +2861,46 @@ A `feature` or `new-system` goal's issues come from a planning task,
 `task_type: plan`, which the planner creates with the goal statement, the
 modality and, for a later phase, what earlier phases built. The planning run
 reads the goal's repos and drafts issues with its `create_issue` tool, each
-in the repo it changes, with acceptance checks and what it depends on. A
-`fix` goal never plans.
+in the repo it changes, with acceptance checks and what it depends on.
+
+**Every goal is planned.** With `config/planner.json`'s `planning.goals` set to
+`all` (as shipped; `from_description` plans only a goal that plans its issues
+from its description, as before), a goal that takes existing issues is planned
+too: it is saved `planning` (`goal.planned`), and none of its tasks is made
+until an operator approves its plan. Its planning task is given the goal and
+every issue it would take, read together: its label's, those assigned to the
+meta-harness, and those picked for it, less any another open goal holds
+(`planning.max_issues` of them, `planning.issue_chars` of each one's text). It
+records its plan with three tools. `create_issue` writes a new task, as above.
+`plan_issue` records its decision on one existing issue: `keep` it, `split` it
+into new tasks that replace it (`replaced_by`), or `leave_out` one that is a
+duplicate, done already or not this goal's, each with its reason and, for a
+kept one, what it waits on. `plan_summary` records how the plan reaches the
+goal, and its gaps: what the goal asks for that no task covers, a risk, an
+assumption. A profile that names `create_issue` gets the other two with it,
+since a deploy never rewrites a deployment's stored profiles. The harness
+server reports them as `issue_planned` and `plan_summarized`.
+
+A plan (`planner/plans.py`) so holds its new tasks (`drafts`), its decision on
+each existing issue (`items`; one the planner said nothing of is kept), its
+`summary` and `gaps`, and the issues it was made over (`issues`). It is invalid
+when it runs nothing, a decision is on an issue that is not the goal's, a split
+names no new task or one the plan lacks, a task waits on an issue the plan
+splits or leaves out, or the dependencies across issues and new tasks make a
+cycle. An operator edits decisions and new tasks alike; each save is a version.
+
+Approving applies the plan (`planning.approve`). Its new tasks become issues,
+in the goal's tracker or, when the operator says so (`track: false`), in the
+meta-harness's own (`mh:` refs); a goal with no tracker always keeps them
+there. Each kept issue is taken into the goal with what the plan says it waits
+on (`issue_link.planned_at`, `plan_depends_on`), which the sweep adds to what
+the issue's own text names. A split issue stays the goal's, held, with the
+tasks that replace it. One left out is marked removed, so the goal's label
+does not sweep it in. An issue the plan took in is not held again for its size
+or its gaps: the plan was the review. Its size still sets its task's spend
+limit. An issue that joins the goal after approval (its label put on later)
+is held as a proposed addition, for an operator to add as it is or to plan the
+goal again; one an operator picks by ref afterward has been looked at and runs.
 
 Built for `feature` (#72, #73): a `feature` goal starts in `planning`; one
 created without a label gets its own, `meta-harness:goal-<the first 8

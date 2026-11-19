@@ -532,13 +532,55 @@ test("a planning profile drafts issues with create_issue, which records them and
 	await gateway.close();
 });
 
+test("a planning profile decides on existing issues and summarizes its plan, with the tools create_issue brings", async () => {
+	const call = (id: string, name: string, input: Record<string, unknown>) =>
+		turn({ finish_reason: "tool_use", tool_calls: [{ id: `toolu_${id}`, name, input }], token: `tok-${id}` });
+	const steps = [
+		call("a", "plan_issue", { ref: "jira:VL-1", decision: "keep", reason: "Ready as it is.", depends_on: ["store", "store"] }),
+		call("b", "plan_issue", { ref: "jira:VL-2", decision: "split", reason: "Two changes." }),
+		call("c", "plan_issue", { ref: "jira:VL-2", decision: "split", reason: "Two changes.", replaced_by: ["store", "api"] }),
+		call("d", "plan_issue", { ref: "jira:VL-3", decision: "leave_out", reason: "Done already." }),
+		call("e", "plan_issue", { ref: "jira:VL-4", decision: "keep", reason: "x", depends_on: ["jira:VL-4"] }),
+		call("f", "plan_summary", { summary: " Store first, then the API. ", gaps: ["No task covers export.", " ", "No task covers export."] }),
+	];
+	const gateway = await startGateway((n) => ({ body: steps[n - 1] ?? DONE_TURN }));
+	const server = await startServer(gateway.url);
+	// The profile names create_issue alone: a deploy never rewrites a deployment's stored profiles.
+	const profile = { name: "pi-plan", tools: ["read", "create_issue"], max_turns: 10, max_minutes: 5 };
+	await api(server, "POST", "/run", runBody({ profile }));
+	const events = await eventsUntilFinished(server, "task-1:0");
+
+	assert.equal(events.at(-1)!.data.status, "FINISHED");
+	const offered = (gateway.requests[0]!.body.tools as { name: string }[]).map((tool) => tool.name);
+	assert.equal(["create_issue", "plan_issue", "plan_summary"].every((name) => offered.includes(name)), true);
+	assert.deepEqual(
+		events.filter((e) => e.type === "issue_planned").map((e) => e.data),
+		[
+			{ ref: "jira:VL-1", decision: "keep", reason: "Ready as it is.", depends_on: ["store"], replaced_by: [] },
+			{ ref: "jira:VL-2", decision: "split", reason: "Two changes.", depends_on: [], replaced_by: ["store", "api"] },
+			{ ref: "jira:VL-3", decision: "leave_out", reason: "Done already.", depends_on: [], replaced_by: [] },
+		],
+	);
+	// A split with no replacement, and an issue that waits on itself, are refused, and the model is told how to go on.
+	const results = events.filter((e) => e.type === "tool_result" && e.data.tool === "plan_issue");
+	assert.deepEqual(results.map((r) => r.data.is_error), [false, true, false, false, true]);
+	assert.match(JSON.stringify(results[1]!.data), /names the drafts that replace jira:VL-2 in replaced_by/);
+	assert.match(JSON.stringify(results[4]!.data), /cannot depend on itself/);
+	assert.deepEqual(events.filter((e) => e.type === "plan_summarized").map((e) => e.data), [
+		{ summary: "Store first, then the API.", gaps: ["No task covers export."] },
+	]);
+	assert.deepEqual(readdirSync(server.workspace), []);
+	await server.stop();
+	await gateway.close();
+});
+
 test("create_issue is offered only to a profile that names it", async () => {
 	const gateway = await startGateway(() => ({ body: DONE_TURN }));
 	const server = await startServer(gateway.url);
 	await api(server, "POST", "/run", runBody({ profile: { name: "pi-lean", tools: ["read"], max_turns: 5, max_minutes: 5 } }));
 	await eventsUntilFinished(server, "task-1:0");
 	const offered = (gateway.requests[0]!.body.tools as { name: string }[]).map((tool) => tool.name);
-	assert.equal(offered.includes("create_issue"), false);
+	assert.equal(["create_issue", "plan_issue", "plan_summary"].some((name) => offered.includes(name)), false);
 	await server.stop();
 	await gateway.close();
 });

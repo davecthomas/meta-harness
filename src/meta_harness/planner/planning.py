@@ -28,8 +28,14 @@ from meta_harness.tasks.client import TaskApiError, TaskClient
 
 log = logging.getLogger("meta_harness.planner")
 
+# What a planning run records its plan as: a new task, a decision on an issue the goal had, and the summary.
+PLAN_EVENTS = ("issue_drafted", "issue_planned", "plan_summarized")
 # A planning task whose status is one of these has ended, and its drafts are read (closed) or it failed.
 ENDED = {"closed", "failed", "canceled", "ready", "review_unresolved"}
+
+
+# How a PlanError for a tracker's refusal starts: the API answers those 502, since asking again may work.
+REFUSED = "the issue tracker refused"
 
 
 class PlanError(RuntimeError):
@@ -48,9 +54,24 @@ class IssueWriter(Protocol):
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue: ...
 
 
+# Which goals are planned before their tasks run: every goal, or only one that plans its issues from its
+# description, as before every goal was planned.
+EVERY_GOAL, FROM_DESCRIPTION = "all", "from_description"
+GOALS = (EVERY_GOAL, FROM_DESCRIPTION)
+# What a planning task is shown of the goal's issues when the configuration does not say: how many, and how
+# much of each one's text.
+MAX_ISSUES, ISSUE_CHARS = 60, 4000
+
+
 def settings() -> dict[str, Any]:
-    """config/planner.json's planning: the candidate a planning task is pinned to, and its spend limit."""
+    """config/planner.json's planning: the candidate a planning task is pinned to, its spend limit, which
+    goals are planned (`goals`), and how much of a goal's issues its planning task is shown."""
     return json.loads(PLANNER_CONFIG_PATH.read_text(encoding="utf-8"))["planning"]
+
+
+def plans_every_goal() -> bool:
+    """Whether a goal that takes existing issues is planned too, before any of its tasks run."""
+    return settings().get("goals", FROM_DESCRIPTION) == EVERY_GOAL
 
 
 def check_settings() -> None:
@@ -67,6 +88,11 @@ def check_settings() -> None:
             raise InvalidOperation
     except InvalidOperation as err:
         raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: planning.max_usd must be an amount above 0") from err
+    if config.get("goals", FROM_DESCRIPTION) not in GOALS:
+        raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: planning.goals must be one of {', '.join(GOALS)}")
+    for key in ("max_issues", "issue_chars"):
+        if key in config and (not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 1):
+            raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: planning.{key} must be a whole number above 0")
 
 
 def goal_label(goal: dict) -> str:
@@ -75,13 +101,16 @@ def goal_label(goal: dict) -> str:
     return f"meta-harness:goal-{goal['id'][:8]}"
 
 
-def prompt(goal: dict, note: str | None, previous: list[dict[str, Any]] | None) -> str:
-    """What the planning task is asked: the goal, its repos, and the rules for drafts. A replan adds the
-    operator's note and the plan it replaces."""
+def prompt(
+    goal: dict, note: str | None, previous: list[dict[str, Any]] | None, issues: list[Issue] | None = None
+) -> str:
+    """What the planning task is asked: the goal, its repos, the issues it already has, and the rules for the
+    plan. A replan adds the operator's note and the plan it replaces."""
     repos = ", ".join(goal["repos"])
+    issues = issues or []
     lines = [
-        "Plan this goal as issues. Read the repository to see what exists, then call create_issue once for each",
-        "issue the goal needs. Do not change any file: you only propose.",
+        "Plan this goal. Read the repository to see what exists. Do not change any file: you only propose, and",
+        "you record the plan with your tools, not as prose.",
         "",
         "--- goal ---",
         goal.get("title") or "",
@@ -89,23 +118,52 @@ def prompt(goal: dict, note: str | None, previous: list[dict[str, Any]] | None) 
         goal["statement"],
         "--- end of goal ---",
         "",
-        f"The goal's repositories: {repos}. /workspace holds {goal['repos'][0]}. Every draft names one of them.",
+        f"The goal's repositories: {repos}. /workspace holds {goal['repos'][0]}. Every new task names one of them.",
         "",
-        "Rules for the drafts:",
-        "- One issue is one change a single pull request can make and its tests can prove. Prefer several small",
-        "  issues to one large one.",
-        "- Each body says what to build and why, then states its checks under a '## Acceptance checks' heading,",
-        "  as a list of commands that pass when the issue is done.",
-        "- Each body names the paths it changes on a 'Paths:' line, so issues that touch different paths can run",
+    ]
+    if issues:
+        config = settings()
+        chars = int(config.get("issue_chars", ISSUE_CHARS))
+        shown = issues[: int(config.get("max_issues", MAX_ISSUES))]
+        lines += [
+            f"The goal already has {len(issues)} issue{'' if len(issues) == 1 else 's'}, between the markers below."
+            + (f" Only the first {len(shown)} are shown." if len(shown) < len(issues) else ""),
+            "Read them together, as one body of work, and call plan_issue once for each with your decision:",
+            "- keep: it runs as it is. Say what it waits on in depends_on, when it truly needs another task first.",
+            "- split: it is too large for one pull request, or holds separate changes. Write the smaller tasks with",
+            "  create_issue and name them in replaced_by. They run in its place.",
+            "- leave_out: it duplicates another, is already done in the repository, or is not this goal's work.",
+            "Give each decision its reason in a sentence. An issue you say nothing of is kept.",
+            "Write a new task with create_issue only for work the goal needs that no issue covers, or for a split.",
+            "",
+            "--- issues ---",
+        ]
+        for issue in shown:
+            body = (issue.body or "").strip()
+            body = body[:chars] + " [cut]" if len(body) > chars else body
+            lines += [f"## {issue.ref} ({issue.repo}): {issue.title}", body or "(no description)", ""]
+        lines += ["--- end of issues ---", ""]
+    else:
+        lines += ["The goal has no issues yet: call create_issue once for each task it needs.", ""]
+    lines += [
+        "Rules for a new task:",
+        "- One task is one change a single pull request can make and its tests can prove. Prefer several small",
+        "  tasks to one large one.",
+        "- Its body says what to build and why, then states its checks under a '## Acceptance checks' heading,",
+        "  as a list of commands that pass when it is done.",
+        "- Its body names the paths it changes on a 'Paths:' line, so tasks that touch different paths can run",
         "  side by side.",
-        "- depends_on names the drafts (by draft_id) and existing issues (owner/repo#number) that must be done",
-        "  first. Name a dependency only when the work truly needs it.",
-        "- Finish with a short summary of the plan: the issues in order, and anything you assumed.",
+        "- depends_on names what must be done first: a new task by its draft_id, an existing issue by its ref as",
+        "  shown above. Name a dependency only when the work truly needs it: what does not wait runs in parallel.",
+        "",
+        "Finish by calling plan_summary: how the plan reaches the goal, in a few sentences an operator will read",
+        "before approving it, and as gaps anything the goal asks for that no task covers, any risk you see, and",
+        "anything you assumed.",
     ]
     if note:
         lines += ["", "An operator asked for this plan to replace the one before it, with this note:", note]
     if previous:
-        lines += ["", "The plan before it, for reference:"]
+        lines += ["", "The new tasks of the plan before it, for reference:"]
         lines += [f"- {d['draft_id']} ({d['repo']}): {d['title']}" for d in previous]
     return "\n".join(lines).strip()
 
@@ -116,8 +174,16 @@ def _plan_count(goal_id: str) -> int:
     return latest["version"] if latest else 0
 
 
-async def start(goal: dict, tasks: TaskClient, events: Events, who: str, note: str | None = None) -> dict:
-    """Starts the goal's planning task and records it on the goal. Returns the task."""
+async def start(
+    goal: dict,
+    tasks: TaskClient,
+    events: Events,
+    who: str,
+    note: str | None = None,
+    issues: list[Issue] | None = None,
+) -> dict:
+    """Starts the goal's planning task and records it on the goal, with the issues it was given to plan over
+    (issues: those the goal already has). Returns the task."""
     config = settings()
 
     def previous() -> list[dict[str, Any]] | None:
@@ -136,7 +202,7 @@ async def start(goal: dict, tasks: TaskClient, events: Events, who: str, note: s
             task_type="plan",
             priority=goal["priority"],
             title=f"Plan: {goal.get('title') or goal['statement']}"[:300],
-            description=prompt(goal, note, before),
+            description=prompt(goal, note, before, issues),
             acceptance_checks=[],
             goal_id=goal["id"],
             pin=config["candidate"],
@@ -147,7 +213,7 @@ async def start(goal: dict, tasks: TaskClient, events: Events, who: str, note: s
 
     def record() -> None:
         with db.connect(autocommit=True) as conn:
-            plans.set_plan_task(conn, goal["id"], task["id"])
+            plans.set_plan_task(conn, goal["id"], task["id"], [plans.clean_issue(vars(i)) for i in issues or []])
 
     await asyncio.to_thread(record)
     events.emit(
@@ -177,20 +243,41 @@ async def collect(goal: dict, tasks: TaskClient, events: Events) -> dict | None:
     if task["status"] not in ENDED:
         return None
 
-    def read() -> list[dict[str, Any]]:
-        return events.read(0, 5000, task_id=task_id, event_type="issue_drafted")["events"]
+    def read() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        recorded = events.read(0, 5000, task_id=task_id, event_type=",".join(PLAN_EVENTS))["events"]
+        with db.connect(autocommit=True) as conn:
+            return recorded, plans.plan_issues(conn, goal["id"])
 
-    drafts = plans.latest_drafts(await asyncio.to_thread(read))
+    recorded, issues = await asyncio.to_thread(read)
+
+    def of(event_type: str) -> list[dict[str, Any]]:
+        return [e for e in recorded if e["event_type"] == event_type]
+
+    drafts = plans.latest_drafts(of("issue_drafted"))
+    items = plans.complete(plans.latest_items(of("issue_planned")), issues)
+    summary, gaps = plans.latest_summary(of("plan_summarized"))
     if task["status"] != "closed":
         invalid = [f"the planning task ended {task['status']}: {task.get('status_reason') or 'no reason was recorded'}"]
     else:
-        invalid = plans.validate(drafts, goal["repos"])
+        invalid = plans.validate(drafts, goal["repos"], items, issues)
 
     def save() -> dict | None:
         with db.connect(autocommit=True) as conn:
             if plans.from_task(conn, goal["id"], task_id):
                 return None
-            plan = plans.save(conn, goal["id"], drafts, invalid, "planned", "planner", task_id=task_id)
+            plan = plans.save(
+                conn,
+                goal["id"],
+                drafts,
+                invalid,
+                "planned",
+                "planner",
+                task_id=task_id,
+                items=items,
+                summary=summary,
+                gaps=gaps,
+                issues=issues,
+            )
             plans.set_plan_task(conn, goal["id"], None)
             return plan
 
@@ -216,12 +303,36 @@ def _emit_saved(events: Events, plan: dict, who: str) -> None:
     )
 
 
-def edit(goal: dict, drafts: list[dict[str, Any]], who: str, events: Events) -> dict:
-    """Saves an operator's edited drafts as the goal's next plan version, valid or not."""
+def edit(
+    goal: dict,
+    drafts: list[dict[str, Any]],
+    who: str,
+    events: Events,
+    items: list[dict[str, Any]] | None = None,
+) -> dict:
+    """Saves an operator's edited plan as the goal's next version, valid or not: its new tasks, and its
+    decisions on the goal's issues when given (items; None keeps those of the version before). The summary,
+    the gaps and the issues the plan was made over are the planner's, and carry over."""
     cleaned = [plans.clean(d) for d in drafts]
-    invalid = plans.validate(cleaned, goal["repos"])
     with db.connect(autocommit=True) as conn:
-        plan = plans.save(conn, goal["id"], cleaned, invalid, "edited", who)
+        before = plans.latest(conn, goal["id"]) or {}
+        issues = list(before.get("issues") or [])
+        decided = plans.complete(
+            [plans.clean_item(i) for i in items] if items is not None else list(before.get("items") or []), issues
+        )
+        invalid = plans.validate(cleaned, goal["repos"], decided, issues)
+        plan = plans.save(
+            conn,
+            goal["id"],
+            cleaned,
+            invalid,
+            "edited",
+            who,
+            items=decided,
+            summary=str(before.get("summary") or ""),
+            gaps=list(before.get("gaps") or []),
+            issues=issues,
+        )
     _emit_saved(events, plan, who)
     return plan
 
@@ -245,15 +356,18 @@ def issue_body(draft: dict[str, Any], created: dict[str, str]) -> str:
     return f"{body}\n\nDepends on: {', '.join(names)}\n" if names else f"{body}\n"
 
 
-async def approve(goal: dict, writer: IssueWriter, events: Events, who: str) -> dict:
-    """Creates the plan's issues on the code host, in dependency order, with the goal's label, and holds each
-    for the goal. Returns the plan with the issue each draft became.
+async def approve(goal: dict, writer: IssueWriter, events: Events, who: str, tracked: bool = True) -> dict:
+    """Applies the goal's plan. Its new tasks become issues, in dependency order, with the goal's label, in
+    the tracker `writer` writes to: the goal's own, or the meta-harness's (tracked says which, for the
+    record). Then each decision on an issue the goal already had is settled: a kept one is taken into the goal
+    with what the plan says it waits on, a split one is replaced by its new tasks, and one left out is removed.
+    Returns the plan with the issue each new task became.
 
-    Each issue is noted as soon as it exists, so an approval the code host interrupted is asked again and
-    carries on from the next draft, making none twice.
+    Each issue is noted as soon as it exists, so an approval the tracker interrupted is asked again and
+    carries on from the next task, making none twice. Settling a decision twice changes nothing.
 
     Raises:
-        PlanError: The goal has no plan, the plan is invalid, or the code host refused: its reason is given.
+        PlanError: The goal has no plan, the plan is invalid, or the tracker refused: its reason is given.
     """
 
     def load() -> dict | None:
@@ -284,10 +398,17 @@ async def approve(goal: dict, writer: IssueWriter, events: Events, who: str) -> 
             ref = issue.ref or ref_for(draft["repo"], issue.number)
             created[draft["draft_id"]] = ref
 
-            def note(draft_id: str = draft["draft_id"], ref: str = ref, repo: str = draft["repo"]) -> None:
+            # What it waits on, as refs: the plan's word, kept beside the Depends on: line in its text, which a
+            # tracker reads only for its own kind of issue.
+            waits = [created.get(dep, dep) for dep in draft["depends_on"]]
+
+            def note(
+                draft_id: str = draft["draft_id"], ref: str = ref, repo: str = draft["repo"], waits: list[str] = waits
+            ) -> None:
                 with db.connect(autocommit=True) as conn:
                     plans.record_created(conn, goal["id"], plan["version"], draft_id, ref)
                     store.add_refs(conn, goal["id"], [(ref, repo)])
+                    store.plan_keep(conn, goal["id"], ref, repo, [w for w in waits if ":" in w])
 
             await asyncio.to_thread(note)
             events.emit(
@@ -298,7 +419,31 @@ async def approve(goal: dict, writer: IssueWriter, events: Events, who: str) -> 
             )
     except TrackerError as err:
         made = f" after creating {len(created)} of {len(plan['drafts'])} issues" if created else ""
-        raise PlanError(f"GitHub refused{made}: {err}. Approve again to carry on") from err
+        raise PlanError(f"{REFUSED}{made}: {err}. Approve again to carry on") from err
+    repo_of = {issue["ref"]: issue["repo"] for issue in plan.get("issues") or []}
+
+    def settle() -> None:
+        with db.connect(autocommit=True) as conn:
+            plans.set_tracked(conn, goal["id"], plan["version"], tracked)
+            for item in plan.get("items") or []:
+                ref, repo = item["ref"], repo_of.get(item["ref"]) or goal["repos"][0]
+                if item["decision"] == plans.LEAVE_OUT:
+                    store.plan_leave_out(conn, goal["id"], ref, repo)
+                elif item["decision"] == plans.SPLIT:
+                    into = [created[d] for d in item["replaced_by"] if d in created]
+                    why = f"the plan split it into {len(into)} smaller task{'' if len(into) == 1 else 's'}, which run in its place"
+                    store.plan_split(
+                        conn, goal["id"], ref, repo, into, f"{why}: {item['reason']}" if item["reason"] else why
+                    )
+                else:
+                    store.plan_keep(conn, goal["id"], ref, repo, [created.get(d, d) for d in item["depends_on"]])
+
+    try:
+        await asyncio.to_thread(settle)
+    except store.GoalError as err:
+        raise PlanError(
+            f"the plan cannot be applied: {err}. Remove that issue from the plan, then approve again"
+        ) from err
     events.emit(
         "plan_approved",
         {"goal_id": goal["id"], "version": plan["version"], "issues": list(created.values())},

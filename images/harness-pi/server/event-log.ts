@@ -18,6 +18,8 @@ export type RunEventType =
 	| "review_submitted"
 	| "plan_updated"
 	| "issue_drafted"
+	| "issue_planned"
+	| "plan_summarized"
 	| "operator_message_delivered"
 	| "heartbeat"
 	| "run_finished";

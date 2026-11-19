@@ -405,6 +405,12 @@
     ],
     "type": "object"
   },
+  "issue_planned v1": {
+    "additionalProperties": true,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
   "issue_refused v1": {
     "additionalProperties": true,
     "properties": {
@@ -719,6 +725,12 @@
       "source",
       "drafts"
     ],
+    "type": "object"
+  },
+  "plan_summarized v1": {
+    "additionalProperties": true,
+    "properties": {},
+    "required": [],
     "type": "object"
   },
   "plan_updated v1": {

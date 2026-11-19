@@ -78,6 +78,7 @@ from meta_harness.planner.sweep import (
     refresh_states,
     sweep_goal,
     swept_goals,
+    goal_tracker,
 )
 from meta_harness.planner.tracker import Tracker, TrackerError, parse_ref
 from meta_harness.trackers import registry as tracker_registry
@@ -284,12 +285,42 @@ def create_app(
         for goal in goals:
             await title_one(goal)
 
+    async def issues_to_plan(goal: dict) -> list:
+        """The issues a goal already has, for its planning task to plan over: its label's open issues, those
+        assigned to the meta-harness when it asked for them, and those picked for it by ref. Each once, and none
+        that another open goal holds. Empty for a goal that plans its issues from its description.
+
+        Raises:
+            TrackerError: The goal's tracker could not be read.
+        """
+        source = goal_tracker(tracker, goal)
+        found: dict[str, Any] = {}
+        for repo in goal["repos"]:
+            listed = await source.list_open(repo, goal["label"]) if goal["label"] else []
+            for issue in [*listed, *await source.list_assigned(repo)]:
+                found.setdefault(issue.ref, issue)
+
+        def held() -> tuple[list[dict], dict[str, str]]:
+            with app.state.pool.connection() as conn:
+                return store.links(conn, goal["id"]), store.holders(conn, list(found))
+
+        links, holders = await asyncio.to_thread(held)
+        for link in links:
+            if link["ref"] not in found and link["state"] == "open":
+                found[link["ref"]] = await source.read(link["ref"])
+        return [i for i in found.values() if i.state == "open" and holders.get(i.ref, goal["id"]) == goal["id"]]
+
     async def plan_one(goal: dict, who: str) -> None:
-        """Start a planning goal's planning task. A failure is logged: Replan on its page starts it again."""
+        """Start a planning goal's planning task, over the issues the goal already has. A failure is logged:
+        Replan on its page starts it again."""
         try:
-            await planning.start(goal, tasks, events, who)
-        except planning.PlanError as err:
-            log.error("goal %s: %s", goal["id"], err)
+            await planning.start(goal, tasks, events, who, issues=await issues_to_plan(goal))
+        except (planning.PlanError, TrackerError) as err:
+            log.error(
+                "goal %s: its planning task could not start: %s. Replan on the goal's page starts it again",
+                goal["id"],
+                err,
+            )
 
     def planning_goals() -> list[dict]:
         with app.state.pool.connection() as conn:
@@ -1000,6 +1031,9 @@ def create_app(
             **body.model_dump(exclude={"refs"}),
             "tracker": scheme,
             "tracker_settings": body.tracker_settings or None,
+            # Planned before any task runs: a goal that plans its issues from its description always, and one
+            # that takes existing issues when the planning configuration says every goal is.
+            "planned": planned or planning.plans_every_goal(),
         }
         try:
             with app.state.pool.connection() as conn:
@@ -1281,7 +1315,12 @@ def create_app(
             ceiling = sandbox_ceiling()
         except ConfigError:
             ceiling = None
-        return {"max_parallel": system_max_parallel(), "max_sandboxes": ceiling}
+        return {
+            "max_parallel": system_max_parallel(),
+            "max_sandboxes": ceiling,
+            # Whether a goal that takes existing issues is planned before its tasks run, for the New goal form.
+            "plans_every_goal": planning.plans_every_goal(),
+        }
 
     @app.post("/v1/goals/{goal_id}/pause")
     def pause(goal_id: str, who: str = Depends(operator)) -> dict:
@@ -1294,7 +1333,7 @@ def create_app(
         yet, goes to planning instead, and its planning task starts."""
         current = load(goal_id)
         if (
-            current["modality"] in store.PLANNED_MODALITIES
+            (current.get("planned") or current["modality"] in store.PLANNED_MODALITIES)
             and current["status"] == "paused"
             and not current["plan_approved_at"]
         ):
@@ -1355,7 +1394,7 @@ def create_app(
         goal, _ = await asyncio.to_thread(move_with, goal_id, who, "active", {"planning"})
         asyncio.create_task(sweep_one(goal))
 
-    plan_api.register(app, operator, load, events, tracker, tasks, activate)
+    plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan)
     budget_api.register(app, operator, load, change_with, events, tasks)
     sizing_api.register(app, operator, load, events, tracker, sweep_one)
     users.register(app, operator, events)

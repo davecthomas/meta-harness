@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Anchor, Badge, Button, Card, Code, Group, List, Loader, Modal, Select, Stack, TagsInput, Text, TextInput, Textarea } from "@mantine/core";
-import { IconArrowRight, IconCheck, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
+import { Alert, Anchor, Badge, Button, Card, Code, Group, List, Loader, Modal, Select, Stack, Switch, TagsInput, Text, TextInput, Textarea } from "@mantine/core";
+import { IconCheck, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
-import { api, type Goal, type GoalPlan as Plan, type PlanDraft } from "../../api";
+import { api, type Goal, type GoalPlan as Plan, type PlanDraft, type PlanItem } from "../../api";
+import { OWN, trackerTitle } from "../trackers/refs";
+import { IssueDecisions, OrderOfWork, PlannerSays, planSentence, tasksOf } from "./PlanReview";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { ErrorAlert, SectionTitle, when } from "../../components/ui";
 
@@ -41,6 +43,7 @@ function DraftCard({ draft, index, onEdit, onRemove }: { draft: PlanDraft; index
           <Group gap="xs" wrap="nowrap">
             <Badge variant="light" radius="sm">{index + 1}</Badge>
             <Text fw={650}>{draft.title || "(no title)"}</Text>
+            <Badge size="xs" variant="light" color="indigo" tt="none">new</Badge>
           </Group>
           <Group gap="xs" wrap="nowrap">
             <Code>{draft.draft_id}</Code>
@@ -69,30 +72,6 @@ function DraftCard({ draft, index, onEdit, onRemove }: { draft: PlanDraft; index
   );
 }
 
-// The order of work as a small graph: each draft, and an arrow from each draft it waits on.
-function OrderOfWork({ drafts }: { drafts: PlanDraft[] }) {
-  const ids = new Set(drafts.map((d) => d.draft_id));
-  return (
-    <Stack gap={4} data-testid="plan-order">
-      {drafts.map((d, i) => {
-        const after = d.depends_on.filter((dep) => ids.has(dep));
-        return (
-          <Group key={d.draft_id} gap={6} wrap="nowrap">
-            <Text size="xs" c="dimmed" w={18}>{i + 1}.</Text>
-            {after.map((dep) => (
-              <Group key={dep} gap={4} wrap="nowrap">
-                <Code>{dep}</Code>
-                <IconArrowRight size={12} />
-              </Group>
-            ))}
-            <Code fw={700}>{d.draft_id}</Code>
-          </Group>
-        );
-      })}
-    </Stack>
-  );
-}
-
 function DraftForm({ draft, isNew, repos, others, onSave, onCancel }: {
   draft: PlanDraft;
   isNew: boolean;
@@ -106,15 +85,15 @@ function DraftForm({ draft, isNew, repos, others, onSave, onCancel }: {
   const idTaken = isNew && others.includes(form.draft_id.trim());
   const ok = /^[a-z0-9][a-z0-9-]{0,39}$/.test(form.draft_id.trim()) && !idTaken && form.title.trim() !== "";
   return (
-    <Modal opened onClose={onCancel} title={isNew ? "Add a draft" : `Edit ${draft.draft_id}`} size="xl">
+    <Modal opened onClose={onCancel} title={isNew ? "Add a new task" : `Edit ${draft.draft_id}`} size="xl">
       <Stack gap="md">
         <Group grow align="flex-start">
           <TextInput
-            label="Draft id"
-            description="A short name other drafts use to wait on this one: lowercase letters, digits and hyphens."
+            label="Task id"
+            description="A short name other tasks use to wait on this one: lowercase letters, digits and hyphens."
             disabled={!isNew}
             value={form.draft_id}
-            error={idTaken ? "Another draft has this id" : undefined}
+            error={idTaken ? "Another task has this id" : undefined}
             onChange={(e) => setForm({ ...form, draft_id: e.currentTarget.value })}
           />
           <Select label="Repo" data={repos} value={form.repo} allowDeselect={false} onChange={(repo) => setForm({ ...form, repo: repo ?? form.repo })} />
@@ -132,7 +111,7 @@ function DraftForm({ draft, isNew, repos, others, onSave, onCancel }: {
         />
         <TagsInput
           label="Waits on"
-          description="Other drafts' ids, or issues that exist as owner/repo#12."
+          description="Other new tasks' ids, or the goal's issues by their refs."
           data={others}
           value={form.depends_on}
           onChange={(depends_on) => setForm({ ...form, depends_on })}
@@ -148,13 +127,19 @@ function DraftForm({ draft, isNew, repos, others, onSave, onCancel }: {
   );
 }
 
-// A feature goal's plan, for a goal in planning: what its planning task drafted, in the order the work can
-// be done. The operator edits drafts (each save is a new version), asks for a new plan with a note, or
-// approves it, which creates the issues on the code host and starts the goal. Nothing is created before that.
+// A goal's plan, for a goal in planning: what its planning task made of the goal and the issues it already
+// has. It shows what the planner says of the plan, the order its tasks can be worked in, its decision on each
+// existing issue, and the new tasks it wrote. The operator edits any of it (each save is a new version), asks
+// for a new plan with a note, or approves it, choosing whether the new tasks go to the goal's tracker. Nothing
+// is created or run before that.
 export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => void }) {
   const [shown, setShown] = useState<Plan | null>(null);
   // The drafts as edited here and not yet saved; null when they are the saved version's.
   const [edited, setEdited] = useState<PlanDraft[] | null>(null);
+  // The decisions on the goal's issues as edited here and not yet saved; null when they are the saved version's.
+  const [editedItems, setEditedItems] = useState<PlanItem[] | null>(null);
+  // Whether the new tasks go to the goal's tracker when the plan is approved, or stay in the meta-harness.
+  const [track, setTrack] = useState(true);
   const [editing, setEditing] = useState<{ draft: PlanDraft; isNew: boolean } | null>(null);
   const [asking, setAsking] = useState<"approve" | "replan" | null>(null);
   const [note, setNote] = useState("");
@@ -190,6 +175,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
     try {
       setShown(await action());
       setEdited(null);
+      setEditedItems(null);
       setAsking(null);
       setNote("");
       after?.();
@@ -202,18 +188,29 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
     }
   }
 
-  const save = () => (edited ? run(() => api.savePlan(goal.id, edited)) : Promise.resolve(true));
+  const dirty = edited !== null || editedItems !== null;
+  const save = () =>
+    dirty ? run(() => api.savePlan(goal.id, edited ?? plan?.drafts ?? [], editedItems ?? undefined)) : Promise.resolve(true);
   const unsaved = useUnsavedChanges({
-    dirty: edited !== null,
+    dirty,
     describe: `the plan of ${goal.title ?? "this goal"}, edited from version ${plan?.version ?? 0}`,
     save,
-    discard: () => setEdited(null),
+    discard: () => {
+      setEdited(null);
+      setEditedItems(null);
+    },
   });
 
   if (!shown) return error ? <ErrorAlert error={error} /> : <Loader size="sm" />;
   const change = (next: PlanDraft[]) => setEdited(next);
   const base = edited ?? plan?.drafts ?? [];
-  const canApprove = !!plan && plan.invalid.length === 0 && edited === null && !drafting;
+  const canApprove = !!plan && plan.invalid.length === 0 && !dirty && !drafting;
+  const issues = plan?.issues ?? [];
+  const items = editedItems ?? plan?.items ?? [];
+  const tasks = tasksOf(base, items, issues);
+  // A goal with no tracker keeps every task in the meta-harness: there is nowhere else to put them.
+  const untracked = (goal.tracker ?? "github") === OWN;
+  const tracker = trackerTitle(goal.tracker ?? "github");
 
   return (
     <>
@@ -222,9 +219,9 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
           !drafting && (
             <Group gap="xs">
               <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => setEditing({ draft: { draft_id: "", repo: goal.repos[0], title: "", body: "\n\n## Acceptance checks\n\n- ", labels: [], depends_on: [] }, isNew: true })}>
-                Add a draft
+                Add a task
               </Button>
-              <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={edited !== null} onClick={() => setAsking("replan")}>Replan</Button>
+              <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={dirty} onClick={() => setAsking("replan")}>Plan again</Button>
               <Button size="xs" color="teal" leftSection={<IconCheck size={14} />} disabled={!canApprove} onClick={() => setAsking("approve")}>Approve the plan</Button>
             </Group>
           )
@@ -235,10 +232,10 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
       {unsaved.element}
       <ErrorAlert error={error} />
       {drafting && (
-        <Alert color="blue" mb="md" title="The planning task is drafting the plan">
+        <Alert color="blue" mb="md" title="The planner is working on the plan">
           <Group gap="xs">
             <Loader size="xs" />
-            <Text size="sm">It reads the goal's repos and proposes issues. Nothing is created until you approve.</Text>
+            <Text size="sm">It reads the goal, its repos and the issues it already has, and proposes how to reach it. Nothing is created or run until you approve.</Text>
             <Anchor component={Link} to={`/tasks/${shown.planning_task_id}`} size="sm">Watch its run</Anchor>
           </Group>
         </Alert>
@@ -247,26 +244,58 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
         <Stack gap="md">
           <Group gap="sm">
             <Text size="sm">
-              Version {plan.version}, {plan.source === "planned" ? "drafted by the planning task" : `edited by ${plan.created_by}`}, {when(plan.created_at)}.
-              Its issues will carry the label <Badge variant="outline" tt="none" radius="sm">{shown.label}</Badge>
+              Version {plan.version}, {plan.source === "planned" ? "made by the planner" : `edited by ${plan.created_by}`}, {when(plan.created_at)}.
+              {base.length > 0 && <> Its new tasks will carry the label <Badge variant="outline" tt="none" radius="sm">{shown.label}</Badge></>}
             </Text>
             {plan.task_id && <Anchor component={Link} to={`/tasks/${plan.task_id}`} size="sm">The planning task's run</Anchor>}
           </Group>
-          {edited !== null && (
+          <PlannerSays summary={plan.summary ?? ""} gaps={plan.gaps ?? []} />
+          {dirty && (
             <Alert color="yellow" title="Edits not saved yet">
               <Group gap="sm">
                 <Text size="sm">Saving makes version {plan.version + 1}. The plan can be approved once it is saved.</Text>
                 <Button size="xs" loading={busy} onClick={() => void save()}>Save as version {plan.version + 1}</Button>
-                <Button size="xs" variant="default" onClick={() => setEdited(null)}>Discard</Button>
+                <Button
+                  size="xs"
+                  variant="default"
+                  onClick={() => {
+                    setEdited(null);
+                    setEditedItems(null);
+                  }}
+                >
+                  Discard
+                </Button>
               </Group>
             </Alert>
           )}
-          {edited === null && plan.invalid.length > 0 && (
+          {!dirty && plan.invalid.length > 0 && (
             <Alert color="red" title="This plan can't be approved yet" role="alert">
               <List size="sm" spacing={2}>{plan.invalid.map((reason) => <List.Item key={reason}>{reason}</List.Item>)}</List>
             </Alert>
           )}
-          {drafts.length > 1 && <OrderOfWork drafts={drafts} />}
+          {tasks.length > 1 && (
+            <div>
+              <Text fw={600} size="sm" mb={4}>The order of work</Text>
+              <OrderOfWork tasks={tasks} />
+            </div>
+          )}
+          {issues.length > 0 && (
+            <div>
+              <Text fw={600} size="sm">The goal's issues</Text>
+              <Text size="xs" c="dimmed" mb={6}>What the plan does with each issue the goal already has. Change any of them before you approve.</Text>
+              <IssueDecisions issues={issues} items={items} drafts={base} onChange={drafting ? undefined : setEditedItems} />
+            </div>
+          )}
+          {(drafts.length > 0 || issues.length > 0) && (
+            <div>
+              <Text fw={600} size="sm">New tasks</Text>
+              <Text size="xs" c="dimmed">
+                {drafts.length
+                  ? "Tasks the planner wrote. They exist only in this plan until you approve it."
+                  : "The planner wrote none: the goal's own issues cover it."}
+              </Text>
+            </div>
+          )}
           {drafts.map((draft, index) => (
             <DraftCard
               key={draft.draft_id}
@@ -276,7 +305,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
               onRemove={drafting ? undefined : () => change(base.filter((d) => d.draft_id !== draft.draft_id))}
             />
           ))}
-          {drafts.length === 0 && <Text size="sm" c="dimmed">The plan has no drafts. Add one, or ask for a new plan.</Text>}
+          {drafts.length === 0 && issues.length === 0 && <Text size="sm" c="dimmed">The plan has no tasks. Add one, or ask for a new plan.</Text>}
         </Stack>
       )}
       {editing && (
@@ -284,7 +313,10 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
           draft={editing.draft}
           isNew={editing.isNew}
           repos={goal.repos}
-          others={base.map((d) => d.draft_id).filter((id) => id !== editing.draft.draft_id || editing.isNew)}
+          others={[
+            ...base.map((d) => d.draft_id).filter((id) => id !== editing.draft.draft_id || editing.isNew),
+            ...items.filter((i) => i.decision === "keep").map((i) => i.ref),
+          ]}
           onCancel={() => setEditing(null)}
           onSave={(draft) => {
             change(editing.isNew ? [...base, draft] : base.map((d) => (d.draft_id === draft.draft_id ? draft : d)));
@@ -292,28 +324,80 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
           }}
         />
       )}
-      <Modal opened={asking === "approve"} onClose={() => setAsking(null)} title="Approve the plan">
+      <Modal opened={asking === "approve"} onClose={() => setAsking(null)} title="Approve the plan" size="lg">
         <Stack gap="md">
-          <Text size="sm">
-            This creates {drafts.length} {drafts.length === 1 ? "issue" : "issues"} in the goal's issue tracker with the label {shown.label}, in the order shown, and
-            starts the goal: its tasks then run each issue to a pull request.
+          <Text size="sm" data-testid="approve-says">
+            {planSentence(base, items)} Then the goal starts: each task runs to a pull request, in the order shown.
           </Text>
+          {base.length > 0 && !untracked && (
+            <Switch
+              data-testid="approve-track"
+              checked={track}
+              onChange={(e) => setTrack(e.currentTarget.checked)}
+              label={`Add the ${base.length === 1 ? "new task" : `${base.length} new tasks`} to ${tracker} as ${base.length === 1 ? "an issue" : "issues"}`}
+              description={
+                track
+                  ? `Each becomes an issue there, with the label ${shown.label}.`
+                  : `Off: ${base.length === 1 ? "it is" : "they are"} kept in the meta-harness alone. Nothing is written to ${tracker} for ${base.length === 1 ? "it" : "them"}, and the pull requests are the only record outside.`
+              }
+            />
+          )}
+          {base.length > 0 && untracked && (
+            <Text size="sm" c="dimmed">This goal uses no issue tracker, so its tasks are kept in the meta-harness alone. The pull requests are the only record outside.</Text>
+          )}
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setAsking(null)}>Not yet</Button>
-            <Button color="teal" loading={busy} onClick={() => void run(() => api.approvePlan(goal.id), onApproved)}>Create the issues and start</Button>
+            <Button color="teal" loading={busy} onClick={() => void run(() => api.approvePlan(goal.id, untracked ? false : track), onApproved)}>Approve and start</Button>
           </Group>
         </Stack>
       </Modal>
       <Modal opened={asking === "replan"} onClose={() => setAsking(null)} title="Ask for a new plan">
         <Stack gap="md">
-          <Text size="sm">A new planning task drafts the plan again, given this plan and your note. It replaces this version when it ends.</Text>
+          <Text size="sm">The planner plans the goal again, given this plan and your note. Its new plan replaces this version when it is done.</Text>
           <Textarea label="Note for the planner" placeholder="What to do differently" autosize minRows={3} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setAsking(null)}>Cancel</Button>
-            <Button loading={busy} onClick={() => void run(() => api.replan(goal.id, note.trim()))}>Replan</Button>
+            <Button loading={busy} onClick={() => void run(() => api.replan(goal.id, note.trim()))}>Plan again</Button>
           </Group>
         </Stack>
       </Modal>
     </>
+  );
+}
+
+// An approved plan, kept readable on the goal's page: what the planner said of it, and, when asked for, what it
+// decided for each issue and the new tasks it added. It is read only: the goal is running it.
+export function ApprovedPlan({ goal }: { goal: Goal }) {
+  const [shown, setShown] = useState<Plan | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    api.goalPlan(goal.id).then(setShown, () => setShown(null));
+  }, [goal.id]);
+  const plan = shown?.plan;
+  if (!plan || !shown?.approved_at) return null;
+  const drafts = inOrder(plan.drafts);
+  const items = plan.items ?? [];
+  const issues = plan.issues ?? [];
+  const kept = plan.tracked === false || (goal.tracker ?? "github") === OWN;
+  return (
+    <Stack gap="sm" mb="md" data-testid="approved-plan">
+      <PlannerSays summary={plan.summary ?? ""} gaps={plan.gaps ?? []} />
+      <Group gap="sm">
+        <Text size="sm" c="dimmed">
+          Plan version {plan.version}, approved {when(shown.approved_at)}. {planSentence(drafts, items).replace("Approving this plan", "It")}
+          {drafts.length > 0 && (kept ? " The new tasks are kept in the meta-harness alone." : ` The new tasks are issues in ${trackerTitle(goal.tracker ?? "github")}.`)}
+        </Text>
+        {(issues.length > 0 || drafts.length > 0) && (
+          <Button size="compact-sm" variant="subtle" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Hide the plan" : "Show the plan"}</Button>
+        )}
+      </Group>
+      {open && (
+        <Stack gap="md">
+          {tasksOf(drafts, items, issues).length > 1 && <OrderOfWork tasks={tasksOf(drafts, items, issues)} />}
+          <IssueDecisions issues={issues} items={items} drafts={drafts} />
+          {drafts.map((draft, index) => <DraftCard key={draft.draft_id} draft={draft} index={index} />)}
+        </Stack>
+      )}
+    </Stack>
   );
 }

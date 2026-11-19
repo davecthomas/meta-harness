@@ -102,8 +102,16 @@ export function NewGoal() {
   const [overage, setOverage] = useState<string | number>(10);
   const [parallel, setParallel] = useState<string | number>("");
   const [systemParallel, setSystemParallel] = useState<number | null>(null);
+  // Whether every goal is planned before its tasks run, as the planning configuration says.
+  const [plansEvery, setPlansEvery] = useState(false);
   useEffect(() => {
-    api.limits().then((l) => setSystemParallel(l.max_parallel), () => setSystemParallel(null));
+    api.limits().then(
+      (l) => {
+        setSystemParallel(l.max_parallel);
+        setPlansEvery(!!l.plans_every_goal);
+      },
+      () => setSystemParallel(null),
+    );
   }, []);
   const [priority, setPriority] = useState<string | number>(0);
   const [autoMerge, setAutoMerge] = useState(false);
@@ -158,7 +166,7 @@ export function NewGoal() {
   const [plans, setPlans] = useState(false);
 
   // Whether this goal plans its tasks: asked for, or the only way with no tracker.
-  const plansNow = plans || untracked;
+  const plansNow = plans || untracked || plansEvery;
 
   function fromDraft(draft: GoalDraft) {
     setTitle(draft.title);
@@ -187,7 +195,7 @@ export function NewGoal() {
       setError(`Choose the goal's ${missing.map((s) => s.label).join(" and ")}.`);
       return null;
     }
-    if (!plansNow && !label.trim() && !refs.length && !takesAssigned) {
+    if (!(plans || untracked) && !label.trim() && !refs.length && !takesAssigned) {
       setError(`Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to the meta-harness" : ""}.`);
       return null;
     }
@@ -208,7 +216,8 @@ export function NewGoal() {
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
         start: started,
-        modality: plansNow ? "feature" : "fix",
+        // Where its issues come from, which is not whether it is planned: the planner decides that.
+        modality: plans || untracked ? "feature" : "fix",
       });
       return goal.id;
     } catch (err) {
@@ -300,7 +309,9 @@ export function NewGoal() {
               <Text size="xs" c="dimmed" mt={4}>
                 {plans
                   ? "A planning task reads the repos and drafts the issues. You review, edit and approve the plan before anything is created or run."
-                  : "The goal runs the open issues with its label, and any you pick."}
+                  : plansEvery
+                    ? "The goal takes the open issues with its label, and any you pick. A planner reads them together and proposes the order, any splits and anything missing; you approve its plan before anything runs."
+                    : "The goal runs the open issues with its label, and any you pick."}
               </Text>
             </div>
             )}

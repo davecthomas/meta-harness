@@ -530,6 +530,9 @@ REGISTRY: list[EventType] = [
             ("review_submitted", "long"),
             ("plan_updated", "short"),
             ("issue_drafted", "long"),
+            # A planning run's decision on an issue its goal already had, and its summary of the plan.
+            ("issue_planned", "long"),
+            ("plan_summarized", "long"),
             ("operator_message_delivered", "long"),
             ("compacted", "short"),
             ("turn_finished", "short"),
@@ -551,6 +554,8 @@ HARNESS_EVENT_TYPES = frozenset(
         "review_submitted",
         "plan_updated",
         "issue_drafted",
+        "issue_planned",
+        "plan_summarized",
         "operator_message_delivered",
         "compacted",
         "turn_finished",

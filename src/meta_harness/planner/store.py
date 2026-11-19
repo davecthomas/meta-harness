@@ -33,7 +33,7 @@ GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
     "status, created_at, updated_at, started_at, closed_at, title, max_parallel, plan_task_id, plan_approved_at, "
     "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to, strict_issues, tracker, "
-    "tracker_settings"
+    "tracker_settings, planned"
 )
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
@@ -45,7 +45,10 @@ LINK_COLUMNS = (
     # What the planner last told the issue's tracker about its task (tracker_progress.py).
     "progress, "
     # The reason the planner last gave the issue's tracker for not starting it (tracker_replies.py).
-    "replied"
+    "replied, "
+    # When an approved plan, or an operator after it, took the issue into the goal, and what the plan says it
+    # waits on beside what its own text names.
+    "planned_at, plan_depends_on"
 )
 
 
@@ -82,6 +85,9 @@ class NewGoal:
     tracker: str | None = None
     # What the goal tells that tracker besides its repos, such as its Jira project. None: nothing.
     tracker_settings: dict | None = None
+    # True: a planning task plans the goal, and nothing runs until an operator approves its plan. A goal that
+    # plans its issues from its description always is.
+    planned: bool = False
 
 
 def _check_budget(mode: str | None, overage_percent: int | None) -> None:
@@ -101,13 +107,14 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
     if goal.modality not in BUILT_MODALITIES:
         raise GoalError(f"the {goal.modality} modality needs phases, which are not built yet; use fix or feature")
     _check_budget(goal.budget_mode, goal.budget_overage_percent)
+    planned = goal.planned or goal.modality in PLANNED_MODALITIES
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             f"INSERT INTO planner.goal (id, created_by, statement, repos, label, modality, modality_source, "
             f"auto_merge, max_usd, priority, status, started_at, title, max_parallel, budget_mode, "
-            f"budget_overage_percent, strict_issues, tracker, tracker_settings) "
+            f"budget_overage_percent, strict_issues, tracker, tracker_settings, planned) "
             f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, %s, "
-            f"%s, %s, %s, %s, %s) "
+            f"%s, %s, %s, %s, %s, %s) "
             f"RETURNING {GOAL_COLUMNS}",
             (
                 new_goal_id(),
@@ -119,8 +126,8 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
                 goal.auto_merge,
                 goal.max_usd,
                 goal.priority,
-                ("planning" if goal.modality in PLANNED_MODALITIES else "active") if goal.start else "paused",
-                goal.start and goal.modality not in PLANNED_MODALITIES,
+                ("planning" if planned else "active") if goal.start else "paused",
+                goal.start and not planned,
                 goal.title,
                 goal.max_parallel,
                 goal.budget_mode,
@@ -128,6 +135,7 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
                 goal.strict_issues,
                 goal.tracker,
                 Jsonb(goal.tracker_settings) if goal.tracker_settings else None,
+                planned,
             ),
         )
         return _goal(cur.fetchone())
@@ -614,6 +622,72 @@ def run_anyway(conn: psycopg.Connection, goal_id: str, ref: str) -> dict:
         return _link(row)
 
 
+def _plan_row(cur: psycopg.Cursor, goal_id: str, ref: str, repo: str) -> dict | None:
+    """The issue's link, locked, for a plan to settle; made, as the goal's, when the issue has none yet (a
+    label's issue the goal has not swept). None when the goal cannot settle it: its task is under way.
+
+    Raises:
+        GoalError: Another open goal holds the issue.
+    """
+    cur.execute(
+        "SELECT l.goal_id, l.task_id, l.dropped, g.status FROM planner.issue_link l "
+        "JOIN planner.goal g ON g.id = l.goal_id WHERE l.ref = %s FOR UPDATE OF l",
+        (ref,),
+    )
+    row = cur.fetchone()
+    if row and row["goal_id"] != goal_id:
+        if not row["dropped"] and row["status"] in OPEN_GOAL_STATUSES:
+            raise GoalError(f"{ref} is held by goal {row['goal_id']}, which is {row['status']}")
+        cur.execute("DELETE FROM planner.issue_link WHERE ref = %s", (ref,))
+        row = None
+    if row is None:
+        cur.execute(
+            "INSERT INTO planner.issue_link (ref, goal_id, repo, state, depends_on) VALUES (%s, %s, %s, 'open', '{}')",
+            (ref, goal_id, repo),
+        )
+        return {"task_id": None}
+    return None if row["task_id"] else row
+
+
+def plan_keep(conn: psycopg.Connection, goal_id: str, ref: str, repo: str, depends_on: list[str]) -> None:
+    """An approved plan takes the issue into the goal as it is, waiting on depends_on beside what its own text
+    names. It is the goal's whether or not its label swept it in yet, and is not held again for its size."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        _plan_row(cur, goal_id, ref, repo)
+        cur.execute(
+            "UPDATE planner.issue_link SET planned_at = now(), plan_depends_on = %s, dropped = false, "
+            "held_reason = NULL WHERE ref = %s AND goal_id = %s",
+            (list(dict.fromkeys(depends_on)), ref, goal_id),
+        )
+
+
+def plan_leave_out(conn: psycopg.Connection, goal_id: str, ref: str, repo: str) -> bool:
+    """An approved plan leaves the issue out of the goal: marked removed, so the goal's label does not sweep
+    it in. Returns False, changing nothing, for an issue whose task is already under way."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        if _plan_row(cur, goal_id, ref, repo) is None:
+            return False
+        cur.execute(
+            "UPDATE planner.issue_link SET dropped = true, planned_at = now(), last_seen_at = now() WHERE ref = %s",
+            (ref,),
+        )
+        return True
+
+
+def plan_split(conn: psycopg.Connection, goal_id: str, ref: str, repo: str, into: list[str], reason: str) -> bool:
+    """An approved plan replaces the issue with the tasks it was split into: it stays the goal's, held, with no
+    task of its own. Returns False, changing nothing, for an issue whose task is already under way."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        if _plan_row(cur, goal_id, ref, repo) is None:
+            return False
+        cur.execute(
+            "UPDATE planner.issue_link SET split_into = %s, held_reason = %s, run_anyway = false, planned_at = now(), "
+            "dropped = false WHERE ref = %s",
+            (into, reason, ref),
+        )
+        return True
+
+
 def set_link_state(conn: psycopg.Connection, ref: str, state: str) -> None:
     with conn.transaction():
         conn.execute("UPDATE planner.issue_link SET state = %s, last_seen_at = now() WHERE ref = %s", (state, ref))
@@ -631,4 +705,6 @@ def _goal(row: dict) -> dict:
 def _link(row: dict) -> dict:
     for key in ("first_seen_at", "last_seen_at"):
         row[key] = row[key].isoformat()
+    if "planned_at" in row:
+        row["planned_at"] = row["planned_at"].isoformat() if row["planned_at"] else None
     return row
