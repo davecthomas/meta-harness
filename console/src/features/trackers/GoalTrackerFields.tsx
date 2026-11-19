@@ -29,7 +29,7 @@ export function GoalTrackerFields(props: {
         <div data-testid="one-tracker">
           <Text size="sm" fw={500}>Issue tracker</Text>
           <Text size="sm">{chosen?.title ?? "None is set up"}</Text>
-          <Text size="xs" c="dimmed">
+          <Text size="sm" c="dimmed">
             {chosen ? "The only one set up. An admin sets up others under Configuration, Issue trackers." : "A goal reads its issues from an issue tracker: an admin sets one up under Configuration, Issue trackers."}
           </Text>
         </div>
