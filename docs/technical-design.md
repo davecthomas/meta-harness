@@ -3437,9 +3437,11 @@ second tab; it takes every run's `run_prompt` as the page opens, as a
 Terminal opens on its prompt. The prompt's full text shows expanded until
 the operator collapses it to its line, and that run's prompt stays
 collapsed in that browser after that. The Tasks page's terminal tiles read
-each task's newest `run_prompt` beside their recent events, so a tile
-shows its run's prompt, expanded, above the run's output, which scrolls
-past it as it grows. A run started before prompts
+each task's `run_prompt` events beside their recent events, so a tile
+shows, expanded, the prompt of each run whose output it holds and of the
+newest run, above that run's output, which scrolls past it as it grows. A
+tile keeps those prompts apart from the 300 output lines it trims to, so a
+long run's prompt stays at the top to scroll back to. A run started before prompts
 were recorded shows none, and is told for a task, fix or review run by
 its attempt's tier.
 

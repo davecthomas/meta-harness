@@ -15,25 +15,46 @@ const KEEP = 300;
 const BACKLOG: Record<TileSize, number> = { 1: 200, 4: 80, 16: 40, 32: 30 };
 const EMPTY: TileFacts = { turn: 0, usd: 0, model: "", status: null };
 
-// Each task's newest `run_prompt`: the prompt of the run a tile is showing. A failed read shows
-// the tile without it rather than holding the tile back.
-async function latestPrompts(ids: string[]): Promise<Map<string, MhEvent>> {
-  const latest = new Map<string, MhEvent>();
+// Every `run_prompt` of each task, oldest first. A failed read shows the tiles without them rather
+// than holding the tiles back.
+async function runPrompts(ids: string[]): Promise<Map<string, MhEvent[]>> {
+  const found = new Map<string, MhEvent[]>();
   try {
     for (const e of await api.taskEvents(ids, ["run_prompt"])) {
       const id = taskOf(e);
       if (e.event_type !== "run_prompt" || !id) continue;
-      if ((latest.get(id)?.position ?? -1) < e.position) latest.set(id, e);
+      found.set(id, [...(found.get(id) ?? []), e]);
     }
   } catch {
-    // The tile's own events still show.
+    // The tiles' own events still show.
   }
-  return latest;
+  return found;
+}
+
+const isPrompt = (e: MhEvent) => e.event_type === "run_prompt";
+
+// A tile's line for an event, knowing its run, so a run's prompt can follow the run's output.
+function lineOf(e: MhEvent): Line | null {
+  const line = describe(e);
+  if (!line) return null;
+  const run = e.run_id ?? (typeof e.payload?.run_id === "string" ? e.payload.run_id : null);
+  return { ...line, run };
+}
+
+// What a tile shows: its newest output, headed by the prompt of each run that output belongs to,
+// and always the newest run's prompt. The prompts are kept apart from the trimmed output, so a
+// long run's prompt stays at the top of the tile however far its output runs on.
+function tileLines(output: Line[], prompts: Line[]): Line[] {
+  const runs = new Set(output.map((l) => l.run).filter((r): r is string => !!r));
+  const first = output[0]?.position ?? Number.MAX_SAFE_INTEGER;
+  const newest = prompts[prompts.length - 1];
+  const shown = prompts.filter((p) => p === newest || (p.run && runs.has(p.run)) || p.position >= first);
+  return [...shown, ...output].sort((a, b) => a.position - b.position);
 }
 
 // Terminal tiles for running tasks. Only tiles on screen stream: the grid keeps one event stream
 // open for exactly the visible tasks, reopened half a second after scrolling stops. A tile that
-// scrolls into view first loads its recent events and its run's prompt, then joins the stream; a
+// scrolls into view first loads its recent events and its runs' prompts, then joins the stream; a
 // tile off screen keeps what it showed. Each tile drops events it has already shown, by position.
 export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?: (s: string) => void }) {
   const [visible, setVisible] = useState<string[]>([]);
@@ -41,6 +62,9 @@ export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?:
   const [facts, setFacts] = useState<Record<string, TileFacts>>({});
   const [from, setFrom] = useState<number | null>(null);
   const lastPosition = useRef<Record<string, number>>({});
+  // Each tile's newest output lines and its runs' prompt lines, which tileLines puts together.
+  const output = useRef<Record<string, Line[]>>({});
+  const prompts = useRef<Record<string, Line[]>>({});
   const streaming = useRef<Set<string>>(new Set());
   const observer = useRef<IntersectionObserver | null>(null);
   const shown = useRef<Set<string>>(new Set());
@@ -80,17 +104,23 @@ export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?:
     (async () => {
       const backlog = BACKLOG[props.size];
       // A long run's backlog no longer reaches back to its prompt, so the prompts are read apart.
-      const prompts = fresh.length ? latestPrompts(fresh) : Promise.resolve(new Map<string, MhEvent>());
+      const read = fresh.length ? runPrompts(fresh) : Promise.resolve(new Map<string, MhEvent[]>());
       await Promise.all(
         fresh.map(async (id) => {
-          const [page, latest] = await Promise.all([api.events([id], backlog), prompts]);
+          const [page, found] = await Promise.all([api.events([id], backlog), read]);
           if (stale) return;
-          const prompt = latest.get(id);
-          const read = prompt && !page.events.some((e) => e.position === prompt.position)
-            ? [prompt, ...page.events].sort((a, b) => a.position - b.position)
-            : page.events;
-          const shownLines = read.map(describe).filter((l): l is Line => l !== null);
-          setLines((current) => ({ ...current, [id]: shownLines.slice(-KEEP) }));
+          const byPosition = new Map<number, MhEvent>();
+          for (const e of [...(found.get(id) ?? []), ...page.events.filter(isPrompt)]) byPosition.set(e.position, e);
+          prompts.current[id] = [...byPosition.values()]
+            .sort((a, b) => a.position - b.position)
+            .map(lineOf)
+            .filter((l): l is Line => l !== null);
+          output.current[id] = page.events
+            .filter((e) => !isPrompt(e))
+            .map(lineOf)
+            .filter((l): l is Line => l !== null)
+            .slice(-KEEP);
+          setLines((current) => ({ ...current, [id]: tileLines(output.current[id], prompts.current[id]) }));
           setFacts((current) => ({ ...current, [id]: page.events.reduce(fold, EMPTY) }));
           const newest = page.events.length ? page.events[page.events.length - 1].position : 0;
           lastPosition.current[id] = Math.max(newest, page.latest_position);
@@ -109,8 +139,12 @@ export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?:
     if (!id || e.position <= (lastPosition.current[id] ?? 0)) return;
     lastPosition.current[id] = e.position;
     setFacts((current) => ({ ...current, [id]: fold(current[id] ?? EMPTY, e) }));
-    const line = describe(e);
-    if (line) setLines((current) => ({ ...current, [id]: [...(current[id] ?? []), line].slice(-KEEP) }));
+    const line = lineOf(e);
+    if (!line) return;
+    if (isPrompt(e)) prompts.current[id] = [...(prompts.current[id] ?? []), line];
+    else output.current[id] = [...(output.current[id] ?? []), line].slice(-KEEP);
+    const next = tileLines(output.current[id] ?? [], prompts.current[id] ?? []);
+    setLines((current) => ({ ...current, [id]: next }));
   }, []);
 
   const streamIds = useMemo(() => (from === null ? [] : settled), [settled, from]);
