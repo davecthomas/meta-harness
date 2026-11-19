@@ -2126,7 +2126,7 @@ credential.
 | GET | `/v1/tasks/{id}/spend` | Task service | Where the task's money went: each of its runs, oldest first, with its kind (the task's own run, review or fix), candidate, turns, model calls, input, cached-input and output tokens, cost, and how it ended, from its `attempt_finished` and `run_finished` events, and their totals in all and by kind against the task's `max_usd`. A run's input tokens are every token its model read: the HTTP Gateway's `input_tokens` plus the run's cache writes, which that count leaves out, so the cached share is of the whole prompt. The totals also give `writing_usd`, what the writing pass's rewrites of the task's posts cost (its `writing_checked` events), which no spend limit counts, and `all_usd`, the runs' cost plus that: the task's figure on the Costs page. The Task page's Spend tab | built |
 | GET | `/v1/goals/{id}/spend` | Planner | Where the goal's money went: each of its tasks with what its runs spent in all and by kind of run, and its runs and turns, most expensive first, and the goal's total and its split by kind against its budget. Opened from the Goal page's spend line | built |
 | POST | `/v1/tasks/{id}/retry` | Task service | Send a `review_unresolved`, `failed` or `canceled` task back to `queued`, with `max_usd` as its new spend limit when given; its `retries` counts up and `task_retried` is recorded. The scheduler starts a new RunTask workflow for it (the one case a task id runs a second workflow, after the first has ended). With an open pull request the workflow resumes at the review loop, on the pull request's head, with fix rounds and spend counted from nothing and its runs numbered after the earlier ones; a pull request that has merged ends the task `closed`; with none, or one closed unmerged, it makes a new first run | built |
-| POST | `/v1/tasks/{id}/merge` | Task service | Ask for a `ready` or `review_unresolved` task's pull request to be merged: back to `queued` with `resume: merge`, and its new workflow merges through the merge queue whatever the goal's `auto_merge` says, then waits for the merge commit's checks. A head that moved goes through checks, review and fixes first. A conflict goes first to the fix run that resolves it, then through checks and review | built |
+| POST | `/v1/tasks/{id}/merge` | Task service | Ask for a `ready` or `review_unresolved` task's pull request to be merged: back to `queued` with `resume: merge`, and its new workflow merges through the merge queue whatever the goal's `auto_merge` says, then waits for the merge commit's checks. A head that moved goes through checks, review and fixes first. A conflict goes first to the fix run that resolves it, then through checks and review. Either way the operator's request stands: once those come back clean it merges, whatever `auto_merge` says | built |
 | POST | `/v1/tasks/{id}/clear` | Task service | Take a `ready` or `review_unresolved` task off the list: `closed` when its pull request's merge is recorded, else `canceled`, with the reason naming the pull request and who cleared it. The pull request stays on GitHub | built |
 | POST | `/v1/tasks/{id}/status` | Task service | Set a task's status. Services only: the RunTask workflow and the planner | built |
 | POST | `/v1/tasks/{id}/recover` | Task service | The supervisor's move for a `running` task, or a `queued` one the scheduler started, with no RunTask workflow behind it (`why`, and `spent_usd`, what its runs have spent): back to `queued` to resume at its pull request, `canceled` when it was asked to cancel, or `failed` after three recoveries. Services only. 409 for a task in any other status | built |
@@ -2890,6 +2890,34 @@ left out), and bounds them: `max_per_goal` updates for a goal, at least
 wait: it is replaced as soon as the goal moves, and an approved plan's goal
 gets its update as soon as its first sweep has made its tasks. One that cannot be written is logged, said on the page,
 and tried again at the next pass.
+
+**The planner's voice** (`planner/voice.py`). What the planner writes for the
+operator, its updates and a plan's summary and gaps, follows the planning
+configuration's `voice`: `tone` (`casual` as shipped, `balanced`, `formal`) and
+`detail` (`low` as shipped, `medium`, `high`). At low detail it names no file,
+route, function or command, keeps to a sentence or two, and raises only what the
+operator needs to know or decide. The settings become instructions in the
+update's model call and in the planning task's prompt for `plan_summary`. A
+task's own description, which an agent works from, is not shortened by them;
+the plan's review folds it under the task's title.
+
+The planner speaks to the operator in one place: its panel at the head of the
+goal's page. The plan's section shows the plan itself (its order of work, its
+decisions on the goal's issues, its new tasks and the approval); the plan's
+summary and gaps reach the operator through the planner's update, which, while
+a plan waits for approval, says what it does and lists approving it and each
+gap worth weighing under "Needs you". A goal with a plan keeps its settings
+folded to one line, so the plan comes first.
+
+Every "Needs you" item comes with what resolves it. The update's model picks an
+action for each (`approve_plan`, `merge`, `review`, `open_task`,
+`raise_budget`, `open_issue`), and `updates.actionable` checks it against the
+goal's records before it is saved: a merge needs a task whose pull request
+passed review, an approval a goal that is planning, and an action the records
+do not support becomes the nearest one they do. The panel shows each as a
+button that resolves the need on the spot (approve the plan, merge after a
+confirm) or opens where it is resolved (the task, its changes, the goal's
+budget, the issue).
 
 **Every goal is planned.** With the planning configuration's `goals` set to
 `all` (as shipped; `from_description` plans only a goal that plans its issues

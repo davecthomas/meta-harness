@@ -14,7 +14,7 @@ import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures, failures } from "./GoalFailures";
 import { usd } from "../../money";
 import { ApprovedPlan, GoalPlan } from "./GoalPlan";
-import { PlannerUpdates } from "./PlannerUpdates";
+import { OPEN_SETTINGS, PlannerUpdates, SHOW_ISSUES } from "./PlannerUpdates";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
 import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
@@ -58,6 +58,21 @@ export function GoalPage() {
   const [spentNow, setSpentNow] = useState<number | undefined>(undefined);
   // Whether the settings are shown: null until the operator says, then as they left it.
   const [settingsOpen, setSettingsOpen] = useState<boolean | null>(null);
+  // The planner's panel resolves a need here: "Raise the budget" opens the settings, and "Show the goal's
+  // issues" brings them into view.
+  useEffect(() => {
+    const settings = () => {
+      setSettingsOpen(true);
+      window.setTimeout(() => document.getElementById("goal-settings-body")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    };
+    const issuesShown = () => document.getElementById("goal-issues")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.addEventListener(OPEN_SETTINGS, settings);
+    window.addEventListener(SHOW_ISSUES, issuesShown);
+    return () => {
+      window.removeEventListener(OPEN_SETTINGS, settings);
+      window.removeEventListener(SHOW_ISSUES, issuesShown);
+    };
+  }, []);
   const [from, setFrom] = useState<number | null>(null);
   // When the board last reread its issues, and why its latest reread failed, if it did.
   const [refreshed, setRefreshed] = useState<number | null>(null);
@@ -209,7 +224,8 @@ export function GoalPage() {
   const shownView = view ?? (goal.status === "active" ? "board" : "table");
   const editable = { goal, readOnly: !open, save: saveField };
   // Settings are open until the goal has issues, then folded unless the operator opened them.
-  const showSettings = settingsOpen ?? issues.length === 0;
+  // A goal being planned, or one with a plan, shows its plan first: its settings stay folded to one line.
+  const showSettings = settingsOpen ?? (issues.length === 0 && !goal.planned && goal.status !== "planning");
   // The tasks the failures alert above the board already explains, so the standing alert does not list them again.
   const explained = new Set(progress ? failures(progress).flatMap((i) => (i.task_id ? [i.task_id] : [])) : []);
   // What the goal's runs have spent, once the board has added it up: newer than the planner's last look.
@@ -272,7 +288,9 @@ export function GoalPage() {
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
       <GoalStanding standing={goal.standing} explained={explained} budgetShown={budgetStanding(goal, spentNow) !== "ok"} />
       {/* The planner's word on the goal, ahead of everything the page lists. */}
-      <PlannerUpdates goalId={goal.id} open={open} />
+      <PlannerUpdates goalId={goal.id} open={open} planning={goal.status === "planning"} />
+      {/* The plan waiting for approval comes next, above the settings: it is what the operator decides on. */}
+      {goal.status === "planning" && <GoalPlan goal={goal} onApproved={() => void Promise.all([load(), loadProgress()])} />}
       <IssuesPicker
         opened={picking}
         onClose={() => setPicking(false)}
@@ -370,12 +388,12 @@ export function GoalPage() {
         </>
       )}
 
-      {goal.status === "planning" && <GoalPlan goal={goal} onApproved={() => void Promise.all([load(), loadProgress()])} />}
       {/* Once approved, what the planner said stays at the head of the goal's work. */}
       {goal.status !== "planning" && goal.plan_approved_at && (
         <ApprovedPlan goal={goal} onPlanAgain={["active", "stalled"].includes(goal.status) ? () => void Promise.all([load(), loadProgress()]) : undefined} />
       )}
 
+      <div id="goal-issues" />
       <SectionTitle
         right={
           issues.length > 0 && (

@@ -4,7 +4,6 @@ The RunTask workflow runs against the review loop's scripted activities, with st
 and for resume_state, which reads the pull request and the earlier runs. No model, gateway or GitHub is called.
 """
 
-import json
 import os
 
 import pytest
@@ -16,7 +15,7 @@ from meta_harness.run_service.resume_activities import ResumeState, author_of
 from meta_harness.run_service.shared import Attempt, PublishResult, RunTaskInput, TaskSpec, TaskStatusRequest
 from meta_harness.run_service.workflows import RunTask
 
-from .test_replay import HISTORIES, _task_activities
+from .test_replay import HISTORIES, _public, _task_activities
 from .test_review_loop import AUTHOR, CHANGES, CLEAN, QUEUE, REPO, Script, env  # noqa: F401 - env is a fixture
 
 PR = f"https://github.com/{REPO}/pull/7"
@@ -74,7 +73,7 @@ async def _resume(env, script: Script, resume: str, state: ResumeState, goal_id:
         if record:
             # A resumed task's history, for test_replay to replay against later code (its docstring says why).
             history = await handle.fetch_history()
-            (HISTORIES / f"{record}.json").write_text(json.dumps(json.loads(history.to_json()), indent=1) + "\n")
+            (HISTORIES / f"{record}.json").write_text(_public(history.to_json()))
     return result, statuses
 
 
@@ -166,6 +165,35 @@ async def test_a_merge_asked_for_whose_base_came_in_without_changing_the_diff_me
 
     assert result.outcome == "merged" and not script.runs, "no review: only the base came in"
     assert script.waited_on == ["c9"], "the new head's checks run"
+
+
+async def test_a_merge_an_operator_asked_for_still_merges_after_the_base_came_in_with_auto_merge_off(env):  # noqa: F811
+    # Seen on production, 2026-11-19: an operator pressed Merge on a goal with auto_merge off while main had
+    # moved. The base came in, the checks passed, and the task went back to waiting for the operator.
+    script = Script(auto_merge=False, merges=[("head_changed", "c9", "same"), "merged"])
+
+    result, _ = await _resume(env, script, "merge", _open(), goal_id="g-1")
+
+    assert result.outcome == "merged", result.outcome_reason
+    assert not script.runs and script.waited_on == ["c9"]
+
+
+async def test_a_merge_an_operator_asked_for_still_merges_after_a_new_commit_is_reviewed_clean(env):  # noqa: F811
+    # The head moved with a changed diff: it is reviewed again, and the clean review merges as asked.
+    script = Script(verdicts=[CLEAN], auto_merge=False, merges=[("head_changed", "c9", "changed"), "merged"])
+
+    result, _ = await _resume(env, script, "merge", _open(), goal_id="g-1")
+
+    assert result.outcome == "merged", result.outcome_reason
+
+
+@pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
+async def test_record_the_merge_asked_stands_history(env):  # noqa: F811
+    # After the merge-asked-stands patch: a merge asked for on a goal with auto_merge off merges once the base is in.
+    if (HISTORIES / "patched-merge-asked-stands.json").exists():
+        pytest.skip("recorded already: an old history is what a deploy finds running, so it stays as it is")
+    script = Script(auto_merge=False, merges=[("head_changed", "c9", "same"), "merged"])
+    await _resume(env, script, "merge", _open(), goal_id="g-1", record="patched-merge-asked-stands")
 
 
 @pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")

@@ -109,8 +109,8 @@ def test_an_update_is_written_once_for_a_state_and_again_when_the_goal_moves(wor
     assert (first["number"], first["headline"], first["needs_you"]) == (
         1,
         "Update 1",
-        [{"what": "Approve the plan.", "ref": ""}],
-    )
+        [{"what": "Approve the plan.", "ref": "", "action": "approve_plan", "task_id": "", "pr_url": ""}],
+    ), "a need with no action of its own gets the one the goal's state supports"
     found, before = writer.calls[0]
     assert before is None and found["goal"]["status"] == "planning" and found["plan"]["planning_task"] == "queued"
     assert (
@@ -278,3 +278,30 @@ def test_the_facts_say_where_each_task_stands_and_whether_it_waits_on_the_operat
     assert updates.stage(link, None, False).startswith("not started yet")
     assert updates.stage({**link, "state": "closed"}, {"status": "closed"}, False) == "done: its issue is closed"
     assert "never for something a fact says needs nothing from them" in updates.SYSTEM_PROMPT
+
+
+def test_every_need_gets_an_action_the_goals_records_support():
+    links = [
+        {"ref": "mh:i-1", "task_id": "t-1"},
+        {"ref": "mh:i-2", "task_id": "t-2"},
+        {"ref": "mh:i-3", "task_id": None},
+    ]
+    tasks = [
+        {"id": "t-1", "status": "ready", "pr_url": "https://github.com/o/r/pull/1"},
+        {"id": "t-2", "status": "running", "pr_url": None},
+    ]
+    active, planning = {"status": "active"}, {"status": "planning"}
+
+    def one(goal: dict, **need) -> dict:
+        [resolved] = updates.actionable([{"what": "Do it.", "ref": "", **need}], goal, links, tasks)
+        return resolved
+
+    merge = one(active, ref="mh:i-1", action="merge")
+    assert (merge["action"], merge["task_id"], merge["pr_url"]) == ("merge", "t-1", "https://github.com/o/r/pull/1")
+    assert one(active, ref="mh:i-2", action="merge")["action"] == "open_task", "no pull request to merge"
+    assert one(active, ref="mh:i-3", action="open_task")["action"] == "open_issue", "no task yet"
+    assert one(active, action="approve_plan")["action"] == "open_issue", "no plan waits on this goal"
+    assert one(planning, action="")["action"] == "approve_plan"
+    assert one({"status": "budget_exhausted"}, action="nonsense")["action"] == "raise_budget"
+    assert one(active, ref="mh:i-1", action="review")["action"] == "review"
+    assert all(n["action"] in updates.ACTIONS for n in [merge])
