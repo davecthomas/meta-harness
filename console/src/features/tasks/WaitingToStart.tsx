@@ -137,7 +137,7 @@ export function WaitingToStart({ task, onChanged }: { task: Task; onChanged?: ()
         <Stack gap="sm" align="flex-start">
           <Text size="sm">The scheduler holds it: {moneyText(task.held.reason)}.</Text>
           <Action task={task} onChanged={onChanged} />
-          <Text size="xs" c="dimmed">Waiting for this since {when(task.held.since)}. The scheduler last looked {when(task.held.last_checked)}.</Text>
+          <Text size="sm" c="dimmed">Waiting for this since {when(task.held.since)}. The scheduler last looked {when(task.held.last_checked)}.</Text>
         </Stack>
       ) : (
         <Text size="sm">Nothing holds it: it starts at the scheduler's next pass.</Text>
