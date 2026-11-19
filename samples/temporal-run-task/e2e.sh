@@ -18,6 +18,9 @@
 #                 its events from the task service and the run service
 #   admission     two tasks on one repo area, submitted through the Task API: the meta-harness scheduler
 #                 starts them, the second only after the first's pull request is open
+#   planned-goal  a goal with no issue tracker, through the planner: its planning task drafts a plan,
+#                 the plan is approved, each of its tasks runs to a pushed branch, and the planner
+#                 writes its update on the goal
 #   egress      the per-run sandbox network rules (stack.sh egress-check)
 #   cleanup       no per-run sandbox container or network is left
 #
@@ -111,6 +114,14 @@ export MH_TASK_API_KEYS=${MH_TASK_API_KEYS:-local:local-task-key}
 export MH_SERVICE_KEYS=${MH_SERVICE_KEYS:-local-service:local-service-key}
 export MH_TASK_API_KEY=${MH_TASK_API_KEY:-local-task-key}
 export MH_SERVICE_KEY=${MH_SERVICE_KEY:-local-service-key}
+# The planner's repo registry for the planned-goal step: one local bare repo, which that step makes.
+# It is set before the planner starts, and the planner looks at its goals often, so the step does not
+# wait a minute for each move.
+PLANNED_ORIGIN="$RUNS_DIR/e2e-$STAMP-planned-registry/origin.git"
+mkdir -p "$(dirname "$PLANNED_ORIGIN")"
+printf '{"repos": {"%s": {"tracker": "mh", "default_checks": []}}}\n' "$PLANNED_ORIGIN" >"$(dirname "$PLANNED_ORIGIN")/repos.json"
+export MH_REPOS_CONFIG="$(dirname "$PLANNED_ORIGIN")/repos.json"
+export MH_PLANNER_SWEEP_SECONDS=${MH_PLANNER_SWEEP_SECONDS:-5}
 started_services=
 control_plane_up() {
   "$PY" -c 'import psycopg; from meta_harness import db; psycopg.connect(db.database_url(), connect_timeout=3).close()' 2>/dev/null \
@@ -131,6 +142,11 @@ if step admission env REF="e2e-$STAMP-admission" DEMO=admission ./stack.sh run; 
   pass "admission: the scheduler ran two tasks on one repo area in turn, with no command starting either"
 else
   fail "admission: expected the scheduler to run both tasks, the second after the first was ready" admission
+fi
+if step planned-goal env REF="e2e-$STAMP-planned-goal" DEMO=planned-goal ORIGIN="$PLANNED_ORIGIN" ./stack.sh run; then
+  pass "planned-goal: a goal with no issue tracker was planned, approved and run, and the planner wrote its update"
+else
+  fail "planned-goal: expected a plan, its two tasks ready with their branches, and the planner's update" planned-goal
 fi
 [ -z "$started_services" ] || ../../scripts/services.sh stop >/dev/null
 

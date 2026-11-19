@@ -106,3 +106,43 @@ def test_a_spend_limit_the_http_gateway_would_refuse_is_refused_and_the_unbounde
     assert issue("r-2", "ten") == 422
     assert issue("r-3", TASK_SPEND_CEILING_USD) == 200, "what a task gets under the track budget policy"
     assert issue("r-4", DEFAULT_SPEND_LIMIT_USD) == 200
+
+
+def test_a_planning_run_drafts_its_tasks_in_the_goals_first_repo_then_says_it_is_done():
+    grant = {"run_id": "t-plan:1", "engine": "claude", "model": "m", "turns": 0}
+    prompt = "The goal's repositories: /tmp/origin.git, o/b. /workspace holds /tmp/origin.git. Every new task names one of them."
+    tools = ["read", "bash", "create_issue", "plan_issue", "plan_summary"]
+
+    first = fake_gateway.scripted_turn(grant, [{"role": "user", "content": prompt}], tools)
+
+    assert first["finish_reason"] == "tool_use"
+    assert [c["name"] for c in first["tool_calls"]] == ["create_issue", "create_issue", "plan_summary"]
+    drafts = [c["input"] for c in first["tool_calls"][:2]]
+    assert [d["draft_id"] for d in drafts] == list(fake_gateway.PLAN_DRAFTS)
+    assert all(
+        d["repo"] == "/tmp/origin.git" and "## Acceptance checks" in d["body"] and d["depends_on"] == [] for d in drafts
+    )
+
+    result = {"type": "tool_result", "tool_call_id": "call_1_0", "result": {"text": "Recorded"}, "is_error": False}
+    last = fake_gateway.scripted_turn(grant, [{"role": "user", "content": prompt}, result], tools)
+    assert (last["finish_reason"], last["tool_calls"]) == ("complete", [])
+
+
+def test_a_structured_answer_is_the_least_its_schema_allows():
+    schema = {
+        "type": "object",
+        "properties": {
+            "size": {"type": "string", "enum": ["small", "large"]},
+            "headline": {"type": "string"},
+            "needs_you": {"type": "array", "items": {"type": "object"}},
+            "count": {"type": "integer"},
+            "done": {"type": "boolean"},
+        },
+    }
+    assert fake_gateway.from_schema(schema) == {
+        "size": "small",
+        "headline": "Fake headline",
+        "needs_you": [],
+        "count": 1,
+        "done": False,
+    }

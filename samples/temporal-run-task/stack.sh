@@ -453,6 +453,14 @@ cmd_run() {
       check_in_turn "$first" "$second"
       log "the scheduler ran $first, then $second once $first's pull request was open"
       ;;
+    planned-goal)
+      # A goal with no issue tracker, driven through the planner as the console would (planned_goal.py):
+      # planned by a planning task, approved, and run to a pushed branch for each of its tasks. ORIGIN
+      # is the bare repo e2e.sh named in the planner's registry before it started the planner.
+      [ -n "${ORIGIN:-}" ] || { log "planned-goal needs ORIGIN, the bare repo in the planner's registry"; exit 1; }
+      make_origin "$ORIGIN"
+      "$PY" planned_goal.py "$ORIGIN"
+      ;;
     *) starter ;;
   esac
 }

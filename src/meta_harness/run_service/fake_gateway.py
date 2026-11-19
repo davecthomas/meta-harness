@@ -10,6 +10,7 @@ the same paths, status codes and JSON fields:
   GET    /v1/run-grants/{run_id}     the grant, without its key
   DELETE /v1/run-grants/{run_id}     revoke it and report what it spent
   POST   /v1/conversations/turn      a scripted model turn, on a grant key
+  POST   /v1/structured              an answer made from the request's response_schema
 
 The scripted run: the first turn asks pi to write hello.txt with
 EXPECTED_TEXT, and any turn after a tool result answers that it is done.
@@ -24,6 +25,12 @@ A task whose text holds CHECKS_MARKER followed by a command is a checks run
 (make image-checks): the first turn runs that command with pi's bash tool,
 as a task's agent would run its acceptance checks, and the second writes
 CHECKS_FILE saying passed or failed, with the end of the command's output.
+A planning run (its tools include create_issue) drafts PLAN_DRAFTS, two
+tasks that depend on nothing, in the first of the goal's repos its prompt
+names, and records a summary with plan_summary. A structured call, which
+the planner makes to name a goal, size an issue and write its update on a
+goal, is answered with the least its response_schema allows: each string
+"Fake <its name>", each enum its first value, each list empty.
 Each turn takes FAKE_TURN_SECONDS (default 2) and costs TURN_USD, so the
 cancel and restart demos have time to act and the spend-limit demo trips
 on turn 2. Grants live in memory. Run grants work as on the real gateway:
@@ -189,6 +196,56 @@ def checks_turn(command: str, messages: list[Any], turn: int) -> tuple[str | Non
     return f"Done. I wrote {CHECKS_FILE}.", []
 
 
+# What a planning run drafts: each a task whose check the scripted run meets by writing EXPECTED_FILE.
+PLAN_DRAFTS = ("greeting", "second-greeting")
+PLAN_SUMMARY = "Two small tasks, each writing the greeting file. Neither waits on the other."
+PLAN_REPOS = re.compile(r"The goal's repositories: (.+?)\. /workspace holds")
+
+
+def plan_calls(messages: list[Any], turn: int) -> list[dict[str, Any]]:
+    """A planning run's tool calls: one create_issue for each of PLAN_DRAFTS, then plan_summary."""
+    found = next((m for text in _strings(messages) if (m := PLAN_REPOS.search(text))), None)
+    repo = found.group(1).split(", ")[0] if found else ""
+    calls = [
+        {
+            "id": f"call_{turn}_{index}",
+            "name": "create_issue",
+            "input": {
+                "draft_id": draft_id,
+                "repo": repo,
+                "title": f"Write the {draft_id.replace('-', ' ')}",
+                "body": f"Create {EXPECTED_FILE} with one short friendly greeting.\n\n"
+                f"## Acceptance checks\n\n- test -s {EXPECTED_FILE}",
+                "labels": [],
+                "depends_on": [],
+            },
+        }
+        for index, draft_id in enumerate(PLAN_DRAFTS)
+    ]
+    summary = {"id": f"call_{turn}_summary", "name": "plan_summary", "input": {"summary": PLAN_SUMMARY, "gaps": []}}
+    return [*calls, summary]
+
+
+def from_schema(schema: Any, name: str = "answer") -> Any:
+    """The least a JSON schema allows, for a structured call's answer: no model is asked."""
+    if not isinstance(schema, dict):
+        return None
+    if schema.get("enum"):
+        return schema["enum"][0]
+    kind = schema.get("type")
+    if kind == "object":
+        return {key: from_schema(value, key) for key, value in (schema.get("properties") or {}).items()}
+    if kind == "array":
+        return []
+    if kind == "string":
+        return f"Fake {name.replace('_', ' ')}"
+    if kind in ("integer", "number"):
+        return 1
+    if kind == "boolean":
+        return False
+    return None
+
+
 # The tasks (workflow ids) whose first review has been given, so each task's later reviews are clean.
 REVIEWED: set[str] = set()
 
@@ -226,6 +283,10 @@ def scripted_turn(grant: dict[str, Any], messages: list[Any], tools: list[str] |
     command = checks_command(messages)
     if command and "submit_review" not in (tools or []):
         text, calls = checks_turn(command, messages, grant["turns"])
+        return {**base, "text": text, "tool_calls": calls, "finish_reason": "tool_use" if calls else "complete"}
+    if "create_issue" in (tools or []):
+        calls = [] if has_tool_result(messages) else plan_calls(messages, grant["turns"])
+        text = None if calls else "Done. The plan is recorded."
         return {**base, "text": text, "tool_calls": calls, "finish_reason": "tool_use" if calls else "complete"}
     if has_tool_result(messages):
         return {**base, "text": f"Done. I wrote {EXPECTED_FILE}.", "tool_calls": [], "finish_reason": "complete"}
@@ -295,6 +356,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(status, body)
         if self.path == "/v1/conversations/turn":
             return self._turn()
+        if self.path == "/v1/structured":
+            if self._bearer() != API_KEY:
+                return self._send(401, {"detail": "unknown API key"})
+            body = self._body()
+            answer = {
+                "data": from_schema(body.get("response_schema")),
+                "finish_reason": "complete",
+                "usd_cost": "0.0001",
+                "engine": body.get("engine"),
+                "model": body.get("model"),
+            }
+            log(f"structured call answered from its schema: {sorted(answer['data'] or {})}")
+            return self._send(200, answer)
         self._send(404, {"detail": f"no route POST {self.path}"})
 
     def _turn(self) -> None:
