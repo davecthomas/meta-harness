@@ -83,7 +83,7 @@ export function UsersPage() {
             <NativeSelect label="Role" data={ROLES} value={role} onChange={(e) => setRole(e.currentTarget.value)} />
             <Button type="submit" loading={busy} disabled={!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())} leftSection={<IconUserPlus size={16} />}>Invite</Button>
           </Group>
-          <Text size="xs" c="dimmed" mt="xs">The console sends no email: after inviting, use Copy invite on their row and send it to them yourself.</Text>
+          <Text size="sm" c="dimmed" mt="xs">The console sends no email: after inviting, use Copy invite on their row and send it to them yourself.</Text>
         </form>
       </Paper>
       {users && users.length === 0 && <Empty>No one has been invited here yet. Until someone is, the accounts the deployment was set up with (its MH_OPERATORS setting) may sign in. Invite an account above to manage access from this page.</Empty>}
@@ -111,7 +111,7 @@ export function UsersPage() {
                         disabled={busy || lastAdmin}
                         onChange={(e) => void act(() => api.setUserRole(u.email, e.currentTarget.value))}
                       />
-                      {lastAdmin && <Text size="xs" c="dimmed">The only admin: make someone else an admin first.</Text>}
+                      {lastAdmin && <Text size="sm" c="dimmed">The only admin: make someone else an admin first.</Text>}
                     </Stack>
                   )}
                 </Table.Td>

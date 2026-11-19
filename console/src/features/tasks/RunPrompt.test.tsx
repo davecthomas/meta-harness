@@ -124,6 +124,22 @@ test("the task page's Terminal merges an older prompt in position order, each pr
   expect([...log.children].map((c) => c.textContent).at(-1)).toContain("turn 1");
 });
 
+test("an ended task's header counts the turns and runs the whole-task read brings in", async () => {
+  const newest = EVENTS.slice(4);
+  vi.stubGlobal("EventSource", class { static CLOSED = 2; addEventListener() {} close() {} });
+  vi.stubGlobal("fetch", (url: string) => {
+    const body = url === "/v1/tasks/t" ? { ...TASK, status: "closed" }
+      : url.includes("event_type=run_prompt") ? { events: EVENTS.filter((e) => ["run_prompt", "turn_started"].includes(e.event_type)), next_position: 99 }
+      : url.startsWith("/v1/events") ? { events: newest, latest_position: newest.at(-1)!.position }
+      : { base: "", ticket: null };
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+  renderTaskPage("/tasks/t");
+  fireEvent.click(await screen.findByText("Show details"));
+  // The first page holds one turn of one run; the older run's turn arrives through the whole-task read.
+  await waitFor(() => expect(screen.getByTestId("task-turns").textContent).toBe("2 turns in 2 runs"));
+});
+
 async function openTerminal(status: string) {
   serveNewestOnly(status);
   renderTaskPage("/tasks/t");
@@ -153,16 +169,19 @@ test("a running task's Terminal still shows the stream badge", async () => {
   expect(screen.getByText("connecting")).toBeTruthy();
 });
 
-test("the terminal shows the prompt as one collapsed line that expands to the full text", () => {
+test("the terminal shows each run's prompt expanded, and collapses it to one line", () => {
+  window.localStorage.clear();
   const lines = EVENTS.map(describe).filter((l): l is Line => l !== null);
   render(<Terminal lines={lines} />);
   const summary = screen.getByText("10:00:00 prompt (repo-task-v1)");
   const details = summary.closest("details")!;
-  expect(details.open).toBe(false);
+  expect(details.open).toBe(true);
   expect(details.querySelector("pre")!.textContent).toBe(PROMPT);
   fireEvent.click(summary);
-  expect(details.open).toBe(true);
-  expect(screen.getByText("10:00:00 prompt (review-v1)")).toBeTruthy();
+  expect(details.open).toBe(false);
+  // The review run's prompt is its own, and stays expanded.
+  expect(screen.getByText("10:00:00 prompt (review-v1)").closest("details")!.open).toBe(true);
+  window.localStorage.clear();
 });
 
 test("the task's facts are folded behind a line that links its goal, and stay open once opened", async () => {

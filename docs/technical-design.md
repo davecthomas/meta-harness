@@ -2738,6 +2738,13 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
   whatever their labels, for a goal whose tracker setting `assigned` is
   `yes`; no call is made for any other goal.
 - `choices("project")` lists the site's projects the Jira account sees.
+- A status name or issue type the site lacks: the console refuses it at
+  entry, from `choices`; saving the configuration (`PUT /v1/config/trackers`)
+  makes no call to Jira and keeps it; the adapter reports it at first use. The
+  first `set_status` to a configured status name, and the first `create_issue`
+  of the project's issue type, check the name against the same `choices` and
+  log a warning that names the setting, the value and the names the site has.
+  A check that cannot reach Jira is silent and repeats at the next use.
 - What blocks an issue is its "is blocked by" links and the keys its
   `Depends on:` lines name.
 - `set_status` moves the issue through its workflow: to the status the
@@ -3425,9 +3432,16 @@ picked. The picture keeps its width and scrolls sideways on a narrow
 window. The page reads every step event of the task as it opens, besides
 its newest events, so the path is whole however long the task has run,
 and reads a picked run's own events when it is picked. The terminal is a
-second tab; it takes every run's `run_prompt` as the page opens, as one
-collapsed `prompt (<template>)` line that opens to the full text, so an
-older run's Terminal opens on its prompt. A run started before prompts
+second tab; it takes every run's `run_prompt` as the page opens, as a
+`prompt (<template>)` line heading that run's section, so an older run's
+Terminal opens on its prompt. The prompt's full text shows expanded until
+the operator collapses it to its line, and that run's prompt stays
+collapsed in that browser after that. The Tasks page's terminal tiles read
+each task's `run_prompt` events beside their recent events, so a tile
+shows, expanded, the prompt of each run whose output it holds and of the
+newest run, above that run's output, which scrolls past it as it grows. A
+tile keeps those prompts apart from the 300 output lines it trims to, so a
+long run's prompt stays at the top to scroll back to. A run started before prompts
 were recorded shows none, and is told for a task, fix or review run by
 its attempt's tier.
 

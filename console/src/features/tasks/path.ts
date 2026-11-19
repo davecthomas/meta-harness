@@ -37,6 +37,11 @@ export interface Step {
   notes: string[];
   // The task is here now.
   now: boolean;
+  // A step that came again the same way, folded into this one: how many times, when the first began, and how
+  // long the earlier ones took. start and end are the newest one's.
+  times?: number;
+  first?: string;
+  before?: number;
 }
 
 // One pass through the stages, and why the task came back to start it.
@@ -83,7 +88,59 @@ export function span(ms: number): string {
 
 // How long a step took, or has taken so far.
 export function took(step: Step, now = Date.now()): number {
-  return (step.end ? Date.parse(step.end) : now) - Date.parse(step.start);
+  return (step.before ?? 0) + (step.end ? Date.parse(step.end) : now) - Date.parse(step.start);
+}
+
+// A length of time in words: "18 minutes", "1 hour 2 minutes".
+export function spanWords(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60000));
+  const part = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  if (m < 1) return part(Math.max(0, Math.round(ms / 1000)), "second");
+  if (m < 60) return part(m, "minute");
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 ? `${part(h, "hour")} ${part(m % 60, "minute")}` : part(h, "hour");
+  return h % 24 ? `${part(Math.floor(h / 24), "day")} ${part(h % 24, "hour")}` : part(Math.floor(h / 24), "day");
+}
+
+// How long a step that came again has taken from its first start to its newest end, or to now.
+export function over(step: Step, now = Date.now()): number {
+  return (step.end ? Date.parse(step.end) : now) - Date.parse(step.first ?? step.start);
+}
+
+// Who an actor was, as a reader names them: the service's own work is the planner's.
+export function actorName(actor: string | null | undefined, fallback = "An operator"): string {
+  if (!actor) return fallback;
+  return actor === "service" ? "the planner" : actor;
+}
+
+const same = (a: Step, b: Step) => a.kind === b.kind && a.column === b.column && a.title === b.title && a.detail === b.detail && a.tone === b.tone && !a.runId && !b.runId;
+
+// A run of steps that repeats with the same reason (a hold and a cancel, again and again) as one of each,
+// counted. A cycle is one to three steps long.
+function fold(path: Step[]): Step[] {
+  const out: Step[] = [];
+  for (const step of path) {
+    out.push(step);
+    for (let len = 1; len <= 3; len++) {
+      if (out.length < 2 * len) continue;
+      const tail = out.slice(-len);
+      const prev = out.slice(-2 * len, -len);
+      if (!tail.every((s, i) => same(s, prev[i]))) continue;
+      tail.forEach((s, i) => {
+        const t = prev[i];
+        t.first = t.first ?? t.start;
+        t.before = (t.before ?? 0) + (s.before ?? 0) + (t.end ? Date.parse(t.end) : Date.now()) - Date.parse(t.start);
+        t.times = (t.times ?? 1) + (s.times ?? 1);
+        t.start = s.start;
+        t.end = s.end;
+        t.now = s.now;
+        t.notes = [...t.notes, ...s.notes.filter((n) => !t.notes.includes(n))];
+      });
+      out.length -= len;
+      break;
+    }
+  }
+  return out;
 }
 
 const pullNumber = (url: string) => url.match(/\/pull\/(\d+)/)?.[1];
@@ -134,7 +191,7 @@ export function steps(events: MhEvent[]): Step[] {
   for (const e of [...events].sort((a, b) => a.position - b.position)) {
     const p = e.payload ?? {};
     const time = e.time_utc;
-    const who = e.actor ?? "An operator";
+    const who = actorName(e.actor);
     const runId = e.run_id ?? (p.run_id as string | undefined) ?? "";
     switch (e.event_type) {
       case "task_created":
@@ -175,7 +232,7 @@ export function steps(events: MhEvent[]): Step[] {
         if (p.owner === "operator" && p.ask && out.at(-1)?.column === 4) note(`Needs you: ${p.ask}`);
         break;
       case "task_cancel_requested":
-        note(`Cancel asked${e.actor ? ` by ${e.actor}` : ""}${p.reason ? `: ${p.reason}` : ""}`);
+        note(`Cancel asked${e.actor ? ` by ${actorName(e.actor)}` : ""}${p.reason ? `: ${p.reason}` : ""}`);
         break;
       case "run_prompt":
         if (runId) run(runId, time, String(p.kind ?? "task"));
@@ -262,7 +319,7 @@ export function steps(events: MhEvent[]): Step[] {
         note(writingLine(p));
         break;
       case "pull_request_merged":
-        add({ key: `p${e.position}`, kind: "merged", column: 4, title: "Merged", detail: `as ${String(p.merge_sha ?? "").slice(0, 12)}${e.actor ? ` by ${e.actor}` : ""}`, tone: "ok", start: time, end: time, url: String(p.pr_url ?? pull) });
+        add({ key: `p${e.position}`, kind: "merged", column: 4, title: "Merged", detail: `as ${String(p.merge_sha ?? "").slice(0, 12)}${e.actor ? ` by ${actorName(e.actor)}` : ""}`, tone: "ok", start: time, end: time, url: String(p.pr_url ?? pull) });
         break;
       case "merge_checks":
         add({
@@ -279,6 +336,9 @@ export function steps(events: MhEvent[]): Step[] {
   out.forEach((step, i) => {
     if (!step.end && i < out.length - 1) step.end = out[i + 1].start;
   });
+  const folded = fold(out);
+  out.length = 0;
+  out.push(...folded);
   // The code host runs the repo's checks on each new commit, for minutes, and records nothing until they end.
   // So a task whose newest step is a finished one that checks always follow is waiting for them, and the path
   // says so: otherwise it shows a finished run and nothing happening.

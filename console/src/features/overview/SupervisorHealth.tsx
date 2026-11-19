@@ -56,7 +56,7 @@ export function SupervisorHealth() {
           </List.Item>
         ))}
       </List>
-      <Text size="xs" c="dimmed" mt={4}>The planner's log has the detail. A sweep that keeps failing means that goal takes in no issues and ends no tasks.</Text>
+      <Text size="sm" c="dimmed" mt={4}>The planner's log has the detail. A sweep that keeps failing means that goal takes in no issues and ends no tasks.</Text>
     </Alert>
   );
 }

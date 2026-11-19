@@ -120,7 +120,7 @@ export function WaitingToStart({ task, onChanged }: { task: Task; onChanged?: ()
         <Stack gap="xs" align="flex-start">
           <Text size="sm">{words.line}</Text>
           <Action task={task} onChanged={onChanged} />
-          <Text size="xs" c="dimmed">{words.yours ? "" : "Nothing for you to do. "}Waiting since {when(task.held!.since)}.</Text>
+          <Text size="sm" c="dimmed">{words.yours ? "" : "Nothing for you to do. "}Waiting since {when(task.held!.since)}.</Text>
         </Stack>
       ) : (
         <Text size="sm">It starts in a moment. Nothing for you to do.</Text>

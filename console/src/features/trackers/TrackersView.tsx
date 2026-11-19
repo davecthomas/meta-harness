@@ -3,6 +3,7 @@ import { Alert, Autocomplete, Badge, Button, Group, Paper, Stack, Text, Tooltip 
 import { getIn } from "../config/staging";
 import { api, type Tracker, type TrackerSetting } from "../../api";
 import { InlineField } from "../../components/InlineField";
+import { PickedName, Unreadable } from "../../components/PickedName";
 import { ErrorAlert } from "../../components/ui";
 import { changed, Reasons, stageOptional, type Staging } from "../config/ConfigViews";
 import { OWN } from "./refs";
@@ -49,7 +50,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
             readOnly={s.readOnly}
             onCommit={(v) => stageOptional(s, ["label"], v.trim())}
           />
-          <Text size="xs" c="dimmed">
+          <Text size="sm" c="dimmed">
             Every issue the meta-harness creates, comments on or moves gets this label, in every tracker, so its work can be told apart and listed. No spaces. Empty: ai:meta-harness.
           </Text>
         </Stack>
@@ -119,7 +120,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
                       {setting.label}
                       {setting.required && <Text span c="red"> *</Text>}
                     </Text>
-                    <Text size="xs" c="dimmed" mb={4}>{setting.help}</Text>
+                    <Text size="sm" c="dimmed" mb={4}>{setting.help}</Text>
                     <SettingField staging={s} tracker={tracker} setting={setting} path={["trackers", tracker.scheme, setting.name]} value={settings?.[setting.name]} />
                   </div>
                 ))}
@@ -194,64 +195,6 @@ function onSite(known: string[] | null, name: string): string | undefined {
   return (known ?? []).find((k) => k.toLowerCase() === name.trim().toLowerCase());
 }
 
-// A name the tracker must have, such as a status or an issue type of a project: picked from the tracker's own
-// list, so it is not mistyped. A mistyped one fails only later, when an issue does not move or cannot be
-// created. A name the list lacks is refused, and one already saved is marked. When the list cannot be read
-// (unreadable: why), or is empty, the name can still be typed. where: whose list it is, such as the project.
-function PickedName(props: {
-  staging: Staging;
-  label: string;
-  what: string;
-  where: string;
-  value: string;
-  empty: string;
-  path: string[];
-  known: string[] | null;
-  unreadable: string | null;
-  testId: string;
-  onCommit: (name: string) => void;
-}) {
-  const { staging: s, known } = props;
-  const listed = !!known?.length;
-  return (
-    <div>
-      <InlineField
-        kind="custom"
-        label={props.label}
-        value={props.value}
-        display={props.value ? <Text size="sm">{props.value}</Text> : undefined}
-        empty={<Text size="sm" c="dimmed">{props.empty}</Text>}
-        changed={changed(s, props.path)}
-        readOnly={s.readOnly}
-        check={(draft: string) =>
-          listed && draft.trim() && !onSite(known, draft) ? `${props.where} has no ${props.what} named ${draft.trim()}: pick one from the list, or leave it empty for the usual` : null
-        }
-        input={(draft) => (
-          <Autocomplete
-            aria-label={props.label}
-            size="xs"
-            w={220}
-            placeholder={known === null && !props.unreadable ? "Loading…" : listed ? `Pick ${/^[aeiou]/i.test(props.what) ? "an" : "a"} ${props.what}` : "Type its name"}
-            value={draft.value}
-            onChange={draft.onChange}
-            data={known ?? []}
-            error={draft.invalid}
-            maxDropdownHeight={260}
-          />
-        )}
-        onCommit={(v: string) => props.onCommit(onSite(known, v) ?? v.trim())}
-      />
-      {listed && props.value && !onSite(known, props.value) ? (
-        <Text size="xs" c="orange" data-testid={props.testId}>{props.where} has no {props.what} named {props.value}</Text>
-      ) : null}
-    </div>
-  );
-}
-
-function Unreadable({ what, error }: { what: string; error: string | null }) {
-  return error ? <Text size="xs" c="orange">The {what} could not be listed, so type each exactly: {error}</Text> : null;
-}
-
 // Whose list a scoped setting's choices are: the project it belongs to, else the tracker.
 function whose(tracker: Tracker, scope?: Record<string, string>): string {
   return Object.values(scope ?? {})[0] ?? tracker.title;
@@ -266,13 +209,13 @@ function ChoiceSetting(props: { staging: Staging; tracker: Tracker; setting: Tra
   return (
     <Stack gap={6}>
       <PickedName
-        staging={s}
         label={`${where}: ${setting.label}`}
         what={what}
         where={where}
         value={typeof props.value === "string" ? props.value : ""}
         empty={setting.required ? "Not set yet" : "The usual"}
-        path={props.path}
+        changed={changed(s, props.path)}
+        readOnly={s.readOnly}
         known={known}
         unreadable={error}
         testId={`choice-unknown-${setting.name}`}
@@ -296,13 +239,13 @@ function StatusNames(props: { staging: Staging; tracker: Tracker; path: string[]
           <div key={status}>
             <Text size="xs" c="dimmed">{label}</Text>
             <PickedName
-              staging={s}
               label={`${where}'s status for ${label.toLowerCase()}`}
               what="status"
               where={where}
               value={names[status] ?? ""}
               empty="The usual"
-              path={[...path, status]}
+              changed={changed(s, [...path, status])}
+              readOnly={s.readOnly}
               known={known}
               unreadable={error}
               testId={`status-unknown-${status}`}
@@ -380,7 +323,7 @@ function EntriesSetting(props: { staging: Staging; tracker: Tracker; setting: Tr
             {(setting.settings ?? []).map((sub) => (
               <div key={sub.name}>
                 <Text size="sm" fw={500}>{sub.label}</Text>
-                <Text size="xs" c="dimmed" mb={4}>{sub.help}</Text>
+                <Text size="sm" c="dimmed" mb={4}>{sub.help}</Text>
                 <SettingField staging={s} tracker={tracker} setting={sub} path={[...path, key, sub.name]} value={entry?.[sub.name]} scope={{ [one]: key }} />
               </div>
             ))}

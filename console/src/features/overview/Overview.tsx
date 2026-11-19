@@ -101,7 +101,7 @@ function NeedsYouRow({ item, onActed }: { item: NeedsYouItem; onActed: () => voi
           <Group gap="md">
             {task && <IssueLink issueRef={task.external_ref} />}
             {task?.pr_url && <PrLink url={task.pr_url} />}
-            {goal && budgetWords(goal) && <Text size="xs" c="dimmed">Spent ${spentOf(goal).toFixed(2)} of ${Number(goal.max_usd).toFixed(2)}: {budgetWords(goal)}</Text>}
+            {goal && budgetWords(goal) && <Text size="sm" c="dimmed">Spent ${spentOf(goal).toFixed(2)} of ${Number(goal.max_usd).toFixed(2)}: {budgetWords(goal)}</Text>}
             {item.since && <Text size="xs" c="dimmed">Waiting on you since {when(item.since)}</Text>}
           </Group>
         </Stack>
@@ -123,7 +123,7 @@ function Stat(props: { label: string; value: number | null; note?: string; to?: 
         <Text fz={32} fw={650} lh={1} c={props.alert ? "red" : undefined}>{props.value ?? "–"}</Text>
         {props.link && <Text size="sm" c="var(--mantine-color-anchor)">{props.link}</Text>}
       </Group>
-      {props.note && <Text size="xs" c="dimmed" mt={8}>{props.note}</Text>}
+      {props.note && <Text size="sm" c="dimmed" mt={8}>{props.note}</Text>}
     </>
   );
   const style = { cursor: props.to || props.onClick ? "pointer" : "default", textDecoration: "none", color: "inherit", textAlign: "left" as const };

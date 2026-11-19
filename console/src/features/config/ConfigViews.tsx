@@ -73,7 +73,7 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
               readOnly={s.readOnly}
               onCommit={(v) => s.stage(["max_parallel"], v)}
             />
-            <Text size="xs" c="dimmed">{ceilingLine(maxSandboxes)}</Text>
+            <Text size="sm" c="dimmed">{ceilingLine(maxSandboxes)}</Text>
           </Stack>,
         ],
         [
@@ -89,7 +89,7 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
               readOnly={s.readOnly}
               onCommit={(stop) => s.stage(["budget_policy"], stop ? "block" : "track")}
             />
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               {doc.budget_policy !== "track"
                 ? "A goal's budget and a task's spend limit stop work, as each says."
                 : "No goal or task is held, refused or ended for its budget or spend limit. Spend is still recorded and shown against them. A task takes this when it starts; one already running keeps its limit."}
@@ -109,7 +109,7 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
               readOnly={s.readOnly}
               onCommit={(on) => s.stage(["writing_pass"], on ? undefined : false)}
             />
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               {doc.writing_pass !== false
                 ? "A pull request description, a review, a comment and a plan's issue go through the writing skill's scanner before they are posted. One with findings gets one rewrite, kept only when it is clean and keeps every heading, link, code span and number."
                 : "Nothing is scanned or rewritten before it is posted. Runs are still told to apply the writing skill themselves."}

@@ -3,7 +3,7 @@ import { Alert, Anchor, Badge, Button, Card, Code, Group, List, Loader, Modal, S
 import { IconCheck, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanDraft, type PlanItem } from "../../api";
-import { OWN, trackerTitle } from "../trackers/refs";
+import { OWN, goalSource, refLabel, trackerTitle } from "../trackers/refs";
 import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview";
 import { APPROVE_PLAN, PLAN_CHANGED } from "./PlannerUpdates";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
@@ -83,16 +83,52 @@ function DraftCard({ draft, index, onEdit, onRemove }: { draft: PlanDraft; index
   );
 }
 
-function DraftForm({ draft, isNew, repos, others, onSave, onCancel }: {
+// An existing issue typed by hand: owner/repo#12 or a Jira key.
+const TYPED_ISSUE = /^(?:[a-z]+:)?(?:[\w.-]+\/[\w.-]+#\d+|[A-Z][A-Z0-9]+-\d+)$/;
+
+function DraftForm({ draft, isNew, repos, others, goal, onSave, onCancel }: {
   draft: PlanDraft;
   isNew: boolean;
   repos: string[];
+  // The goal, whose tracker's open issues Waits on offers.
+  goal: Goal;
   // The other drafts' ids, which this one may wait on.
   others: string[];
   onSave: (draft: PlanDraft) => void;
   onCancel: () => void;
 }) {
   const [form, setForm] = useState(draft);
+  // The goal tracker's open issues, read as the New goal form's picker reads them: each repo's, newest first.
+  // null until read; unreadable holds why.
+  const [listed, setListed] = useState<{ ref: string; title: string }[] | null>(null);
+  const [unreadable, setUnreadable] = useState<string | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
+  const goalRepos = goal.repos.join(",");
+  useEffect(() => {
+    let stale = false;
+    const source = goalSource(goal);
+    Promise.all(goal.repos.map((name) => api.repoIssues(name, { limit: 500 }, source))).then(
+      (lists) => {
+        if (stale) return;
+        if (lists.some((l) => !Array.isArray(l?.issues))) {
+          setUnreadable("the tracker sent no list of issues");
+          return;
+        }
+        const all = lists.flatMap((l) => l.issues).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+        setListed(all.map((i) => ({ ref: i.ref, title: i.title })));
+      },
+      (err) => !stale && setUnreadable(err instanceof Error ? err.message : String(err)),
+    );
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goalRepos, goal.tracker]);
+  // The ref a typed entry names among the listed issues, written with or without its tracker.
+  const listedAs = (entry: string) => (listed ?? []).find((i) => i.ref === entry || refLabel(i.ref) === refLabel(entry))?.ref;
+  const known = (entry: string) => others.includes(entry) || listedAs(entry) !== undefined;
+  // Entries saved earlier that no draft or listed issue matches now.
+  const gone = listed ? form.depends_on.filter((d) => !known(d)) : [];
   const idTaken = isNew && others.includes(form.draft_id.trim());
   const ok = /^[a-z0-9][a-z0-9-]{0,39}$/.test(form.draft_id.trim()) && !idTaken && form.title.trim() !== "";
   return (
@@ -122,10 +158,36 @@ function DraftForm({ draft, isNew, repos, others, onSave, onCancel }: {
         />
         <TagsInput
           label="Waits on"
-          description="Other new tasks' ids, or the goal's issues by their refs."
-          data={others}
+          description={
+            listed
+              ? "Other new tasks' ids, or one of the goal's open issues."
+              : "Other new tasks' ids, or an existing issue typed as owner/repo#12 or a Jira key."
+          }
+          data={[...others, ...(listed ?? []).map((i) => ({ value: i.ref, label: `${refLabel(i.ref)} ${i.title}` }))]}
           value={form.depends_on}
-          onChange={(depends_on) => setForm({ ...form, depends_on })}
+          error={
+            refused ??
+            (unreadable
+              ? `The goal's open issues could not be read (${unreadable}). A typed owner/repo#12 or Jira key is still taken.`
+              : gone.length
+                ? `No longer a task or open issue of the goal: ${gone.join(", ")}`
+                : undefined)
+          }
+          onChange={(entries) => {
+            const kept: string[] = [];
+            const bad: string[] = [];
+            for (const entry of entries) {
+              if (form.depends_on.includes(entry) || others.includes(entry)) kept.push(entry);
+              else if (listed) {
+                const ref = listedAs(entry);
+                if (ref) kept.push(ref);
+                else bad.push(entry);
+              } else if (TYPED_ISSUE.test(entry)) kept.push(entry);
+              else bad.push(entry);
+            }
+            setRefused(bad.length ? `Not a task id or an open issue of the goal: ${bad.join(", ")}` : null);
+            setForm({ ...form, depends_on: [...new Set(kept)] });
+          }}
         />
         <Group justify="flex-end">
           <Button variant="default" onClick={onCancel}>Cancel</Button>
@@ -309,14 +371,14 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
           {issues.length > 0 && (
             <div>
               <Text fw={600} size="sm">The goal's issues</Text>
-              <Text size="xs" c="dimmed" mb={6}>Change any decision before you approve.</Text>
+              <Text size="sm" c="dimmed" mb={6}>Change any decision before you approve.</Text>
               <IssueDecisions issues={issues} items={items} drafts={base} onChange={drafting ? undefined : setEditedItems} />
             </div>
           )}
           {(drafts.length > 0 || issues.length > 0) && (
             <div>
               <Text fw={600} size="sm">New tasks</Text>
-              <Text size="xs" c="dimmed">
+              <Text size="sm" c="dimmed">
                 {drafts.length
                   ? "Written by the planner. Created when you approve."
                   : "None: the goal's issues cover it."}
@@ -340,6 +402,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
           draft={editing.draft}
           isNew={editing.isNew}
           repos={goal.repos}
+          goal={goal}
           others={[
             ...base.map((d) => d.draft_id).filter((id) => id !== editing.draft.draft_id || editing.isNew),
             ...items.filter((i) => i.decision === "keep").map((i) => i.ref),

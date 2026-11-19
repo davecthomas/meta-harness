@@ -8,7 +8,7 @@ import { usd } from "../../money";
 import { when } from "../../components/ui";
 import { checksLine } from "./Checks";
 import { Timeline } from "./Timeline";
-import { COLUMNS, candidateName, rows, span, steps, took, totals, type Step, type StepKind, type Tone } from "./path";
+import { COLUMNS, candidateName, over, rows, span, spanWords, steps, took, totals, type Step, type StepKind, type Tone } from "./path";
 
 // The picture's measures, in pixels: a stage's column, the gap between two, and the strip a loop back is drawn in.
 const WIDE = 184;
@@ -29,7 +29,8 @@ const TICK_MS = 1000;
 
 export function numbers(step: Step, now: number): string {
   const parts: string[] = [];
-  if (step.start !== step.end) parts.push(`${span(took(step, now))}${step.end ? "" : " so far"}`);
+  if (step.times && step.times > 1) parts.push(`${step.times} times over ${spanWords(over(step, now))}`);
+  else if (step.start !== step.end) parts.push(`${span(took(step, now))}${step.end ? "" : " so far"}`);
   if (step.usd !== undefined) parts.push(usd(step.usd));
   if (step.turns) parts.push(`${step.turns} turns`);
   return parts.join(" · ");
@@ -39,7 +40,6 @@ export function numbers(step: Step, now: number): string {
 function About({ step, now }: { step: Step; now: number }) {
   return (
     <Stack gap={2} maw={360}>
-      <Text size="xs" fw={600}>{step.title}</Text>
       {step.detail && <Text size="xs">{step.detail}</Text>}
       {step.candidate && <Text size="xs">{step.candidate}</Text>}
       {step.runId && <Text size="xs" ff="monospace">{step.runId}</Text>}

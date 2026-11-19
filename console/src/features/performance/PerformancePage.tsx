@@ -96,12 +96,13 @@ export function costLabel(key: string, costs: Pick<Costs, "labels" | "group_by">
   return key;
 }
 
-function Stat(props: { label: string; value: string; note?: React.ReactNode }) {
+// A note that only names a value stays a small caption; one that explains why there is no value (explains) is set larger.
+function Stat(props: { label: string; value: string; note?: React.ReactNode; explains?: boolean }) {
   return (
     <Card withBorder padding="lg">
       <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{props.label}</Text>
       <Text fz={28} fw={650} lh={1.2} mt={4}>{props.value}</Text>
-      {props.note && <Text size="xs" c="dimmed" mt={4}>{props.note}</Text>}
+      {props.note && <Text size={props.explains ? "sm" : "xs"} c="dimmed" mt={4}>{props.note}</Text>}
     </Card>
   );
 }
@@ -238,6 +239,7 @@ export function PerformancePage() {
             <Stat
               label={`Change from the ${spanDays(costs)} days before`}
               value={costs.change_percent === null ? "–" : `${costs.change_percent > 0 ? "+" : ""}${costs.change_percent}%`}
+              explains={costs.change_percent === null}
               note={
                 costs.change_percent === null
                   ? `${usd(costs.previous_total)} then: too little to compare`
@@ -247,6 +249,7 @@ export function PerformancePage() {
             <Stat
               label="A month at this trend"
               value={costs.projected_month === null ? "–" : usd(costs.projected_month)}
+              explains={!trend}
               note={
                 trend ? (
                   <Group gap={4} component="span">

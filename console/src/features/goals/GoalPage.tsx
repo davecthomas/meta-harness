@@ -9,6 +9,7 @@ import { goalSource } from "../trackers/refs";
 import { issueSourceLabel } from "./issueSource";
 import { CancelGoal } from "./CancelGoal";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
+import { NoSuchRecord, isNotFound } from "../../components/NoSuchRecord";
 import { GoalStanding } from "./GoalStanding";
 import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures, failures } from "./GoalFailures";
@@ -50,6 +51,7 @@ export function GoalPage() {
   // For a goal not started yet: its label's open issues, read but not taken in, so the operator sees what Start runs.
   const [waiting, setWaiting] = useState<(LabelIssue & { repo: string })[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
   // Each issue's progress and what each task spent, for the board, and the position the live stream starts from.
   const [progress, setProgress] = useState<IssueProgress[] | null>(null);
   const [spend, setSpend] = useState<Record<string, number>>({});
@@ -90,7 +92,10 @@ export function GoalPage() {
   // quiet: a timed refresh, which rereads the goal and its tasks but not its label's issues on the code host.
   const load = useCallback(async (quiet = false) => {
     try {
-      const g = await api.goal(goalId);
+      const g = await api.goal(goalId).catch((err) => {
+        if (isNotFound(err)) setMissing(true);
+        throw err;
+      });
       setGoal(g);
       const page = await api.tasks({ goalId }, 0, 1000);
       setTasks(Object.fromEntries(page.items.map((t) => [t.id, t])));
@@ -217,6 +222,7 @@ export function GoalPage() {
     `${goalId}:${issues.length}`,
   );
 
+  if (!goal && missing) return <NoSuchRecord kind="goal" id={goalId} />;
   if (!goal) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const open = !["met", "canceled"].includes(goal.status);
   const status = goalStatus(goal);
@@ -332,7 +338,7 @@ export function GoalPage() {
                 "Where its issues come from",
                 <Stack gap={0}>
                   <Text size="sm">{issueSourceLabel(goal.modality)}</Text>
-                  <Text size="xs" c="dimmed">Fixed when the goal was created.</Text>
+                  <Text size="sm" c="dimmed">Fixed when the goal was created.</Text>
                 </Stack>,
               ],
               // One tracker for all the goal's issues, fixed when it was created.
@@ -341,7 +347,7 @@ export function GoalPage() {
                 <Text size="sm">
                   {trackerTitle(goal.tracker ?? "github")}
                   {Object.entries(goal.tracker_settings ?? {}).map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to the meta-harness" : `, ${name} ${value}`)).join("")}
-                  <Text span size="xs" c="dimmed" display="block">Fixed when the goal was created.</Text>
+                  <Text span size="sm" c="dimmed" display="block">Fixed when the goal was created.</Text>
                 </Text>,
               ],
               ["Label", <LabelEdit {...editable} />],
@@ -465,7 +471,7 @@ export function GoalPage() {
                 <Table.Td><Text size="sm">{i.state}</Text></Table.Td>
                 <Table.Td>
                   {task ? <StatusBadge status={task.status} /> : i.refused_reason && <StatusBadge status="refused" />}
-                  {i.refused_reason && <Text size="xs" c="dimmed" mt={4}>{i.refused_reason}</Text>}
+                  {i.refused_reason && <Text size="sm" c="dimmed" mt={4}>{i.refused_reason}</Text>}
                 </Table.Td>
                 <Table.Td onClick={(e) => e.stopPropagation()}>
                   {task?.pr_url && <PrLink url={task.pr_url} />}
