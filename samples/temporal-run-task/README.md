@@ -224,6 +224,7 @@ history.
 | `src/meta_harness/run_service/sandbox.py` | The Docker executor backend: starts, finds and removes a run's per-run sandbox container and its network |
 | `src/meta_harness/run_service/fake_gateway.py` | The fake HTTP Gateway: run grants and scripted model turns, with no model calls |
 | `e2e.sh` | `make e2e`: the zero-cost end-to-end check, which CI runs on every pull request |
+| `planned_goal.py` | The check's `planned-goal` step: one goal planned, approved and run through the planner |
 | `src/meta_harness/run_service/egress_check.py` | `make egress-check`: the network rules, checked from inside a throwaway per-run sandbox |
 | `egress-proxy/` | The local egress proxy: `proxy.py` (Python standard library only) and its `Dockerfile` |
 | `src/meta_harness/run_service/harness_client.py` | Reads the harness server's event stream and prints one line per event |
@@ -958,6 +959,16 @@ one shape for every engine, and answers 400 to a malformed one, so the check
 fails if pi sends an engine's own shape. Each turn takes 2 seconds and costs $0.002, so the
 cancel and restart demos have time to act and the spend-limit demo trips on
 turn 2. The fake refuses to start when a real gateway answers on its port.
+
+The check also runs one goal the whole way through the planner
+(`planned_goal.py`, the `planned-goal` step): a goal with no issue tracker over
+a local bare repo is planned by a planning task, whose run the fake scripts as
+two drafted tasks and a summary; the plan is approved with its tasks kept in
+the meta-harness; the scheduler runs each to a pushed branch; and the planner
+writes its update on the goal. For the planner's own model calls (a goal's
+name, an issue's size, an update) the fake answers `/v1/structured` with the
+least the request's schema allows. The step needs the planner the check
+starts, with its own repo registry: stop services you started yourself first.
 
 `e2e.sh` runs each step with its output in `e2e-logs/<step>.log`. The fake
 gateway's runs use the `zero-cost` entry of `config/models.json`, which turns
