@@ -132,7 +132,8 @@ async def test_an_issue_is_created_in_the_goals_project_and_a_label_with_a_space
     made = await adapter.create_issue("o/r", "Split 1", "Body.", ["mh"])
 
     assert made.ref == "jira:VL-9"
-    assert jira.asked[0][2] == {
+    posted = next(body for method, path, body in jira.asked if (method, path) == ("POST", "/rest/api/2/issue"))
+    assert posted == {
         "fields": {
             "project": {"key": "VL"},
             "summary": "Split 1",
@@ -443,3 +444,56 @@ async def test_a_moved_issue_is_labeled_first_one_left_where_it_is_is_not_and_a_
     assert await adapter.bound(GOAL).set_status("jira:VL-7", TODO) is False
     await adapter.bound(GOAL).mark("jira:VL-7")
     assert [method for method, _, _ in jira.asked if method != "GET"] == []
+
+
+def _site_lists(statuses=("To Do", "Done"), types=("Task", "Story")) -> Jira:
+    kinds = [{"name": t, "subtask": False, "statuses": [status(s, "new") for s in statuses]} for t in types]
+    return Jira(
+        {
+            ("GET", "/rest/api/2/project/VL/statuses"): kinds,
+            ("GET", "/rest/api/2/issue/VL-1"): issue("VL-1", state=("To Do", "new")),
+            ("GET", "/rest/api/2/issue/VL-1/transitions"): {"transitions": []},
+            ("POST", "/rest/api/2/issue"): {"key": "VL-1"},
+        }
+    )
+
+
+def _adapter(jira: Jira, issue_type: str = "Task", named: str = "Done") -> JiraTracker:
+    spec = {"issue_type": issue_type, "statuses": {"done": named}}
+    site = Site(site=SITE, projects={"VL": spec})
+    return JiraTracker("b@example.com", "t", lambda: site, httpx.MockTransport(jira)).bound(GOAL)
+
+
+async def test_a_known_status_and_issue_type_raise_no_warning(caplog):
+    adapter = _adapter(_site_lists(), "Story", "done")
+
+    with caplog.at_level("WARNING"):
+        await adapter.create_issue("o/r", "t", "b", [])
+        with pytest.raises(TrackerError):
+            await adapter.set_status("jira:VL-1", "done")  # no such move, which the check does not touch
+
+    assert "not one the site has" not in caplog.text
+
+
+async def test_an_unknown_status_name_is_warned_at_first_use_only(caplog):
+    adapter = _adapter(_site_lists(), named="Shipped")
+
+    with caplog.at_level("WARNING"):
+        for _ in range(2):
+            with pytest.raises(TrackerError):
+                await adapter.set_status("jira:VL-1", "done")
+
+    warned = [r.getMessage() for r in caplog.records if "not one the site has" in r.getMessage()]
+    assert len(warned) == 1
+    assert "statuses 'Shipped'" in warned[0] and "To Do" in warned[0] and "VL" in warned[0]
+
+
+async def test_an_unknown_issue_type_is_warned_at_first_use(caplog):
+    adapter = _adapter(_site_lists(), issue_type="Epic")
+
+    with caplog.at_level("WARNING"):
+        await adapter.create_issue("o/r", "t", "b", [])
+
+    warned = [r.getMessage() for r in caplog.records if "not one the site has" in r.getMessage()]
+    assert len(warned) == 1
+    assert "issue_type 'Epic'" in warned[0] and "Story, Task" in warned[0]
