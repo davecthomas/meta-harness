@@ -27,7 +27,10 @@ export interface GoalDraft {
   modality: string;
   model: string;
   usd_cost: string;
-  label: string;
+  // The label drafted from, when it was one: the goal can take it. Null for a draft from several (labels):
+  // a goal takes one label, so it holds the issues read (refs) as picked issues.
+  label: string | null;
+  labels?: string[];
   repos: string[];
   refs: string[];
 }
@@ -165,7 +168,7 @@ export const goalsApi = {
     call<{ added: string[] }>(`/v1/goals/${goalId}/issues`, { method: "POST", body: JSON.stringify({ refs }) }),
   labelIssues: (repo: string, label: string, source?: IssueSource) =>
     call<{ issues: LabelIssue[] }>(`/v1/repos/${repo}/issues` + query({ label, ...sourceQuery(source) })).then((r) => r.issues),
-  draftGoal: (body: { label: string; repos: string[]; refs: string[]; tracker?: string; tracker_settings?: Record<string, string> }) =>
+  draftGoal: (body: { labels: string[]; repos: string[]; refs: string[]; tracker?: string; tracker_settings?: Record<string, string> }) =>
     call<GoalDraft>("/v1/goals/draft", { method: "POST", body: JSON.stringify(body) }),
   goalAction: (id: string, action: "pause" | "resume" | "cancel" | "complete" | "reopen" | "sweep") =>
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),

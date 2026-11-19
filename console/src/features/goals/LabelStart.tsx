@@ -3,6 +3,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Group,
   Loader,
   Paper,
@@ -17,8 +18,8 @@ import {
 import { IconChevronDown, IconChevronRight, IconSearch, IconSparkles } from "@tabler/icons-react";
 import { api, type IssueSource, type GoalDraft, type LabelCount, type LabelIssue } from "../../api";
 
-// An optional helper for the New goal form: pick a label, see its open issues, and have a model draft the
-// goal's title and description from them. onDraft fills the form below; nothing is saved here, and nothing
+// An optional helper for the New goal form: pick one label or several, see their open issues, and have a model
+// draft the goal's title and description from them. onDraft fills the form below; nothing is saved here, and nothing
 // here chooses the goal's issues. The form's Label field and Pick issues do that.
 // source: which tracker's labels and issues, and what it asks of a goal; the default tracker's when left out.
 export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) => void; source?: IssueSource }) {
@@ -26,7 +27,8 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
   const [repos, setRepos] = useState<string[]>([]);
   const [repo, setRepo] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [picked, setPicked] = useState<LabelCount | null>(null);
+  // The labels to draft from: one, or several whose issues are read together.
+  const [picked, setPicked] = useState<LabelCount[]>([]);
   const [issues, setIssues] = useState<(LabelIssue & { repo: string })[] | null>(null);
   // Closed until asked for: the form below is the goal, and this only helps fill it in.
   const [opened, setOpened] = useState(false);
@@ -37,7 +39,7 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
   useEffect(() => {
     // What was shown, and any error, belonged to the source before. An answer for that one is dropped.
     let stale = false;
-    setPicked(null);
+    setPicked([]);
     setIssues(null);
     setLabels(null);
     setError(null);
@@ -63,30 +65,34 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
     [labels, repo, search],
   );
 
+  // Adds a label to the ones drafted from, or takes it out, and reads the open issues of them all: each
+  // issue once, however many of the labels it has.
   async function pick(row: LabelCount) {
-    setPicked(row);
+    const next = picked.some((p) => p.label === row.label) ? picked.filter((p) => p.label !== row.label) : [...picked, row];
+    setPicked(next);
     setIssues(null);
     setDraft(null);
     setError(null);
+    if (!next.length) return;
     try {
       const found = await Promise.all(
-        Object.keys(row.repos).map(async (name) =>
-          (await api.labelIssues(name, row.label, source)).map((issue) => ({ ...issue, repo: name })),
+        next.flatMap((label) =>
+          Object.keys(label.repos).map(async (name) => (await api.labelIssues(name, label.label, source)).map((issue) => ({ ...issue, repo: name }))),
         ),
       );
-      const all = found.flat();
-      setIssues(all);
+      const once = new Map(found.flat().map((issue) => [issue.ref, issue]));
+      setIssues([...once.values()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }
 
   async function makeDraft() {
-    if (!picked) return;
+    if (!picked.length) return;
     setDrafting(true);
     setError(null);
     try {
-      const made = await api.draftGoal({ label: picked.label, repos: Object.keys(picked.repos), refs: free.map((i) => i.ref), tracker: source?.tracker, tracker_settings: source?.settings });
+      const made = await api.draftGoal({ labels: picked.map((p) => p.label), repos: [...new Set(picked.flatMap((p) => Object.keys(p.repos)))], refs: free.map((i) => i.ref), tracker: source?.tracker, tracker_settings: source?.settings });
       setDraft(made);
       onDraft(made);
     } catch (err) {
@@ -102,13 +108,13 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
   return (
     <Paper maw={720} mb="lg">
       <Stack gap="md">
-        <UnstyledButton onClick={() => setOpened((now) => !now)} aria-expanded={opened} aria-label="Draft from a label (optional)">
+        <UnstyledButton onClick={() => setOpened((now) => !now)} aria-expanded={opened} aria-label="Draft from labels (optional)">
           <Group gap="xs" wrap="nowrap">
             {opened ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
             <div>
-              <Title order={4}>Draft from a label (optional)</Title>
+              <Title order={4}>Draft from labels (optional)</Title>
               <Text size="sm" c="dimmed">
-                Pick a label, and a model drafts the title and description from its open issues. It fills in the
+                Pick one label or several, and a model drafts the title and description from its open issues. It fills in the
                 form below and saves nothing.
               </Text>
             </div>
@@ -150,12 +156,14 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
                   p="xs"
                   style={{
                     borderRadius: "var(--mantine-radius-sm)",
-                    background: picked?.label === row.label ? "var(--mantine-color-default-hover)" : undefined,
+                    background: picked.some((p) => p.label === row.label) ? "var(--mantine-color-default-hover)" : undefined,
                   }}
                   aria-label={`Label ${row.label}`}
+                  aria-pressed={picked.some((p) => p.label === row.label)}
                 >
                   <Group justify="space-between" wrap="nowrap">
                     <Group gap="xs" wrap="nowrap">
+                      <Checkbox size="xs" readOnly tabIndex={-1} checked={picked.some((p) => p.label === row.label)} aria-hidden />
                       <Badge variant="light">{row.label}</Badge>
                       {Object.entries(row.repos).map(([name, count]) => (
                         <Text key={name} size="xs" c="dimmed" ff="monospace">
@@ -170,11 +178,11 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
             </Stack>
           </>
         )}
-        {picked && issues === null && !error && <Loader size="sm" />}
-        {picked && issues && (
+        {picked.length > 0 && issues === null && !error && <Loader size="sm" />}
+        {picked.length > 0 && issues && (
           <Stack gap="sm">
             <Text size="sm" fw={600}>
-              {picked.label}: {free.length} open {free.length === 1 ? "issue" : "issues"} for the draft
+              {picked.map((p) => p.label).join(", ")}: {free.length} open {free.length === 1 ? "issue" : "issues"} for the draft
               {issues.length > free.length ? `, and ${issues.length - free.length} another goal holds` : ""}
             </Text>
             <Table>
@@ -208,10 +216,10 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
           <Alert color="indigo" title={draft.title}>
             <Text size="sm">{draft.theme}</Text>
             <Text size="xs" c="dimmed" mt={4}>
-              Drafted by {draft.model} for ${draft.usd_cost}. The issues read as {draft.modality}
-. The
-              form below has the title, description, label and repos: edit them, then create the goal. The goal
-              takes every open issue with that label, now and later; Pick issues adds others.
+              Drafted by {draft.model} for ${draft.usd_cost}. The issues read as {draft.modality}.{" "}
+              {draft.label
+                ? "The form below has the title, description, label and repos: edit them, then create the goal. The goal takes every open issue with that label, now and later; Pick issues adds others."
+                : `The form below has the title, description and repos, and the ${draft.refs.length} issues read here as picked issues: a goal takes one label, so with several it holds these issues and none labeled later. Edit them, then create the goal.`}
             </Text>
           </Alert>
         )}

@@ -139,7 +139,9 @@ class RefsIn(BaseModel):
 
 
 class DraftIn(BaseModel):
-    label: str = Field(min_length=1)
+    # The label to draft from, or several in `labels`: the draft reads the open issues of every one.
+    label: str | None = Field(default=None, min_length=1)
+    labels: list[str] = Field(default_factory=list, max_length=20)
     # The repos to read the label's issues from. Empty: every registered repo.
     repos: list[str] = Field(default_factory=list)
     # The issues to draft from, as refs. Empty: every open issue with the label.
@@ -913,24 +915,31 @@ def create_app(
 
     @app.post("/v1/goals/draft")
     async def draft_goal(body: DraftIn, who: str = Depends(operator)) -> dict:
-        """A goal drafted by a model from a label's open issues. Nothing is saved: the operator edits it first."""
+        """A goal drafted by a model from the open issues of one label or of several. Nothing is saved: the
+        operator edits it first. A goal takes one label, so a draft from several comes back with `label` null
+        and the issues it read in `refs`, for the goal to hold as picked issues."""
+        labels = list(dict.fromkeys([name.strip() for name in [*body.labels, body.label or ""] if name.strip()]))
+        if not labels:
+            raise HTTPException(status_code=422, detail="name the label to draft from, in label, or several in labels")
         names = registered(body.repos)
-        issues = [
-            i
-            for found in (await open_issues(names, body.label, body.tracker, body.tracker_settings)).values()
-            for i in found
-        ]
+        by_ref: dict[str, Any] = {}
+        for name in labels:
+            for found in (await open_issues(names, name, body.tracker, body.tracker_settings)).values():
+                by_ref.update({i.ref: i for i in found if i.ref not in by_ref})
+        issues = list(by_ref.values())
+        # What the model is told the label is, and what the draft is recorded under.
+        said = ", ".join(labels)
         if body.refs:
             wanted = set(body.refs)
             issues = [i for i in issues if i.ref in wanted]
         try:
-            drafted = await draft(body.label, issues)
+            drafted = await draft(said, issues)
         except drafting.DraftError as err:
             raise HTTPException(status_code=502, detail=str(err)) from err
         events.emit(
             "goal_drafted",
             {
-                "label": body.label,
+                "label": said,
                 "repos": names,
                 "issues": len(issues),
                 "model": drafted.model,
@@ -938,7 +947,13 @@ def create_app(
             },
             actor=who,
         )
-        return {**asdict(drafted), "label": body.label, "repos": names, "refs": [i.ref for i in issues]}
+        return {
+            **asdict(drafted),
+            "label": labels[0] if len(labels) == 1 else None,
+            "labels": labels,
+            "repos": names,
+            "refs": [i.ref for i in issues],
+        }
 
     @app.post("/v1/goals", status_code=201)
     async def create(body: GoalIn, who: str = Depends(operator)) -> dict:

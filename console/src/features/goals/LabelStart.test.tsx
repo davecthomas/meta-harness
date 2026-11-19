@@ -72,7 +72,7 @@ test("the draft helper is closed until asked for, lists a label's issues read-on
   );
 
   // Optional and closed: the form below is the goal.
-  const helper = await screen.findByRole("button", { name: "Draft from a label (optional)" });
+  const helper = await screen.findByRole("button", { name: "Draft from labels (optional)" });
   expect(helper.getAttribute("aria-expanded")).toBe("false");
   expect(screen.queryByRole("button", { name: "Label bug" })).toBeNull();
   fireEvent.click(helper);
@@ -86,7 +86,7 @@ test("the draft helper is closed until asked for, lists a label's issues read-on
   fireEvent.click(screen.getByRole("button", { name: "Draft the goal" }));
 
   expect(await screen.findByText("Fix the save bugs")).toBeTruthy();
-  expect(drafted).toEqual([{ label: "bug", repos: ["o/a", "o/b"], refs: ["github:o/a#1", "github:o/b#5"] }]);
+  expect(drafted).toEqual([{ labels: ["bug"], repos: ["o/a", "o/b"], refs: ["github:o/a#1", "github:o/b#5"] }]);
   await waitFor(() => expect((screen.getByLabelText(/Description/) as HTMLTextAreaElement).value).toBe("Make saving reliable."));
   expect((screen.getByRole("textbox", { name: /^Title/ }) as HTMLInputElement).value).toBe("Fix the save bugs");
   expect((screen.getByRole("combobox", { name: /^Label/ }) as HTMLInputElement).value).toBe("bug");
@@ -127,7 +127,7 @@ test("the label list filters by text and by repo", async () => {
     </MantineProvider>,
   );
 
-  fireEvent.click(await screen.findByRole("button", { name: "Draft from a label (optional)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Draft from labels (optional)" }));
   expect(await screen.findByRole("button", { name: "Label docs" })).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Find a label"), { target: { value: "bu" } });
   expect(screen.queryByRole("button", { name: "Label docs" })).toBeNull();
@@ -141,7 +141,7 @@ test("an answer for a project no longer asked about, even a refusal arriving las
     <MantineProvider theme={theme}><LabelStart onDraft={() => undefined} source={{ tracker: "jira", settings: { project } }} /></MantineProvider>
   );
   const { rerender } = render(view("V"));
-  fireEvent.click(screen.getByRole("button", { name: "Draft from a label (optional)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Draft from labels (optional)" }));
   rerender(view("AB"));
   await waitFor(() => expect(Object.keys(answers).sort()).toEqual(["AB", "V"]));
 
@@ -151,4 +151,47 @@ test("an answer for a project no longer asked about, even a refusal arriving las
   await new Promise((r) => setTimeout(r, 20));
 
   expect(screen.queryByText("names its project by its key")).toBeNull();
+});
+
+test("a draft from several labels reads each issue once and fills the form with them as picked issues", async () => {
+  const drafted: Record<string, unknown>[] = [];
+  const issue = (n: number, title: string) => ({ ref: `github:o/a#${n}`, number: n, title, labels: [], updated_at: "", held_by: null });
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [{ label: "bug", total: 2, repos: { "o/a": 2 } }, { label: "ux", total: 2, repos: { "o/a": 2 } }] });
+    if (url === "/v1/repos/o/a/issues?label=bug") return respond({ issues: [issue(1, "Crash on save"), issue(2, "Both labels")] });
+    if (url === "/v1/repos/o/a/issues?label=ux") return respond({ issues: [issue(2, "Both labels"), issue(3, "Cramped table")] });
+    if (url.startsWith("/v1/repos/o/a/issues")) return respond({ issues: [issue(1, "Crash on save"), issue(2, "Both labels"), issue(3, "Cramped table")], total: 3 });
+    if (url === "/v1/goals/draft") {
+      drafted.push(JSON.parse(String(init?.body)));
+      return respond({ title: "Fix the console", statement: "Bugs and rough edges.", theme: "Th", modality: "fix", model: "m", usd_cost: "0.001", label: null, labels: ["bug", "ux"], repos: ["o/a"], refs: ["github:o/a#1", "github:o/a#2", "github:o/a#3"] });
+    }
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <NewGoal />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Draft from labels (optional)" }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Label bug" }));
+  fireEvent.click(screen.getByRole("button", { name: "Label ux" }));
+  expect(await screen.findByText(/bug, ux: 3 open issues for the draft/)).toBeTruthy();
+  expect(screen.getAllByText("Both labels")).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Label ux" }).getAttribute("aria-pressed")).toBe("true");
+
+  // Taking a label out again reads only what is left.
+  fireEvent.click(screen.getByRole("button", { name: "Label ux" }));
+  expect(await screen.findByText(/^bug: 2 open issues for the draft/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Label ux" }));
+  await screen.findByText(/bug, ux: 3 open issues for the draft/);
+
+  fireEvent.click(screen.getByRole("button", { name: "Draft the goal" }));
+  expect(await screen.findByText(/a goal takes one label, so with several it holds these issues/)).toBeTruthy();
+  expect(drafted).toEqual([{ labels: ["bug", "ux"], repos: ["o/a"], refs: ["github:o/a#1", "github:o/a#2", "github:o/a#3"] }]);
+  expect((screen.getByRole("combobox", { name: /^Label/ }) as HTMLInputElement).value).toBe("");
+  expect(await screen.findByText(/3 picked by hand/)).toBeTruthy();
 });
