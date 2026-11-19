@@ -145,7 +145,8 @@ export function TaskPage() {
         // timeline (or a ?run= link to an older run) would otherwise show no prompt for those runs.
         // The terminal gets them too, so an older run's Terminal opens on its prompt.
         // Every step of the task's path too, however old, so the picture of it is whole.
-        api.taskEvents([taskId], [...new Set(["run_prompt", ...STEP_EVENTS])]).then((prompts) => {
+        // turn_started too, so the header counts every turn and run, not only those on the loaded pages.
+        api.taskEvents([taskId], [...new Set(["run_prompt", "turn_started", ...STEP_EVENTS])]).then((prompts) => {
           if (stale) return;
           setEvents((current) => merge(current, prompts));
           // The terminal takes only the prompts: older steps reach it in order, as it scrolls up.
@@ -319,7 +320,7 @@ export function TaskPage() {
             ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
             ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
             ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
-            ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
+            ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} model={facts.model} /></Stack>],
           ]}
         />
           </div>

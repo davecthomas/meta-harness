@@ -1,4 +1,4 @@
-import { Badge, Group, Stack, Text, Tooltip } from "@mantine/core";
+import { Badge, Code, Group, Stack, Text, Tooltip } from "@mantine/core";
 import type { MhEvent } from "../../api";
 import { usd as money } from "../../money";
 
@@ -11,10 +11,13 @@ export interface TaskSpend {
   output: number;
   byModel: Record<string, number>;
   byAttempt: { attempt: number; candidate: string; usd: number; decision: string }[];
+  turns: number;
+  runs: number;
 }
 
 export function spendOf(events: MhEvent[]): TaskSpend {
-  const out: TaskSpend = { usd: 0, underWay: 0, input: 0, output: 0, byModel: {}, byAttempt: [] };
+  const out: TaskSpend = { usd: 0, underWay: 0, input: 0, output: 0, byModel: {}, byAttempt: [], turns: 0, runs: 0 };
+  const runIds = new Set<string>();
   for (const e of events) {
     const p = e.payload ?? {};
     if (e.event_type === "model_call" && p.model) {
@@ -26,6 +29,11 @@ export function spendOf(events: MhEvent[]): TaskSpend {
       out.input += (Number(p.input_tokens) || 0) + (Number(p.cache_write_5m_tokens) || 0) + (Number(p.cache_write_1h_tokens) || 0);
       out.output += Number(p.output_tokens) || 0;
       out.byModel[name] = (out.byModel[name] ?? 0) + usd;
+    }
+    if (e.event_type === "turn_started") {
+      out.turns += 1;
+      if (e.run_id) runIds.add(e.run_id);
+      out.runs = runIds.size;
     }
     if (e.event_type === "attempt_finished") {
       out.underWay = 0;
@@ -44,12 +52,16 @@ function tokens(n: number): string {
 // report), so the header, the tab and the path say one number. While a run is under way, what it has cost so far
 // is shown beside it, named as that, since no report counts it until the run ends. Without total (the report
 // not read yet), the figure is the live sum of the model calls.
-export function SpendLine({ spend, turn, total, running }: { spend: TaskSpend; turn: number; total?: number; running?: boolean }) {
+export function SpendLine({ spend, turn, total, running, model }: { spend: TaskSpend; turn: number; total?: number; running?: boolean; model?: string }) {
   const models = Object.entries(spend.byModel).sort((a, b) => b[1] - a[1]);
   return (
     <Stack gap={4}>
       <Group gap="xs">
-        <Text size="sm">Turn {turn}</Text>
+        <Text size="sm" data-testid="task-turns">
+          {running
+            ? `Turn ${turn} of the run under way`
+            : `${spend.turns || turn} turn${(spend.turns || turn) === 1 ? "" : "s"}${spend.runs ? ` in ${spend.runs} run${spend.runs === 1 ? "" : "s"}` : ""}`}
+        </Text>
         <Tooltip
           label={models.length ? models.map(([m, usd]) => `${m}: ${money(usd)}`).join("\n") : "No model call yet"}
           style={{ whiteSpace: "pre" }}
@@ -62,6 +74,7 @@ export function SpendLine({ spend, turn, total, running }: { spend: TaskSpend; t
         )}
         <Text size="xs" c="dimmed">{tokens(spend.input)} in · {tokens(spend.output)} out</Text>
       </Group>
+      {running && model && <Text size="xs" c="dimmed">Run under way on <Code>{model}</Code></Text>}
       {spend.byAttempt.length > 1 && (
         <Group gap={6}>
           {spend.byAttempt.map((a) => (
