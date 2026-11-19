@@ -173,6 +173,29 @@ test("a custom kind edits with its own input: its check refuses before a commit,
   expect(commits).toEqual(["taken"]);
 });
 
+// Whether Mantine drew the text at the smallest size and dimmed at once, from the style it sets on the element.
+function smallAndDimmed(el: HTMLElement): boolean {
+  const style = el.getAttribute("style") ?? "";
+  return style.includes("--mantine-font-size-xs") && style.includes("--mantine-color-dimmed");
+}
+
+test("an open field's help, how it saves and cancels, is not drawn at xs and dimmed together", () => {
+  const { unmount } = render(
+    <MantineProvider theme={theme}>
+      <InlineField kind="custom" label="nickname" value="ann" display={<span>ann</span>} input={() => <input aria-label="Nickname" />} onCommit={() => null} />
+    </MantineProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit nickname" }));
+  const custom = screen.getByText("Enter saves, Escape cancels.");
+  expect(custom.getAttribute("style")).toContain("--mantine-color-dimmed");
+  expect(smallAndDimmed(custom)).toBe(false);
+  unmount();
+
+  renderField({ kind: "textarea", label: "Notes", initial: "old", onCommit: vi.fn() });
+  fireEvent.click(screen.getByRole("button", { name: "Edit Notes" }));
+  expect(smallAndDimmed(screen.getByText("Ctrl+Enter or ⌘+Enter saves, Escape cancels."))).toBe(false);
+});
+
 test("a custom value in a page heading opens on a click and takes no button of its own", () => {
   render(
     <MantineProvider theme={theme}>

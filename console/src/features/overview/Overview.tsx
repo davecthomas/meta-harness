@@ -123,7 +123,7 @@ function Stat(props: { label: string; value: number | null; note?: string; to?: 
         <Text fz={32} fw={650} lh={1} c={props.alert ? "red" : undefined}>{props.value ?? "–"}</Text>
         {props.link && <Text size="sm" c="var(--mantine-color-anchor)">{props.link}</Text>}
       </Group>
-      {props.note && <Text size="xs" c="dimmed" mt={8}>{props.note}</Text>}
+      {props.note && <Text size="sm" c="dimmed" mt={8}>{props.note}</Text>}
     </>
   );
   const style = { cursor: props.to || props.onClick ? "pointer" : "default", textDecoration: "none", color: "inherit", textAlign: "left" as const };

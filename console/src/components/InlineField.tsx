@@ -294,9 +294,7 @@ export function InlineField(props: InlineFieldProps) {
             </Group>
           )}
           {shownReasons.map((r) => <Text key={r} size="xs" c="red" role="alert">{r}</Text>)}
-          {!busy && !shownReasons.length && (
-            <Text size="xs" c="dimmed">{multiline ? "Ctrl+Enter or ⌘+Enter saves" : "Enter saves"}, Escape cancels.</Text>
-          )}
+          {!busy && !shownReasons.length && <SaveHint multiline={multiline} />}
         </Stack>
       </Box>
     );
@@ -359,7 +357,6 @@ export function InlineField(props: InlineFieldProps) {
           minRows={2}
           value={draft ?? ""}
           placeholder={props.placeholder}
-          description="Ctrl or Cmd+Enter to save, Escape to cancel"
           onChange={(e) => setDraft(e.currentTarget.value)}
           onKeyDown={(e) => keys(e, () => void commit(draft), true)}
           onBlur={() => void commit(draft)}
@@ -450,6 +447,7 @@ export function InlineField(props: InlineFieldProps) {
     return (
       <Stack gap={2}>
         {input}
+        {props.kind === "textarea" && !shownReasons.length && <SaveHint multiline />}
         {reasonsBlock}
       </Stack>
     );
@@ -491,6 +489,11 @@ export function InlineField(props: InlineFieldProps) {
       {reasonsBlock}
     </Stack>
   );
+}
+
+// How an open field saves and cancels: help, so it reads at the body's size and never small and dimmed at once.
+function SaveHint({ multiline }: { multiline?: boolean }) {
+  return <Text size="sm" c="dimmed">{multiline ? "Ctrl+Enter or ⌘+Enter saves" : "Enter saves"}, Escape cancels.</Text>;
 }
 
 function Empty({ children }: { children?: ReactNode }) {

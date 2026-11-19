@@ -123,7 +123,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
                 <ol style={{ margin: "2px 0 0", paddingLeft: 16 }}>{issue.split!.map((s) => <li key={s}>{s}</li>)}</ol>
               </Text>
             )}
-            <Text size="xs" c="dimmed">
+            <Text size="xs">
               {(issue.split ?? []).length > 0 ? "Split makes those separate issues, which run in its place. " : ""}Run anyway runs it as one task: a larger pull request, and more likely to need fix rounds.
             </Text>
           </Stack>
@@ -133,7 +133,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
         {gap && <Text size="xs" c="yellow.8" data-testid="issue-gap">{gap}</Text>}
         {props.actions}
         {/* Why a queued task has not started, from the scheduler. */}
-        {task?.status === "queued" && task.held && <Text size="xs" c="dimmed" lineClamp={3}>{moneyText(task.held.reason)}</Text>}
+        {task?.status === "queued" && task.held && <Text size="xs" lineClamp={3}>{moneyText(task.held.reason)}</Text>}
       </Stack>
     </Paper>
   );
@@ -273,7 +273,7 @@ export function GoalGraph(props: { issues: IssueProgress[]; tasks: Record<string
   return (
     <Stack gap="xs" mb="lg">
       <Group gap="lg" data-testid="graph-legend">
-        <Text size="xs" c="dimmed">Work runs left to right: an arrow points from an issue to one that waits on it. Click an issue to open its task.</Text>
+        <Text size="sm" c="dimmed">Work runs left to right: an arrow points from an issue to one that waits on it. Click an issue to open its task.</Text>
         <Group gap={6}><Badge size="xs" color="red" variant="outline">red</Badge><Text size="xs" c="dimmed">needs you, or is stuck behind one that does</Text></Group>
         <Group gap={6}><Badge size="xs" color="teal" variant="outline">green</Badge><Text size="xs" c="dimmed">done</Text></Group>
       </Group>

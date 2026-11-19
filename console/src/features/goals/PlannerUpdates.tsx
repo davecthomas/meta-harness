@@ -239,7 +239,7 @@ export function PlannerUpdates({ goalId, open, planning = false }: { goalId: str
       )}
       {refused && <Alert color="red" variant="light" mt="sm" p="xs" data-testid="planner-update-refused">{refused}</Alert>}
       {read.error && !refused && (
-        <Text size="xs" c="dimmed" mt="sm" pl={50}>
+        <Text size="sm" c="dimmed" mt="sm" pl={50}>
           The planner could not write its latest update ({read.error}). It tries again every minute; Ask for an update tries now.
         </Text>
       )}
