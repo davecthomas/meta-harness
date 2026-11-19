@@ -102,7 +102,7 @@ test("a task held by the scheduler and failed on its first run jumps from its ru
     ev("attempt_finished", { attempt: 1, tier: "complex", candidate: "harness:pi-careful/claude:claude-opus-5-5", decision: "final", detail: "run_harness failed", spent_usd: "0" }, 9, { run_id: "t:run-1" }),
     ev("task_status_changed", { from: "running", to: "failed", reason: "TaskFailed: run 1 ended for good" }),
   ]);
-  expect(path.map((s) => [s.title, s.column, s.tone])).toEqual([["Held by the scheduler", 0, "plain"], ["Task run", 1, "bad"], ["Failed", 4, "bad"]]);
+  expect(path.map((s) => [s.title, s.column, s.tone])).toEqual([["Waiting its turn", 0, "plain"], ["Task run", 1, "bad"], ["Failed", 4, "bad"]]);
   expect(path[0].detail).toBe("repo area docs is held by t-2");
   expect(Date.parse(path[0].end!) - Date.parse(path[0].start)).toBe(402_000);
   expect(rows(path)).toHaveLength(1);

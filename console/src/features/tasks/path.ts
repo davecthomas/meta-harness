@@ -1,5 +1,6 @@
 import type { MhEvent } from "../../api";
 import { moneyText, usd } from "../../money";
+import { heldLine } from "./hold";
 import { writingLine } from "./writing";
 
 // The stages a task passes through, left to right. A step sits in its stage's column, and a step that
@@ -140,9 +141,9 @@ export function steps(events: MhEvent[]): Step[] {
         waitFor({ key: `p${e.position}`, column: 0, title: "Queued", detail: "", tone: "plain", start: time });
         break;
       case "task_held": {
-        const reason = moneyText(String(p.reason ?? ""));
-        if (wait && wait.kind === "wait" && wait.column === 0) Object.assign(wait, { title: "Held by the scheduler", detail: reason });
-        else waitFor({ key: `p${e.position}`, column: 0, title: "Held by the scheduler", detail: reason, tone: "plain", start: time });
+        const reason = heldLine(p);
+        if (wait && wait.kind === "wait" && wait.column === 0) Object.assign(wait, { title: "Waiting its turn", detail: reason });
+        else waitFor({ key: `p${e.position}`, column: 0, title: "Waiting its turn", detail: reason, tone: "plain", start: time });
         break;
       }
       case "task_admitted":
