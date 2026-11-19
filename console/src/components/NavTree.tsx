@@ -1,9 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { StatusIcon } from "./StatusIcon";
 import { NavLink as RouterLink, useLocation } from "react-router-dom";
 import { ActionIcon, Anchor, Box, Collapse, Group, NavLink, Text } from "@mantine/core";
 import { IconChevronRight } from "@tabler/icons-react";
-import { statusColor } from "../theme";
-import { statusWords } from "./status";
 
 // The pieces of the left pane's history: rows that link to a page and open to show what is under them, as other
 // agent consoles list their conversations.
@@ -12,20 +11,14 @@ import { statusWords } from "./status";
 export const REFRESH_MS = 30_000;
 
 // A small dot in a status's color, with the status as its name for a screen reader and on hover.
+// A row's status: its icon in its color (StatusIcon).
 export function StatusDot({ status }: { status: string }) {
-  return (
-    <Box
-      component="span"
-      role="img"
-      aria-label={statusWords(status).label}
-      title={statusWords(status).meaning ? `${statusWords(status).label}: ${statusWords(status).meaning}` : statusWords(status).label}
-      w={8}
-      h={8}
-      display="inline-block"
-      style={{ borderRadius: "50%", flex: "none", background: `var(--mantine-color-${statusColor(status)}-6)` }}
-    />
-  );
+  return <StatusIcon status={status} />;
 }
+
+// A row whose work is over reads quieter than live work. A canceled one is also struck through: its work was
+// dropped, where a done one's shipped.
+const FINISHED = new Set(["closed", "canceled", "met"]);
 
 const ROUNDED = { borderRadius: "var(--mantine-radius-md)" };
 
@@ -81,7 +74,11 @@ export function LeafItem(props: { label: string; to: string; status: string; tit
     <NavLink
       component={RouterLink}
       to={props.to}
-      label={<Text size="sm" truncate>{props.label}</Text>}
+      label={
+        <Text size="sm" truncate c={FINISHED.has(props.status) ? "dimmed" : undefined} td={props.status === "canceled" ? "line-through" : undefined}>
+          {props.label}
+        </Text>
+      }
       title={props.title ?? props.label}
       leftSection={<StatusDot status={props.status} />}
       active={path === props.to}

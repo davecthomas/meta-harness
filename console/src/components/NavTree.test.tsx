@@ -124,3 +124,38 @@ test("the pane shows the first few of a long list and links to the page that has
   expect(screen.queryByRole("link", { name: /Working 10/ })).toBeNull();
   expect(screen.getByRole("link", { name: "All 13 in progress" }).getAttribute("href")).toBe("/tasks");
 });
+
+test("a goal's tasks show what needs you first, then work going on, then waiting, with finished ones folded away", async () => {
+  const t = (id: string, name: string, status: string, extra: Record<string, unknown> = {}) => ({ ...task(id, `${name} title`, status), name, task_type: "bug", pr_url: null, ...extra });
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url.startsWith("/v1/goals")) return respond({ goals: [goal("g-1", "Console UX", "active")], total: 1 });
+    if (url.includes("goal_id=g-1"))
+      return respond({
+        tasks: [
+          t("t-q", "Waiting one", "queued"),
+          t("t-c", "Shipped one", "closed"),
+          t("t-r", "Working one", "running"),
+          t("t-x", "Dropped one", "canceled"),
+          t("t-u", "Stuck one", "review_unresolved"),
+          t("t-p", "Plan run", "closed", { task_type: "plan" }),
+        ],
+        total: 6,
+      });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  show(<GoalHistory />, "/goals/g-1");
+
+  await screen.findByText("Working one");
+  const shown = screen.getAllByRole("link").map((a) => a.textContent).filter((text) => text !== "Console UX");
+  expect(shown).toEqual(["Stuck one", "Working one", "Waiting one"]);
+  expect(screen.queryByText("Plan run")).toBeNull();
+
+  // Each status reads from its icon's shape and its words on hover, not from a color alone.
+  expect(screen.getByRole("img", { name: "Review unresolved" })).toBeTruthy();
+  expect(screen.getByRole("img", { name: "Working" }).querySelector(".mh-spin")).toBeTruthy();
+  expect(screen.getByRole("img", { name: "Queued" }).getAttribute("title")).toContain("It has not started");
+
+  fireEvent.click(screen.getByText("Finished (2)"));
+  expect((await screen.findByText("Dropped one")).style.textDecoration).toBe("line-through");
+  expect(screen.getByText("Shipped one").style.textDecoration).not.toBe("line-through");
+});
