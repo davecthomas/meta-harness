@@ -4,6 +4,7 @@ import { IconCoin } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import { api, type Task } from "../../api";
 import { RaiseGoalBudget } from "../goals/budget";
+import type { BudgetResume } from "../goals/api";
 import { moneyText } from "../../money";
 import { useBudgetAnswer } from "./budgetAnswer";
 
@@ -61,6 +62,29 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
     }
   }
 
+  // The goal's budget is raised. The goal tells its held tasks to look again, but one it could not tell
+  // (not in tasks_told) would wait for its own recheck, with no answer to write the hold again: this task is
+  // then asked to look again itself, and the alert stays if that fails.
+  async function goalRaised(resumed: BudgetResume) {
+    const says = `The goal's budget raised to ${usd(resumed.to)}. The task continues at its next step.`;
+    if (resumed.tasks_told.includes(task.id)) {
+      send(says, task.updated_at);
+      reread();
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const answered = await api.decideBudget(task.id, "raise");
+      onAnswered(answered);
+      send(says, answered.updated_at);
+    } catch (err) {
+      setError(`The goal's budget was raised to ${usd(resumed.to)}, but the task could not be told to look again: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Alert
       color="orange"
@@ -76,10 +100,7 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
             {/* Raises the goal's budget here, which tells this task to look again. */}
             <RaiseGoalBudget
               goalId={task.goal_id!}
-              onResumed={(resumed) => {
-                send(`The goal's budget raised to ${usd(resumed.to)}. The task continues at its next step.`, task.updated_at);
-                reread();
-              }}
+              onResumed={(resumed) => void goalRaised(resumed)}
             />
             <Group gap="sm" align="center">
               <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm">The goal's page</Anchor>

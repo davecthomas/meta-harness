@@ -195,6 +195,52 @@ test("Look again now, on a task held for its goal's budget, says what was sent i
   expect(asked.find((a) => a.url === "/v1/tasks/t-1/budget")!.body).toEqual({ action: "raise" });
 });
 
+test("a read of the task from before the answer, arriving after it, leaves the line in place", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  // The first read was on its way before the answer was sent: the task as it was, held, with the old limit.
+  const before = { max_usd: "10.00", updated_at: HELD.updated_at };
+  served(HELD, [before, raised, carriedOn]);
+  fireEvent.click(screen.getByRole("button", { name: "Raise the limit and carry on" }));
+  await screen.findByRole("status");
+  await pass(REREAD_MS);
+  expect(screen.getByRole("status").textContent).toBe("Limit raised to $15.00. The task continues at its next step.");
+  expect(screen.queryByRole("alert")).toBeNull();
+  await pass(REREAD_MS);
+  expect(screen.getByRole("status")).toBeTruthy();
+  await pass(REREAD_MS);
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+const goalNotTelling = (url: string) =>
+  url === "/v1/goals/g-1/resume-budget"
+    ? json({ goal: { ...GOAL, max_usd: "20.00" }, from: "10.00", to: "20.00", spent_usd: "9.95", how: "worked out", tasks_told: [] })
+    : goalServed(url);
+
+test("a goal raise that did not tell this task asks the task to look again itself", async () => {
+  const asked = served(FOR_GOAL, [{}], goalNotTelling);
+  await screen.findByLabelText(/New goal budget/);
+  fireEvent.click(screen.getByRole("button", { name: "Raise the goal's budget and carry on" }));
+  expect((await screen.findByRole("status")).textContent).toBe("The goal's budget raised to $20.00. The task continues at its next step.");
+  expect(asked.find((a) => a.url === "/v1/tasks/t-1/budget")!.body).toEqual({ action: "raise" });
+});
+
+test("a goal raise that did not tell this task, and a task that could not be asked, keeps the alert and says so", async () => {
+  served(FOR_GOAL, [{}], (url) => (url === "/v1/tasks/t-1/budget" ? json({ detail: "the task's workflow did not answer" }, 503) : goalNotTelling(url)));
+  await screen.findByLabelText(/New goal budget/);
+  fireEvent.click(screen.getByRole("button", { name: "Raise the goal's budget and carry on" }));
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("could not be told to look again"));
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+test("a goal raise that told this task sends nothing more for it", async () => {
+  const asked = served(FOR_GOAL, [{}], goalServed);
+  await screen.findByLabelText(/New goal budget/);
+  fireEvent.click(screen.getByRole("button", { name: "Raise the goal's budget and carry on" }));
+  await screen.findByRole("status");
+  expect(asked.find((a) => a.url === "/v1/tasks/t-1/budget")).toBeUndefined();
+});
+
 test("raising the goal's budget from the task's page says what was sent in place of the alert", async () => {
   served(FOR_GOAL, [{}], goalServed);
   await screen.findByLabelText(/New goal budget/);
