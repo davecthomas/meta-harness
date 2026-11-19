@@ -108,6 +108,14 @@ test("with the engine left at the library's default, a typed model is refused an
   expect(staged).toEqual([]);
 });
 
+test("clearing the engine drops its model while the list is read", async () => {
+  const staged = show({ engine: "claude", model: "claude-haiku-5-5", min_confidence: 0.5 }, { engines: ENGINES, error: null });
+  const engine = open("Classifier engine");
+  fireEvent.change(engine, { target: { value: "" } });
+  fireEvent.keyDown(engine, { key: "Enter" });
+  await waitFor(() => expect(staged).toEqual([[["classifier"], { min_confidence: 0.5 }]]));
+});
+
 test("an engine that lists no models takes a typed model", async () => {
   const staged = show({ engine: "openai-compatible" }, { engines: ENGINES, error: null });
   const model = open("Classifier model");

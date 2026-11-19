@@ -75,7 +75,8 @@ function NoModel(props: {
 // default engine is decided by the worker's settings, so its models cannot be listed: while the list is read,
 // a model needs an engine picked first, and a saved model with no engine is marked. When the list cannot be
 // read, a model is typed. The model of an engine that lists none is typed. A change of engine drops a model the new
-// engine does not offer, so the classifier never names a pair that cannot run. Engine none routes without a
+// engine does not offer, and clearing the engine while the list is read drops the model, so the classifier
+// never names a pair that cannot run. Engine none routes without a
 // classifier: choosing it drops the model, its model field refuses any name, and a saved one is marked.
 export function ClassifierFields(props: {
   engine: string;
@@ -94,6 +95,9 @@ export function ClassifierFields(props: {
   const models = engines === null ? null : chosen?.models ?? [];
   const pickEngine = (engine: string) => {
     if (routesWithoutClassifier(engine)) return props.onEngine(engine, "");
+    // Clearing the engine while the list is read: the library's default engine cannot be listed, so the
+    // model could not be checked against it, and is dropped.
+    if (!engine.trim() && engines !== null) return props.onEngine("", "");
     const offered = engines?.find((e) => e.engine === engine)?.models ?? [];
     const keep = !props.model || !offered.length || offered.some((m) => m.toLowerCase() === props.model.toLowerCase());
     props.onEngine(engine, keep ? props.model : "");
