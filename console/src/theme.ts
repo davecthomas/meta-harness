@@ -1,4 +1,4 @@
-import { createTheme, type CSSVariablesResolver } from "@mantine/core";
+import { createTheme, Input, type CSSVariablesResolver } from "@mantine/core";
 import { statusWords } from "./components/status";
 
 // One theme for the whole console, light and dark. Mantine's components carry the layout, spacing
@@ -13,8 +13,12 @@ const WINDOW_TITLE = {
 // the disabled control's own fill, so it is checked against that too (theme.test.tsx).
 export const textColors = {
   light: { dimmed: "#5c636a", placeholder: "#5c636a", disabled: "#5c636a", disabledFill: "#e9ecef", page: "#ffffff", card: "#ffffff" },
-  dark: { dimmed: "#a3a3a3", placeholder: "#a3a3a3", disabled: "#adadad", disabledFill: "#383838", page: "#242424", card: "#2e2e2e" },
+  dark: { dimmed: "#a3a3a3", placeholder: "#a3a3a3", disabled: "#adadad", disabledFill: "#2e2e2e", page: "#242424", card: "#2e2e2e" },
 };
+
+// Mantine draws a disabled input at opacity 0.6, which blends its text and fill into the page and drops the
+// contrast. The theme sets it back to 1; the disabled colors above already carry the dimming.
+export const disabledInputOpacity = 1;
 
 export const cssVariablesResolver: CSSVariablesResolver = () => ({
   variables: {},
@@ -37,6 +41,7 @@ export const theme = createTheme({
   fontFamilyMonospace: "ui-monospace, SFMono-Regular, Menlo, monospace",
   headings: { fontWeight: "650" },
   components: {
+    Input: Input.extend({ styles: { input: { opacity: disabledInputOpacity } } }),
     Table: { defaultProps: { verticalSpacing: "sm", highlightOnHover: true } },
     Paper: { defaultProps: { withBorder: true, p: "lg" } },
     // A badge shows its whole label. Mantine lets one shrink and end in "…", which a narrow table column or a
