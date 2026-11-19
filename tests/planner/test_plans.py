@@ -1,7 +1,5 @@
 """A plan's drafts: which hold together, in what order their issues are created, and how a body names them."""
 
-import pytest
-
 from meta_harness.planner import planning, plans
 
 REPOS = ["o/a", "o/b"]
@@ -164,23 +162,40 @@ def test_a_planning_runs_last_word_on_an_issue_and_its_last_summary_are_the_plan
     assert plans.latest_summary([]) == ("", [])
 
 
-def test_the_shipped_configuration_plans_every_goal_and_its_settings_are_checked(monkeypatch, tmp_path):
-    import json
+def test_the_shipped_configuration_plans_every_goal_and_its_settings_are_checked():
+    from meta_harness.config import kinds
 
     shipped = planning.settings()
     assert shipped["goals"] == "all", "every goal is planned before its tasks run, as shipped"
+    assert planning.tracks_new_tasks() is True
     planning.check_settings()
+    assert kinds.check_planning(shipped, None) == []
 
-    def with_planning(**changed) -> None:
-        path = tmp_path / "planner.json"
-        path.write_text(json.dumps({"planning": {**shipped, **changed}}))
-        monkeypatch.setattr(planning, "PLANNER_CONFIG_PATH", path)
+    def reasons(**changed) -> list[str]:
+        return kinds.check_planning({**shipped, **changed}, None)
 
-    with_planning(goals="some")
-    with pytest.raises(RuntimeError, match="planning.goals must be one of all, from_description"):
-        planning.check_settings()
-    with_planning(max_issues=0)
-    with pytest.raises(RuntimeError, match="planning.max_issues must be a whole number above 0"):
-        planning.check_settings()
-    with_planning(goals="from_description")
-    planning.check_settings()
+    assert reasons(goals="some") == [
+        "goals must be one of all, from_description: which goals are planned before their tasks run"
+    ]
+    assert reasons(max_issues=0)[0].startswith("max_issues must be a whole number above 0")
+    assert reasons(max_usd="0")[0].startswith("max_usd must be an amount above 0")
+    assert reasons(candidate="claude:x")[0].startswith("candidate must be harness:<profile>/<engine>:<model>")
+    assert reasons(track_new_tasks="yes")[0].startswith("track_new_tasks must be true or false")
+    assert reasons(goals="from_description", track_new_tasks=False) == []
+
+
+def test_the_planning_candidates_profile_must_exist_and_be_able_to_record_a_plan():
+    from meta_harness.config import kinds
+
+    shipped = planning.settings()
+    profiles = {
+        "profiles": {
+            "profiles": {"pi-plan": {"tools": ["read", "create_issue"]}, "pi-lean": {"tools": ["read", "write"]}}
+        }
+    }
+
+    assert kinds.check_planning(shipped, profiles) == []
+    [gone] = kinds.check_planning({**shipped, "candidate": "harness:pi-gone/claude:m"}, profiles)
+    assert gone == "candidate names the harness profile pi-gone, which the profiles lack: pick one of pi-lean, pi-plan"
+    [toolless] = kinds.check_planning({**shipped, "candidate": "harness:pi-lean/claude:m"}, profiles)
+    assert "has no create_issue tool" in toolless and "Pick a planning profile" in toolless

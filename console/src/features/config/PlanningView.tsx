@@ -1,0 +1,158 @@
+import { Badge, Code, Group, Stack, Text } from "@mantine/core";
+import { InlineField } from "../../components/InlineField";
+import { Facts } from "../../components/ui";
+import { changed, type Staging } from "./ConfigViews";
+import { joinCandidate, splitCandidate } from "./staging";
+
+// With the value itself first when the list does not name it, so a select can show what the document holds.
+function withValue(options: string[], value: string): string[] {
+  return !value || options.includes(value) ? options : [value, ...options];
+}
+
+const GOALS = [
+  { value: "all", label: "Every goal" },
+  { value: "from_description", label: "Only goals that plan their issues from a description" },
+];
+
+// The planning configuration: who the planner is (the harness profile and model a planning task runs on), what
+// one planning task may spend, which goals are planned before their tasks run, where a plan's new tasks go
+// unless the operator says otherwise, and how much of a goal's issues the planner is shown.
+// profiles: the harness profiles a planning task can run on (those with the create_issue tool, which a
+// planning run records its plan with). models: every model the configuration prices.
+export function PlanningView({ staging: s, profiles, models }: { staging: Staging; profiles: string[]; models: string[] }) {
+  const doc = s.document;
+  const { profile, model } = splitCandidate(String(doc.candidate ?? ""));
+  const everyGoal = (doc.goals ?? "from_description") === "all";
+  const tracks = doc.track_new_tasks !== false;
+  return (
+    <Facts
+      items={[
+        [
+          "The planner",
+          <Stack gap={4}>
+            <Group gap="xs">
+              <InlineField
+                kind="select"
+                label="Planner's harness profile"
+                value={profile || null}
+                data={withValue(profiles, profile)}
+                display={profile ? <Badge variant="dot" tt="none">{profile}</Badge> : undefined}
+                empty="pick a profile"
+                changed={changed(s, ["candidate"])}
+                readOnly={s.readOnly}
+                onCommit={(v) => s.stage(["candidate"], joinCandidate(v ?? "", model))}
+              />
+              <InlineField
+                kind="select"
+                searchable
+                label="Planner's model"
+                value={model || null}
+                data={withValue(models, model)}
+                display={model ? <Code>{model}</Code> : undefined}
+                empty="pick a model"
+                changed={changed(s, ["candidate"])}
+                reasons={s.reasons("candidate")}
+                readOnly={s.readOnly}
+                onCommit={(v) => s.stage(["candidate"], joinCandidate(profile, v ?? ""))}
+              />
+            </Group>
+            <Text size="xs" c="dimmed">
+              The agent that plans a goal: it reads the goal and its issues, and proposes the tasks, their order, any splits and what is missing. Its
+              profile needs the create_issue tool, which a plan is recorded with.
+            </Text>
+          </Stack>,
+        ],
+        [
+          "Which goals are planned",
+          <Stack gap={4}>
+            <InlineField
+              kind="select"
+              label="Which goals are planned"
+              value={doc.goals ?? "from_description"}
+              data={GOALS}
+              changed={changed(s, ["goals"])}
+              reasons={s.reasons("goals")}
+              readOnly={s.readOnly}
+              onCommit={(v) => v && s.stage(["goals"], v)}
+            />
+            <Text size="xs" c="dimmed">
+              {everyGoal
+                ? "Every goal is planned when it is saved, and none of its tasks starts until its plan is approved."
+                : "A goal that takes existing issues runs them as they are, with no plan. Only a goal that plans its issues from its description is planned first."}
+            </Text>
+          </Stack>,
+        ],
+        [
+          "A plan's new tasks",
+          <Stack gap={4}>
+            <InlineField
+              kind="switch"
+              label="A plan's new tasks go to the issue tracker"
+              nameByLabel
+              value={tracks}
+              switchLabel={tracks ? "Added to the goal's issue tracker" : "Kept in the meta-harness alone"}
+              changed={changed(s, ["track_new_tasks"])}
+              reasons={s.reasons("track_new_tasks")}
+              readOnly={s.readOnly}
+              onCommit={(on) => s.stage(["track_new_tasks"], on)}
+            />
+            <Text size="xs" c="dimmed">
+              What an approval starts with: the operator can choose the other for any plan. A goal with no tracker always keeps its tasks in the
+              meta-harness.
+            </Text>
+          </Stack>,
+        ],
+        [
+          "Spend limit",
+          <Stack gap={4}>
+            <InlineField
+              kind="number"
+              label="A planning task's spend limit"
+              value={doc.max_usd === undefined || doc.max_usd === null ? null : Number(doc.max_usd)}
+              min={0.01}
+              decimalScale={2}
+              prefix="$"
+              changed={changed(s, ["max_usd"])}
+              reasons={s.reasons("max_usd")}
+              readOnly={s.readOnly}
+              onCommit={(v) => s.stage(["max_usd"], v === null ? undefined : Number(v).toFixed(2))}
+            />
+            <Text size="xs" c="dimmed">The most one planning task may spend. A goal planned again spends it again.</Text>
+          </Stack>,
+        ],
+        [
+          "What the planner is shown",
+          <Stack gap={4}>
+            <Group gap="lg">
+              <InlineField
+                kind="number"
+                label="Issues shown to the planner"
+                value={doc.max_issues ?? 60}
+                min={1}
+                decimalScale={0}
+                suffix=" issues"
+                changed={changed(s, ["max_issues"])}
+                reasons={s.reasons("max_issues")}
+                readOnly={s.readOnly}
+                onCommit={(v) => s.stage(["max_issues"], v ?? undefined)}
+              />
+              <InlineField
+                kind="number"
+                label="Characters of each issue shown to the planner"
+                value={doc.issue_chars ?? 4000}
+                min={1}
+                decimalScale={0}
+                suffix=" characters of each"
+                changed={changed(s, ["issue_chars"])}
+                reasons={s.reasons("issue_chars")}
+                readOnly={s.readOnly}
+                onCommit={(v) => s.stage(["issue_chars"], v ?? undefined)}
+              />
+            </Group>
+            <Text size="xs" c="dimmed">A goal with more issues than this is planned over the first of them, and the plan says so.</Text>
+          </Stack>,
+        ],
+      ]}
+    />
+  );
+}

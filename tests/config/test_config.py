@@ -67,10 +67,36 @@ def client():
 def test_every_kind_is_seeded_from_its_file_on_first_read(client):
     listed = client.get("/v1/config").json()["kinds"]
 
-    assert [k["kind"] for k in listed] == ["tiers", "profiles", "repos", "trackers", "skills", "task_policy"]
+    assert [k["kind"] for k in listed] == [
+        "tiers",
+        "profiles",
+        "repos",
+        "trackers",
+        "skills",
+        "planning",
+        "task_policy",
+    ]
     assert all(k["version"] == 1 and k["edited_by"] == "seed" for k in listed)
     assert client.get("/v1/config/tiers").json()["document"] == TIERS
     assert client.get("/v1/config/profiles").json()["document"] == PROFILES
+
+
+def test_the_planning_configuration_is_seeded_edited_and_checked_against_the_profiles(client):
+    seeded = client.get("/v1/config/planning").json()
+    assert seeded["version"] == 1 and seeded["document"]["goals"] == "all"
+
+    edited = {**seeded["document"], "goals": "from_description", "track_new_tasks": False, "max_usd": "5.00"}
+    saved = client.put("/v1/config/planning", json={"document": edited, "note": "plan only from descriptions"})
+    assert saved.status_code == 200, saved.text
+    assert client.get("/v1/config/planning").json()["document"]["track_new_tasks"] is False
+
+    # A planning run records its plan with create_issue: a profile without it, or one that does not exist, is refused.
+    for candidate, said in (
+        ("harness:pi-lean/claude:claude-opus-5-5", "has no create_issue tool"),
+        ("harness:pi-none/claude:x", "which the profiles lack"),
+    ):
+        refused = client.put("/v1/config/planning", json={"document": {**edited, "candidate": candidate}})
+        assert refused.status_code == 422 and said in refused.json()["detail"]["reasons"][0]
 
 
 def test_a_saved_edit_becomes_the_next_active_version_with_an_audit_event(client):

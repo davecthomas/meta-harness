@@ -13,12 +13,12 @@ Only the control plane writes to the code host: the planning run proposes, and t
 """
 
 import asyncio
-import json
 import logging
-from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
 from meta_harness import db
+from meta_harness.config import kinds as config_kinds
+from meta_harness.config import store as config_store
 from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import plans, store
 from meta_harness.planner.drafting import PLANNER_CONFIG_PATH
@@ -64,9 +64,11 @@ MAX_ISSUES, ISSUE_CHARS = 60, 4000
 
 
 def settings() -> dict[str, Any]:
-    """config/planner.json's planning: the candidate a planning task is pinned to, its spend limit, which
-    goals are planned (`goals`), and how much of a goal's issues its planning task is shown."""
-    return json.loads(PLANNER_CONFIG_PATH.read_text(encoding="utf-8"))["planning"]
+    """The planning configuration (config/kinds.py's `planning`): the candidate a planning task is pinned to,
+    its spend limit, which goals are planned (`goals`), how much of a goal's issues its planning task is shown,
+    and whether a plan's new tasks go to the goal's tracker by default. The console's active version, or the
+    planning section of config/planner.json."""
+    return config_store.current_document("planning")
 
 
 def plans_every_goal() -> bool:
@@ -74,25 +76,19 @@ def plans_every_goal() -> bool:
     return settings().get("goals", FROM_DESCRIPTION) == EVERY_GOAL
 
 
+def tracks_new_tasks() -> bool:
+    """Whether a plan's new tasks go to the goal's tracker unless the operator says otherwise."""
+    return bool(settings().get("track_new_tasks", True))
+
+
 def check_settings() -> None:
-    """Raises RuntimeError naming what is wrong with config/planner.json's planning."""
+    """Raises RuntimeError naming what is wrong with the planning configuration."""
     try:
         config = settings()
     except (OSError, ValueError, KeyError) as err:
         raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: no planning settings ({err})") from err
-    candidate = config.get("candidate")
-    if not isinstance(candidate, str) or not candidate.startswith("harness:") or "/" not in candidate:
-        raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: planning.candidate must be harness:<profile>/<engine>:<model>")
-    try:
-        if Decimal(str(config.get("max_usd"))) <= 0:
-            raise InvalidOperation
-    except InvalidOperation as err:
-        raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: planning.max_usd must be an amount above 0") from err
-    if config.get("goals", FROM_DESCRIPTION) not in GOALS:
-        raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: planning.goals must be one of {', '.join(GOALS)}")
-    for key in ("max_issues", "issue_chars"):
-        if key in config and (not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 1):
-            raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: planning.{key} must be a whole number above 0")
+    if reasons := config_kinds.check_planning(config, None):
+        raise RuntimeError(f"the planning configuration ({PLANNER_CONFIG_PATH.name}'s planning): {'; '.join(reasons)}")
 
 
 def goal_label(goal: dict) -> str:

@@ -96,6 +96,63 @@ def seed_task_policy() -> dict[str, Any]:
     return json.loads(TASK_POLICY_PATH.read_text(encoding="utf-8"))
 
 
+# Which goals are planned before their tasks run (planner/planning.py).
+PLANNING_GOALS = ("all", "from_description")
+
+
+def seed_planning() -> dict[str, Any]:
+    """The planning section of the deployment's config/planner.json."""
+    return dict(json.loads((REPO_ROOT / "config" / "planner.json").read_text(encoding="utf-8"))["planning"])
+
+
+def check_planning(document: dict[str, Any], others: dict[str, dict[str, Any]] | None = None) -> list[str]:
+    """Problems with the planning configuration. The candidate's profile is checked against the profiles when
+    others holds them: a planning run records its plan with create_issue, so its profile must have it."""
+    reasons = []
+    candidate = document.get("candidate")
+    profile = ""
+    if not isinstance(candidate, str) or not candidate.startswith("harness:") or "/" not in candidate:
+        reasons.append(
+            "candidate must be harness:<profile>/<engine>:<model>: the profile and model a planning task runs on"
+        )
+    else:
+        profile, _, pair = candidate.removeprefix("harness:").partition("/")
+        if not profile or ":" not in pair or not all(pair.split(":", 1)):
+            reasons.append("candidate must be harness:<profile>/<engine>:<model>: pick a profile and a model")
+    known = (others or {}).get("profiles", {}).get("profiles")
+    if profile and isinstance(known, dict):
+        if profile not in known:
+            reasons.append(
+                f"candidate names the harness profile {profile}, which the profiles lack: pick one of {', '.join(sorted(known))}"
+            )
+        elif "create_issue" not in (known[profile].get("tools") or []):
+            reasons.append(
+                f"candidate names the harness profile {profile}, which has no create_issue tool: a planning run "
+                "records its plan with it. Pick a planning profile, or add the tool to this one"
+            )
+    try:
+        if Decimal(str(document.get("max_usd"))) <= 0:
+            raise InvalidOperation
+    except InvalidOperation:
+        reasons.append("max_usd must be an amount above 0: the most a planning task may spend")
+    if document.get("goals", "from_description") not in PLANNING_GOALS:
+        reasons.append(
+            f"goals must be one of {', '.join(PLANNING_GOALS)}: which goals are planned before their tasks run"
+        )
+    for key, what in (
+        ("max_issues", "issues a planning task is shown"),
+        ("issue_chars", "characters of each issue it is shown"),
+    ):
+        value = document.get(key, 1)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append(f"{key} must be a whole number above 0: how many {what}")
+    if not isinstance(document.get("track_new_tasks", True), bool):
+        reasons.append(
+            "track_new_tasks must be true or false: whether a plan's new tasks go to the goal's tracker unless the operator says otherwise"
+        )
+    return reasons
+
+
 SANDBOXES_ENV = "MH_MAX_SANDBOXES"
 
 
@@ -347,6 +404,14 @@ KINDS: dict[str, Kind] = {
         "Packaged instructions, with their scripts and references, that a harness profile's runs load.",
         seed_skills,
         check_skills,
+    ),
+    "planning": Kind(
+        "planning",
+        "Planning",
+        "The planner: the harness profile and model its planning tasks run on, what one may spend, which goals "
+        "are planned before their tasks run, and where a plan's new tasks go.",
+        seed_planning,
+        check_planning,
     ),
     "task_policy": Kind(
         "task_policy",

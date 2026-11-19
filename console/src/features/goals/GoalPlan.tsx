@@ -140,6 +140,10 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
   const [editedItems, setEditedItems] = useState<PlanItem[] | null>(null);
   // Whether the new tasks go to the goal's tracker when the plan is approved, or stay in the meta-harness.
   const [track, setTrack] = useState(true);
+  // It starts as the planning configuration says; the operator may choose the other for this plan.
+  useEffect(() => {
+    api.limits().then((l) => setTrack(l.track_new_tasks !== false), () => undefined);
+  }, []);
   const [editing, setEditing] = useState<{ draft: PlanDraft; isNew: boolean } | null>(null);
   const [asking, setAsking] = useState<"approve" | "replan" | null>(null);
   const [note, setNote] = useState("");
