@@ -695,6 +695,69 @@
     ],
     "type": "object"
   },
+  "plan_fix_accepted v1": {
+    "additionalProperties": true,
+    "properties": {
+      "drafts": {
+        "type": "integer"
+      },
+      "for_version": {
+        "type": "integer"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "goal_id",
+      "for_version",
+      "version"
+    ],
+    "type": "object"
+  },
+  "plan_fix_dismissed v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id"
+    ],
+    "type": "object"
+  },
+  "plan_fixes_assessed v1": {
+    "additionalProperties": true,
+    "properties": {
+      "fixes": {
+        "type": "integer"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "usd_cost": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "goal_id",
+      "version",
+      "fixes",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
   "plan_requested v1": {
     "additionalProperties": true,
     "properties": {

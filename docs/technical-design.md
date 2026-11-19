@@ -2919,6 +2919,23 @@ button that resolves the need on the spot (approve the plan, merge after a
 confirm) or opens where it is resolved (the task, its changes, the goal's
 budget, the issue).
 
+**Suggested fixes** (`planner/suggestions.py`). When a planning task's plan is
+saved with gaps, one small model call sorts them: a gap a change to the plan
+itself would settle (two tasks that would clash run in order, a missing step
+becomes a task) is a fix the planner makes; one only the operator can settle
+stays a question. For the fixes, a second planning task revises the plan with
+them as its note. Its result is kept in `planner.plan_suggestion`, apart from
+the goal's plan versions, so the current plan can still be edited or approved
+while it drafts. The planner's update then asks the operator to accept it
+(`accept_fix`), with a line for each change. Accepting
+(`POST /v1/goals/{id}/suggestion/accept`) makes it the next plan version,
+source `suggested`, which is still approved as any plan is; dismissing it, or
+editing the plan or asking for a new one, leaves it behind. At most one fix is
+drafted per plan version and none for a version that was itself a fix. The
+planning configuration's `suggest_fixes` turns them off. The sorting call is a
+`plan_fixes_assessed` event, counted as planning cost; accepting and dismissing
+are `plan_fix_accepted` and `plan_fix_dismissed`.
+
 **Every goal is planned.** With the planning configuration's `goals` set to
 `all` (as shipped; `from_description` plans only a goal that plans its issues
 from its description, as before), a goal that takes existing issues is planned

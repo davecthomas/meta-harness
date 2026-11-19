@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Anchor, Button, Collapse, Group, Paper, Stack, Text, ThemeIcon, Timeline } from "@mantine/core";
+import { Alert, Anchor, Button, Collapse, Group, List, Paper, Stack, Text, ThemeIcon, Timeline } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { IconCheck, IconCompass, IconGitMerge, IconRefresh } from "@tabler/icons-react";
 import { ConfirmButton } from "../../components/ConfirmButton";
@@ -40,25 +40,66 @@ export function since(iso: string, now = Date.now()): string {
 }
 
 // What resolves a need: the page's own button for it. Every need has one.
-export type NeedAction = "approve_plan" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue";
-export type Need = { what: string; ref: string; action?: NeedAction | ""; task_id?: string; pr_url?: string };
+export type NeedAction = "approve_plan" | "accept_fix" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue";
+// changes: for accept_fix, what the planner's fix changes in the plan, a line each.
+export type Need = { what: string; ref: string; action?: NeedAction | ""; task_id?: string; pr_url?: string; changes?: string[] };
 
 // Events the goal page listens for, so a need is resolved where it is shown: the plan's approval, and the
 // goal's settings (its budget).
 export const APPROVE_PLAN = "mh:approve-plan";
 export const OPEN_SETTINGS = "mh:open-settings";
 export const SHOW_ISSUES = "mh:show-issues";
+// Sent once the plan changed from here (a fix accepted or dismissed), so the plan's section reads it again.
+export const PLAN_CHANGED = "mh:plan-changed";
 
 // The button that resolves one need, or takes the operator to where they do.
 // planning: the goal is being planned, so a need written before needs had actions, about no issue, is the
 // plan's approval.
-function NeedAction({ need, planning, onDone }: { need: Need; planning: boolean; onDone: () => void }) {
+function NeedAction({ need, planning, goalId, onDone }: { need: Need; planning: boolean; goalId: string; onDone: () => void }) {
+  const changed = () => {
+    window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
+    onDone();
+  };
   const send = (name: string) => () => window.dispatchEvent(new CustomEvent(name));
   const task = need.task_id ?? "";
   const action = need.action || (planning && !need.ref ? "approve_plan" : "");
   switch (action) {
     case "approve_plan":
       return <Button size="xs" color="teal" leftSection={<IconCheck size={14} />} onClick={send(APPROVE_PLAN)}>Approve the plan</Button>;
+    case "accept_fix":
+      return (
+        <Group gap="xs" wrap="nowrap">
+          <ConfirmButton
+            size="xs"
+            color="teal"
+            label="Accept the fix"
+            title="Accept the planner's fix?"
+            says={
+              <Stack gap={4}>
+                <Text size="sm">It becomes the plan. You still approve the plan before anything runs.</Text>
+                <List size="sm" spacing={2}>{(need.changes ?? []).map((line) => <List.Item key={line}>{line}</List.Item>)}</List>
+              </Stack>
+            }
+            confirm="Accept"
+            leftSection={<IconCheck size={14} />}
+            onConfirm={async () => {
+              await api.acceptFix(goalId);
+              changed();
+            }}
+          />
+          <Button
+            size="xs"
+            variant="subtle"
+            color="gray"
+            onClick={async () => {
+              await api.dismissFix(goalId);
+              changed();
+            }}
+          >
+            Dismiss
+          </Button>
+        </Group>
+      );
     case "merge":
       return (
         <Group gap="xs" wrap="nowrap">
@@ -96,15 +137,20 @@ function NeedAction({ need, planning, onDone }: { need: Need; planning: boolean;
 }
 
 // What an update asks of the operator, each with the button that resolves it.
-function NeedsYou({ needs, planning, onDone }: { needs: Need[]; planning: boolean; onDone: () => void }) {
+function NeedsYou({ needs, planning, goalId, onDone }: { needs: Need[]; planning: boolean; goalId: string; onDone: () => void }) {
   if (!needs.length) return null;
   return (
     <Alert color="yellow" variant="light" p="sm" title={needs.length === 1 ? "Needs you" : `Needs you: ${needs.length} things`} data-testid="planner-needs-you">
       <Stack gap="xs">
         {needs.map((need, i) => (
           <Group key={i} justify="space-between" wrap="wrap" gap="sm" data-testid="planner-need">
-            <Text size="sm" style={{ flex: "1 1 240px" }}>{need.what}</Text>
-            <NeedAction need={need} planning={planning} onDone={onDone} />
+            <Stack gap={2} style={{ flex: "1 1 240px" }}>
+              <Text size="sm">{need.what}</Text>
+              {need.action === "accept_fix" && (need.changes ?? []).length > 0 && (
+                <Text size="xs" c="dimmed">{(need.changes ?? []).join(" · ")}</Text>
+              )}
+            </Stack>
+            <NeedAction need={need} planning={planning} goalId={goalId} onDone={onDone} />
           </Group>
         ))}
       </Stack>
@@ -185,7 +231,7 @@ export function PlannerUpdates({ goalId, open, planning = false }: { goalId: str
       {latest && (
         <Stack gap="sm" pl={50}>
           <Text size="md" style={{ whiteSpace: "pre-wrap" }}>{latest.body}</Text>
-          <NeedsYou needs={latest.needs_you ?? []} planning={planning} onDone={() => void load()} />
+          <NeedsYou needs={latest.needs_you ?? []} planning={planning} goalId={goalId} onDone={() => void ask()} />
           {latest.next && (
             <Text size="sm"><Text span fw={650}>Next: </Text>{latest.next}</Text>
           )}
