@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, SegmentedControl, Stack, Text } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
 import { api, goalTitle, type MhEvent, type PullChecks, type ReviewRound, type Task } from "../../api";
@@ -92,7 +92,24 @@ export function TaskPage() {
   // The tab is in the URL (?tab=), so a link can name it and Back returns to the one before. A link to one run
   // (?run=) with no tab opens the Terminal on that run, which is what "Sent to fix run 3" means to show.
   const tab = tabOf(params);
+  // A link that names a tab brings that tab's content into view; choosing a tab on the control itself does not.
+  const location = useLocation();
+  const tabsTop = useRef<HTMLDivElement>(null);
+  const scrolledFor = useRef<string | null>(null);
+  const pickedHere = useRef(false);
+  const named = params.has("tab") || params.has("run");
+  const loaded = task !== null;
+  useEffect(() => {
+    if (!loaded || scrolledFor.current === location.key) return;
+    scrolledFor.current = location.key;
+    if (pickedHere.current) {
+      pickedHere.current = false;
+      return;
+    }
+    if (named) tabsTop.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [loaded, location.key, named]);
   const setTab = (next: Tab) => {
+    pickedHere.current = true;
     const kept: Record<string, string> = { tab: next };
     // One run's filter belongs to the views that show runs.
     if (onlyRun && (next === "terminal" || next === "timeline")) kept.run = onlyRun;
@@ -331,6 +348,7 @@ export function TaskPage() {
         <RunAttempts taskId={task.id} attempts={task.attempts ?? 1} onSet={() => void api.task(task.id).then(setTask)} />
       )}
       <Plan events={events} running={status === "running"} />
+      <div ref={tabsTop}>
       <SegmentedControl
         mb="md"
         value={tab}
@@ -343,6 +361,7 @@ export function TaskPage() {
           { value: "spend", label: "Spend" },
         ]}
       />
+      </div>
       {tab === "reviews" && task.pr_url ? (
         reviewsFailed && !rounds ? (
           <ReadFailed what="this task's reviews" error={reviewsFailed} />

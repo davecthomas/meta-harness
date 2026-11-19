@@ -72,3 +72,17 @@ test("a URL names its tab; one that names only a run shows the Terminal; otherwi
   expect(tabOf(new URLSearchParams("tab=nonsense"))).toBe("timeline");
   expect(tabOf(new URLSearchParams(""))).toBe("timeline");
 });
+
+test("a link naming a tab scrolls the tab's content into view; picking a tab does not", async () => {
+  const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+  try {
+    serve();
+    await screen.findByTestId("review-1");
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByText("Terminal"));
+    await screen.findByRole("log");
+    expect(scroll).toHaveBeenCalledTimes(1);
+  } finally {
+    scroll.mockRestore();
+  }
+});
