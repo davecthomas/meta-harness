@@ -3,6 +3,7 @@ import { IconArrowDown, IconArrowUp, IconPlus, IconTrash } from "@tabler/icons-r
 import { InlineField } from "../../components/InlineField";
 import { Facts } from "../../components/ui";
 import { useState } from "react";
+import { ClassifierFields, type ClassifierList } from "./ClassifierFields";
 import { changed, Reasons, stageOptional, type Staging } from "./ConfigViews";
 import { RemovedRows } from "./RemovedRows";
 import { getIn, joinCandidate, move, setIn, splitCandidate } from "./staging";
@@ -20,8 +21,9 @@ function withValue(options: string[], value: string): string[] {
 
 // The router: its classifier, default tier, what happens when a tier is used up, and each tier with its
 // description, thinking level and candidates, which are a harness profile and a model each, in the order
-// the run loop tries them.
-export function TiersView({ staging: s, profiles, models }: { staging: Staging; profiles: string[]; models: string[] }) {
+// the run loop tries them. classifiers: the engines and models the classifier is picked from; until it is
+// given, the list is still loading.
+export function TiersView({ staging: s, profiles, models, classifiers }: { staging: Staging; profiles: string[]; models: string[]; classifiers?: ClassifierList }) {
   const router = s.document;
   const tiers: any[] = router.tiers ?? [];
   const classifier: Record<string, any> = router.classifier ?? {};
@@ -42,11 +44,12 @@ export function TiersView({ staging: s, profiles, models }: { staging: Staging; 
       },
     }));
   // A classifier left with no field is dropped, so the library's default applies.
-  const stageClassifier = (key: string, value: unknown) => {
-    const empty = value === null || value === undefined || value === "";
+  const stageClassifier = (fields: Record<string, unknown>) => {
     const next = { ...classifier };
-    if (empty) delete next[key];
-    else next[key] = value;
+    for (const [key, value] of Object.entries(fields)) {
+      if (value === null || value === undefined || value === "") delete next[key];
+      else next[key] = value;
+    }
     s.stage(["classifier"], Object.keys(next).length ? next : undefined);
   };
   const exhausted = router.on_exhausted ?? "fail";
@@ -70,18 +73,20 @@ export function TiersView({ staging: s, profiles, models }: { staging: Staging; 
           [
             "Classifier",
             <Stack gap={4}>
-              <Group gap="lg" wrap="wrap">
-                <Group gap={6} wrap="nowrap">
-                  <Text size="xs" c="dimmed">Engine</Text>
-                  <InlineField kind="text" label="Classifier engine" value={classifier.engine ?? ""} empty="the library's default" changed={changed(s, ["classifier", "engine"])} readOnly={s.readOnly} onCommit={(v) => stageClassifier("engine", v)} />
-                </Group>
-                <Group gap={6} wrap="nowrap">
-                  <Text size="xs" c="dimmed">Model</Text>
-                  <InlineField kind="text" label="Classifier model" value={classifier.model ?? ""} empty="the engine's default" changed={changed(s, ["classifier", "model"])} readOnly={s.readOnly} onCommit={(v) => stageClassifier("model", v)} />
-                </Group>
+              <Group gap="lg" wrap="wrap" align="flex-start">
+                <ClassifierFields
+                  engine={typeof classifier.engine === "string" ? classifier.engine : ""}
+                  model={typeof classifier.model === "string" ? classifier.model : ""}
+                  list={classifiers ?? { engines: null, error: null }}
+                  engineChanged={changed(s, ["classifier", "engine"])}
+                  modelChanged={changed(s, ["classifier", "model"])}
+                  readOnly={s.readOnly}
+                  onEngine={(engine, model) => stageClassifier({ engine, model })}
+                  onModel={(model) => stageClassifier({ model })}
+                />
                 <Group gap={6} wrap="nowrap">
                   <Text size="xs" c="dimmed">Confidence at least</Text>
-                  <InlineField kind="number" label="Classifier minimum confidence" value={classifier.min_confidence ?? null} min={0} max={1} step={0.05} decimalScale={2} allowEmpty empty="any" changed={changed(s, ["classifier", "min_confidence"])} readOnly={s.readOnly} onCommit={(v) => stageClassifier("min_confidence", v)} />
+                  <InlineField kind="number" label="Classifier minimum confidence" value={classifier.min_confidence ?? null} min={0} max={1} step={0.05} decimalScale={2} allowEmpty empty="any" changed={changed(s, ["classifier", "min_confidence"])} readOnly={s.readOnly} onCommit={(v) => stageClassifier({ min_confidence: v })} />
                 </Group>
               </Group>
               <Reasons reasons={s.reasons("classifier")} />
