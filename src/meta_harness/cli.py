@@ -322,6 +322,68 @@ def goal_get(goal_id: str) -> None:
     click.echo(json.dumps(_task_call(_goals().get, goal_id), indent=2))
 
 
+def _plan_lines(shown: dict) -> list[str]:
+    """A goal's plan as the lines `mh goal plan` prints: heading, summary, tasks in run order, the issues it
+    splits or leaves out, its gaps, and why it cannot be approved."""
+    from meta_harness.planner import plans
+
+    plan = shown.get("plan")
+    if not plan:
+        return [f"{shown['goal_id']} has no plan"]
+    state = f"approved {shown['approved_at']}" if shown.get("approved_at") else "awaiting approval"
+    lines = [f"{shown['goal_id']}  plan v{plan['version']}  {shown['status']}  {state}"]
+    if shown.get("planning_task_id"):
+        lines.append(f"planning task {shown['planning_task_id']} is still drafting")
+    lines += ["", "Summary:", f"  {plan.get('summary') or '(none)'}"]
+
+    issues = {i["ref"]: i for i in plan.get("issues") or []}
+    items = plan.get("items") or []
+    tasks = [{**d, "kind": "new"} for d in plan.get("drafts") or []]
+    tasks += [
+        {
+            "draft_id": item["ref"],
+            "repo": issues.get(item["ref"], {}).get("repo", ""),
+            "title": issues.get(item["ref"], {}).get("title", ""),
+            "depends_on": item.get("depends_on") or [],
+            "kind": "keep",
+        }
+        for item in items
+        if item.get("decision") == plans.KEEP
+    ]
+    lines += ["", "Tasks, in run order:"]
+    for n, task in enumerate(plans.ordered(tasks), 1):
+        waits = ", ".join(task["depends_on"]) or "nothing"
+        lines.append(
+            f"  {n}. {task['draft_id']}  [{task['kind']}]  {task['repo'] or '-'}  {task['title'] or '(no title)'}"
+            f"  (waits on {waits})"
+        )
+    if not tasks:
+        lines.append("  (none)")
+
+    dropped = [item for item in items if item.get("decision") != plans.KEEP]
+    if dropped:
+        lines += ["", "Split or left out:"]
+        for item in dropped:
+            line = f"  {item['ref']}  {item['decision']}: {item.get('reason') or '(no reason)'}"
+            if item["decision"] == plans.SPLIT:
+                line += f" (replaced by {', '.join(item.get('replaced_by') or []) or 'nothing'})"
+            lines.append(line)
+
+    gaps = plan.get("gaps") or []
+    lines += ["", "Gaps:"] + ([f"  - {gap}" for gap in gaps] or ["  none"])
+    if invalid := plan.get("invalid") or []:
+        lines += ["", "Cannot be approved:"] + [f"  - {reason}" for reason in invalid]
+    return lines
+
+
+@goal.command("plan")
+@click.argument("goal_id")
+def goal_plan(goal_id: str) -> None:
+    """A goal's current plan: its summary, its tasks in run order, and its gaps."""
+    for line in _plan_lines(_task_call(_goals().plan, goal_id)):
+        click.echo(line)
+
+
 @goal.command("pause")
 @click.argument("goal_id")
 def goal_pause(goal_id: str) -> None:
