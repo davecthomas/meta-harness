@@ -91,7 +91,7 @@ function ImportDialog({ names, onClose, onAdd }: { names: string[]; onClose: () 
                 <Text size="sm" fw={500}>The skill's folder</Text>
                 {/* webkitdirectory picks a whole folder; React passes it through as an attribute. */}
                 <input type="file" aria-label="The skill's folder" {...({ webkitdirectory: "", directory: "" } as object)} multiple onChange={(e) => void pick(e.currentTarget.files)} />
-                <Text size="sm" c="dimmed">{files ? `${Object.keys(files).length} files` : "The folder that holds its SKILL.md."}</Text>
+                <Text size={files ? "xs" : "sm"} c="dimmed">{files ? `${Object.keys(files).length} files` : "The folder that holds its SKILL.md."}</Text>
               </Stack>
             )}
             {error && <Alert color="red" role="alert">{error}</Alert>}
