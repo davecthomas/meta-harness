@@ -43,6 +43,10 @@ DEFAULTS = {
 }
 # What resolves a need, so the page can offer it as a button: each need an update names comes with one.
 ACTIONS = ("approve_plan", "accept_fix", "merge", "review", "open_task", "raise_budget", "open_issue")
+# The actions a task's or an issue's own state decides, whatever the model wrote: a review no fix settled is
+# settled on the spot (merge as is, try another fix), a failed task is retried, and an issue held for its size
+# is split or run as one.
+STATE_ACTIONS = ("settle_review", "retry", "split_or_run")
 # How many of a goal's issues an update is told of, each in a line.
 MAX_ISSUES = 60
 COLUMNS = "goal_id, number, digest, headline, body, needs_you, next, model, usd_cost, created_at"
@@ -146,6 +150,12 @@ def _when(value: Any) -> datetime:
     return value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
 
 
+def _split_already(link: dict) -> bool:
+    """An issue the plan or the operator already split waits for its parts: nothing is left to choose."""
+    reason = str(link.get("held_reason") or "")
+    return bool(link.get("split_into")) or reason.startswith(("split into", "the plan split it"))
+
+
 def actionable(
     needs: list[dict], goal: dict, links: list[dict], tasks: list[dict], suggestion: dict | None = None
 ) -> list[dict]:
@@ -162,8 +172,17 @@ def actionable(
         task = by_id.get((link or {}).get("task_id") or "")
         wanted = need.get("action") if need.get("action") in ACTIONS else ""
         pr = (task or {}).get("pr_url") or ""
+        status = (task or {}).get("status")
         if wanted == "accept_fix" and suggestion:
             action = "accept_fix"
+        elif task and pr and status == "review_unresolved":
+            action = "settle_review"
+        elif task and pr and status == "ready":
+            action = "merge"
+        elif task and status == "failed":
+            action = "retry"
+        elif not task and link and link.get("held_reason") and not _split_already(link):
+            action = "split_or_run"
         elif wanted == "approve_plan" and planning:
             action = "approve_plan"
         elif wanted == "merge" and task and pr and task.get("status") in ("ready", "review_unresolved"):
