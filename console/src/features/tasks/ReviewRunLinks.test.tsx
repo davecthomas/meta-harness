@@ -82,6 +82,10 @@ test("a link naming a tab scrolls the tab's content into view; picking a tab doe
     fireEvent.click(screen.getByText("Terminal"));
     await screen.findByRole("log");
     expect(scroll).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText(/^Reviews/));
+    const card = await screen.findByTestId("review-1");
+    fireEvent.click(within(card).getByRole("link", { name: "Show review run" }));
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(2));
   } finally {
     scroll.mockRestore();
   }
