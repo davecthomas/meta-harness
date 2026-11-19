@@ -6,12 +6,17 @@ import { afterEach, expect, test, vi } from "vitest";
 import { GoalPage } from "./GoalPage";
 import { GoalsPage } from "./GoalsPage";
 import { theme } from "../../theme";
+import { setTrackers } from "../trackers/refs";
+import type { Trackers } from "../trackers/api";
 
 function respond(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  setTrackers(null);
+});
 
 const SAVED = {
   id: "g-1",
@@ -285,4 +290,41 @@ test("the board refreshes by itself: a card with no task shows its issue's title
   } finally {
     vi.useRealTimers();
   }
+});
+
+// The goal page over a goal on `tracker` (none when null) whose issue states were read at a known time.
+function renderChecked(tracker: string | null) {
+  const issue = {
+    ref: "jira:VL-1", title: "An issue", repo: "VL", state: "open", depends_on: [], refused_reason: null,
+    task_id: null, task_status: null, task_status_reason: null, pr_url: null, pr_state: null, checks: null,
+  };
+  const body = { ...goal("active"), issues: [issue], ...(tracker ? { tracker } : {}), states_checked_at: "2026-11-18T07:41:00Z", states_complete: true };
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url.startsWith("/v1/tasks")) return respond({ tasks: [], total: 0 });
+    if (url.endsWith("/issues")) return respond({ issues: [], states_checked_at: body.states_checked_at, states_complete: true });
+    return respond(body);
+  });
+  renderAt("/goals/g-1", <GoalPage />);
+}
+
+test("the states-checked line names a Jira goal's tracker, not GitHub", async () => {
+  setTrackers({
+    default: "github",
+    trackers: [
+      { scheme: "github", title: "GitHub" },
+      { scheme: "jira", title: "Jira" },
+    ],
+  } as unknown as Trackers);
+  renderChecked("jira");
+
+  const line = await screen.findByTestId("states-checked");
+  expect(line.textContent).toContain("issue states read from Jira");
+  expect(line.textContent).not.toContain("GitHub");
+});
+
+test("the states-checked line says GitHub for a goal with no tracker", async () => {
+  renderChecked(null);
+
+  const line = await screen.findByTestId("states-checked");
+  expect(line.textContent).toContain("issue states read from GitHub");
 });
