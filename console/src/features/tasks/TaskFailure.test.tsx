@@ -35,6 +35,15 @@ test("a failed task says why at the top, names each run that did not finish, and
   expect(screen.getByRole("link", { name: /Warnings and errors/ }).getAttribute("href")).toBe("/admin/logs?q=t-1&minutes=1440");
 });
 
+test("the remedy line is not both extra small and dimmed", () => {
+  show("failed");
+  const line = screen.getByText("What to do:").parentElement as HTMLElement;
+  const style = line.getAttribute("style") ?? "";
+  const xs = line.getAttribute("data-size") === "xs" || style.includes("font-size-xs");
+  const dimmed = line.getAttribute("data-c") === "dimmed" || style.includes("dimmed");
+  expect(xs && dimmed).toBe(false);
+});
+
 test("an unresolved task is marked too, and a task in any other status shows nothing", () => {
   const { unmount } = show("review_unresolved");
   expect(screen.getByRole("alert").textContent).toContain("The review loop ended without a clean review");
