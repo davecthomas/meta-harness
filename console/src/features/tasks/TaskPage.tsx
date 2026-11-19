@@ -37,6 +37,8 @@ const FIRST = 400;
 const TABS = ["timeline", "terminal", "changes", "checks", "reviews", "attempts", "spend"] as const;
 export type Tab = (typeof TABS)[number];
 
+const DETAILS_KEY = "mh.task.details";
+
 // The Checks tab's name, with how the checks stand once they are known.
 function checksLabel(checks: PullChecks | null): string {
   if (!checks || !checks.total) return "Checks";
@@ -210,6 +212,25 @@ export function TaskPage() {
   const newestStep = useMemo(() => steps(events).at(-1), [events]);
   const { checks, error: checksError } = useChecks(taskId, !!task?.pr_url && (tab === "checks" || waitsForChecks(newestStep)), events.length);
 
+  // Whether the task's facts are unfolded: closed unless this browser last left them open.
+  const [detailsOpen, setDetailsOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(DETAILS_KEY) === "open";
+    } catch {
+      return false;
+    }
+  });
+  const toggleDetails = () => {
+    setDetailsOpen((open) => {
+      try {
+        window.localStorage.setItem(DETAILS_KEY, open ? "closed" : "open");
+      } catch {
+        // Without storage the choice lasts for this page only.
+      }
+      return !open;
+    });
+  };
+
   if (!task) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const status = facts.status ?? task.status;
   // As every list shows it: a working task with a pull request open is in review.
@@ -259,23 +280,46 @@ export function TaskPage() {
       <BudgetHold task={{ ...task, status }} onAnswered={setTask} />
       <WaitingToStart task={{ ...task, status }} onChanged={() => void api.task(taskId).then(setTask, () => undefined)} />
       <TaskFailure task={task} status={status} events={events} onChanged={() => void api.task(taskId).then(setTask, () => undefined)} />
-      <Facts
-        items={[
-          ["Status", (
-            <Text size="sm">
-              {statusLabel(shown)}{task.status_reason && `: ${moneyText(task.status_reason)}`}
-              {task.cancel_requested && status === "running" && " (cancel requested)"}
-            </Text>
-          )],
-          ...(task.standing && status !== "closed" ? [["Who has it", <Standing standing={task.standing} />] as [string, React.ReactNode]] : []),
-          ["Repo", <Code>{task.repo}</Code>],
-          ["Issue", <IssueLink issueRef={task.external_ref} />],
-          ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
-          ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
-          ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
-          ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
-        ]}
-      />
+      {/* The task's facts, folded away: the timeline below is what the page is for. The fold's own line keeps
+          the way back to the goal. Whoever opens it finds it open on the next task too. */}
+      <Paper withBorder p="sm" mb="md" data-testid="task-details">
+        <Group justify="space-between" wrap="nowrap" gap="md">
+          <Text size="sm" lineClamp={1} data-testid="task-details-summary">
+            {task.goal_id ? (
+              <>
+                <Text span c="dimmed">Goal: </Text>
+                <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>
+              </>
+            ) : (
+              <Text span c="dimmed">A task with no goal</Text>
+            )}
+          </Text>
+          <Button size="compact-sm" variant="subtle" onClick={toggleDetails} aria-expanded={detailsOpen} aria-controls="task-details-body">
+            {detailsOpen ? "Hide details" : "Show details"}
+          </Button>
+        </Group>
+        {detailsOpen && (
+          <div id="task-details-body" style={{ marginTop: 12 }}>
+        <Facts
+          items={[
+            ["Status", (
+              <Text size="sm">
+                {statusLabel(shown)}{task.status_reason && `: ${moneyText(task.status_reason)}`}
+                {task.cancel_requested && status === "running" && " (cancel requested)"}
+              </Text>
+            )],
+            ...(task.standing && status !== "closed" ? [["Who has it", <Standing standing={task.standing} />] as [string, React.ReactNode]] : []),
+            ["Repo", <Code>{task.repo}</Code>],
+            ["Issue", <IssueLink issueRef={task.external_ref} />],
+            ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
+            ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
+            ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
+            ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
+          ]}
+        />
+          </div>
+        )}
+      </Paper>
       {status === "running" && <SteerBox taskId={task.id} />}
       {["queued", "blocked"].includes(status) && (
         <RunAttempts taskId={task.id} attempts={task.attempts ?? 1} onSet={() => void api.task(task.id).then(setTask)} />
