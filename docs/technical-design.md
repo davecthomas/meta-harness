@@ -2161,6 +2161,7 @@ credential.
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. A tier candidate's model select offers them | built |
+| GET | `/v1/config/images` | Configuration, in the planner process | The harness images the deployment builds, which a harness profile's image is picked from: each directory under `images/` with a Dockerfile, under the name the deployment tags it with (the default image, `HARNESS_IMAGE`, for the directory its repository is named after; `<directory>:<the default's tag>` for any other), and `default`, the image a profile with no image runs. 422 says why when the directory cannot be read (`config/images.py`) | built |
 | GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles`, `repos` or `task_policy`; `modalities` and `access` are planned | built |
 | GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history | built |
 | PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused. A `repos` version that drops a repo an open goal names is refused, naming the goal | built |
@@ -3326,7 +3327,9 @@ change stay read-only.
   change), description, thinking and candidates (added, removed and
   reordered), the classifier, the default tier and what happens when a tier
   is used up. Harness profiles: each profile's tools, max turns, max minutes,
-  vCPU and memory, Bash allowlist and image, and a profile is added or
+  vCPU and memory, Bash allowlist and image (picked from the images the
+  deployment builds, `GET /v1/config/images`; empty is the default image),
+  and a profile is added or
   removed from the table. Repo registry: each repo's tracker and default
   acceptance checks. Task policy: max parallel (with the VM's ceiling), fix
   rounds and the reviewer pairs, each a harness profile and a model picked
