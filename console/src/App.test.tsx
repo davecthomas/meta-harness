@@ -155,3 +155,24 @@ test("an address that is no page's says so and offers the ways on", async () => 
   expect(missing.textContent).toContain("Nothing is at /goalz");
   expect(within(missing).getByRole("link", { name: "Goals" }).getAttribute("href")).toBe("/goals");
 });
+
+test("the left menu hides for more room on the page, by its button or the shortcut, and stays hidden next time", async () => {
+  window.localStorage.removeItem("mh:menu-hidden");
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/me") return respond({ identity: "operator@example.com" });
+    if (url.startsWith("/v1/goals")) return respond({ goals: [], total: 0 });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  const first = renderAt("/goals");
+
+  fireEvent.click(await screen.findByRole("button", { name: "Hide the menu" }));
+  expect(screen.getByRole("button", { name: "Show the menu" })).toBeTruthy();
+  expect(window.localStorage.getItem("mh:menu-hidden")).toBe("1");
+  first.unmount();
+
+  renderAt("/goals");
+  expect(await screen.findByRole("button", { name: "Show the menu" })).toBeTruthy();
+  fireEvent.keyDown(document.documentElement, { key: "\\", code: "Backslash", ctrlKey: true });
+  expect(await screen.findByRole("button", { name: "Hide the menu" })).toBeTruthy();
+  expect(window.localStorage.getItem("mh:menu-hidden")).toBe("0");
+});
