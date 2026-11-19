@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert, Anchor, Button, Collapse, Group, List, Paper, Stack, Text, ThemeIcon, Timeline } from "@mantine/core";
 import { IconCompass, IconRefresh } from "@tabler/icons-react";
 import { api } from "../../api";
-import { issueUrl, refLabel } from "../trackers/refs";
+import { isOwn, issueUrl, refLabel } from "../trackers/refs";
 import { when } from "../../components/ui";
 
 // One update the planner wrote for the goal: where it stands, what changed, what needs the operator and what
@@ -46,7 +46,8 @@ function NeedsYou({ needs }: { needs: PlannerUpdate["needs_you"] }) {
           return (
             <List.Item key={i}>
               {need.what}
-              {need.ref && (
+              {/* A task kept in the meta-harness has no page of its own to link: its name is in the sentence. */}
+              {need.ref && !isOwn(need.ref) && (
                 <>
                   {" "}
                   {url ? <Anchor href={url} target="_blank" rel="noreferrer" size="sm">{refLabel(need.ref)}</Anchor> : <Text span size="sm" c="dimmed">{refLabel(need.ref)}</Text>}
@@ -125,7 +126,7 @@ export function PlannerUpdates({ goalId, open }: { goalId: string; open: boolean
           </Stack>
         </Group>
         {open && (
-          <Button size="xs" variant="subtle" leftSection={<IconRefresh size={14} />} loading={asking} onClick={() => void ask()}>
+          <Button size="xs" variant="subtle" style={{ flexShrink: 0 }} leftSection={<IconRefresh size={14} />} loading={asking} onClick={() => void ask()}>
             Ask for an update
           </Button>
         )}

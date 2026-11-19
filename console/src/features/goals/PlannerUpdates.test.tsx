@@ -51,6 +51,8 @@ test("the latest update leads with its headline, what needs the operator and wha
   expect(needs.querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/issues/12");
   expect(screen.getByText("The UI task starts when the API merges.")).toBeTruthy();
 
+  expect(screen.getByRole("button", { name: "Ask for an update" }).style.flexShrink).toBe("0");
+
   // The ones before it are a click away.
   fireEvent.click(screen.getByRole("button", { name: "1 earlier update" }));
   expect(await screen.findByText("The plan is ready for you.")).toBeTruthy();
@@ -80,6 +82,14 @@ test("an update that could not be written says why and what to do, and keeps the
 test("nothing is shown with updates off, or on a closed goal that never had one", async () => {
   show([{ updates: [LATEST], enabled: false, error: null }]);
   await waitFor(() => expect(screen.queryByTestId("planner-updates")).toBeNull());
+});
+
+test("a need about a task kept in the meta-harness shows no ref beside it", async () => {
+  show([{ updates: [{ ...LATEST, needs_you: [{ what: "Merge pull request #382.", ref: "mh:i-abdbf8c1cc27" }] }], enabled: true, error: null }]);
+
+  const needs = await screen.findByTestId("planner-needs-you");
+  expect(needs.textContent).toContain("Merge pull request #382.");
+  expect(needs.textContent).not.toContain("Kept here");
 });
 
 test("a closed goal keeps its last update and offers no new one", async () => {
