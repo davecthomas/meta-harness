@@ -29,6 +29,7 @@ import { ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusB
 import { statusLabel } from "../../components/status";
 import { shownStatus } from "./shownStatus";
 import { moneyText } from "../../money";
+import { NoSuchRecord, isNotFound } from "../../components/NoSuchRecord";
 import { errorText, ReadFailed } from "../../components/ReadFailed";
 import { ConfirmButton } from "../../components/ConfirmButton";
 
@@ -86,6 +87,7 @@ export function TaskPage() {
   const [facts, setFacts] = useState<TileFacts>(EMPTY);
   const [from, setFrom] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
   // The task's review rounds, for the Reviews tab, read once the task has a pull request.
   // The tab is in the URL (?tab=), so a link can name it and Back returns to the one before. A link to one run
   // (?run=) with no tab opens the Terminal on that run, which is what "Sent to fix run 3" means to show.
@@ -124,6 +126,7 @@ export function TaskPage() {
     setEvents([]);
     setFacts(EMPTY);
     setFrom(null);
+    setMissing(false);
     exhausted.current = false;
     (async () => {
       try {
@@ -142,13 +145,15 @@ export function TaskPage() {
         // timeline (or a ?run= link to an older run) would otherwise show no prompt for those runs.
         // The terminal gets them too, so an older run's Terminal opens on its prompt.
         // Every step of the task's path too, however old, so the picture of it is whole.
-        api.taskEvents([taskId], [...new Set(["run_prompt", ...STEP_EVENTS])]).then((prompts) => {
+        // turn_started too, so the header counts every turn and run, not only those on the loaded pages.
+        api.taskEvents([taskId], [...new Set(["run_prompt", "turn_started", ...STEP_EVENTS])]).then((prompts) => {
           if (stale) return;
           setEvents((current) => merge(current, prompts));
           // The terminal takes only the prompts: older steps reach it in order, as it scrolls up.
           setLines((current) => merge(current, prompts.filter((e) => e.event_type === "run_prompt").map(withRun).filter((l): l is Line => l !== null)));
         }, () => undefined);
       } catch (err) {
+        if (isNotFound(err)) setMissing(true);
         setError(err instanceof Error ? err.message : String(err));
       }
     })();
@@ -231,6 +236,7 @@ export function TaskPage() {
     });
   };
 
+  if (!task && missing) return <NoSuchRecord kind="task" id={taskId} />;
   if (!task) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const status = facts.status ?? task.status;
   // As every list shows it: a working task with a pull request open is in review.
@@ -314,7 +320,7 @@ export function TaskPage() {
             ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
             ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
             ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
-            ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
+            ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} model={facts.model} /></Stack>],
           ]}
         />
           </div>
