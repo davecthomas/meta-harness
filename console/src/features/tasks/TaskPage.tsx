@@ -314,7 +314,7 @@ export function TaskPage() {
             ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
             ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
             ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
-            ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} />{facts.model && <Code>{facts.model}</Code>}</Stack>],
+            ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} model={facts.model} /></Stack>],
           ]}
         />
           </div>
