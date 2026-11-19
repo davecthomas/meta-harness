@@ -256,3 +256,132 @@ def test_an_approved_drafts_body_goes_through_the_writing_pass_before_it_becomes
         ("issue", "api", 0, goal["id"]),
     ]
     assert checked[0]["changes"] == [{"before": sloppy, "after": plain}]
+
+
+# --- A goal that uses no issue tracker ------------------------------------------------------------------
+
+
+class GitHubIssues(WritingTracker):
+    scheme = "github"
+    writes_progress = False
+
+    def bound(self, source):
+        return self
+
+    def repo_of(self, ref: str) -> str:
+        from meta_harness.trackers.github import parse_ref
+
+        return parse_ref(ref)[0]
+
+
+@pytest.fixture
+def untracked(monkeypatch):
+    """A planner with GitHub set up as the default tracker, and the meta-harness's own tracker beside it."""
+    from meta_harness.trackers import OwnTracker, Trackers
+    from meta_harness.trackers import registry as tracker_registry
+
+    document = {"default": "github", "trackers": {"github": {}}}
+    monkeypatch.setattr(tracker_registry, "document", lambda: document)
+    events, github, tasks = Events(), GitHubIssues(), FakeTasks()
+    app = create_app(
+        events,
+        Trackers([github, OwnTracker()]),
+        tasks,
+        operator_keys={"op-key": "dave"},
+        service_keys={},
+        sweep_seconds=0,
+        titler=_no_title,
+    )
+    with TestClient(app) as client:
+        yield client, events, github, tasks, document
+
+
+def test_a_goal_with_no_tracker_is_planned_and_its_tasks_are_kept_in_the_meta_harness_alone(untracked):
+    client, events, github, tasks, _ = untracked
+    goal = _feature(client, tracker="mh")
+    assert (goal["tracker"], goal["status"]) == ("mh", "planning")
+    _planned(client, events, tasks, goal, [draft("api", ("store",)), draft("store")])
+
+    approved = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+
+    assert approved.status_code == 200, approved.text
+    created = approved.json()["plan"]["created"]
+    assert all(ref.startswith("mh:i-") for ref in created.values())
+    assert github.created == [] and github.labels == [], "nothing is written to any outside tracker"
+    swept = client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).json()
+    by_ref = {
+        t["external_ref"]: t
+        for t in tasks.tasks.values()
+        if t.get("goal_id") == goal["id"] and t["task_type"] != "plan"
+    }
+    assert set(by_ref) == set(created.values()), swept
+    # The plan's order holds: the API waits on the store.
+    store_task, api_task = by_ref[created["store"]], by_ref[created["api"]]
+    assert (store_task["status"], api_task["status"]) == ("queued", "blocked")
+    assert api_task["depends_on"] == [created["store"]] and store_task["acceptance_checks"] == ["make test"]
+
+    # Each task's merge closes its issue here, since no tracker would, and the goal is met when all have.
+    for task in (store_task, api_task):
+        task.update(status="closed", pr_url="https://github.com/davecthomas/meta-harness/pull/9")
+        client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    after = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+    assert {i["state"] for i in after["issues"]} == {"closed"} and after["status"] == "met"
+
+
+def test_a_goal_with_no_tracker_plans_from_its_description_and_takes_no_outside_issue(untracked):
+    client, _, github, _, _ = untracked
+    refused = client.post(
+        "/v1/goals", json={"statement": "Fix bugs", "repos": [REPO], "tracker": "mh", "label": "bug"}, headers=OPERATOR
+    )
+    assert refused.status_code == 422
+    assert "a goal that uses no issue tracker has no issues to take in" in refused.json()["detail"]
+    assert "plan it from the description" in refused.json()["detail"]
+
+    theirs = github.add(REPO, 1_000_000 + uuid.uuid4().int % 10**12)
+    outside = client.post(
+        "/v1/goals",
+        json={"statement": "Add exports", "repos": [REPO], "modality": "feature", "tracker": "mh", "refs": [theirs]},
+        headers=OPERATOR,
+    )
+    assert outside.status_code == 422 and "is not a mh issue" in outside.json()["detail"]
+
+
+def test_with_no_tracker_set_up_a_new_goal_uses_none(untracked):
+    client, _, _, _, document = untracked
+    document.update(trackers={}, default=None)
+
+    listed = client.get("/v1/trackers", headers=OPERATOR).json()
+    goal = _feature(client)
+
+    assert listed["default"] == "mh" and [t["scheme"] for t in listed["trackers"] if t["configured"]] == ["mh"]
+    assert goal["tracker"] == "mh"
+
+
+def test_a_tracked_goal_may_hold_a_task_kept_in_the_meta_harness_beside_its_trackers_issues(untracked):
+    import asyncio
+
+    from meta_harness.trackers import OwnTracker
+
+    client, _, github, tasks, _ = untracked
+    label = f"mh:{uuid.uuid4().hex[:8]}"
+    theirs = github.add(
+        REPO, 1_000_000 + uuid.uuid4().int % 10**12, labels=[label], body="## Acceptance checks\n\n- make test"
+    )
+    kept = asyncio.run(
+        OwnTracker().create_issue(REPO, "Kept here", "Do it.\n\n## Acceptance checks\n\n- make test\n", [])
+    )
+    goal = client.post(
+        "/v1/goals",
+        json={"statement": "Fix bugs", "repos": [REPO], "label": label, "refs": [kept.ref]},
+        headers=OPERATOR,
+    ).json()
+    assert goal["tracker"] == "github"
+
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+
+    refs = {t["external_ref"]: t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]}
+    assert set(refs) == {theirs, kept.ref}
+    refs[kept.ref].update(status="closed", pr_url="https://github.com/davecthomas/meta-harness/pull/9")
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    states = {i["ref"]: i["state"] for i in client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["issues"]}
+    assert states == {theirs: "open", kept.ref: "closed"}

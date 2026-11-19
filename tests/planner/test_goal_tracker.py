@@ -226,7 +226,10 @@ def test_the_trackers_are_listed_as_their_adapters_describe_them_and_issue_lists
 
     assert listed["default"] == "jira"
     by = {t["scheme"]: t for t in listed["trackers"]}
-    assert list(by) == ["github", "jira"]
+    assert list(by) == ["github", "jira", "mh"]
+    # The meta-harness's own tracker is the choice of no tracker: always there, with nothing to set up.
+    assert (by["mh"]["built_in"], by["mh"]["configured"], by["mh"]["settings"]) == (True, True, [])
+    assert by["mh"]["title"] == "None: no issue tracking" and not by["github"]["built_in"]
     assert by["github"]["configured"] and by["github"]["signed_in"] and not by["github"]["writes_progress"]
     assert [s["name"] for s in by["jira"]["settings"]] == ["site", "projects", "default_project"]
     assert by["jira"]["configured"] and not by["jira"]["signed_in"]

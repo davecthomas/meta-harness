@@ -229,8 +229,15 @@ def test_the_registry_is_each_adapters_own_description_and_checks_a_configuratio
         None
     )
     assert registry.check({"default": "jira", "trackers": {"github": {}}}, None) == [
-        "default must be one of the trackers set up (github), not 'jira'"
+        "default must be one of the trackers set up (github), or mh for goals that use no tracker, not 'jira'"
     ]
+    # No tracker need be set up: every goal then keeps its tasks in the meta-harness.
+    assert registry.check({"trackers": {}}, None) == [] == registry.check({"default": "mh", "trackers": {}}, None)
+    assert registry.check({"default": "mh", "trackers": {"github": {}}}, None) == []
+    [unset] = registry.check({"default": "jira", "trackers": {}}, None)
+    assert unset == "default names 'jira', which is not set up: set it up, or leave default out"
+    assert registry.check({"default": "github"}, None)[0].startswith("trackers must be an object")
+    assert registry.spec("mh") is registry.OWN and registry.spec("jira") is jira and registry.spec("linear") is None
     bad = {
         "default": "jira",
         "trackers": {"linear": {}, "jira": {"site": "http://example.atlassian.net", "statuses": {"shipped": "Done"}}},

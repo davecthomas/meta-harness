@@ -233,6 +233,9 @@ def issue_body(draft: dict[str, Any], created: dict[str, str]) -> str:
         if dep in created and created[dep].startswith("github:"):
             repo, _, number = created[dep].removeprefix("github:").partition("#")
             names.append(f"#{number}" if repo.lower() == draft["repo"].lower() else f"{repo}#{number}")
+        elif dep in created and created[dep].startswith("mh:"):
+            # A task kept in the meta-harness is named by its whole ref, which is all it has.
+            names.append(created[dep])
         elif dep in created:
             # Another tracker's issue is named by its key: jira:PROJ-12 as PROJ-12.
             names.append(created[dep].partition(":")[2])

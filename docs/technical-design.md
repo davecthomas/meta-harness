@@ -2613,6 +2613,20 @@ how an issue's task is going (`writes_progress`: Jira yes; GitHub no, since a
 pull request's `Closes` line links and closes its issue). A new tracker is
 one module and one line in the registry.
 
+**The meta-harness's own tracker** (`trackers/own.py`, scheme `mh`) keeps
+issues in the meta-harness and in no outside system: rows of
+`planner.own_issue`, with refs `mh:<id>`. It is an adapter like the others, so
+the sweep, sizing, dependencies, the board and the met check read its issues as
+they read any. It is always there, has nothing to set up, and is not part of
+the `trackers` configuration. It is what a goal that uses no tracker uses: its
+work is planned from its description, every task of its plan is an issue
+there, and its pull requests are the only record outside the meta-harness. The
+planner tells it how each task goes, and a task's merge closes its issue, since
+nothing else would. A goal on another tracker may also hold such issues: its
+tracker is then `WithOwn` (`trackers/router.py`), which sends each call that
+names an issue to the tracker its ref names. The `trackers` configuration may
+set up no tracker at all, and every goal then uses none.
+
 **Which trackers are set up, and the default**, is the `trackers`
 configuration, versioned and checked like the other kinds
 (`config/trackers.json` ships GitHub alone; `config/trackers.local.json`,

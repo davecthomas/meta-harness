@@ -199,6 +199,10 @@ async def sweep_goal(
     result.replied = await tracker_replies.write(goal, tracker, result.errors)
     # Before the goal is looked at for being met: for a tracker that is told, done is what closes an issue.
     result.told = await tracker_progress.write(goal, goal_tracker(tracker, goal), tasks, result.errors)
+    if result.told:
+        # Telling a tracker done is what closed those issues, so their closing is recorded now, not a sweep
+        # later: a goal whose last task just merged is met in this sweep.
+        await _record_closed(goal, seen - set(result.told), tracker, events, result)
     if not result.errors:
         await _complete_if_met(goal, tracker, tasks, events, result)
     try:
