@@ -147,7 +147,7 @@ function NeedsYou({ needs, planning, goalId, onDone }: { needs: Need[]; planning
             <Stack gap={2} style={{ flex: "1 1 240px" }}>
               <Text size="sm">{need.what}</Text>
               {need.action === "accept_fix" && (need.changes ?? []).length > 0 && (
-                <Text size="xs" c="dimmed">{(need.changes ?? []).join(" · ")}</Text>
+                <Text size="sm" c="dimmed">{(need.changes ?? []).join(" · ")}</Text>
               )}
             </Stack>
             <NeedAction need={need} planning={planning} goalId={goalId} onDone={onDone} />

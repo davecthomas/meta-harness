@@ -156,13 +156,13 @@ export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<str
         <Progress value={(100 * done) / props.issues.length} color="teal" />
       </Stack>
       <Stack gap={2} w={220}>
-        <Text size="xs" c="dimmed">
+        <Text size="sm" c="dimmed">
           ${spent.toFixed(2)} spent{budget ? ` of $${budget.toFixed(2)}` : ""}{words && `: ${words}`}
           {projected !== null && done < props.issues.length && ` · about $${projected.toFixed(2)} to finish`}
           {props.onSpend && spent > 0 && (
             <>
               {" · "}
-              <Anchor component="button" type="button" size="xs" onClick={props.onSpend}>where it went</Anchor>
+              <Anchor component="button" type="button" size="sm" onClick={props.onSpend}>where it went</Anchor>
             </>
           )}
         </Text>

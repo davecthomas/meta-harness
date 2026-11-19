@@ -357,11 +357,13 @@ export function InlineField(props: InlineFieldProps) {
           minRows={2}
           value={draft ?? ""}
           placeholder={props.placeholder}
+          // The description is tied to the textarea (aria-describedby); help, so at the body's size, not xs.
+          description={SAVE_HINT_MULTILINE}
           onChange={(e) => setDraft(e.currentTarget.value)}
           onKeyDown={(e) => keys(e, () => void commit(draft), true)}
           onBlur={() => void commit(draft)}
           rightSection={section}
-          styles={{ input: { fontFamily: ff } }}
+          styles={{ input: { fontFamily: ff }, description: { fontSize: "var(--mantine-font-size-sm)" } }}
         />
       );
     } else if (props.kind === "number") {
@@ -447,7 +449,6 @@ export function InlineField(props: InlineFieldProps) {
     return (
       <Stack gap={2}>
         {input}
-        {props.kind === "textarea" && !shownReasons.length && <SaveHint multiline />}
         {reasonsBlock}
       </Stack>
     );
@@ -492,8 +493,10 @@ export function InlineField(props: InlineFieldProps) {
 }
 
 // How an open field saves and cancels: help, so it reads at the body's size and never small and dimmed at once.
+const SAVE_HINT_MULTILINE = "Ctrl+Enter or ⌘+Enter saves, Escape cancels.";
+
 function SaveHint({ multiline }: { multiline?: boolean }) {
-  return <Text size="sm" c="dimmed">{multiline ? "Ctrl+Enter or ⌘+Enter saves" : "Enter saves"}, Escape cancels.</Text>;
+  return <Text size="sm" c="dimmed">{multiline ? SAVE_HINT_MULTILINE : "Enter saves, Escape cancels."}</Text>;
 }
 
 function Empty({ children }: { children?: ReactNode }) {

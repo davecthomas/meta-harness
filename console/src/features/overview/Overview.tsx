@@ -101,7 +101,7 @@ function NeedsYouRow({ item, onActed }: { item: NeedsYouItem; onActed: () => voi
           <Group gap="md">
             {task && <IssueLink issueRef={task.external_ref} />}
             {task?.pr_url && <PrLink url={task.pr_url} />}
-            {goal && budgetWords(goal) && <Text size="xs" c="dimmed">Spent ${spentOf(goal).toFixed(2)} of ${Number(goal.max_usd).toFixed(2)}: {budgetWords(goal)}</Text>}
+            {goal && budgetWords(goal) && <Text size="sm" c="dimmed">Spent ${spentOf(goal).toFixed(2)} of ${Number(goal.max_usd).toFixed(2)}: {budgetWords(goal)}</Text>}
             {item.since && <Text size="xs" c="dimmed">Waiting on you since {when(item.since)}</Text>}
           </Group>
         </Stack>

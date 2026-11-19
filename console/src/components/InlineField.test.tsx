@@ -193,7 +193,18 @@ test("an open field's help, how it saves and cancels, is not drawn at xs and dim
 
   renderField({ kind: "textarea", label: "Notes", initial: "old", onCommit: vi.fn() });
   fireEvent.click(screen.getByRole("button", { name: "Edit Notes" }));
-  expect(smallAndDimmed(screen.getByText("Ctrl+Enter or ⌘+Enter saves, Escape cancels."))).toBe(false);
+  const hint = screen.getByText("Ctrl+Enter or ⌘+Enter saves, Escape cancels.");
+  expect(hint.getAttribute("style")).toContain("font-size: var(--mantine-font-size-sm)");
+  expect(smallAndDimmed(hint)).toBe(false);
+});
+
+test("a textarea's save and cancel keys stay its accessible description", () => {
+  renderField({ kind: "textarea", label: "Notes", initial: "old", onCommit: vi.fn() });
+  fireEvent.click(screen.getByRole("button", { name: "Edit Notes" }));
+  const box = screen.getByRole("textbox", { name: "Notes" });
+  const hint = screen.getByText("Ctrl+Enter or ⌘+Enter saves, Escape cancels.");
+  expect(hint.id).not.toBe("");
+  expect(box.getAttribute("aria-describedby")?.split(" ")).toContain(hint.id);
 });
 
 test("a custom value in a page heading opens on a click and takes no button of its own", () => {
