@@ -183,3 +183,17 @@ test("the time a task waits for the code host's checks counts as waiting, and is
   const opened = Date.parse(going.at(-1)!.start);
   expect(totals(going, opened + 90_000).checks).toBe(90_000);
 });
+
+test("a hold and a cancel that repeat with the same reason show once, counted", () => {
+  const again: MhEvent[] = [];
+  for (let i = 0; i < 5; i++) {
+    again.push(ev("task_held", { reason: "goal g-1 is canceled" }, 240, { actor: "service" }));
+    again.push(ev("task_status_changed", { from: "queued", to: "canceled", reason: "its goal was canceled" }, 1, { actor: "service" }));
+    if (i < 4) again.push(ev("task_status_changed", { from: "canceled", to: "queued" }, 1));
+  }
+  const path = steps([ev("task_created", { status: "queued" }), ...again]);
+  const held = path.filter((s) => s.title === "Held by the scheduler");
+  expect(held).toHaveLength(1);
+  expect(held[0].times).toBe(5);
+  expect(path.filter((s) => s.title === "Canceled")).toHaveLength(1);
+});
