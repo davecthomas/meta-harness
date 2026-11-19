@@ -4,7 +4,7 @@ import { IconCheck, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/i
 import { Link } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanDraft, type PlanItem } from "../../api";
 import { OWN, trackerTitle } from "../trackers/refs";
-import { IssueDecisions, OrderOfWork, PlannerSays, planSentence, tasksOf } from "./PlanReview";
+import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { ErrorAlert, SectionTitle, when } from "../../components/ui";
 
@@ -263,7 +263,6 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
             </Text>
             {plan.task_id && <Anchor component={Link} to={`/tasks/${plan.task_id}`} size="sm">The planning task's run</Anchor>}
           </Group>
-          <PlannerSays summary={plan.summary ?? ""} gaps={plan.gaps ?? []} />
           {dirty && (
             <Alert color="yellow" title="Edits not saved yet">
               <Group gap="sm">
@@ -413,7 +412,6 @@ export function ApprovedPlan({ goal, onPlanAgain }: { goal: Goal; onPlanAgain?: 
   const kept = plan.tracked === false || (goal.tracker ?? "github") === OWN;
   return (
     <Stack gap="sm" mb="md" data-testid="approved-plan">
-      <PlannerSays summary={plan.summary ?? ""} gaps={plan.gaps ?? []} />
       <Group gap="sm">
         <Text size="sm" c="dimmed">
           Plan version {plan.version}, approved {when(shown.approved_at)}. {planSentence(drafts, items).replace("Approving this plan", "It")}

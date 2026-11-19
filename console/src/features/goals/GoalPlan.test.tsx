@@ -138,13 +138,12 @@ const OVER_ISSUES = () =>
   planned({ drafts: [draft("store"), draft("api", ["store"])], items: DECIDED, issues: ISSUES, summary: "Store first, then the API, then the crash.", gaps: ["Nothing covers export."] });
 const JIRA_GOAL = { ...GOAL, tracker: "jira" } as Goal;
 
-test("the plan leads with what the planner says, then the order across issues and new tasks, then each decision", async () => {
+test("the plan shows the order across issues and new tasks, then each decision; the planner speaks only in its panel", async () => {
   show(OVER_ISSUES(), JIRA_GOAL);
 
-  const says = await screen.findByTestId("planner-says");
-  expect(says.textContent).toContain("Store first, then the API, then the crash.");
-  expect(says.textContent).toContain("One thing to know before you approve");
-  expect(says.textContent).toContain("Nothing covers export.");
+  await screen.findByTestId("plan-order");
+  // What the planner says of the plan is in its updates at the head of the page, not repeated here.
+  expect(screen.queryByText("Store first, then the API, then the crash.")).toBeNull();
   // The kept issue waits on a new task: one order of work for both kinds, and only what runs is in it.
   const order = screen.getByTestId("plan-order").textContent ?? "";
   expect(order).toContain("3 tasks. 1 can start at once");
@@ -231,7 +230,6 @@ test("an approved plan stays readable on the goal's page: what the planner said,
   );
 
   const section = await screen.findByTestId("approved-plan");
-  expect(within(section).getByTestId("planner-says").textContent).toContain("Store first, then the API, then the crash.");
   expect(section.textContent).toContain("Plan version 1, approved");
   expect(section.textContent).toContain("It runs 1 issue of the goal's as it is, replaces 1 issue with new tasks, leaves 1 issue out and adds 2 new tasks.");
   expect(section.textContent).toContain("The new tasks are kept in the meta-harness only.");
