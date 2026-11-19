@@ -124,6 +124,22 @@ test("the task page's Terminal merges an older prompt in position order, each pr
   expect([...log.children].map((c) => c.textContent).at(-1)).toContain("turn 1");
 });
 
+test("an ended task's header counts the turns and runs the whole-task read brings in", async () => {
+  const newest = EVENTS.slice(4);
+  vi.stubGlobal("EventSource", class { static CLOSED = 2; addEventListener() {} close() {} });
+  vi.stubGlobal("fetch", (url: string) => {
+    const body = url === "/v1/tasks/t" ? { ...TASK, status: "closed" }
+      : url.includes("event_type=run_prompt") ? { events: EVENTS.filter((e) => ["run_prompt", "turn_started"].includes(e.event_type)), next_position: 99 }
+      : url.startsWith("/v1/events") ? { events: newest, latest_position: newest.at(-1)!.position }
+      : { base: "", ticket: null };
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+  renderTaskPage("/tasks/t");
+  fireEvent.click(await screen.findByText("Show details"));
+  // The first page holds one turn of one run; the older run's turn arrives through the whole-task read.
+  await waitFor(() => expect(screen.getByTestId("task-turns").textContent).toBe("2 turns in 2 runs"));
+});
+
 async function openTerminal(status: string) {
   serveNewestOnly(status);
   renderTaskPage("/tasks/t");
