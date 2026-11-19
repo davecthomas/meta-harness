@@ -196,7 +196,7 @@ export function TasksPage() {
                     />
                   </Table.Td>
                 )}
-                <Table.Td maw={420}><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} /></Table.Td>
+                <Table.Td maw={420}><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} name={t.name} /></Table.Td>
                 <Table.Td>
                   <Group gap={4} wrap="nowrap">
                     <StatusBadge status={shownStatus(t)} />

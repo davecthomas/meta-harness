@@ -2949,6 +2949,21 @@ planning configuration's `suggest_fixes` turns them off. The sorting call is a
 `plan_fixes_assessed` event, counted as planning cost; accepting and dismissing
 are `plan_fix_accepted` and `plan_fix_dismissed`.
 
+**Task names** (`planner/naming.py`). A task's id says nothing to a person and
+its title is a sentence, so each task has a short name: two to four words, at
+most 28 characters ("Hint text contrast"), kept in `tasks.task.name`. A task is
+created without one. Each planner pass reads the tasks with no name
+(`GET /v1/tasks/unnamed`: those of the last 30 days, never a review, fix or
+smoke task) and names them a goal at a time, one small model call for up to 25
+of a goal's tasks, told the names the goal already has. It saves each with
+`POST /v1/tasks/{id}/name`, which numbers a name another task of the goal has
+("Hint text contrast 2"), so a name says which task within its goal. The
+console calls a task by its name wherever it showed the id, with the title
+beside it or on hover and the id behind a copy button; a task not yet named is
+called by its title. A call that fails is logged and its tasks are tried again
+after ten minutes. Each call is a `task_names_written` event, counted as
+planning cost.
+
 **Every goal is planned.** With the planning configuration's `goals` set to
 `all` (as shipped; `from_description` plans only a goal that plans its issues
 from its description, as before), a goal that takes existing issues is planned

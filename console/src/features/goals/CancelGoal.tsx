@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { Anchor, Button, Group, Modal, Stack, Text } from "@mantine/core";
+import { TaskName } from "../../components/TaskName";
+import { Button, Group, Modal, Stack, Text } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
 import type { Task } from "../../api";
 
@@ -52,7 +52,7 @@ export function CancelGoal({ tasks, onCancel }: { tasks: Pick<Task, "id" | "stat
               </Text>
               <Group gap="xs">
                 {effect.left.map((id) => (
-                  <Anchor key={id} component={Link} to={`/tasks/${id}`} ff="monospace" size="sm">{id}</Anchor>
+                  <TaskName key={id} id={id} />
                 ))}
               </Group>
             </Stack>

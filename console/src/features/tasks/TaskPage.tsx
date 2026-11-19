@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CopyId, taskName } from "../../components/TaskName";
 import { Link } from "react-router-dom";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, SegmentedControl, Stack, Text } from "@mantine/core";
@@ -271,8 +272,13 @@ export function TaskPage() {
   return (
     <>
       <PageHeader
-        title={task.title}
-        description={<Group gap="xs"><StatusBadge status={shown} /><Text size="sm" c="dimmed" ff="monospace">{task.id}</Text></Group>}
+        title={taskName(task)}
+        description={
+          <Stack gap={6}>
+            {task.name && <Text size="sm">{task.title}</Text>}
+            <Group gap={6}><StatusBadge status={shown} /><CopyId id={task.id} /></Group>
+          </Stack>
+        }
         actions={
           <>
             {cancellable && (

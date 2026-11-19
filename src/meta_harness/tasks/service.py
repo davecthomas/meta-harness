@@ -98,6 +98,10 @@ class StatusIn(BaseModel):
     waiting_on: str | None = None
 
 
+class NameIn(BaseModel):
+    name: str = Field(max_length=200)
+
+
 class FindingIn(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
     path: str | None = Field(default=None, max_length=500)
@@ -304,6 +308,13 @@ def create_app(
                 task["standing"] = standings.get(task["id"])
                 task["budget_request"] = requested(task)
             return {"tasks": tasks, "total": total, "offset": offset, "limit": limit}
+
+    @app.get("/v1/tasks/unnamed")
+    def unnamed(limit: int = Query(60, ge=1, le=200), who: Caller = Depends(service_only)) -> dict:
+        """The newest tasks with no short name yet, for the planner to name, and the names their goals have."""
+        with app.state.pool.connection() as conn:
+            found, taken = store.unnamed(conn, limit)
+        return {"tasks": found, "taken": taken}
 
     @app.get("/v1/tasks/{task_id}")
     def read(task_id: str, who: Caller = Depends(caller)) -> dict:
@@ -628,6 +639,17 @@ def create_app(
             actor=who.actor,
         )
         return task
+
+    @app.post("/v1/tasks/{task_id}/name")
+    def set_name(task_id: str, body: NameIn, who: Caller = Depends(service_only)) -> dict:
+        """Give a task its short name: the planner's, once it has written one."""
+        try:
+            with app.state.pool.connection() as conn:
+                return store.set_name(conn, task_id, body.name)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such task") from err
+        except store.TaskError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
 
     @app.post("/v1/tasks/{task_id}/status")
     def set_status(task_id: str, body: StatusIn, who: Caller = Depends(service_only)) -> dict:

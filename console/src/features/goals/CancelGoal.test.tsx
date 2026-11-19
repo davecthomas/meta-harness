@@ -22,8 +22,16 @@ test("canceling a goal cancels unstarted tasks, stops running ones, and leaves t
   });
 });
 
+afterEach(() => vi.unstubAllGlobals());
+
 test("Cancel goal asks first, says what happens to the tasks, and links those it leaves", async () => {
   const onCancel = vi.fn(() => Promise.resolve());
+  // Each task left is linked by its name, read from the Task API.
+  const names: Record<string, string> = { "t-published": "Profile image picker", "t-ready": "Hint text contrast" };
+  vi.stubGlobal("fetch", (url: string) => {
+    const id = String(url).split("/").pop()!;
+    return Promise.resolve(new Response(JSON.stringify({ id, title: "A long title", name: names[id] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
   render(
     <MantineProvider theme={theme}>
       <MemoryRouter>
@@ -38,8 +46,8 @@ test("Cancel goal asks first, says what happens to the tasks, and links those it
   expect(onCancel).not.toHaveBeenCalled();
   expect(dialog.textContent).toContain("2 tasks that have not started are canceled, and 1 running task is stopped");
   expect(dialog.textContent).toContain("2 tasks have a pull request open and are left as they are");
-  expect(screen.getByRole("link", { name: "t-published" }).getAttribute("href")).toBe("/tasks/t-published");
-  expect(screen.getByRole("link", { name: "t-ready" }).getAttribute("href")).toBe("/tasks/t-ready");
+  expect((await screen.findByRole("link", { name: "Profile image picker" })).getAttribute("href")).toBe("/tasks/t-published");
+  expect(screen.getByRole("link", { name: "Hint text contrast" }).getAttribute("href")).toBe("/tasks/t-ready");
 
   fireEvent.click(screen.getAllByRole("button", { name: "Cancel goal" }).at(-1)!);
   await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));

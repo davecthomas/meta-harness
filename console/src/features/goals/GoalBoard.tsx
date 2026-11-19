@@ -85,7 +85,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
       style={{ cursor: to ? "pointer" : "default" }}
     >
       <Stack gap={4}>
-        <Text size="sm" fw={500} lineClamp={2}>{task?.title ?? issue.title ?? shortRef(issue.ref)}</Text>
+        <Text size="sm" fw={500} lineClamp={2} title={task?.title ?? issue.title ?? undefined}>{task?.name || task?.title || issue.title || shortRef(issue.ref)}</Text>
         <Group gap={6} onClick={(e) => e.stopPropagation()}>
           {url ? <Anchor href={url} target="_blank" size="xs" ff="monospace">{shortRef(issue.ref)}</Anchor> : <Text size="xs" ff="monospace">{issue.ref}</Text>}
         </Group>
@@ -300,7 +300,7 @@ export function GoalGraph(props: { issues: IssueProgress[]; tasks: Record<string
             const p = at.get(i.ref)!;
             const task = i.task_id ? props.tasks[i.task_id] : undefined;
             const where = column.get(i.ref)!;
-            const title = task?.title ?? i.title ?? shortRef(i.ref);
+            const title = task?.name || task?.title || i.title || shortRef(i.ref);
             return (
               <g key={i.ref} transform={`translate(${p.x},${p.y})`} style={{ cursor: i.task_id ? "pointer" : "default" }}
                 onClick={() => i.task_id && navigate(`/tasks/${i.task_id}`)} data-testid={`node-${i.ref}`} data-column={where}>

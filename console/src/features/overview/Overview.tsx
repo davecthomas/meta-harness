@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { TaskName } from "../../components/TaskName";
 import { Link } from "react-router-dom";
-import { Anchor, Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Text } from "@mantine/core";
+import { Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Text } from "@mantine/core";
 import { api, type MhEvent } from "../../api";
 import { PullRequestsRow } from "./PullRequestsRow";
 import { ReviewsInProgress } from "../tasks/reviewing";
@@ -161,7 +162,7 @@ export function TodaySpend() {
             <Text size="xs" c="dimmed">Most expensive today</Text>
             {top.map(([id, usd]) => (
               <Group key={id} gap="xs">
-                <Anchor component={Link} to={`/tasks/${id}`} ff="monospace" size="xs">{id}</Anchor>
+                <TaskName id={id} size="xs" />
                 <Text size="xs">${usd.toFixed(2)}</Text>
               </Group>
             ))}

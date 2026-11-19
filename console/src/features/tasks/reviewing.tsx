@@ -92,7 +92,7 @@ export function ReviewsInProgress() {
         {reviews.map(({ review, task }) => (
           <Group key={review.run_id} justify="space-between" wrap="wrap" gap="sm">
             <Group gap="sm" wrap="wrap">
-              <TitleLink to={`/tasks/${task.id}`} title={task.title} id={task.id} />
+              <TitleLink to={`/tasks/${task.id}`} title={task.title} id={task.id} name={task.name} />
               {task.pr_url && <PrLink url={task.pr_url} />}
               <Text size="xs" c="dimmed">review started {ago(review.since)}</Text>
             </Group>
