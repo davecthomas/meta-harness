@@ -128,8 +128,8 @@ function fold(path: Step[]): Step[] {
       tail.forEach((s, i) => {
         const t = prev[i];
         t.first = t.first ?? t.start;
-        t.before = (t.before ?? 0) + (t.end ? Date.parse(t.end) : Date.now()) - Date.parse(t.start);
-        t.times = (t.times ?? 1) + 1;
+        t.before = (t.before ?? 0) + (s.before ?? 0) + (t.end ? Date.parse(t.end) : Date.now()) - Date.parse(t.start);
+        t.times = (t.times ?? 1) + (s.times ?? 1);
         t.start = s.start;
         t.end = s.end;
         t.now = s.now;
