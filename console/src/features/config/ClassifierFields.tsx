@@ -39,9 +39,42 @@ function routesWithoutClassifier(engine: string): boolean {
   return engine.trim().toLowerCase() === NO_CLASSIFIER;
 }
 
+// A model field that takes no name: refused is why a typed one is refused, unused why a saved one is marked.
+function NoModel(props: {
+  model: string;
+  empty: string;
+  refused: string;
+  unused: string;
+  changed?: boolean;
+  readOnly?: boolean;
+  onModel: (model: string) => void;
+}) {
+  return (
+    <div>
+      <InlineField
+        kind="text"
+        label="Classifier model"
+        value={props.model}
+        empty={props.empty}
+        changed={props.changed}
+        readOnly={props.readOnly}
+        onCommit={(v) => {
+          if (v.trim()) return props.refused;
+          props.onModel("");
+        }}
+      />
+      {props.model ? (
+        <Text size="xs" c="orange" data-testid="classifier-model-unknown">{props.unused}</Text>
+      ) : null}
+    </div>
+  );
+}
+
 // The router classifier's engine and model, each picked from the library's list: the models are the chosen
-// engine's. An empty engine is the library's default, and an empty model the engine's default; so is a model
-// with no engine, or of an engine that lists none, which is typed. A change of engine drops a model the new
+// engine's. An empty engine is the library's default, and an empty model the engine's default. The library's
+// default engine is decided by the worker's settings, so its models cannot be listed: while the list is read,
+// a model needs an engine picked first, and a saved model with no engine is marked. When the list cannot be
+// read, a model is typed. The model of an engine that lists none is typed. A change of engine drops a model the new
 // engine does not offer, so the classifier never names a pair that cannot run. Engine none routes without a
 // classifier: choosing it drops the model, its model field refuses any name, and a saved one is marked.
 export function ClassifierFields(props: {
@@ -56,7 +89,8 @@ export function ClassifierFields(props: {
 }) {
   const { engines, error } = props.list;
   const chosen = engines?.find((e) => e.engine.toLowerCase() === props.engine.trim().toLowerCase());
-  // No engine, or one the list lacks: no list to pick its model from, so it is typed.
+  const noEngine = !props.engine.trim();
+  // An engine the list lacks: no list to pick its model from, so it is typed.
   const models = engines === null ? null : chosen?.models ?? [];
   const pickEngine = (engine: string) => {
     if (routesWithoutClassifier(engine)) return props.onEngine(engine, "");
@@ -86,23 +120,25 @@ export function ClassifierFields(props: {
         <Group gap={6} wrap="nowrap" align="flex-start">
           <Text size="xs" c="dimmed" mt={4}>Model</Text>
           {routesWithoutClassifier(props.engine) ? (
-            <div>
-              <InlineField
-                kind="text"
-                label="Classifier model"
-                value={props.model}
-                empty="none, as no classifier runs"
-                changed={props.modelChanged}
-                readOnly={props.readOnly}
-                onCommit={(v) => {
-                  if (v.trim()) return `Engine ${props.engine.trim()} routes without a classifier, so it takes no model: leave it empty`;
-                  props.onModel("");
-                }}
-              />
-              {props.model ? (
-                <Text size="xs" c="orange" data-testid="classifier-model-unknown">Engine {props.engine.trim()} takes no model, so {props.model} is not used</Text>
-              ) : null}
-            </div>
+            <NoModel
+              model={props.model}
+              empty="none, as no classifier runs"
+              refused={`Engine ${props.engine.trim()} routes without a classifier, so it takes no model: leave it empty`}
+              unused={`Engine ${props.engine.trim()} takes no model, so ${props.model} is not used`}
+              changed={props.modelChanged}
+              readOnly={props.readOnly}
+              onModel={props.onModel}
+            />
+          ) : noEngine && engines !== null ? (
+            <NoModel
+              model={props.model}
+              empty="the engine's default"
+              refused="Pick a classifier engine first, so the model can be checked against its list, or leave it empty for the engine's default"
+              unused={`No classifier engine is picked, so ${props.model} cannot be checked: pick the engine that offers it`}
+              changed={props.modelChanged}
+              readOnly={props.readOnly}
+              onModel={props.onModel}
+            />
           ) : (
             <PickedName
               label="Classifier model"

@@ -95,6 +95,19 @@ test("a name the list lacks is refused, and a saved one it lacks is marked", asy
   expect(staged).toEqual([]);
 });
 
+test("with the engine left at the library's default, a typed model is refused and a saved one is marked", async () => {
+  const staged = show({ model: "gpt-6-lnua" }, { engines: ENGINES, error: null });
+  expect(screen.getByTestId("classifier-model-unknown").textContent).toBe(
+    "No classifier engine is picked, so gpt-6-lnua cannot be checked: pick the engine that offers it",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit Classifier model" }));
+  const model = screen.getByRole("textbox", { name: "Classifier model" });
+  fireEvent.change(model, { target: { value: "gpt-6-luna" } });
+  fireEvent.keyDown(model, { key: "Enter" });
+  expect(await screen.findByText(/Pick a classifier engine first/)).toBeTruthy();
+  expect(staged).toEqual([]);
+});
+
 test("an engine that lists no models takes a typed model", async () => {
   const staged = show({ engine: "openai-compatible" }, { engines: ENGINES, error: null });
   const model = open("Classifier model");
