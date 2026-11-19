@@ -317,14 +317,19 @@ export function rows(path: Step[]): Row[] {
   return out;
 }
 
+const WAITS: StepKind[] = ["wait", "parked", "checks", "merge_checks"];
+
 // The whole path in numbers: how long, how much of that was waiting, what it cost, and how often it looped.
-export function totals(path: Step[], now = Date.now()): { elapsed: number; waited: number; usd: number; runs: number; rounds: number } {
+// waited is every stretch in which no run of the task was working: queued, held, parked for an operator, and
+// waiting for the code host's checks, which is usually most of it. checks is that last part alone.
+export function totals(path: Step[], now = Date.now()): { elapsed: number; waited: number; checks: number; usd: number; runs: number; rounds: number } {
   const first = path[0];
   const last = path.at(-1);
   const until = last ? (last.now && !last.end ? now : Date.parse(last.end ?? last.start)) : now;
   return {
     elapsed: first ? until - Date.parse(first.start) : 0,
-    waited: path.filter((s) => s.kind === "wait" || s.kind === "parked").reduce((sum, s) => sum + took(s, now), 0),
+    waited: path.filter((s) => WAITS.includes(s.kind)).reduce((sum, s) => sum + took(s, now), 0),
+    checks: path.filter((s) => s.kind === "checks" || s.kind === "merge_checks").reduce((sum, s) => sum + took(s, now), 0),
     usd: path.reduce((sum, s) => sum + (s.usd ?? 0), 0),
     runs: path.filter((s) => s.runId).length,
     rounds: Math.max(0, ...path.map((s) => s.round ?? 0)),

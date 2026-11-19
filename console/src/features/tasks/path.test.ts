@@ -158,3 +158,28 @@ test("a task waiting for the code host's checks says so, after its pull request 
   const closed = [...merged, ev("task_status_changed", { from: "running", to: "closed", reason: "merged" }, 300)];
   expect(steps(closed).at(-1)!.kind).toBe("end");
 });
+
+test("the time a task waits for the code host's checks counts as waiting, and is said apart", () => {
+  const path = steps([
+    ev("task_created", { status: "queued" }),
+    ev("task_admitted", {}, 5),
+    ...run(1, "task", "standard", 60, "0.05"),
+    ev("pull_request_opened", { pr_url: "https://github.com/o/r/pull/9", files: ["a"] }, 4),
+    ev("pull_request_checks", { state: "passed", failed: [] }, 300),
+    ...run(2, "review", "review", 30, "0.1"),
+    ev("pull_request_reviewed", { round: 1, verdict: "clean", findings: 0 }, 1),
+    ev("pull_request_merged", { pr_url: "https://github.com/o/r/pull/9", merge_sha: "58e544902fca" }, 5),
+    ev("merge_checks", { state: "passed", failed: [] }, 420),
+    ev("task_status_changed", { from: "running", to: "closed", reason: "merged" }, 1),
+  ]);
+  const sum = totals(path);
+  expect(sum.checks).toBe((300 + 420) * 1000);
+  // Queued for 5 seconds, then the two waits for checks.
+  expect(sum.waited).toBe((5 + 300 + 420) * 1000);
+  expect(sum.waited).toBeLessThan(sum.elapsed);
+
+  // A wait for checks still going counts up to now.
+  const going = steps([ev("task_created", { status: "queued" }), ev("task_admitted", {}, 5), ...run(3, "task", "standard", 60, "0.05"), ev("pull_request_opened", { pr_url: "https://github.com/o/r/pull/9" }, 4)]);
+  const opened = Date.parse(going.at(-1)!.start);
+  expect(totals(going, opened + 90_000).checks).toBe(90_000);
+});

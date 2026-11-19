@@ -167,7 +167,7 @@ export function TaskPath(props: { events: MhEvent[]; checks?: PullChecks | null;
       {/* The time from start is the page's pulse: large, and counted by the second while the task goes on. */}
       <Text size="sm" c="dimmed" mb="sm" data-testid="path-totals">
         <Text span fz={28} fw={700} lh={1.1} ff="monospace" c={path.at(-1)!.now ? "blue" : "var(--mantine-color-text)"} mr={4} data-testid="path-elapsed">{span(sum.elapsed)}</Text>{" "}
-        from start to {path.at(-1)!.now ? "now" : "end"}, {span(sum.waited)} of it waiting
+        from start to {path.at(-1)!.now ? "now" : "end"}, {span(sum.waited)} of it waiting{sum.checks ? ` (${span(sum.checks)} for checks)` : ""}
         {" · "}{sum.runs} run{sum.runs === 1 ? "" : "s"}{sum.rounds ? ` · ${sum.rounds} review round${sum.rounds === 1 ? "" : "s"}` : ""} · {usd(props.usd ?? sum.usd)}
       </Text>
       <div style={{ overflowX: "auto", paddingBottom: 8 }}>
