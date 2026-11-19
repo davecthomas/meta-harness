@@ -29,6 +29,7 @@ import { ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusB
 import { statusLabel } from "../../components/status";
 import { shownStatus } from "./shownStatus";
 import { moneyText } from "../../money";
+import { NoSuchRecord, isNotFound } from "../../components/NoSuchRecord";
 import { errorText, ReadFailed } from "../../components/ReadFailed";
 import { ConfirmButton } from "../../components/ConfirmButton";
 
@@ -86,6 +87,7 @@ export function TaskPage() {
   const [facts, setFacts] = useState<TileFacts>(EMPTY);
   const [from, setFrom] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
   // The task's review rounds, for the Reviews tab, read once the task has a pull request.
   // The tab is in the URL (?tab=), so a link can name it and Back returns to the one before. A link to one run
   // (?run=) with no tab opens the Terminal on that run, which is what "Sent to fix run 3" means to show.
@@ -124,6 +126,7 @@ export function TaskPage() {
     setEvents([]);
     setFacts(EMPTY);
     setFrom(null);
+    setMissing(false);
     exhausted.current = false;
     (async () => {
       try {
@@ -149,6 +152,7 @@ export function TaskPage() {
           setLines((current) => merge(current, prompts.filter((e) => e.event_type === "run_prompt").map(withRun).filter((l): l is Line => l !== null)));
         }, () => undefined);
       } catch (err) {
+        if (isNotFound(err)) setMissing(true);
         setError(err instanceof Error ? err.message : String(err));
       }
     })();
@@ -231,6 +235,7 @@ export function TaskPage() {
     });
   };
 
+  if (!task && missing) return <NoSuchRecord kind="task" id={taskId} />;
   if (!task) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const status = facts.status ?? task.status;
   // As every list shows it: a working task with a pull request open is in review.
