@@ -260,3 +260,21 @@ def test_the_update_settings_are_checked_and_fall_back_to_goal_draftings_model(m
         updates.settings()["model"] == f"{drafter['engine']}:{drafter['model']}"
         and updates.settings()["enabled"] is True
     )
+
+
+def test_the_facts_say_where_each_task_stands_and_whether_it_waits_on_the_operator():
+    link = {"state": "open", "held_reason": None, "refused_reason": None}
+    reviewing = updates.stage(link, {"status": "running", "pr_url": "https://github.com/o/r/pull/9"}, False)
+
+    assert "its own review" in reviewing and reviewing.endswith("Nothing is needed from the operator yet")
+    assert updates.stage(link, {"status": "running"}, False).startswith("an agent is writing the change")
+    assert updates.stage(link, {"status": "ready"}, False).endswith("It waits on the operator to merge it")
+    assert updates.stage(link, {"status": "ready"}, True).endswith("Nothing is needed from the operator")
+    assert (
+        updates.stage(link, {"status": "running", "waiting_on": "an answer"}, False)
+        == "waits on the operator: an answer"
+    )
+    assert updates.stage({**link, "held_reason": "large"}, None, False).endswith("It waits on the operator")
+    assert updates.stage(link, None, False).startswith("not started yet")
+    assert updates.stage({**link, "state": "closed"}, {"status": "closed"}, False) == "done: its issue is closed"
+    assert "never for something a fact says needs nothing from them" in updates.SYSTEM_PROMPT
