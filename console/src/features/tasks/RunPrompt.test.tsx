@@ -169,16 +169,19 @@ test("a running task's Terminal still shows the stream badge", async () => {
   expect(screen.getByText("connecting")).toBeTruthy();
 });
 
-test("the terminal shows the prompt as one collapsed line that expands to the full text", () => {
+test("the terminal shows each run's prompt expanded, and collapses it to one line", () => {
+  window.localStorage.clear();
   const lines = EVENTS.map(describe).filter((l): l is Line => l !== null);
   render(<Terminal lines={lines} />);
   const summary = screen.getByText("10:00:00 prompt (repo-task-v1)");
   const details = summary.closest("details")!;
-  expect(details.open).toBe(false);
+  expect(details.open).toBe(true);
   expect(details.querySelector("pre")!.textContent).toBe(PROMPT);
   fireEvent.click(summary);
-  expect(details.open).toBe(true);
-  expect(screen.getByText("10:00:00 prompt (review-v1)")).toBeTruthy();
+  expect(details.open).toBe(false);
+  // The review run's prompt is its own, and stays expanded.
+  expect(screen.getByText("10:00:00 prompt (review-v1)").closest("details")!.open).toBe(true);
+  window.localStorage.clear();
 });
 
 test("the task's facts are folded behind a line that links its goal, and stay open once opened", async () => {
