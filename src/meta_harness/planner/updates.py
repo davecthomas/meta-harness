@@ -41,6 +41,8 @@ DEFAULTS = {
     "max_per_goal": 60,
     "min_seconds": 90,
 }
+# What resolves a need, so the page can offer it as a button: each need an update names comes with one.
+ACTIONS = ("approve_plan", "merge", "review", "open_task", "raise_budget", "open_issue")
 # How many of a goal's issues an update is told of, each in a line.
 MAX_ISSUES = 60
 COLUMNS = "goal_id, number, digest, headline, body, needs_you, next, model, usd_cost, created_at"
@@ -59,10 +61,18 @@ SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "what": {"type": "string", "description": "What to do, in one sentence."},
+                    "what": {"type": "string", "description": "What to do, in one short sentence."},
                     "ref": {"type": "string", "description": "The issue's ref it is about, exactly as given, or ''."},
+                    "action": {
+                        "type": "string",
+                        "enum": list(ACTIONS),
+                        "description": "What resolves it: approve_plan (a plan waits for approval), merge (a pull "
+                        "request passed review and waits to be merged), review (look at a pull request's changes), "
+                        "open_task (a task waits on an answer, failed, or needs a look), raise_budget (the goal "
+                        "reached its budget), open_issue (an issue is held or refused).",
+                    },
                 },
-                "required": ["what", "ref"],
+                "required": ["what", "ref", "action"],
                 "additionalProperties": False,
             },
         },
@@ -132,6 +142,48 @@ def goals() -> list[dict]:
 
 def _when(value: Any) -> datetime:
     return value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+
+
+def actionable(needs: list[dict], goal: dict, links: list[dict], tasks: list[dict]) -> list[dict]:
+    """Each need with what resolves it, checked against the goal's records: the action the page offers, and
+    the task it acts on. Every need gets one. An action the records do not support (a merge of a task with no
+    pull request ready, a plan approval on a goal not planning) becomes the nearest one they do, so the page
+    never offers a button that cannot work, and never a need with no way to act on it."""
+    by_ref = {link["ref"]: link for link in links}
+    by_id = {task["id"]: task for task in tasks}
+    planning = goal["status"] == "planning"
+    out = []
+    for need in needs:
+        link = by_ref.get(need.get("ref") or "")
+        task = by_id.get((link or {}).get("task_id") or "")
+        wanted = need.get("action") if need.get("action") in ACTIONS else ""
+        pr = (task or {}).get("pr_url") or ""
+        if wanted == "approve_plan" and planning:
+            action = "approve_plan"
+        elif wanted == "merge" and task and pr and task.get("status") in ("ready", "review_unresolved"):
+            action = "merge"
+        elif wanted in ("merge", "review") and task and pr:
+            action = "review"
+        elif wanted == "raise_budget":
+            action = "raise_budget"
+        elif task:
+            action = "open_task"
+        elif link:
+            action = "open_issue"
+        elif planning:
+            action = "approve_plan"
+        else:
+            action = "raise_budget" if goal["status"] == "budget_exhausted" else "open_issue"
+        out.append(
+            {
+                "what": need.get("what") or "",
+                "ref": (link or {}).get("ref") or "",
+                "action": action,
+                "task_id": (task or {}).get("id") or "",
+                "pr_url": pr,
+            }
+        )
+    return out
 
 
 def stage(link: dict, task: dict | None, auto_merge: bool) -> str:
@@ -284,7 +336,11 @@ async def write_update(
         headline=str(data.get("headline") or "").strip(),
         body=str(data.get("body") or "").strip(),
         needs_you=[
-            {"what": str(n.get("what") or "").strip(), "ref": str(n.get("ref") or "").strip()}
+            {
+                "what": str(n.get("what") or "").strip(),
+                "ref": str(n.get("ref") or "").strip(),
+                "action": str(n.get("action") or "").strip(),
+            }
             for n in data.get("needs_you") or []
         ],
         next=str(data.get("next") or "").strip(),
@@ -349,7 +405,8 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
             return store.links(conn, goal["id"]), plans.latest(conn, goal["id"])
 
     links, plan = await asyncio.to_thread(read)
-    found = facts(goal, links, await asyncio.to_thread(tasks.list, None, goal["id"], 500), plan)
+    tasks_of_goal = await asyncio.to_thread(tasks.list, None, goal["id"], 500)
+    found = facts(goal, links, tasks_of_goal, plan)
     state = digest(found)
     earlier = await asyncio.to_thread(latest, goal["id"], 1)
     before = earlier[0] if earlier else None
@@ -371,6 +428,7 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
     written = await (writer or write_update)(found, before)
     if not written.headline or not written.body:
         raise UpdateError("the model wrote an empty update")
+    written.needs_you = actionable(written.needs_you, goal, links, tasks_of_goal)
     saved = await asyncio.to_thread(_save, goal["id"], state, written)
     events.emit(
         "goal_update_written",

@@ -2909,6 +2909,16 @@ a plan waits for approval, says what it does and lists approving it and each
 gap worth weighing under "Needs you". A goal with a plan keeps its settings
 folded to one line, so the plan comes first.
 
+Every "Needs you" item comes with what resolves it. The update's model picks an
+action for each (`approve_plan`, `merge`, `review`, `open_task`,
+`raise_budget`, `open_issue`), and `updates.actionable` checks it against the
+goal's records before it is saved: a merge needs a task whose pull request
+passed review, an approval a goal that is planning, and an action the records
+do not support becomes the nearest one they do. The panel shows each as a
+button that resolves the need on the spot (approve the plan, merge after a
+confirm) or opens where it is resolved (the task, its changes, the goal's
+budget, the issue).
+
 **Every goal is planned.** With the planning configuration's `goals` set to
 `all` (as shipped; `from_description` plans only a goal that plans its issues
 from its description, as before), a goal that takes existing issues is planned
