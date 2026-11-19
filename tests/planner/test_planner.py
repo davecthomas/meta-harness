@@ -1351,7 +1351,9 @@ def test_a_tasks_checks_are_listed_with_how_they_stand_and_how_long_they_usually
     async def check_details(repo, ref):
         asked.append(ref)
         if ref == "HEAD":
-            return [check("tests", "completed", "success", 100), check("sandbox", "completed", "success", 240)]
+            # The default branch also deploys, which no pull request does.
+            usual = [check("tests", "completed", "success", 100), check("sandbox", "completed", "success", 240)]
+            return [*usual, check("deploy", "completed", "success", 460)]
         if ref == "m1":
             return [check("tests", "completed", "failure", 90)]
         return [

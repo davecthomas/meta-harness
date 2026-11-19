@@ -705,7 +705,7 @@ def create_app(
         """The code host's checks on the commit the task waits on, for an operator to watch: its pull request's
         head, or its merge commit once merged (`of`). Each check has its state, times and log, and `usual_seconds`,
         how long it took on the default branch's newest commit. `state` is how they stand together, and
-        `usual_seconds` how long the wait usually is: the slowest check's. 404 for a task with no pull request,
+        `usual_seconds` how long the wait usually is: the slowest of these checks'. 404 for a task with no pull request,
         502 when the code host cannot be read."""
         _, repo, number = await task_pull(task_id)
         try:
@@ -729,7 +729,8 @@ def create_app(
             "passed": len(done) - len(failed),
             "failed": failed,
             "total": len(checks),
-            "usual_seconds": max(usual.values(), default=None),
+            # Of the checks on this commit only: the default branch runs some a pull request does not (a deploy).
+            "usual_seconds": max((c["usual_seconds"] for c in checks if c["usual_seconds"] is not None), default=None),
             "checks": checks,
         }
 
