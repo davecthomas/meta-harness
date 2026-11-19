@@ -450,6 +450,23 @@ async def _take_in(
             await asyncio.to_thread(_hold, issue.ref, reason)
         result.held.append(issue.ref)
         return
+    # A planned goal runs what its plan covers. An issue that joins after the plan was approved (its label put
+    # on later, or assigned later) waits as a proposed addition, for an operator to add it or plan again. One the
+    # plan settled, one an operator picked by ref, and one run anyway have all been looked at.
+    covered = any((existing or {}).get(key) for key in ("planned_at", "picked", "run_anyway"))
+    if goal.get("planned") and goal.get("plan_approved_at") and not covered:
+        reason = (
+            "it joined the goal after its plan was approved, so the plan does not cover it: add it to the plan "
+            "as it is (Run anyway), or plan the goal again"
+        )
+        if not existing:
+            await asyncio.to_thread(
+                _save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, None, title, labels
+            )
+        if reason != (existing or {}).get("held_reason"):
+            await asyncio.to_thread(_hold, issue.ref, reason)
+        result.held.append(issue.ref)
+        return
     # An issue refused before is looked at again each sweep, so one given its acceptance checks since, or
     # whose repo was given default checks, becomes a task without anyone dropping and adding it.
     registered = repos.get(issue.repo)
@@ -459,7 +476,8 @@ async def _take_in(
         return
     size, sized = found
     was_held = (existing or {}).get("held_reason")
-    if not (existing or {}).get("run_anyway"):
+    # An issue its goal's approved plan took in is not held for its size or its gaps: the plan was the review.
+    if not (existing or {}).get("run_anyway") and not (existing or {}).get("planned_at"):
         held = sizing.hold_reason(size, sized, bool(goal.get("strict_issues")))
         if held:
             if held != was_held:
@@ -487,7 +505,9 @@ async def _take_in(
         return
     # The issue's own limit, else the task policy's for its size; neither: the task has none, as before sizing.
     max_usd = sizing.issue_limit(issue.body) or await asyncio.to_thread(config_store.max_usd_for_size, size)
-    open_deps = [ref for ref in issue.depends_on if await _is_open(ref, tracker)]
+    # What it waits on: what its own text names, and what its goal's plan says.
+    waits = list(dict.fromkeys([*issue.depends_on, *((existing or {}).get("plan_depends_on") or [])]))
+    open_deps = [ref for ref in waits if await _is_open(ref, tracker)]
     # The link was read before the sizer's call: an operator may have split or removed the issue since, or another
     # goal taken it. Look again under the row's lock, so the original makes no task beside its smaller issues and
     # keeps the reason its split recorded, and a removed issue or another goal's makes none for this goal.

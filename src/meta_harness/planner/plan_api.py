@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field
 from meta_harness import db
 from meta_harness.planner import planning, plans, store
 from meta_harness.planner.sweep import goal_tracker
+from meta_harness.trackers.base import TrackerError
+from meta_harness.trackers.own import SCHEME as OWN
 
 
 class DraftIn(BaseModel):
@@ -28,8 +30,24 @@ class DraftIn(BaseModel):
     depends_on: list[str] = []
 
 
+class ItemIn(BaseModel):
+    ref: str = Field(min_length=1, max_length=300)
+    decision: str = Field(min_length=1, max_length=20)
+    reason: str = Field(default="", max_length=2000)
+    depends_on: list[str] = []
+    replaced_by: list[str] = []
+
+
 class PlanIn(BaseModel):
     drafts: list[DraftIn] = Field(max_length=200)
+    # The decisions on the issues the goal already had. Left out: those of the version before stay.
+    items: list[ItemIn] | None = Field(default=None, max_length=500)
+
+
+class ApproveIn(BaseModel):
+    # Whether the plan's new tasks become issues in the goal's tracker (true), or are kept in the meta-harness
+    # alone. Left out: the tracker, as before. A goal with no tracker keeps them either way.
+    track: bool = True
 
 
 class ReplanIn(BaseModel):
@@ -44,8 +62,10 @@ def register(
     tracker: Any,
     tasks: Any,
     activate: Callable[[str, str], Any],
+    issues_of: Callable[[dict], Any],
 ) -> None:
-    """Adds the plan routes. activate(goal_id, who) makes a planning goal active and sweeps it."""
+    """Adds the plan routes. activate(goal_id, who) makes a planning goal active and sweeps it. issues_of(goal)
+    reads the issues the goal already has, for its planning task to plan over."""
 
     def planning_goal(goal_id: str) -> dict:
         goal = load(goal_id)
@@ -81,7 +101,8 @@ def register(
             raise HTTPException(
                 status_code=409, detail="the planning task is still drafting: wait for it, or cancel it"
             )
-        planning.edit(goal, [d.model_dump() for d in body.drafts], who, events)
+        items = [i.model_dump() for i in body.items] if body.items is not None else None
+        planning.edit(goal, [d.model_dump() for d in body.drafts], who, events, items)
         return shown(goal)
 
     @app.post("/v1/goals/{goal_id}/replan", status_code=202)
@@ -90,14 +111,16 @@ def register(
         if goal.get("plan_task_id"):
             raise HTTPException(status_code=409, detail="a planning task is already drafting this goal's plan")
         try:
-            await planning.start(goal, tasks, events, who, note=(body.note.strip() if body else "") or None)
-        except planning.PlanError as err:
+            note = (body.note.strip() if body else "") or None
+            await planning.start(goal, tasks, events, who, note=note, issues=await issues_of(goal))
+        except (planning.PlanError, TrackerError) as err:
             raise HTTPException(status_code=502, detail=str(err)) from err
         return await asyncio.to_thread(shown, load(goal_id))
 
     @app.post("/v1/goals/{goal_id}/approve")
-    async def approve(goal_id: str, who: str = Depends(operator)) -> dict:
+    async def approve(goal_id: str, body: ApproveIn | None = None, who: str = Depends(operator)) -> dict:
         goal = planning_goal(goal_id)
+        track = body.track if body else True
         if goal.get("plan_task_id"):
             raise HTTPException(status_code=409, detail="the planning task is still drafting: wait for its plan")
         if not goal["label"]:
@@ -108,10 +131,16 @@ def register(
 
             await asyncio.to_thread(label)
             goal = load(goal_id)
+        writer = goal_tracker(tracker, goal)
+        # Kept in the meta-harness: the new tasks go to its own tracker, which a tracked goal's tracker carries
+        # beside its own. A goal with no tracker has only that one.
+        kept = getattr(writer, "own", None)
+        # In the tracker when asked, or when the goal's tracker is the only one there is to write to.
+        tracked = getattr(writer, "scheme", "") != OWN and (track or kept is None)
         try:
-            await planning.approve(goal, goal_tracker(tracker, goal), events, who)
+            await planning.approve(goal, writer if tracked or kept is None else kept, events, who, tracked)
         except planning.PlanError as err:
-            code = 502 if "GitHub refused" in str(err) else 409
+            code = 502 if str(err).startswith(planning.REFUSED) else 409
             raise HTTPException(status_code=code, detail=str(err)) from err
 
         def approved() -> None:

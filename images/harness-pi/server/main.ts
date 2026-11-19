@@ -93,6 +93,10 @@ function summarize(event: RunEvent): string {
 			return `${d.path}`;
 		case "issue_drafted":
 			return `${d.draft_id} in ${d.repo}: ${d.title}`;
+		case "issue_planned":
+			return `${d.ref}: ${d.decision}`;
+		case "plan_summarized":
+			return `${(d.gaps as unknown[]).length} gaps`;
 		case "review_submitted":
 			return `verdict ${d.verdict}, ${(d.findings as unknown[]).length} findings`;
 		case "run_finished":

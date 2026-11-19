@@ -12,12 +12,19 @@
  * which the harness server reports in an `issue_drafted` event, and writes
  * nothing to the code host: the planner creates the issues once an operator
  * approves the plan. A second call with the same draft_id replaces the draft.
+ *
+ * `plan_issue` and `plan_summary` are the rest of a planning run's tools, and come with `create_issue`. The
+ * first records the run's decision on an issue its goal already has (keep it, split it into drafts, or leave it
+ * out), reported in an `issue_planned` event. The second records how the plan reaches the goal and what it does
+ * not cover, reported in a `plan_summarized` event. Neither writes anywhere else.
  */
 
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-export const OWNED_TOOLS = ["submit_review", "update_plan", "create_issue"] as const;
+export const OWNED_TOOLS = ["submit_review", "update_plan", "create_issue", "plan_issue", "plan_summary"] as const;
+/** The planning tools a profile gets with create_issue, without naming them. */
+export const PLANNING_TOOLS = ["plan_issue", "plan_summary"] as const;
 
 export interface PlanStep {
 	step: string;
@@ -193,6 +200,109 @@ export function createIssueTool(onDraft: (draft: IssueDraft) => void): ToolDefin
 				content: [{ type: "text", text: `${replaced ? "Replaced" : "Recorded"} draft ${draft.draft_id}: ${JSON.stringify(draft)}` }],
 				details: undefined,
 			};
+		},
+	});
+}
+
+export interface IssueDecision {
+	/** The existing issue's ref, as the task's description gives it. */
+	ref: string;
+	decision: "keep" | "split" | "leave_out";
+	reason: string;
+	/** What a kept issue waits on: other issues' refs, or drafts' ids. */
+	depends_on: string[];
+	/** For a split: the ids of the drafts that replace the issue. */
+	replaced_by: string[];
+}
+
+const IssueDecisionSchema = Type.Object({
+	ref: Type.String({ minLength: 1, description: "The issue's ref, exactly as the task shows it." }),
+	decision: Type.Union([Type.Literal("keep"), Type.Literal("split"), Type.Literal("leave_out")], {
+		description: "keep: it runs as it is. split: the drafts in replaced_by run in its place. leave_out: it is not run for this goal.",
+	}),
+	reason: Type.String({ minLength: 1, description: "Why, in a sentence an operator will read." }),
+	depends_on: Type.Optional(
+		Type.Array(Type.String({ minLength: 1 }), {
+			description: "For keep: what must be done first, as other issues' refs or drafts' draft_id. Only what the work truly needs.",
+		}),
+	),
+	replaced_by: Type.Optional(
+		Type.Array(Type.String({ pattern: DRAFT_ID }), { description: "For split: the draft_id of each draft that replaces the issue." }),
+	),
+});
+
+/**
+ * The plan_issue tool, for a planning run. `onDecision` receives each decision as it is recorded. Calling it
+ * again for the same issue replaces the decision.
+ */
+export function planIssueTool(onDecision: (decision: IssueDecision) => void): ToolDefinition {
+	const decided = new Set<string>();
+	return defineTool({
+		name: "plan_issue",
+		label: "Decide on an issue",
+		description:
+			"Record your decision on one issue the goal already has: keep it, split it into drafts you wrote with " +
+			"create_issue, or leave it out. Give the reason. Call it once for each issue; calling it again for the same " +
+			"issue replaces the decision. Nothing changes until an operator approves the plan.",
+		promptSnippet: "plan_issue: decide what the plan does with an existing issue (keep, split, leave out), and why",
+		parameters: IssueDecisionSchema,
+		async execute(_toolCallId, params) {
+			const decision: IssueDecision = {
+				ref: params.ref.trim(),
+				decision: params.decision,
+				reason: params.reason.trim(),
+				depends_on: [...new Set(params.depends_on ?? [])],
+				replaced_by: [...new Set(params.replaced_by ?? [])],
+			};
+			const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], details: undefined, isError: true });
+			if (decision.decision === "split" && decision.replaced_by.length === 0) {
+				return refuse(`A split names the drafts that replace ${decision.ref} in replaced_by. Write them with create_issue, then call plan_issue again.`);
+			}
+			if (decision.depends_on.includes(decision.ref)) {
+				return refuse(`${decision.ref} cannot depend on itself. Call plan_issue again.`);
+			}
+			const replaced = decided.has(decision.ref);
+			decided.add(decision.ref);
+			onDecision(decision);
+			return {
+				content: [{ type: "text", text: `${replaced ? "Replaced" : "Recorded"} the decision on ${decision.ref}: ${decision.decision}` }],
+				details: undefined,
+			};
+		},
+	});
+}
+
+export interface PlanSummary {
+	summary: string;
+	gaps: string[];
+}
+
+const PlanSummarySchema = Type.Object({
+	summary: Type.String({
+		minLength: 1,
+		description: "How the plan reaches the goal, in a few sentences an operator reads before approving it.",
+	}),
+	gaps: Type.Optional(
+		Type.Array(Type.String({ minLength: 1 }), {
+			description: "What the goal asks for that no task covers, any risk you see, and anything you assumed. One per entry.",
+		}),
+	),
+});
+
+/** The plan_summary tool, for a planning run. `onSummary` receives the summary; a later call replaces it. */
+export function planSummaryTool(onSummary: (summary: PlanSummary) => void): ToolDefinition {
+	return defineTool({
+		name: "plan_summary",
+		label: "Summarize the plan",
+		description:
+			"Record how the plan reaches the goal and what it leaves uncovered. Call it once, when the plan is complete. " +
+			"Calling it again replaces the summary.",
+		promptSnippet: "plan_summary: say how the plan reaches the goal, and its gaps, once the plan is complete",
+		parameters: PlanSummarySchema,
+		async execute(_toolCallId, params) {
+			const summary: PlanSummary = { summary: params.summary.trim(), gaps: [...new Set((params.gaps ?? []).map((g) => g.trim()).filter(Boolean))] };
+			onSummary(summary);
+			return { content: [{ type: "text", text: "Recorded the plan's summary." }], details: undefined };
 		},
 	});
 }

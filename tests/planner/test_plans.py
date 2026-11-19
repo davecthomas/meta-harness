@@ -46,7 +46,7 @@ def test_each_reason_a_plan_is_invalid_names_its_draft():
 
 def test_drafts_that_depend_on_each_other_in_a_cycle_are_refused_with_the_cycle():
     reasons = plans.validate([draft("a", ("b",)), draft("b", ("c",)), draft("c", ("a",)), draft("d")], REPOS)
-    assert reasons == ["the drafts depend on each other in a cycle: a -> b -> c -> a"]
+    assert reasons == ["the plan's tasks depend on each other in a cycle: a -> b -> c -> a"]
 
 
 def test_issues_are_created_with_each_draft_after_what_it_depends_on():
@@ -80,3 +80,83 @@ def test_the_planning_settings_name_a_candidate_and_a_spend_limit():
     planning.check_settings()
     config = planning.settings()
     assert config["candidate"].startswith("harness:pi-plan/")
+
+
+# --- A plan over the issues a goal already has ---------------------------------------------------------
+
+ISSUES = [{"ref": f"jira:VL-{n}", "repo": "o/r", "title": f"Issue {n}"} for n in (1, 2, 3)]
+
+
+def item(ref: str, decision: str = "keep", **fields) -> dict:
+    return plans.clean_item({"ref": ref, "decision": decision, "reason": "because", **fields})
+
+
+def test_every_issue_gets_one_decision_and_one_the_planner_said_nothing_of_is_kept():
+    decided = plans.complete([item("jira:VL-2", "leave_out"), item("jira:VL-9")], ISSUES)
+
+    assert [(i["ref"], i["decision"]) for i in decided] == [
+        ("jira:VL-1", "keep"),
+        ("jira:VL-2", "leave_out"),
+        ("jira:VL-3", "keep"),
+        ("jira:VL-9", "keep"),
+    ]
+    [unknown] = plans.validate([], ["o/r"], decided, ISSUES)
+    assert unknown == "jira:VL-9: is not one of the goal's issues, so the plan cannot decide on it"
+
+
+def test_a_plan_of_kept_issues_needs_no_new_task_but_must_run_something():
+    kept = plans.complete([], ISSUES)
+    assert plans.validate([], ["o/r"], kept, ISSUES) == []
+    none = [item(i["ref"], "leave_out") for i in ISSUES]
+    assert plans.validate([], ["o/r"], none, ISSUES) == ["the plan runs nothing: it has no new task and keeps no issue"]
+
+
+def test_a_split_names_drafts_that_replace_the_issue_and_nothing_waits_on_what_the_plan_takes_out():
+    drafts = [draft("store", repo="o/r"), draft("api", ("store", "jira:VL-1"), repo="o/r")]
+    good = [
+        item("jira:VL-1"),
+        item("jira:VL-2", "split", replaced_by=["store", "api"]),
+        item("jira:VL-3", depends_on=["api", "jira:VL-1"]),
+    ]
+    assert plans.validate(drafts, ["o/r"], good, ISSUES) == []
+
+    bad = [
+        item("jira:VL-1", "split"),
+        item("jira:VL-2", "split", replaced_by=["nope"]),
+        item("jira:VL-3", "merge", depends_on=["jira:VL-3"]),
+    ]
+    reasons = plans.validate([draft("store", ("jira:VL-1",), repo="o/r")], ["o/r"], bad, ISSUES)
+    assert "store: waits on jira:VL-1, which the plan splits: wait on the tasks that replace it" in reasons
+    assert "jira:VL-1: is split, so it names the new tasks that replace it" in reasons
+    assert "jira:VL-2: is replaced by nope, which is no draft of the plan" in reasons
+    assert "jira:VL-3: its decision is 'merge', not one of keep, split, leave_out" in reasons
+    left = [item("jira:VL-1", "leave_out"), item("jira:VL-2", depends_on=["jira:VL-1"]), item("jira:VL-3")]
+    assert plans.validate([], ["o/r"], left, ISSUES) == ["jira:VL-2: waits on jira:VL-1, which the plan leaves out"]
+
+
+def test_a_cycle_through_an_existing_issue_and_a_new_task_is_refused():
+    drafts = [draft("store", ("jira:VL-1",), repo="o/r")]
+    looped = [item("jira:VL-1", depends_on=["store"]), item("jira:VL-2"), item("jira:VL-3")]
+
+    [reason] = plans.validate(drafts, ["o/r"], looped, ISSUES)
+
+    assert reason.startswith("the plan's tasks depend on each other in a cycle: ") and "jira:VL-1" in reason
+
+
+def test_a_planning_runs_last_word_on_an_issue_and_its_last_summary_are_the_plans():
+    events = [
+        {"position": 1, "payload": {"ref": "jira:VL-1", "decision": "split", "reason": "Big", "replaced_by": ["a"]}},
+        {
+            "position": 2,
+            "payload": {"ref": "jira:VL-1", "decision": "keep", "reason": " Fine after all ", "depends_on": ["a", "a"]},
+        },
+    ]
+    assert plans.latest_items(events) == [
+        {"ref": "jira:VL-1", "decision": "keep", "reason": "Fine after all", "depends_on": ["a"], "replaced_by": []}
+    ]
+    summaries = [
+        {"position": 4, "payload": {"summary": " Second. ", "gaps": ["None covers export", ""]}},
+        {"position": 3, "payload": {"summary": "First."}},
+    ]
+    assert plans.latest_summary(summaries) == ("Second.", ["None covers export"])
+    assert plans.latest_summary([]) == ("", [])

@@ -34,7 +34,12 @@ import {
 import { bashAllowlist } from "../extension/bash-allowlist.ts";
 import {
 	createIssueTool,
+	type IssueDecision,
 	type IssueDraft,
+	PLANNING_TOOLS,
+	planIssueTool,
+	planSummaryTool,
+	type PlanSummary,
 	OWNED_TOOLS,
 	type PlanStep,
 	type Review,
@@ -443,11 +448,22 @@ export class Harness {
 			sessionManager: SessionManager.create(this.config.workspaceDir, this.config.sessionDir, { id: sessionId }),
 			// A run that edits keeps a plan too: update_plan comes with write, without the profile naming it, since a
 			// deploy never rewrites the deployment's active profiles.
-			tools: profile.tools.includes("write") && !profile.tools.includes("update_plan") ? [...profile.tools, "update_plan"] : profile.tools,
+			// A planning profile gets the rest of the planning tools with create_issue, for the same reason.
+			tools: [
+				...profile.tools,
+				...(profile.tools.includes("write") && !profile.tools.includes("update_plan") ? ["update_plan"] : []),
+				...(profile.tools.includes("create_issue") ? PLANNING_TOOLS.filter((name) => !profile.tools.includes(name)) : []),
+			],
 			customTools: [
 				...(profile.tools.includes("submit_review") ? [submitReviewTool((review) => this.onReview(review))] : []),
 				...(profile.tools.includes("write") || profile.tools.includes("update_plan") ? [updatePlanTool((steps) => this.onPlan(steps))] : []),
-				...(profile.tools.includes("create_issue") ? [createIssueTool((draft) => this.onDraft(draft))] : []),
+				...(profile.tools.includes("create_issue")
+					? [
+							createIssueTool((draft) => this.onDraft(draft)),
+							planIssueTool((decision) => this.onDecision(decision)),
+							planSummaryTool((summary) => this.onSummary(summary)),
+						]
+					: []),
 			],
 		});
 		session.subscribe((event) => this.onPiEvent(event));
@@ -541,6 +557,22 @@ export class Harness {
 		if (!run) return;
 		this.emit("issue_drafted", run, { ...draft });
 		this.config.log(`run ${run.run_id}: issue drafted, ${draft.draft_id} in ${draft.repo}`);
+	}
+
+	/** One decision from plan_issue, for the run in progress. */
+	private onDecision(decision: IssueDecision): void {
+		const run = this.current;
+		if (!run) return;
+		this.emit("issue_planned", run, { ...decision });
+		this.config.log(`run ${run.run_id}: issue planned, ${decision.ref}: ${decision.decision}`);
+	}
+
+	/** plan_summary's summary, for the run in progress. */
+	private onSummary(summary: PlanSummary): void {
+		const run = this.current;
+		if (!run) return;
+		this.emit("plan_summarized", run, { ...summary });
+		this.config.log(`run ${run.run_id}: plan summarized, ${summary.gaps.length} gaps`);
 	}
 
 	/** submit_review's verdict, for the run in progress. */

@@ -195,7 +195,7 @@ def test_an_approval_github_interrupts_carries_on_without_making_an_issue_twice(
     refused = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
 
     assert refused.status_code == 502
-    assert "GitHub refused after creating 1 of 2 issues" in refused.json()["detail"]
+    assert "the issue tracker refused after creating 1 of 2 issues" in refused.json()["detail"]
     assert client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "planning"
 
     again = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
@@ -385,3 +385,214 @@ def test_a_tracked_goal_may_hold_a_task_kept_in_the_meta_harness_beside_its_trac
     client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
     states = {i["ref"]: i["state"] for i in client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["issues"]}
     assert states == {theirs: "open", kept.ref: "closed"}
+
+
+# --- Every goal is planned: a goal that already has issues --------------------------------------------
+
+CHECKS = "## Acceptance checks\n\n- make test"
+
+
+@pytest.fixture
+def planned(untracked, monkeypatch):
+    """The untracked world, with the planning configuration saying every goal is planned."""
+    from meta_harness.planner import planning
+
+    monkeypatch.setattr(planning, "plans_every_goal", lambda: True)
+    return untracked
+
+
+def _labeled(client, github, titles: list[str], **fields) -> tuple[dict, list[str]]:
+    """A goal on GitHub with a label, and an open issue with that label for each title."""
+    label = f"mh:{uuid.uuid4().hex[:8]}"
+    refs = [
+        github.add(REPO, 1_000_000 + uuid.uuid4().int % 10**12, labels=[label], body=f"Do it.\n\n{CHECKS}", title=t)
+        for t in titles
+    ]
+    made = client.post(
+        "/v1/goals", json={"statement": "Fix the console", "repos": [REPO], "label": label, **fields}, headers=OPERATOR
+    )
+    assert made.status_code == 201, made.text
+    return made.json(), refs
+
+
+def _plan(client, events, tasks, goal: dict, recorded: list[tuple[str, dict]]) -> dict:
+    """The goal's planning task ends having recorded these (event type, payload). Returns what the API shows."""
+    task = next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"] and t["status"] == "queued")
+    for event_type, payload in recorded:
+        events.emit(event_type, payload, task_id=task["id"])
+    task["status"] = "closed"
+    return client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+
+
+def test_a_goal_with_issues_is_planned_at_save_over_those_issues_and_nothing_starts(planned):
+    client, events, github, tasks, _ = planned
+
+    goal, (first, second) = _labeled(client, github, ["Crash on save", "Wrong total"])
+
+    assert (goal["status"], goal["planned"], goal["started_at"]) == ("planning", True, None)
+    [task] = [t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]]
+    assert task["task_type"] == "plan"
+    # The planning task reads the goal's issues together, each with its ref and text.
+    for expected in (
+        f"## {first} ({REPO}): Crash on save",
+        f"## {second} ({REPO}): Wrong total",
+        "plan_issue",
+        "plan_summary",
+        "leave_out",
+    ):
+        assert expected in task["description"]
+    assert "The goal already has 2 issues" in task["description"]
+    assert client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).status_code in (200, 409)
+    assert [t["task_type"] for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]] == ["plan"]
+
+
+def test_the_plan_holds_a_decision_for_each_issue_the_new_tasks_the_summary_and_the_gaps(planned):
+    client, events, github, tasks, _ = planned
+    goal, (keep, big, dup) = _labeled(client, github, ["Keep me", "Too big", "Duplicate"])
+
+    shown = _plan(
+        client,
+        events,
+        tasks,
+        goal,
+        [
+            ("issue_drafted", draft("store")),
+            ("issue_drafted", draft("api", ("store", keep))),
+            (
+                "issue_planned",
+                {"ref": big, "decision": "split", "reason": "Two changes.", "replaced_by": ["store", "api"]},
+            ),
+            ("issue_planned", {"ref": dup, "decision": "leave_out", "reason": "Same as the first."}),
+            ("plan_summarized", {"summary": "Store, then the API.", "gaps": ["Nothing covers export."]}),
+        ],
+    )
+
+    plan = shown["plan"]
+    assert (
+        plan["invalid"] == []
+        and plan["summary"] == "Store, then the API."
+        and plan["gaps"] == ["Nothing covers export."]
+    )
+    assert [(i["ref"], i["title"]) for i in plan["issues"]] == [(keep, "Keep me"), (big, "Too big"), (dup, "Duplicate")]
+    # An issue the planner said nothing of is kept.
+    assert [(i["ref"], i["decision"]) for i in plan["items"]] == [(keep, "keep"), (big, "split"), (dup, "leave_out")]
+    assert [d["draft_id"] for d in plan["drafts"]] == ["store", "api"]
+
+    # An operator changes a decision: the next version keeps the planner's summary, and says what is now wrong.
+    edited = client.put(
+        f"/v1/goals/{goal['id']}/plan",
+        json={"drafts": plan["drafts"], "items": [{"ref": big, "decision": "split", "reason": "x"}]},
+        headers=OPERATOR,
+    ).json()["plan"]
+    assert edited["version"] == 2 and edited["summary"] == "Store, then the API."
+    assert f"{big}: is split, so it names the new tasks that replace it" in edited["invalid"]
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 409
+
+
+def _decided(client, events, tasks, github, **approve) -> tuple[dict, dict, tuple]:
+    goal, (keep, big, dup) = _labeled(client, github, ["Keep me", "Too big", "Duplicate"])
+    _plan(
+        client,
+        events,
+        tasks,
+        goal,
+        [
+            ("issue_drafted", draft("store")),
+            ("issue_drafted", draft("api", ("store",))),
+            ("issue_planned", {"ref": keep, "decision": "keep", "reason": "Ready.", "depends_on": ["api"]}),
+            (
+                "issue_planned",
+                {"ref": big, "decision": "split", "reason": "Two changes.", "replaced_by": ["store", "api"]},
+            ),
+            ("issue_planned", {"ref": dup, "decision": "leave_out", "reason": "Same as the first."}),
+        ],
+    )
+    approved = client.post(f"/v1/goals/{goal['id']}/approve", json=approve or None, headers=OPERATOR)
+    assert approved.status_code == 200, approved.text
+    return goal, approved.json()["plan"], (keep, big, dup)
+
+
+def test_approving_applies_the_plan_new_tasks_in_the_tracker_splits_replaced_and_duplicates_left_out(planned):
+    client, events, github, tasks, _ = planned
+
+    goal, plan, (keep, big, dup) = _decided(client, events, tasks, github)
+
+    created = plan["created"]
+    assert plan["tracked"] is True and [i.title for i in github.created] == ["Build store", "Build api"]
+    assert all(ref.startswith("github:") for ref in created.values())
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    by_ref = {
+        t["external_ref"]: t
+        for t in tasks.tasks.values()
+        if t.get("goal_id") == goal["id"] and t["task_type"] != "plan"
+    }
+    # The kept issue and the two new tasks run. The split issue and the duplicate do not.
+    assert set(by_ref) == {keep, created["store"], created["api"]}
+    # The plan's order holds, across an existing issue and the new tasks.
+    assert by_ref[created["store"]]["status"] == "queued"
+    assert by_ref[created["api"]]["depends_on"] == [created["store"]]
+    assert by_ref[keep]["depends_on"] == [created["api"]] and by_ref[keep]["status"] == "blocked"
+    shown = {i["ref"]: i for i in client.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR).json()["issues"]}
+    assert dup not in shown, "an issue the plan left out is not the goal's"
+    assert shown[big]["split_into"] == [created["store"], created["api"]]
+    assert shown[big]["held_reason"].startswith(
+        "the plan split it into 2 smaller tasks, which run in its place: Two changes."
+    )
+    after = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+    assert after["status"] == "active" and after["plan_approved_at"]
+
+
+def test_new_tasks_can_be_kept_in_the_meta_harness_and_out_of_the_goals_tracker(planned):
+    client, events, github, tasks, _ = planned
+
+    goal, plan, (keep, _, _) = _decided(client, events, tasks, github, track=False)
+
+    created = plan["created"]
+    assert plan["tracked"] is False and github.created == [] and github.labels == []
+    assert all(ref.startswith("mh:i-") for ref in created.values())
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    by_ref = {
+        t["external_ref"]: t
+        for t in tasks.tasks.values()
+        if t.get("goal_id") == goal["id"] and t["task_type"] != "plan"
+    }
+    # One goal now holds its tracker's issue and two tasks kept here, and the plan's order joins them.
+    assert set(by_ref) == {keep, created["store"], created["api"]}
+    assert by_ref[created["api"]]["depends_on"] == [created["store"]] and by_ref[keep]["depends_on"] == [created["api"]]
+
+
+def test_an_issue_that_joins_after_approval_waits_as_a_proposed_addition(planned):
+    client, events, github, tasks, _ = planned
+    goal, _, _ = _decided(client, events, tasks, github)
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    before = {t["external_ref"] for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]}
+
+    late = github.add(
+        REPO,
+        1_000_000 + uuid.uuid4().int % 10**12,
+        labels=[goal["label"]],
+        body=f"Later.\n\n{CHECKS}",
+        title="Labeled later",
+    )
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+
+    assert {t["external_ref"] for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]} == before
+    card = next(
+        i for i in client.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR).json()["issues"] if i["ref"] == late
+    )
+    assert "joined the goal after its plan was approved" in card["held_reason"] and "Run anyway" in card["held_reason"]
+
+    # The operator adds it to the plan as it is.
+    ran = client.post(f"/v1/goals/{goal['id']}/issues/run-anyway", json={"ref": late}, headers=OPERATOR)
+    assert ran.status_code == 200, ran.text
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    assert late in {t["external_ref"] for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]}
+
+
+def test_only_goals_that_plan_from_their_description_are_planned_when_the_configuration_says_so(untracked):
+    client, _, github, tasks, _ = untracked
+
+    goal, _ = _labeled(client, github, ["Crash on save"])
+
+    assert (goal["status"], goal["planned"]) == ("active", False) and goal["started_at"]
+    assert not [t for t in tasks.tasks.values() if t.get("task_type") == "plan" and t.get("goal_id") == goal["id"]]

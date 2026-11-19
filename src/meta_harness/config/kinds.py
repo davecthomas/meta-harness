@@ -31,7 +31,21 @@ from meta_harness.run_service.routing import replaced_engine_reason
 
 from meta_harness.run_service.paths import REPO_ROOT
 
-KNOWN_TOOLS = {"read", "write", "edit", "ls", "find", "grep", "bash", "submit_review", "update_plan", "create_issue"}
+KNOWN_TOOLS = {
+    "read",
+    "write",
+    "edit",
+    "ls",
+    "find",
+    "grep",
+    "bash",
+    "submit_review",
+    "update_plan",
+    "create_issue",
+    # The rest of a planning run's tools. A profile that names create_issue gets them without naming them.
+    "plan_issue",
+    "plan_summary",
+}
 THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "max"}
 TRACKERS = {"github"}
 
