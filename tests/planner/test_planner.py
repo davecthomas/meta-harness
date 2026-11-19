@@ -1389,8 +1389,13 @@ def test_a_tasks_checks_are_listed_with_how_they_stand_and_how_long_they_usually
             check("scan", "completed", "skipped", 1),
         ]
 
+    async def newest_containing(repo, base, sha):
+        return newest["sha"] or sha
+
+    newest = {"sha": ""}
     monkeypatch.setattr(code_host, "read_pull_request", read_pull_request)
     monkeypatch.setattr(code_host, "check_details", check_details)
+    monkeypatch.setattr(code_host, "newest_containing", newest_containing)
 
     found = api.get("/v1/pulls/t-pr/checks", headers=OPERATOR).json()
     assert (found["of"], found["sha"], found["state"]) == ("pull_request", "abc", "pending")
@@ -1527,3 +1532,59 @@ def test_a_goal_may_lower_the_systems_parallel_limit_but_not_raise_it(api, monke
     inherited = api.patch(f"/v1/goals/{goal['id']}", json={"max_parallel": None}, headers=OPERATOR).json()
     assert inherited["max_parallel"] is None
     assert api.patch(f"/v1/goals/{goal['id']}", json={"priority": 3}, headers=OPERATOR).json()["max_parallel"] is None
+
+
+def test_a_merged_tasks_checks_a_newer_merge_canceled_show_the_run_that_replaced_them(api, parts, monkeypatch):
+    from meta_harness.run_service import code_host
+    from meta_harness.run_service.code_host import PullRequest
+
+    _, _, tasks = parts
+    tasks.tasks["t-m"] = {"id": "t-m", "status": "running", "pr_url": "https://github.com/o/r/pull/9", "goal_id": None}
+
+    def check(name, status, conclusion=None):
+        return {
+            "name": name,
+            "status": status,
+            "conclusion": conclusion,
+            "started_at": None,
+            "completed_at": None,
+            "seconds": None,
+            "url": f"https://github.com/o/r/runs/{name}",
+        }
+
+    runs = {
+        "m1": [
+            check("tests", "completed", "cancelled"),
+            check("deploy", "completed", "failure"),
+            check("e2e", "completed", "cancelled"),
+            check("lint", "completed", "success"),
+        ],
+        # The newer merge re-ran tests and deploy; its e2e has not appeared yet.
+        "m2": [check("tests", "completed", "success"), check("deploy", "in_progress")],
+        "HEAD": [],
+    }
+
+    async def read_pull_request(repo, number):
+        return PullRequest(repo=repo, number=number, url="", state="merged", head_sha="h", merge_sha="m1")
+
+    async def check_details(repo, ref):
+        return runs[ref]
+
+    async def newest_containing(repo, base, sha):
+        return "m2"
+
+    monkeypatch.setattr(code_host, "read_pull_request", read_pull_request)
+    monkeypatch.setattr(code_host, "check_details", check_details)
+    monkeypatch.setattr(code_host, "newest_containing", newest_containing)
+
+    found = api.get("/v1/pulls/t-m/checks", headers=OPERATOR).json()
+
+    by_name = {c["name"]: c for c in found["checks"]}
+    assert found["state"] == "pending" and found["failed"] == []
+    assert (by_name["tests"]["conclusion"], by_name["tests"]["replaced"]) == (
+        "success",
+        {"sha": "m1", "conclusion": "cancelled"},
+    )
+    assert by_name["deploy"]["status"] == "in_progress" and by_name["deploy"]["replaced"]["conclusion"] == "failure"
+    assert by_name["e2e"]["status"] == "queued" and by_name["e2e"]["replaced"]["conclusion"] == "cancelled"
+    assert "replaced" not in by_name["lint"]
