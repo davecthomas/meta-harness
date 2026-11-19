@@ -325,3 +325,11 @@ test("when the issues cannot be read, Waits on says why and still takes a typed 
   expect(within(dialog).getByText("VL-7")).toBeTruthy();
   expect(within(dialog).queryByText("nonsense")).toBeNull();
 });
+
+test("a saved entry written as owner/repo#n shows no mark when that issue is listed", async () => {
+  show(planned({ drafts: [draft("store", ["o/a#12"]), draft("api"), draft("ui")] }), GOAL, [{ ref: "github:o/a#12", title: "Fix the cache" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit store" }));
+  const dialog = await screen.findByRole("dialog", { name: "Edit store" });
+  await waitFor(() => expect(within(dialog).getByText(/one of the goal's open issues/)).toBeTruthy());
+  expect(within(dialog).queryByText(/No longer a task or open issue/)).toBeNull();
+});

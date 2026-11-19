@@ -124,10 +124,9 @@ function DraftForm({ draft, isNew, repos, others, goal, onSave, onCancel }: {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [goalRepos, goal.tracker]);
-  const issueRefs = new Set((listed ?? []).map((i) => i.ref));
   // The ref a typed entry names among the listed issues, written with or without its tracker.
   const listedAs = (entry: string) => (listed ?? []).find((i) => i.ref === entry || refLabel(i.ref) === refLabel(entry))?.ref;
-  const known = (entry: string) => others.includes(entry) || issueRefs.has(entry);
+  const known = (entry: string) => others.includes(entry) || listedAs(entry) !== undefined;
   // Entries saved earlier that no draft or listed issue matches now.
   const gone = listed ? form.depends_on.filter((d) => !known(d)) : [];
   const idTaken = isNew && others.includes(form.draft_id.trim());
