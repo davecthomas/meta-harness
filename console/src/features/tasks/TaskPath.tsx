@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Anchor, Badge, Box, Button, Group, Paper, Stack, Text, Tooltip, UnstyledButton } from "@mantine/core";
 import {
   IconArrowBackUp, IconChecks, IconCircleCheck, IconClock, IconEye, IconFlag, IconGitMerge, IconGitPullRequest, IconNote, IconPlayerPlay,
@@ -23,6 +23,9 @@ const ICONS: Record<StepKind, typeof IconClock> = {
 const COLORS: Record<Tone, string> = { ok: "teal", bad: "red", warn: "yellow", plain: "gray" };
 
 // A step's numbers on one line: how long, what it cost, how many turns.
+// How often a step that is still going shows its time again.
+const TICK_MS = 1000;
+
 export function numbers(step: Step, now: number): string {
   const parts: string[] = [];
   if (step.start !== step.end) parts.push(`${span(took(step, now))}${step.end ? "" : " so far"}`);
@@ -103,6 +106,27 @@ function Picked({ step, events, onOpenRun, onOpenReviews }: { step: Step; events
   );
 }
 
+// What the task is doing now and for how long, counted by the second: the newest step of its path while that
+// step is still going. For a place with no timeline on show, such as above the terminal, which prints nothing
+// while a task waits for the code host's checks.
+export function NowLine({ events }: { events: MhEvent[] }) {
+  const step = useMemo(() => steps(events).at(-1), [events]);
+  const going = !!step && step.now && !step.end;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!going) return;
+    const timer = setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => clearInterval(timer);
+  }, [going]);
+  if (!step || !going) return null;
+  return (
+    <Text size="sm" mb="xs" data-testid="now-line">
+      <Text span fw={600}>Now: {step.title}</Text>, {span(took(step, now))} so far{step.detail ? `. ${step.detail}` : ""}
+    </Text>
+  );
+}
+
+
 // A task's path as a picture. Stages are columns and time runs left to right; each time the task goes
 // back to an earlier stage (a review's findings to a fix run, a retry, a merge the supervisor asked for
 // again) it starts a new row, so a loop shows as a return, not as a longer line.
@@ -111,12 +135,13 @@ export function TaskPath(props: { events: MhEvent[]; usd?: number; pick?: string
   const path = steps(props.events);
   // A link that names a run opens on that run's step.
   const [picked, setPicked] = useState<string | null>(props.pick ?? null);
-  // Steps still going show their time so far, so the picture is read again as time passes.
+  // Steps still going show their time so far, counted by the second, so the page is seen to be alive while a
+  // run or a wait goes on. Nothing is read from the service for it.
   const [now, setNow] = useState(() => Date.now());
   const going = path.some((s) => !s.end);
   useEffect(() => {
     if (!going) return;
-    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    const timer = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(timer);
   }, [going]);
   if (!path.length) return <Text size="sm" c="dimmed">Nothing has happened yet: the task has not started. Each step shows here as it happens.</Text>;
