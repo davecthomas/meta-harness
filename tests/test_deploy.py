@@ -71,6 +71,8 @@ def test_the_deploy_workflow_waits_for_every_check_main_runs():
     jobs = set()
     for workflow in ("control-plane.yml", "e2e.yml"):
         jobs |= set(re.findall(r"^    name: (.+)$", (WORKFLOWS / workflow).read_text(), re.M))
+    # Not a check of the code: it only says whether a pull request needs the two slow ones.
+    jobs.discard("which checks this change needs")
     deploy = (WORKFLOWS / "deploy.yml").read_text()
     waited = set(re.search(r'CHECKS: "(.+)"', deploy).group(1).split("|"))
     assert waited == jobs
@@ -351,3 +353,39 @@ def test_both_stacks_take_their_state_bucket_from_the_settings_file():
 def test_the_platform_stack_checks_the_project_number_it_is_given():
     platform = (ROOT / "deploy" / "terraform" / "platform" / "main.tf").read_text()
     assert "self.number == var.project_number" in platform
+
+
+def test_only_a_console_source_or_docs_change_skips_the_slow_checks():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("checks_scope", ROOT / "deploy" / "checks_scope.py")
+    scope = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scope)
+
+    assert not scope.needs_slow_checks(["console/src/features/tasks/TaskPage.tsx", "console/src/theme.ts"])
+    assert not scope.needs_slow_checks(["docs/technical-design.md", "README.md", "console/src/api.ts", ""])
+    # A dependency, a build setting, any service or image code, a workflow: the checks run.
+    for path in (
+        "console/package-lock.json",
+        "console/vite.config.ts",
+        "src/meta_harness/planner/service.py",
+        "images/harness-pi/server/harness.ts",
+        "samples/temporal-run-task/stack.sh",
+        ".github/workflows/e2e.yml",
+        "config/models.json",
+        "tests/test_edge.py",
+    ):
+        assert scope.needs_slow_checks(["console/src/api.ts", path]), path
+    assert scope.needs_slow_checks([]), "with nothing to go on, the checks run"
+
+
+def test_the_slow_checks_skip_only_on_an_explicit_skip_and_never_on_main():
+    workflow = (ROOT / ".github" / "workflows" / "e2e.yml").read_text()
+    guard = "if: ${{ always() && needs.scope.outputs.slow != 'skip' }}"
+    assert workflow.count(guard) == 2, "the end-to-end check and the sandbox's checks, and no other job"
+    for job in ("  e2e:", "  image-checks:"):
+        assert guard in workflow.split(job, 1)[1].split("\n    steps:", 1)[0], job
+    # Anything but a pull request, a push to main among them, runs them: the deploy waits for all five checks.
+    assert 'slow=run\n          if [ "$EVENT" = pull_request ]; then' in workflow
+    deploy = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+    assert "sandbox runs this repo's checks" in deploy and "zero-cost end-to-end check" in deploy
