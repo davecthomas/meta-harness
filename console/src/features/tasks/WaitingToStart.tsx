@@ -5,19 +5,25 @@ import { Link } from "react-router-dom";
 import { api, type IssueProgress, type Task } from "../../api";
 import { IssueLink, StatusBadge, when } from "../../components/ui";
 import { RaiseGoalBudget } from "../goals/budget";
-import { moneyText } from "../../money";
+import { holdWords } from "./hold";
 
-// A task that has not started says why at the top of its page, with what would start it. A queued task shows
-// the scheduler's reason for holding it (the task's `held`) and the action that fits its kind; a blocked one
-// shows each issue it waits on.
+// A task that has not started says why at the top of its page in a sentence, and what would start it: the action
+// when it is the operator's to take, or that nothing is needed. A blocked task shows each issue it waits on.
 
-const TaskLinks = ({ ids }: { ids: string[] }) => (
-  <Group gap="xs">
-    {ids.map((id) => (
-      <Anchor key={id} component={Link} to={`/tasks/${id}`} ff="monospace" size="sm">{id}</Anchor>
-    ))}
-  </Group>
-);
+// The tasks a hold waits on, each by its title: a title says what the task is, an ID does not.
+function TaskLinks({ ids }: { ids: string[] }) {
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  useEffect(() => {
+    ids.forEach((id) => api.task(id).then((t) => setTitles((was) => ({ ...was, [id]: t.title })), () => undefined));
+  }, [ids.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <Stack gap={2}>
+      {ids.map((id) => (
+        <Anchor key={id} component={Link} to={`/tasks/${id}`} size="sm">{titles[id] ?? "the other task"}</Anchor>
+      ))}
+    </Stack>
+  );
+}
 
 // In a list or on a card: why a queued or blocked task waits, in a line. Null for a task that does not wait.
 export function waitReason(task: Pick<Task, "status" | "held" | "depends_on">): string | null {
@@ -26,7 +32,7 @@ export function waitReason(task: Pick<Task, "status" | "held" | "depends_on">): 
     return n ? `waits on ${n} ${n === 1 ? "issue" : "issues"}` : "waits on other issues";
   }
   if (task.status !== "queued") return null;
-  return task.held ? moneyText(task.held.reason) : "starts at the scheduler's next pass";
+  return task.held ? holdWords(task.held).short : "starts in a moment";
 }
 
 function Blocked({ task }: { task: Task }) {
@@ -68,7 +74,7 @@ function Blocked({ task }: { task: Task }) {
             {issue?.task_id && (
               <>
                 <StatusBadge status={issue.task_status ?? "queued"} />
-                <Anchor component={Link} to={`/tasks/${issue.task_id}`} ff="monospace" size="xs">{issue.task_id}</Anchor>
+                <Anchor component={Link} to={`/tasks/${issue.task_id}`} size="sm">Open its task</Anchor>
               </>
             )}
           </Group>
@@ -78,6 +84,7 @@ function Blocked({ task }: { task: Task }) {
   );
 }
 
+// What to do about a hold, when it is the operator's to act on, or what it waits for.
 function Action({ task, onChanged }: { task: Task; onChanged?: () => void }) {
   const held = task.held!;
   const detail = held.detail ?? {};
@@ -85,43 +92,16 @@ function Action({ task, onChanged }: { task: Task; onChanged?: () => void }) {
   const holders = (detail.holders as string[] | undefined) ?? [];
   switch (held.kind) {
     case "goal_budget":
-      return goalId ? (
-        <Stack gap="sm">
-          <RaiseGoalBudget goalId={goalId} onResumed={onChanged} />
-          <Anchor component={Link} to={`/goals/${goalId}`} size="sm">The goal's page</Anchor>
-        </Stack>
-      ) : null;
+      return goalId ? <RaiseGoalBudget goalId={goalId} onResumed={onChanged} /> : null;
     case "goal_status":
-      return goalId ? (
-        <Group gap="xs">
-          <Text size="sm">Its goal is</Text>
-          <StatusBadge status={String(detail.status ?? "not active")} />
-          <Anchor component={Link} to={`/goals/${goalId}`} size="sm">Open the goal</Anchor>
+      return goalId ? <Anchor component={Link} to={`/goals/${goalId}`} size="sm">Open the goal</Anchor> : null;
+    case "repo_area":
+      return holders.length ? (
+        <Group gap="xs" align="flex-start">
+          <Text size="sm">Waiting for:</Text>
+          <TaskLinks ids={holders} />
         </Group>
       ) : null;
-    case "goal_parallel":
-    case "system_parallel":
-      return (
-        <Group gap="xs">
-          <Text size="sm">These tasks hold the places:</Text>
-          <TaskLinks ids={holders} />
-        </Group>
-      );
-    case "repo_area":
-      return (
-        <Group gap="xs">
-          <Text size="sm">Held by</Text>
-          <TaskLinks ids={holders} />
-          <Text size="sm">
-            on <Text span ff="monospace" size="xs">{((detail.held_paths as string[] | undefined) ?? []).join(", ") || "the whole repo"}</Text>, which this task's{" "}
-            <Text span ff="monospace" size="xs">{((detail.paths as string[] | undefined) ?? []).join(", ")}</Text> shares.
-          </Text>
-        </Group>
-      );
-    case "kill_switch":
-    case "draining":
-      // The banner at the top of every page says who stopped the work, when and why, and how it ends.
-      return <Text size="sm">The banner at the top of this page says why, and an admin can end it there.</Text>;
     default:
       return null;
   }
@@ -129,18 +109,21 @@ function Action({ task, onChanged }: { task: Task; onChanged?: () => void }) {
 
 export function WaitingToStart({ task, onChanged }: { task: Task; onChanged?: () => void }) {
   if (task.status !== "queued" && task.status !== "blocked") return null;
+  // A task with a pull request has run before: it waits to carry on, not to start.
+  const title = task.pr_url ? "Waiting its turn" : "Waiting to start";
+  const words = task.held ? holdWords(task.held) : null;
   return (
-    <Alert color="blue" title="Waiting to start" icon={<IconHourglass size={18} />} mb="md" data-testid="waiting-to-start">
+    <Alert color="blue" title={title} icon={<IconHourglass size={18} />} mb="md" data-testid="waiting-to-start">
       {task.status === "blocked" ? (
         <Blocked task={task} />
-      ) : task.held ? (
-        <Stack gap="sm" align="flex-start">
-          <Text size="sm">The scheduler holds it: {moneyText(task.held.reason)}.</Text>
+      ) : words ? (
+        <Stack gap="xs" align="flex-start">
+          <Text size="sm">{words.line}</Text>
           <Action task={task} onChanged={onChanged} />
-          <Text size="sm" c="dimmed">Waiting for this since {when(task.held.since)}. The scheduler last looked {when(task.held.last_checked)}.</Text>
+          <Text size="sm" c="dimmed">{words.yours ? "" : "Nothing for you to do. "}Waiting since {when(task.held!.since)}.</Text>
         </Stack>
       ) : (
-        <Text size="sm">Nothing holds it: it starts at the scheduler's next pass.</Text>
+        <Text size="sm">It starts in a moment. Nothing for you to do.</Text>
       )}
     </Alert>
   );
