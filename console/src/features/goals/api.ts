@@ -168,7 +168,7 @@ export const goalsApi = {
   },
   goal: (id: string) => call<Goal & { issues: IssueLink[] }>(`/v1/goals/${id}`),
   // The system's parallel limit, which a goal inherits and may lower.
-  limits: () => call<{ max_parallel: number | null; max_sandboxes: number | null; plans_every_goal?: boolean }>("/v1/limits"),
+  limits: () => call<{ max_parallel: number | null; max_sandboxes: number | null; plans_every_goal?: boolean; track_new_tasks?: boolean }>("/v1/limits"),
   createGoal: (body: Record<string, unknown>) => call<Goal>("/v1/goals", { method: "POST", body: JSON.stringify(body) }),
   // Goals from labels: every label on the registered repos' open issues, a label's issues, and a drafted goal.
   // source, here and below: which tracker's issues, and what it asks of a goal; the default tracker's when left out.

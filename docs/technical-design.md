@@ -2863,7 +2863,16 @@ modality and, for a later phase, what earlier phases built. The planning run
 reads the goal's repos and drafts issues with its `create_issue` tool, each
 in the repo it changes, with acceptance checks and what it depends on.
 
-**Every goal is planned.** With `config/planner.json`'s `planning.goals` set to
+**The planning configuration** is a configuration kind of its own, `planning`,
+versioned and edited in the console (Configuration, Planning) like the others,
+and seeded from `config/planner.json`'s `planning`: the candidate a planning
+task runs on (`candidate`, whose profile must exist and have the `create_issue`
+tool), what one planning task may spend (`max_usd`), which goals are planned
+(`goals`), whether a plan's new tasks go to the goal's tracker unless the
+operator says otherwise (`track_new_tasks`, true when left out), and how much
+of a goal's issues the planner is shown (`max_issues`, `issue_chars`).
+
+**Every goal is planned.** With the planning configuration's `goals` set to
 `all` (as shipped; `from_description` plans only a goal that plans its issues
 from its description, as before), a goal that takes existing issues is planned
 too: it is saved `planning` (`goal.planned`), and none of its tasks is made

@@ -8,6 +8,7 @@ import { useAdmin } from "../../components/Role";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { DataTable, ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
 import { TaskPolicyView, type Staging } from "./ConfigViews";
+import { PlanningView } from "./PlanningView";
 import { ReposView } from "./ReposView";
 import { ProfilesView } from "./ProfilesView";
 import { SkillsView } from "./SkillsView";
@@ -87,7 +88,7 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
   const [error, setError] = useState<string | null>(null);
   const [profileNames, setProfileNames] = useState<string[]>([]);
   // The profiles, for which skills each names; and the skills, for the profiles' choices.
-  const [profileDocs, setProfileDocs] = useState<Record<string, { skills?: string[] }>>({});
+  const [profileDocs, setProfileDocs] = useState<Record<string, { skills?: string[]; tools?: string[] }>>({});
   const [skillNames, setSkillNames] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const admin = useAdmin();
@@ -109,7 +110,8 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
   // What one kind's view offers from another: a tier candidate names a harness profile and a model, a profile
   // names skills, and a skill says which profiles use it.
   useEffect(() => {
-    if (!["tiers", "profiles", "skills"].includes(summary.kind)) return;
+    // The task policy picks its reviewers, and planning its planner, from the same profiles and models.
+    if (!["tiers", "profiles", "skills", "task_policy", "planning"].includes(summary.kind)) return;
     api.config("profiles").then(
       (p) => {
         setProfileNames(Object.keys(p.document.profiles ?? {}));
@@ -121,6 +123,8 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
     api.configModels().then((m) => setModels(m.map((x) => x.name)), () => setModels([]));
   }, [summary.kind]);
 
+  // The profiles a planning task can run on: a plan is recorded with create_issue.
+  const planningProfiles = profileNames.filter((name) => (profileDocs[name]?.tools ?? []).includes("create_issue"));
   const original = current?.document ?? {};
   const document = staged ?? original;
   const count = current ? countChanges(original, document) : 0;
@@ -250,6 +254,7 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
       {summary.kind === "skills" && <SkillsView staging={staging} profiles={profileDocs} />}
       {summary.kind === "repos" && <ReposView staging={staging} />}
       {summary.kind === "trackers" && <TrackersView staging={staging} />}
+      {summary.kind === "planning" && <PlanningView staging={staging} profiles={planningProfiles} models={models} />}
       {summary.kind === "task_policy" && <TaskPolicyView policy={document} maxSandboxes={maxSandboxes} staging={staging} profiles={profileNames} models={models} />}
 
       <SectionTitle>Version history</SectionTitle>
@@ -332,6 +337,7 @@ const KIND_NAMES: Record<ConfigKind, string> = {
   profiles: "harness profiles",
   repos: "repo registry",
   skills: "skills",
+  planning: "planning",
   task_policy: "task policy",
 };
 

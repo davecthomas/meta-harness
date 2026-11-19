@@ -152,6 +152,9 @@ export function reasonTarget(kind: ConfigKind, document: Record<string, any>, re
     const scheme = Object.keys(document.trackers ?? {}).find((n) => reason.startsWith(`${n}:`));
     return scheme ? `tracker:${scheme}` : null;
   }
+  if (kind === "planning") {
+    return ["candidate", "max_usd", "goals", "max_issues", "issue_chars", "track_new_tasks"].find((key) => reason.startsWith(`${key} `)) ?? null;
+  }
   if (reason.startsWith("max_parallel")) return "max_parallel";
   if (reason.startsWith("review.reviewers") || reason.startsWith("reviewer ")) return "reviewers";
   if (reason.startsWith("review.max_rounds")) return "max_rounds";

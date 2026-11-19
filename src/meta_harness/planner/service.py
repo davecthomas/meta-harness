@@ -1331,6 +1331,8 @@ def create_app(
             "max_sandboxes": ceiling,
             # Whether a goal that takes existing issues is planned before its tasks run, for the New goal form.
             "plans_every_goal": planning.plans_every_goal(),
+            # Where a plan's new tasks go unless the operator says otherwise at approval.
+            "track_new_tasks": planning.tracks_new_tasks(),
         }
 
     @app.post("/v1/goals/{goal_id}/pause")
