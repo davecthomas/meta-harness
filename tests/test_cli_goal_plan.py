@@ -60,10 +60,15 @@ def _plan(**overrides) -> dict:
     return plan
 
 
-def _shown(plan: dict | None, approved_at: str | None = None, planning_task_id: str | None = None) -> dict:
+def _shown(
+    plan: dict | None,
+    approved_at: str | None = None,
+    planning_task_id: str | None = None,
+    status: str = "planning",
+) -> dict:
     return {
         "goal_id": "g-1",
-        "status": "planning",
+        "status": status,
         "planning_task_id": planning_task_id,
         "approved_at": approved_at,
         "label": "mh:g-1",
@@ -126,17 +131,25 @@ def test_no_gaps_and_invalid_reasons(run):
 
 
 def test_approved_and_awaiting_headings_differ(run):
-    approved = run(_shown(_plan(), approved_at="2026-05-01T10:00:00+00:00"))
+    approved = run(_shown(_plan(), approved_at="2026-05-01T10:00:00+00:00", status="active"))
     awaiting = run(_shown(_plan(), planning_task_id="t-42"))
     assert approved.exit_code == 0 and awaiting.exit_code == 0
     approved_head = approved.output.splitlines()[0]
     awaiting_head = awaiting.output.splitlines()[0]
     assert approved_head != awaiting_head
-    assert "v3" in approved_head and "planning" in approved_head
+    assert "v3" in approved_head and "active" in approved_head
     assert "approved 2026-05-01T10:00:00+00:00" in approved_head
     assert "awaiting approval" in awaiting_head
     assert "still drafting" in awaiting.output and "t-42" in awaiting.output
     assert "still drafting" not in approved.output
+
+
+def test_replanned_goal_awaits_approval_despite_old_approval(run):
+    result = run(_shown(_plan(), approved_at="2026-05-01T10:00:00+00:00"))
+    assert result.exit_code == 0, result.output
+    head = result.output.splitlines()[0]
+    assert "planning" in head and "awaiting approval" in head
+    assert "approved 2026" not in head
 
 
 def test_goal_with_no_plan(run):

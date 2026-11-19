@@ -330,7 +330,9 @@ def _plan_lines(shown: dict) -> list[str]:
     plan = shown.get("plan")
     if not plan:
         return [f"{shown['goal_id']} has no plan"]
-    state = f"approved {shown['approved_at']}" if shown.get("approved_at") else "awaiting approval"
+    # A replanned goal keeps its old approval time while it is back in planning; its latest plan still needs approval.
+    approved = shown.get("approved_at") and shown.get("status") != "planning"
+    state = f"approved {shown['approved_at']}" if approved else "awaiting approval"
     lines = [f"{shown['goal_id']}  plan v{plan['version']}  {shown['status']}  {state}"]
     if shown.get("planning_task_id"):
         lines.append(f"planning task {shown['planning_task_id']} is still drafting")
