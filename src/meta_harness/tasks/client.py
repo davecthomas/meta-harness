@@ -58,6 +58,13 @@ class TaskClient:
     def list(self, statuses: list[str] | None = None, goal_id: str | None = None, limit: int = 100) -> list[dict]:
         return self.page(statuses, goal_id, limit, 0)["tasks"]
 
+    def unnamed(self, limit: int = 60) -> dict:
+        """The newest tasks with no short name yet, and the names taken in their goals: {tasks, taken}."""
+        return self._call("GET", "/v1/tasks/unnamed", params={"limit": limit})
+
+    def set_name(self, task_id: str, name: str) -> dict:
+        return self._call("POST", f"/v1/tasks/{task_id}/name", json={"name": name})
+
     def pending_messages(self) -> list[dict]:
         """Operator messages waiting to be handed to their task's workflow."""
         return self._call("GET", "/v1/messages/pending")["messages"]

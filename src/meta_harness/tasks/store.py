@@ -45,8 +45,13 @@ COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
     "pr_url, head_sha, created_at, updated_at, attempts, waiting_on, retries, resume, review_claimed_by, "
-    "status_changed_at, recoveries, spent_carried_usd, drives"
+    "status_changed_at, recoveries, spent_carried_usd, drives, name"
 )
+# A task's short name: at most this many words and characters, so it fits where an id did.
+NAME_WORDS = 4
+NAME_CHARS = 28
+# Tasks older than this get no name: their work is long over, and a page shows their title.
+NAMED_DAYS = 30
 # The most times the supervisor sends one parked task back by itself, for its merge or through its review
 # loop, between an operator's retries. Past it the task waits for an operator.
 MAX_DRIVES = 3
@@ -141,6 +146,67 @@ def create(conn: psycopg.Connection, caller: str, task: NewTask, *, internal: bo
         return _jsonable(cur.fetchone()), False
 
 
+def clean_name(name: str) -> str:
+    """A short name as it is stored: single spaces, no quotes or closing period. Raises TaskError for one that
+    is empty or too long to stand where an id did."""
+    cleaned = " ".join(str(name or "").replace('"', "").replace("`", "").split()).strip(" .:;,")
+    if not cleaned:
+        raise TaskError("a task's name needs at least one word; send two to four that say what the task does")
+    if len(cleaned.split()) > NAME_WORDS or len(cleaned) > NAME_CHARS:
+        raise TaskError(
+            f"the name {cleaned!r} is too long: send at most {NAME_WORDS} words and {NAME_CHARS} characters"
+        )
+    return cleaned
+
+
+def unnamed(conn: psycopg.Connection, limit: int = 60) -> tuple[list[dict], dict[str, list[str]]]:
+    """The newest tasks with no name yet, and the names already taken in each of their goals. Review and fix
+    runs and deploys' smoke tasks are never named: a person does not follow them by name."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT id, goal_id, title, task_type FROM tasks.task WHERE name IS NULL "
+            "AND task_type NOT IN ('review', 'fix', 'smoke') AND created_at > now() - make_interval(days => %s) "
+            "ORDER BY created_at DESC LIMIT %s",
+            (NAMED_DAYS, limit),
+        )
+        found = cur.fetchall()
+        goals = sorted({t["goal_id"] for t in found if t["goal_id"]})
+        cur.execute(
+            "SELECT goal_id, name FROM tasks.task WHERE goal_id = ANY(%s) AND name IS NOT NULL ORDER BY name",
+            (goals,),
+        )
+        taken: dict[str, list[str]] = {}
+        for row in cur.fetchall():
+            taken.setdefault(row["goal_id"], []).append(row["name"])
+    return found, taken
+
+
+def set_name(conn: psycopg.Connection, task_id: str, name: str) -> dict:
+    """Give a task its short name. A name another task of its goal has gets a number after it, so a name
+    says which task within a goal."""
+    cleaned = clean_name(name)
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT goal_id FROM tasks.task WHERE id = %s", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(task_id)
+        chosen = cleaned
+        if row["goal_id"]:
+            # One naming at a time per goal, so two tasks never take the same name.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"task-name:{row['goal_id']}",))
+            cur.execute(
+                "SELECT lower(name) AS name FROM tasks.task WHERE goal_id = %s AND id <> %s AND name IS NOT NULL",
+                (row["goal_id"], task_id),
+            )
+            taken = {r["name"] for r in cur.fetchall()}
+            number = 2
+            while chosen.lower() in taken:
+                chosen = f"{cleaned} {number}"
+                number += 1
+        cur.execute(f"UPDATE tasks.task SET name = %s WHERE id = %s RETURNING {COLUMNS}", (chosen, task_id))
+        return _jsonable(cur.fetchone())
+
+
 # A task in one of these has ended short of its issue: what is submitted for the issue again replaces what the
 # task was made from.
 RENEWABLE = ("canceled", "failed")
@@ -230,7 +296,7 @@ def list_tasks(
     """One page of tasks, highest priority then oldest first, and how many match in all.
 
     pr True: only tasks with a pull request; False: only tasks without one; None: either.
-    q: text in the title, the id or the issue ref, any case.
+    q: text in the title, the name, the id or the issue ref, any case.
     waiting True: only tasks waiting on an operator (waiting_on set); False: only those that are not.
     smoke: also list deploys' smoke tasks, which a list for a person leaves out.
     has_it: only tasks the supervisor found this owner to have (operator, supervisor, workflow, scheduler or
@@ -253,8 +319,8 @@ def list_tasks(
     if pr is not None:
         clauses.append("pr_url IS NOT NULL" if pr else "pr_url IS NULL")
     if q:
-        clauses.append("(title ILIKE %s OR id ILIKE %s OR external_ref ILIKE %s)")
-        params += [f"%{q}%"] * 3
+        clauses.append("(title ILIKE %s OR id ILIKE %s OR external_ref ILIKE %s OR name ILIKE %s)")
+        params += [f"%{q}%"] * 4
     order = "priority DESC, created_at, id"
     if has_it:
         # A goal that is paused or planning holds its tasks on purpose: that is the goal's to show, not a

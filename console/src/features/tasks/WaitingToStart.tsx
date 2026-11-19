@@ -6,24 +6,17 @@ import { api, type IssueProgress, type Task } from "../../api";
 import { IssueLink, StatusBadge, when } from "../../components/ui";
 import { RaiseGoalBudget } from "../goals/budget";
 import { holdWords } from "./hold";
+import { TaskName } from "../../components/TaskName";
 
 // A task that has not started says why at the top of its page in a sentence, and what would start it: the action
 // when it is the operator's to take, or that nothing is needed. A blocked task shows each issue it waits on.
 
-// The tasks a hold waits on, each by its title: a title says what the task is, an ID does not.
-function TaskLinks({ ids }: { ids: string[] }) {
-  const [titles, setTitles] = useState<Record<string, string>>({});
-  useEffect(() => {
-    ids.forEach((id) => api.task(id).then((t) => setTitles((was) => ({ ...was, [id]: t.title })), () => undefined));
-  }, [ids.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
-  return (
-    <Stack gap={2}>
-      {ids.map((id) => (
-        <Anchor key={id} component={Link} to={`/tasks/${id}`} size="sm">{titles[id] ?? "the other task"}</Anchor>
-      ))}
-    </Stack>
-  );
-}
+// The tasks a hold waits on, each by its name: a name says which task, an ID does not.
+const TaskLinks = ({ ids }: { ids: string[] }) => (
+  <Stack gap={2}>
+    {ids.map((id) => <TaskName key={id} id={id} />)}
+  </Stack>
+);
 
 // In a list or on a card: why a queued or blocked task waits, in a line. Null for a task that does not wait.
 export function waitReason(task: Pick<Task, "status" | "held" | "depends_on">): string | null {

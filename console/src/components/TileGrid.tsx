@@ -160,7 +160,7 @@ export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?:
         return (
           <Paper component="section" className="tile" p={0} key={t.id} data-task-id={t.id} ref={watch}>
             <header>
-              <Anchor component={Link} to={`/tasks/${t.id}`} className="title" fw={600} size="sm" truncate="end">{t.title}</Anchor>
+              <Anchor component={Link} to={`/tasks/${t.id}`} className="title" fw={600} size="sm" truncate="end" title={t.title}>{t.name || t.title}</Anchor>
               <Group className="facts" gap={8} wrap="wrap">
                 <Badge size="xs" variant="light" color={statusColor(status)} tt="none">{statusLabel(status)}</Badge>
                 {props.size !== 32 && <Text size="xs" c="dimmed" ff="monospace">{t.repo.split("/").pop()}</Text>}

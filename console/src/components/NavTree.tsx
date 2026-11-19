@@ -75,14 +75,14 @@ export function TreeItem(props: {
 }
 
 // A leaf: one goal's or task's row, linking to its page.
-export function LeafItem(props: { label: string; to: string; status: string }) {
+export function LeafItem(props: { label: string; to: string; status: string; title?: string }) {
   const path = useLocation().pathname;
   return (
     <NavLink
       component={RouterLink}
       to={props.to}
       label={<Text size="sm" truncate>{props.label}</Text>}
-      title={props.label}
+      title={props.title ?? props.label}
       leftSection={<StatusDot status={props.status} />}
       active={path === props.to}
       variant="light"
