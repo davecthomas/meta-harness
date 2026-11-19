@@ -1,5 +1,5 @@
-import { Alert, Anchor, Badge, Card, Code, Group, List, MultiSelect, Paper, SegmentedControl, Stack, Text, TextInput } from "@mantine/core";
-import { IconArrowRight, IconBulb } from "@tabler/icons-react";
+import { Anchor, Badge, Card, Code, Group, MultiSelect, SegmentedControl, Stack, Text, TextInput } from "@mantine/core";
+import { IconArrowRight } from "@tabler/icons-react";
 import type { PlanDecision, PlanDraft, PlanItem } from "../../api";
 import { issueUrl, refLabel } from "../trackers/refs";
 
@@ -14,25 +14,6 @@ const DECISIONS: { value: PlanDecision; label: string }[] = [
   { value: "split", label: "Split" },
   { value: "leave_out", label: "Leave out" },
 ];
-
-// What the planner says of its plan, set apart at the top: how it reaches the goal, and what it does not cover.
-export function PlannerSays({ summary, gaps }: { summary: string; gaps: string[] }) {
-  if (!summary && !gaps.length) return null;
-  return (
-    <Paper withBorder p="md" data-testid="planner-says" style={{ borderLeft: "4px solid var(--mantine-color-indigo-6)" }}>
-      <Group gap="xs" mb={6}>
-        <IconBulb size={18} color="var(--mantine-color-indigo-5)" />
-        <Text fw={650}>From the planner</Text>
-      </Group>
-      {summary && <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{summary}</Text>}
-      {gaps.length > 0 && (
-        <Alert color="yellow" variant="light" mt="sm" p="xs" title={gaps.length === 1 ? "One thing to know before you approve" : `${gaps.length} things to know before you approve`}>
-          <List size="sm" spacing={2}>{gaps.map((gap) => <List.Item key={gap}>{gap}</List.Item>)}</List>
-        </Alert>
-      )}
-    </Paper>
-  );
-}
 
 // One task the plan runs: an issue it keeps, or a new task it wrote.
 export interface PlanTask {

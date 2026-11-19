@@ -328,3 +328,25 @@ test("the states-checked line says GitHub for a goal with no tracker", async () 
   const line = await screen.findByTestId("states-checked");
   expect(line.textContent).toContain("issue states read from GitHub");
 });
+
+test.each([
+  ["planning", {}],
+  ["active", { planned: true }],
+])("a %s goal with a plan folds its settings, so the plan comes first", async (status, more) => {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url.startsWith("/v1/tasks")) return respond({ tasks: [], total: 0 });
+    return respond({ ...goal(status), ...more, issues: [] });
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/g-1"]}>
+        <Routes>
+          <Route path="/goals/:goalId" element={<GoalPage />} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  expect(await screen.findByRole("button", { name: "Show and edit settings" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Edit budget" })).toBeNull();
+});

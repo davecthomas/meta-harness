@@ -64,3 +64,8 @@ async def test_an_update_is_written_in_the_planners_voice(monkeypatch):
 
     assert "friendly and casual" in seen[0]["system_prompt"] and "Do not name files" in seen[0]["system_prompt"]
     assert "Say only what the facts say" in seen[0]["system_prompt"]
+
+
+def test_the_update_is_the_one_place_the_operator_reads_a_plan_waiting_for_approval():
+    assert "While a plan waits for approval, your update is where the operator reads it" in updates.SYSTEM_PROMPT
+    assert "each of its gaps the operator should weigh before approving" in updates.SYSTEM_PROMPT

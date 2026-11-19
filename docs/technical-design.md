@@ -2901,6 +2901,14 @@ update's model call and in the planning task's prompt for `plan_summary`. A
 task's own description, which an agent works from, is not shortened by them;
 the plan's review folds it under the task's title.
 
+The planner speaks to the operator in one place: its panel at the head of the
+goal's page. The plan's section shows the plan itself (its order of work, its
+decisions on the goal's issues, its new tasks and the approval); the plan's
+summary and gaps reach the operator through the planner's update, which, while
+a plan waits for approval, says what it does and lists approving it and each
+gap worth weighing under "Needs you". A goal with a plan keeps its settings
+folded to one line, so the plan comes first.
+
 **Every goal is planned.** With the planning configuration's `goals` set to
 `all` (as shipped; `from_description` plans only a goal that plans its issues
 from its description, as before), a goal that takes existing issues is planned
