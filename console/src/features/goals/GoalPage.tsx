@@ -13,7 +13,7 @@ import { GoalStanding } from "./GoalStanding";
 import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures, failures } from "./GoalFailures";
 import { usd } from "../../money";
-import { GoalPlan } from "./GoalPlan";
+import { ApprovedPlan, GoalPlan } from "./GoalPlan";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
 import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
@@ -368,6 +368,8 @@ export function GoalPage() {
       )}
 
       {goal.status === "planning" && <GoalPlan goal={goal} onApproved={() => void Promise.all([load(), loadProgress()])} />}
+      {/* Once approved, what the planner said stays at the head of the goal's work. */}
+      {goal.status !== "planning" && goal.plan_approved_at && <ApprovedPlan goal={goal} />}
 
       <SectionTitle
         right={

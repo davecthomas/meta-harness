@@ -54,7 +54,19 @@ export interface PlanDraft {
   depends_on: string[];
 }
 
-// A feature goal's plan as the planner shows it: its newest version, or none while the first is drafted.
+// A plan's decision on an issue the goal already had: run it as it is, replace it with new tasks, or leave it
+// out, with the planner's reason. depends_on names what a kept issue waits on: other issues' refs, or new
+// tasks' draft_id. replaced_by names the new tasks a split issue is replaced by.
+export type PlanDecision = "keep" | "split" | "leave_out";
+export interface PlanItem {
+  ref: string;
+  decision: PlanDecision;
+  reason: string;
+  depends_on: string[];
+  replaced_by: string[];
+}
+
+// A goal's plan as the planner shows it: its newest version, or none while the first is drafted.
 export interface GoalPlan {
   goal_id: string;
   status: string;
@@ -65,7 +77,16 @@ export interface GoalPlan {
   label: string;
   plan: {
     version: number;
+    // The new tasks the planner wrote: they exist only in the plan until it is approved.
     drafts: PlanDraft[];
+    // The decision on each issue the goal already had, and those issues as they were when it was planned.
+    items?: PlanItem[];
+    issues?: { ref: string; repo: string; title: string }[];
+    // How the plan reaches the goal, and what it does not cover.
+    summary?: string;
+    gaps?: string[];
+    // Where an approval put the new tasks: the goal's tracker (true) or the meta-harness alone.
+    tracked?: boolean | null;
     // Why the plan cannot be approved; empty when it can.
     invalid: string[];
     source: "planned" | "edited";
@@ -147,7 +168,7 @@ export const goalsApi = {
   },
   goal: (id: string) => call<Goal & { issues: IssueLink[] }>(`/v1/goals/${id}`),
   // The system's parallel limit, which a goal inherits and may lower.
-  limits: () => call<{ max_parallel: number | null; max_sandboxes: number | null }>("/v1/limits"),
+  limits: () => call<{ max_parallel: number | null; max_sandboxes: number | null; plans_every_goal?: boolean }>("/v1/limits"),
   createGoal: (body: Record<string, unknown>) => call<Goal>("/v1/goals", { method: "POST", body: JSON.stringify(body) }),
   // Goals from labels: every label on the registered repos' open issues, a label's issues, and a drafted goal.
   // source, here and below: which tracker's issues, and what it asks of a goal; the default tracker's when left out.
@@ -184,11 +205,13 @@ export const goalsApi = {
   goalSpend: (id: string) => call<GoalSpend>(`/v1/goals/${id}/spend`),
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
   goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
-  savePlan: (id: string, drafts: PlanDraft[]) =>
-    call<GoalPlan>(`/v1/goals/${id}/plan`, { method: "PUT", body: JSON.stringify({ drafts }) }),
+  // items: the decisions on the goal's issues; left out, those of the version before stay.
+  savePlan: (id: string, drafts: PlanDraft[], items?: PlanItem[]) =>
+    call<GoalPlan>(`/v1/goals/${id}/plan`, { method: "PUT", body: JSON.stringify(items ? { drafts, items } : { drafts }) }),
   replan: (id: string, note: string) =>
     call<GoalPlan>(`/v1/goals/${id}/replan`, { method: "POST", body: JSON.stringify({ note }) }),
-  approvePlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/approve`, { method: "POST" }),
+  // track: whether the plan's new tasks become issues in the goal's tracker, or are kept in the meta-harness.
+  approvePlan: (id: string, track = true) => call<GoalPlan>(`/v1/goals/${id}/approve`, { method: "POST", body: JSON.stringify({ track }) }),
   // A held issue: make it a task whatever its size and gaps, or create the smaller issues it splits into.
   runAnyway: (id: string, ref: string) =>
     call<{ goal_id: string; ref: string; run_anyway: boolean }>(`/v1/goals/${id}/issues/run-anyway`, {

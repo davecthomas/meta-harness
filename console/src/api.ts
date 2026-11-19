@@ -36,6 +36,9 @@ export interface Goal {
   // What the goal told its tracker besides its repos: for Jira, { project }. Null when the tracker asks nothing.
   tracker_settings?: Record<string, string> | null;
   modality: string;
+  // Whether a planner plans the goal before its tasks run, and when an operator approved its plan.
+  planned?: boolean;
+  plan_approved_at?: string | null;
   status: string;
   auto_merge: boolean;
   max_usd: string | null;

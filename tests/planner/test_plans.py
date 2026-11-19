@@ -1,5 +1,7 @@
 """A plan's drafts: which hold together, in what order their issues are created, and how a body names them."""
 
+import pytest
+
 from meta_harness.planner import planning, plans
 
 REPOS = ["o/a", "o/b"]
@@ -160,3 +162,25 @@ def test_a_planning_runs_last_word_on_an_issue_and_its_last_summary_are_the_plan
     ]
     assert plans.latest_summary(summaries) == ("Second.", ["None covers export"])
     assert plans.latest_summary([]) == ("", [])
+
+
+def test_the_shipped_configuration_plans_every_goal_and_its_settings_are_checked(monkeypatch, tmp_path):
+    import json
+
+    shipped = planning.settings()
+    assert shipped["goals"] == "all", "every goal is planned before its tasks run, as shipped"
+    planning.check_settings()
+
+    def with_planning(**changed) -> None:
+        path = tmp_path / "planner.json"
+        path.write_text(json.dumps({"planning": {**shipped, **changed}}))
+        monkeypatch.setattr(planning, "PLANNER_CONFIG_PATH", path)
+
+    with_planning(goals="some")
+    with pytest.raises(RuntimeError, match="planning.goals must be one of all, from_description"):
+        planning.check_settings()
+    with_planning(max_issues=0)
+    with pytest.raises(RuntimeError, match="planning.max_issues must be a whole number above 0"):
+        planning.check_settings()
+    with_planning(goals="from_description")
+    planning.check_settings()

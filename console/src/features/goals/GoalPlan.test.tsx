@@ -2,9 +2,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
-import type { Goal, GoalPlan as Plan, PlanDraft } from "../../api";
+import type { Goal, GoalPlan as Plan, PlanDraft, PlanItem } from "../../api";
+import { planSentence, tasksOf } from "./PlanReview";
 import { theme } from "../../theme";
-import { GoalPlan, inOrder, splitBody } from "./GoalPlan";
+import { ApprovedPlan, GoalPlan, inOrder, splitBody } from "./GoalPlan";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -22,7 +23,7 @@ function planned(fields: Partial<NonNullable<Plan["plan"]>> = {}, top: Partial<P
   };
 }
 
-function show(first: Plan) {
+function show(first: Plan, goal: Goal = GOAL) {
   const asked: { url: string; method: string; body: any }[] = [];
   const approved: number[] = [];
   let now = first;
@@ -30,7 +31,7 @@ function show(first: Plan) {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : null;
     asked.push({ url, method, body });
-    if (method === "PUT") now = planned({ version: now.plan!.version + 1, drafts: body.drafts, source: "edited", created_by: "dave" });
+    if (method === "PUT") now = planned({ ...now.plan, version: now.plan!.version + 1, drafts: body.drafts, items: body.items ?? now.plan!.items, source: "edited", created_by: "dave" });
     if (url.endsWith("/replan")) now = { ...now, planning_task_id: "t-plan-2" };
     if (url.endsWith("/approve")) now = { ...now, status: "active", approved_at: "2026-11-10T11:00:00Z" };
     return Promise.resolve(new Response(JSON.stringify(now), { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -38,7 +39,7 @@ function show(first: Plan) {
   render(
     <MantineProvider theme={theme}>
       <MemoryRouter>
-        <GoalPlan goal={GOAL} onApproved={() => approved.push(1)} />
+        <GoalPlan goal={goal} onApproved={() => approved.push(1)} />
       </MemoryRouter>
     </MantineProvider>,
   );
@@ -47,7 +48,7 @@ function show(first: Plan) {
 
 test("while the planning task drafts, the page says so and links to its run", async () => {
   show({ ...planned(), plan: null, planning_task_id: "t-plan" });
-  expect(await screen.findByText("The planning task is drafting the plan")).toBeTruthy();
+  expect(await screen.findByText("The planner is working on the plan")).toBeTruthy();
   expect(screen.getByRole("link", { name: "Watch its run" }).getAttribute("href")).toBe("/tasks/t-plan");
   expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
 });
@@ -62,7 +63,9 @@ test("the plan shows each draft in the order the work can be done, with its chec
   expect(api.textContent).toContain("- make test");
   expect(api.textContent).toContain("Afterstore");
   expect(screen.getByTestId("plan-order").textContent).toContain("store");
-  expect(screen.getByText(/Version 1, drafted by the planning task/)).toBeTruthy();
+  expect(screen.getByText(/Version 1, made by the planner/)).toBeTruthy();
+  // The order of work says how much can run side by side.
+  expect(screen.getByTestId("plan-order").textContent).toContain("3 tasks. 1 can start at once");
   expect(screen.getByRole("link", { name: "The planning task's run" }).getAttribute("href")).toBe("/tasks/t-plan");
 });
 
@@ -97,21 +100,112 @@ test("Approve says what it will create, creates the issues and tells the page", 
   const { asked, approved } = show(planned());
   fireEvent.click(await screen.findByRole("button", { name: "Approve the plan" }));
   const dialog = await screen.findByRole("dialog", { name: "Approve the plan" });
-  expect(dialog.textContent).toContain("creates 3 issues in the goal's issue tracker with the label meta-harness:goal-g-1");
-  fireEvent.click(within(dialog).getByRole("button", { name: "Create the issues and start" }));
+  expect(within(dialog).getByTestId("approve-says").textContent).toContain("Approving this plan adds 3 new tasks. Then the goal starts");
+  // The new tasks go to the goal's tracker unless the operator says to keep them in the meta-harness.
+  const toTracker = within(dialog).getByRole("switch") as HTMLInputElement;
+  expect(toTracker.checked).toBe(true);
+  expect(dialog.textContent).toContain("Add the 3 new tasks to GitHub as issues");
+  expect(dialog.textContent).toContain("with the label meta-harness:goal-g-1");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Approve and start" }));
   await waitFor(() => expect(approved).toHaveLength(1));
-  expect(asked.at(-1)).toMatchObject({ url: "/v1/goals/g-1/approve", method: "POST" });
+  expect(asked.at(-1)).toMatchObject({ url: "/v1/goals/g-1/approve", method: "POST", body: { track: true } });
 });
 
 test("Replan takes a note and starts a new planning task", async () => {
   const { asked } = show(planned());
-  fireEvent.click(await screen.findByRole("button", { name: "Replan" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Plan again" }));
   const dialog = await screen.findByRole("dialog", { name: "Ask for a new plan" });
   fireEvent.change(within(dialog).getByLabelText("Note for the planner"), { target: { value: "Smaller issues." } });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Replan" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Plan again" }));
   await waitFor(() => expect(asked.some((a) => a.url.endsWith("/replan"))).toBe(true));
   expect(asked.find((a) => a.url.endsWith("/replan"))!.body).toEqual({ note: "Smaller issues." });
-  expect(await screen.findByText("The planning task is drafting the plan")).toBeTruthy();
+  expect(await screen.findByText("The planner is working on the plan")).toBeTruthy();
+});
+
+// --- A plan over the issues a goal already has ---------------------------------------------------------
+
+const ISSUES = [
+  { ref: "jira:VL-1", repo: "o/a", title: "Crash on save" },
+  { ref: "jira:VL-2", repo: "o/a", title: "Too big" },
+  { ref: "jira:VL-3", repo: "o/a", title: "Duplicate of the first" },
+];
+const item = (ref: string, decision: PlanItem["decision"], more: Partial<PlanItem> = {}): PlanItem => ({ ref, decision, reason: "Because.", depends_on: [], replaced_by: [], ...more });
+const DECIDED = [item("jira:VL-1", "keep", { depends_on: ["api"] }), item("jira:VL-2", "split", { replaced_by: ["store", "api"], reason: "Two changes." }), item("jira:VL-3", "leave_out")];
+const OVER_ISSUES = () =>
+  planned({ drafts: [draft("store"), draft("api", ["store"])], items: DECIDED, issues: ISSUES, summary: "Store first, then the API, then the crash.", gaps: ["Nothing covers export."] });
+const JIRA_GOAL = { ...GOAL, tracker: "jira" } as Goal;
+
+test("the plan leads with what the planner says, then the order across issues and new tasks, then each decision", async () => {
+  show(OVER_ISSUES(), JIRA_GOAL);
+
+  const says = await screen.findByTestId("planner-says");
+  expect(says.textContent).toContain("Store first, then the API, then the crash.");
+  expect(says.textContent).toContain("One thing to know before you approve");
+  expect(says.textContent).toContain("Nothing covers export.");
+  // The kept issue waits on a new task: one order of work for both kinds, and only what runs is in it.
+  const order = screen.getByTestId("plan-order").textContent ?? "";
+  expect(order).toContain("3 tasks. 1 can start at once");
+  expect(order.indexOf("store")).toBeLessThan(order.indexOf("VL-1"));
+  expect(order).not.toContain("VL-2");
+  expect(order).not.toContain("VL-3");
+  const big = screen.getByTestId("plan-issue-jira:VL-2");
+  expect(big.textContent).toContain("Too big");
+  expect((within(big).getByRole("radio", { name: "Split" }) as HTMLInputElement).checked).toBe(true);
+  expect((within(big).getByRole("textbox", { name: "Why, for VL-2" }) as HTMLInputElement).value).toBe("Two changes.");
+  expect((within(screen.getByTestId("plan-issue-jira:VL-3")).getByRole("radio", { name: "Leave out" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByText("Tasks the planner wrote. They exist only in this plan until you approve it.")).toBeTruthy();
+});
+
+test("an operator changes a decision, which is saved with the plan as its next version", async () => {
+  const { asked } = show(OVER_ISSUES(), JIRA_GOAL);
+  const dup = await screen.findByTestId("plan-issue-jira:VL-3");
+
+  fireEvent.click(within(dup).getByRole("radio", { name: "Run as it is" }));
+
+  expect(await screen.findByText("Edits not saved yet")).toBeTruthy();
+  expect((screen.getByRole("button", { name: "Approve the plan" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByTestId("plan-order").textContent).toContain("4 tasks");
+  fireEvent.click(screen.getByRole("button", { name: "Save as version 2" }));
+  await waitFor(() => expect(asked.some((a) => a.method === "PUT")).toBe(true));
+  const put = asked.find((a) => a.method === "PUT")!;
+  expect(put.body.items.map((i: PlanItem) => [i.ref, i.decision])).toEqual([["jira:VL-1", "keep"], ["jira:VL-2", "split"], ["jira:VL-3", "keep"]]);
+  expect(put.body.drafts).toHaveLength(2);
+});
+
+test("approving says what the plan does in numbers, and new tasks can be kept out of the tracker", async () => {
+  const { asked, approved } = show(OVER_ISSUES(), JIRA_GOAL);
+  fireEvent.click(await screen.findByRole("button", { name: "Approve the plan" }));
+  const dialog = await screen.findByRole("dialog", { name: "Approve the plan" });
+  expect(within(dialog).getByTestId("approve-says").textContent).toContain(
+    "Approving this plan runs 1 issue of the goal's as it is, replaces 1 issue with new tasks, leaves 1 issue out and adds 2 new tasks.",
+  );
+
+  expect(dialog.textContent).toContain("Add the 2 new tasks to jira as issues");
+  fireEvent.click(within(dialog).getByRole("switch"));
+  expect(dialog.textContent).toContain("they are kept in the meta-harness alone");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Approve and start" }));
+
+  await waitFor(() => expect(approved).toHaveLength(1));
+  expect(asked.at(-1)).toMatchObject({ url: "/v1/goals/g-1/approve", body: { track: false } });
+});
+
+test("a goal with no tracker is told its tasks stay in the meta-harness, with no choice to make", async () => {
+  const { asked, approved } = show(planned(), { ...GOAL, tracker: "mh" } as Goal);
+  fireEvent.click(await screen.findByRole("button", { name: "Approve the plan" }));
+  const dialog = await screen.findByRole("dialog", { name: "Approve the plan" });
+
+  expect(within(dialog).queryByRole("switch")).toBeNull();
+  expect(dialog.textContent).toContain("This goal uses no issue tracker, so its tasks are kept in the meta-harness alone.");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Approve and start" }));
+  await waitFor(() => expect(approved).toHaveLength(1));
+  expect(asked.at(-1)!.body).toEqual({ track: false });
+});
+
+test("a plan's tasks are the issues it keeps and its new tasks, and its sentence counts each decision", () => {
+  const tasks = tasksOf([draft("store"), draft("api", ["store"])], DECIDED, ISSUES);
+  expect(tasks.map((t) => [t.key, t.kind])).toEqual([["store", "new"], ["api", "new"], ["jira:VL-1", "issue"]]);
+  expect(planSentence([], [item("jira:VL-1", "keep"), item("jira:VL-2", "keep")])).toBe("Approving this plan runs 2 issues of the goal's as they are.");
+  expect(planSentence([], [])).toBe("Approving this plan runs nothing.");
 });
 
 test("drafts are ordered after what they wait on, and a body splits at its acceptance checks", () => {
@@ -119,4 +213,31 @@ test("drafts are ordered after what they wait on, and a body splits at its accep
   expect(inOrder([draft("a", ["b"]), draft("b", ["a"])]).map((d) => d.draft_id)).toEqual(["b", "a"]);
   expect(splitBody("Build it.\n\n## Acceptance checks\n\n- make test\n")).toEqual({ text: "Build it.", checks: "- make test" });
   expect(splitBody("No checks here.")).toEqual({ text: "No checks here.", checks: null });
+});
+
+test("an approved plan stays readable on the goal's page: what the planner said, and the plan when asked for", async () => {
+  const approved = { ...OVER_ISSUES(), status: "active", approved_at: "2026-11-19T10:00:00Z" };
+  approved.plan = { ...approved.plan!, tracked: false, created: { store: "mh:i-000000000001", api: "mh:i-000000000002" } };
+  vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify(approved), { status: 200 })));
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <ApprovedPlan goal={{ ...JIRA_GOAL, status: "active" } as Goal} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  const section = await screen.findByTestId("approved-plan");
+  expect(within(section).getByTestId("planner-says").textContent).toContain("Store first, then the API, then the crash.");
+  expect(section.textContent).toContain("Plan version 1, approved");
+  expect(section.textContent).toContain("It runs 1 issue of the goal's as it is, replaces 1 issue with new tasks, leaves 1 issue out and adds 2 new tasks.");
+  expect(section.textContent).toContain("The new tasks are kept in the meta-harness alone.");
+  expect(screen.queryByTestId("plan-issues")).toBeNull();
+
+  fireEvent.click(within(section).getByRole("button", { name: "Show the plan" }));
+  // Read only: a decision shows as what was decided, with no way to change it.
+  const big = screen.getByTestId("plan-issue-jira:VL-2");
+  expect(big.textContent).toContain("Split");
+  expect(within(big).queryByRole("radio")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
 });

@@ -1315,7 +1315,12 @@ def create_app(
             ceiling = sandbox_ceiling()
         except ConfigError:
             ceiling = None
-        return {"max_parallel": system_max_parallel(), "max_sandboxes": ceiling}
+        return {
+            "max_parallel": system_max_parallel(),
+            "max_sandboxes": ceiling,
+            # Whether a goal that takes existing issues is planned before its tasks run, for the New goal form.
+            "plans_every_goal": planning.plans_every_goal(),
+        }
 
     @app.post("/v1/goals/{goal_id}/pause")
     def pause(goal_id: str, who: str = Depends(operator)) -> dict:

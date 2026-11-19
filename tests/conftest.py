@@ -59,3 +59,13 @@ def no_retry_waits(monkeypatch):
 
     monkeypatch.setattr(retrying, "_sleep", lambda seconds: None)
     monkeypatch.setattr(retrying, "_async_sleep", no_wait)
+
+
+@pytest.fixture(autouse=True)
+def goals_run_unplanned(monkeypatch):
+    """Tests start from goals that take their issues in as they come: most are about what happens to a goal's
+    issues and tasks, not about planning. The shipped configuration plans every goal first; the planning tests
+    turn that on themselves (tests/planner/test_planning.py's `planned`), and one test reads the shipped file."""
+    from meta_harness.planner import planning
+
+    monkeypatch.setattr(planning, "plans_every_goal", lambda: False)
