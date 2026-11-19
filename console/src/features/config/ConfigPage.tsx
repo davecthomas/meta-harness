@@ -14,6 +14,7 @@ import { ProfilesView } from "./ProfilesView";
 import { SkillsView } from "./SkillsView";
 import { JsonDialog, ReviewDialog, StagedBar } from "./StagedChanges";
 import { TiersView } from "./TiersView";
+import { useClassifierEngines } from "./ClassifierFields";
 import { TrackersView } from "../trackers/TrackersView";
 import { countChanges, reasonTarget, setIn, shapeProblems } from "./staging";
 
@@ -91,6 +92,7 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
   const [profileDocs, setProfileDocs] = useState<Record<string, { skills?: string[]; tools?: string[] }>>({});
   const [skillNames, setSkillNames] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const classifiers = useClassifierEngines(summary.kind === "tiers");
   const admin = useAdmin();
 
   const load = useCallback(async () => {
@@ -249,7 +251,7 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
       )}
       <ErrorAlert error={error} />
 
-      {summary.kind === "tiers" && <TiersView staging={staging} profiles={profileNames} models={models} />}
+      {summary.kind === "tiers" && <TiersView staging={staging} profiles={profileNames} models={models} classifiers={classifiers} />}
       {summary.kind === "profiles" && <ProfilesView staging={staging} skills={skillNames} />}
       {summary.kind === "skills" && <SkillsView staging={staging} profiles={profileDocs} />}
       {summary.kind === "repos" && <ReposView staging={staging} />}

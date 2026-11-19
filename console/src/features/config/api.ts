@@ -29,12 +29,19 @@ export interface ConfigVersion {
   created_at: string;
 }
 
+// An engine the router's classifier can name, with the models it offers: none when its server decides them.
+export interface ClassifierEngine {
+  engine: string;
+  models: string[];
+}
+
 // The config feature's calls; src/api.ts spreads them into `api`.
 export const configApi = {
   // max_sandboxes: the most sandboxes the deployment's VM holds, the ceiling on max_parallel; null when unset.
   configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file"; max_sandboxes?: number | null }>("/v1/config"),
   configModels: () =>
     call<{ models: { name: string; engine: string; model: string; status: string }[] }>("/v1/config/models").then((r) => r.models),
+  configClassifiers: () => call<{ engines?: ClassifierEngine[] }>("/v1/config/classifiers").then((r) => r?.engines ?? []),
   // Read a skill from a git repository or from its files, to look at before it is staged. Saves nothing.
   readSkill: (from: { url?: string; ref?: string; path?: string; files?: Record<string, string> }) =>
     call<{ name: string; skill: SkillEntry }>("/v1/config/skills/read", { method: "POST", body: JSON.stringify(from) }),
