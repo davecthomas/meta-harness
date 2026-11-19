@@ -263,6 +263,28 @@ def test_raising_a_held_tasks_limit_saves_it_and_queues_the_answer_for_its_workf
     assert ("budget_decision", {"action": "raise", "max_usd": "15"}) in [(e[0], e[1]) for e in events.events]
 
 
+def test_a_raise_that_was_not_enough_is_read_back_with_the_holds_new_reason_and_amounts(api):
+    from meta_harness import budget_request
+
+    task = _held(api)
+    answered = api.post(
+        f"/v1/tasks/{task['id']}/budget", json={"action": "raise", "max_usd": "15"}, headers=_as(CALLER_KEY)
+    ).json()
+    # The workflow took the answer and looked again: the run still needs more than the new limit leaves.
+    again = budget_request.hold_reason("fix run 4", "6", budget_request.task_why("5.20", "15"))
+    api.post(
+        f"/v1/tasks/{task['id']}/status",
+        json={"status": "running", "reason": again, "waiting_on": "budget"},
+        headers=_as(SERVICE_KEY),
+    )
+
+    read = api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()
+    assert (read["status"], read["waiting_on"], read["status_reason"]) == ("running", "budget", again)
+    assert (read["budget_request"]["limit_usd"], read["budget_request"]["to_usd"]) == ("15.00", "16.00")
+    # What the console takes as the answer handled: the task was written after the answer was accepted.
+    assert read["updated_at"] != answered["updated_at"]
+
+
 def test_a_budget_answer_needs_a_held_task_and_goes_through_its_own_endpoint(api):
     held = _held(api)
     ended = api.post(f"/v1/tasks/{held['id']}/budget", json={"action": "end"}, headers=_as(CALLER_KEY))

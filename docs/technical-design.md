@@ -1043,7 +1043,10 @@ its repo-area lock and its place in the parallel limit, marked
 what is left. A run that stops at its spend limit holds the same way and,
 once there is budget, runs again. The operator answers through
 `POST /v1/tasks/{id}/budget`: `raise` with a new `max_usd` for the task, or
-`end`, which ends the task as it would have ended. A task held for its
+`end`, which ends the task as it would have ended. An answer that leaves the
+next run still short holds the task again, its status reason rewritten with
+what is left now (behind the `budget-hold-again` patch), so the hold's reason
+and its `budget_request` say what the raise left. A task held for its
 goal's budget looks again every five minutes, so raising the goal's budget
 on its page lets its tasks go on by themselves, and a budget resume
 (`POST /v1/goals/{id}/resume-budget`) tells them to look again at once. A task no one answers in 24
@@ -3518,7 +3521,15 @@ what the next run needs and what is left, a field for a new spend limit
 with Raise the limit and carry on, and End the task; one held for its goal's
 budget has a field for the goal's new budget instead, holding the budget a
 resume would set, with Raise the goal's budget and carry on, a link to the
-goal, and Look again now. Money reads as dollars and cents everywhere: the
+goal, and Look again now. The scheduler hands an answer to the task's
+workflow at its next pass, so once one is accepted the alert gives way to a
+line saying what was sent ("Limit raised to $15.00. The task continues at its
+next step."), and the page reads the task again every few seconds
+(`console/src/features/tasks/budgetAnswer.ts`). The workflow writes the task
+once it has taken the answer, which moves its `updated_at`: the line stays
+until then, however long the scheduler takes, and clears when the task waits
+no more. When the workflow held it again, the alert comes back with the
+reason it wrote. Money reads as dollars and cents everywhere: the
 services round the amounts in the reasons they write
 (`src/meta_harness/money.py`), and the console formats every amount it
 shows and rounds the amounts in a reason recorded before that

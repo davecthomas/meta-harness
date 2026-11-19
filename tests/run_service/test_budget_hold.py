@@ -115,6 +115,38 @@ async def test_a_task_short_of_its_limit_holds_and_carries_on_when_the_limit_is_
     assert Decimal(world.script.runs[-1].spend_limit_usd) == Decimal("3.00"), "the raised limit less what is spent"
 
 
+async def test_a_raise_that_is_not_enough_holds_the_task_again_with_what_is_short_now(env):  # noqa: F811
+    import os
+
+    from .test_replay import HISTORIES, _public
+
+    # As above, $3.00 of $2.50 spent before the second review: $3.50 leaves $0.50 of the $1.00 it needs.
+    world = World(Script(verdicts=[CHANGES, CLEAN], fix_commits=["c1"]), limit="2.50")
+    worker, handle = await _start(env, world, "raise-short")
+    try:
+        await _answer(handle, world, "raise:3.50")
+        for _ in range(600):
+            if len(world.holds) > 1:
+                break
+            await asyncio.sleep(0.05)
+        await handle.signal(RunTask.operator_message, OperatorMessage(message_id=2, text="raise:6.00", when="budget"))
+        result = await handle.result()
+        history = await handle.fetch_history()
+    finally:
+        await worker.__aexit__(None, None, None)
+
+    assert result.outcome == "clean"
+    first, again, resumed = world.holds
+    assert first.waiting and "the task has $-0.50 left of its $2.50 spend limit" in first.reason
+    assert again.waiting and "review run 4 needs about $1.00" in again.reason
+    assert "the task has $0.50 left of its $3.50 spend limit" in again.reason, "the reason as the raise left it"
+    assert not resumed.waiting and "carrying on with review run 4" in resumed.reason
+    # The path behind the budget-hold-again patch, recorded for the replay test (its docstring says how).
+    path = HISTORIES / "patched-budget-hold-again.json"
+    if os.environ.get("MH_RECORD_HISTORIES") and not path.exists():
+        path.write_text(_public(history.to_json()))
+
+
 async def test_a_held_task_an_operator_ends_ends_as_it_would_have(env):  # noqa: F811
     world = World(Script(verdicts=[CHANGES, CLEAN], fix_commits=["c1"]), limit="2.50")
     worker, handle = await _start(env, world, "end")

@@ -344,7 +344,8 @@ export function TaskPage() {
         )}
       </Paper>
       {status === "running" && <SteerBox taskId={task.id} />}
-      {["queued", "blocked"].includes(status) && (
+      {/* Several attempts at once is a choice made before a task's first run, not one it can take with a pull request open. */}
+      {["queued", "blocked"].includes(status) && !task.pr_url && (
         <RunAttempts taskId={task.id} attempts={task.attempts ?? 1} onSet={() => void api.task(task.id).then(setTask)} />
       )}
       <Plan events={events} running={status === "running"} />
