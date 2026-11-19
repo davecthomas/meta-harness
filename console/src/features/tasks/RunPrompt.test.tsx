@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
@@ -163,4 +163,36 @@ test("the terminal shows the prompt as one collapsed line that expands to the fu
   fireEvent.click(summary);
   expect(details.open).toBe(true);
   expect(screen.getByText("10:00:00 prompt (review-v1)")).toBeTruthy();
+});
+
+test("the task's facts are folded behind a line that links its goal, and stay open once opened", async () => {
+  window.localStorage.clear();
+  serveNewestOnly();
+  vi.stubGlobal("fetch", ((inner) => (url: string) =>
+    url === "/v1/tasks/t"
+      ? Promise.resolve(new Response(JSON.stringify({ ...TASK, goal_id: "g-1" }), { status: 200 }))
+      : url === "/v1/goals/g-1"
+        ? Promise.resolve(new Response(JSON.stringify({ id: "g-1", title: "Fix the console's bugs", statement: "" }), { status: 200 }))
+        : inner(url))(globalThis.fetch as (url: string) => Promise<Response>));
+  renderTaskPage("/tasks/t");
+
+  const summary = await screen.findByTestId("task-details-summary");
+  await waitFor(() => expect(summary.textContent).toBe("Goal: Fix the console's bugs"));
+  expect(within(summary).getByRole("link").getAttribute("href")).toBe("/goals/g-1");
+  // Folded: the table's rows are not on the page, and the timeline is.
+  expect(screen.queryByText("Acceptance checks")).toBeNull();
+  expect(await screen.findByTestId("task-path")).toBeTruthy();
+  expect(screen.getByTestId("path-elapsed")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+  expect(screen.getByText("Acceptance checks")).toBeTruthy();
+  expect(screen.getByText("Turn and spend")).toBeTruthy();
+  cleanup();
+
+  // The next task page opens with them shown, since this browser left them open.
+  renderTaskPage("/tasks/t");
+  expect(await screen.findByRole("button", { name: "Hide details" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Hide details" }));
+  expect(screen.queryByText("Acceptance checks")).toBeNull();
+  window.localStorage.clear();
 });

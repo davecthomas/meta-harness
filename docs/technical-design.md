@@ -3222,6 +3222,13 @@ returns to the one before; a link that names only a run (`?run=<run id>`)
 opens the Terminal on that run alone, with Show every run to bring the rest
 back. Each review round on the Reviews tab links to its own review run (Show
 review run) and, when it sent findings to a fix run, to that fix run.
+The Task page leads with its timeline. The task's facts (status and its
+reason, repo, issue, pull request, acceptance checks, turn and spend) are folded
+behind one line that keeps the link to its goal, and open with Show details; a
+browser that leaves them open finds them open on the next task. The timeline's
+first figure, the time from the task's start, is set large and counted by the
+second while the task goes on, as the sign that it is running.
+
 The Task page's Timeline tab, the one it opens on, is a picture of the
 task's path, drawn from the task's events alone (`console/src/features/tasks/path.ts`
 turns them into steps; no service works anything out for it). The five
