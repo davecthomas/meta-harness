@@ -22,9 +22,17 @@ the goal's repos is held until it does.
 Calls sign in as one Jira account: MH_JIRA_EMAIL and MH_JIRA_TOKEN, an API token of that account. They use
 REST API version 2, whose descriptions and comments are text (wiki markup), which is what the planner reads an
 issue's `## Acceptance checks`, `Paths:` and `Depends on:` lines from.
+
+A status name or issue type the site lacks is caught in two places, and saving the configuration is neither: it
+makes no call to Jira. The console refuses the name at entry, where it offers `choices`. The adapter reports it
+at first use: the first time it moves an issue to a configured status or creates an issue of a configured type,
+it checks the name against the same `choices`, and a name the list lacks gets a warning that names the setting,
+the value and the names the site has. The issue then fails to move or be created as before; the warning says
+why. A check that cannot reach Jira says nothing and is tried again at the next use.
 """
 
 import asyncio
+import logging
 import os
 import re
 import weakref
@@ -50,6 +58,8 @@ from meta_harness.trackers.base import (
     TrackerError,
     configured_label,
 )
+
+log = logging.getLogger(__name__)
 
 SCHEME = "jira"
 REF = re.compile(r"^jira:(?P<key>[A-Z][A-Z0-9_]+-\d+)$")
@@ -103,6 +113,8 @@ class Connections:
     """The adapter's HTTP client, one per event loop, shared by every copy bound to a goal."""
 
     def __init__(self) -> None:
+        # What was checked against the site's lists, by project, setting and name: once for every copy.
+        self.checked: set[tuple[str, str, str]] = set()
         self.clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient] = (
             weakref.WeakKeyDictionary()
         )
@@ -239,6 +251,27 @@ class JiraTracker:
             )
         return site
 
+    async def _check_name(self, project: str, setting: str, value: str) -> None:
+        """Warns, the first time a configured name is used, when the site's `choices` for it lack the name."""
+        value = value.strip()
+        mark = (project, setting, value.lower())
+        if not value or mark in self.connections.checked:
+            return
+        try:
+            names = [c["value"] for c in await self.choices(setting, {"project": project})]
+        except TrackerError:
+            return
+        self.connections.checked.add(mark)
+        if names and value.lower() not in {n.lower() for n in names}:
+            log.warning(
+                "Jira project %s: %s %r is not one the site has (it has: %s). An issue will not %s.",
+                project,
+                setting,
+                value,
+                ", ".join(names),
+                "move to it" if setting == "statuses" else "be created",
+            )
+
     def _project(self) -> str:
         """The project of the goal this adapter reads for."""
         project = str((self.source.settings if self.source else {}).get("project") or "")
@@ -371,6 +404,7 @@ class JiraTracker:
         """Creates the issue in the goal's project. For a goal with several repos its description says which
         one it is for, the way the planner reads it back."""
         several = self.source is not None and len(self.source.repos) > 1
+        await self._check_name(self._project(), "issue_type", self._site().issue_type_of(self._project()))
         made = await self._call(
             "POST",
             "/issue",
@@ -407,7 +441,9 @@ class JiraTracker:
         key = parse_ref(ref)
         site = self._site()
         now = (await self._call("GET", f"/issue/{key}", params={"fields": "status"}))["fields"]["status"]
-        named = site.statuses_of(key.rsplit("-", 1)[0]).get(status, "").strip().lower()
+        project = key.rsplit("-", 1)[0]
+        await self._check_name(project, "statuses", site.statuses_of(project).get(status, ""))
+        named = site.statuses_of(project).get(status, "").strip().lower()
         category = (now.get("statusCategory") or {}).get("key")
         here = now.get("name", "").lower()
         if named and here == named:

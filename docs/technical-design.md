@@ -2738,6 +2738,13 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
   whatever their labels, for a goal whose tracker setting `assigned` is
   `yes`; no call is made for any other goal.
 - `choices("project")` lists the site's projects the Jira account sees.
+- A status name or issue type the site lacks: the console refuses it at
+  entry, from `choices`; saving the configuration (`PUT /v1/config/trackers`)
+  makes no call to Jira and keeps it; the adapter reports it at first use. The
+  first `set_status` to a configured status name, and the first `create_issue`
+  of the project's issue type, check the name against the same `choices` and
+  log a warning that names the setting, the value and the names the site has.
+  A check that cannot reach Jira is silent and repeats at the next use.
 - What blocks an issue is its "is blocked by" links and the keys its
   `Depends on:` lines name.
 - `set_status` moves the issue through its workflow: to the status the
