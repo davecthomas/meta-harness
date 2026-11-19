@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { taskName } from "../../components/TaskName";
 import { useLocation } from "react-router-dom";
 import { api, goalStatus, goalTitle, type Goal } from "../../api";
 import { LeafItem, MoreLink, PastGroup, readFailed, StatusDot, TreeItem, TreeNote, useRows } from "../../components/NavTree";
@@ -60,7 +61,7 @@ function GoalTasks({ goalId }: { goalId: string }) {
     <>
       {error && <TreeNote error>{readFailed("its tasks", error)}</TreeNote>}
       {rows.length === 0 && <TreeNote>No tasks yet.</TreeNote>}
-      {rows.map((t) => <LeafItem key={t.id} label={t.title} to={`/tasks/${t.id}`} status={shownStatus(t)} />)}
+      {rows.map((t) => <LeafItem key={t.id} label={taskName(t)} title={t.title} to={`/tasks/${t.id}`} status={shownStatus(t)} />)}
     </>
   );
 }

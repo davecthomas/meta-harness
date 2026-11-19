@@ -87,11 +87,13 @@ export function IssueLink({ issueRef }: { issueRef: string }) {
   return url ? <Anchor href={url} target="_blank" size="sm">{issueRef.replace(/^[a-z]+:/, "")}</Anchor> : <Code>{issueRef}</Code>;
 }
 
-export function TitleLink(props: { to: string; title: string; id: string }) {
+// A row's link to a goal or task. A task with a short name is called by it, over its title; anything else is
+// called by its title, over its id.
+export function TitleLink(props: { to: string; title: string; id: string; name?: string | null }) {
   return (
     <>
-      <Anchor component={Link} to={props.to} fw={500} size="sm">{props.title}</Anchor>
-      <Id>{props.id}</Id>
+      <Anchor component={Link} to={props.to} fw={500} size="sm">{props.name || props.title}</Anchor>
+      {props.name ? <Text size="xs" c="dimmed" lineClamp={1} title={props.title}>{props.title}</Text> : <Id>{props.id}</Id>}
     </>
   );
 }

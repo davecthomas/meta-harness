@@ -114,6 +114,8 @@ export interface Task {
   repo: string;
   task_type: string;
   title: string;
+  // Its short name, from the planner; null until it has one.
+  name?: string | null;
   status: string;
   status_reason: string | null;
   cancel_requested: boolean;

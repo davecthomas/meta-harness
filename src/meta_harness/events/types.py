@@ -500,6 +500,21 @@ REGISTRY: list[EventType] = [
             ["goal_id", "version", "fixes", "model", "usd_cost"],
         ),
     ),
+    # The planner gave a goal's tasks their short names (planner/naming.py): one model call. goal_id is empty
+    # for tasks of no goal.
+    EventType(
+        "task_names_written",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "tasks": {"type": "integer"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "tasks", "model", "usd_cost"],
+        ),
+    ),
     # An operator accepted the planner's suggested fix, which became the plan's next version, or dismissed it.
     EventType(
         "plan_fix_accepted",
