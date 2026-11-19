@@ -155,7 +155,7 @@ export function Changes({ taskId }: { taskId: string }) {
           {range && (
             <Paper withBorder p="sm">
               <Stack gap="xs">
-                <Text size="xs" c="dimmed">Comment on {file.path}, line{range[1] > range[0] ? `s ${range[0]}-${range[1]}` : ` ${range[0]}`}. It posts to the pull request with your name.</Text>
+                <Text size="sm" c="dimmed">Comment on {file.path}, line{range[1] > range[0] ? `s ${range[0]}-${range[1]}` : ` ${range[0]}`}. It posts to the pull request with your name.</Text>
                 <Textarea aria-label="Comment" autosize minRows={2} value={comment} onChange={(e) => setComment(e.currentTarget.value)} />
                 <Group justify="flex-end">
                   <Button size="xs" variant="default" onClick={() => setRange(null)}>Cancel</Button>
