@@ -126,6 +126,19 @@ test("a tracker that is set up shows its settings, its missing sign-in by name, 
   expect(staged).toEqual([[["default"], "jira"]]);
 });
 
+test("a field's help is never at the smallest size and dimmed at once", async () => {
+  show(WITH_JIRA({}));
+  const jira = within(await screen.findByTestId("tracker-jira"));
+  const helps = ["The Jira site's address", "The projects the meta-harness works in", "The project a new goal starts with", "Task when empty", "The project's own names"];
+  for (const help of helps) {
+    const text = jira.getByText(help);
+    const size = text.getAttribute("data-size");
+    expect(size, help).toBeTruthy();
+    const dimmed = text.style.color === "var(--mantine-color-dimmed)";
+    expect(dimmed && size === "xs", help).toBe(false);
+  }
+});
+
 const SITE_STATUSES = ["Draft", "In Dev", "In Code Review", "Done"];
 const WITH_JIRA = (vl: Record<string, unknown>, more: Record<string, unknown> = {}) => ({
   default: "github",

@@ -68,7 +68,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
                 onCommit={(v) => s.stage(["candidate"], joinCandidate(profile, v ?? ""))}
               />
             </Group>
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               The agent that plans each goal. Its profile needs the create_issue tool.
             </Text>
           </Stack>,
@@ -86,7 +86,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               readOnly={s.readOnly}
               onCommit={(v) => v && s.stage(["goals"], v)}
             />
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               {everyGoal
                 ? "Nothing starts until you approve the goal's plan."
                 : "A goal over existing issues runs them unplanned."}
@@ -107,7 +107,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               readOnly={s.readOnly}
               onCommit={(on) => s.stage(["track_new_tasks"], on)}
             />
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               The starting choice at approval. You can change it for any plan.
             </Text>
           </Stack>,
@@ -136,7 +136,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
                 onCommit={(v) => v && s.stage(["voice", "detail"], v)}
               />
             </Group>
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               Applies to the planner's updates and plan summaries. Task descriptions for agents stay exact.
             </Text>
           </Stack>,
@@ -180,7 +180,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
                 onCommit={(v) => s.stage(["updates", "max_per_goal"], v ?? undefined)}
               />
             </Group>
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               One short model call each time a goal moves, none while it stands still.
             </Text>
           </Stack>,
@@ -199,7 +199,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               readOnly={s.readOnly}
               onCommit={(on) => s.stage(["suggest_fixes"], on)}
             />
-            <Text size="xs" c="dimmed">When a plan has a problem the planner can fix itself, it drafts the fix for you to accept. Each fix is one more planning run.</Text>
+            <Text size="sm" c="dimmed">When a plan has a problem the planner can fix itself, it drafts the fix for you to accept. Each fix is one more planning run.</Text>
           </Stack>,
         ],
         [
@@ -217,7 +217,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               readOnly={s.readOnly}
               onCommit={(v) => s.stage(["max_usd"], v === null ? undefined : Number(v).toFixed(2))}
             />
-            <Text size="xs" c="dimmed">For each planning run.</Text>
+            <Text size="sm" c="dimmed">For each planning run.</Text>
           </Stack>,
         ],
         [
@@ -249,7 +249,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
                 onCommit={(v) => s.stage(["issue_chars"], v ?? undefined)}
               />
             </Group>
-            <Text size="xs" c="dimmed">The plan says when a goal has more issues than this.</Text>
+            <Text size="sm" c="dimmed">The plan says when a goal has more issues than this.</Text>
           </Stack>,
         ],
       ]}

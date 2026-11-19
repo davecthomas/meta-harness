@@ -338,7 +338,7 @@ export function GoalPage() {
                 "Where its issues come from",
                 <Stack gap={0}>
                   <Text size="sm">{issueSourceLabel(goal.modality)}</Text>
-                  <Text size="xs" c="dimmed">Fixed when the goal was created.</Text>
+                  <Text size="sm" c="dimmed">Fixed when the goal was created.</Text>
                 </Stack>,
               ],
               // One tracker for all the goal's issues, fixed when it was created.
@@ -347,7 +347,7 @@ export function GoalPage() {
                 <Text size="sm">
                   {trackerTitle(goal.tracker ?? "github")}
                   {Object.entries(goal.tracker_settings ?? {}).map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to the meta-harness" : `, ${name} ${value}`)).join("")}
-                  <Text span size="xs" c="dimmed" display="block">Fixed when the goal was created.</Text>
+                  <Text span size="sm" c="dimmed" display="block">Fixed when the goal was created.</Text>
                 </Text>,
               ],
               ["Label", <LabelEdit {...editable} />],
@@ -471,7 +471,7 @@ export function GoalPage() {
                 <Table.Td><Text size="sm">{i.state}</Text></Table.Td>
                 <Table.Td>
                   {task ? <StatusBadge status={task.status} /> : i.refused_reason && <StatusBadge status="refused" />}
-                  {i.refused_reason && <Text size="xs" c="dimmed" mt={4}>{i.refused_reason}</Text>}
+                  {i.refused_reason && <Text size="sm" c="dimmed" mt={4}>{i.refused_reason}</Text>}
                 </Table.Td>
                 <Table.Td onClick={(e) => e.stopPropagation()}>
                   {task?.pr_url && <PrLink url={task.pr_url} />}

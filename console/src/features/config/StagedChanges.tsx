@@ -14,7 +14,7 @@ export function StagedBar(props: { count: number; version: number; onDiscard: ()
           <Text size="sm" fw={600}>
             {props.count} {props.count === 1 ? "change" : "changes"} not saved yet
           </Text>
-          <Text size="xs" c="dimmed">Nothing applies until you review and save. They are changes to version {props.version}.</Text>
+          <Text size="sm" c="dimmed">Nothing applies until you review and save. They are changes to version {props.version}.</Text>
         </Stack>
         <Group gap="xs">
           <Button size="xs" variant="default" leftSection={<IconTrash size={14} />} onClick={props.onDiscard}>Discard</Button>
