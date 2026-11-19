@@ -56,6 +56,7 @@ from meta_harness.planner import (
     cost_facts,
     drafting,
     goal_costs,
+    naming,
     plan_api,
     planning,
     plans,
@@ -244,6 +245,7 @@ def create_app(
     sizer: sizing.Sizer | None = None,
     update_writer: updates.Writer | None = None,
     fix_assessor: suggestions.Assessor | None = None,
+    namer: naming.Namer | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -434,6 +436,13 @@ def create_app(
 
             await each(await listed(planning_goals, "plans"), collect, "collecting of its plan")
             await update_goals()
+            # Tasks with no short name yet get one. A failure leaves them showing their titles.
+            try:
+                await naming.name_unnamed(tasks, events, namer)
+            except Exception as err:  # noqa: BLE001 - logged; the next pass names them
+                log.error(
+                    "planner: the naming of tasks failed: %s: %s. The next pass tries again", type(err).__name__, err
+                )
             await asyncio.sleep(interval)
 
     supervisor = Supervisor(tasks, events, workflows or TemporalWorkflows(), host)

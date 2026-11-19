@@ -46,10 +46,15 @@ test("a tool row opens to its arguments and output", () => {
   expect(within(turn).getByText("12 passed")).toBeTruthy();
 });
 
+test("a hold of a kind the console knows reads as a sentence, with no paths or IDs", () => {
+  const [item] = entries([ev("task_held", { reason: "repo area docs of o/r is held by t-1", kind: "repo_area" })]);
+  expect(item.kind === "status" && item.text).toBe("Waiting: Another task is changing the same files. This one starts when it finishes.");
+});
+
 test("the scheduler's hold and its admission show as items", () => {
   const list = entries([ev("task_held", { reason: "goal g-1 is paused", kind: "goal_status" }), ev("task_admitted", { repo: "o/r", areas: [] })]);
   expect(list.map((e) => (e.kind === "status" ? e.text : e.kind))).toEqual([
-    "Held by the scheduler: goal g-1 is paused",
+    "Waiting: goal g-1 is paused",
     "Admitted by the scheduler: its run starts",
   ]);
 });

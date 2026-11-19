@@ -1135,6 +1135,30 @@
     ],
     "type": "object"
   },
+  "task_names_written v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "tasks": {
+        "type": "integer"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "tasks",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
   "task_recovered v1": {
     "additionalProperties": true,
     "properties": {

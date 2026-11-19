@@ -38,7 +38,6 @@ export function PickedName(props: PickedNameProps) {
         label={props.label}
         value={props.value}
         display={props.value ? <Text size="sm">{props.value}</Text> : <Text size="sm" c="dimmed">{props.empty}</Text>}
-        empty={<Text size="sm" c="dimmed">{props.empty}</Text>}
         changed={props.changed}
         readOnly={props.readOnly}
         check={(draft: string) =>

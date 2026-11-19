@@ -16,6 +16,7 @@ export interface Command {
 // Keyboard shortcuts, shown by ?.
 export const SHORTCUTS: [string, string][] = [
   ["⌘K / Ctrl+K", "Open the command palette"],
+  ["⌘\\ / Ctrl+\\", "Hide or show the left menu"],
   ["g o", "Go to the Overview"],
   ["g g", "Go to Goals"],
   ["g t", "Go to Tasks"],

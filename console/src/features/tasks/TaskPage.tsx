@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CopyId, taskName } from "../../components/TaskName";
 import { Link } from "react-router-dom";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, SegmentedControl, Stack, Text } from "@mantine/core";
@@ -271,8 +272,13 @@ export function TaskPage() {
   return (
     <>
       <PageHeader
-        title={task.title}
-        description={<Group gap="xs"><StatusBadge status={shown} /><Text size="sm" c="dimmed" ff="monospace">{task.id}</Text></Group>}
+        title={taskName(task)}
+        description={
+          <Stack gap={6}>
+            {task.name && <Text size="sm">{task.title}</Text>}
+            <Group gap={6}><StatusBadge status={shown} /><CopyId id={task.id} /></Group>
+          </Stack>
+        }
         actions={
           <>
             {cancellable && (
@@ -344,7 +350,8 @@ export function TaskPage() {
         )}
       </Paper>
       {status === "running" && <SteerBox taskId={task.id} />}
-      {["queued", "blocked"].includes(status) && (
+      {/* Several attempts at once is a choice made before a task's first run, not one it can take with a pull request open. */}
+      {["queued", "blocked"].includes(status) && !task.pr_url && (
         <RunAttempts taskId={task.id} attempts={task.attempts ?? 1} onSet={() => void api.task(task.id).then(setTask)} />
       )}
       <Plan events={events} running={status === "running"} />

@@ -348,7 +348,9 @@ class RunTask:
         When that is under what the run needs (need: what the last run of its kind cost), the task holds:
         it stays running, marked as waiting on an operator for budget, until the operator raises the limit or
         ends it, or BUDGET_HOLD passes. A task held for its goal's budget looks again every BUDGET_RECHECK,
-        so raising the goal's budget lets it go on. None: the task must end, out of budget.
+        so raising the goal's budget lets it go on. An answer that was not enough writes the hold again, with
+        what is short now: the console reads that write as the answer taken. None: the task must end, out of
+        budget.
         """
         if not self._holds():
             left = limit - spent
@@ -356,6 +358,7 @@ class RunTask:
         need = max(need, MIN_RUN_USD)
         waited = timedelta(0)
         held = False
+        answered = False
         while True:
             left = limit - spent
             why = "" if left >= need else budget_request.task_why(left, limit)
@@ -378,12 +381,16 @@ class RunTask:
                 # Written by budget_request, which the Task API reads it back with to serve the request's amounts.
                 await self._budget_hold(True, budget_request.hold_reason(what, need, why))
                 workflow.logger.warning("%s is held for budget before %s: %s", self._where(), what, why)
+            elif answered and workflow.patched("budget-hold-again"):
+                # Still short after an operator's answer: the reason says so with the amounts as they are now.
+                await self._budget_hold(True, budget_request.hold_reason(what, need, why))
             wait = min(BUDGET_RECHECK, BUDGET_HOLD - waited) if for_goal else BUDGET_HOLD - waited
             try:
                 await workflow.wait_condition(lambda: self._budget_answer is not None, timeout=wait)
             except asyncio.TimeoutError:
                 waited += wait
             answer, self._budget_answer = self._budget_answer, None
+            answered = answer is not None
             if answer == "end" or (answer is None and waited >= BUDGET_HOLD):
                 ended = "an operator ended it" if answer else f"no one raised the budget in {BUDGET_HOLD}"
                 await self._budget_hold(False, f"{why}, and {ended}")

@@ -36,3 +36,18 @@
 @media (max-width: 1100px) { .tiles.up-32 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 800px) { .tiles.up-16, .tiles.up-32 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .tiles.up-4, .tiles.up-16, .tiles.up-32 { grid-template-columns: minmax(0, 1fr); } }
+
+/* A status icon for work going on now turns slowly; it holds still for anyone who asked for less motion. */
+@keyframes mh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.mh-spin {
+  animation: mh-spin 1.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mh-spin {
+    animation: none;
+  }
+}

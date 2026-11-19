@@ -2,6 +2,7 @@
 
     GET  /v1/config                       every kind: its title, description and active version; max_sandboxes
     GET  /v1/config/models                the models a tier candidate can name, for the tier form
+    GET  /v1/config/classifiers           the router classifier's engines, each with its models, for the tier form
     GET  /v1/config/images                the harness images the deployment builds, for a profile's image; 422
                                           says why when they cannot be listed
     GET  /v1/config/{kind}                the active version, with its document
@@ -24,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import auth
 from meta_harness.config import images, skills, store
+from meta_harness.config.classifiers import classifier_engines
 from meta_harness.config.kinds import KINDS, ConfigError, sandbox_ceiling
 from meta_harness.config.models import catalog
 
@@ -117,6 +119,11 @@ def router(
             return {"images": images.built(), "default": images.DEFAULT_IMAGE}
         except images.ImagesUnreadable as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
+
+    @api.get("/v1/config/classifiers")
+    def classifiers(who: str = Depends(operator)) -> dict:
+        """Every engine the router's classifier can name, with the models each offers."""
+        return {"engines": classifier_engines()}
 
     @api.post("/v1/config/skills/read", dependencies=[Depends(auth.admin_only)])
     def read_skill(body: SkillIn, who: str = Depends(operator)) -> dict:

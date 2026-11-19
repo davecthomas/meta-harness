@@ -1043,7 +1043,10 @@ its repo-area lock and its place in the parallel limit, marked
 what is left. A run that stops at its spend limit holds the same way and,
 once there is budget, runs again. The operator answers through
 `POST /v1/tasks/{id}/budget`: `raise` with a new `max_usd` for the task, or
-`end`, which ends the task as it would have ended. A task held for its
+`end`, which ends the task as it would have ended. An answer that leaves the
+next run still short holds the task again, its status reason rewritten with
+what is left now (behind the `budget-hold-again` patch), so the hold's reason
+and its `budget_request` say what the raise left. A task held for its
 goal's budget looks again every five minutes, so raising the goal's budget
 on its page lets its tasks go on by themselves, and a budget resume
 (`POST /v1/goals/{id}/resume-budget`) tells them to look again at once. A task no one answers in 24
@@ -2162,6 +2165,7 @@ credential.
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. A tier candidate's model select offers them | built |
 | GET | `/v1/config/images` | Configuration, in the planner process | The harness images the deployment builds, which a harness profile's image is picked from: the one image `make images` (`mh-images.service`) builds, `HARNESS_IMAGE` from `HARNESS_DIR`, and `default`, the image a profile with no image runs. Another directory under `images/` is not listed, since nothing builds it. 422 says why when the build directory has no readable Dockerfile (`config/images.py`) | built |
+| GET | `/v1/config/classifiers` | Configuration, in the planner process | The engines the router's classifier can name, each with its models: the engines ai-api-unified's provider registry lists for classification, and `none`; each engine's models from its model registry (`openai-decisions` its Decisions models, the others their provider's priced completions models, `openai-compatible` none, so its model is typed). The tiers view picks the classifier's engine and model from them, and refuses a name the list lacks | built |
 | GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles`, `repos` or `task_policy`; `modalities` and `access` are planned | built |
 | GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history | built |
 | PUT | `/v1/config/{kind}` | Configuration, in the planner process | Save a new version, checked as at startup; 422 lists every reason a bad one is refused. A `repos` version that drops a repo an open goal names is refused, naming the goal | built |
@@ -2924,7 +2928,15 @@ action for each (`approve_plan`, `merge`, `review`, `open_task`,
 `raise_budget`, `open_issue`), and `updates.actionable` checks it against the
 goal's records before it is saved: a merge needs a task whose pull request
 passed review, an approval a goal that is planning, and an action the records
-do not support becomes the nearest one they do. The panel shows each as a
+do not support becomes the nearest one they do. A task's or an issue's own state
+outranks the model's pick: a review no fix settled is `settle_review`, a task
+ready to merge `merge`, a failed task `retry`, and an issue held for its size
+`split_or_run`. The panel goes further and reads each need's task as it is
+now, so an update written before the operator acted still offers what fits:
+Merge as is, Try another fix and See the findings on a review no fix settled;
+Merge on one ready; Retry on one failed or canceled; Split and Run anyway on a
+held issue; and "Under way again" once the task runs. Acting from the panel
+asks the planner for a new update at once. The panel shows each as a
 button that resolves the need on the spot (approve the plan, merge after a
 confirm) or opens where it is resolved (the task, its changes, the goal's
 budget, the issue).
@@ -2945,6 +2957,21 @@ drafted per plan version and none for a version that was itself a fix. The
 planning configuration's `suggest_fixes` turns them off. The sorting call is a
 `plan_fixes_assessed` event, counted as planning cost; accepting and dismissing
 are `plan_fix_accepted` and `plan_fix_dismissed`.
+
+**Task names** (`planner/naming.py`). A task's id says nothing to a person and
+its title is a sentence, so each task has a short name: two to four words, at
+most 28 characters ("Hint text contrast"), kept in `tasks.task.name`. A task is
+created without one. Each planner pass reads the tasks with no name
+(`GET /v1/tasks/unnamed`: those of the last 30 days, never a review, fix or
+smoke task) and names them a goal at a time, one small model call for up to 25
+of a goal's tasks, told the names the goal already has. It saves each with
+`POST /v1/tasks/{id}/name`, which numbers a name another task of the goal has
+("Hint text contrast 2"), so a name says which task within its goal. The
+console calls a task by its name wherever it showed the id, with the title
+beside it or on hover and the id behind a copy button; a task not yet named is
+called by its title. A call that fails is logged and its tasks are tried again
+after ten minutes. Each call is a `task_names_written` event, counted as
+planning cost.
 
 **Every goal is planned.** With the planning configuration's `goals` set to
 `all` (as shipped; `from_description` plans only a goal that plans its issues
@@ -3520,7 +3547,15 @@ what the next run needs and what is left, a field for a new spend limit
 with Raise the limit and carry on, and End the task; one held for its goal's
 budget has a field for the goal's new budget instead, holding the budget a
 resume would set, with Raise the goal's budget and carry on, a link to the
-goal, and Look again now. Money reads as dollars and cents everywhere: the
+goal, and Look again now. The scheduler hands an answer to the task's
+workflow at its next pass, so once one is accepted the alert gives way to a
+line saying what was sent ("Limit raised to $15.00. The task continues at its
+next step."), and the page reads the task again every few seconds
+(`console/src/features/tasks/budgetAnswer.ts`). The workflow writes the task
+once it has taken the answer, which moves its `updated_at`: the line stays
+until then, however long the scheduler takes, and clears when the task waits
+no more. When the workflow held it again, the alert comes back with the
+reason it wrote. Money reads as dollars and cents everywhere: the
 services round the amounts in the reasons they write
 (`src/meta_harness/money.py`), and the console formats every amount it
 shows and rounds the amounts in a reason recorded before that
