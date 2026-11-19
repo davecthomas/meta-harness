@@ -192,7 +192,7 @@ test("a hold and a cancel that repeat with the same reason show once, counted", 
     if (i < 4) again.push(ev("task_status_changed", { from: "canceled", to: "queued" }, 1));
   }
   const path = steps([ev("task_created", { status: "queued" }), ...again]);
-  const held = path.filter((s) => s.title === "Held by the scheduler");
+  const held = path.filter((s) => s.title === "Waiting its turn");
   expect(held).toHaveLength(1);
   expect(held[0].times).toBe(5);
   expect(path.filter((s) => s.title === "Canceled")).toHaveLength(1);
@@ -205,7 +205,7 @@ test("a repeat inside a repeating cycle keeps every count", () => {
   // Hold and cancel twice, then a different hold and cancel; all of that twice over.
   const round = () => [hold("a"), cancel("a"), requeue(), hold("a"), cancel("a"), requeue(), hold("b"), ev("task_admitted", {}, 60)];
   const path = steps([ev("task_created", { status: "queued" }), ...round(), ...round()]);
-  const held = path.filter((s) => s.title === "Held by the scheduler" && s.detail === "a");
+  const held = path.filter((s) => s.title === "Waiting its turn" && s.detail === "a");
   expect(held).toHaveLength(1);
   expect(held[0].times).toBe(4);
 });
