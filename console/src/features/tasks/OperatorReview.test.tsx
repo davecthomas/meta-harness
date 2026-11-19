@@ -14,9 +14,16 @@ const ROUND = {
   next: { kind: "waiting" },
 } as ReviewRound;
 
-function served(answer: Partial<Task>) {
+const FILES = [{ path: "app.py", additions: 1, deletions: 0, patch: null }, { path: "lib/util.py", additions: 2, deletions: 1, patch: null }];
+
+// files: what the pull request's diff lists; null makes the diff unreadable.
+function served(answer: Partial<Task>, files: typeof FILES | null = FILES) {
   const asked: { url: string; body: unknown }[] = [];
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (String(url).includes("/pull")) {
+      if (!files) return Promise.resolve(new Response(JSON.stringify({ detail: "GitHub is down" }), { status: 502, headers: { "Content-Type": "application/json" } }));
+      return Promise.resolve(new Response(JSON.stringify({ files }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
     asked.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
     return Promise.resolve(new Response(JSON.stringify({ ...TASK, ...answer }), { status: 202, headers: { "Content-Type": "application/json" } }));
   });
@@ -53,7 +60,12 @@ test("the operator keeps the agent's right findings, adds their own, and submits
 
   fireEvent.click(screen.getByRole("checkbox", { name: "Keep the agent's finding 1" }));
   fireEvent.click(screen.getByRole("button", { name: "Add a finding" }));
-  fireEvent.change(screen.getByLabelText("Path of your finding 1"), { target: { value: "app.py" } });
+  fireEvent.click(screen.getByRole("button", { name: "Edit Path of your finding 1" }));
+  const path = screen.getByRole("combobox", { name: "Path of your finding 1" });
+  await waitFor(() => expect(path.getAttribute("placeholder")).toBe("Pick a file"));
+  fireEvent.change(path, { target: { value: "app.py" } });
+  fireEvent.keyDown(path, { key: "Enter" });
+  await screen.findByText("app.py", { selector: "p" });
   fireEvent.change(screen.getByLabelText("Your finding 1"), { target: { value: "This loop never ends." } });
   fireEvent.click(screen.getByRole("button", { name: "Submit: changes needed (2)" }));
 
@@ -71,4 +83,41 @@ test("with every agent finding dropped and none added, the operator submits no c
   fireEvent.click(screen.getByRole("button", { name: "Submit: no change needed" }));
   await waitFor(() => expect(asked).toHaveLength(1));
   expect(asked[0].body).toEqual({ verdict: "clean", keep: [], findings: [] });
+});
+
+const waiting = { ...TASK, review_claimed_by: "dave", waiting_on: "operator_review" } as Task;
+async function openPath() {
+  inPage(<OperatorReview task={waiting} rounds={[ROUND]} onChanged={() => undefined} />);
+  fireEvent.click(screen.getByRole("button", { name: "Add a finding" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit Path of your finding 1" }));
+  return screen.getByRole("combobox", { name: "Path of your finding 1" });
+}
+
+test("a finding's path is offered from the files the pull request changes", async () => {
+  served({});
+  const input = await openPath();
+  await waitFor(() => expect(input.getAttribute("placeholder")).toBe("Pick a file"));
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: "lib" } });
+  expect(await screen.findByText("lib/util.py")).toBeTruthy();
+});
+
+test("a path the changed files lack is refused", async () => {
+  served({});
+  const input = await openPath();
+  await waitFor(() => expect(input.getAttribute("placeholder")).toBe("Pick a file"));
+  fireEvent.change(input, { target: { value: "nope.py" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(await screen.findByText(/The pull request has no file named nope.py/)).toBeTruthy();
+});
+
+test("when the changed files cannot be read, the reason shows and a path can still be typed", async () => {
+  const asked = served({}, null);
+  const input = await openPath();
+  expect(await screen.findByText(/could not be listed, so type each exactly/)).toBeTruthy();
+  expect(input.getAttribute("placeholder")).toBe("Type its name");
+  fireEvent.change(input, { target: { value: "anything.py" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(await screen.findByText("anything.py", { selector: "p" })).toBeTruthy();
+  expect(asked).toEqual([]);
 });

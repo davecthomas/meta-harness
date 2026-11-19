@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { Alert, Button, Checkbox, Group, NumberInput, Stack, Text, TextInput, Textarea } from "@mantine/core";
+import { useEffect, useState } from "react";
+import { Alert, Button, Checkbox, Group, NumberInput, Stack, Text, Textarea } from "@mantine/core";
 import { IconUserCheck } from "@tabler/icons-react";
 import { api, type ReviewRound, type Task } from "../../api";
+import { PickedName, Unreadable } from "../../components/PickedName";
 
 // An operator's own review of a task's pull request, in place of leaving the round to the agent.
 //
@@ -54,6 +55,25 @@ export function OperatorReview({ task, rounds, onChanged }: { task: Task; rounds
   const [own, setOwn] = useState<Own[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The files the pull request changes, read as the Changes tab reads them: null while loading.
+  const [changed, setChanged] = useState<string[] | null>(null);
+  const [unreadable, setUnreadable] = useState<string | null>(null);
+  const reading = task.status === "running" && Boolean(task.review_claimed_by) && waiting;
+  useEffect(() => {
+    if (!reading) return;
+    let live = true;
+    api.pullDiff(task.id).then(
+      (diff) => {
+        if (!live) return;
+        setChanged(diff.files.map((f) => f.path));
+        setUnreadable(null);
+      },
+      (err) => live && setUnreadable(err instanceof Error ? err.message : String(err)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [reading, task.id]);
   if (task.status !== "running" || !task.review_claimed_by) return null;
   const who = task.review_claimed_by;
   const findings = waiting && agent ? agent.findings : [];
@@ -110,7 +130,20 @@ export function OperatorReview({ task, rounds, onChanged }: { task: Task; rounds
             ))}
             {own.map((f, i) => (
               <Group key={i} gap="xs" align="flex-start" wrap="nowrap">
-                <TextInput aria-label={`Path of your finding ${i + 1}`} placeholder="path (optional)" value={f.path} onChange={(e) => edit(i, { path: e.currentTarget.value })} w={220} styles={{ input: { fontFamily: "var(--mantine-font-family-monospace)" } }} />
+                <div>
+                  <PickedName
+                    label={`Path of your finding ${i + 1}`}
+                    what="file"
+                    where="The pull request"
+                    value={f.path}
+                    empty="path (optional)"
+                    known={changed}
+                    unreadable={unreadable}
+                    testId={`path-unknown-${i + 1}`}
+                    onCommit={(name) => edit(i, { path: name })}
+                  />
+                  <Unreadable what="changed files" error={unreadable} />
+                </div>
                 <NumberInput aria-label={`Line of your finding ${i + 1}`} placeholder="line" min={1} allowDecimal={false} value={f.line} onChange={(v) => edit(i, { line: v })} w={90} />
                 <Textarea aria-label={`Your finding ${i + 1}`} placeholder="What needs to change, and why" autosize minRows={1} value={f.body} onChange={(e) => edit(i, { body: e.currentTarget.value })} style={{ flex: 1 }} />
                 <Button size="compact-xs" variant="subtle" color="gray" mt={6} onClick={() => setOwn((now) => now.filter((_, n) => n !== i))}>Remove</Button>
