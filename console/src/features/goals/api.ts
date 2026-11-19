@@ -90,7 +90,7 @@ export interface GoalPlan {
     tracked?: boolean | null;
     // Why the plan cannot be approved; empty when it can.
     invalid: string[];
-    source: "planned" | "edited";
+    source: "planned" | "edited" | "suggested";
     task_id: string | null;
     note: string | null;
     created: Record<string, string>;
@@ -212,6 +212,9 @@ export const goalsApi = {
   // items: the decisions on the goal's issues; left out, those of the version before stay.
   savePlan: (id: string, drafts: PlanDraft[], items?: PlanItem[]) =>
     call<GoalPlan>(`/v1/goals/${id}/plan`, { method: "PUT", body: JSON.stringify(items ? { drafts, items } : { drafts }) }),
+  // The planner's suggested fix for the plan: make it the plan's next version, or leave it behind.
+  acceptFix: (id: string) => call<unknown>(`/v1/goals/${id}/suggestion/accept`, { method: "POST" }),
+  dismissFix: (id: string) => call<unknown>(`/v1/goals/${id}/suggestion/dismiss`, { method: "POST" }),
   replan: (id: string, note: string) =>
     call<GoalPlan>(`/v1/goals/${id}/replan`, { method: "POST", body: JSON.stringify({ note }) }),
   // track: whether the plan's new tasks become issues in the goal's tracker, or are kept in the meta-harness.

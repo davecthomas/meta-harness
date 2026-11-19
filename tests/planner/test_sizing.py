@@ -6,6 +6,8 @@ import uuid
 
 import httpx
 import pytest
+
+from meta_harness import db
 from fastapi.testclient import TestClient
 
 from meta_harness.config import kinds
@@ -281,6 +283,20 @@ def test_a_strict_goal_holds_an_issue_with_a_gap_until_the_issue_is_edited_or_th
     assert patched.status_code == 200 and patched.json()["strict_issues"] is False
     _sweep(client, goal)
     assert _task(tasks, other) is not None
+
+
+def test_a_planned_goals_issue_the_sizer_cannot_size_runs_unsized(world):
+    # Its approved plan already judged what one task can do: a sizer that fails does not hold its work.
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    with db.connect(autocommit=True) as conn:
+        conn.execute("UPDATE planner.goal SET planned = true WHERE id = %s", (goal["id"],))
+    sizer.fail = True
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\n{CHECKS}", labels=[goal["label"]])
+
+    swept = _sweep(client, goal)
+
+    assert _task(tasks, ref) is not None and swept["errors"] == []
 
 
 def test_an_issue_the_sizer_cannot_size_waits_unsized_for_the_next_sweep(world):
@@ -835,3 +851,26 @@ def test_an_outsiders_issue_waits_for_an_operator_and_its_task_carries_no_hidden
     tracker.issues[own].author_association = "COLLABORATOR"
     _sweep(client, goal)
     assert _task(tasks, own) is not None
+
+
+async def test_a_sizing_answer_cut_short_is_asked_for_once_more_with_room_to_finish(monkeypatch):
+    # Seen on production, 2026-11-19: an issue's sizing ended "length" at every sweep, and it never became a task.
+    monkeypatch.setenv("GATEWAY_URL", "http://gateway")
+    monkeypatch.setenv("GATEWAY_API_KEY", "gw-key")
+    limits = []
+    answer = {"size": "medium", "reasons": [], "missing": [], "split": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        limits.append(json.loads(request.content)["max_response_tokens"])
+        if len(limits) == 1:
+            return httpx.Response(200, json={"data": None, "finish_reason": "length"})
+        return httpx.Response(200, json={"data": answer, "finish_reason": "complete", "usd_cost": "0.0004"})
+
+    sized = await sizing.size_issue(_issue("A long one."), httpx.MockTransport(handler))
+
+    first = sizing.settings()["max_response_tokens"]
+    assert sized.size == "medium" and limits == [first, first * sizing.LENGTH_RETRY_FACTOR]
+
+    always = httpx.MockTransport(lambda r: httpx.Response(200, json={"data": None, "finish_reason": "length"}))
+    with pytest.raises(sizing.SizingError, match="did not finish \\(length\\)"):
+        await sizing.size_issue(_issue("A long one."), always)

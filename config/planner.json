@@ -36,6 +36,7 @@
     "voice": {
       "tone": "casual",
       "detail": "low"
-    }
+    },
+    "suggest_fixes": true
   }
 }
