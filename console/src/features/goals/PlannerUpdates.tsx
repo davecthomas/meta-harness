@@ -121,7 +121,7 @@ export function PlannerUpdates({ goalId, open }: { goalId: string; open: boolean
             {latest ? (
               <Text size="xl" fw={650} lh={1.3} data-testid="planner-headline">{latest.headline}</Text>
             ) : (
-              <Text size="sm">Your planner is looking at this goal. Its first update is written within a couple of minutes.</Text>
+              <Text size="sm">Your planner is looking at this goal. Its first update is a minute or two away.</Text>
             )}
           </Stack>
         </Group>

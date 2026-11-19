@@ -75,7 +75,7 @@ export function OrderOfWork({ tasks }: { tasks: PlanTask[] }) {
   return (
     <Stack gap={4} data-testid="plan-order">
       <Text size="sm" c="dimmed">
-        {tasks.length} {tasks.length === 1 ? "task" : "tasks"}. {first === tasks.length ? "None waits on another, so they can all run side by side." : `${first} can start at once; the rest wait on the tasks before their arrows.`}
+        {tasks.length} {tasks.length === 1 ? "task" : "tasks"}. {first === tasks.length ? "None waits on another." : `${first} can start at once; the rest wait on the tasks before their arrows.`}
       </Text>
       {tasks.map((task, i) => {
         const after = task.depends_on.filter((dep) => keys.has(dep));
