@@ -23,7 +23,7 @@ const LATEST = {
 const FIRST = { number: 1, headline: "The plan is ready for you.", body: "Three tasks, in order.", needs_you: [], next: "", created_at: "2026-11-19T11:00:00Z" };
 
 // The panel over a fake API. reads: what each GET answers, the last one repeating. Returns the POSTs made.
-function show(reads: unknown[], open = true, ask: () => Promise<Response> = () => respond({ update: LATEST })) {
+function show(reads: unknown[], open = true, ask: () => Promise<Response> = () => respond({ update: LATEST }), planning = false) {
   const posts: string[] = [];
   let read = 0;
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
@@ -36,7 +36,7 @@ function show(reads: unknown[], open = true, ask: () => Promise<Response> = () =
   render(
     <MantineProvider theme={theme}>
       <MemoryRouter>
-        <PlannerUpdates goalId="g-1" open={open} />
+        <PlannerUpdates goalId="g-1" open={open} planning={planning} />
       </MemoryRouter>
     </MantineProvider>,
   );
@@ -116,6 +116,13 @@ test("every need comes with the button that resolves it", async () => {
   await waitFor(() => expect(posts).toContain("/v1/tasks/t-1/merge"));
   window.removeEventListener("mh:approve-plan", approve);
   window.removeEventListener("mh:open-settings", settings);
+});
+
+test("a need written before needs had actions still gets a button: on a goal being planned, the approval", async () => {
+  show([{ updates: [{ ...LATEST, needs_you: [{ what: "Review and approve the plan.", ref: "" }] }], enabled: true, error: null }], true, undefined, true);
+
+  const [row] = await screen.findAllByTestId("planner-need");
+  expect(within(row).getByRole("button", { name: "Approve the plan" })).toBeTruthy();
 });
 
 test("nothing is shown with updates off, or on a closed goal that never had one", async () => {
