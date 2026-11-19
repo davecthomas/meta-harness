@@ -21,8 +21,8 @@ import {
   useComputedColorScheme,
   useMantineColorScheme,
 } from "@mantine/core";
-import { useDisclosure } from "@mantine/hooks";
-import { IconHexagons, IconMoon, IconPlus, IconSettings, IconSun } from "@tabler/icons-react";
+import { useDisclosure, useHotkeys } from "@mantine/hooks";
+import { IconHexagons, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconMoon, IconPlus, IconSettings, IconSun } from "@tabler/icons-react";
 import { api, ApiError } from "./api";
 import { SIGNED_OUT } from "./client";
 import { SignIn, signOut } from "./features/auth/SignIn";
@@ -48,6 +48,38 @@ function isActive(path: string, to: string): boolean {
   return path === to || path.startsWith(to + "/");
 }
 
+const MENU_HIDDEN = "mh:menu-hidden";
+
+// Whether the menu was hidden last time. Storage that cannot be read leaves it shown.
+function readHidden(): boolean {
+  try {
+    return window.localStorage.getItem(MENU_HIDDEN) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function keepHidden(hidden: boolean): boolean {
+  try {
+    window.localStorage.setItem(MENU_HIDDEN, hidden ? "1" : "0");
+  } catch {
+    // Not kept: the menu still hides or shows for this visit.
+  }
+  return hidden;
+}
+
+// The button that hides or shows the left menu on a wide screen. A phone has the burger instead.
+function MenuToggle({ hidden, onToggle }: { hidden: boolean; onToggle: () => void }) {
+  const label = hidden ? "Show the menu" : "Hide the menu";
+  return (
+    <Tooltip label={`${label} (⌘\\ or Ctrl+\\)`} withArrow>
+      <ActionIcon variant="subtle" color="gray" size="lg" onClick={onToggle} aria-label={label} visibleFrom="sm">
+        {hidden ? <IconLayoutSidebarLeftExpand size={20} /> : <IconLayoutSidebarLeftCollapse size={20} />}
+      </ActionIcon>
+    </Tooltip>
+  );
+}
+
 export function App() {
   const [who, setWho] = useState<string | null>(null);
   const [admin, setAdmin] = useState(false);
@@ -57,6 +89,11 @@ export function App() {
   // Why the sign-in screen shows, when it is not the first visit: the session ended while the console was open.
   const [expired, setExpired] = useState(false);
   const [opened, { toggle, close }] = useDisclosure();
+  // On a wide screen the menu can be hidden, for more room on the page; the choice is kept for next time.
+  const [hidden, setHidden] = useState(() => readHidden());
+  const toggleMenu = useCallback(() => setHidden((was) => keepHidden(!was)), []);
+  // The key by its place on the keyboard, so the shortcut works whatever character a layout puts there.
+  useHotkeys([["mod+backslash", toggleMenu, { usePhysicalKeys: true }]]);
   // The pane's lists that are closed: Goals and Tasks start open.
   const [shut, setShut] = useState<Record<string, boolean>>({});
   const location = useLocation();
@@ -110,11 +147,12 @@ export function App() {
   if (signIn) return <SignIn onSignedIn={signedIn} expired={expired} />;
 
   return (
-    <AppShell header={{ height: 56 }} navbar={{ width: 300, breakpoint: "sm", collapsed: { mobile: !opened } }} padding="lg">
+    <AppShell header={{ height: 56 }} navbar={{ width: 300, breakpoint: "sm", collapsed: { mobile: !opened, desktop: hidden } }} padding="lg">
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Menu" />
+            {who && <MenuToggle hidden={hidden} onToggle={toggleMenu} />}
             <IconHexagons size={26} stroke={1.6} color="var(--mantine-primary-color-filled)" />
             <Title order={4}>Meta-harness</Title>
             {who && <VersionTag />}
