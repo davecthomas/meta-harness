@@ -5,6 +5,7 @@ import { api, type Tracker, type TrackerSetting } from "../../api";
 import { InlineField } from "../../components/InlineField";
 import { ErrorAlert } from "../../components/ui";
 import { changed, Reasons, stageOptional, type Staging } from "../config/ConfigViews";
+import { OWN } from "./refs";
 
 // The Issue trackers configuration: every tracker the meta-harness supports, as its adapter describes it. One
 // is set up by filling in its settings, and one of those set up is the default, which a new goal uses unless it
@@ -28,7 +29,8 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
   if (error) return <ErrorAlert error={`The supported trackers could not be read: ${error}`} />;
   if (!supported) return null;
   const setUp: Record<string, any> = s.document.trackers ?? {};
-  const chosen: string = s.document.default ?? "github";
+  // With no tracker set up, new goals use none.
+  const chosen: string = Object.keys(setUp).length ? (s.document.default ?? "github") : OWN;
   return (
     <Stack gap="md">
       <Reasons reasons={s.reasons("default")} />
@@ -53,8 +55,10 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
         </Stack>
       </Paper>
       {supported.map((tracker) => {
+        // The choice of no tracker has nothing to set up or remove: it is only ever the default, or not.
+        const builtIn = !!tracker.built_in;
         const settings = setUp[tracker.scheme];
-        const isSetUp = settings !== undefined;
+        const isSetUp = builtIn || settings !== undefined;
         const isDefault = chosen === tracker.scheme;
         return (
           <Paper key={tracker.scheme} p="md" data-testid={`tracker-${tracker.scheme}`}>
@@ -63,7 +67,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
                 <Group gap="xs">
                   <Text fw={600}>{tracker.title}</Text>
                   {isDefault && <Badge color="indigo" variant="light" tt="none">Default for new goals</Badge>}
-                  <Badge color={isSetUp ? "teal" : "gray"} variant="light" tt="none">{isSetUp ? "Set up" : "Not set up"}</Badge>
+                  {!builtIn && <Badge color={isSetUp ? "teal" : "gray"} variant="light" tt="none">{isSetUp ? "Set up" : "Not set up"}</Badge>}
                   {isSetUp && tracker.credentials.length > 0 && (
                     <Badge color={tracker.signed_in ? "teal" : "orange"} variant="light" tt="none">
                       {tracker.signed_in ? "Signed in" : "Sign-in missing"}
@@ -82,7 +86,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
                   {isSetUp && !isDefault && (
                     <Button size="xs" variant="light" onClick={() => s.stage(["default"], tracker.scheme)}>Make default</Button>
                   )}
-                  {isSetUp && !isDefault && (
+                  {isSetUp && !isDefault && !builtIn && (
                     <Tooltip label="Goals that use it keep their issues, and stop reading new ones from it" multiline w={260}>
                       <Button size="xs" variant="subtle" color="red" onClick={() => s.stage(["trackers", tracker.scheme], undefined)}>
                         Remove

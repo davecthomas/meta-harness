@@ -491,12 +491,15 @@ def create_app(
         source = bound_tracker(scheme, goal_repos, settings) if hasattr(tracker, "named") else tracker
         pairs, wrong = [], []
         for ref in dict.fromkeys(refs):
-            if scheme and hasattr(tracker, "named") and not ref.startswith(f"{scheme}:"):
+            # A task kept in the meta-harness may join any goal, whatever its tracker.
+            kept = hasattr(tracker, "adapter") and ref.startswith(f"{tracker_registry.OWN.scheme}:")
+            if scheme and hasattr(tracker, "named") and not kept and not ref.startswith(f"{scheme}:"):
                 wrong.append(f"{ref} is not a {scheme} issue, and the goal's tracker is {scheme}")
                 continue
             try:
                 # The tracker the ref names says which repo the issue's work is done in.
-                repo = source.repo_of(ref) if hasattr(source, "repo_of") else parse_ref(ref)[0]
+                reader = tracker.named(tracker_registry.OWN.scheme) if kept else source
+                repo = reader.repo_of(ref) if hasattr(reader, "repo_of") else parse_ref(ref)[0]
             except (ValueError, TrackerError) as err:
                 wrong.append(
                     f"{ref} cannot be one of the goal's issues: {err}. A ref is github:<owner>/<repo>#<number>, "
@@ -562,7 +565,7 @@ def create_app(
         chosen = tracker_named(scheme)
         if not hasattr(chosen, "bound"):
             return chosen
-        spec = tracker_registry.SUPPORTED.get(getattr(chosen, "scheme", ""))
+        spec = tracker_registry.spec(getattr(chosen, "scheme", ""))
         if spec and (reasons := spec.check_goal(dict(settings or {}))):
             raise HTTPException(status_code=422, detail="; ".join(reasons))
         return chosen.bound(Source(tuple(names), dict(settings or {})))
@@ -814,7 +817,8 @@ def create_app(
         document = tracker_registry.document()
         set_up = document.get("trackers") or {}
         found = []
-        for scheme, spec in tracker_registry.SUPPORTED.items():
+        own = tracker_registry.OWN
+        for scheme, spec in [*tracker_registry.SUPPORTED.items(), (own.scheme, own)]:
             adapter = tracker.adapter(scheme) if hasattr(tracker, "adapter") else None
             missing = [name for name in spec.credentials if not os.environ.get(name)]
             found.append(
@@ -828,7 +832,9 @@ def create_app(
                     # What a new goal starts with for them, from the tracker's settings: Jira's default project.
                     "goal_defaults": spec.goal_defaults(set_up.get(scheme)) if scheme in set_up else {},
                     "credentials": spec.credentials,
-                    "configured": scheme in set_up,
+                    # The meta-harness's own tracker has nothing to set up: it is the choice of no tracker.
+                    "configured": scheme in set_up or spec is own,
+                    "built_in": spec is own,
                     # Signed in: every secret its sign-in needs is in the planner's environment.
                     "signed_in": not missing,
                     "missing_credentials": missing,
@@ -838,7 +844,7 @@ def create_app(
                     "issue_url_prefix": getattr(adapter, "issue_url_prefix", lambda: None)(),
                 }
             )
-        return {"default": document.get("default") or "github", "trackers": found}
+        return {"default": tracker_registry.default(), "trackers": found}
 
     @app.get("/v1/trackers/{scheme}/choices/{setting}")
     async def tracker_choices(scheme: str, setting: str, request: Request, who: str = Depends(operator)) -> dict:
@@ -965,12 +971,18 @@ def create_app(
         # A goal that plans its own issues needs neither: its plan's issues get a label of the goal's own. Nor
         # does one that takes the issues assigned to the meta-harness in its tracker.
         chosen_tracker = body.tracker or tracker_registry.default()
-        spec = tracker_registry.SUPPORTED.get(chosen_tracker)
+        spec = tracker_registry.spec(chosen_tracker)
         if spec:
             # What the goal does not say starts as its tracker's default: Jira's default project.
             defaults = spec.goal_defaults(tracker_registry.settings(chosen_tracker))
             body.tracker_settings = {**defaults, **body.tracker_settings}
         assigned = bool(spec and spec.takes_assigned(body.tracker_settings))
+        if chosen_tracker == tracker_registry.OWN.scheme and not planned:
+            raise HTTPException(
+                status_code=422,
+                detail="a goal that uses no issue tracker has no issues to take in: its work is planned from its "
+                "description. Choose to plan it from the description, or choose a tracker for the goal",
+            )
         if not body.label and not body.refs and not planned and not assigned:
             raise HTTPException(
                 status_code=422,

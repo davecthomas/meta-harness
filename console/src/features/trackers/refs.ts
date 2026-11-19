@@ -30,8 +30,18 @@ export function trackerOf(ref: string): string {
   return at > 0 ? ref.slice(0, at) : "";
 }
 
-// A ref as people read it, without its tracker: owner/repo#12, PROJ-12.
+// The scheme of the meta-harness's own tracker: a task kept in the meta-harness and in no outside tracker.
+export const OWN = "mh";
+
+// Whether the issue is one kept in the meta-harness alone: a plan's task that no tracker has.
+export function isOwn(ref: string): boolean {
+  return trackerOf(ref) === OWN;
+}
+
+// A ref as people read it, without its tracker: owner/repo#12, PROJ-12. A task kept in the meta-harness has no
+// name anywhere else, so it reads as that, with the end of its id to tell two apart.
 export function refLabel(ref: string): string {
+  if (isOwn(ref)) return `Kept here · ${ref.slice(-6)}`;
   return ref.replace(/^[a-z]+:/, "");
 }
 

@@ -333,3 +333,28 @@ test("a goal's switch setting is on as yes, and off leaves it out", () => {
   fireEvent.click(screen.getByRole("switch", { name: /Take issues assigned to the meta-harness/ }));
   expect(changes[1]).toEqual({ project: "VL" });
 });
+
+test("the choice of no tracker can be the default, and has nothing to set up or remove", async () => {
+  const none: Tracker = { ...base, scheme: "mh", title: "None: no issue tracking", description: "Tasks are kept in the meta-harness.", settings: [], configured: true, built_in: true };
+  const staged: [string[], unknown][] = [];
+  vi.stubGlobal("fetch", (url: string) => (url === "/v1/trackers" ? respond({ default: "github", trackers: [GITHUB, none] }) : respond({})));
+  const document = { default: "github", trackers: { github: {} } };
+  render(
+    <MantineProvider theme={theme}>
+      <TrackersView staging={{ document, original: document, stage: (path, value) => staged.push([path as string[], value]), reasons: () => [] }} />
+    </MantineProvider>,
+  );
+
+  const card = within(await screen.findByTestId("tracker-mh"));
+  expect(card.queryByText("Set up")).toBeNull();
+  expect(card.queryByRole("button", { name: "Remove" })).toBeNull();
+  expect(card.queryByRole("button", { name: /Set up/ })).toBeNull();
+  fireEvent.click(card.getByRole("button", { name: "Make default" }));
+  expect(staged).toEqual([[["default"], "mh"]]);
+});
+
+test("a task kept in the meta-harness reads as that, with no link to anywhere else", () => {
+  expect(refLabel("mh:i-0123456789ab")).toBe("Kept here · 6789ab");
+  expect(issueUrl("mh:i-0123456789ab")).toBeNull();
+  expect(refLabel("jira:VL-12")).toBe("VL-12");
+});

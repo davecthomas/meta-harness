@@ -75,6 +75,45 @@ test("a Jira goal starts on the default project, and its issues are read only fo
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
+test("a goal with no tracker asks only for a description, and is saved to be planned", async () => {
+  const created: Record<string, unknown>[] = [];
+  const base = { description: "", settings: [], credentials: [], missing_credentials: [], signed_in: true, configured: true, writes_progress: true, issue_url_prefix: null, goal_settings: [], goal_defaults: {} };
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/trackers") return respond({ default: "github", trackers: [{ ...base, scheme: "github", title: "GitHub Issues" }, { ...base, scheme: "mh", title: "None: no issue tracking", built_in: true }] });
+    if (url.startsWith("/v1/labels")) return respond({ repos: ["o/a"], labels: [] });
+    if (url === "/v1/goals" && init?.method === "POST") {
+      created.push(JSON.parse(String(init.body)));
+      return respond({ id: "g-1" }, 201);
+    }
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/new"]}>
+        <Routes>
+          <Route path="/goals/new" element={<NewGoal />} />
+          <Route path="/goals/:goalId" element={<p>Goal page</p>} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Add CSV export" } });
+  // With a tracker, the goal says where its issues come from.
+  expect(await screen.findByRole("radiogroup", { name: "Where its issues come from" })).toBeTruthy();
+
+  fireEvent.change(screen.getByLabelText("Issue tracker"), { target: { value: "mh" } });
+
+  expect((await screen.findByTestId("untracked-note")).textContent).toContain("nothing is written to any tracker");
+  expect(screen.queryByRole("radiogroup", { name: "Where its issues come from" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: /^Label/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
+  expect(await screen.findByText("Goal page")).toBeTruthy();
+  expect(created[0]).toMatchObject({ statement: "Add CSV export", repos: ["o/a"], tracker: "mh", modality: "feature", start: true });
+  expect(created[0]).not.toHaveProperty("label");
+});
+
 test("Save creates the goal without starting it and opens its page", async () => {
   const created: Record<string, unknown>[] = [];
   await fillAndPress("Save", created);

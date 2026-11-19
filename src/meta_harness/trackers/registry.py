@@ -16,13 +16,21 @@ import json
 from typing import Any
 
 from meta_harness.run_service.paths import REPO_ROOT
-from meta_harness.trackers import github, jira
+from meta_harness.trackers import github, jira, own
 import re
 
 from meta_harness.trackers.base import MARK_LABEL, Supported
 
 # Every tracker the meta-harness supports. To add one: write its adapter module, with a SPEC, and list it here.
 SUPPORTED: dict[str, Supported] = {module.SPEC.scheme: module.SPEC for module in (github, jira)}
+# The meta-harness's own tracker, for tasks kept in no outside system (trackers/own.py). It is always there and
+# has nothing to set up, so it is not part of the configuration: a goal that uses no tracker uses it.
+OWN = own.SPEC
+
+
+def spec(scheme: str) -> Supported | None:
+    """A tracker's description by its scheme: a supported one's, or the meta-harness's own."""
+    return OWN if scheme == OWN.scheme else SUPPORTED.get(scheme)
 
 
 def seed() -> dict[str, Any]:
@@ -41,8 +49,12 @@ def document() -> dict[str, Any]:
 
 
 def default() -> str:
-    """The tracker a new goal uses when it names none."""
-    return str(document().get("default") or "github")
+    """The tracker a new goal uses when it names none: the configuration's default, and the meta-harness's
+    own, which is no outside tracker at all, when none is set up."""
+    configured = document()
+    if not (configured.get("trackers") or {}):
+        return OWN.scheme
+    return str(configured.get("default") or "github")
 
 
 def mark_label() -> str:
@@ -51,7 +63,9 @@ def mark_label() -> str:
 
 
 def settings(scheme: str) -> dict[str, Any] | None:
-    """A tracker's settings, or None for one that is not set up."""
+    """A tracker's settings, or None for one that is not set up. The meta-harness's own always is."""
+    if scheme == OWN.scheme:
+        return {}
     found = (document().get("trackers") or {}).get(scheme)
     return dict(found) if isinstance(found, dict) else None
 
@@ -59,8 +73,8 @@ def settings(scheme: str) -> dict[str, Any] | None:
 def check(document: dict[str, Any], others: dict[str, dict[str, Any]] | None) -> list[str]:
     """Why a trackers configuration cannot be used; empty when it can."""
     trackers = document.get("trackers")
-    if not isinstance(trackers, dict) or not trackers:
-        return ["trackers must be an object of the trackers set up, by name, with at least one"]
+    if not isinstance(trackers, dict):
+        return ["trackers must be an object of the trackers set up, by name; empty when goals use none"]
     reasons = []
     for scheme, spec in trackers.items():
         if scheme not in SUPPORTED:
@@ -68,8 +82,14 @@ def check(document: dict[str, Any], others: dict[str, dict[str, Any]] | None) ->
         elif not isinstance(spec, dict):
             reasons.append(f"{scheme}: a tracker's settings are an object")
     chosen = document.get("default")
-    if chosen not in trackers:
-        reasons.append(f"default must be one of the trackers set up ({', '.join(sorted(trackers))}), not {chosen!r}")
+    # With no tracker set up there is none to default to: every goal keeps its tasks in the meta-harness.
+    if trackers and chosen not in trackers and chosen != OWN.scheme:
+        reasons.append(
+            f"default must be one of the trackers set up ({', '.join(sorted(trackers))}), or {OWN.scheme} for "
+            f"goals that use no tracker, not {chosen!r}"
+        )
+    if not trackers and chosen not in (None, "", OWN.scheme):
+        reasons.append(f"default names {chosen!r}, which is not set up: set it up, or leave default out")
     label = document.get("label", MARK_LABEL)
     if not isinstance(label, str) or not label or len(label) > 50 or re.search(r"[\s,]", label):
         reasons.append(

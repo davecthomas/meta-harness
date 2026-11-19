@@ -5,6 +5,78 @@ from collections.abc import Callable
 
 from meta_harness.trackers import registry
 from meta_harness.trackers.base import Issue, Source, Tracker, TrackerError, scheme_of
+from meta_harness.trackers.own import SCHEME as OWN
+
+
+class WithOwn:
+    """A goal's tracker together with the meta-harness's own (trackers/own.py), as one tracker.
+
+    A goal's issues are its tracker's, and may also include tasks its plan added that are kept in the
+    meta-harness. Every call that names an issue goes to the tracker its ref names, so the planner reads,
+    closes and tells either kind the same way. A call that names no issue goes to the goal's tracker, and
+    listing by label adds the own issues carrying it.
+    """
+
+    # The own tracker's issues are told how their tasks go, whatever the goal's tracker asks for itself.
+    writes_progress = True
+
+    def __init__(self, primary: Tracker, own: Tracker) -> None:
+        self.primary, self.own = primary, own
+        self.scheme = primary.scheme
+
+    def _of(self, ref: str) -> Tracker:
+        return self.own if scheme_of(ref) == self.own.scheme else self.primary
+
+    def bound(self, source: Source) -> "WithOwn":
+        return WithOwn(self.primary.bound(source), self.own.bound(source))
+
+    async def list_open(self, repo: str, label: str | None) -> list[Issue]:
+        found = await self.primary.list_open(repo, label)
+        # Only by label: with none, the question is what the goal's tracker has to pick from.
+        return found if label is None else found + await self.own.list_open(repo, label)
+
+    async def list_assigned(self, repo: str) -> list[Issue]:
+        return await self.primary.list_assigned(repo)
+
+    async def read(self, ref: str) -> Issue:
+        return await self._of(ref).read(ref)
+
+    async def ensure_label(self, repo: str, label: str) -> None:
+        await self.primary.ensure_label(repo, label)
+
+    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
+        return await self.primary.create_issue(repo, title, body, labels)
+
+    def _told(self, ref: str) -> Tracker | None:
+        """The tracker to tell of the issue's progress; None for one that shows it by itself."""
+        tracker = self._of(ref)
+        return tracker if getattr(tracker, "writes_progress", False) else None
+
+    async def comment(self, ref: str, body: str) -> str:
+        tracker = self._told(ref)
+        return await tracker.comment(ref, body) if tracker else ""
+
+    async def mark(self, ref: str) -> None:
+        await self._of(ref).mark(ref)
+
+    async def set_status(self, ref: str, status: str) -> bool:
+        tracker = self._told(ref)
+        return await tracker.set_status(ref, status) if tracker else False
+
+    async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
+        tracker = self._told(ref)
+        if tracker:
+            await tracker.link_pull_request(ref, pr_url, title)
+
+    def repo_of(self, ref: str) -> str:
+        return self._of(ref).repo_of(ref)
+
+    def url(self, ref: str) -> str | None:
+        return self._of(ref).url(ref)
+
+    def __getattr__(self, name: str):
+        # What only the goal's tracker has, such as an adapter's `choices`.
+        return getattr(self.primary, name)
 
 
 class Trackers:
@@ -40,7 +112,12 @@ class Trackers:
     def for_goal(self, goal: dict) -> Tracker:
         """The goal's tracker: the one it was created with, GitHub for a goal from before goals named one."""
         adapter = self.named(goal.get("tracker") or "github", f"goal {goal.get('id', '')}".strip())
-        return adapter.bound(Source(tuple(goal.get("repos") or ()), dict(goal.get("tracker_settings") or {})))
+        source = Source(tuple(goal.get("repos") or ()), dict(goal.get("tracker_settings") or {}))
+        own = self.adapters.get(OWN)
+        if own is None or adapter.scheme == OWN:
+            return adapter.bound(source)
+        # A tracked goal may still hold tasks its plan kept in the meta-harness.
+        return WithOwn(adapter.bound(source), own.bound(source))
 
     def for_repo(self, repo: str) -> Tracker:
         """With no goal to say, a repo's issues are read from the default tracker."""

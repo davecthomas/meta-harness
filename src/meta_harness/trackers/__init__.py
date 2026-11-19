@@ -14,6 +14,7 @@ from meta_harness.trackers.base import (
 )
 from meta_harness.trackers.github import GitHubTracker
 from meta_harness.trackers.jira import JiraTracker
+from meta_harness.trackers.own import OwnTracker
 from meta_harness.trackers.router import Trackers
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "GitHubTracker",
     "Issue",
     "JiraTracker",
+    "OwnTracker",
     "Source",
     "Tracker",
     "TrackerError",
@@ -37,4 +39,5 @@ def connected() -> Trackers:
     whose sign-in is missing says so when it is called."""
     from meta_harness.trackers import registry
 
-    return Trackers([spec.build() for spec in registry.SUPPORTED.values() if spec.build])
+    specs = [*registry.SUPPORTED.values(), registry.OWN]
+    return Trackers([spec.build() for spec in specs if spec.build])

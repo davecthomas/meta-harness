@@ -83,6 +83,9 @@ export function NewGoal() {
     if (places.some((s) => (next[s.name] ?? "") !== (trackerSettings[s.name] ?? ""))) setRefs([]);
   }
   const asked = trackers.find((t) => t.scheme === tracker)?.goal_settings ?? [];
+  // No tracker: the goal has no issues to take in, so its tasks are planned from its description, and kept
+  // in the meta-harness.
+  const untracked = !!trackers.find((t) => t.scheme === tracker)?.built_in;
   const missing = asked.filter((s) => s.required && !(trackerSettings[s.name] ?? "").trim());
   // A goal that takes the issues assigned to the meta-harness in its tracker has issues to take in without a
   // label or picked ones.
@@ -154,6 +157,9 @@ export function NewGoal() {
   // Whether the goal plans its own issues from its description (a feature goal) or runs issues that exist.
   const [plans, setPlans] = useState(false);
 
+  // Whether this goal plans its tasks: asked for, or the only way with no tracker.
+  const plansNow = plans || untracked;
+
   function fromDraft(draft: GoalDraft) {
     setTitle(draft.title);
     setStatement(draft.statement);
@@ -181,7 +187,7 @@ export function NewGoal() {
       setError(`Choose the goal's ${missing.map((s) => s.label).join(" and ")}.`);
       return null;
     }
-    if (!plans && !label.trim() && !refs.length && !takesAssigned) {
+    if (!plansNow && !label.trim() && !refs.length && !takesAssigned) {
       setError(`Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to the meta-harness" : ""}.`);
       return null;
     }
@@ -202,7 +208,7 @@ export function NewGoal() {
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
         start: started,
-        modality: plans ? "feature" : "fix",
+        modality: plansNow ? "feature" : "fix",
       });
       return goal.id;
     } catch (err) {
@@ -273,6 +279,13 @@ export function NewGoal() {
               </Stack>
             </Checkbox.Group>
             <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} />
+            {untracked ? (
+              <Text size="sm" data-testid="untracked-note">
+                With no issue tracker, a planning task reads the repos and writes the goal's tasks from its description. You review, edit
+                and approve the plan before anything runs. The tasks are kept in the meta-harness: nothing is written to any tracker, and
+                the pull requests are the only record outside it.
+              </Text>
+            ) : (
             <div>
               <Text size="sm" fw={500} mb={4}>Where its issues come from</Text>
               <SegmentedControl
@@ -290,7 +303,8 @@ export function NewGoal() {
                   : "The goal runs the open issues with its label, and any you pick."}
               </Text>
             </div>
-            {plans ? (
+            )}
+            {untracked ? null : plans ? (
               <LabelField
                 value={label}
                 onChange={setLabel}
@@ -402,7 +416,7 @@ export function NewGoal() {
                 disabled={saving === false}
                 onClick={() => (start.current = true)}
               >
-                {plans ? "Save and plan" : "Save and start"}
+                {plansNow ? "Save and plan" : "Save and start"}
               </Button>
             </Group>
           </Stack>

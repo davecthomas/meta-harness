@@ -31,6 +31,9 @@ export interface Tracker {
   credentials: string[];
   // Set up: the trackers configuration holds its settings.
   configured: boolean;
+  // The meta-harness's own tracker, which is the choice of no tracker: always there, with nothing to set up.
+  // A goal on it keeps its tasks in the meta-harness and writes to no outside system.
+  built_in?: boolean;
   signed_in: boolean;
   missing_credentials: string[];
   // Whether the planner tells it how an issue's task is going.
