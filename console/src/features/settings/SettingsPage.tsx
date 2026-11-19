@@ -110,7 +110,7 @@ export function SettingsPage() {
             ],
           ]}
         />
-        <Text size="xs" c="dimmed" mt="xs">The browser asks once to allow notifications.</Text>
+        <Text size="sm" c="dimmed" mt="xs">The browser asks once to allow notifications.</Text>
       </Paper>
     </>
   );
