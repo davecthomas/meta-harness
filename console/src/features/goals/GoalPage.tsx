@@ -14,6 +14,7 @@ import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures, failures } from "./GoalFailures";
 import { usd } from "../../money";
 import { ApprovedPlan, GoalPlan } from "./GoalPlan";
+import { PlannerUpdates } from "./PlannerUpdates";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
 import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
@@ -270,6 +271,8 @@ export function GoalPage() {
       <ErrorAlert error={error} />
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
       <GoalStanding standing={goal.standing} explained={explained} budgetShown={budgetStanding(goal, spentNow) !== "ok"} />
+      {/* The planner's word on the goal, ahead of everything the page lists. */}
+      <PlannerUpdates goalId={goal.id} open={open} />
       <IssuesPicker
         opened={picking}
         onClose={() => setPicking(false)}

@@ -25,6 +25,13 @@
     "max_usd": "3.00",
     "goals": "all",
     "max_issues": 60,
-    "issue_chars": 4000
+    "issue_chars": 4000,
+    "updates": {
+      "enabled": true,
+      "model": "claude:claude-haiku-4-5",
+      "max_response_tokens": 700,
+      "max_per_goal": 60,
+      "min_seconds": 90
+    }
   }
 }

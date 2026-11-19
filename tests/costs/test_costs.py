@@ -385,3 +385,13 @@ def test_no_percentage_change_from_a_span_too_small_to_compare(api):
         )  # fmt: skip
     again = api.get("/v1/costs", params={**SPAN, "source": "cloud"}, headers=OPERATOR).json()
     assert again["change_percent"] == 100.0
+
+
+def test_the_planners_updates_on_a_goal_are_counted_as_planning_cost(clean):
+    events = Events()
+    events.add(
+        "goal_update_written",
+        {"goal_id": "g-a", "number": 1, "model": "claude:claude-haiku-5", "usd_cost": "0.02"},
+        "2026-11-11",
+    )
+    assert _harvest(events) == 1

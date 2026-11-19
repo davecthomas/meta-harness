@@ -2872,6 +2872,23 @@ tool), what one planning task may spend (`max_usd`), which goals are planned
 operator says otherwise (`track_new_tasks`, true when left out), and how much
 of a goal's issues the planner is shown (`max_issues`, `issue_chars`).
 
+**The planner's updates.** The planner keeps the operator up to date at the
+head of each goal's page (`planner/updates.py`): where the goal stands, what
+changed, what needs the operator and what happens next, in plain language.
+Each pass of the planner's loop gathers the facts its own records hold about
+every open goal (its plan, each issue and its task, what is held and why) and
+reduces them to a digest; an update is written, with one small model call
+through the HTTP Gateway, only when the digest differs from the last update's,
+so a goal that stands still costs nothing. A goal that closes gets one last
+update. The model is given the facts and its last update, and told to say only
+what the facts say. Updates are rows of `planner.goal_update`, read with
+`GET /v1/goals/{id}/updates`; `POST` to the same path writes one now. Each is a
+`goal_update_written` event, whose cost is counted as planning. The planning
+configuration's `updates` turns them off, names the model (goal drafting's when
+left out), and bounds them: `max_per_goal` updates for a goal, at least
+`min_seconds` apart. One that cannot be written is logged, said on the page,
+and tried again at the next pass.
+
 **Every goal is planned.** With the planning configuration's `goals` set to
 `all` (as shipped; `from_description` plans only a goal that plans its issues
 from its description, as before), a goal that takes existing issues is planned

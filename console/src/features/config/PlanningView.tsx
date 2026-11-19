@@ -24,6 +24,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
   const { profile, model } = splitCandidate(String(doc.candidate ?? ""));
   const everyGoal = (doc.goals ?? "from_description") === "all";
   const tracks = doc.track_new_tasks !== false;
+  const updatesOn = doc.updates?.enabled !== false;
   return (
     <Facts
       items={[
@@ -99,6 +100,52 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
             <Text size="xs" c="dimmed">
               What an approval starts with: the operator can choose the other for any plan. A goal with no tracker always keeps its tasks in the
               meta-harness.
+            </Text>
+          </Stack>,
+        ],
+        [
+          "The planner's updates",
+          <Stack gap={4}>
+            <InlineField
+              kind="switch"
+              label="The planner writes updates on each goal's page"
+              nameByLabel
+              value={updatesOn}
+              switchLabel={updatesOn ? "Written as each goal moves" : "Off"}
+              changed={changed(s, ["updates", "enabled"])}
+              reasons={s.reasons("updates")}
+              readOnly={s.readOnly}
+              onCommit={(on) => s.stage(["updates", "enabled"], on)}
+            />
+            <Group gap="lg">
+              <InlineField
+                kind="select"
+                searchable
+                label="Model that writes the updates"
+                value={doc.updates?.model || null}
+                data={withValue(models, String(doc.updates?.model ?? ""))}
+                display={doc.updates?.model ? <Code>{doc.updates.model}</Code> : undefined}
+                empty="goal drafting's model"
+                changed={changed(s, ["updates", "model"])}
+                readOnly={s.readOnly}
+                onCommit={(v) => s.stage(["updates", "model"], v ?? undefined)}
+              />
+              <InlineField
+                kind="number"
+                label="Most updates a goal may have"
+                value={doc.updates?.max_per_goal ?? 60}
+                min={1}
+                decimalScale={0}
+                suffix=" a goal at most"
+                changed={changed(s, ["updates", "max_per_goal"])}
+                readOnly={s.readOnly}
+                onCommit={(v) => s.stage(["updates", "max_per_goal"], v ?? undefined)}
+              />
+            </Group>
+            <Text size="xs" c="dimmed">
+              At the head of a goal's page the planner says, in plain language, where the goal stands, what changed, what needs you and what
+              happens next. One short model call each time the goal moves, and none while it stands still; the most a goal may have bounds what
+              they cost.
             </Text>
           </Stack>,
         ],

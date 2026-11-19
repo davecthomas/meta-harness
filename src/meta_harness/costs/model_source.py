@@ -17,7 +17,7 @@ from meta_harness.costs import store
 from meta_harness.costs.store import Cost
 
 SOURCE = "model"
-EVENT_TYPES = "attempt_finished,goal_drafted,goal_titled,issue_sized,writing_checked"
+EVENT_TYPES = "attempt_finished,goal_drafted,goal_titled,goal_update_written,issue_sized,writing_checked"
 PAGE = 2000
 # The kind of cost a writing pass's rewrite is.
 WRITING = "writing"

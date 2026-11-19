@@ -312,6 +312,20 @@ REGISTRY: list[EventType] = [
             ["goal_id", "title", "model", "usd_cost"],
         ),
     ),
+    # The planner wrote an update for a goal's page (planner/updates.py): one model call, and what it cost.
+    EventType(
+        "goal_update_written",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "number": {"type": "integer"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "number", "model", "usd_cost"],
+        ),
+    ),
     EventType(
         "goal_drafted",
         1,
