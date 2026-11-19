@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
 import type { MhEvent, PullCheck, PullChecks } from "../../api";
@@ -28,6 +28,8 @@ test("the checks read in one line: how many passed, the slowest still going, and
   expect(checksLine(failed, NOW)).toBe("3 of 4 passed, failed: tests");
   expect(checksLine({ ...CHECKS, total: 0, checks: [] }, NOW)).toBe("No check has started yet");
   expect(checksLine(null, NOW)).toBe("");
+  // A check of the default branch that does not run here, such as a deploy, does not lengthen "usually".
+  expect(checksLine({ ...CHECKS, usual_seconds: 462 }, NOW)).toContain("usually about 4m in all");
 });
 
 test("the Checks tab lists each check with its state, its time counted by the second, its usual time and its log", () => {
@@ -76,6 +78,17 @@ test("checks are read every few seconds while any is going, and not at all when 
   await act(() => vi.advanceTimersByTimeAsync(11_000));
   expect(asked).toEqual(["/v1/pulls/t-1/checks", "/v1/pulls/t-1/checks", "/v1/pulls/t-1/checks"]);
   expect(screen.getByText("pending")).toBeTruthy();
+  // A page in the background is read once, then left alone until it is looked at.
+  cleanup();
+  asked.length = 0;
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  render(<Watch active />);
+  await act(() => vi.advanceTimersByTimeAsync(11_000));
+  expect(asked).toHaveLength(1);
+  hidden.mockReturnValue(false);
+  await act(async () => void document.dispatchEvent(new Event("visibilitychange")));
+  expect(asked).toHaveLength(2);
+  hidden.mockRestore();
 });
 
 let n = 0;

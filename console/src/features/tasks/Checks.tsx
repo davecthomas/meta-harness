@@ -31,7 +31,10 @@ export function checksLine(checks: PullChecks | null, now: number): string {
     const took = ran(slowest, now);
     parts.push(`${slowest.name} ${took === null ? "waiting to start" : `running ${span(took)}`}${going.length > 1 ? ` and ${going.length - 1} more` : ""}`);
   }
-  if (going.length && checks.usual_seconds) parts.push(`usually about ${span(checks.usual_seconds * 1000)} in all`);
+  // How long this commit's own checks usually take: the slowest of them. Not every check of the default
+  // branch runs on a pull request (a deploy does not), so only the ones here count.
+  const usual = Math.max(0, ...checks.checks.map((c) => c.usual_seconds ?? 0));
+  if (going.length && usual) parts.push(`usually about ${span(usual * 1000)} in all`);
   return parts.join(", ");
 }
 
@@ -45,8 +48,10 @@ export function useChecks(taskId: string, active: boolean, again?: unknown): { c
   useEffect(() => {
     if (!active) return;
     let stale = false;
-    const read = () => {
-      if (document.hidden) return;
+    // A hidden page is not kept current, but it is read once, and again the moment it is looked at: a tab
+    // opened in the background shows its checks when it is first seen.
+    const read = (first = false) => {
+      if (document.hidden && !first) return;
       api.pullChecks(taskId).then(
         (found) => {
           if (stale) return;
@@ -56,11 +61,14 @@ export function useChecks(taskId: string, active: boolean, again?: unknown): { c
         (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
       );
     };
-    read();
+    read(true);
     const timer = setInterval(read, going ? GOING_MS : ENDED_MS);
+    const seen = () => read();
+    document.addEventListener("visibilitychange", seen);
     return () => {
       stale = true;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", seen);
     };
   }, [taskId, active, going, again]);
   return { checks, error };
