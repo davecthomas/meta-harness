@@ -6,14 +6,17 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { Task } from "../../api";
 import { theme } from "../../theme";
 import { BudgetHold } from "./BudgetHold";
-import { LOOKED_AGAIN_MS, REREAD_MS } from "./budgetAnswer";
+import { REREAD_MS } from "./budgetAnswer";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
-const HELD = { id: "t-1", title: "Fix it", status: "running", waiting_on: "budget", max_usd: "10.00", goal_id: "g-1", status_reason: "fix run 4 needs about $1.00, and the task has $0.20 left of its $10.00 spend limit." } as Task;
+const HELD = { id: "t-1", title: "Fix it", status: "running", waiting_on: "budget", max_usd: "10.00", goal_id: "g-1", status_reason: "fix run 4 needs about $1.00, and the task has $0.20 left of its $10.00 spend limit.", updated_at: "2026-11-18T10:00:00Z" } as Task;
+// When an answer with a new limit saved it; a later updated_at is the workflow writing the task.
+const ANSWERED_AT = "2026-11-18T10:00:05Z";
+const WRITTEN_AT = "2026-11-18T10:00:09Z";
 
 function show(task: Task) {
   const asked: { url: string; body: any }[] = [];
@@ -82,8 +85,9 @@ function Page({ first }: { first: Task }) {
   return <BudgetHold task={task} onAnswered={setTask} />;
 }
 
-// Serves the answer (the task as the Task API returns it: still held, with its old reason, and any new limit)
-// and each later read of the task: the next of reads each time, the last again once they run out.
+// Serves the answer (the task as the Task API returns it: still held, with its old reason, and any new limit,
+// which moves its updated_at) and each later read of the task: the next of reads each time, the last again
+// once they run out.
 function served(task: Task, reads: Partial<Task>[], other: (url: string) => Promise<Response> | null = () => null) {
   const asked: { url: string; body: any }[] = [];
   let read = 0;
@@ -92,7 +96,7 @@ function served(task: Task, reads: Partial<Task>[], other: (url: string) => Prom
     asked.push({ url, body });
     const elsewhere = other(url);
     if (elsewhere) return elsewhere;
-    if (url === "/v1/tasks/t-1/budget") return json({ ...task, ...(body.max_usd ? { max_usd: String(body.max_usd) } : {}) }, 202);
+    if (url === "/v1/tasks/t-1/budget") return json({ ...task, ...(body.max_usd ? { max_usd: String(body.max_usd), updated_at: ANSWERED_AT } : {}) }, 202);
     if (url === "/v1/tasks/t-1") return json({ ...task, ...reads[Math.min(read++, reads.length - 1)] });
     return json({ detail: "not here" }, 404);
   });
@@ -112,11 +116,12 @@ async function pass(ms: number) {
   });
 }
 
-const carriedOn = { max_usd: "15.00", waiting_on: null, status_reason: "the budget was raised; carrying on with fix run 4" };
+const raised = { max_usd: "15.00", updated_at: ANSWERED_AT };
+const carriedOn = { max_usd: "15.00", waiting_on: null, status_reason: "the budget was raised; carrying on with fix run 4", updated_at: WRITTEN_AT };
 
 test("once a raised limit is accepted, the alert gives way to what was sent, which clears when the task waits no more", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  const asked = served(HELD, [{ max_usd: "15.00" }, carriedOn]);
+  const asked = served(HELD, [raised, carriedOn]);
   fireEvent.click(screen.getByRole("button", { name: "Raise the limit and carry on" }));
   expect((await screen.findByRole("status")).textContent).toBe("Limit raised to $15.00. The task continues at its next step.");
   expect(screen.queryByRole("alert")).toBeNull();
@@ -133,7 +138,7 @@ test("once a raised limit is accepted, the alert gives way to what was sent, whi
 test("a task held for a new reason after its workflow looked again shows the alert again, with that reason", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const again = "fix run 4 needs about $6.00, and the task has $5.20 left of its $15.00 spend limit.";
-  served(HELD, [{ max_usd: "15.00", status_reason: again }]);
+  served(HELD, [{ ...raised, status_reason: again, updated_at: WRITTEN_AT }]);
   fireEvent.click(screen.getByRole("button", { name: "Raise the limit and carry on" }));
   await screen.findByRole("status");
   await pass(REREAD_MS);
@@ -143,13 +148,16 @@ test("a task held for a new reason after its workflow looked again shows the ale
   expect((screen.getByLabelText(/New spend limit/) as HTMLInputElement).value).toBe("$23");
 });
 
-test("a task held as before once its workflow has had time to look again shows the alert again", async () => {
+test("the line stays however long the scheduler takes, and the alert comes back once the workflow holds the task again", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  served(HELD, [{ max_usd: "15.00" }]);
+  // A minute of reads with the answer not yet taken, then the workflow writes the hold again, its reason unchanged.
+  const waiting = Array.from({ length: 20 }, () => raised);
+  served(HELD, [...waiting, { ...raised, updated_at: WRITTEN_AT }]);
   fireEvent.click(screen.getByRole("button", { name: "Raise the limit and carry on" }));
   await screen.findByRole("status");
-  await pass(LOOKED_AGAIN_MS - REREAD_MS);
+  await pass(20 * REREAD_MS);
   expect(screen.getByRole("status")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
   await pass(REREAD_MS);
   expect((await screen.findByRole("alert")).textContent).toContain("fix run 4 needs about $1.00");
   expect(screen.queryByRole("status")).toBeNull();
