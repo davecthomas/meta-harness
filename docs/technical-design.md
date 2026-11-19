@@ -3517,7 +3517,13 @@ what the next run needs and what is left, a field for a new spend limit
 with Raise the limit and carry on, and End the task; one held for its goal's
 budget has a field for the goal's new budget instead, holding the budget a
 resume would set, with Raise the goal's budget and carry on, a link to the
-goal, and Look again now. Money reads as dollars and cents everywhere: the
+goal, and Look again now. The scheduler hands an answer to the task's
+workflow at its next pass, so once one is accepted the alert gives way to a
+line saying what was sent ("Limit raised to $15.00. The task continues at its
+next step."), and the page reads the task again every few seconds
+(`console/src/features/tasks/budgetAnswer.ts`). The line clears when the task
+waits no more; when the task is held for a new reason, or still held as
+before 30 seconds on, the alert comes back with the task's reason. Money reads as dollars and cents everywhere: the
 services round the amounts in the reasons they write
 (`src/meta_harness/money.py`), and the console formats every amount it
 shows and rounds the amounts in a reason recorded before that
