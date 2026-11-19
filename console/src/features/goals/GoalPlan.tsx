@@ -36,6 +36,9 @@ export function splitBody(body: string): { text: string; checks: string | null }
 
 function DraftCard({ draft, index, onEdit, onRemove }: { draft: PlanDraft; index: number; onEdit?: () => void; onRemove?: () => void }) {
   const { text, checks } = splitBody(draft.body);
+  // The body is written for the agent that does the task. It stays folded so the plan reads as a short list;
+  // one click shows it.
+  const [open, setOpen] = useState(false);
   return (
     <Card withBorder padding="md" data-testid={`draft-${draft.draft_id}`}>
       <Stack gap="xs">
@@ -52,11 +55,18 @@ function DraftCard({ draft, index, onEdit, onRemove }: { draft: PlanDraft; index
             {onRemove && <Button size="compact-xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={onRemove} aria-label={`Remove ${draft.draft_id}`}>Remove</Button>}
           </Group>
         </Group>
-        {text && <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{text}</Text>}
+        <Group>
+          <Anchor component="button" type="button" size="sm" aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} the details of ${draft.draft_id}`} onClick={() => setOpen((v) => !v)}>
+            {open ? "Hide details" : "Show details: what the agent is asked to build, and its checks"}
+          </Anchor>
+        </Group>
+        {open && text && <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{text}</Text>}
         {checks !== null ? (
-          <Alert color="teal" variant="light" title="Acceptance checks" p="xs">
-            <Text size="sm" ff="monospace" style={{ whiteSpace: "pre-wrap" }}>{checks || "(none listed)"}</Text>
-          </Alert>
+          open && (
+            <Alert color="teal" variant="light" title="Acceptance checks" p="xs">
+              <Text size="sm" ff="monospace" style={{ whiteSpace: "pre-wrap" }}>{checks || "(none listed)"}</Text>
+            </Alert>
+          )
         ) : (
           <Alert color="orange" variant="light" p="xs">No acceptance checks: the body needs a "## Acceptance checks" section.</Alert>
         )}

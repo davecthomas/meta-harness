@@ -2891,6 +2891,16 @@ wait: it is replaced as soon as the goal moves, and an approved plan's goal
 gets its update as soon as its first sweep has made its tasks. One that cannot be written is logged, said on the page,
 and tried again at the next pass.
 
+**The planner's voice** (`planner/voice.py`). What the planner writes for the
+operator, its updates and a plan's summary and gaps, follows the planning
+configuration's `voice`: `tone` (`casual` as shipped, `balanced`, `formal`) and
+`detail` (`low` as shipped, `medium`, `high`). At low detail it names no file,
+route, function or command, keeps to a sentence or two, and raises only what the
+operator needs to know or decide. The settings become instructions in the
+update's model call and in the planning task's prompt for `plan_summary`. A
+task's own description, which an agent works from, is not shortened by them;
+the plan's review folds it under the task's title.
+
 **Every goal is planned.** With the planning configuration's `goals` set to
 `all` (as shipped; `from_description` plans only a goal that plans its issues
 from its description, as before), a goal that takes existing issues is planned

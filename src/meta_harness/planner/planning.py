@@ -19,6 +19,7 @@ from typing import Any, Protocol
 from meta_harness import db
 from meta_harness.config import kinds as config_kinds
 from meta_harness.config import store as config_store
+from meta_harness.planner import voice
 from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import plans, store
 from meta_harness.planner.drafting import PLANNER_CONFIG_PATH
@@ -152,9 +153,13 @@ def prompt(
         "- depends_on names what must be done first: a new task by its draft_id, an existing issue by its ref as",
         "  shown above. Name a dependency only when the work truly needs it: what does not wait runs in parallel.",
         "",
-        "Finish by calling plan_summary: how the plan reaches the goal, in a few sentences an operator will read",
-        "before approving it, and as gaps anything the goal asks for that no task covers, any risk you see, and",
-        "anything you assumed.",
+        "Finish by calling plan_summary: how the plan reaches the goal, for the operator to read before approving",
+        "it, and as gaps what the operator should know or decide before approving: anything the goal asks for that",
+        "no task covers, and any risk or assumption that could change their decision.",
+        "The summary and the gaps are the only part of the plan written for the operator, and the operator is not",
+        "reading the code. They decide in a few seconds whether to trust the plan, so write those two this way,",
+        "whatever detail the tasks' own bodies need:",
+        voice.instructions(settings(), "plan"),
     ]
     if note:
         lines += ["", "An operator asked for this plan to replace the one before it, with this note:", note]

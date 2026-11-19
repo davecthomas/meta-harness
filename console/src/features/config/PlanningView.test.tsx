@@ -32,6 +32,9 @@ test("the planning tab says who the planner is, which goals are planned and wher
   expect(screen.getByText("claude:claude-opus-5-5")).toBeTruthy();
   expect(screen.getByText("Every goal")).toBeTruthy();
   expect(screen.getByText(/none of its tasks starts until its plan is approved/)).toBeTruthy();
+  // Left out of the document, the planner is casual and shares little detail.
+  expect(screen.getByText("Casual and friendly")).toBeTruthy();
+  expect(screen.getByText("Low detail: what you need to know")).toBeTruthy();
   // Left out of the document, new tasks go to the tracker.
   expect((screen.getByRole("switch", { name: "A plan's new tasks go to the issue tracker" }) as HTMLInputElement).checked).toBe(true);
   expect(screen.getByText("Added to the goal's issue tracker")).toBeTruthy();

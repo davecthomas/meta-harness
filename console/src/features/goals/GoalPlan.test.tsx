@@ -59,6 +59,9 @@ test("the plan shows each draft in the order the work can be done, with its chec
   const cards = screen.getAllByTestId(/^draft-/).map((c) => c.getAttribute("data-testid"));
   expect(cards).toEqual(["draft-store", "draft-api", "draft-ui"]);
   const api = screen.getByTestId("draft-api");
+  // What the agent is asked to build stays folded until it is asked for: the plan reads as a short list.
+  expect(within(api).queryByText("Acceptance checks")).toBeNull();
+  fireEvent.click(within(api).getByRole("button", { name: "Show the details of api" }));
   expect(within(api).getByText("Acceptance checks")).toBeTruthy();
   expect(api.textContent).toContain("- make test");
   expect(api.textContent).toContain("Afterstore");

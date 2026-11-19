@@ -154,6 +154,7 @@ export function reasonTarget(kind: ConfigKind, document: Record<string, any>, re
   }
   if (kind === "planning") {
     if (reason.startsWith("updates")) return "updates";
+    if (reason.startsWith("voice")) return "voice";
     return ["candidate", "max_usd", "goals", "max_issues", "issue_chars", "track_new_tasks"].find((key) => reason.startsWith(`${key} `)) ?? null;
   }
   if (reason.startsWith("max_parallel")) return "max_parallel";
