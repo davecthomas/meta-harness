@@ -155,7 +155,7 @@ export function TasksPage() {
             loading={clearing}
             onConfirm={() => clearPicked()}
           />
-          <Text size="xs" c="dimmed">A merged pull request closes its task; any other cancels it. The pull request stays on GitHub.</Text>
+          <Text size="sm" c="dimmed">A merged pull request closes its task; any other cancels it. The pull request stays on GitHub.</Text>
         </Group>
       )}
       {unclear.length > 0 && (
