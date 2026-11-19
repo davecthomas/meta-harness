@@ -23,7 +23,7 @@ function planned(fields: Partial<NonNullable<Plan["plan"]>> = {}, top: Partial<P
   };
 }
 
-function show(first: Plan, goal: Goal = GOAL) {
+function show(first: Plan, goal: Goal = GOAL, issues?: { ref: string; title: string }[] | "fail") {
   const asked: { url: string; method: string; body: any }[] = [];
   const approved: number[] = [];
   let now = first;
@@ -31,6 +31,11 @@ function show(first: Plan, goal: Goal = GOAL) {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : null;
     asked.push({ url, method, body });
+    if (issues && url.includes("/issues")) {
+      if (issues === "fail") return Promise.resolve(new Response(JSON.stringify({ detail: "tracker down" }), { status: 502, headers: { "Content-Type": "application/json" } }));
+      const list = issues.map((i, n) => ({ ...i, number: n + 1, labels: [], updated_at: "2026-11-10T10:00:00Z", held_by: null }));
+      return Promise.resolve(new Response(JSON.stringify({ issues: list, total: list.length, next_cursor: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
     if (method === "PUT") now = planned({ ...now.plan, version: now.plan!.version + 1, drafts: body.drafts, items: body.items ?? now.plan!.items, source: "edited", created_by: "dave" });
     if (url.endsWith("/replan")) now = { ...now, planning_task_id: "t-plan-2" };
     if (url.endsWith("/approve")) now = { ...now, status: "active", approved_at: "2026-11-10T11:00:00Z" };
@@ -273,4 +278,50 @@ test("a goal under way is planned again from its page, with a note, and a goal t
   await screen.findByTestId("approved-plan");
   // The dialog's own button goes as it closes; the page's is not offered at all.
   await waitFor(() => expect(screen.queryByRole("button", { name: "Plan again" })).toBeNull());
+});
+
+async function openWaitsOn(issues: { ref: string; title: string }[] | "fail") {
+  show(planned(), GOAL, issues);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit store" }));
+  const dialog = await screen.findByRole("dialog", { name: "Edit store" });
+  return { dialog, input: within(dialog).getByLabelText("Waits on") };
+}
+
+// The field is looked up again at each entry: it is drawn anew when the issues arrive.
+function enter(_old: HTMLElement, value: string) {
+  const input = within(screen.getByRole("dialog")).getByLabelText("Waits on");
+  input.focus();
+  fireEvent.change(input, { target: { value } });
+  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+}
+
+test("Waits on offers the goal tracker's open issues beside the other drafts", async () => {
+  const { dialog, input } = await openWaitsOn([{ ref: "github:o/a#12", title: "Fix the cache" }]);
+  await waitFor(() => expect(within(dialog).getByText(/one of the goal's open issues/)).toBeTruthy());
+  fireEvent.focus(input);
+  fireEvent.click(input);
+  expect(await screen.findByText("o/a#12 Fix the cache")).toBeTruthy();
+  expect(screen.getAllByText("api").length).toBeGreaterThan(0);
+});
+
+test("Waits on refuses an entry that is neither a draft id nor a listed issue, and takes a listed one", async () => {
+  const { dialog, input } = await openWaitsOn([{ ref: "github:o/a#12", title: "Fix the cache" }]);
+  await waitFor(() => expect(within(dialog).getByText(/one of the goal's open issues/)).toBeTruthy());
+  enter(input, "o/a#99");
+  expect(await within(dialog).findByText(/Not a task id or an open issue of the goal: o\/a#99/)).toBeTruthy();
+  enter(input, "o/a#12");
+  await waitFor(() => expect(within(dialog).queryByText(/Not a task id/)).toBeNull());
+  expect(within(dialog).getByText("github:o/a#12")).toBeTruthy();
+});
+
+test("when the issues cannot be read, Waits on says why and still takes a typed ref", async () => {
+  const { dialog, input } = await openWaitsOn("fail");
+  expect(await within(dialog).findByText(/could not be read/)).toBeTruthy();
+  enter(input, "o/a#99");
+  enter(input, "VL-7");
+  enter(input, "nonsense");
+  expect(await within(dialog).findByText(/Not a task id or an open issue of the goal: nonsense/)).toBeTruthy();
+  expect(within(dialog).getByText("o/a#99")).toBeTruthy();
+  expect(within(dialog).getByText("VL-7")).toBeTruthy();
+  expect(within(dialog).queryByText("nonsense")).toBeNull();
 });
