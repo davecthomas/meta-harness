@@ -3,6 +3,7 @@ import { Badge, Code, Collapse, Group, Paper, Stack, Text, UnstyledButton } from
 import { IconChevronDown, IconChevronRight, IconFile, IconRobot, IconSettings } from "@tabler/icons-react";
 import type { MhEvent } from "../../api";
 import { moneyText, usd } from "../../money";
+import { heldLine } from "./hold";
 import { writingLine } from "./writing";
 
 // One entry on the timeline: a turn with what happened in it, or an event between turns.
@@ -95,7 +96,7 @@ export function entries(events: MhEvent[]): Entry[] {
         out.push({ kind: "status", position: e.position, text: `${e.actor ?? "Operator"}: ${p.when === "stop" ? "stop after this turn" : `${p.text} (${p.when === "after_stop" ? "after it stops" : "next turn"})`}`, error: false });
         break;
       case "task_held":
-        out.push({ kind: "status", position: e.position, text: `Held by the scheduler: ${moneyText(String(p.reason ?? ""))}`, error: false });
+        out.push({ kind: "status", position: e.position, text: `Waiting: ${heldLine(p)}`, error: false });
         break;
       case "task_admitted":
         out.push({ kind: "status", position: e.position, text: "Admitted by the scheduler: its run starts", error: false });
