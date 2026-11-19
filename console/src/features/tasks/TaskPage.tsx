@@ -142,7 +142,8 @@ export function TaskPage() {
         // timeline (or a ?run= link to an older run) would otherwise show no prompt for those runs.
         // The terminal gets them too, so an older run's Terminal opens on its prompt.
         // Every step of the task's path too, however old, so the picture of it is whole.
-        api.taskEvents([taskId], [...new Set(["run_prompt", ...STEP_EVENTS])]).then((prompts) => {
+        // turn_started too, so the header counts every turn and run, not only those on the loaded pages.
+        api.taskEvents([taskId], [...new Set(["run_prompt", "turn_started", ...STEP_EVENTS])]).then((prompts) => {
           if (stale) return;
           setEvents((current) => merge(current, prompts));
           // The terminal takes only the prompts: older steps reach it in order, as it scrolls up.
