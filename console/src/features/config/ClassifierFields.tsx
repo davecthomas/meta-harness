@@ -1,6 +1,7 @@
 import { Group, Stack, Text } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { api } from "../../api";
+import { InlineField } from "../../components/InlineField";
 import { PickedName, Unreadable } from "../../components/PickedName";
 import type { ClassifierEngine } from "./api";
 
@@ -30,10 +31,19 @@ export function useClassifierEngines(wanted: boolean): ClassifierList {
   return { engines, error };
 }
 
+// The engine that routes without a classifier, as the router library spells it (STR_ROUTER_CLASSIFIER_NONE),
+// in any capitals: it takes no model.
+const NO_CLASSIFIER = "none";
+
+function routesWithoutClassifier(engine: string): boolean {
+  return engine.trim().toLowerCase() === NO_CLASSIFIER;
+}
+
 // The router classifier's engine and model, each picked from the library's list: the models are the chosen
 // engine's. An empty engine is the library's default, and an empty model the engine's default; so is a model
 // with no engine, or of an engine that lists none, which is typed. A change of engine drops a model the new
-// engine does not offer, so the classifier never names a pair that cannot run.
+// engine does not offer, so the classifier never names a pair that cannot run. Engine none routes without a
+// classifier: choosing it drops the model, its model field refuses any name, and a saved one is marked.
 export function ClassifierFields(props: {
   engine: string;
   model: string;
@@ -49,6 +59,7 @@ export function ClassifierFields(props: {
   // No engine, or one the list lacks: no list to pick its model from, so it is typed.
   const models = engines === null ? null : chosen?.models ?? [];
   const pickEngine = (engine: string) => {
+    if (routesWithoutClassifier(engine)) return props.onEngine(engine, "");
     const offered = engines?.find((e) => e.engine === engine)?.models ?? [];
     const keep = !props.model || !offered.length || offered.some((m) => m.toLowerCase() === props.model.toLowerCase());
     props.onEngine(engine, keep ? props.model : "");
@@ -74,19 +85,39 @@ export function ClassifierFields(props: {
         </Group>
         <Group gap={6} wrap="nowrap" align="flex-start">
           <Text size="xs" c="dimmed" mt={4}>Model</Text>
-          <PickedName
-            label="Classifier model"
-            what="model"
-            where={`Engine ${chosen?.engine ?? props.engine}`}
-            value={props.model}
-            empty="the engine's default"
-            known={models}
-            unreadable={error}
-            testId="classifier-model-unknown"
-            changed={props.modelChanged}
-            readOnly={props.readOnly}
-            onCommit={props.onModel}
-          />
+          {routesWithoutClassifier(props.engine) ? (
+            <div>
+              <InlineField
+                kind="text"
+                label="Classifier model"
+                value={props.model}
+                empty="none, as no classifier runs"
+                changed={props.modelChanged}
+                readOnly={props.readOnly}
+                onCommit={(v) => {
+                  if (v.trim()) return `Engine ${props.engine.trim()} routes without a classifier, so it takes no model: leave it empty`;
+                  props.onModel("");
+                }}
+              />
+              {props.model ? (
+                <Text size="xs" c="orange" data-testid="classifier-model-unknown">Engine {props.engine.trim()} takes no model, so {props.model} is not used</Text>
+              ) : null}
+            </div>
+          ) : (
+            <PickedName
+              label="Classifier model"
+              what="model"
+              where={`Engine ${chosen?.engine ?? props.engine}`}
+              value={props.model}
+              empty="the engine's default"
+              known={models}
+              unreadable={error}
+              testId="classifier-model-unknown"
+              changed={props.modelChanged}
+              readOnly={props.readOnly}
+              onCommit={props.onModel}
+            />
+          )}
         </Group>
       </Group>
       <Unreadable what="classifier engines" error={error} />

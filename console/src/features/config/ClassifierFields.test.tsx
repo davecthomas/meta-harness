@@ -16,6 +16,7 @@ const ENGINES = [
   { engine: "claude", models: ["claude-haiku-5-5", "claude-sonnet-5-5"] },
   { engine: "openai-compatible", models: [] },
   { engine: "openai-decisions", models: ["gpt-6-luna"] },
+  { engine: "none", models: [] },
 ];
 
 function router(classifier: Record<string, unknown>) {
@@ -101,6 +102,29 @@ test("an engine that lists no models takes a typed model", async () => {
   fireEvent.change(model, { target: { value: " qwen3-32b " } });
   fireEvent.keyDown(model, { key: "Enter" });
   await waitFor(() => expect(staged).toEqual([[["classifier"], { engine: "openai-compatible", model: "qwen3-32b" }]]));
+});
+
+test("engine none drops the model and refuses a typed one", async () => {
+  const staged = show({ engine: "claude", model: "claude-haiku-5-5" }, { engines: ENGINES, error: null });
+  const engine = open("Classifier engine");
+  fireEvent.change(engine, { target: { value: "none" } });
+  fireEvent.keyDown(engine, { key: "Enter" });
+  await waitFor(() => expect(staged).toEqual([[["classifier"], { engine: "none" }]]));
+  cleanup();
+
+  const after = show({ engine: "none" }, { engines: ENGINES, error: null });
+  expect(screen.getByText("none, as no classifier runs")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Edit Classifier model" }));
+  const model = screen.getByRole("textbox", { name: "Classifier model" });
+  fireEvent.change(model, { target: { value: "qwen3-32b" } });
+  fireEvent.keyDown(model, { key: "Enter" });
+  expect(await screen.findByText(/Engine none routes without a classifier, so it takes no model/)).toBeTruthy();
+  expect(after).toEqual([]);
+});
+
+test("a saved model under engine none is marked", () => {
+  show({ engine: "None", model: "claude-haiku-5-5" }, { engines: ENGINES, error: null });
+  expect(screen.getByTestId("classifier-model-unknown").textContent).toBe("Engine None takes no model, so claude-haiku-5-5 is not used");
 });
 
 test("when the list cannot be read the field says why and still takes a typed name", async () => {
