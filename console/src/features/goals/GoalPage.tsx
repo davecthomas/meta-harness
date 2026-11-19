@@ -462,6 +462,10 @@ export function GoalPage() {
         </DataTable>
       ) : status === "not_started" ? (
         <Empty>No tasks yet: the goal takes in its issues when it starts.</Empty>
+      ) : goal.status === "planning" ? (
+        <Empty>No tasks yet: the plan's tasks are made when you approve it.</Empty>
+      ) : goal.tracker === "mh" ? (
+        <Empty>No tasks yet. This goal keeps its tasks in the meta-harness: its approved plan's tasks appear here within a minute, and Plan again adds more.</Empty>
       ) : (
         <Empty>
           No issues yet. {goal.label ? <>Label an open issue <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> in one of the goal's repos, or pick issues with Add issues.</> : "Pick issues with Add issues."} The planner takes them in within a minute, or now with Take in issues now.

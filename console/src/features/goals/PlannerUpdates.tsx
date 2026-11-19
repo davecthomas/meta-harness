@@ -76,12 +76,18 @@ export function PlannerUpdates({ goalId, open }: { goalId: string; open: boolean
   useEffect(() => {
     void load();
     if (!open) return;
-    const timer = setInterval(() => {
+    const refresh = () => {
       if (document.hidden) return;
       void load();
       setNow(Date.now());
-    }, REFRESH_MS);
-    return () => clearInterval(timer);
+    };
+    const timer = setInterval(refresh, REFRESH_MS);
+    // A tab that was out of view reads the latest as soon as it is looked at again.
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [load, open]);
 
   async function ask() {
@@ -141,7 +147,7 @@ export function PlannerUpdates({ goalId, open }: { goalId: string; open: boolean
       )}
       {before.length > 0 && (
         <Stack gap="xs" mt="sm" pl={50}>
-          <Anchor component="button" type="button" size="sm" onClick={() => setEarlier((v) => !v)} aria-expanded={earlier}>
+          <Anchor component="button" type="button" size="sm" style={{ alignSelf: "flex-start" }} onClick={() => setEarlier((v) => !v)} aria-expanded={earlier}>
             {earlier ? "Hide earlier updates" : before.length === 1 ? "1 earlier update" : `${before.length} earlier updates`}
           </Anchor>
           <Collapse expanded={earlier}>
