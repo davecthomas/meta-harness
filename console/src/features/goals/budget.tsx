@@ -119,8 +119,8 @@ export function BudgetRow(props: FieldProps) {
         </>
       )}
       {goal.budget_policy === "track" && (
-        <Text size="xs" c="dimmed" w="100%">
-          The budget policy only tracks spend, so this budget stops nothing for now. <Anchor component={Link} to="/config?kind=task_policy" size="xs">Task policy</Anchor>
+        <Text size="sm" c="dimmed" w="100%">
+          The budget policy only tracks spend, so this budget stops nothing for now. <Anchor component={Link} to="/config?kind=task_policy" size="sm">Task policy</Anchor>
         </Text>
       )}
     </Group>

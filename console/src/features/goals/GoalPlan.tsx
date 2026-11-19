@@ -309,14 +309,14 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
           {issues.length > 0 && (
             <div>
               <Text fw={600} size="sm">The goal's issues</Text>
-              <Text size="xs" c="dimmed" mb={6}>Change any decision before you approve.</Text>
+              <Text size="sm" c="dimmed" mb={6}>Change any decision before you approve.</Text>
               <IssueDecisions issues={issues} items={items} drafts={base} onChange={drafting ? undefined : setEditedItems} />
             </div>
           )}
           {(drafts.length > 0 || issues.length > 0) && (
             <div>
               <Text fw={600} size="sm">New tasks</Text>
-              <Text size="xs" c="dimmed">
+              <Text size="sm" c="dimmed">
                 {drafts.length
                   ? "Written by the planner. Created when you approve."
                   : "None: the goal's issues cover it."}

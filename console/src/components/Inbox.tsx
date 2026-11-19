@@ -103,7 +103,7 @@ function Item({ item }: { item: NeedsYouItem }) {
       <Anchor component={Link} to={item.to} size="sm" fw={500}>
         {item.action}: {item.title}
       </Anchor>
-      <Text size="xs" c="dimmed">{item.detail}</Text>
+      <Text size="sm" c="dimmed">{item.detail}</Text>
       {item.href && <Anchor href={item.href} target="_blank" size="xs">{item.hrefLabel ?? "Open"}</Anchor>}
     </Stack>
   );

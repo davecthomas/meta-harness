@@ -179,7 +179,7 @@ export function PriorityEdit({ goal, readOnly, save }: FieldProps) {
       value={goal.priority}
       display={
         <Text size="sm">
-          {goal.priority} <Text span size="xs" c="dimmed">Higher runs first.</Text>
+          {goal.priority} <Text span size="sm" c="dimmed">Higher runs first.</Text>
         </Text>
       }
       same={(a, b) => (Number(a) || 0) === (Number(b) || 0)}

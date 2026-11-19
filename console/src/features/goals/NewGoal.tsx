@@ -32,7 +32,7 @@ export function LabelIssues({ label, issues }: { label: string; issues: LabeledI
         </Text>
       ))}
       {free.length > SHOWN && <Text size="xs" c="dimmed">and {free.length - SHOWN} more</Text>}
-      <Text size="xs" c="dimmed">The goal takes every open issue with this label, now and later. Pick issues adds others.</Text>
+      <Text size="sm" c="dimmed">The goal takes every open issue with this label, now and later. Pick issues adds others.</Text>
     </Stack>
   );
 }
@@ -306,7 +306,7 @@ export function NewGoal() {
                   { value: "feature", label: "Plan them from the description" },
                 ]}
               />
-              <Text size="xs" c="dimmed" mt={4}>
+              <Text size="sm" c="dimmed" mt={4}>
                 {plans
                   ? "A planning task reads the repos and drafts the issues. You review, edit and approve the plan before anything is created or run."
                   : plansEvery
