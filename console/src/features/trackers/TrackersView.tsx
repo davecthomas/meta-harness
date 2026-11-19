@@ -50,7 +50,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
             readOnly={s.readOnly}
             onCommit={(v) => stageOptional(s, ["label"], v.trim())}
           />
-          <Text size="xs" c="dimmed">
+          <Text size="sm" c="dimmed">
             Every issue the meta-harness creates, comments on or moves gets this label, in every tracker, so its work can be told apart and listed. No spaces. Empty: ai:meta-harness.
           </Text>
         </Stack>
@@ -120,7 +120,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
                       {setting.label}
                       {setting.required && <Text span c="red"> *</Text>}
                     </Text>
-                    <Text size="xs" c="dimmed" mb={4}>{setting.help}</Text>
+                    <Text size="sm" c="dimmed" mb={4}>{setting.help}</Text>
                     <SettingField staging={s} tracker={tracker} setting={setting} path={["trackers", tracker.scheme, setting.name]} value={settings?.[setting.name]} />
                   </div>
                 ))}
@@ -323,7 +323,7 @@ function EntriesSetting(props: { staging: Staging; tracker: Tracker; setting: Tr
             {(setting.settings ?? []).map((sub) => (
               <div key={sub.name}>
                 <Text size="sm" fw={500}>{sub.label}</Text>
-                <Text size="xs" c="dimmed" mb={4}>{sub.help}</Text>
+                <Text size="sm" c="dimmed" mb={4}>{sub.help}</Text>
                 <SettingField staging={s} tracker={tracker} setting={sub} path={[...path, key, sub.name]} value={entry?.[sub.name]} scope={{ [one]: key }} />
               </div>
             ))}

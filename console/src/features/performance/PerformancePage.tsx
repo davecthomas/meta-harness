@@ -101,7 +101,7 @@ function Stat(props: { label: string; value: string; note?: React.ReactNode }) {
     <Card withBorder padding="lg">
       <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{props.label}</Text>
       <Text fz={28} fw={650} lh={1.2} mt={4}>{props.value}</Text>
-      {props.note && <Text size="xs" c="dimmed" mt={4}>{props.note}</Text>}
+      {props.note && <Text size="sm" c="dimmed" mt={4}>{props.note}</Text>}
     </Card>
   );
 }

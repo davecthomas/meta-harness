@@ -62,7 +62,7 @@ export function ReviewersField({ staging: s, profiles, models }: { staging: Stag
         );
       })}
       {reviewers.length === 0 && <Text size="sm" c="dimmed">No reviewer: a save is refused until there is one.</Text>}
-      <Text size="xs" c="dimmed">Tried in this order. One whose model wrote the pull request is skipped, so a different model always reviews.</Text>
+      <Text size="sm" c="dimmed">Tried in this order. One whose model wrote the pull request is skipped, so a different model always reviews.</Text>
       <Reasons reasons={s.reasons("reviewers")} />
       {original.length > reviewers.length && <Badge size="xs" color="yellow" variant="light" tt="none">not saved: {original.length - reviewers.length} removed</Badge>}
       {!s.readOnly && (
