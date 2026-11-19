@@ -186,6 +186,23 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
           </Stack>,
         ],
         [
+          "Suggested fixes",
+          <Stack gap={4}>
+            <InlineField
+              kind="switch"
+              label="The planner drafts fixes to its plans"
+              nameByLabel
+              value={doc.suggest_fixes !== false}
+              switchLabel={doc.suggest_fixes !== false ? "On" : "Off"}
+              changed={changed(s, ["suggest_fixes"])}
+              reasons={s.reasons("suggest_fixes")}
+              readOnly={s.readOnly}
+              onCommit={(on) => s.stage(["suggest_fixes"], on)}
+            />
+            <Text size="xs" c="dimmed">When a plan has a problem the planner can fix itself, it drafts the fix for you to accept. Each fix is one more planning run.</Text>
+          </Stack>,
+        ],
+        [
           "Spend limit",
           <Stack gap={4}>
             <InlineField

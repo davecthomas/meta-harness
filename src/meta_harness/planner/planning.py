@@ -182,9 +182,13 @@ async def start(
     who: str,
     note: str | None = None,
     issues: list[Issue] | None = None,
+    external_ref: str | None = None,
+    record: bool = True,
 ) -> dict:
     """Starts the goal's planning task and records it on the goal, with the issues it was given to plan over
-    (issues: those the goal already has). Returns the task."""
+    (issues: those the goal already has). Returns the task. A suggested fix's planning task (suggestions.py)
+    passes its own external_ref and record=False: the goal's plan is not being redrafted, so nothing waits on
+    it."""
     config = settings()
 
     def previous() -> list[dict[str, Any]] | None:
@@ -198,7 +202,7 @@ async def start(
         task = await asyncio.to_thread(
             tasks.create,
             # One planning task per plan asked for: a retry of this call finds the same task.
-            external_ref=f"plan:{goal['id']}:{number}:{len(note or '')}",
+            external_ref=external_ref or f"plan:{goal['id']}:{number}:{len(note or '')}",
             repo=goal["repos"][0],
             task_type="plan",
             priority=goal["priority"],
@@ -212,11 +216,12 @@ async def start(
     except TaskApiError as err:
         raise PlanError(f"could not start the planning task: {err}") from err
 
-    def record() -> None:
+    def on_goal() -> None:
         with db.connect(autocommit=True) as conn:
             plans.set_plan_task(conn, goal["id"], task["id"], [plans.clean_issue(vars(i)) for i in issues or []])
 
-    await asyncio.to_thread(record)
+    if record:
+        await asyncio.to_thread(on_goal)
     events.emit(
         "plan_requested",
         {"goal_id": goal["id"], "task_id": task["id"], "note": note},
@@ -244,23 +249,13 @@ async def collect(goal: dict, tasks: TaskClient, events: Events) -> dict | None:
     if task["status"] not in ENDED:
         return None
 
-    def read() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        recorded = events.read(0, 5000, task_id=task_id, event_type=",".join(PLAN_EVENTS))["events"]
+    def issues_given() -> list[dict[str, Any]]:
         with db.connect(autocommit=True) as conn:
-            return recorded, plans.plan_issues(conn, goal["id"])
+            return plans.plan_issues(conn, goal["id"])
 
-    recorded, issues = await asyncio.to_thread(read)
-
-    def of(event_type: str) -> list[dict[str, Any]]:
-        return [e for e in recorded if e["event_type"] == event_type]
-
-    drafts = plans.latest_drafts(of("issue_drafted"))
-    items = plans.complete(plans.latest_items(of("issue_planned")), issues)
-    summary, gaps = plans.latest_summary(of("plan_summarized"))
-    if task["status"] != "closed":
-        invalid = [f"the planning task ended {task['status']}: {task.get('status_reason') or 'no reason was recorded'}"]
-    else:
-        invalid = plans.validate(drafts, goal["repos"], items, issues)
+    issues = await asyncio.to_thread(issues_given)
+    found = await gather(goal, task, events, issues)
+    drafts, items, summary, gaps, invalid = (found[k] for k in ("drafts", "items", "summary", "gaps", "invalid"))
 
     def save() -> dict | None:
         with db.connect(autocommit=True) as conn:
@@ -287,6 +282,28 @@ async def collect(goal: dict, tasks: TaskClient, events: Events) -> dict | None:
         return None
     _emit_saved(events, plan, "planner")
     return plan
+
+
+async def gather(goal: dict, task: dict, events: Events, issues: list[dict[str, Any]]) -> dict[str, Any]:
+    """What an ended planning task recorded, as a plan: its drafts, its decisions on the issues it was given,
+    its summary and gaps, and why the plan cannot be approved, if it cannot."""
+
+    def read() -> list[dict[str, Any]]:
+        return events.read(0, 5000, task_id=task["id"], event_type=",".join(PLAN_EVENTS))["events"]
+
+    recorded = await asyncio.to_thread(read)
+
+    def of(event_type: str) -> list[dict[str, Any]]:
+        return [e for e in recorded if e["event_type"] == event_type]
+
+    drafts = plans.latest_drafts(of("issue_drafted"))
+    items = plans.complete(plans.latest_items(of("issue_planned")), issues)
+    summary, gaps = plans.latest_summary(of("plan_summarized"))
+    if task["status"] != "closed":
+        invalid = [f"the planning task ended {task['status']}: {task.get('status_reason') or 'no reason was recorded'}"]
+    else:
+        invalid = plans.validate(drafts, goal["repos"], items, issues)
+    return {"drafts": drafts, "items": items, "summary": summary, "gaps": gaps, "invalid": invalid}
 
 
 def _emit_saved(events: Events, plan: dict, who: str) -> None:
