@@ -166,6 +166,10 @@ def check_planning(document: dict[str, Any], others: dict[str, dict[str, Any]] |
             value = updates.get(key, 1)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 reasons.append(f"updates.{key} must be a whole number above 0: {what}")
+    if not isinstance(document.get("suggest_fixes", True), bool):
+        reasons.append(
+            "suggest_fixes must be true or false: whether the planner drafts fixes to a plan's gaps for you to accept"
+        )
     if not isinstance(document.get("track_new_tasks", True), bool):
         reasons.append(
             "track_new_tasks must be true or false: whether a plan's new tasks go to the goal's tracker unless the operator says otherwise"

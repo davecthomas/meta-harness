@@ -485,6 +485,36 @@ REGISTRY: list[EventType] = [
             ["goal_id", "task_id"],
         ),
     ),
+    # The planner sorted a plan's gaps for fixes it could make itself (planner/suggestions.py): one model call.
+    EventType(
+        "plan_fixes_assessed",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "version": {"type": "integer"},
+                "fixes": {"type": "integer"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "version", "fixes", "model", "usd_cost"],
+        ),
+    ),
+    # An operator accepted the planner's suggested fix, which became the plan's next version, or dismissed it.
+    EventType(
+        "plan_fix_accepted",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "for_version": {"type": "integer"},
+                "version": {"type": "integer"},
+                "drafts": {"type": "integer"},
+            },
+            ["goal_id", "for_version", "version"],
+        ),
+    ),
+    EventType("plan_fix_dismissed", 1, _object({"goal_id": {"type": "string"}}, ["goal_id"])),
     EventType(
         "plan_saved",
         1,

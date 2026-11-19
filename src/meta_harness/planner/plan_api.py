@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from meta_harness import db
-from meta_harness.planner import planning, plans, store
+from meta_harness.planner import planning, plans, store, suggestions
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.trackers.base import TrackerError
 from meta_harness.trackers.own import SCHEME as OWN
@@ -86,6 +86,8 @@ def register(
             "approved_at": goal.get("plan_approved_at"),
             "label": goal["label"] or planning.goal_label(goal),
             "plan": plan,
+            # A fix the planner suggests for this plan, with what it changes; None when there is none.
+            "suggestion": suggestions.current(goal["id"]),
         }
 
     @app.get("/v1/goals/{goal_id}/plan")
@@ -127,6 +129,31 @@ def register(
         except (planning.PlanError, TrackerError) as err:
             raise HTTPException(status_code=502, detail=str(err)) from err
         return await asyncio.to_thread(shown, load(goal_id))
+
+    @app.post("/v1/goals/{goal_id}/suggestion/accept")
+    def accept_suggestion(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Make the planner's suggested fix the goal's next plan version, for the operator to approve."""
+        goal = planning_goal(goal_id)
+        if goal.get("plan_task_id"):
+            raise HTTPException(
+                status_code=409, detail="a planning task is drafting a new plan: wait for it, then look again"
+            )
+        try:
+            suggestions.accept(goal, who, events)
+        except suggestions.SuggestionError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        return shown(load(goal_id))
+
+    @app.post("/v1/goals/{goal_id}/suggestion/dismiss")
+    def dismiss_suggestion(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Leave the planner's suggested fix behind: the current plan stands."""
+        goal = planning_goal(goal_id)
+        try:
+            suggestions.dismiss(goal)
+        except suggestions.SuggestionError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        events.emit("plan_fix_dismissed", {"goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
+        return shown(goal)
 
     @app.post("/v1/goals/{goal_id}/approve")
     async def approve(goal_id: str, body: ApproveIn | None = None, who: str = Depends(operator)) -> dict:

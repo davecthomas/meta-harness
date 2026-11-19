@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanDraft, type PlanItem } from "../../api";
 import { OWN, trackerTitle } from "../trackers/refs";
 import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview";
-import { APPROVE_PLAN } from "./PlannerUpdates";
+import { APPROVE_PLAN, PLAN_CHANGED } from "./PlannerUpdates";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { ErrorAlert, SectionTitle, when } from "../../components/ui";
 
@@ -216,12 +216,18 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
     },
   });
 
-  // "Approve the plan" in the planner's panel opens this plan's approval, where its counts are said first.
+  // "Approve the plan" in the planner's panel opens this plan's approval, where its counts are said first; a
+  // fix accepted there makes a new version, read here at once.
   useEffect(() => {
     const approve = () => setAsking("approve");
+    const changed = () => void load();
     window.addEventListener(APPROVE_PLAN, approve);
-    return () => window.removeEventListener(APPROVE_PLAN, approve);
-  }, []);
+    window.addEventListener(PLAN_CHANGED, changed);
+    return () => {
+      window.removeEventListener(APPROVE_PLAN, approve);
+      window.removeEventListener(PLAN_CHANGED, changed);
+    };
+  }, [load]);
 
   if (!shown) return error ? <ErrorAlert error={error} /> : <Loader size="sm" />;
   const change = (next: PlanDraft[]) => setEdited(next);
@@ -266,7 +272,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
         <Stack gap="md">
           <Group gap="sm">
             <Text size="sm">
-              Version {plan.version}, {plan.source === "planned" ? "made by the planner" : `edited by ${plan.created_by}`}, {when(plan.created_at)}.
+              Version {plan.version}, {plan.source === "planned" ? "made by the planner" : plan.source === "suggested" ? `the planner's fix, accepted by ${plan.created_by}` : `edited by ${plan.created_by}`}, {when(plan.created_at)}.
               {base.length > 0 && <> Its new tasks will carry the label <Badge variant="outline" tt="none" radius="sm">{shown.label}</Badge></>}
             </Text>
             {plan.task_id && <Anchor component={Link} to={`/tasks/${plan.task_id}`} size="sm">The planning task's run</Anchor>}
