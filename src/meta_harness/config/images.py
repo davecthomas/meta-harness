@@ -1,64 +1,61 @@
 """The harness images the deployment builds, for the harness profile form to pick a profile's image from.
 
-The deployment builds each directory under `images/` that holds a Dockerfile
-(`make images` in samples/temporal-run-task, which mh-images.service runs on
-the VM). Images are built on the machine and never pulled, so a profile that
-names any other image fails every run on it at start
-(meta_harness.run_service.sandbox).
+The deployment builds one harness image: mh-images.service runs `make images` in samples/temporal-run-task,
+whose `build_image` (stack.sh) builds HARNESS_DIR, `images/harness-pi` unless set, and tags it HARNESS_IMAGE,
+`harness-pi:dev` unless set. The VM's environment file sets neither, and the planner reads the same file, so
+the planner sees the same two values the build used. Images are built on the machine and never pulled, so a
+profile that names any other image fails every run on it at start (meta_harness.run_service.sandbox).
 
-Each image is listed under the name the deployment tags it with. The default
-image, HARNESS_IMAGE (meta_harness.run_service.routing.DEFAULT_IMAGE, default
-`harness-pi:dev`), is the build of the directory its repository is named
-after; any other directory is tagged `<directory>:<the default's tag>`.
+So the list is that one image, under HARNESS_IMAGE (meta_harness.run_service.routing.DEFAULT_IMAGE), the
+image a profile with no image runs. Another directory under `images/` is not listed: nothing builds or
+tags it.
 """
 
+import os
 from pathlib import Path
 from typing import Any
 
 from meta_harness.run_service.paths import REPO_ROOT
 from meta_harness.run_service.routing import DEFAULT_IMAGE
 
-IMAGES_DIR = REPO_ROOT / "images"
+# What samples/temporal-run-task/Makefile builds the harness image from when HARNESS_DIR is not set.
+DEFAULT_DIR = REPO_ROOT / "images" / "harness-pi"
 
 
 class ImagesUnreadable(Exception):
-    """The images directory cannot be read, so the built images cannot be listed."""
+    """The harness image's build directory cannot be read, so the built images cannot be listed."""
 
 
-def _split(image: str) -> tuple[str, str]:
-    """An image reference as (repository, tag); the tag is `latest` when it names none.
-
-    A colon before the last slash is a registry's port, not a tag.
-    """
-    head, colon, tag = image.rpartition(":")
-    if not colon or "/" in tag:
-        return image, "latest"
-    return head, tag
+def harness_dir() -> Path:
+    """The directory the deployment builds the harness image from: HARNESS_DIR, else `images/harness-pi`."""
+    return Path(os.environ.get("HARNESS_DIR") or DEFAULT_DIR)
 
 
-def built(root: Path | None = None, default: str | None = None) -> list[dict[str, Any]]:
-    """Every harness image the deployment builds, by name: its name, the directory it is built from, and
-    whether it is the default image, the one a profile with no image runs.
+def _shown(directory: Path) -> str:
+    """The directory relative to the repository, or as it is when it lies outside it."""
+    try:
+        return str(directory.resolve().relative_to(REPO_ROOT.resolve()))
+    except ValueError:
+        return str(directory)
+
+
+def built(directory: Path | None = None, default: str | None = None) -> list[dict[str, Any]]:
+    """Every harness image the deployment builds: the one image `make images` builds, with its name, the
+    directory it is built from, and `default`, true since it is the image a profile with no image runs.
 
     Raises:
-        ImagesUnreadable: The images directory is missing or cannot be listed.
+        ImagesUnreadable: The build directory is missing, or holds no readable Dockerfile.
     """
-    root = root or IMAGES_DIR
+    directory = directory or harness_dir()
     default = default or DEFAULT_IMAGE
-    repository, tag = _split(default)
-    default_dir = repository.rsplit("/", 1)[-1]
+    dockerfile = directory / "Dockerfile"
     try:
-        directories = sorted(d for d in root.iterdir() if d.is_dir() and (d / "Dockerfile").is_file())
+        if not dockerfile.is_file():
+            raise ImagesUnreadable(f"the harness image's build directory {directory} has no Dockerfile")
+        with dockerfile.open("rb"):
+            pass
     except OSError as err:
-        raise ImagesUnreadable(f"the images directory {root} cannot be read: {err.strerror or err}") from err
-    found = []
-    for directory in directories:
-        is_default = directory.name == default_dir
-        found.append(
-            {
-                "name": default if is_default else f"{directory.name}:{tag}",
-                "directory": f"images/{directory.name}",
-                "default": is_default,
-            }
-        )
-    return sorted(found, key=lambda image: image["name"])
+        raise ImagesUnreadable(
+            f"the harness image's build directory {directory} cannot be read: {err.strerror or err}"
+        ) from err
+    return [{"name": default, "directory": _shown(directory), "default": True}]

@@ -4,13 +4,11 @@ import { afterEach, expect, test, vi } from "vitest";
 import { ProfilesView } from "./ProfilesView";
 import { theme } from "../../theme";
 
-// A profile's image is picked from the harness images the deployment builds (GET /v1/config/images).
+// A profile's image is picked from the harness images the deployment builds (GET /v1/config/images): the one
+// image `make images` builds.
 
 const IMAGES = {
-  images: [
-    { name: "harness-other:dev", directory: "images/harness-other", default: false },
-    { name: "harness-pi:dev", directory: "images/harness-pi", default: true },
-  ],
+  images: [{ name: "harness-pi:dev", directory: "images/harness-pi", default: true }],
   default: "harness-pi:dev",
 };
 
@@ -47,11 +45,10 @@ test("the images the deployment builds are offered, and an empty image is the de
   expect(input.getAttribute("placeholder")).toBe("Pick a harness image");
   fireEvent.focus(input);
   fireEvent.change(input, { target: { value: "harness" } });
-  expect(await screen.findByText("harness-other:dev")).toBeTruthy();
-  expect(screen.getByText("harness-pi:dev")).toBeTruthy();
-  fireEvent.change(input, { target: { value: "HARNESS-OTHER:dev" } });
+  expect(await screen.findByRole("option", { name: "harness-pi:dev" })).toBeTruthy();
+  fireEvent.change(input, { target: { value: "HARNESS-PI:dev" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  await waitFor(() => expect(staged).toEqual([[["profiles", "pi-lean", "image"], "harness-other:dev"]]));
+  await waitFor(() => expect(staged).toEqual([[["profiles", "pi-lean", "image"], "harness-pi:dev"]]));
 });
 
 test("an image the deployment does not build is refused, and a saved one is marked", async () => {
@@ -65,8 +62,8 @@ test("an image the deployment does not build is refused, and a saved one is mark
 });
 
 test("when the images cannot be listed the field says why and still takes a typed image", async () => {
-  const staged = show(() => respond({ detail: "the images directory /opt/meta-harness/images cannot be read" }, 422));
-  expect(await screen.findByText(/The harness images could not be listed, so type each exactly: the images directory/)).toBeTruthy();
+  const staged = show(() => respond({ detail: "the harness image's build directory /opt/meta-harness/images/harness-pi has no Dockerfile" }, 422));
+  expect(await screen.findByText(/The harness images could not be listed, so type each exactly: the harness image's build directory/)).toBeTruthy();
   const input = open();
   expect(input.getAttribute("placeholder")).toBe("Type its name");
   fireEvent.change(input, { target: { value: " harness-mine:dev " } });
