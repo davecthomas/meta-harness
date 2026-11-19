@@ -67,7 +67,7 @@ test("a Jira goal starts on the default project, and its issues are read only fo
 
   const project = await screen.findByDisplayValue("Voltron (VL)");
   fireEvent.change(project, { target: { value: "V" } });
-  fireEvent.click(screen.getByRole("button", { name: "Draft from a label (optional)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Draft from labels (optional)" }));
   expect((await screen.findAllByText("bug")).length).toBeGreaterThan(0);
 
   expect(asked.length).toBeGreaterThan(0);

@@ -107,7 +107,29 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
           </Group>
         )}
         {issue.refused_reason && <Text size="xs" c="red">{issue.refused_reason}</Text>}
-        {held && <Text size="xs" c="orange" data-testid="held-reason">Held: {held}</Text>}
+        {held && issue.size === "large" ? (
+          // Too large for one task: said in parts, since the reason as one sentence is a wall of text.
+          <Stack gap={4} data-testid="held-reason">
+            <Text size="xs" fw={600} c="orange">Not started: too large for one task</Text>
+            {(issue.size_reasons ?? []).length > 0 && (
+              <Text size="xs" component="div">
+                Why:
+                <ul style={{ margin: "2px 0 0", paddingLeft: 16 }}>{issue.size_reasons!.map((r) => <li key={r}>{r}</li>)}</ul>
+              </Text>
+            )}
+            {(issue.split ?? []).length > 0 && (
+              <Text size="xs" component="div">
+                Suggested split:
+                <ol style={{ margin: "2px 0 0", paddingLeft: 16 }}>{issue.split!.map((s) => <li key={s}>{s}</li>)}</ol>
+              </Text>
+            )}
+            <Text size="xs" c="dimmed">
+              {(issue.split ?? []).length > 0 ? "Split makes those separate issues, which run in its place. " : ""}Run anyway runs it as one task: a larger pull request, and more likely to need fix rounds.
+            </Text>
+          </Stack>
+        ) : held ? (
+          <Text size="xs" c="orange" data-testid="held-reason">Held: {held}</Text>
+        ) : null}
         {gap && <Text size="xs" c="yellow.8" data-testid="issue-gap">{gap}</Text>}
         {props.actions}
         {/* Why a queued task has not started, from the scheduler. */}

@@ -222,8 +222,9 @@ def hold_reason(size: str | None, sizing: dict[str, Any] | None, strict: bool) -
     """Why an issue of this size and sizing waits for an operator instead of becoming a task; None when it runs."""
     sizing = sizing or {}
     if size == "large":
-        reasons = "; ".join(sizing.get("reasons") or [])
-        split = "; ".join(sizing.get("split") or [])
+        # Each as the model wrote it, less its own full stop: they are joined into one sentence here.
+        reasons = "; ".join(str(r).strip().rstrip(".") for r in sizing.get("reasons") or [])
+        split = "; ".join(str(s).strip().rstrip(".") for s in sizing.get("split") or [])
         why = "sized large" + (f": {reasons}" if reasons else "")
         return why + (f". Suggested split: {split}" if split else "") + ". Split it, or run it anyway"
     missing = sizing.get("missing") or []

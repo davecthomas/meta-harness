@@ -142,7 +142,9 @@ def count_labels(issues_by_repo: dict[str, list[Issue]], held: dict[str, str] | 
 
 
 def draft_prompt(label: str, issues: list[Issue], body_chars: int) -> str:
-    parts = [f"The label is {label!r}. Its open issues are between the markers.", "", "--- issues ---"]
+    several = "," in label
+    named = f"The labels are {label}. Their" if several else f"The label is {label!r}. Its"
+    parts = [f"{named} open issues are between the markers.", "", "--- issues ---"]
     for issue in issues:
         body = (issue.body or "").strip()
         if len(body) > body_chars:

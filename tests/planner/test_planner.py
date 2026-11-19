@@ -633,6 +633,33 @@ def test_a_goal_is_drafted_from_the_chosen_issues_and_nothing_is_saved(parts):
     }
 
 
+def test_a_goal_is_drafted_from_several_labels_issues_each_read_once(parts):
+    from meta_harness.planner.drafting import Draft
+
+    _, tracker, _ = parts
+    bugs, ux = _label(), _label()
+    first = tracker.add(REPO, _number(), labels=[bugs], title="A bug")
+    both = tracker.add(REPO, _number(), labels=[bugs, ux], title="Both")
+    third = tracker.add(REPO, _number(), labels=[ux], title="A rough edge")
+    seen = []
+
+    async def drafter(label_asked, issues):
+        seen.append((label_asked, sorted(i.ref for i in issues)))
+        return Draft(title="T", statement="S", theme="Th", modality="fix", model="claude:m", usd_cost="0.001")
+
+    with _drafting_api(parts, drafter) as client:
+        drafted = client.post("/v1/goals/draft", json={"labels": [bugs, ux, bugs], "repos": [REPO]}, headers=OPERATOR)
+        nothing = client.post("/v1/goals/draft", json={"repos": [REPO]}, headers=OPERATOR)
+
+    body = drafted.json()
+    assert drafted.status_code == 200 and seen == [(f"{bugs}, {ux}", sorted([first, both, third]))]
+    # A goal takes one label: with several, the goal holds the issues read, as picked issues.
+    assert (body["label"], body["labels"]) == (None, [bugs, ux]) and sorted(body["refs"]) == sorted(
+        [first, both, third]
+    )
+    assert nothing.status_code == 422 and "name the label to draft from" in nothing.json()["detail"]
+
+
 def test_a_draft_the_gateway_could_not_make_is_a_502_with_the_reason(parts):
     from meta_harness.planner.drafting import DraftError
 

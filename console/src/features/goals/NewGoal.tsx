@@ -157,8 +157,14 @@ export function NewGoal() {
   function fromDraft(draft: GoalDraft) {
     setTitle(draft.title);
     setStatement(draft.statement);
-    setLabel(draft.label);
     setChosen(draft.repos);
+    if (draft.label) {
+      setLabel(draft.label);
+    } else {
+      // Drafted from several labels: a goal takes one, so it holds the issues the draft read, picked by hand.
+      setLabel("");
+      setRefs(draft.refs);
+    }
   }
 
   // Creates the goal, started or not. Returns its id, or null when it is refused (the form shows why).
