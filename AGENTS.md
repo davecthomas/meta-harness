@@ -23,6 +23,10 @@ and what is planned.
   in `samples/temporal-run-task`): what a task's agent meets when it runs
   them. A check that passes on a developer's machine and fails there is a
   sandbox or image problem to fix, not a check to weaken.
+- Those two checks are skipped on a pull request that touches only the
+  console's source (`console/src`) or the docs, which cannot change what they
+  prove (`deploy/checks_scope.py`). Every other pull request runs them, and so
+  does every push to main, which the deploy waits for.
 
 ## Rules
 
