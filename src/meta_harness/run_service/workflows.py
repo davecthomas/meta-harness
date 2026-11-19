@@ -783,16 +783,26 @@ class RunTask:
                 standing = ""
                 if merged.state == "head_changed" and workflow.patched("resume-standing"):
                     standing = self._still_clean(merged, asked, loop)
-                outcome, reason = await self._review_loop(loop, conflict=conflict, standing=standing)
+                # The operator's word stands through whatever the loop does first: when its checks, review and
+                # fixes come back clean, the pull request merges whatever its goal's auto_merge says. It used to
+                # be asked of the goal again, so a merge asked for while main had moved waited for the operator
+                # a second time.
+                asked_for = workflow.patched("merge-asked-stands")
+                outcome, reason = await self._review_loop(
+                    loop, conflict=conflict, standing=standing, asked_for=asked_for
+                )
         else:
             outcome, reason = await self._review_loop(loop)
         if outcome == "merged" and loop.merge_sha:
             outcome, reason = await self._after_merge(loop, reason)
         return result(outcome, reason, loop.published, loop.spent), attempts
 
-    async def _review_loop(self, loop: "_Loop", conflict: bool = False, standing: str = "") -> tuple[str, str]:
+    async def _review_loop(
+        self, loop: "_Loop", conflict: bool = False, standing: str = "", asked_for: bool = False
+    ) -> tuple[str, str]:
         """The review loop on the task's pull request. Returns its outcome and why. With conflict, the pull
-        request conflicts with its base, and the loop starts with the fix run that resolves it."""
+        request conflicts with its base, and the loop starts with the fix run that resolves it. With asked_for,
+        an operator asked for the merge, so a clean pull request merges whatever its goal's auto_merge says."""
         info = workflow.info()
         log = workflow.logger
         try:
@@ -836,7 +846,7 @@ class RunTask:
                     fix = loop.prompt_request("fix", failed_checks=checks.failed)
                 elif standing:
                     clean, standing = f"{standing}, and its checks passed at {loop.head[:12]}", ""
-                    merged = await self._merge(loop, clean)
+                    merged = await self._merge(loop, clean, asked_for=asked_for)
                     if merged.state == "head_changed":
                         loop.head = merged.head_sha
                         standing = self._still_clean(merged, clean, loop)
@@ -915,7 +925,7 @@ class RunTask:
                             clean = f"an operator dismissed every finding of review round {reviews} at {loop.head[:12]}"
                     if review["verdict"] == "clean" or all_dismissed:
                         previous = {}
-                        merged = await self._merge(loop, clean)
+                        merged = await self._merge(loop, clean, asked_for=asked_for)
                         if merged.state == "head_changed":
                             log.info("%s: a commit landed after the review: %s", info.workflow_id, merged.head_sha)
                             loop.head = merged.head_sha

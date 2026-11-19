@@ -9,9 +9,20 @@ function withValue(options: string[], value: string): string[] {
   return !value || options.includes(value) ? options : [value, ...options];
 }
 
+const TONES = [
+  { value: "casual", label: "Casual and friendly" },
+  { value: "balanced", label: "Plain and professional" },
+  { value: "formal", label: "Formal" },
+];
+const DETAILS = [
+  { value: "low", label: "Low detail" },
+  { value: "medium", label: "Medium detail" },
+  { value: "high", label: "High detail" },
+];
+
 const GOALS = [
   { value: "all", label: "Every goal" },
-  { value: "from_description", label: "Only goals that plan their issues from a description" },
+  { value: "from_description", label: "Only goals written as a description" },
 ];
 
 // The planning configuration: who the planner is (the harness profile and model a planning task runs on), what
@@ -58,8 +69,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               />
             </Group>
             <Text size="xs" c="dimmed">
-              The agent that plans a goal: it reads the goal and its issues, and proposes the tasks, their order, any splits and what is missing. Its
-              profile needs the create_issue tool, which a plan is recorded with.
+              The agent that plans each goal. Its profile needs the create_issue tool.
             </Text>
           </Stack>,
         ],
@@ -78,8 +88,8 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
             />
             <Text size="xs" c="dimmed">
               {everyGoal
-                ? "Every goal is planned when it is saved, and none of its tasks starts until its plan is approved."
-                : "A goal that takes existing issues runs them as they are, with no plan. Only a goal that plans its issues from its description is planned first."}
+                ? "Nothing starts until you approve the goal's plan."
+                : "A goal over existing issues runs them unplanned."}
             </Text>
           </Stack>,
         ],
@@ -98,8 +108,36 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               onCommit={(on) => s.stage(["track_new_tasks"], on)}
             />
             <Text size="xs" c="dimmed">
-              What an approval starts with: the operator can choose the other for any plan. A goal with no tracker always keeps its tasks in the
-              meta-harness.
+              The starting choice at approval. You can change it for any plan.
+            </Text>
+          </Stack>,
+        ],
+        [
+          "How the planner talks",
+          <Stack gap={4}>
+            <Group gap="lg">
+              <InlineField
+                kind="select"
+                label="Planner's tone of voice"
+                value={doc.voice?.tone ?? "casual"}
+                data={TONES}
+                changed={changed(s, ["voice", "tone"])}
+                readOnly={s.readOnly}
+                onCommit={(v) => v && s.stage(["voice", "tone"], v)}
+              />
+              <InlineField
+                kind="select"
+                label="Technical detail the planner shares"
+                value={doc.voice?.detail ?? "low"}
+                data={DETAILS}
+                changed={changed(s, ["voice", "detail"])}
+                reasons={s.reasons("voice")}
+                readOnly={s.readOnly}
+                onCommit={(v) => v && s.stage(["voice", "detail"], v)}
+              />
+            </Group>
+            <Text size="xs" c="dimmed">
+              Applies to the planner's updates and plan summaries. Task descriptions for agents stay exact.
             </Text>
           </Stack>,
         ],
@@ -143,9 +181,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               />
             </Group>
             <Text size="xs" c="dimmed">
-              At the head of a goal's page the planner says, in plain language, where the goal stands, what changed, what needs you and what
-              happens next. One short model call each time the goal moves, and none while it stands still; the most a goal may have bounds what
-              they cost.
+              One short model call each time a goal moves, none while it stands still.
             </Text>
           </Stack>,
         ],
@@ -164,7 +200,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               readOnly={s.readOnly}
               onCommit={(v) => s.stage(["max_usd"], v === null ? undefined : Number(v).toFixed(2))}
             />
-            <Text size="xs" c="dimmed">The most one planning task may spend. A goal planned again spends it again.</Text>
+            <Text size="xs" c="dimmed">For each planning run.</Text>
           </Stack>,
         ],
         [
@@ -196,7 +232,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
                 onCommit={(v) => s.stage(["issue_chars"], v ?? undefined)}
               />
             </Group>
-            <Text size="xs" c="dimmed">A goal with more issues than this is planned over the first of them, and the plan says so.</Text>
+            <Text size="xs" c="dimmed">The plan says when a goal has more issues than this.</Text>
           </Stack>,
         ],
       ]}

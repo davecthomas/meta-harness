@@ -56,6 +56,10 @@ class GoalsClient:
         """The goal's planning state and its newest plan version; plan is None for a goal with no plan."""
         return self._call("GET", f"/v1/goals/{goal_id}/plan")
 
+    def updates(self, goal_id: str) -> dict:
+        """The planner's updates on the goal, newest first, with `enabled` and `error`."""
+        return self._call("GET", f"/v1/goals/{goal_id}/updates")
+
     def patch(self, goal_id: str, actor: str | None = None, **fields: Any) -> dict:
         return self._call("PATCH", f"/v1/goals/{goal_id}", actor=actor, json=fields)
 

@@ -4,7 +4,8 @@ import { IconCheck, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/i
 import { Link } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanDraft, type PlanItem } from "../../api";
 import { OWN, trackerTitle } from "../trackers/refs";
-import { IssueDecisions, OrderOfWork, PlannerSays, planSentence, tasksOf } from "./PlanReview";
+import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview";
+import { APPROVE_PLAN } from "./PlannerUpdates";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { ErrorAlert, SectionTitle, when } from "../../components/ui";
 
@@ -36,6 +37,9 @@ export function splitBody(body: string): { text: string; checks: string | null }
 
 function DraftCard({ draft, index, onEdit, onRemove }: { draft: PlanDraft; index: number; onEdit?: () => void; onRemove?: () => void }) {
   const { text, checks } = splitBody(draft.body);
+  // The body is written for the agent that does the task. It stays folded so the plan reads as a short list;
+  // one click shows it.
+  const [open, setOpen] = useState(false);
   return (
     <Card withBorder padding="md" data-testid={`draft-${draft.draft_id}`}>
       <Stack gap="xs">
@@ -52,11 +56,18 @@ function DraftCard({ draft, index, onEdit, onRemove }: { draft: PlanDraft; index
             {onRemove && <Button size="compact-xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={onRemove} aria-label={`Remove ${draft.draft_id}`}>Remove</Button>}
           </Group>
         </Group>
-        {text && <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{text}</Text>}
+        <Group>
+          <Anchor component="button" type="button" size="sm" aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} the details of ${draft.draft_id}`} onClick={() => setOpen((v) => !v)}>
+            {open ? "Hide details" : "Show details"}
+          </Anchor>
+        </Group>
+        {open && text && <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{text}</Text>}
         {checks !== null ? (
-          <Alert color="teal" variant="light" title="Acceptance checks" p="xs">
-            <Text size="sm" ff="monospace" style={{ whiteSpace: "pre-wrap" }}>{checks || "(none listed)"}</Text>
-          </Alert>
+          open && (
+            <Alert color="teal" variant="light" title="Acceptance checks" p="xs">
+              <Text size="sm" ff="monospace" style={{ whiteSpace: "pre-wrap" }}>{checks || "(none listed)"}</Text>
+            </Alert>
+          )
         ) : (
           <Alert color="orange" variant="light" p="xs">No acceptance checks: the body needs a "## Acceptance checks" section.</Alert>
         )}
@@ -205,6 +216,13 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
     },
   });
 
+  // "Approve the plan" in the planner's panel opens this plan's approval, where its counts are said first.
+  useEffect(() => {
+    const approve = () => setAsking("approve");
+    window.addEventListener(APPROVE_PLAN, approve);
+    return () => window.removeEventListener(APPROVE_PLAN, approve);
+  }, []);
+
   if (!shown) return error ? <ErrorAlert error={error} /> : <Loader size="sm" />;
   const change = (next: PlanDraft[]) => setEdited(next);
   const base = edited ?? plan?.drafts ?? [];
@@ -239,7 +257,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
         <Alert color="blue" mb="md" title="The planner is working on the plan">
           <Group gap="xs">
             <Loader size="xs" />
-            <Text size="sm">It reads the goal, its repos and the issues it already has, and proposes how to reach it. Nothing is created or run until you approve.</Text>
+            <Text size="sm">Nothing starts until you approve its plan.</Text>
             <Anchor component={Link} to={`/tasks/${shown.planning_task_id}`} size="sm">Watch its run</Anchor>
           </Group>
         </Alert>
@@ -253,7 +271,6 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
             </Text>
             {plan.task_id && <Anchor component={Link} to={`/tasks/${plan.task_id}`} size="sm">The planning task's run</Anchor>}
           </Group>
-          <PlannerSays summary={plan.summary ?? ""} gaps={plan.gaps ?? []} />
           {dirty && (
             <Alert color="yellow" title="Edits not saved yet">
               <Group gap="sm">
@@ -286,7 +303,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
           {issues.length > 0 && (
             <div>
               <Text fw={600} size="sm">The goal's issues</Text>
-              <Text size="xs" c="dimmed" mb={6}>What the plan does with each issue the goal already has. Change any of them before you approve.</Text>
+              <Text size="xs" c="dimmed" mb={6}>Change any decision before you approve.</Text>
               <IssueDecisions issues={issues} items={items} drafts={base} onChange={drafting ? undefined : setEditedItems} />
             </div>
           )}
@@ -295,8 +312,8 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
               <Text fw={600} size="sm">New tasks</Text>
               <Text size="xs" c="dimmed">
                 {drafts.length
-                  ? "Tasks the planner wrote. They exist only in this plan until you approve it."
-                  : "The planner wrote none: the goal's own issues cover it."}
+                  ? "Written by the planner. Created when you approve."
+                  : "None: the goal's issues cover it."}
               </Text>
             </div>
           )}
@@ -342,12 +359,12 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
               description={
                 track
                   ? `Each becomes an issue there, with the label ${shown.label}.`
-                  : `Off: ${base.length === 1 ? "it is" : "they are"} kept in the meta-harness alone. Nothing is written to ${tracker} for ${base.length === 1 ? "it" : "them"}, and the pull requests are the only record outside.`
+                  : `Off: kept in the meta-harness only. Nothing is written to ${tracker}.`
               }
             />
           )}
           {base.length > 0 && untracked && (
-            <Text size="sm" c="dimmed">This goal uses no issue tracker, so its tasks are kept in the meta-harness alone. The pull requests are the only record outside.</Text>
+            <Text size="sm" c="dimmed">This goal has no issue tracker: its tasks are kept in the meta-harness only.</Text>
           )}
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setAsking(null)}>Not yet</Button>
@@ -357,7 +374,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
       </Modal>
       <Modal opened={asking === "replan"} onClose={() => setAsking(null)} title="Ask for a new plan">
         <Stack gap="md">
-          <Text size="sm">The planner plans the goal again, given this plan and your note. Its new plan replaces this version when it is done.</Text>
+          <Text size="sm">The new plan replaces this one.</Text>
           <Textarea label="Note for the planner" placeholder="What to do differently" autosize minRows={3} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setAsking(null)}>Cancel</Button>
@@ -403,11 +420,10 @@ export function ApprovedPlan({ goal, onPlanAgain }: { goal: Goal; onPlanAgain?: 
   const kept = plan.tracked === false || (goal.tracker ?? "github") === OWN;
   return (
     <Stack gap="sm" mb="md" data-testid="approved-plan">
-      <PlannerSays summary={plan.summary ?? ""} gaps={plan.gaps ?? []} />
       <Group gap="sm">
         <Text size="sm" c="dimmed">
           Plan version {plan.version}, approved {when(shown.approved_at)}. {planSentence(drafts, items).replace("Approving this plan", "It")}
-          {drafts.length > 0 && (kept ? " The new tasks are kept in the meta-harness alone." : ` The new tasks are issues in ${trackerTitle(goal.tracker ?? "github")}.`)}
+          {drafts.length > 0 && (kept ? " The new tasks are kept in the meta-harness only." : ` The new tasks are issues in ${trackerTitle(goal.tracker ?? "github")}.`)}
         </Text>
         {(issues.length > 0 || drafts.length > 0) && (
           <Button size="compact-sm" variant="subtle" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Hide the plan" : "Show the plan"}</Button>
@@ -417,8 +433,7 @@ export function ApprovedPlan({ goal, onPlanAgain }: { goal: Goal; onPlanAgain?: 
       <Modal opened={asking} onClose={() => setAsking(false)} title="Plan the goal again">
         <Stack gap="md">
           <Text size="sm">
-            The planner plans what no task has started on, with your note, and you approve its new plan. The tasks already running go on.
-            Nothing new starts until you approve.
+            Running tasks carry on. Nothing new starts until you approve the new plan.
           </Text>
           <Textarea label="Note for the planner" placeholder="What changed, or what to do differently" autosize minRows={3} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
           {error && <Text size="sm" c="red" role="alert">{error}</Text>}

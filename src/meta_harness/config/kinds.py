@@ -146,6 +146,9 @@ def check_planning(document: dict[str, Any], others: dict[str, dict[str, Any]] |
         value = document.get(key, 1)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             reasons.append(f"{key} must be a whole number above 0: how many {what}")
+    from meta_harness.planner import voice
+
+    reasons += voice.check(document)
     updates = document.get("updates", {})
     if not isinstance(updates, dict):
         reasons.append("updates must be an object: the settings of the planner's updates on a goal's page")
@@ -390,51 +393,49 @@ KINDS: dict[str, Kind] = {
     "tiers": Kind(
         "tiers",
         "Router tiers",
-        "The ai-api-unified router's tiers, each with its ordered harness-profile-and-model candidates and thinking level.",
+        "Which profile and model a task runs on, by how hard it is.",
         seed_tiers,
         check_tiers,
     ),
     "profiles": Kind(
         "profiles",
         "Harness profiles",
-        "Each harness profile's tools, turn and minute limits, sandbox resources and bash allowlist.",
+        "What an agent may use and how long it may run.",
         seed_profiles,
         check_profiles,
     ),
     "repos": Kind(
         "repos",
         "Repositories",
-        "The repositories goals may change, each with its default acceptance checks. Add one from those the GitHub App is installed on.",
+        "The repositories goals may change.",
         seed_repos,
         check_repos,
     ),
     "trackers": Kind(
         "trackers",
         "Issue trackers",
-        "Which issue trackers are set up, each with its settings, and which one a new goal uses.",
+        "Where goals find their issues.",
         tracker_registry.seed,
         tracker_registry.check,
     ),
     "skills": Kind(
         "skills",
         "Skills",
-        "Packaged instructions, with their scripts and references, that a harness profile's runs load.",
+        "Instructions an agent loads for a kind of work.",
         seed_skills,
         check_skills,
     ),
     "planning": Kind(
         "planning",
         "Planning",
-        "The planner: the harness profile and model its planning tasks run on, what one may spend, which goals "
-        "are planned before their tasks run, and where a plan's new tasks go.",
+        "How the planner plans a goal and talks to you.",
         seed_planning,
         check_planning,
     ),
     "task_policy": Kind(
         "task_policy",
         "Task policy",
-        "How many tasks run at once across every goal, whether budgets stop work or only track spend, the "
-        "review loop's reviewer pairs and fix rounds, and the spend limit a task gets for its issue's size.",
+        "Limits on running tasks: how many at once, what they may spend, and who reviews them.",
         seed_task_policy,
         check_task_policy,
     ),

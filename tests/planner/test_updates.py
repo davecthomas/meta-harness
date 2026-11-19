@@ -11,6 +11,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from meta_harness import db
 from meta_harness.config import kinds
 from meta_harness.planner import planning, updates
 from meta_harness.planner.service import create_app
@@ -108,8 +109,8 @@ def test_an_update_is_written_once_for_a_state_and_again_when_the_goal_moves(wor
     assert (first["number"], first["headline"], first["needs_you"]) == (
         1,
         "Update 1",
-        [{"what": "Approve the plan.", "ref": ""}],
-    )
+        [{"what": "Approve the plan.", "ref": "", "action": "approve_plan", "task_id": "", "pr_url": ""}],
+    ), "a need with no action of its own gets the one the goal's state supports"
     found, before = writer.calls[0]
     assert before is None and found["goal"]["status"] == "planning" and found["plan"]["planning_task"] == "queued"
     assert (
@@ -137,15 +138,24 @@ def test_two_updates_keep_their_distance_and_a_goal_has_only_its_share(world, mo
     _planned(client, events, tasks, goal, [draft("store")])
     moved = _goal(client, goal["id"])
 
+    def asks(needs: str) -> None:
+        with db.connect(autocommit=True) as conn:
+            conn.execute("UPDATE planner.goal_update SET needs_you = %s::jsonb WHERE goal_id = %s", (needs, goal["id"]))
+
+    asks("[]")
     assert _write(moved, tasks, events, writer) is None, "the last update is seconds old: the next pass writes it"
 
+    # One that asked something of the operator does not wait: the goal moved, so what it asked may be done.
+    asks('[{"what": "Approve the plan.", "ref": ""}]')
+    assert _write(moved, tasks, events, writer)["number"] == 2
+
     shipped = planning.settings()
-    monkeypatch.setattr(planning, "settings", lambda: {**shipped, "updates": {"max_per_goal": 2}})
+    monkeypatch.setattr(planning, "settings", lambda: {**shipped, "updates": {"max_per_goal": 3}})
     asked = client.post(f"/v1/goals/{goal['id']}/updates", headers=OPERATOR)
-    assert asked.status_code == 200 and asked.json()["update"]["number"] == 2, "one asked for is written at once"
+    assert asked.status_code == 200 and asked.json()["update"]["number"] == 3, "one asked for is written at once"
     refused = client.post(f"/v1/goals/{goal['id']}/updates", headers=OPERATOR)
     assert refused.status_code == 502 and "updates.max_per_goal" in refused.json()["detail"]
-    assert _write(moved, tasks, events, writer) is None and len(writer.calls) == 2
+    assert len(writer.calls) == 3
 
 
 def test_an_update_that_cannot_be_written_says_so_with_what_to_do_and_keeps_the_last(world):
@@ -250,3 +260,48 @@ def test_the_update_settings_are_checked_and_fall_back_to_goal_draftings_model(m
         updates.settings()["model"] == f"{drafter['engine']}:{drafter['model']}"
         and updates.settings()["enabled"] is True
     )
+
+
+def test_the_facts_say_where_each_task_stands_and_whether_it_waits_on_the_operator():
+    link = {"state": "open", "held_reason": None, "refused_reason": None}
+    reviewing = updates.stage(link, {"status": "running", "pr_url": "https://github.com/o/r/pull/9"}, False)
+
+    assert "its own review" in reviewing and reviewing.endswith("Nothing is needed from the operator yet")
+    assert updates.stage(link, {"status": "running"}, False).startswith("an agent is writing the change")
+    assert updates.stage(link, {"status": "ready"}, False).endswith("It waits on the operator to merge it")
+    assert updates.stage(link, {"status": "ready"}, True).endswith("Nothing is needed from the operator")
+    assert (
+        updates.stage(link, {"status": "running", "waiting_on": "an answer"}, False)
+        == "waits on the operator: an answer"
+    )
+    assert updates.stage({**link, "held_reason": "large"}, None, False).endswith("It waits on the operator")
+    assert updates.stage(link, None, False).startswith("not started yet")
+    assert updates.stage({**link, "state": "closed"}, {"status": "closed"}, False) == "done: its issue is closed"
+    assert "never for something a fact says needs nothing from them" in updates.SYSTEM_PROMPT
+
+
+def test_every_need_gets_an_action_the_goals_records_support():
+    links = [
+        {"ref": "mh:i-1", "task_id": "t-1"},
+        {"ref": "mh:i-2", "task_id": "t-2"},
+        {"ref": "mh:i-3", "task_id": None},
+    ]
+    tasks = [
+        {"id": "t-1", "status": "ready", "pr_url": "https://github.com/o/r/pull/1"},
+        {"id": "t-2", "status": "running", "pr_url": None},
+    ]
+    active, planning = {"status": "active"}, {"status": "planning"}
+
+    def one(goal: dict, **need) -> dict:
+        [resolved] = updates.actionable([{"what": "Do it.", "ref": "", **need}], goal, links, tasks)
+        return resolved
+
+    merge = one(active, ref="mh:i-1", action="merge")
+    assert (merge["action"], merge["task_id"], merge["pr_url"]) == ("merge", "t-1", "https://github.com/o/r/pull/1")
+    assert one(active, ref="mh:i-2", action="merge")["action"] == "open_task", "no pull request to merge"
+    assert one(active, ref="mh:i-3", action="open_task")["action"] == "open_issue", "no task yet"
+    assert one(active, action="approve_plan")["action"] == "open_issue", "no plan waits on this goal"
+    assert one(planning, action="")["action"] == "approve_plan"
+    assert one({"status": "budget_exhausted"}, action="nonsense")["action"] == "raise_budget"
+    assert one(active, ref="mh:i-1", action="review")["action"] == "review"
+    assert all(n["action"] in updates.ACTIONS for n in [merge])
