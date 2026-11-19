@@ -303,5 +303,37 @@ def test_every_need_gets_an_action_the_goals_records_support():
     assert one(active, action="approve_plan")["action"] == "open_issue", "no plan waits on this goal"
     assert one(planning, action="")["action"] == "approve_plan"
     assert one({"status": "budget_exhausted"}, action="nonsense")["action"] == "raise_budget"
-    assert one(active, ref="mh:i-1", action="review")["action"] == "review"
+    assert one(active, ref="mh:i-1", action="review")["action"] == "merge", "a pull request ready to merge is merged"
     assert all(n["action"] in updates.ACTIONS for n in [merge])
+
+
+def test_a_tasks_or_issues_own_state_picks_the_buttons_whatever_the_model_wrote():
+    links = [
+        {"ref": "mh:i-1", "task_id": "t-1"},
+        {"ref": "mh:i-2", "task_id": "t-2"},
+        {"ref": "mh:i-3", "task_id": None, "held_reason": "it is large: 4 areas"},
+        {
+            "ref": "mh:i-4",
+            "task_id": None,
+            "held_reason": "the plan split it into 3 smaller tasks, which run in its place",
+        },
+        {"ref": "mh:i-5", "task_id": "t-5"},
+    ]
+    tasks = [
+        {"id": "t-1", "status": "review_unresolved", "pr_url": "https://github.com/o/r/pull/1"},
+        {"id": "t-2", "status": "failed", "pr_url": None},
+        {"id": "t-5", "status": "ready", "pr_url": "https://github.com/o/r/pull/5"},
+    ]
+
+    def action(ref: str, wanted: str) -> str:
+        [need] = updates.actionable(
+            [{"what": "Look.", "ref": ref, "action": wanted}], {"status": "active"}, links, tasks
+        )
+        return need["action"]
+
+    # A review no fix settled is settled on the spot, not just opened.
+    assert action("mh:i-1", "review") == "settle_review"
+    assert action("mh:i-2", "open_task") == "retry"
+    assert action("mh:i-3", "open_issue") == "split_or_run"
+    assert action("mh:i-4", "open_issue") == "open_issue", "already split: nothing left to choose"
+    assert action("mh:i-5", "review") == "merge"
