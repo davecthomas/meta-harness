@@ -241,3 +241,35 @@ test("an approved plan stays readable on the goal's page: what the planner said,
   expect(within(big).queryByRole("radio")).toBeNull();
   expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
 });
+
+test("a goal under way is planned again from its page, with a note, and a goal that has ended is not", async () => {
+  const approved = { ...OVER_ISSUES(), status: "active", approved_at: "2026-11-19T10:00:00Z" };
+  const asked: { url: string; body: any }[] = [];
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    asked.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+    return Promise.resolve(new Response(JSON.stringify(approved), { status: 200 }));
+  });
+  const again: number[] = [];
+  const view = (onPlanAgain?: () => void) => (
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <ApprovedPlan goal={{ ...JIRA_GOAL, status: "active" } as Goal} onPlanAgain={onPlanAgain} />
+      </MemoryRouter>
+    </MantineProvider>
+  );
+  const { rerender } = render(view(() => again.push(1)));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Plan again" }));
+  const dialog = await screen.findByRole("dialog", { name: "Plan the goal again" });
+  expect(dialog.textContent).toContain("The tasks already running go on.");
+  fireEvent.change(within(dialog).getByLabelText("Note for the planner"), { target: { value: "Fit the new issue in." } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Plan again" }));
+
+  await waitFor(() => expect(again).toHaveLength(1));
+  expect(asked.at(-1)).toEqual({ url: "/v1/goals/g-1/replan", body: { note: "Fit the new issue in." } });
+
+  rerender(view(undefined));
+  await screen.findByTestId("approved-plan");
+  // The dialog's own button goes as it closes; the page's is not offered at all.
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Plan again" })).toBeNull());
+});

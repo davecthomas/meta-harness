@@ -596,3 +596,52 @@ def test_only_goals_that_plan_from_their_description_are_planned_when_the_config
 
     assert (goal["status"], goal["planned"]) == ("active", False) and goal["started_at"]
     assert not [t for t in tasks.tasks.values() if t.get("task_type") == "plan" and t.get("goal_id") == goal["id"]]
+
+
+def test_a_goal_under_way_is_planned_again_over_what_no_task_has_started_and_its_running_tasks_go_on(planned):
+    client, events, github, tasks, _ = planned
+    goal, _, (keep, big, dup) = _decided(client, events, tasks, github)
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    running = {
+        t["id"]: t["status"]
+        for t in tasks.tasks.values()
+        if t.get("goal_id") == goal["id"] and t["task_type"] != "plan"
+    }
+    late = github.add(
+        REPO,
+        1_000_000 + uuid.uuid4().int % 10**12,
+        labels=[goal["label"]],
+        body=f"Later.\n\n{CHECKS}",
+        title="Labeled later",
+    )
+
+    again = client.post(f"/v1/goals/{goal['id']}/replan", json={"note": "Fit the new issue in."}, headers=OPERATOR)
+
+    assert again.status_code == 202, again.text
+    assert client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "planning"
+    plan_tasks = [t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"] and t["task_type"] == "plan"]
+    newest = max(plan_tasks, key=lambda t: t["external_ref"])
+    # The planner is given what no task has started on: the late issue. What is under way is not its to decide.
+    assert "The goal already has 1 issue" in newest["description"] and "Labeled later" in newest["description"]
+    assert "Keep me" not in newest["description"] and "Fit the new issue in." in newest["description"]
+    # Nothing that was running is touched.
+    assert {t["id"]: t["status"] for t in tasks.tasks.values() if t["id"] in running} == running
+
+    newest["status"] = "closed"
+    events.emit("issue_planned", {"ref": late, "decision": "keep", "reason": "Fits."}, task_id=newest["id"])
+    shown = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    assert [i["ref"] for i in shown["plan"]["issues"]] == [late] and shown["plan"]["invalid"] == []
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    assert late in {t["external_ref"] for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]}
+
+
+def test_a_goal_that_was_never_planned_or_has_ended_cannot_be_planned_again(untracked):
+    client, _, github, _, _ = untracked
+    goal, _ = _labeled(client, github, ["Crash on save"])
+
+    refused = client.post(f"/v1/goals/{goal['id']}/replan", headers=OPERATOR)
+    assert refused.status_code == 409 and "cannot be planned again: it was never planned" in refused.json()["detail"]
+    client.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
+    ended = client.post(f"/v1/goals/{goal['id']}/replan", headers=OPERATOR)
+    assert ended.status_code == 409 and "it is canceled" in ended.json()["detail"]

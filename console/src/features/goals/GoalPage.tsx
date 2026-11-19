@@ -369,7 +369,9 @@ export function GoalPage() {
 
       {goal.status === "planning" && <GoalPlan goal={goal} onApproved={() => void Promise.all([load(), loadProgress()])} />}
       {/* Once approved, what the planner said stays at the head of the goal's work. */}
-      {goal.status !== "planning" && goal.plan_approved_at && <ApprovedPlan goal={goal} />}
+      {goal.status !== "planning" && goal.plan_approved_at && (
+        <ApprovedPlan goal={goal} onPlanAgain={["active", "stalled"].includes(goal.status) ? () => void Promise.all([load(), loadProgress()]) : undefined} />
+      )}
 
       <SectionTitle
         right={
