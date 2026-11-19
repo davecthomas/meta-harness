@@ -20,6 +20,14 @@ const LATEST = {
   next: "The UI task starts when the API merges.",
   created_at: NOW,
 };
+const pr = (n: number) => `https://github.com/o/r/pull/${n}`;
+const TASKS: Record<string, unknown> = {
+  "t-1": { id: "t-1", title: "CLI", status: "ready", pr_url: pr(9), max_usd: "5" },
+  "t-2": { id: "t-2", title: "Export", status: "review_unresolved", pr_url: pr(10), max_usd: "5" },
+  "t-3": { id: "t-3", title: "Question", status: "running", pr_url: null, max_usd: "5" },
+  "t-4": { id: "t-4", title: "Broken", status: "failed", pr_url: null, max_usd: "5" },
+};
+const ISSUES = [{ ref: "jira:VL-8", repo: "o/r", state: "open", depends_on: [], refused_reason: null, held_reason: "it is large: 4 areas", task_id: null, task_status: null, task_status_reason: null, pr_url: null, pr_state: null, checks: null, split: [] }];
 const FIRST = { number: 1, headline: "The plan is ready for you.", body: "Three tasks, in order.", needs_you: [], next: "", created_at: "2026-11-19T11:00:00Z" };
 
 // The panel over a fake API. reads: what each GET answers, the last one repeating. Returns the POSTs made.
@@ -31,6 +39,10 @@ function show(reads: unknown[], open = true, ask: () => Promise<Response> = () =
       posts.push(url);
       return ask();
     }
+    // Each need's task, read for its state now, and the goal's issues, read for a held one's choices.
+    const task = String(url).match(/^\/v1\/tasks\/(t-[\w-]+)$/);
+    if (task) return respond(TASKS[task[1]] ?? { detail: "no such task" }, TASKS[task[1]] ? 200 : 404);
+    if (String(url).startsWith("/v1/goals/g-1/issues")) return respond({ issues: ISSUES });
     return respond(reads[Math.min(read++, reads.length - 1)]);
   });
   render(
@@ -82,14 +94,17 @@ test("an update that could not be written says why and what to do, and keeps the
   expect((await screen.findByTestId("planner-update-refused", {}, { timeout: 60000 })).textContent).toContain("Ask again in a moment");
 }, 70000);
 
-test("every need comes with the button that resolves it", async () => {
+test("every need comes with the button that resolves it, from its task's state now", async () => {
   const needs = [
     { what: "Approve the plan.", ref: "", action: "approve_plan" },
-    { what: "Merge the CLI change.", ref: "mh:i-1", action: "merge", task_id: "t-1", pr_url: "https://github.com/o/r/pull/9" },
+    { what: "Merge the CLI change.", ref: "mh:i-1", action: "merge", task_id: "t-1", pr_url: pr(9) },
+    // The model said "review", but the task's review ended with findings no fix settled: settle it here.
     { what: "Look at the export change.", ref: "mh:i-2", action: "review", task_id: "t-2" },
     { what: "Answer the agent's question.", ref: "mh:i-3", action: "open_task", task_id: "t-3" },
     { what: "Raise the budget.", ref: "", action: "raise_budget" },
     { what: "Decide on the held issue.", ref: "jira:VL-7", action: "open_issue" },
+    { what: "The broken task failed.", ref: "mh:i-4", action: "retry", task_id: "t-4" },
+    { what: "Split the big issue or run it as one.", ref: "jira:VL-8", action: "split_or_run" },
   ];
   const seen: string[] = [];
   const approve = () => seen.push("approve");
@@ -99,21 +114,30 @@ test("every need comes with the button that resolves it", async () => {
   const posts = show([{ updates: [{ ...LATEST, needs_you: needs }], enabled: true, error: null }]);
 
   const rows = await screen.findAllByTestId("planner-need");
-  expect(rows).toHaveLength(6);
+  expect(rows).toHaveLength(8);
   for (const row of rows) expect(row.querySelectorAll("a, button").length).toBeGreaterThan(0);
 
   fireEvent.click(within(rows[0]).getByRole("button", { name: "Approve the plan" }));
   fireEvent.click(within(rows[4]).getByRole("button", { name: "Raise the budget" }));
   expect(seen).toEqual(["approve", "settings"]);
-  expect(within(rows[1]).getByRole("link", { name: "See the changes" }).getAttribute("href")).toBe("/tasks/t-1?tab=changes");
-  expect(within(rows[2]).getByRole("link", { name: "Open the changes" }).getAttribute("href")).toBe("/tasks/t-2?tab=changes");
+  expect((await within(rows[1]).findByRole("link", { name: "See the changes" })).getAttribute("href")).toBe("/tasks/t-1?tab=changes");
+  expect(await within(rows[2]).findByRole("button", { name: "Merge as is" })).toBeTruthy();
+  expect(within(rows[2]).getByRole("link", { name: "See the findings" }).getAttribute("href")).toBe("/tasks/t-2?tab=reviews");
+  expect(await within(rows[3]).findByText("Under way again.")).toBeTruthy();
   expect(within(rows[3]).getByRole("link", { name: "Open the task" }).getAttribute("href")).toBe("/tasks/t-3");
   expect(within(rows[5]).getByRole("button", { name: "Show the goal's issues" })).toBeTruthy();
+  expect(await within(rows[7]).findByRole("button", { name: "Run anyway" })).toBeTruthy();
+  expect(within(rows[7]).getByRole("button", { name: "Split" })).toBeTruthy();
 
-  // Merge resolves it on the spot, after a confirm.
+  // Each resolves it on the spot, and the planner is asked for a fresh update at once.
+  fireEvent.click(within(rows[2]).getByRole("button", { name: "Try another fix" }));
+  await waitFor(() => expect(posts).toContain("/v1/tasks/t-2/retry"));
+  fireEvent.click(await within(rows[6]).findByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(posts).toContain("/v1/tasks/t-4/retry"));
   fireEvent.click(within(rows[1]).getByRole("button", { name: "Merge" }));
   fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Merge" }));
   await waitFor(() => expect(posts).toContain("/v1/tasks/t-1/merge"));
+  expect(posts).toContain("/v1/goals/g-1/updates");
   window.removeEventListener("mh:approve-plan", approve);
   window.removeEventListener("mh:open-settings", settings);
 });

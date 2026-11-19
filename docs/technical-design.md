@@ -2927,7 +2927,15 @@ action for each (`approve_plan`, `merge`, `review`, `open_task`,
 `raise_budget`, `open_issue`), and `updates.actionable` checks it against the
 goal's records before it is saved: a merge needs a task whose pull request
 passed review, an approval a goal that is planning, and an action the records
-do not support becomes the nearest one they do. The panel shows each as a
+do not support becomes the nearest one they do. A task's or an issue's own state
+outranks the model's pick: a review no fix settled is `settle_review`, a task
+ready to merge `merge`, a failed task `retry`, and an issue held for its size
+`split_or_run`. The panel goes further and reads each need's task as it is
+now, so an update written before the operator acted still offers what fits:
+Merge as is, Try another fix and See the findings on a review no fix settled;
+Merge on one ready; Retry on one failed or canceled; Split and Run anyway on a
+held issue; and "Under way again" once the task runs. Acting from the panel
+asks the planner for a new update at once. The panel shows each as a
 button that resolves the need on the spot (approve the plan, merge after a
 confirm) or opens where it is resolved (the task, its changes, the goal's
 budget, the issue).

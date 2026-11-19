@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Anchor, Button, Collapse, Group, List, Paper, Stack, Text, ThemeIcon, Timeline } from "@mantine/core";
-import { Link } from "react-router-dom";
-import { IconCheck, IconCompass, IconGitMerge, IconRefresh } from "@tabler/icons-react";
+import { IconCheck, IconCompass, IconRefresh } from "@tabler/icons-react";
 import { ConfirmButton } from "../../components/ConfirmButton";
-import { tasksApi } from "../tasks/api";
-import { reviewLink } from "../tasks/reviewing";
 import { api } from "../../api";
 import { issueUrl } from "../trackers/refs";
 import { when } from "../../components/ui";
+import { HeldIssueAction, TaskNeedAction } from "./needActions";
 
 // One update the planner wrote for the goal: where it stands, what changed, what needs the operator and what
 // happens next.
@@ -40,7 +38,9 @@ export function since(iso: string, now = Date.now()): string {
 }
 
 // What resolves a need: the page's own button for it. Every need has one.
-export type NeedAction = "approve_plan" | "accept_fix" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue";
+export type NeedAction =
+  | "approve_plan" | "accept_fix" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue"
+  | "settle_review" | "retry" | "split_or_run";
 // changes: for accept_fix, what the planner's fix changes in the plan, a line each.
 export type Need = { what: string; ref: string; action?: NeedAction | ""; task_id?: string; pr_url?: string; changes?: string[] };
 
@@ -55,7 +55,7 @@ export const PLAN_CHANGED = "mh:plan-changed";
 // The button that resolves one need, or takes the operator to where they do.
 // planning: the goal is being planned, so a need written before needs had actions, about no issue, is the
 // plan's approval.
-function NeedAction({ need, planning, goalId, onDone }: { need: Need; planning: boolean; goalId: string; onDone: () => void }) {
+function NeedAction({ need, planning, goalId, label, onDone }: { need: Need; planning: boolean; goalId: string; label: string | null; onDone: () => void }) {
   const changed = () => {
     window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
     onDone();
@@ -100,29 +100,18 @@ function NeedAction({ need, planning, goalId, onDone }: { need: Need; planning: 
           </Button>
         </Group>
       );
+    // A need about a task gets the buttons its task's state calls for now (needActions.tsx): merge or try
+    // another fix on a review no fix settled, retry a failed task, and none once it is under way again.
     case "merge":
-      return (
-        <Group gap="xs" wrap="nowrap">
-          <ConfirmButton
-            size="xs"
-            color="teal"
-            label="Merge"
-            title="Merge this pull request?"
-            says="It merges through the merge queue once its checks pass. A merge to main cannot be taken back from here."
-            confirm="Merge"
-            leftSection={<IconGitMerge size={14} />}
-            onConfirm={async () => {
-              await tasksApi.mergeTask(task);
-              onDone();
-            }}
-          />
-          <Button size="xs" variant="subtle" component={Link} to={reviewLink(task)}>See the changes</Button>
-        </Group>
-      );
     case "review":
-      return <Button size="xs" variant="light" component={Link} to={reviewLink(task)}>Open the changes</Button>;
+    case "settle_review":
+    case "retry":
     case "open_task":
-      return <Button size="xs" variant="light" component={Link} to={`/tasks/${task}`}>Open the task</Button>;
+      return task ? <TaskNeedAction taskId={task} onDone={onDone} /> : <Button size="xs" variant="light" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>;
+    case "split_or_run": {
+      const issues = <Button size="xs" variant="light" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>;
+      return need.ref ? <HeldIssueAction goalId={goalId} issueRef={need.ref} label={label} fallback={issues} onDone={onDone} /> : issues;
+    }
     case "raise_budget":
       return <Button size="xs" variant="light" onClick={send(OPEN_SETTINGS)}>Raise the budget</Button>;
     default: {
@@ -137,7 +126,7 @@ function NeedAction({ need, planning, goalId, onDone }: { need: Need; planning: 
 }
 
 // What an update asks of the operator, each with the button that resolves it.
-function NeedsYou({ needs, planning, goalId, onDone }: { needs: Need[]; planning: boolean; goalId: string; onDone: () => void }) {
+function NeedsYou({ needs, planning, goalId, label, onDone }: { needs: Need[]; planning: boolean; goalId: string; label: string | null; onDone: () => void }) {
   if (!needs.length) return null;
   return (
     <Alert color="yellow" variant="light" p="sm" title={needs.length === 1 ? "Needs you" : `Needs you: ${needs.length} things`} data-testid="planner-needs-you">
@@ -150,7 +139,7 @@ function NeedsYou({ needs, planning, goalId, onDone }: { needs: Need[]; planning
                 <Text size="sm" c="dimmed">{(need.changes ?? []).join(" · ")}</Text>
               )}
             </Stack>
-            <NeedAction need={need} planning={planning} goalId={goalId} onDone={onDone} />
+            <NeedAction need={need} planning={planning} goalId={goalId} label={label} onDone={onDone} />
           </Group>
         ))}
       </Stack>
@@ -162,7 +151,7 @@ function NeedsYou({ needs, planning, goalId, onDone }: { needs: Need[]; planning
 // language (where the goal stands, what changed, what needs the operator, what happens next), the ones before
 // it, and a way to ask for one now. open: the goal is not closed, so its updates are reread as it moves.
 // Nothing is shown when updates are off, or for a goal that never had one and will not get one.
-export function PlannerUpdates({ goalId, open, planning = false }: { goalId: string; open: boolean; planning?: boolean }) {
+export function PlannerUpdates({ goalId, open, planning = false, label = null }: { goalId: string; open: boolean; planning?: boolean; label?: string | null }) {
   const [read, setRead] = useState<PlannerUpdatesRead | null>(null);
   const [asking, setAsking] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
@@ -231,7 +220,7 @@ export function PlannerUpdates({ goalId, open, planning = false }: { goalId: str
       {latest && (
         <Stack gap="sm" pl={50}>
           <Text size="md" style={{ whiteSpace: "pre-wrap" }}>{latest.body}</Text>
-          <NeedsYou needs={latest.needs_you ?? []} planning={planning} goalId={goalId} onDone={() => void ask()} />
+          <NeedsYou needs={latest.needs_you ?? []} planning={planning} goalId={goalId} label={label} onDone={() => void ask()} />
           {latest.next && (
             <Text size="sm"><Text span fw={650}>Next: </Text>{latest.next}</Text>
           )}
