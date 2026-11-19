@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanDraft, type PlanItem } from "../../api";
 import { OWN, trackerTitle } from "../trackers/refs";
 import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview";
+import { APPROVE_PLAN } from "./PlannerUpdates";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { ErrorAlert, SectionTitle, when } from "../../components/ui";
 
@@ -214,6 +215,13 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
       setEditedItems(null);
     },
   });
+
+  // "Approve the plan" in the planner's panel opens this plan's approval, where its counts are said first.
+  useEffect(() => {
+    const approve = () => setAsking("approve");
+    window.addEventListener(APPROVE_PLAN, approve);
+    return () => window.removeEventListener(APPROVE_PLAN, approve);
+  }, []);
 
   if (!shown) return error ? <ErrorAlert error={error} /> : <Loader size="sm" />;
   const change = (next: PlanDraft[]) => setEdited(next);

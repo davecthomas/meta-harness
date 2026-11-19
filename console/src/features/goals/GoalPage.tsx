@@ -14,7 +14,7 @@ import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures, failures } from "./GoalFailures";
 import { usd } from "../../money";
 import { ApprovedPlan, GoalPlan } from "./GoalPlan";
-import { PlannerUpdates } from "./PlannerUpdates";
+import { OPEN_SETTINGS, PlannerUpdates, SHOW_ISSUES } from "./PlannerUpdates";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
 import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
@@ -58,6 +58,21 @@ export function GoalPage() {
   const [spentNow, setSpentNow] = useState<number | undefined>(undefined);
   // Whether the settings are shown: null until the operator says, then as they left it.
   const [settingsOpen, setSettingsOpen] = useState<boolean | null>(null);
+  // The planner's panel resolves a need here: "Raise the budget" opens the settings, and "Show the goal's
+  // issues" brings them into view.
+  useEffect(() => {
+    const settings = () => {
+      setSettingsOpen(true);
+      window.setTimeout(() => document.getElementById("goal-settings-body")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    };
+    const issuesShown = () => document.getElementById("goal-issues")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.addEventListener(OPEN_SETTINGS, settings);
+    window.addEventListener(SHOW_ISSUES, issuesShown);
+    return () => {
+      window.removeEventListener(OPEN_SETTINGS, settings);
+      window.removeEventListener(SHOW_ISSUES, issuesShown);
+    };
+  }, []);
   const [from, setFrom] = useState<number | null>(null);
   // When the board last reread its issues, and why its latest reread failed, if it did.
   const [refreshed, setRefreshed] = useState<number | null>(null);
@@ -378,6 +393,7 @@ export function GoalPage() {
         <ApprovedPlan goal={goal} onPlanAgain={["active", "stalled"].includes(goal.status) ? () => void Promise.all([load(), loadProgress()]) : undefined} />
       )}
 
+      <div id="goal-issues" />
       <SectionTitle
         right={
           issues.length > 0 && (
