@@ -322,6 +322,34 @@ def goal_get(goal_id: str) -> None:
     click.echo(json.dumps(_task_call(_goals().get, goal_id), indent=2))
 
 
+@goal.command("updates")
+@click.argument("goal_id")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Show only the newest N updates.")
+def goal_updates(goal_id: str, limit: int | None) -> None:
+    """The planner's updates on a goal, newest first."""
+    result = _task_call(_goals().updates, goal_id)
+    rows = result.get("updates") or []
+    if limit is not None:
+        rows = rows[:limit]
+    if not result.get("enabled", True):
+        click.echo("The planner's updates are off.")
+    if result.get("error"):
+        click.echo(f"The latest update could not be written: {result['error']}")
+    if not rows:
+        click.echo("This goal has no updates yet.")
+    for row in rows:
+        click.echo(f"\n#{row['number']}  {row['created_at']}  {row['headline']}")
+        click.echo(row["body"])
+        needs = row.get("needs_you") or []
+        if needs:
+            click.echo("Needs you:")
+            for item in needs:
+                ref = f" ({item['ref']})" if item.get("ref") else ""
+                click.echo(f"  ! {item['what']}{ref}")
+        if row.get("next"):
+            click.echo(f"Next: {row['next']}")
+
+
 @goal.command("pause")
 @click.argument("goal_id")
 def goal_pause(goal_id: str) -> None:

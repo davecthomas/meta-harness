@@ -52,6 +52,10 @@ class GoalsClient:
         """Each of the goal's issues with its task status, pull request URL, pull request state and checks."""
         return self._call("GET", f"/v1/goals/{goal_id}/issues")["issues"]
 
+    def updates(self, goal_id: str) -> dict:
+        """The planner's updates on the goal, newest first, with `enabled` and `error`."""
+        return self._call("GET", f"/v1/goals/{goal_id}/updates")
+
     def patch(self, goal_id: str, actor: str | None = None, **fields: Any) -> dict:
         return self._call("PATCH", f"/v1/goals/{goal_id}", actor=actor, json=fields)
 
