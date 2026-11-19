@@ -36,6 +36,9 @@ export interface PullCheck {
   seconds: number | null;
   usual_seconds: number | null;
   url: string | null;
+  // A merged task's run that a newer merge canceled or replaced: the newer run stands in for it, as it does
+  // in the task's own wait. sha and conclusion are the replaced run's.
+  replaced?: { sha: string; conclusion: string | null } | null;
 }
 
 // The checks on the commit a task waits on, from GET /v1/pulls/{task_id}/checks: its pull request's head, or

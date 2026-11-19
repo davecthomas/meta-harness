@@ -127,3 +127,19 @@ test("the terminal says when a wait for checks starts and how it ends", () => {
   expect(text("pull_request_merged", { merge_sha: "58e544902fca" })).toBe("merged as 58e5449. Waiting for the merge commit's checks");
   expect(text("merge_checks", { state: "passed", failed: [] })).toBe("merge commit's checks passed");
 });
+
+test("a merged task's run that a newer merge canceled shows the newer run, and says the checks run at the same time", () => {
+  const replaced: PullChecks = {
+    ...CHECKS,
+    of: "merge",
+    checks: [
+      check("control plane tests", { replaced: { sha: "22d286d", conclusion: "cancelled" } }),
+      check("deploy", { status: "in_progress", conclusion: null, completed_at: null, seconds: null, replaced: { sha: "22d286d", conclusion: "failure" } }),
+    ],
+  };
+  render(<MantineProvider theme={theme}><Checks checks={replaced} error={null} /></MantineProvider>);
+  const notes = screen.getAllByTestId("check-replaced").map((n) => n.textContent);
+  expect(notes).toEqual(["Canceled by a newer merge; the newer commit's run counts", "Failed here; the newer commit's run counts"]);
+  expect(screen.getByText(/These run at the same time on the merge; a deploy waits for the rest to pass/)).toBeTruthy();
+  expect(screen.queryByText(/Failed \(cancelled\)/)).toBeNull();
+});
