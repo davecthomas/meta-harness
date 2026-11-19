@@ -32,8 +32,10 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 from meta_harness.github_app import GitHubAppError, GitHubApps, git_auth_env
 
@@ -368,6 +370,53 @@ async def check_runs(repo: str, sha: str) -> list[CheckRun]:
             )
         )
     return found
+
+
+def _seconds(started: str | None, completed: str | None) -> int | None:
+    """How long a check ran, from the code host's two times; None while it has not finished."""
+    if not started or not completed:
+        return None
+    try:
+        took = datetime.fromisoformat(completed.replace("Z", "+00:00")) - datetime.fromisoformat(
+            started.replace("Z", "+00:00")
+        )
+    except ValueError:
+        return None
+    return max(0, int(took.total_seconds()))
+
+
+async def check_details(repo: str, ref: str) -> list[dict[str, Any]]:
+    """Every check on a commit (or a branch's newest), for an operator to watch: its name, how it stands, when it
+    started and ended, how long it ran, and where its log is. Commit statuses are included as checks of their
+    own, with no times. Read only."""
+    runs = await _github(repo, READ_CHECKS, "GET", f"/repos/{repo}/commits/{ref}/check-runs", params={"per_page": 100})
+    found = [
+        {
+            "name": run["name"],
+            "status": run["status"],
+            "conclusion": run.get("conclusion"),
+            "started_at": run.get("started_at"),
+            "completed_at": run.get("completed_at"),
+            "seconds": _seconds(run.get("started_at"), run.get("completed_at")),
+            "url": run.get("html_url") or run.get("details_url"),
+        }
+        for run in (runs or {}).get("check_runs", [])
+    ]
+    combined = await _github(repo, READ_CHECKS, "GET", f"/repos/{repo}/commits/{ref}/status")
+    for status in (combined or {}).get("statuses", []):
+        pending = status["state"] == "pending"
+        found.append(
+            {
+                "name": status["context"],
+                "status": "in_progress" if pending else "completed",
+                "conclusion": None if pending else ("success" if status["state"] == "success" else "failure"),
+                "started_at": None,
+                "completed_at": None,
+                "seconds": None,
+                "url": status.get("target_url"),
+            }
+        )
+    return sorted(found, key=lambda check: check["name"].lower())
 
 
 @dataclass

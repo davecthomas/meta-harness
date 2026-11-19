@@ -33,6 +33,7 @@ import asyncio
 import logging
 import json
 import os
+import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -94,6 +95,8 @@ TASKS_PAGE = 1000
 SWEPT_STATUSES = ("active", "budget_exhausted")
 # How long a read of the tracker for a goal no sweep covers stands, before its page reads it again.
 STATE_CHECK_SECONDS = 60.0
+# How long a repo's usual check times are kept before they are read again.
+USUAL_CHECKS_SECONDS = 600.0
 
 
 class GoalIn(BaseModel):
@@ -679,6 +682,56 @@ def create_app(
         except code_host.CodeHostError as err:
             raise HTTPException(status_code=502, detail=str(err)) from err
         return {"repo": repo, "number": number, "head_sha": pull.head_sha, "state": pull.state, "files": files}
+
+    # How long each of a repo's checks took on its default branch's newest commit, kept a while: what a wait for
+    # checks usually lasts, read once for every task that asks.
+    usual_checks: dict[str, tuple[float, dict[str, int]]] = {}
+
+    async def usual_seconds(repo: str) -> dict[str, int]:
+        kept = usual_checks.get(repo)
+        if kept and time.monotonic() - kept[0] < USUAL_CHECKS_SECONDS:
+            return kept[1]
+        try:
+            found = await code_host.check_details(repo, "HEAD")
+        except code_host.CodeHostError as err:
+            log.warning("could not read %s's usual check times: %s", repo, err)
+            return kept[1] if kept else {}
+        usual = {check["name"]: check["seconds"] for check in found if check["seconds"] is not None}
+        usual_checks[repo] = (time.monotonic(), usual)
+        return usual
+
+    @app.get("/v1/pulls/{task_id}/checks")
+    async def pull_checks(task_id: str, who: str = Depends(operator)) -> dict:
+        """The code host's checks on the commit the task waits on, for an operator to watch: its pull request's
+        head, or its merge commit once merged (`of`). Each check has its state, times and log, and `usual_seconds`,
+        how long it took on the default branch's newest commit. `state` is how they stand together, and
+        `usual_seconds` how long the wait usually is: the slowest check's. 404 for a task with no pull request,
+        502 when the code host cannot be read."""
+        _, repo, number = await task_pull(task_id)
+        try:
+            pull = await code_host.read_pull_request(repo, number)
+            sha = pull.merge_sha or pull.head_sha
+            checks = await code_host.check_details(repo, sha) if sha else []
+        except code_host.CodeHostError as err:
+            raise HTTPException(status_code=502, detail=str(err)) from err
+        usual = await usual_seconds(repo)
+        for check in checks:
+            check["usual_seconds"] = usual.get(check["name"])
+        done = [c for c in checks if c["status"] == "completed"]
+        failed = [c["name"] for c in done if c["conclusion"] not in code_host.PASSING_CONCLUSIONS]
+        state = "none" if not checks else "failed" if failed else "pending" if len(done) < len(checks) else "passed"
+        return {
+            "repo": repo,
+            "number": number,
+            "sha": sha,
+            "of": "merge" if pull.merge_sha else "pull_request",
+            "state": state,
+            "passed": len(done) - len(failed),
+            "failed": failed,
+            "total": len(checks),
+            "usual_seconds": max(usual.values(), default=None),
+            "checks": checks,
+        }
 
     @app.post("/v1/pulls/{task_id}/comments", status_code=201)
     async def pull_comment(task_id: str, body: LineCommentIn, who: str = Depends(operator)) -> dict:

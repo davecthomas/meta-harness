@@ -25,6 +25,34 @@ export interface PullDiff {
   files: { path: string; status: string; additions: number; deletions: number; patch: string | null }[];
 }
 
+// One of the code host's checks on a commit. seconds: how long it ran, once done. usual_seconds: how long it
+// took on the default branch's newest commit.
+export interface PullCheck {
+  name: string;
+  status: "queued" | "in_progress" | "completed" | string;
+  conclusion: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  seconds: number | null;
+  usual_seconds: number | null;
+  url: string | null;
+}
+
+// The checks on the commit a task waits on, from GET /v1/pulls/{task_id}/checks: its pull request's head, or
+// its merge commit once merged. usual_seconds: how long the wait usually is, the slowest check's.
+export interface PullChecks {
+  repo: string;
+  number: number;
+  sha: string;
+  of: "pull_request" | "merge";
+  state: "pending" | "passed" | "failed" | "none";
+  passed: number;
+  failed: string[];
+  total: number;
+  usual_seconds: number | null;
+  checks: PullCheck[];
+}
+
 // A task's attempts side by side, from GET /v1/pulls/{task_id}/attempts.
 export interface AttemptsCompare {
   task_id: string;
@@ -109,6 +137,7 @@ export const tasksApi = {
   supervisor: () => call<SupervisorState>("/v1/supervisor"),
   reviews: (id: string) => call<{ rounds: ReviewRound[] }>(`/v1/tasks/${id}/reviews`).then((r) => r.rounds),
   pullDiff: (taskId: string) => call<PullDiff>(`/v1/pulls/${taskId}/diff`),
+  pullChecks: (taskId: string) => call<PullChecks>(`/v1/pulls/${taskId}/checks`),
   commentOnLines: (taskId: string, body: { path: string; line: number; start_line: number | null; body: string }) =>
     call<{ url: string }>(`/v1/pulls/${taskId}/comments`, { method: "POST", body: JSON.stringify(body) }),
   messageTask: (id: string, text: string, when: "next_turn" | "after_stop" | "stop" | "choose") =>

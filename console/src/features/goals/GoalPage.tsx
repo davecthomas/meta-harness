@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Collapse, Group, Loader, Paper, SegmentedControl, Stack, Table, Text } from "@mantine/core";
 import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlayerPause, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
-import { api, trackerTitle, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type Task } from "../../api";
+import { STEP_EVENTS } from "../tasks/path";
+import { api, trackerTitle, goalStatus, goalTitle, type Goal, type IssueLink as Issue, type IssueProgress, type LabelIssue, type MhEvent, type Task } from "../../api";
 import { goalSource } from "../trackers/refs";
 import { issueSourceLabel } from "./issueSource";
 import { CancelGoal } from "./CancelGoal";
@@ -51,6 +52,8 @@ export function GoalPage() {
   // Each issue's progress and what each task spent, for the board, and the position the live stream starts from.
   const [progress, setProgress] = useState<IssueProgress[] | null>(null);
   const [spend, setSpend] = useState<Record<string, number>>({});
+  // Each running task's recorded steps, for the board's line that says what it is doing now.
+  const [taskSteps, setTaskSteps] = useState<Record<string, MhEvent[]>>({});
   const [spentNow, setSpentNow] = useState<number | undefined>(undefined);
   // Whether the settings are shown: null until the operator says, then as they left it.
   const [settingsOpen, setSettingsOpen] = useState<boolean | null>(null);
@@ -107,6 +110,17 @@ export function GoalPage() {
       for (const task of cost?.tasks ?? []) spent[task.task_id] = Number(task.usd) || 0;
       setProgress(issues);
       setSpend(spent);
+      const running = issues.filter((i) => i.task_id && i.task_status === "running").map((i) => i.task_id!);
+      if (running.length) {
+        // Beside the rest, not before it: the board shows without this line if the read is slow or fails.
+        void api.taskEvents(running, STEP_EVENTS).then((found) => {
+          const by: Record<string, MhEvent[]> = {};
+          for (const e of found) if (e.task_id) (by[e.task_id] ??= []).push(e);
+          setTaskSteps(by);
+        }, () => undefined);
+      } else {
+        setTaskSteps({});
+      }
       setSpentNow(cost ? Number(cost.usd) || 0 : 0);
       setRefreshed(Date.now());
       setRefreshError(null);
@@ -385,6 +399,7 @@ export function GoalPage() {
           issues={progress}
           tasks={tasks}
           spend={spend}
+          steps={taskSteps}
           actions={(i) => (
             <HeldActions goalId={goal.id} label={goal.label} issue={i} readOnly={!open} onChanged={() => void Promise.all([load(), loadProgress()])} />
           )}
