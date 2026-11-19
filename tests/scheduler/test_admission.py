@@ -22,7 +22,7 @@ class Tasks:
     def __init__(self):
         self.tasks: dict[str, dict] = {}
 
-    def add(self, repo, status="queued", priority=0, paths=None, goal_id=None):
+    def add(self, repo, status="queued", priority=0, paths=None, goal_id=None, resume=None):
         task_id = f"t-{uuid.uuid4().hex[:10]}"
         self.tasks[task_id] = {
             "id": task_id,
@@ -32,6 +32,7 @@ class Tasks:
             "paths": paths or [],
             "goal_id": goal_id,
             "n": len(self.tasks),
+            "resume": resume,
         }
         return task_id
 
@@ -106,6 +107,22 @@ async def test_two_tasks_on_one_repo_area_run_in_turn(repo):
     result = await admission.pass_once()
     assert result.released == [first]
     assert result.started == [second]
+
+
+async def test_a_task_back_only_to_merge_waits_on_no_area_and_holds_none(repo):
+    tasks = Tasks()
+    running = tasks.add(repo, priority=2, paths=["console/src"])
+    merging = tasks.add(repo, priority=1, paths=["console/src/features"], resume="merge")
+    later = tasks.add(repo, paths=["console/src/features/goals"])
+    admission, started = _admission(tasks)
+
+    result = await admission.pass_once()
+
+    assert result.started == [running, merging], "the merge does not wait for the task running in its area"
+    assert "held by " + running in result.held[later], "and the area stays held by the task that writes code"
+    assert areas_for({"paths": ["src"], "resume": "merge"}) == [] and areas_for(
+        {"paths": ["src"], "resume": "review"}
+    ) == ["src"]
 
 
 async def test_tasks_on_separate_areas_run_together(repo):
