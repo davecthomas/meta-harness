@@ -31,6 +31,7 @@ Environment: GATEWAY_URL and GATEWAY_API_KEY, the HTTP Gateway the meta-harness 
 """
 
 import json
+import logging
 import os
 import re
 from dataclasses import asdict, dataclass, field
@@ -45,6 +46,7 @@ from meta_harness.planner.tracker import Issue
 from meta_harness.run_service.paths import REPO_ROOT
 
 PLANNER_CONFIG_PATH = REPO_ROOT / "config" / "planner.json"
+log = logging.getLogger("meta_harness.planner")
 SIZES = ("small", "medium", "large")
 # The size stored on the task, as the Task API's complexity, which also sets the router's floor for it.
 COMPLEXITY_FOR_SIZE = {"small": "low", "medium": "medium", "large": "high"}
@@ -61,6 +63,8 @@ SPLIT_TITLE_CHARS = 200
 # "Spend limit: $5" or "Spend limit: 5.00" in an issue body: the task's own spend limit.
 SPEND_LINE = re.compile(r"^\s*spend limit:\s*\$?\s*(\d+(?:\.\d+)?)\s*$", re.IGNORECASE | re.MULTILINE)
 
+# How much more room a sizing answer cut short by its token limit gets, once.
+LENGTH_RETRY_FACTOR = 4
 SIZE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -205,13 +209,23 @@ async def size_issue(issue: Issue, transport: httpx.AsyncBaseTransport | None = 
         "max_response_tokens": int(config["max_response_tokens"]),
     }
     async with httpx.AsyncClient(timeout=60, transport=retrying.async_transport(transport)) as http:
-        try:
-            response = await http.post(f"{url}/v1/structured", json=body, headers={"Authorization": f"Bearer {key}"})
-        except httpx.HTTPError as err:
-            raise SizingError(f"the HTTP Gateway is unreachable: {err}") from err
-    if response.status_code != 200:
-        raise SizingError(f"the HTTP Gateway answered {response.status_code}: {response.text[:300]}")
-    result = response.json()
+        # An answer cut short by its token limit is asked for once more with room to finish: asked the same way
+        # at the next sweep it would be cut short again, and the issue would wait forever.
+        for limit in (body["max_response_tokens"], body["max_response_tokens"] * LENGTH_RETRY_FACTOR):
+            try:
+                response = await http.post(
+                    f"{url}/v1/structured",
+                    json={**body, "max_response_tokens": limit},
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+            except httpx.HTTPError as err:
+                raise SizingError(f"the HTTP Gateway is unreachable: {err}") from err
+            if response.status_code != 200:
+                raise SizingError(f"the HTTP Gateway answered {response.status_code}: {response.text[:300]}")
+            result = response.json()
+            if result.get("finish_reason") != "length":
+                break
+            log.warning("sizing %s: the answer was cut short at %s tokens", issue.ref, limit)
     data = result.get("data")
     if result.get("finish_reason") != "complete" or not isinstance(data, dict):
         raise SizingError(f"the model did not finish ({result.get('finish_reason')})")

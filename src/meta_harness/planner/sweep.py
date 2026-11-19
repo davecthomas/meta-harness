@@ -624,6 +624,9 @@ async def _size(
         log.warning("could not size %s: %s", issue.ref, err)
         if size:
             return size, recorded
+        if goal.get("planned"):
+            # Its plan, which an operator approved, already judged what one task can do: the issue runs unsized.
+            return None, None
         result.errors.append(f"{issue.ref}: could not size it, so it waits for the next sweep: {err}")
         return None
     if sized is None:
