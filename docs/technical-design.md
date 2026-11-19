@@ -2886,7 +2886,9 @@ what the facts say. Updates are rows of `planner.goal_update`, read with
 `goal_update_written` event, whose cost is counted as planning. The planning
 configuration's `updates` turns them off, names the model (goal drafting's when
 left out), and bounds them: `max_per_goal` updates for a goal, at least
-`min_seconds` apart. One that cannot be written is logged, said on the page,
+`min_seconds` apart. An update that asks something of the operator does not
+wait: it is replaced as soon as the goal moves, and an approved plan's goal
+gets its update as soon as its first sweep has made its tasks. One that cannot be written is logged, said on the page,
 and tried again at the next pass.
 
 **Every goal is planned.** With the planning configuration's `goals` set to

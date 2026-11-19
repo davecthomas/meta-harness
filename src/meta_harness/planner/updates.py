@@ -10,7 +10,8 @@ them into a few sentences. `digest` is those facts reduced to what matters, so n
 spent, while the goal stands still. The model is told to say only what the facts say.
 
 Settings are the planning configuration's `updates`: whether they are written, the model (goal drafting's
-when it names none), how many a goal may have, and the least time between two. A call that fails is logged and tried again at the next pass: the page
+when it names none), how many a goal may have, and the least time between two (an update that asks something of the operator does not wait: it is
+replaced as soon as the goal moves). A call that fails is logged and tried again at the next pass: the page
 keeps the update before it.
 """
 
@@ -320,7 +321,9 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
         if before["digest"] == state:
             return None
         age = (datetime.now(UTC) - datetime.fromisoformat(before["created_at"])).total_seconds()
-        if age < float(config["min_seconds"]):
+        # An update that asks something of the operator is replaced as soon as the goal moves: what it asks
+        # may be done, and a page that still asks for it is wrong.
+        if age < float(config["min_seconds"]) and not before["needs_you"]:
             return None
     if before and before["number"] >= int(config["max_per_goal"]):
         if asked:

@@ -11,6 +11,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from meta_harness import db
 from meta_harness.config import kinds
 from meta_harness.planner import planning, updates
 from meta_harness.planner.service import create_app
@@ -137,15 +138,24 @@ def test_two_updates_keep_their_distance_and_a_goal_has_only_its_share(world, mo
     _planned(client, events, tasks, goal, [draft("store")])
     moved = _goal(client, goal["id"])
 
+    def asks(needs: str) -> None:
+        with db.connect(autocommit=True) as conn:
+            conn.execute("UPDATE planner.goal_update SET needs_you = %s::jsonb WHERE goal_id = %s", (needs, goal["id"]))
+
+    asks("[]")
     assert _write(moved, tasks, events, writer) is None, "the last update is seconds old: the next pass writes it"
 
+    # One that asked something of the operator does not wait: the goal moved, so what it asked may be done.
+    asks('[{"what": "Approve the plan.", "ref": ""}]')
+    assert _write(moved, tasks, events, writer)["number"] == 2
+
     shipped = planning.settings()
-    monkeypatch.setattr(planning, "settings", lambda: {**shipped, "updates": {"max_per_goal": 2}})
+    monkeypatch.setattr(planning, "settings", lambda: {**shipped, "updates": {"max_per_goal": 3}})
     asked = client.post(f"/v1/goals/{goal['id']}/updates", headers=OPERATOR)
-    assert asked.status_code == 200 and asked.json()["update"]["number"] == 2, "one asked for is written at once"
+    assert asked.status_code == 200 and asked.json()["update"]["number"] == 3, "one asked for is written at once"
     refused = client.post(f"/v1/goals/{goal['id']}/updates", headers=OPERATOR)
     assert refused.status_code == 502 and "updates.max_per_goal" in refused.json()["detail"]
-    assert _write(moved, tasks, events, writer) is None and len(writer.calls) == 2
+    assert len(writer.calls) == 3
 
 
 def test_an_update_that_cannot_be_written_says_so_with_what_to_do_and_keeps_the_last(world):

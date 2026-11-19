@@ -335,11 +335,11 @@ def create_app(
                 err,
             )
 
-    async def update_goals() -> None:
+    async def update_goals(only: list[dict] | None = None) -> None:
         """The planner's update for each goal whose state has changed since its last. One that cannot be
         written is logged when its reason changes and tried again at the next pass: an update never stops a
         sweep, and the goal's page keeps the one before it."""
-        for goal in await listed(updates.goals, "updates"):
+        for goal in only if only is not None else await listed(updates.goals, "updates"):
             try:
                 await updates.write(goal, tasks, events, update_writer)
             except asyncio.CancelledError:
@@ -1459,7 +1459,13 @@ def create_app(
     async def activate(goal_id: str, who: str) -> None:
         """An approved plan's goal becomes active, and its first sweep takes the created issues in."""
         goal, _ = await asyncio.to_thread(move_with, goal_id, who, "active", {"planning"})
-        asyncio.create_task(sweep_one(goal))
+
+        async def start() -> None:
+            # The sweep makes the tasks; then the planner says so, in place of its update that asked for approval.
+            await sweep_one(goal)
+            await update_goals([goal])
+
+        asyncio.create_task(start())
 
     async def plan_again(goal_id: str, who: str) -> dict:
         """A planned goal that is under way goes back to planning: its running tasks go on, and the scheduler
