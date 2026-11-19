@@ -2115,6 +2115,7 @@ credential.
 | GET | `/v1/tasks/{id}` | Task service | State, current run, routing decision, pull request URL and outcome. `held` says why the scheduler holds a queued task: `{reason, kind, since, last_checked, detail}`, null for a queued task it does not hold and for a task in any other status. `kind` is one of `goal_budget`, `goal_status`, `goal_parallel`, `system_parallel`, `repo_area`, `kill_switch`, `draining` or `start_failed`, so a page need not read the reason's words, and `detail` names what the reason is about (`goal_id`, the tasks holding the places as `holders`, the shared `paths`). The list (`GET /v1/tasks`) carries `held` on each queued task too. The task service reads it from the scheduler's record with scheduler code (`scheduler/holds.py`) | built |
 | POST | `/v1/tasks/{id}/cancel` | Task service | Cancel a task that has not started, or ask for its active run to stop, which the scheduler carries out | built |
 | GET | `/v1/pulls/{task_id}/diff` | Meta-harness run service, served from the planner process | The files the task's pull request changes, with their added and removed counts and patches, and its head commit. The Task page's Changes tab | built |
+| GET | `/v1/pulls/{task_id}/checks` | Meta-harness run service, served from the planner process | The code host's checks on the commit the task waits on, its pull request's head or its merge commit once merged (`of`): each check's state, times and log, with how long it took on the default branch's newest commit (`usual_seconds`), and how they stand together. Read only, for the Task page's Checks tab | built |
 | POST | `/v1/pulls/{task_id}/comments` | Meta-harness run service, served from the planner process | A review comment on lines of the pull request's head commit, posted as the GitHub App with the operator named in its text, and recorded as `pull_request_commented` with the operator as actor | built |
 | POST | `/v1/tasks/{id}/attempts` | Task service | Run a task that has not started as 2 to 4 attempts at once | built |
 | GET | `/v1/pulls/{task_id}/attempts` | Meta-harness run service, served from the planner process | A task's attempts side by side: candidate, how each ended, cost, and the changes in each one's workspace, and whether the task waits for a pick | built |
@@ -3243,6 +3244,18 @@ request's checks", or "Waiting for the merge commit's checks". A step still
 going counts its time by the second, in the browser. The Terminal tab, which
 prints nothing during such a wait, shows the same step and its time above the
 terminal ("Now: ...").
+
+While a task waits for checks, the console reads them
+(`GET /v1/pulls/{task_id}/checks`, every five seconds while any is going, and
+only while a page that shows them is open). The Checks tab lists each one with
+its state, its time counted by the second, how long it usually takes, and a
+link to its log. The waiting step, the line above the terminal and the tab's
+name say how they stand ("4 of 6 passed, sandbox running 2m 10s, usually about
+4m in all"). "Usually" is how long each check took on the default branch's
+newest commit, kept ten minutes per repo. The terminal prints a line when a
+wait for checks starts and when it ends, with the result, and one for each
+review round and for the merge. On a goal's board a running task's card says
+what the task is doing now and for how long, from the same steps.
 
 | Step | From | It shows |
 |---|---|---|

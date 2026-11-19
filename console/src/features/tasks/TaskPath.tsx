@@ -3,9 +3,10 @@ import { Anchor, Badge, Box, Button, Group, Paper, Stack, Text, Tooltip, Unstyle
 import {
   IconArrowBackUp, IconChecks, IconCircleCheck, IconClock, IconEye, IconFlag, IconGitMerge, IconGitPullRequest, IconNote, IconPlayerPlay,
 } from "@tabler/icons-react";
-import type { MhEvent } from "../../api";
+import type { MhEvent, PullChecks } from "../../api";
 import { usd } from "../../money";
 import { when } from "../../components/ui";
+import { checksLine } from "./Checks";
 import { Timeline } from "./Timeline";
 import { COLUMNS, candidateName, rows, span, steps, took, totals, type Step, type StepKind, type Tone } from "./path";
 
@@ -49,7 +50,8 @@ function About({ step, now }: { step: Step; now: number }) {
   );
 }
 
-function StepCard({ step, now, picked, onPick }: { step: Step; now: number; picked: boolean; onPick: () => void }) {
+// checks: how the code host's checks stand, shown on the step that waits for them.
+function StepCard({ step, now, picked, onPick, checks }: { step: Step; now: number; picked: boolean; onPick: () => void; checks?: PullChecks | null }) {
   const Icon = ICONS[step.kind];
   const color = COLORS[step.tone];
   const waiting = step.kind === "wait" || step.kind === "parked";
@@ -75,6 +77,7 @@ function StepCard({ step, now, picked, onPick }: { step: Step; now: number; pick
             {step.detail && <Text size="xs" c={step.tone === "bad" ? "red" : "dimmed"} lineClamp={2}>{step.detail}</Text>}
             {step.candidate && <Text size="xs" c="dimmed" truncate>{candidateName(step.candidate)}</Text>}
             {numbers(step, now) && <Text size="xs" ff="monospace">{numbers(step, now)}</Text>}
+            {waitsForChecks(step) && checks && <Text size="xs" data-testid="step-checks">{checksLine(checks, now)}</Text>}
             {step.notes.map((n, i) => (
               <Group key={i} gap={4} wrap="nowrap" align="flex-start">
                 <IconNote size={12} style={{ flexShrink: 0, marginTop: 3 }} />
@@ -106,10 +109,16 @@ function Picked({ step, events, onOpenRun, onOpenReviews }: { step: Step; events
   );
 }
 
+// Whether a step is the wait for the code host's checks, still going.
+export function waitsForChecks(step: Step | undefined): boolean {
+  return !!step && step.now && !step.end && (step.kind === "checks" || step.kind === "merge_checks");
+}
+
 // What the task is doing now and for how long, counted by the second: the newest step of its path while that
-// step is still going. For a place with no timeline on show, such as above the terminal, which prints nothing
-// while a task waits for the code host's checks.
-export function NowLine({ events }: { events: MhEvent[] }) {
+// step is still going. For a place with no timeline on show: above the terminal, which prints nothing while a
+// task waits for the code host's checks, and on a goal's board (compact: one short line, no explanation).
+// checks: how those checks stand, said while the task waits for them.
+export function NowLine({ events, checks, compact }: { events: MhEvent[]; checks?: PullChecks | null; compact?: boolean }) {
   const step = useMemo(() => steps(events).at(-1), [events]);
   const going = !!step && step.now && !step.end;
   const [now, setNow] = useState(() => Date.now());
@@ -119,9 +128,13 @@ export function NowLine({ events }: { events: MhEvent[] }) {
     return () => clearInterval(timer);
   }, [going]);
   if (!step || !going) return null;
+  const progress = waitsForChecks(step) && checks ? checksLine(checks, now) : "";
+  if (compact) {
+    return <Text size="xs" c="blue" data-testid="now-line">{step.title}, {span(took(step, now))}</Text>;
+  }
   return (
     <Text size="sm" mb="xs" data-testid="now-line">
-      <Text span fw={600}>Now: {step.title}</Text>, {span(took(step, now))} so far{step.detail ? `. ${step.detail}` : ""}
+      <Text span fw={600}>Now: {step.title}</Text>, {span(took(step, now))} so far. {progress || step.detail}
     </Text>
   );
 }
@@ -131,7 +144,7 @@ export function NowLine({ events }: { events: MhEvent[] }) {
 // back to an earlier stage (a review's findings to a fix run, a retry, a merge the supervisor asked for
 // again) it starts a new row, so a loop shows as a return, not as a longer line.
 // usd: what the task's runs have spent, as its Spend tab counts it; the path's own sum of its steps without it.
-export function TaskPath(props: { events: MhEvent[]; usd?: number; pick?: string | null; onOpenRun: (runId: string) => void; onOpenReviews: () => void; onPickRun?: (runId: string) => void }) {
+export function TaskPath(props: { events: MhEvent[]; checks?: PullChecks | null; usd?: number; pick?: string | null; onOpenRun: (runId: string) => void; onOpenReviews: () => void; onPickRun?: (runId: string) => void }) {
   const path = steps(props.events);
   // A link that names a run opens on that run's step.
   const [picked, setPicked] = useState<string | null>(props.pick ?? null);
@@ -179,6 +192,7 @@ export function TaskPath(props: { events: MhEvent[]; usd?: number; pick?: string
                             key={s.key}
                             step={s}
                             now={now}
+                            checks={props.checks}
                             picked={picked === s.key}
                             onPick={() => {
                               setPicked(picked === s.key ? null : s.key);

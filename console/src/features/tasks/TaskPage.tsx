@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useParams, useSearchParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Code, Group, Loader, Paper, SegmentedControl, Stack, Text } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
-import { api, goalTitle, type MhEvent, type ReviewRound, type Task } from "../../api";
+import { api, goalTitle, type MhEvent, type PullChecks, type ReviewRound, type Task } from "../../api";
+import { Checks, useChecks } from "./Checks";
 import { Reviews } from "./Reviews";
 import { SpendReport } from "./SpendReport";
 import { BudgetHold } from "./BudgetHold";
@@ -13,7 +14,8 @@ import { OperatorReview } from "./OperatorReview";
 import { TaskActions } from "./TaskActions";
 import { TaskFailure } from "./TaskFailure";
 import { Standing } from "./Standing";
-import { NowLine, TaskPath } from "./TaskPath";
+import { NowLine, TaskPath, waitsForChecks } from "./TaskPath";
+import { steps } from "./path";
 import { STEP_EVENTS } from "./path";
 import { Plan } from "./Plan";
 import { SteerBox } from "./SteerBox";
@@ -32,8 +34,14 @@ import { ConfirmButton } from "../../components/ConfirmButton";
 
 const FIRST = 400;
 
-const TABS = ["timeline", "terminal", "changes", "reviews", "attempts", "spend"] as const;
+const TABS = ["timeline", "terminal", "changes", "checks", "reviews", "attempts", "spend"] as const;
 export type Tab = (typeof TABS)[number];
+
+// The Checks tab's name, with how the checks stand once they are known.
+function checksLabel(checks: PullChecks | null): string {
+  if (!checks || !checks.total) return "Checks";
+  return checks.state === "pending" ? `Checks (${checks.passed}/${checks.total})` : checks.state === "failed" ? "Checks (failed)" : "Checks";
+}
 
 // The tab a task page URL shows: the one it names, else the Terminal when it names a run, else the Timeline.
 export function tabOf(params: URLSearchParams): Tab {
@@ -197,6 +205,11 @@ export function TaskPage() {
     }
   }, [taskId]);
 
+  // The code host's checks, read while someone can see them: on the Checks tab, and while the task waits for
+  // them, when the timeline's step and the line above the terminal say how they stand. Read again at each step.
+  const newestStep = useMemo(() => steps(events).at(-1), [events]);
+  const { checks, error: checksError } = useChecks(taskId, !!task?.pr_url && (tab === "checks" || waitsForChecks(newestStep)), events.length);
+
   if (!task) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   const status = facts.status ?? task.status;
   // As every list shows it: a working task with a pull request open is in review.
@@ -276,7 +289,7 @@ export function TaskPage() {
           { value: "timeline", label: "Timeline" },
           { value: "terminal", label: "Terminal" },
           ...((task.attempts ?? 1) > 1 ? [{ value: "attempts", label: "Attempts" }] : []),
-          ...(task.pr_url ? [{ value: "changes", label: "Changes" }, { value: "reviews", label: `Reviews${rounds ? ` (${rounds.length})` : ""}` }] : []),
+          ...(task.pr_url ? [{ value: "changes", label: "Changes" }, { value: "checks", label: checksLabel(checks) }, { value: "reviews", label: `Reviews${rounds ? ` (${rounds.length})` : ""}` }] : []),
           { value: "spend", label: "Spend" },
         ]}
       />
@@ -293,6 +306,8 @@ export function TaskPage() {
             }}
           />
         ) : <Center h={120}><Loader /></Center>
+      ) : tab === "checks" && task.pr_url ? (
+        <Checks checks={checks} error={checksError} />
       ) : tab === "spend" ? (
         <SpendReport taskId={task.id} status={status} />
       ) : tab === "attempts" ? (
@@ -302,6 +317,7 @@ export function TaskPage() {
       ) : tab === "timeline" ? (
         <TaskPath
           events={events}
+          checks={checks}
           usd={spent}
           pick={onlyRun}
           onOpenRun={(run) => setParams({ tab: "terminal", run })}
@@ -321,7 +337,7 @@ export function TaskPage() {
           <Button size="compact-xs" variant="subtle" onClick={() => setParams({ tab })}>Show every run</Button>
         </Group>
       )}
-      {!onlyRun && <NowLine events={events} />}
+      {!onlyRun && <NowLine events={events} checks={checks} />}
       <Paper p={0} style={{ overflow: "hidden" }}>
         <Terminal lines={onlyRun ? lines.filter((l) => l.run === onlyRun) : lines} className="tall" onScrollTop={loadOlder} />
       </Paper>

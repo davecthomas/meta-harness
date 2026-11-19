@@ -44,8 +44,16 @@ export function describe(e: MhEvent): Line | null {
     case "plan_updated": return line("info", `plan: ${(p.steps ?? []).map((s: { step: string; status: string }) => `${s.status === "done" ? "[x]" : s.status === "in_progress" ? "[>]" : "[ ]"} ${s.step}`).join("  ")}`);
     case "turn_finished": return p.text ? line("text", String(p.text)) : null;
     case "run_finished": return line(p.status === "FINISHED" ? "status" : "error", `run ${p.status} (${p.end_reason ?? ""})${p.error ? ": " + p.error : ""}`);
-    case "attempt_finished": return line("status", `attempt ${p.attempt} on ${p.candidate}: ${p.decision}, ${usd(p.spent_usd)}`);
-    case "pull_request_opened": return line("status", `pull request ${p.pr_url}`);
+    // A wait for the code host's checks prints nothing while it lasts, so its start and its end are said.
+    case "attempt_finished": {
+      const pushed = p.tier === "fix" && p.decision === "finished" ? ". Its changes go to the pull request, and the code host's checks run on them: several minutes with nothing to print" : "";
+      return line("status", `attempt ${p.attempt} on ${p.candidate}: ${p.decision}, ${usd(p.spent_usd)}${pushed}`);
+    }
+    case "pull_request_opened": return line("status", `pull request ${p.pr_url} opened. Waiting for the code host's checks: several minutes with nothing to print`);
+    case "pull_request_checks": return line(p.state === "failed" ? "error" : "status", `checks ${p.state}${p.head_sha ? ` at ${String(p.head_sha).slice(0, 7)}` : ""}${(p.failed ?? []).length ? `: ${p.failed.join(", ")}` : ""}`);
+    case "pull_request_reviewed": return line("status", `review round ${p.round}: ${p.verdict === "clean" ? "clean" : `${p.findings} finding${p.findings === 1 ? "" : "s"}, changes asked`}`);
+    case "pull_request_merged": return line("status", `merged as ${String(p.merge_sha ?? "").slice(0, 7)}. Waiting for the merge commit's checks`);
+    case "merge_checks": return line(p.state === "failed" ? "error" : "status", `merge commit's checks ${p.state}${(p.failed ?? []).length ? `: ${p.failed.join(", ")}` : ""}`);
     case "task_cancel_requested": return line("warn", `cancel requested: ${p.reason}`);
     case "budget_hold": return line("warn", `held for budget: ${moneyText(String(p.reason ?? ""))}`);
     case "review_hold": return line("warn", `review held for an operator: ${p.reason}`);

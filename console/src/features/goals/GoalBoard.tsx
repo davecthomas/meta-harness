@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { Anchor, Badge, Group, Paper, Progress, SimpleGrid, Stack, Text, Tooltip } from "@mantine/core";
 import { useNavigate } from "react-router-dom";
-import { issueUrl, type Goal, type IssueProgress, type Task } from "../../api";
+import { issueUrl, type Goal, type IssueProgress, type MhEvent, type Task } from "../../api";
 import { budgetColor, budgetStanding, budgetWords } from "./budget";
 import { PrLink, StatusBadge } from "../../components/ui";
 import { projection } from "../tasks/Spend";
+import { NowLine } from "../tasks/TaskPath";
 import { moneyText } from "../../money";
 import { SizeBadge, gapText } from "./sizing";
 
@@ -61,7 +62,8 @@ function shortRef(ref: string): string {
   return ref.replace(/^[a-z]+:/, "");
 }
 
-function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; actions?: ReactNode }) {
+// events: the steps the issue's task has recorded, for what it is doing now.
+function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; actions?: ReactNode; events?: MhEvent[] }) {
   const navigate = useNavigate();
   const { issue, task } = props;
   const url = issueUrl(issue.ref);
@@ -92,6 +94,8 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
           <SizeBadge issue={issue} />
           {props.usd !== undefined && props.usd > 0 && <Text size="xs" c="dimmed">${props.usd.toFixed(2)}</Text>}
         </Group>
+        {/* What a running task is doing now, and for how long: "Working" alone does not say. */}
+        {issue.task_status === "running" && props.events && <NowLine events={props.events} compact />}
         {issue.pr_url && (
           <Group gap={6} onClick={(e) => e.stopPropagation()}>
             <PrLink url={issue.pr_url} size="xs" />
@@ -154,6 +158,8 @@ export function GoalBoard(props: {
   tasks: Record<string, Task>;
   spend: Record<string, number>;
   actions?: (issue: IssueProgress) => ReactNode;
+  // Each running task's recorded steps, by task id, for the line that says what it is doing now.
+  steps?: Record<string, MhEvent[]>;
 }) {
   const { column } = layout(props.issues);
   return (
@@ -172,6 +178,7 @@ export function GoalBoard(props: {
                 issue={i}
                 task={i.task_id ? props.tasks[i.task_id] : undefined}
                 usd={i.task_id ? props.spend[i.task_id] : undefined}
+                events={i.task_id ? props.steps?.[i.task_id] : undefined}
                 actions={props.actions?.(i)}
               />
             ))}

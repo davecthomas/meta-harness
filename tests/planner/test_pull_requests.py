@@ -358,3 +358,33 @@ def test_pull_request_events_are_read_for_the_tasks_page_by_page(monkeypatch):
 
     assert [e["position"] for e in found] == [1, 2, 3]
     assert reads[0][1] == {"task_id": "t-1", "event_type": ",".join(progress.PR_EVENT_TYPES)}
+
+
+async def test_check_details_lists_each_check_with_its_times_and_log(monkeypatch):
+    from meta_harness.run_service import code_host
+
+    async def github(repo, permissions, method, path, **kwargs):
+        if path.endswith("/check-runs"):
+            run = {"name": "tests", "status": "completed", "conclusion": "success", "html_url": "https://x/1"}
+            going = {
+                "name": "Sandbox",
+                "status": "in_progress",
+                "conclusion": None,
+                "started_at": "2026-11-18T23:35:00Z",
+            }
+            return {
+                "check_runs": [
+                    {**run, "started_at": "2026-11-18T23:35:00Z", "completed_at": "2026-11-18T23:36:47Z"},
+                    going,
+                ]
+            }
+        return {"statuses": [{"context": "scan", "state": "success", "target_url": "https://x/s"}]}
+
+    monkeypatch.setattr(code_host, "_github", github)
+
+    found = await code_host.check_details("o/r", "abc")
+
+    assert [c["name"] for c in found] == ["Sandbox", "scan", "tests"]
+    assert (found[2]["seconds"], found[2]["url"]) == (107, "https://x/1")
+    assert (found[0]["status"], found[0]["seconds"]) == ("in_progress", None)
+    assert (found[1]["conclusion"], found[1]["url"]) == ("success", "https://x/s")

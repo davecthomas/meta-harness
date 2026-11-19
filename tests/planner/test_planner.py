@@ -1319,6 +1319,74 @@ def test_a_labelless_goal_keeps_a_repo_that_holds_its_only_picked_issues(api, pa
 # --- A task's pull request: its diff and line comments -------------------------------------------------
 
 
+def test_a_tasks_checks_are_listed_with_how_they_stand_and_how_long_they_usually_take(api, parts, monkeypatch):
+    from meta_harness.run_service import code_host
+    from meta_harness.run_service.code_host import CodeHostError, PullRequest
+
+    _, _, tasks = parts
+    tasks.tasks["t-pr"] = {
+        "id": "t-pr",
+        "status": "running",
+        "pr_url": "https://github.com/o/r/pull/7",
+        "goal_id": None,
+    }
+    tasks.tasks["t-none"] = {"id": "t-none", "status": "running", "pr_url": None, "goal_id": None}
+    pull = {"merge_sha": ""}
+    asked = []
+
+    def check(name, status, conclusion=None, seconds=None):
+        times = {"started_at": "2026-11-18T23:35:00Z", "completed_at": None, "seconds": seconds}
+        return {
+            "name": name,
+            "status": status,
+            "conclusion": conclusion,
+            **times,
+            "url": f"https://github.com/o/r/runs/{name}",
+        }
+
+    async def read_pull_request(repo, number):
+        state = "merged" if pull["merge_sha"] else "open"
+        return PullRequest(repo=repo, number=number, url="", state=state, head_sha="abc", merge_sha=pull["merge_sha"])
+
+    async def check_details(repo, ref):
+        asked.append(ref)
+        if ref == "HEAD":
+            return [check("tests", "completed", "success", 100), check("sandbox", "completed", "success", 240)]
+        if ref == "m1":
+            return [check("tests", "completed", "failure", 90)]
+        return [
+            check("sandbox", "in_progress"),
+            check("tests", "completed", "success", 95),
+            check("scan", "completed", "skipped", 1),
+        ]
+
+    monkeypatch.setattr(code_host, "read_pull_request", read_pull_request)
+    monkeypatch.setattr(code_host, "check_details", check_details)
+
+    found = api.get("/v1/pulls/t-pr/checks", headers=OPERATOR).json()
+    assert (found["of"], found["sha"], found["state"]) == ("pull_request", "abc", "pending")
+    assert (found["passed"], found["total"], found["failed"], found["usual_seconds"]) == (2, 3, [], 240)
+    assert [(c["name"], c["usual_seconds"]) for c in found["checks"]] == [
+        ("sandbox", 240),
+        ("tests", 100),
+        ("scan", None),
+    ]
+
+    # Once merged, the checks the task waits on are the merge commit's. The usual times are read once.
+    pull["merge_sha"] = "m1"
+    merged = api.get("/v1/pulls/t-pr/checks", headers=OPERATOR).json()
+    assert (merged["of"], merged["sha"], merged["state"], merged["failed"]) == ("merge", "m1", "failed", ["tests"])
+    assert asked.count("HEAD") == 1
+
+    assert api.get("/v1/pulls/t-none/checks", headers=OPERATOR).status_code == 404
+
+    async def down(repo, ref):
+        raise CodeHostError("GitHub did not answer")
+
+    monkeypatch.setattr(code_host, "check_details", down)
+    assert api.get("/v1/pulls/t-pr/checks", headers=OPERATOR).status_code == 502
+
+
 def test_a_tasks_diff_and_a_line_comment_that_names_the_operator(api, parts, monkeypatch):
     from meta_harness.run_service import code_host
     from meta_harness.run_service.code_host import PullRequest
