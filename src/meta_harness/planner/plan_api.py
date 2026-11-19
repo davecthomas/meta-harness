@@ -63,9 +63,11 @@ def register(
     tasks: Any,
     activate: Callable[[str, str], Any],
     issues_of: Callable[[dict], Any],
+    plan_again: Callable[[str, str], Any],
 ) -> None:
     """Adds the plan routes. activate(goal_id, who) makes a planning goal active and sweeps it. issues_of(goal)
-    reads the issues the goal already has, for its planning task to plan over."""
+    reads the issues the goal has that no task has started on, for its planning task to plan over.
+    plan_again(goal_id, who) sends a planned goal that is under way back to planning."""
 
     def planning_goal(goal_id: str) -> dict:
         goal = load(goal_id)
@@ -107,7 +109,16 @@ def register(
 
     @app.post("/v1/goals/{goal_id}/replan", status_code=202)
     async def replan(goal_id: str, body: ReplanIn | None = None, who: str = Depends(operator)) -> dict:
-        goal = planning_goal(goal_id)
+        """Start a new planning task for the goal, with a note. For a goal in planning, its plan is made again.
+        For a planned goal that is under way, the goal goes back to planning first: the tasks already running
+        go on, the issues no task has started on are planned again, and nothing new starts until the new plan
+        is approved."""
+        goal = load(goal_id)
+        if goal["status"] in ("active", "stalled") and goal.get("planned"):
+            goal = await plan_again(goal_id, who)
+        elif goal["status"] != "planning":
+            why = "it was never planned" if goal["status"] in ("active", "stalled") else f"it is {goal['status']}"
+            raise HTTPException(status_code=409, detail=f"this goal cannot be planned again: {why}")
         if goal.get("plan_task_id"):
             raise HTTPException(status_code=409, detail="a planning task is already drafting this goal's plan")
         try:

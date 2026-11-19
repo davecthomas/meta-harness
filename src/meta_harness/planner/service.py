@@ -300,15 +300,26 @@ def create_app(
             for issue in [*listed, *await source.list_assigned(repo)]:
                 found.setdefault(issue.ref, issue)
 
-        def held() -> tuple[list[dict], dict[str, str]]:
+        def held() -> tuple[list[dict], dict[str, str], set[str]]:
             with app.state.pool.connection() as conn:
-                return store.links(conn, goal["id"]), store.holders(conn, list(found))
+                return (
+                    store.links(conn, goal["id"]),
+                    store.holders(conn, list(found)),
+                    store.dropped_refs(conn, goal["id"]),
+                )
 
-        links, holders = await asyncio.to_thread(held)
+        links, holders, removed = await asyncio.to_thread(held)
         for link in links:
             if link["ref"] not in found and link["state"] == "open":
                 found[link["ref"]] = await source.read(link["ref"])
-        return [i for i in found.values() if i.state == "open" and holders.get(i.ref, goal["id"]) == goal["id"]]
+        # One whose task is already under way is not the plan's to decide: a goal planned again plans the rest.
+        # Nor is one removed from the goal, by an operator or by a plan before this one.
+        under_way = removed | {link["ref"] for link in links if link["task_id"] or link.get("split_into") is not None}
+        return [
+            i
+            for i in found.values()
+            if i.state == "open" and i.ref not in under_way and holders.get(i.ref, goal["id"]) == goal["id"]
+        ]
 
     async def plan_one(goal: dict, who: str) -> None:
         """Start a planning goal's planning task, over the issues the goal already has. A failure is logged:
@@ -1394,7 +1405,13 @@ def create_app(
         goal, _ = await asyncio.to_thread(move_with, goal_id, who, "active", {"planning"})
         asyncio.create_task(sweep_one(goal))
 
-    plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan)
+    async def plan_again(goal_id: str, who: str) -> dict:
+        """A planned goal that is under way goes back to planning: its running tasks go on, and the scheduler
+        starts none of its others until the new plan is approved."""
+        goal, _ = await asyncio.to_thread(move_with, goal_id, who, "planning", {"active", "stalled"})
+        return goal
+
+    plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again)
     budget_api.register(app, operator, load, change_with, events, tasks)
     sizing_api.register(app, operator, load, events, tracker, sweep_one)
     users.register(app, operator, events)

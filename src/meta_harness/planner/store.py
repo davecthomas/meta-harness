@@ -21,9 +21,11 @@ GOAL_STATUSES = {"planning", "active", "paused", "met", "stalled", "budget_exhau
 GOAL_MOVES = {
     # A feature goal plans first: its planning task drafts issues, and an operator approves the plan.
     "planning": {"active", "canceled"},
-    "active": {"paused", "met", "stalled", "budget_exhausted", "canceled"},
+    # A planned goal that is under way may be planned again: its running tasks go on, and nothing new starts
+    # until the new plan is approved.
+    "active": {"paused", "met", "stalled", "budget_exhausted", "canceled", "planning"},
     "paused": {"active", "planning", "met", "canceled"},
-    "stalled": {"active", "met", "canceled"},
+    "stalled": {"active", "met", "canceled", "planning"},
     "budget_exhausted": {"active", "canceled"},
     # An operator reopens a met or canceled goal, and the planner takes in its label's open issues again.
     "met": {"active"},
@@ -315,6 +317,12 @@ def links(conn: psycopg.Connection, goal_id: str) -> list[dict]:
             (goal_id,),
         )
         return [_link(row) for row in cur.fetchall()]
+
+
+def dropped_refs(conn: psycopg.Connection, goal_id: str) -> set[str]:
+    """The issues removed from the goal, by an operator or by its plan: its label does not bring them back."""
+    rows = conn.execute("SELECT ref FROM planner.issue_link WHERE goal_id = %s AND dropped", (goal_id,)).fetchall()
+    return {ref for (ref,) in rows}
 
 
 def save_link(

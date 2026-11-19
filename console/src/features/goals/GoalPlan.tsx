@@ -367,9 +367,27 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
 
 // An approved plan, kept readable on the goal's page: what the planner said of it, and, when asked for, what it
 // decided for each issue and the new tasks it added. It is read only: the goal is running it.
-export function ApprovedPlan({ goal }: { goal: Goal }) {
+// onPlanAgain: the goal went back to planning; absent for a goal that has ended, which is not planned again.
+export function ApprovedPlan({ goal, onPlanAgain }: { goal: Goal; onPlanAgain?: () => void }) {
   const [shown, setShown] = useState<Plan | null>(null);
   const [open, setOpen] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function planAgain() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.replan(goal.id, note.trim());
+      setAsking(false);
+      onPlanAgain?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
   useEffect(() => {
     api.goalPlan(goal.id).then(setShown, () => setShown(null));
   }, [goal.id]);
@@ -390,7 +408,22 @@ export function ApprovedPlan({ goal }: { goal: Goal }) {
         {(issues.length > 0 || drafts.length > 0) && (
           <Button size="compact-sm" variant="subtle" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Hide the plan" : "Show the plan"}</Button>
         )}
+        {onPlanAgain && <Button size="compact-sm" variant="subtle" leftSection={<IconRefresh size={14} />} onClick={() => setAsking(true)}>Plan again</Button>}
       </Group>
+      <Modal opened={asking} onClose={() => setAsking(false)} title="Plan the goal again">
+        <Stack gap="md">
+          <Text size="sm">
+            The planner plans what no task has started on, with your note, and you approve its new plan. The tasks already running go on.
+            Nothing new starts until you approve.
+          </Text>
+          <Textarea label="Note for the planner" placeholder="What changed, or what to do differently" autosize minRows={3} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+          {error && <Text size="sm" c="red" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setAsking(false)}>Cancel</Button>
+            <Button loading={busy} onClick={() => void planAgain()}>Plan again</Button>
+          </Group>
+        </Stack>
+      </Modal>
       {open && (
         <Stack gap="md">
           {tasksOf(drafts, items, issues).length > 1 && <OrderOfWork tasks={tasksOf(drafts, items, issues)} />}

@@ -2902,6 +2902,13 @@ limit. An issue that joins the goal after approval (its label put on later)
 is held as a proposed addition, for an operator to add as it is or to plan the
 goal again; one an operator picks by ref afterward has been looked at and runs.
 
+A planned goal that is under way can be planned again (`POST
+/v1/goals/{id}/replan`, Plan again on its page): it goes back to `planning`,
+the tasks already running go on, and the scheduler starts none of its others
+until the new plan is approved. The planner is given only what no task has
+started on. An issue with a task under way, one a plan split, and one removed
+from the goal are not the new plan's to decide.
+
 Built for `feature` (#72, #73): a `feature` goal starts in `planning`; one
 created without a label gets its own, `meta-harness:goal-<the first 8
 characters of its id>`. The planner starts one task with `task_type: plan`,
