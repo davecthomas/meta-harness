@@ -288,7 +288,7 @@ export function GoalPage() {
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
       <GoalStanding standing={goal.standing} explained={explained} budgetShown={budgetStanding(goal, spentNow) !== "ok"} />
       {/* The planner's word on the goal, ahead of everything the page lists. */}
-      <PlannerUpdates goalId={goal.id} open={open} />
+      <PlannerUpdates goalId={goal.id} open={open} planning={goal.status === "planning"} />
       {/* The plan waiting for approval comes next, above the settings: it is what the operator decides on. */}
       {goal.status === "planning" && <GoalPlan goal={goal} onApproved={() => void Promise.all([load(), loadProgress()])} />}
       <IssuesPicker

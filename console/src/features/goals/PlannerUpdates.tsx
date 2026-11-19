@@ -50,10 +50,13 @@ export const OPEN_SETTINGS = "mh:open-settings";
 export const SHOW_ISSUES = "mh:show-issues";
 
 // The button that resolves one need, or takes the operator to where they do.
-function NeedAction({ need, onDone }: { need: Need; onDone: () => void }) {
+// planning: the goal is being planned, so a need written before needs had actions, about no issue, is the
+// plan's approval.
+function NeedAction({ need, planning, onDone }: { need: Need; planning: boolean; onDone: () => void }) {
   const send = (name: string) => () => window.dispatchEvent(new CustomEvent(name));
   const task = need.task_id ?? "";
-  switch (need.action) {
+  const action = need.action || (planning && !need.ref ? "approve_plan" : "");
+  switch (action) {
     case "approve_plan":
       return <Button size="xs" color="teal" leftSection={<IconCheck size={14} />} onClick={send(APPROVE_PLAN)}>Approve the plan</Button>;
     case "merge":
@@ -93,7 +96,7 @@ function NeedAction({ need, onDone }: { need: Need; onDone: () => void }) {
 }
 
 // What an update asks of the operator, each with the button that resolves it.
-function NeedsYou({ needs, onDone }: { needs: Need[]; onDone: () => void }) {
+function NeedsYou({ needs, planning, onDone }: { needs: Need[]; planning: boolean; onDone: () => void }) {
   if (!needs.length) return null;
   return (
     <Alert color="yellow" variant="light" p="sm" title={needs.length === 1 ? "Needs you" : `Needs you: ${needs.length} things`} data-testid="planner-needs-you">
@@ -101,7 +104,7 @@ function NeedsYou({ needs, onDone }: { needs: Need[]; onDone: () => void }) {
         {needs.map((need, i) => (
           <Group key={i} justify="space-between" wrap="wrap" gap="sm" data-testid="planner-need">
             <Text size="sm" style={{ flex: "1 1 240px" }}>{need.what}</Text>
-            <NeedAction need={need} onDone={onDone} />
+            <NeedAction need={need} planning={planning} onDone={onDone} />
           </Group>
         ))}
       </Stack>
@@ -113,7 +116,7 @@ function NeedsYou({ needs, onDone }: { needs: Need[]; onDone: () => void }) {
 // language (where the goal stands, what changed, what needs the operator, what happens next), the ones before
 // it, and a way to ask for one now. open: the goal is not closed, so its updates are reread as it moves.
 // Nothing is shown when updates are off, or for a goal that never had one and will not get one.
-export function PlannerUpdates({ goalId, open }: { goalId: string; open: boolean }) {
+export function PlannerUpdates({ goalId, open, planning = false }: { goalId: string; open: boolean; planning?: boolean }) {
   const [read, setRead] = useState<PlannerUpdatesRead | null>(null);
   const [asking, setAsking] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
@@ -182,7 +185,7 @@ export function PlannerUpdates({ goalId, open }: { goalId: string; open: boolean
       {latest && (
         <Stack gap="sm" pl={50}>
           <Text size="md" style={{ whiteSpace: "pre-wrap" }}>{latest.body}</Text>
-          <NeedsYou needs={latest.needs_you ?? []} onDone={() => void load()} />
+          <NeedsYou needs={latest.needs_you ?? []} planning={planning} onDone={() => void load()} />
           {latest.next && (
             <Text size="sm"><Text span fw={650}>Next: </Text>{latest.next}</Text>
           )}
