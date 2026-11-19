@@ -3432,9 +3432,14 @@ picked. The picture keeps its width and scrolls sideways on a narrow
 window. The page reads every step event of the task as it opens, besides
 its newest events, so the path is whole however long the task has run,
 and reads a picked run's own events when it is picked. The terminal is a
-second tab; it takes every run's `run_prompt` as the page opens, as one
-collapsed `prompt (<template>)` line that opens to the full text, so an
-older run's Terminal opens on its prompt. A run started before prompts
+second tab; it takes every run's `run_prompt` as the page opens, as a
+`prompt (<template>)` line heading that run's section, so an older run's
+Terminal opens on its prompt. The prompt's full text shows expanded until
+the operator collapses it to its line, and that run's prompt stays
+collapsed in that browser after that. The Tasks page's terminal tiles read
+each task's newest `run_prompt` beside their recent events, so a tile
+shows its run's prompt, expanded, above the run's output, which scrolls
+past it as it grows. A run started before prompts
 were recorded shows none, and is told for a task, fix or review run by
 its attempt's tier.
 

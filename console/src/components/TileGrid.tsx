@@ -15,10 +15,26 @@ const KEEP = 300;
 const BACKLOG: Record<TileSize, number> = { 1: 200, 4: 80, 16: 40, 32: 30 };
 const EMPTY: TileFacts = { turn: 0, usd: 0, model: "", status: null };
 
+// Each task's newest `run_prompt`: the prompt of the run a tile is showing. A failed read shows
+// the tile without it rather than holding the tile back.
+async function latestPrompts(ids: string[]): Promise<Map<string, MhEvent>> {
+  const latest = new Map<string, MhEvent>();
+  try {
+    for (const e of await api.taskEvents(ids, ["run_prompt"])) {
+      const id = taskOf(e);
+      if (e.event_type !== "run_prompt" || !id) continue;
+      if ((latest.get(id)?.position ?? -1) < e.position) latest.set(id, e);
+    }
+  } catch {
+    // The tile's own events still show.
+  }
+  return latest;
+}
+
 // Terminal tiles for running tasks. Only tiles on screen stream: the grid keeps one event stream
 // open for exactly the visible tasks, reopened half a second after scrolling stops. A tile that
-// scrolls into view first loads its recent events, then joins the stream; a tile off screen keeps
-// what it showed. Each tile drops events it has already shown, by position.
+// scrolls into view first loads its recent events and its run's prompt, then joins the stream; a
+// tile off screen keeps what it showed. Each tile drops events it has already shown, by position.
 export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?: (s: string) => void }) {
   const [visible, setVisible] = useState<string[]>([]);
   const [lines, setLines] = useState<Record<string, Line[]>>({});
@@ -63,11 +79,17 @@ export function TileGrid(props: { tasks: Task[]; size: TileSize; onStreamState?:
     }
     (async () => {
       const backlog = BACKLOG[props.size];
+      // A long run's backlog no longer reaches back to its prompt, so the prompts are read apart.
+      const prompts = fresh.length ? latestPrompts(fresh) : Promise.resolve(new Map<string, MhEvent>());
       await Promise.all(
         fresh.map(async (id) => {
-          const page = await api.events([id], backlog);
+          const [page, latest] = await Promise.all([api.events([id], backlog), prompts]);
           if (stale) return;
-          const shownLines = page.events.map(describe).filter((l): l is Line => l !== null);
+          const prompt = latest.get(id);
+          const read = prompt && !page.events.some((e) => e.position === prompt.position)
+            ? [prompt, ...page.events].sort((a, b) => a.position - b.position)
+            : page.events;
+          const shownLines = read.map(describe).filter((l): l is Line => l !== null);
           setLines((current) => ({ ...current, [id]: shownLines.slice(-KEEP) }));
           setFacts((current) => ({ ...current, [id]: page.events.reduce(fold, EMPTY) }));
           const newest = page.events.length ? page.events[page.events.length - 1].position : 0;
