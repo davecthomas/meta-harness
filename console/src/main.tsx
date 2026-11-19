@@ -6,7 +6,7 @@ import { Notifications } from "@mantine/notifications";
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
 import { App } from "./App";
-import { theme } from "./theme";
+import { theme, cssVariablesResolver } from "./theme";
 import "./styles.css";
 
 // A data router, so an editor can hold a navigation while it asks about unsaved changes (useBlocker).
@@ -14,7 +14,7 @@ const router = createBrowserRouter([{ path: "*", element: <App /> }]);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <MantineProvider theme={theme} defaultColorScheme="auto">
+    <MantineProvider theme={theme} cssVariablesResolver={cssVariablesResolver} defaultColorScheme="auto">
       <Notifications position="top-right" />
       <RouterProvider router={router} />
     </MantineProvider>
