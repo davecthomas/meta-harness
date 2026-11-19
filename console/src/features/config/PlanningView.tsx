@@ -9,6 +9,17 @@ function withValue(options: string[], value: string): string[] {
   return !value || options.includes(value) ? options : [value, ...options];
 }
 
+const TONES = [
+  { value: "casual", label: "Casual and friendly" },
+  { value: "balanced", label: "Plain and professional" },
+  { value: "formal", label: "Formal" },
+];
+const DETAILS = [
+  { value: "low", label: "Low detail: what you need to know" },
+  { value: "medium", label: "Medium detail" },
+  { value: "high", label: "High detail: files, commands, every assumption" },
+];
+
 const GOALS = [
   { value: "all", label: "Every goal" },
   { value: "from_description", label: "Only goals that plan their issues from a description" },
@@ -100,6 +111,36 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
             <Text size="xs" c="dimmed">
               What an approval starts with: the operator can choose the other for any plan. A goal with no tracker always keeps its tasks in the
               meta-harness.
+            </Text>
+          </Stack>,
+        ],
+        [
+          "How the planner talks",
+          <Stack gap={4}>
+            <Group gap="lg">
+              <InlineField
+                kind="select"
+                label="Planner's tone of voice"
+                value={doc.voice?.tone ?? "casual"}
+                data={TONES}
+                changed={changed(s, ["voice", "tone"])}
+                readOnly={s.readOnly}
+                onCommit={(v) => v && s.stage(["voice", "tone"], v)}
+              />
+              <InlineField
+                kind="select"
+                label="Technical detail the planner shares"
+                value={doc.voice?.detail ?? "low"}
+                data={DETAILS}
+                changed={changed(s, ["voice", "detail"])}
+                reasons={s.reasons("voice")}
+                readOnly={s.readOnly}
+                onCommit={(v) => v && s.stage(["voice", "detail"], v)}
+              />
+            </Group>
+            <Text size="xs" c="dimmed">
+              How the planner writes to you: its updates on a goal, and its summary of a plan. Less detail is quicker to read and decide on.
+              The tasks an agent works from stay as exact as the work needs.
             </Text>
           </Stack>,
         ],
