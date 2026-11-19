@@ -1,6 +1,7 @@
 import { call, query } from "../../client";
 import { sourceQuery, type IssueSource } from "../trackers/api";
 import type { Goal, IssueLink, Page } from "../../api";
+import type { PlannerUpdate, PlannerUpdatesRead } from "./PlannerUpdates";
 
 export interface LabelCount {
   label: string;
@@ -203,6 +204,9 @@ export const goalsApi = {
     }),
   // Where the goal's money went: each task's spend, and the goal's by kind of run.
   goalSpend: (id: string) => call<GoalSpend>(`/v1/goals/${id}/spend`),
+  // The planner's updates on the goal, newest first; and one written now.
+  goalUpdates: (id: string) => call<PlannerUpdatesRead>(`/v1/goals/${id}/updates`),
+  askForGoalUpdate: (id: string) => call<{ update: PlannerUpdate | null }>(`/v1/goals/${id}/updates`, { method: "POST" }),
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
   goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
   // items: the decisions on the goal's issues; left out, those of the version before stay.

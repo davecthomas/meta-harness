@@ -146,6 +146,23 @@ def check_planning(document: dict[str, Any], others: dict[str, dict[str, Any]] |
         value = document.get(key, 1)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             reasons.append(f"{key} must be a whole number above 0: how many {what}")
+    updates = document.get("updates", {})
+    if not isinstance(updates, dict):
+        reasons.append("updates must be an object: the settings of the planner's updates on a goal's page")
+    else:
+        if not isinstance(updates.get("enabled", True), bool):
+            reasons.append("updates.enabled must be true or false: whether the planner writes updates on a goal's page")
+        model = updates.get("model", "")
+        if not isinstance(model, str) or (model and not all(model.partition(":")[::2])):
+            reasons.append("updates.model must be <engine>:<model>, or left out to use goal drafting's model")
+        for key, what in (
+            ("max_response_tokens", "the most tokens one update may be"),
+            ("max_per_goal", "the most updates one goal may have, which bounds what they cost"),
+            ("min_seconds", "the least seconds between two updates of a goal"),
+        ):
+            value = updates.get(key, 1)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                reasons.append(f"updates.{key} must be a whole number above 0: {what}")
     if not isinstance(document.get("track_new_tasks", True), bool):
         reasons.append(
             "track_new_tasks must be true or false: whether a plan's new tasks go to the goal's tracker unless the operator says otherwise"

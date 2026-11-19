@@ -330,6 +330,30 @@
     ],
     "type": "object"
   },
+  "goal_update_written v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "number",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
   "guardrail_blocked v1": {
     "additionalProperties": true,
     "properties": {},

@@ -62,6 +62,7 @@ from meta_harness.planner import (
     repos,
     settings,
     sizing,
+    updates,
     sizing_api,
     store,
     users,
@@ -239,6 +240,7 @@ def create_app(
     workflows: Workflows | None = None,
     apps: GitHubApps | None = None,
     sizer: sizing.Sizer | None = None,
+    update_writer: updates.Writer | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -333,6 +335,25 @@ def create_app(
                 err,
             )
 
+    async def update_goals() -> None:
+        """The planner's update for each goal whose state has changed since its last. One that cannot be
+        written is logged when its reason changes and tried again at the next pass: an update never stops a
+        sweep, and the goal's page keeps the one before it."""
+        for goal in await listed(updates.goals, "updates"):
+            try:
+                await updates.write(goal, tasks, events, update_writer)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001 - logged; the next pass tries again
+                said = f"{type(err).__name__}: {err}"
+                if app.state.update_errors.get(goal["id"]) != said:
+                    log.error(
+                        "goal %s: the planner's update could not be written, and is tried again: %s", goal["id"], said
+                    )
+                app.state.update_errors[goal["id"]] = said
+            else:
+                app.state.update_errors.pop(goal["id"], None)
+
     def planning_goals() -> list[dict]:
         with app.state.pool.connection() as conn:
             return store.list_goals(conn, ["planning"])
@@ -391,6 +412,7 @@ def create_app(
                 await planning.collect(goal, tasks, events)
 
             await each(await listed(planning_goals, "plans"), collect, "collecting of its plan")
+            await update_goals()
             await asyncio.sleep(interval)
 
     supervisor = Supervisor(tasks, events, workflows or TemporalWorkflows(), host)
@@ -446,6 +468,8 @@ def create_app(
     # What each goal's latest sweep, follow-up or plan collecting could not do: {goal_id: {at, errors}}.
     app.state.sweeps = {}
     app.state.goal_costs = goal_costs.Cache(tasks, events)
+    # Why each goal's latest update could not be written, for its page; empty when it was.
+    app.state.update_errors = {}
     app.state.each = each
     app.state.supervisor = supervisor
     app.state.title_untitled = title_untitled
@@ -1158,6 +1182,36 @@ def create_app(
         # What the goal has cost, the one figure every page shows for it: the same as on the goal list.
         goal_costs.give([goal], *await asyncio.to_thread(app.state.goal_costs.get))
         return goal
+
+    @app.get("/v1/goals/{goal_id}/updates")
+    async def goal_updates(goal_id: str, who: str = Depends(operator)) -> dict:
+        """The planner's updates on the goal, newest first, whether it writes them, and why the latest could
+        not be written when it could not."""
+        await asyncio.to_thread(load, goal_id)
+        return {
+            "updates": await asyncio.to_thread(updates.latest, goal_id),
+            "enabled": bool(updates.settings()["enabled"]),
+            "error": app.state.update_errors.get(goal_id),
+        }
+
+    @app.post("/v1/goals/{goal_id}/updates")
+    async def ask_for_update(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Has the planner write an update now, whether or not anything has changed since its last."""
+        goal = await asyncio.to_thread(load, goal_id)
+        if not updates.settings()["enabled"]:
+            raise HTTPException(
+                status_code=409,
+                detail="the planner's updates are off: turn them on in Configuration, Planning, then ask again",
+            )
+        try:
+            written = await updates.write(goal, tasks, events, update_writer, asked=True)
+        except updates.UpdateError as err:
+            log.error("goal %s: the update an operator asked for could not be written: %s", goal_id, err)
+            raise HTTPException(
+                status_code=502, detail=f"the update could not be written: {err}. Ask again in a moment"
+            ) from err
+        app.state.update_errors.pop(goal_id, None)
+        return {"update": written}
 
     @app.get("/v1/goals/{goal_id}/issues")
     async def goal_issues(goal_id: str, who: str = Depends(operator)) -> dict:
