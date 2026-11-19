@@ -49,7 +49,7 @@ export function ConfigPage() {
     <>
       <PageHeader
         title="Configuration"
-        description="What tasks run on. A saved version applies to the next task routed; running tasks keep what they started with."
+        description="A saved change applies to the next task. Running tasks keep what they started with."
       />
       {source === "file" && (
         <Alert color="yellow" icon={<IconInfoCircle />} mb="lg" title="This deployment reads its configuration from files">
@@ -227,8 +227,8 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
           <Stack gap={2} style={{ flex: "1 1 360px" }}>
             <Text c="dimmed" size="sm">{summary.description}</Text>
             <Text size="sm">
-              Version {current.version}, {current.origin === "seed" ? "seeded from the deployment's file" : `saved by ${current.edited_by}`},{" "}
-              {when(current.created_at)}{current.note ? `: ${current.note}` : ""}
+              Version {current.version} · {current.origin === "seed" ? "from the deployment's file" : `saved by ${current.edited_by}`} · {when(current.created_at)}
+              {current.note && current.origin !== "seed" ? ` · ${current.note}` : ""}
             </Text>
           </Stack>
           {admin ? (

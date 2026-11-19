@@ -156,7 +156,7 @@ test("the plan leads with what the planner says, then the order across issues an
   expect((within(big).getByRole("radio", { name: "Split" }) as HTMLInputElement).checked).toBe(true);
   expect((within(big).getByRole("textbox", { name: "Why, for VL-2" }) as HTMLInputElement).value).toBe("Two changes.");
   expect((within(screen.getByTestId("plan-issue-jira:VL-3")).getByRole("radio", { name: "Leave out" }) as HTMLInputElement).checked).toBe(true);
-  expect(screen.getByText("Tasks the planner wrote. They exist only in this plan until you approve it.")).toBeTruthy();
+  expect(screen.getByText("Written by the planner. Created when you approve.")).toBeTruthy();
 });
 
 test("an operator changes a decision, which is saved with the plan as its next version", async () => {
@@ -185,7 +185,7 @@ test("approving says what the plan does in numbers, and new tasks can be kept ou
 
   expect(dialog.textContent).toContain("Add the 2 new tasks to jira as issues");
   fireEvent.click(within(dialog).getByRole("switch"));
-  expect(dialog.textContent).toContain("they are kept in the meta-harness alone");
+  expect(dialog.textContent).toContain("kept in the meta-harness only");
   fireEvent.click(within(dialog).getByRole("button", { name: "Approve and start" }));
 
   await waitFor(() => expect(approved).toHaveLength(1));
@@ -198,7 +198,7 @@ test("a goal with no tracker is told its tasks stay in the meta-harness, with no
   const dialog = await screen.findByRole("dialog", { name: "Approve the plan" });
 
   expect(within(dialog).queryByRole("switch")).toBeNull();
-  expect(dialog.textContent).toContain("This goal uses no issue tracker, so its tasks are kept in the meta-harness alone.");
+  expect(dialog.textContent).toContain("This goal has no issue tracker: its tasks are kept in the meta-harness only.");
   fireEvent.click(within(dialog).getByRole("button", { name: "Approve and start" }));
   await waitFor(() => expect(approved).toHaveLength(1));
   expect(asked.at(-1)!.body).toEqual({ track: false });
@@ -234,7 +234,7 @@ test("an approved plan stays readable on the goal's page: what the planner said,
   expect(within(section).getByTestId("planner-says").textContent).toContain("Store first, then the API, then the crash.");
   expect(section.textContent).toContain("Plan version 1, approved");
   expect(section.textContent).toContain("It runs 1 issue of the goal's as it is, replaces 1 issue with new tasks, leaves 1 issue out and adds 2 new tasks.");
-  expect(section.textContent).toContain("The new tasks are kept in the meta-harness alone.");
+  expect(section.textContent).toContain("The new tasks are kept in the meta-harness only.");
   expect(screen.queryByTestId("plan-issues")).toBeNull();
 
   fireEvent.click(within(section).getByRole("button", { name: "Show the plan" }));
@@ -264,7 +264,7 @@ test("a goal under way is planned again from its page, with a note, and a goal t
 
   fireEvent.click(await screen.findByRole("button", { name: "Plan again" }));
   const dialog = await screen.findByRole("dialog", { name: "Plan the goal again" });
-  expect(dialog.textContent).toContain("The tasks already running go on.");
+  expect(dialog.textContent).toContain("Running tasks carry on.");
   fireEvent.change(within(dialog).getByLabelText("Note for the planner"), { target: { value: "Fit the new issue in." } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Plan again" }));
 

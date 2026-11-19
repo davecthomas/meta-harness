@@ -61,7 +61,7 @@ test("the latest update leads with its headline, what needs the operator and wha
 test("an open goal with no update yet says one is coming, and asking writes one now", async () => {
   const posts = show([{ updates: [], enabled: true, error: null }, { updates: [LATEST], enabled: true, error: null }]);
 
-  expect(await screen.findByText(/Its first update is written within a couple of minutes/)).toBeTruthy();
+  expect(await screen.findByText(/Its first update is a minute or two away/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Ask for an update" }));
 
   await waitFor(() => expect(posts).toEqual(["/v1/goals/g-1/updates"]));
