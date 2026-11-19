@@ -1841,6 +1841,8 @@ every task event:
 2. It admits a task when global run concurrency is under its limit, the caller
    is under its concurrency quota and daily spend cap, the pool manager has
    sandbox capacity, and no other run holds the task's repo area.
+   A task sent back only to merge its reviewed pull request (`resume: merge`)
+   takes no area: it writes no code, so it neither waits for nor holds one.
 3. A repo-area lock covers the repo plus the top-level directories the task
    names. A task that names none takes no area and runs beside the others:
    each run has its own clone and branch, and the merge step turns a conflict

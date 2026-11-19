@@ -62,7 +62,12 @@ class AdmissionResult:
 
 
 def areas_for(task: dict) -> list[str]:
-    """The task's paths, without leading and trailing slashes; none for a task that names no paths."""
+    """The task's paths, without leading and trailing slashes; none for a task that names no paths. None for a
+    task sent back only to merge its reviewed pull request either: it writes no code, so it waits on no other
+    task's area, and holds none. (Held behind a task running in its area, a ready pull request waited for that
+    whole run before it could merge.)"""
+    if task.get("resume") == "merge":
+        return []
     return sorted({p.strip().removeprefix("./").strip("/") for p in task.get("paths") or []} - {""})
 
 
