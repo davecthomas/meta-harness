@@ -118,6 +118,27 @@ test("every need comes with the button that resolves it", async () => {
   window.removeEventListener("mh:open-settings", settings);
 });
 
+test("a fix the planner drafted is accepted or dismissed from the panel, with what it changes", async () => {
+  const fix = { what: "I can run the api after the store so they don't clash. Accept?", ref: "", action: "accept_fix", changes: ["Build api now waits for Build store"] };
+  let changed = 0;
+  const onChanged = () => (changed += 1);
+  window.addEventListener("mh:plan-changed", onChanged);
+  const posts = show([{ updates: [{ ...LATEST, needs_you: [fix] }], enabled: true, error: null }], true, () => respond({}), true);
+
+  const [row] = await screen.findAllByTestId("planner-need");
+  expect(row.textContent).toContain("Build api now waits for Build store");
+  fireEvent.click(within(row).getByRole("button", { name: "Accept the fix" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog.textContent).toContain("You still approve the plan before anything runs.");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Accept" }));
+  await waitFor(() => expect(posts).toContain("/v1/goals/g-1/suggestion/accept"));
+  await waitFor(() => expect(changed).toBe(1));
+
+  fireEvent.click(within(row).getByRole("button", { name: "Dismiss" }));
+  await waitFor(() => expect(posts).toContain("/v1/goals/g-1/suggestion/dismiss"));
+  window.removeEventListener("mh:plan-changed", onChanged);
+});
+
 test("a need written before needs had actions still gets a button: on a goal being planned, the approval", async () => {
   show([{ updates: [{ ...LATEST, needs_you: [{ what: "Review and approve the plan.", ref: "" }] }], enabled: true, error: null }], true, undefined, true);
 

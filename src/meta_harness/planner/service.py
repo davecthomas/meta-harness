@@ -58,10 +58,12 @@ from meta_harness.planner import (
     goal_costs,
     plan_api,
     planning,
+    plans,
     progress,
     repos,
     settings,
     sizing,
+    suggestions,
     updates,
     sizing_api,
     store,
@@ -241,6 +243,7 @@ def create_app(
     apps: GitHubApps | None = None,
     sizer: sizing.Sizer | None = None,
     update_writer: updates.Writer | None = None,
+    fix_assessor: suggestions.Assessor | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -335,6 +338,23 @@ def create_app(
                 err,
             )
 
+    async def suggest(goal: dict) -> None:
+        """A planning goal's suggested fix: started for its latest plan when that has gaps a change to the plan
+        would settle, and collected once its planning task ends. A failure is logged and leaves the plan as it
+        is: the operator can still approve it or ask for a new one."""
+        try:
+            await suggestions.collect(goal, tasks, events)
+
+            def latest() -> dict | None:
+                with db.connect(autocommit=True) as conn:
+                    return plans.latest(conn, goal["id"])
+
+            plan = await asyncio.to_thread(latest)
+            if plan and not goal.get("plan_task_id"):
+                await suggestions.maybe_start(goal, plan, tasks, events, issues_to_plan, fix_assessor)
+        except (suggestions.SuggestionError, TrackerError) as err:
+            log.error("goal %s: the planner could not suggest a fix for its plan: %s", goal["id"], err)
+
     async def update_goals(only: list[dict] | None = None) -> None:
         """The planner's update for each goal whose state has changed since its last. One that cannot be
         written is logged when its reason changes and tried again at the next pass: an update never stops a
@@ -410,6 +430,7 @@ def create_app(
             # A planning goal's ended planning task becomes its plan.
             async def collect(goal: dict) -> None:
                 await planning.collect(goal, tasks, events)
+                await suggest(goal)
 
             await each(await listed(planning_goals, "plans"), collect, "collecting of its plan")
             await update_goals()
