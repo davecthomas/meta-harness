@@ -48,6 +48,27 @@ def test_the_shipped_scanner_decides_findings_in_sloppy_text_and_none_in_plain_t
     assert writing.decided(writing.scan(PLAIN)) == []
 
 
+def test_this_products_own_name_is_not_a_finding_and_a_rewrite_must_keep_it():
+    named = "The meta-harness opened the pull request. The harness server ran 3 checks."
+
+    assert "harness" in {hit["match"] for hit in writing.scan(named)["hits"] if hit.get("decides")}
+    assert writing.decided(writing.scan(named)) == []
+    # Beside a real finding, only that one counts, and a rewrite that renames the product is dropped.
+    sloppy = named + " It is a robust fix."
+    assert [hit["match"] for hit in writing.decided(writing.scan(sloppy))] == ["robust"]
+    assert writing.lost(sloppy, named + " It is a fix.") == ""
+    assert "name" in writing.lost(sloppy, "The meta-tool opened the pull request. The harness server ran 3 checks.")
+
+
+async def test_a_text_that_only_names_the_product_is_posted_with_no_rewrite():
+    asked: list = []
+
+    outcome = await writing.check("The meta-harness merged it.", _gateway("The tool merged it.", asked=asked))
+
+    assert (outcome.text, outcome.findings, outcome.rewritten) == ("The meta-harness merged it.", 0, False)
+    assert asked == []
+
+
 def test_a_rewrite_must_keep_headings_links_code_numbers_and_the_lines_the_meta_harness_reads():
     issue = "Add the export.\n\nPaths: src/a, tests\n\n## Acceptance checks\n\n- uv run pytest -q tests\n"
 
@@ -133,7 +154,13 @@ async def test_one_posts_texts_are_recorded_together_with_only_the_changed_ones_
 def test_the_settings_are_checked_and_a_bad_one_is_named(monkeypatch):
     writing.check_settings()
     good = dict(writing.settings())
-    for key, bad in (("model", ""), ("scanner", None), ("max_response_tokens", 0)):
+    for key, bad in (
+        ("model", ""),
+        ("scanner", None),
+        ("max_response_tokens", 0),
+        ("names", "harness"),
+        ("names", [""]),
+    ):
         monkeypatch.setattr(writing, "settings", lambda key=key, bad=bad: {**good, key: bad})
         with pytest.raises(RuntimeError, match=f"writing_pass.{key}"):
             writing.check_settings()

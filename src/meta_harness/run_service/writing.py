@@ -129,6 +129,12 @@ def check_settings() -> None:
     for key in ("skill", "scanner", "rules", "engine", "model"):
         if not isinstance(config.get(key), str) or not config[key]:
             raise RuntimeError(f"{CONFIG_PATH.name}: writing_pass.{key} must name one")
+    names = config.get("names", [])
+    if not isinstance(names, list) or not all(isinstance(name, str) and name.strip() for name in names):
+        raise RuntimeError(
+            f"{CONFIG_PATH.name}: writing_pass.names must be a list of words, each a name here that the scanner "
+            "would otherwise count as a finding; use [] for none"
+        )
     tokens = config.get("max_response_tokens")
     if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
         raise RuntimeError(f"{CONFIG_PATH.name}: writing_pass.max_response_tokens must be a positive whole number")
@@ -183,13 +189,25 @@ def scan(text: str, source: str | None = None) -> dict[str, Any]:
     return report
 
 
+def names() -> set[str]:
+    """The words that are names in this deployment (`writing_pass.names`), in lower case. The scanner's word
+    lists hold `harness`, which a model overuses as a verb and which is this product's name: counted as a
+    finding, it sent every text that names the meta-harness to a rewrite that could only fail its check or
+    rename the product."""
+    return {str(name).strip().lower() for name in settings().get("names") or []}
+
+
 def decided(report: dict[str, Any]) -> list[dict[str, Any]]:
     """The hits the scanner decides by itself. A candidate, which needs a reader to confirm, is not a finding
-    here, and neither is a hit the scanner says cannot be applied."""
+    here, and neither is a hit the scanner says cannot be applied, nor a word that is a name here."""
+    named = names()
     return [
         hit
         for hit in report.get("hits") or []
-        if isinstance(hit, dict) and hit.get("decides") and not hit.get("in_unterminated_region")
+        if isinstance(hit, dict)
+        and hit.get("decides")
+        and not hit.get("in_unterminated_region")
+        and str(hit.get("match") or "").strip().lower() not in named
     ]
 
 
@@ -199,6 +217,7 @@ HEADING = re.compile(r"^#{1,6}[ \t]+.*$", re.MULTILINE)
 LINK_TARGET = re.compile(r"\]\(([^)\s]+)")
 URL = re.compile(r"https?://[^\s)>\]]+")
 NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+WORD = re.compile(r"[a-z][a-z0-9]*")
 # Lines the control plane reads back from an issue or a pull request, which a rewrite must leave as they are:
 # an issue's paths and dependencies, what a pull request closes, and each line of an issue's acceptance checks.
 READ_BACK = re.compile(r"^(?:Paths|Depends on|Closes|Fixes|Resolves)\b.*$", re.MULTILINE | re.IGNORECASE)
@@ -207,7 +226,8 @@ CHECKS_SECTION = re.compile(r"^#{1,6}[ \t]+Acceptance checks[ \t]*\n(.*?)(?=^#{1
 
 def kept_parts(text: str) -> dict[str, Counter]:
     """The parts of a text a rewrite must keep, each with how often it occurs: the lines the control plane
-    reads back, fenced code blocks, code spans, headings, link targets, and the numbers outside code."""
+    reads back, fenced code blocks, code spans, headings, link targets, and the numbers and this deployment's
+    names outside code."""
     blocks = [match.group(0) for match in FENCE.finditer(text)]
     prose = FENCE.sub("", text)
     spans = CODE_SPAN.findall(prose)
@@ -222,6 +242,7 @@ def kept_parts(text: str) -> dict[str, Counter]:
         "heading": Counter(line.rstrip() for line in HEADING.findall(outside)),
         "link": Counter(LINK_TARGET.findall(outside) + [url.rstrip(".,;:") for url in URL.findall(outside)]),
         "number": Counter(NUMBER.findall(outside)),
+        "name": Counter(word for word in WORD.findall(outside.lower()) if word in names()),
     }
 
 
