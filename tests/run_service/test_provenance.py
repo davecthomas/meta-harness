@@ -49,6 +49,8 @@ def test_the_shipped_configuration_is_usable():
     assert provenance.style_for("src/app.py", shipped) == ("#", "")
     assert provenance.style_for("web/a.tsx", shipped) == ("//", "")
     assert provenance.style_for("docs/a.md", shipped) == ("<!--", "-->")
+    assert provenance.style_for("docs/a.mdx", shipped) == ("{/*", "*/}"), "MDX takes no HTML comment"
+    assert provenance.style_for("images/Dockerfile", shipped) == ("#", "")
     assert provenance.style_for("data.json", shipped) is None, "JSON has no comments"
     assert provenance.style_for("dist/app.min.js", shipped) is None
 
@@ -117,6 +119,33 @@ def test_what_must_stay_first_stays_first():
         "---\ntitle: A\n---\n<!-- Made by run task-t-1:run-1. -->\n\n# A\n"
     )
     assert _stamp("#!/bin/sh", "run.sh") == f"#!/bin/sh\n{PY}\n", "a first line with no newline gets one"
+
+
+def test_dockerfile_parser_directives_stay_ahead_of_the_header():
+    assert _stamp("# syntax=docker/dockerfile:1\nFROM python:3.12\n", "Dockerfile") == (
+        f"# syntax=docker/dockerfile:1\n{PY}\n\nFROM python:3.12\n"
+    )
+    assert _stamp("# syntax = docker/dockerfile:1\n#Escape=`\n# check=skip=all\nFROM x\n", "Dockerfile") == (
+        f"# syntax = docker/dockerfile:1\n#Escape=`\n# check=skip=all\n{PY}\n\nFROM x\n"
+    )
+    assert _stamp("# a comment\n# syntax=docker/dockerfile:1\nFROM x\n", "Dockerfile") == (
+        f"{PY}\n\n# a comment\n# syntax=docker/dockerfile:1\nFROM x\n"
+    ), "a directive after a comment is a comment already"
+    assert _stamp("# syntax=docker/dockerfile:1\nprint(1)\n", "a.py") == (
+        f"{PY}\n\n# syntax=docker/dockerfile:1\nprint(1)\n"
+    ), "only a Dockerfile has directives"
+    once = _stamp("# escape=`\nFROM x\n", "Dockerfile")
+    assert once is not None and _stamp(once, "Dockerfile") is None
+
+
+def test_an_mdx_file_gets_an_mdx_comment_after_its_front_matter():
+    shipped = json.loads(provenance.CONFIG_PATH.read_text(encoding="utf-8"))
+    style = provenance.style_for("docs/a.mdx", shipped)
+    assert style is not None
+    header = provenance.header_lines("Made by run r.", style)
+    assert provenance.stamped("---\ntitle: A\n---\n# A\n", "docs/a.mdx", header) == (
+        "---\ntitle: A\n---\n{/* Made by run r. */}\n\n# A\n"
+    )
 
 
 def test_line_endings_a_byte_order_mark_and_several_lines_are_kept():
@@ -215,8 +244,13 @@ async def test_publish_heads_only_the_files_the_run_created(origin: Path, tmp_pa
     assert _git("show", "mh/task:renamed.py", cwd=origin) == "moved = 1"
 
     again = await code_host.publish(**kwargs)
-    assert again is not None and again.commit == published.commit and again.stamped == []
-    assert given == [["notes.json", "pkg/new.py"]], "a retried publish finds nothing new to head"
+    assert again is not None and again.commit == published.commit
+    assert again.stamped == ["pkg/new.py"], "a retry after the commit still reports the headed files"
+    assert given[1] == ["notes.json", "pkg/new.py"], "the retry finds them in the commit the first attempt made"
+    assert _git("show", "mh/task:pkg/new.py", cwd=origin) == f"{PY}\n\nnew = 1", "and heads nothing twice"
+
+    other = await code_host.publish(**{**kwargs, "commit_message": "another run's"})
+    assert other is not None and other.stamped == [], "a commit this publish did not make is not its own"
 
 
 async def test_files_a_conflicted_merge_brought_are_not_the_run_s(origin: Path, tmp_path: Path):

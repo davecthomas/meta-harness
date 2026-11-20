@@ -14,7 +14,8 @@
       ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".scala", ".dart", ".proto"
     ],
     "--": [".sql", ".lua", ".hs"],
-    "<!-- -->": [".md", ".mdx", ".markdown", ".html", ".htm", ".xml", ".svg", ".vue"],
-    "/* */": [".css", ".scss", ".less"]
+    "<!-- -->": [".md", ".markdown", ".html", ".htm", ".xml", ".svg", ".vue"],
+    "/* */": [".css", ".scss", ".less"],
+    "{/* */}": [".mdx"]
   }
 }

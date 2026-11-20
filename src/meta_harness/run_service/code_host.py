@@ -279,6 +279,9 @@ async def publish(
     headers, when given, is called before the commit with the files the run
     created (`created_files`); it may add a provenance header to them, and
     returns the files that carry one, which the result's `stamped` lists.
+    A retried attempt that finds the earlier attempt's commit, and nothing
+    left to commit, hands it the files that commit created instead
+    (`committed_files`), so `stamped` still lists them.
     Every git command names git_dir and the workspace outright, so the
     `.git` file pi could rewrite in the workspace decides nothing.
     """
@@ -291,6 +294,8 @@ async def publish(
     stamped: list[str] = []
     if headers is not None:
         created = await created_files(git_dir, workspace)
+        if not created and not await _git(git_dir, workspace, "status", "--porcelain"):
+            created = await committed_files(git_dir, workspace, commit_message)
         if created:
             stamped = await headers(created)
         if stamped:
@@ -352,6 +357,30 @@ async def created_files(git_dir: Path, workspace: Path) -> list[str]:
     added = [name for name in staged.split("\0") if name]
     if added and (git_dir / "MERGE_HEAD").is_file():
         merged = await _git(git_dir, workspace, "ls-tree", "-r", "-z", "--name-only", "MERGE_HEAD")
+        brought = set(merged.split("\0"))
+        added = [name for name in added if name not in brought]
+    return added
+
+
+async def committed_files(git_dir: Path, workspace: Path, commit_message: str) -> list[str]:
+    """The files an earlier attempt of this publish created, when HEAD is the commit it made (its author and
+    message are this publish's); else none. Like `created_files`: added against the first parent, a moved file
+    left out, and, for a merge, the files another parent brought too."""
+    made = await _git(git_dir, workspace, "log", "-1", "--format=%an%n%B", "HEAD")
+    author, _, message = made.partition("\n")
+    if author != COMMIT_NAME or message.strip() != commit_message.strip():
+        return []
+    parents = (await _git(git_dir, workspace, "rev-list", "--parents", "-n", "1", "HEAD")).split()[1:]
+    if not parents:
+        return []
+    changed = await _git(
+        git_dir, workspace, "diff", "--name-only", "--diff-filter=A", "--find-renames", "-z", parents[0], "HEAD"
+    )
+    added = [name for name in changed.split("\0") if name]
+    for other in parents[1:]:
+        if not added:
+            break
+        merged = await _git(git_dir, workspace, "ls-tree", "-r", "-z", "--name-only", other)
         brought = set(merged.split("\0"))
         added = [name for name in added if name not in brought]
     return added

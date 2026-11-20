@@ -11,13 +11,16 @@ the header says and which files take one:
 - `styles` maps a comment syntax to the file names and extensions written in
   it: one marker (`#`) is a line comment, two (`<!-- -->`) open and close a
   block. A file in no style gets no header: JSON, for one, has no comments.
+  MDX takes `{/* */}`, since it does not accept an HTML comment.
 - `skip` lists glob patterns of files that never take one, such as minified
   or generated files.
 - `enabled` is the default; `repos` turns it on or off for one repo, and a
   goal's own `provenance` setting, when set, outranks both (`wanted`).
 
 A header goes after what must stay first: a `#!` line, a Python coding line,
-an XML declaration, an HTML doctype, or a Markdown file's front matter. A
+an XML declaration, an HTML doctype, a Markdown file's front matter, or a
+Dockerfile's parser directives (`# syntax=`, `# escape=`, `# check=`), which
+Docker reads only ahead of every ordinary comment. A
 blank line follows it. A file that already starts with the header keeps it as
 it is, so a retried publish adds nothing twice. Binary files, files that are
 not UTF-8, links and files over MAX_BYTES are left as they are.
@@ -43,6 +46,9 @@ MAX_TEXT_CHARS = 500
 MISSING = "none"
 MARKDOWN = {".md", ".mdx", ".markdown"}
 CODING_LINE = re.compile(r"^[ \t\f]*#.*?coding[:=][ \t]*[-\w.]+")
+DOCKERFILES = {"Dockerfile", "Containerfile"}
+# A Dockerfile parser directive Docker knows; an unknown one is an ordinary comment, which ends the directives.
+DOCKER_DIRECTIVE = re.compile(r"^#[ \t]*(syntax|escape|check)[ \t]*=", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -155,8 +161,18 @@ def header_lines(text: str, style: tuple[str, str]) -> list[str]:
     return [opening, *lines, closing]
 
 
-def _preamble(lines: list[str], suffix: str) -> int:
+def _is_dockerfile(path: PurePosixPath) -> bool:
+    return path.name in DOCKERFILES or path.suffix.lower() == ".dockerfile"
+
+
+def _preamble(lines: list[str], path: PurePosixPath) -> int:
     """How many of a file's first lines must stay ahead of a header."""
+    suffix = path.suffix.lower()
+    if _is_dockerfile(path):
+        kept = 0
+        while kept < len(lines) and DOCKER_DIRECTIVE.match(lines[kept]):
+            kept += 1
+        return kept
     kept = 0
     if lines and lines[0].startswith("#!"):
         kept = 1
@@ -183,7 +199,7 @@ def stamped(content: str, path: str, header: list[str]) -> str | None:
     body = content[len(bom) :]
     newline = "\r\n" if "\r\n" in body else "\n"
     lines = body.splitlines(keepends=True)
-    kept = _preamble([line.rstrip("\r\n") for line in lines], PurePosixPath(path).suffix.lower())
+    kept = _preamble([line.rstrip("\r\n") for line in lines], PurePosixPath(path))
     head, rest = "".join(lines[:kept]), "".join(lines[kept:])
     if head and not head.endswith("\n"):
         head += newline
