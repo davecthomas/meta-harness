@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { MhEvent } from "../../api";
-import { candidateName, rows, span, steps, totals } from "./path";
+import { STEP_EVENTS, candidateName, rows, span, steps, totals } from "./path";
 
 let n = 0;
 let clock = Date.parse("2026-11-11T18:00:00Z");
@@ -208,6 +208,10 @@ test("a repeat inside a repeating cycle keeps every count", () => {
   const held = path.filter((s) => s.title === "Waiting its turn" && s.detail === "a");
   expect(held).toHaveLength(1);
   expect(held[0].times).toBe(4);
+});
+
+test("the page reads the supervisor's remedies with the rest of a task's steps", () => {
+  expect(STEP_EVENTS).toContain("remedy_applied");
 });
 
 test("a task made blocked waits as Blocked, is Queued once what it waited on is done, and shows what unstuck it", () => {

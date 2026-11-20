@@ -61,6 +61,8 @@ export const STEP_EVENTS = [
   "operator_review_claimed", "operator_review_released", "operator_review_submitted", "operator_message", "attempt_chosen", "writing_checked",
   "provenance_added",
   "pull_request_summary",
+  // What the supervisor or the planner did to unstick the task, noted on the step it started.
+  "remedy_applied",
 ];
 
 const PARKED: Record<string, string> = {
