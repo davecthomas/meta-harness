@@ -24,7 +24,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  # write: a deploy that passed its smoke task is published as a release of its version (the last step).
+  contents: write
   checks: read
   id-token: write
   issues: write
@@ -237,6 +238,19 @@ jobs:
           done
           timeout 1500 gcloud compute ssh mh-vm --zone "$ZONE" --project "$PROJECT" --tunnel-through-iap --quiet \
             --command "sudo bash /opt/meta-harness/deploy/vm/smoke.sh ${{ github.sha }}" | tee smoke.txt
+      - name: publish the deployed version as a release
+        # The version running in production, as a tag and a release: the README's version badge reads it. A
+        # deploy run again for the same version leaves the existing release as it is.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="v$(python3 src/meta_harness/versioning.py)"
+          if gh release view "$version" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "$version is already released"
+            exit 0
+          fi
+          gh release create "$version" --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+            --title "$version" --notes "Deployed ${GITHUB_SHA::7}: $(git log -1 --format=%s "${{ github.sha }}")"
       - name: open an issue for the failed deploy
         # A failed deploy is work: the issue's label lets a goal pick it up and fix it.
         if: failure()
