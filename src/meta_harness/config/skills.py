@@ -14,12 +14,20 @@ The document:
 or `{"kind": "shipped"}`). Its content is stored with the version, so a run gets exactly what was approved,
 whatever its source does later.
 
+A locked skill is one the control plane itself depends on: it runs the skill's script in its own process, or
+puts the skill's text in its prompts. So what the skill holds is decided by a pull request, never by a save.
+config/skills/locked.json names the locked skills. Each is always the shipped files, with `"locked": true`
+in its source: a save that changes or removes one is refused, an import under its name is refused, and a
+deploy sets the stored copy to the shipped files (store.sync_locked). Every other skill is imported, changed
+and removed as an admin sees fit, and runs only inside a per-run sandbox, which holds no credential.
+
 This module checks a document, reads a skill from a directory or from a git repository, and lists what a
 git repository offers an import: its branches and tags, and its directories that hold a SKILL.md. Nothing
 here saves.
 """
 
 import ipaddress
+import json
 import os
 import re
 import socket
@@ -40,6 +48,8 @@ GIT_URL = re.compile(r"^https://[A-Za-z0-9.\-]+(:[0-9]+)?/[^\s]+$")
 GIT_TIMEOUT_SECONDS = 60
 # Directories never taken into a skill: version control and caches.
 SKIPPED = {".git", "__pycache__", "node_modules", ".venv"}
+# The file under config/skills/ that names the locked skills.
+LOCKED_FILE = "locked.json"
 
 
 class SkillError(ValueError):
@@ -49,6 +59,64 @@ class SkillError(ValueError):
 def skills_dir() -> Path:
     """The shipped skills, config/skills/<name>/, which seed the kind's first version."""
     return Path(os.environ.get("MH_SKILLS_DIR") or REPO_ROOT / "config" / "skills")
+
+
+def locked() -> set[str]:
+    """The names of the locked skills: those config/skills/locked.json lists that ship as a directory there.
+    Empty when the file is missing or cannot be read: `check_locked` stops a service that starts so."""
+    root = skills_dir()
+    try:
+        names = json.loads((root / LOCKED_FILE).read_text(encoding="utf-8")).get("locked")
+    except (OSError, ValueError, AttributeError):
+        return set()
+    if not isinstance(names, list):
+        return set()
+    return {name for name in names if isinstance(name, str) and (root / name / "SKILL.md").is_file()}
+
+
+def check_locked(needed: list[str]) -> None:
+    """Raises RuntimeError when config/skills/locked.json is unusable, or does not lock a skill the control
+    plane depends on. needed: the names of those skills."""
+    path = skills_dir() / LOCKED_FILE
+    try:
+        names = json.loads(path.read_text(encoding="utf-8")).get("locked")
+    except (OSError, ValueError, AttributeError) as err:
+        raise RuntimeError(f'{path}: cannot be read ({err}). It holds {{"locked": ["<skill name>", ...]}}') from err
+    if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+        raise RuntimeError(f'{path}: locked must be a list of skill names, such as {{"locked": ["{needed[0]}"]}}')
+    absent = sorted(name for name in names if not (skills_dir() / name / "SKILL.md").is_file())
+    if absent:
+        raise RuntimeError(
+            f"{path}: locks {', '.join(absent)}, which config/skills/ does not hold. Add the skill's directory "
+            "there, or take the name out of the list"
+        )
+    unlocked = sorted(set(needed) - set(names))
+    if unlocked:
+        raise RuntimeError(
+            f"{path}: {', '.join(unlocked)} must be locked, since the control plane runs its script and puts "
+            "its text in prompts. Add the name to the list"
+        )
+
+
+def locked_errors(skills: dict[str, Any]) -> list[str]:
+    """What a skills document does to the locked skills that it may not: change one, remove one, or call
+    another skill locked."""
+    names = locked()
+    reasons = []
+    if names:
+        shipped = seed_skills()["skills"]
+        for name in sorted(names):
+            if skills.get(name) != shipped[name]:
+                did = "changed" if name in skills else "removed"
+                reasons.append(
+                    f"{name} is locked and cannot be {did} here: the control plane runs its script and uses "
+                    f"its text. Leave it as it is, and change it with a pull request to config/skills/{name}/"
+                )
+    for name, skill in skills.items():
+        source = skill.get("source") if isinstance(skill, dict) else None
+        if name not in names and isinstance(source, dict) and source.get("locked"):
+            reasons.append(f"{name}: only a skill config/skills/{LOCKED_FILE} names is locked. Take locked out")
+    return reasons
 
 
 def frontmatter(text: str) -> dict[str, str]:
@@ -120,6 +188,7 @@ def check_skills(document: dict[str, Any], others: dict[str, dict[str, Any]]) ->
     reasons = []
     for name, skill in skills.items():
         reasons += skill_errors(name, skill)
+    reasons += locked_errors(skills)
     profiles = (others.get("profiles") or {}).get("profiles", {})
     for profile, spec in profiles.items():
         for name in (spec or {}).get("skills") or []:
@@ -172,8 +241,11 @@ def seed_skills() -> dict[str, Any]:
     found: dict[str, Any] = {}
     root = skills_dir()
     if root.is_dir():
+        names = locked()
         for directory in sorted(p for p in root.iterdir() if p.is_dir() and (p / "SKILL.md").is_file()):
             name, skill = from_files(read_dir(directory), {"kind": "shipped"})
+            if name in names:
+                skill["source"] = {"kind": "shipped", "locked": True}
             found[name] = skill
     return {"skills": found}
 

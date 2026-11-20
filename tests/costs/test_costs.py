@@ -387,6 +387,19 @@ def test_no_percentage_change_from_a_span_too_small_to_compare(api):
     assert again["change_percent"] == 100.0
 
 
+def test_an_updates_own_rewrite_is_a_writing_cost_of_its_goal(clean):
+    events = Events()
+    passed = {"kind": "update", "model": "claude:claude-haiku-5", "usd_cost": "0.001"}
+    update = {"goal_id": "g-a", "number": 1, "model": "claude:claude-haiku-5", "usd_cost": "0.02", "writing": passed}
+    events.add("goal_update_written", update, "2026-11-11")
+
+    assert _harvest(events) == 1
+
+    with db.connect(autocommit=True) as conn:
+        rows = conn.execute("SELECT item, goal_id, usd FROM costs.daily_cost ORDER BY item").fetchall()
+    assert rows == [("planning", "g-a", Decimal("0.02")), ("writing", "g-a", Decimal("0.001"))]
+
+
 def test_the_planners_updates_on_a_goal_are_counted_as_planning_cost(clean):
     events = Events()
     events.add(

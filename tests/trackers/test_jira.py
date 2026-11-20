@@ -8,6 +8,8 @@ import pytest
 from meta_harness.trackers import DONE, IN_PROGRESS, IN_REVIEW, TODO, Source, TrackerError
 from meta_harness.trackers.jira import JiraTracker, Site, check_goal, markdown, repo_for
 
+pytestmark = pytest.mark.usefixtures("unchecked_text")
+
 SITE = "https://example.atlassian.net"
 # A goal with one repo, whose issues are in the project VL.
 GOAL = Source(repos=("o/r",), settings={"project": "VL"})

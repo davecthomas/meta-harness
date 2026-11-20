@@ -9,6 +9,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from meta_harness import outbound
 from meta_harness.trackers import TrackerError
 from meta_harness.planner.service import create_app
 from meta_harness.planner.tracker import Issue
@@ -183,7 +184,7 @@ def test_approving_creates_the_issues_in_order_with_the_goals_label_and_starts_t
     for issue in tracker.created:
         [said] = provenance.parse(issue.body)
         assert (said["kind"], said["goal"], said["task"], said["by"]) == ("issue", goal["id"], plan_task, "dave")
-        assert issue.body.endswith(provenance.line(provenance.Provenance(**said)) + "\n")
+        assert issue.body.endswith(provenance.line(provenance.Provenance(**said)))
     assert approved.json()["plan"]["created"] == {"store": store_issue.ref, "api": api_issue.ref, "ui": ui_issue.ref}
     after = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
     assert after["status"] == "active" and after["started_at"] and after["plan_approved_at"]
@@ -377,7 +378,9 @@ def test_a_tracked_goal_may_hold_a_task_kept_in_the_meta_harness_beside_its_trac
         REPO, 1_000_000 + uuid.uuid4().int % 10**12, labels=[label], body="## Acceptance checks\n\n- make test"
     )
     kept = asyncio.run(
-        OwnTracker().create_issue(REPO, "Kept here", "Do it.\n\n## Acceptance checks\n\n- make test\n", [])
+        OwnTracker().create_issue(
+            REPO, outbound.trusted("Kept here"), outbound.trusted("Do it.\n\n## Acceptance checks\n\n- make test\n"), []
+        )
     )
     goal = client.post(
         "/v1/goals",

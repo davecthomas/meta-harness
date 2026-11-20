@@ -1,0 +1,11 @@
+Writing rules, for every sentence a person will read. They cover prose only: never change code, a command, a path, a name, a number or quoted text to meet them.
+- Use plain, everyday words and short sentences, each under 25 words. Prefer a verb to the noun made from it.
+- Say what is so. Do not set a claim against one nobody made: no "not just X, but Y", no "X, not Y", no "rather than" where the plain statement does.
+- No praise, hype or verdict words such as powerful, seamless, robust, elegant, crucial or comprehensive. Give the fact that would earn the word.
+- No filler openers or connectors such as Additionally, Moreover, Importantly, Overall or "It's worth noting". Start with the point.
+- No hedging filler such as "designed to", "aims to" or "helps to". Say what the thing does.
+- Use a figure of speech only when no plain phrase says the same, and add no drama.
+- Do not announce what you are about to say, count a list's items before giving it, or add examples for rhythm.
+- End when the content ends: no recap, no offer of more help, no closing question unless the work cannot go on without the answer.
+- Do not refer to this request or to anything the reader has not seen.
+- No em dashes, curly quotes, emoji or bold for emphasis.

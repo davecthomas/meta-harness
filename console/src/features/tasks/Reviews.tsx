@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Anchor, Badge, Button, Card, Group, Modal, Stack, Text, Textarea } from "@mantine/core";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, type ReviewRound, type Task } from "../../api";
 import { Empty, when } from "../../components/ui";
 import { CandidateName, VerdictBadge } from "./words";
@@ -37,6 +37,12 @@ export function Reviews({ task, rounds, onAnswered }: { task: Task; rounds: Revi
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A round named in the address (?round=, as a review's box on the timeline opens it) is scrolled to and marked.
+  const [params] = useSearchParams();
+  const asked = Number(params.get("round")) || null;
+  useEffect(() => {
+    if (asked) document.querySelector(`[data-testid="review-${asked}"]`)?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }, [asked, rounds.length]);
   if (!rounds.length) return <Empty>{noReviewYet(task)}</Empty>;
   const repo = repoOf(task.pr_url);
   const held = task.status === "running" && task.waiting_on === "review" ? rounds[rounds.length - 1].round : null;
@@ -71,7 +77,14 @@ export function Reviews({ task, rounds, onAnswered }: { task: Task; rounds: Revi
         </Alert>
       )}
       {rounds.map((r) => (
-        <Card key={r.round} withBorder padding="md" data-testid={`review-${r.round}`}>
+        <Card
+          key={r.round}
+          withBorder
+          padding="md"
+          data-testid={`review-${r.round}`}
+          data-asked={asked === r.round || undefined}
+          style={asked === r.round ? { borderColor: "var(--mantine-primary-color-filled)", boxShadow: "0 0 0 2px var(--mantine-primary-color-light)" } : undefined}
+        >
           <Stack gap="xs">
             <Group justify="space-between">
               <Group gap="xs">

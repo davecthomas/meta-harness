@@ -43,16 +43,19 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from meta_harness import outbound
+from meta_harness.outbound import rules as writing_rules
 from meta_harness import auth, db
 from meta_harness.costs import api as costs_api
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
 from meta_harness.config.kinds import ConfigError, sandbox_ceiling
 from meta_harness.github_app import GitHubApps
-from meta_harness.run_service import code_host, writing
+from meta_harness.run_service import code_host
 from meta_harness.run_service.provenance import COMMENT, Provenance, payload
 from meta_harness.planner import (
     activity,
+    auto_split,
     budget_api,
     cost_facts,
     drafting,
@@ -127,6 +130,8 @@ class GoalIn(BaseModel):
     priority: int = 0
     # True: an issue missing acceptance checks, paths or a testable outcome is held, not run (sizing.py).
     strict_issues: bool = False
+    # Whether the files its runs create take a provenance header. None: config/provenance.json decides.
+    provenance: bool | None = None
     # The issue tracker the goal uses, one for all its issues. Left out: the default tracker.
     tracker: str | None = Field(default=None, min_length=1, max_length=40)
     # What the tracker asks of a goal besides its repos (GET /v1/trackers, goal_settings): for Jira, its project.
@@ -178,6 +183,9 @@ class GoalPatch(BaseModel):
     max_parallel: int | None = Field(default=None, ge=1)
     # An issue it has not made a task yet is held, or let go, at the next sweep.
     strict_issues: bool | None = None
+    # Whether the files its runs create from now on take a provenance header. Sent as null:
+    # config/provenance.json decides again.
+    provenance: bool | None = None
 
 
 def system_max_parallel() -> int | None:
@@ -201,6 +209,7 @@ def add_shipped_configuration(pool, events: Events) -> None:
     """At startup: what the shipped files add to the configuration reaches the active versions."""
     with pool.connection() as conn:
         for saved in [
+            *config_store.sync_locked(conn),
             *config_store.add_shipped(conn),
             *config_store.add_shipped_to_profiles(conn),
             *config_store.replace_engines(conn),
@@ -263,7 +272,16 @@ def create_app(
 
     async def sweep_one(goal: dict) -> SweepResult:
         async with locks.setdefault(goal["id"], asyncio.Lock()):
-            return await sweep_goal(goal, tracker, tasks, events, host, size)
+            result = await sweep_goal(goal, tracker, tasks, events, host, size)
+            # An issue the sweep held for its size is split by the planner itself, within its tries; the next
+            # sweep takes the parts in.
+            try:
+                result.split = await auto_split.run(goal, tracker, events)
+            except Exception as err:  # noqa: BLE001 - logged; the held issue keeps its Split and Run anyway
+                log.error(
+                    "goal %s: the planner could not split its held issues: %s: %s", goal["id"], type(err).__name__, err
+                )
+            return result
 
     name = titler or drafting.title_goal
     # The GitHub Apps, to list the repos they are installed on: the tracker's, else the environment's.
@@ -568,7 +586,7 @@ def create_app(
     sizing.check_settings()
     costs_api.check_settings()
     planning.check_settings()
-    writing.check_settings()
+    writing_rules.check_settings()
     draft = drafter or drafting.draft_goal
 
     def registered(names: list[str]) -> list[str]:
@@ -855,7 +873,11 @@ def create_app(
                 pull.head_sha,
                 body.path,
                 body.line,
-                f"**{who}** wrote:\n\n{body.body}",
+                # The operator's own words: redacted and cut to fit, never rewritten.
+                await outbound.prepare(
+                    f"**{who}** wrote:\n\n{body.body}",
+                    outbound.Context(outbound.GITHUB, outbound.COMMENT, outbound.PERSON),
+                ),
                 body.start_line,
                 provenance=signed,
             )
@@ -1097,8 +1119,8 @@ def create_app(
         if not body.label and not body.refs and not planned and not assigned:
             raise HTTPException(
                 status_code=422,
-                detail="a goal needs issues to take in: give it a label, or pick issues by ref, or, where its "
-                "tracker has it, turn on taking the issues assigned to the meta-harness",
+                detail="a goal needs issues to take in: give it a label, or pick issues by ref. Where its "
+                "tracker has it, you can also turn on taking the issues assigned to the meta-harness",
             )
         if why := parallel_reason(body.max_parallel):
             raise HTTPException(status_code=422, detail=why)
@@ -1387,11 +1409,11 @@ def create_app(
 
     @app.patch("/v1/goals/{goal_id}")
     async def patch(goal_id: str, body: GoalPatch, who: str = Depends(operator)) -> dict:
-        """Change only the fields sent. A field that may be empty (label, max_usd, max_parallel) is cleared
-        when sent as null; any other sent as null is left as it is. A change to the budget takes effect at
+        """Change only the fields sent. A field that may be empty (label, max_usd, max_parallel, provenance) is
+        cleared when sent as null; any other sent as null is left as it is. A change to the budget takes effect at
         once: the goal's standing is worked out again, and its tasks held for the budget look again."""
         fields = {k: v for k, v in body.model_dump().items() if v is not None}
-        for clearable in ("label", "max_usd", "max_parallel"):
+        for clearable in ("label", "max_usd", "max_parallel", "provenance"):
             if clearable in body.model_fields_set:
                 fields[clearable] = getattr(body, clearable)
         if "max_parallel" in fields and (why := parallel_reason(body.max_parallel)):

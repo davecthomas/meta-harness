@@ -174,6 +174,8 @@ class PublishRequest:
     # The run's provenance (run_service/run_provenance.py), written into the description and the commit message.
     # None for a run outside the Task API.
     provenance: dict[str, Any] | None = None
+    # The task's goal, whose provenance setting outranks the configuration's for the files the run created.
+    goal_id: str = ""
 
 
 @dataclass

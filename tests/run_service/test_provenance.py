@@ -12,6 +12,8 @@ from meta_harness.run_service.code_host import CodeHostError, Published
 from meta_harness.run_service.provenance import COMMENT, COMMIT, PULL_REQUEST, REVIEW, Provenance
 from meta_harness.run_service.shared import PostReviewRequest, PublishRequest
 
+pytestmark = pytest.mark.usefixtures("unchecked_text")
+
 
 def test_a_line_names_the_version_and_kind_then_each_known_field_and_reads_back():
     signed = Provenance(REVIEW, task="t-12", model="harness:pi-review/claude:opus", round=2, version="1.2.3")
@@ -149,6 +151,8 @@ async def test_a_comment_and_a_line_comment_end_with_their_provenance(github):
 def emitted(monkeypatch):
     found: list = []
     monkeypatch.setattr(activities.events, "emit", lambda kind, payload, **fields: found.append((kind, payload)))
+    # Publish records the pull request's summary at once rather than through the outbox.
+    monkeypatch.setattr(activities.events, "append", lambda kind, payload, **fields: found.append((kind, payload)))
 
     async def unchanged(texts, transport=None):
         return [None for _ in texts]

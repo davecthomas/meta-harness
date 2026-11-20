@@ -1,5 +1,6 @@
 """Skills: packaged instructions a harness profile's runs load, kept as a configuration kind."""
 
+import copy
 import subprocess
 from pathlib import Path
 
@@ -29,7 +30,13 @@ def test_a_skill_is_read_from_its_files_by_its_frontmatter():
         skills.from_files({"SKILL.md": "Just text."}, {"kind": "upload"})
 
 
-def test_a_skills_document_is_refused_with_every_reason():
+@pytest.fixture
+def no_locks(monkeypatch):
+    """A deployment that locks no skill, for the checks that are not about the lock."""
+    monkeypatch.setattr(skills, "locked", lambda: set())
+
+
+def test_a_skills_document_is_refused_with_every_reason(no_locks):
     assert skills.check_skills({"skills": {"tidy-notes": _skill()}}, {}) == []
     assert skills.check_skills({"skills": []}, {}) == ["skills must be an object of skills, by name"]
     reasons = skills.check_skills(
@@ -48,7 +55,7 @@ def test_a_skills_document_is_refused_with_every_reason():
     assert "tidy-notes: files over 256 KB: big.txt" in reasons
 
 
-def test_a_skill_a_profile_names_cannot_be_removed_and_a_profile_names_only_known_skills():
+def test_a_skill_a_profile_names_cannot_be_removed_and_a_profile_names_only_known_skills(no_locks):
     profile = {"tools": ["read", "bash"], "max_turns": 10, "max_minutes": 10, "skills": ["tidy-notes"]}
     refused = skills.check_skills({"skills": {}}, {"profiles": {"profiles": {"pi-lean": profile}}})
     assert refused == ["harness profile pi-lean names skill tidy-notes: remove it from the profile first"]
@@ -63,7 +70,7 @@ def test_a_skill_a_profile_names_cannot_be_removed_and_a_profile_names_only_know
 
 def test_the_shipped_skills_seed_the_kind_and_no_ai_slop_is_one_of_them(tmp_path: Path, monkeypatch):
     shipped = skills.seed_skills()["skills"]
-    assert "no-ai-slop2" in shipped and shipped["no-ai-slop2"]["source"] == {"kind": "shipped"}
+    assert "no-ai-slop2" in shipped and shipped["no-ai-slop2"]["source"] == {"kind": "shipped", "locked": True}
     assert skills.check_skills({"skills": shipped}, {}) == []
     assert "MIT License" in shipped["no-ai-slop2"]["files"]["LICENSE"]
     assert "no-ai-slop-scan.py" in shipped["no-ai-slop2"]["files"], "its scanner ships beside it"
@@ -77,6 +84,46 @@ def test_the_shipped_skills_seed_the_kind_and_no_ai_slop_is_one_of_them(tmp_path
     (tmp_path / "not-a-skill").mkdir()
     monkeypatch.setenv("MH_SKILLS_DIR", str(tmp_path))
     assert list(skills.seed_skills()["skills"]) == ["tidy-notes"]
+
+
+def test_a_locked_skill_is_always_the_shipped_files_and_every_other_skill_is_open():
+    shipped = skills.seed_skills()["skills"]
+    assert skills.locked() == {"no-ai-slop2"}
+    held = {**shipped, "tidy-notes": _skill()}
+    assert skills.check_skills({"skills": held}, {}) == [], "a skill is imported beside a locked one"
+
+    changed = copy.deepcopy(held)
+    changed["no-ai-slop2"]["files"]["no-ai-slop-scan.py"] += "\nimport os\n"
+    [reason] = skills.check_skills({"skills": changed}, {})
+    assert reason.startswith("no-ai-slop2 is locked and cannot be changed here")
+    assert "pull request to config/skills/no-ai-slop2/" in reason
+
+    [reason] = skills.check_skills({"skills": {"tidy-notes": _skill()}}, {})
+    assert reason.startswith("no-ai-slop2 is locked and cannot be removed here")
+
+    imported = {**held, "no-ai-slop2": {**shipped["no-ai-slop2"], "source": {"kind": "upload"}}}
+    assert len(skills.check_skills({"skills": imported}, {})) == 1, "an upload under its name is a change"
+
+    posing = {**held, "tidy-notes": {**_skill(), "source": {"kind": "upload", "locked": True}}}
+    [reason] = skills.check_skills({"skills": posing}, {})
+    assert reason.startswith("tidy-notes: only a skill config/skills/locked.json names is locked")
+
+
+def test_the_lock_list_is_checked_at_startup_and_a_bad_one_is_named(tmp_path: Path, monkeypatch):
+    skills.check_locked(["no-ai-slop2"])
+    with pytest.raises(RuntimeError, match="tidy-notes must be locked"):
+        skills.check_locked(["tidy-notes"])
+
+    monkeypatch.setenv("MH_SKILLS_DIR", str(tmp_path))
+    with pytest.raises(RuntimeError, match="cannot be read"):
+        skills.check_locked(["no-ai-slop2"])
+    (tmp_path / "locked.json").write_text('{"locked": "no-ai-slop2"}')
+    with pytest.raises(RuntimeError, match="locked must be a list of skill names"):
+        skills.check_locked(["no-ai-slop2"])
+    (tmp_path / "locked.json").write_text('{"locked": ["no-ai-slop2"]}')
+    with pytest.raises(RuntimeError, match="which config/skills/ does not hold"):
+        skills.check_locked(["no-ai-slop2"])
+    assert skills.locked() == set()
 
 
 def test_a_skill_is_imported_from_a_git_repository_at_a_ref_and_says_the_commit(tmp_path: Path, monkeypatch):

@@ -334,6 +334,28 @@ decides everything pi loads:
   needs it, so a skill it does not use costs a line of the prompt. A
   skill's scripts run inside the per-run sandbox, under the profile's bash
   allowlist and the egress proxy, so a skill grants no access.
+- **A locked skill** is one the control plane itself depends on: it runs
+  the skill's script in its own process, or puts the skill's text in its
+  prompts. An admin who could change such a skill could run code that holds
+  the control plane's credentials, so what it holds is decided by a pull
+  request. `config/skills/locked.json` names the locked skills; today
+  `no-ai-slop2`, for the writing pass's scanner and the writing rules. A
+  locked skill is always the shipped files, with `"locked": true` in its
+  source:
+  - A save or a rollback that changes or removes one is refused, and so is
+    an import under its name. Each refusal says to change it with a pull
+    request.
+  - Each deploy sets the stored copy, which runs load, to the shipped files
+    (`store.sync_locked`), as a new version.
+  - The control plane reads the script and the rules from the shipped files,
+    never from the stored configuration, and runs the script with none of
+    its own environment.
+  - The Skills page shows a lock on its row, which says why, and no remove
+    button.
+  - A service does not start when the list is unreadable, or leaves out the
+    skill `config/planner.json`'s `writing_pass.skill` names.
+
+  Every other skill is imported, changed and removed as before.
 - The kind is seeded from `config/skills/`, and a skill added there later
   reaches a deployment as a new version, as a shipped profile does. It
   ships `no-ai-slop2` (MIT, from codeandtheory/machine-ai-skills, with its
@@ -728,7 +750,10 @@ Built today: `max_parallel`, which the scheduler reads each admission pass,
 `review.reviewers` and `review.max_rounds`, which the run service reads, and
 `max_usd_by_size`, which the planner reads when it makes an issue a task, and
 `writing_pass`, a switch: `false` turns the writing pass off (What the
-meta-harness writes), and left out or `true` it is on. Also `max_task_usd`, the
+meta-harness writes), and left out or `true` it is on. Also
+`credential_redaction`, a switch: only `true` turns on the replacing of
+tokens, keys and passwords in what is posted (Credential redaction), and
+left out or `false` it is off. Also `max_task_usd`, the
 most one task may spend whatever else is set (Budgets).
 The other fields below are planned.
 
@@ -791,7 +816,7 @@ task's remaining spend, its attempts so far and the task policy's limits.
 | Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the harness profile's `max_minutes` plus 10 minutes, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
 | Collect | Reads the harness server's `/usage` and `/record`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. A final summary that is missing, or under three words, gives way to one the run service writes from `/record` (`run_service/summaries.py`): the files, how each acceptance check ended, the last plan and the command counts, under a line that says where it came from. A harness image without `/record` falls back to the files its events named. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
 | Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run whose activity ended because the worker under it shut down (`WorkerShutdown`, which every deploy's restart causes) is neither: the workflow waits 20 seconds for the worker to be back and takes the same run up again, up to five times, and the activity re-attaches to it by its run id, so the restart costs the task no attempt and no candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
-| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary, which goes through the writing pass first (What the meta-harness writes). A summary that is missing, or under three words, gives way to one the meta-harness writes under its own heading, `Summary written by the meta-harness`, from the files the branch changes, with the run's few words quoted; a summary the run service already wrote from the harness's record is kept as it is. Neither goes through the writing pass (`run_service/pr_summary.py`). The description is written when the pull request is opened, and no later push changes it. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
+| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary, which goes through the writing pass first (What the meta-harness writes). A summary that is missing, or under three words, gives way to one the meta-harness writes under its own heading, `Summary written by the meta-harness`, from the files the branch changes, with the run's few words quoted; a summary the run service already wrote from the harness's record is kept as it is. Neither goes through the writing pass (`run_service/pr_summary.py`). Publish records the summary it posted on the task as `pull_request_summary`, once for the opening and once for each fix round, with its source: `run` for the run's own words, `recorded` for the run service's fallback from `/record`, `files` for Publish's own. It appends the event at once, not through the client outbox, so an event service that does not store it fails Publish, and Temporal retries it. A retried Publish that finds the pull request its own earlier attempt opened, as after a failed label request, reads the opening summary back from the description and records that. A fix round's retry adds no second section, and records the section the description holds, whatever its own writing pass returned. The console shows that source on the task's Changes tab, beside the pull request in the task's details, on the task's path and on the goal's board. The description is written when the pull request is opened, and no later push changes it. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
 The RunTask workflow's Temporal history records every attempt, tier candidate
 and decision. The operator console and the harness analyzer read each run's
@@ -1271,20 +1296,91 @@ claimed round has waited longer than `review.operator_alert_minutes`, and a
 
 ### What the meta-harness writes
 
+Every text the control plane writes for people (a tracker issue or comment, a
+pull request's description, a review, a comment on one) leaves through one
+pipeline, `src/meta_harness/outbound/`. `outbound.prepare(text, Context)` runs
+its stages in a fixed order and returns the text as `Checked`, a string only
+the pipeline makes. The adapters that write to the outside (the GitHub, Jira
+and own trackers, and the code host's publish, review and comment calls) take
+nothing else: `outbound.require` refuses a plain string with how to fix it, so
+a write that skips the pipeline fails the first time it runs. A `Checked` text
+remembers the context it was prepared for, and `require` also refuses one
+prepared for another destination, or a body where a title goes. A text for a
+tracker (`outbound.for_tracker`) always names its kind and who wrote it, since
+a default would let a model's text skip the writing pass unnoticed.
+
+| Stage | What it does | Applies to |
+|---|---|---|
+| `redact` | Credentials become `[redacted]`: tokens, keys and passwords, never personal data (Credential redaction, below). First, so no later stage or model sees one | Every text, and only when the task policy's `credential_redaction` is `true`. It is off by default |
+| `deslop` | The writing pass below: scan, one rewrite when there are findings, kept only when clean and whole | Text a model wrote (`source: generated`), never a title, an operator's own words (`person`) or the fixed strings in this code (`fixed`) |
+| `inert` | Puts each `@mention` in a code span, and each issue a model's text says it closes (`fixes #12`), so the text notifies no one and closes nothing. Code is left as it is, and so is the `Closes` line this code adds | A text for GitHub that a model wrote or this code composed; closing references only in a model's text; never an operator's own words |
+| `fit` | Cuts the text to what its destination takes (GitHub 64,000 characters, Jira 31,000, a title 250), and says that it was cut | Every text |
+| `stamp` | The provenance line, last, so nothing rewrites or cuts it | A text given a provenance, never a title |
+
+A post composed here from parts (a pull request's description around the run's
+summary, a review's body around its findings) sends each model-written part
+through as `generated`, then the whole as `fixed`: redacted and cut as a whole,
+with no second rewrite. A stage (`outbound/stages.py`) is a small class with
+`applies(context)` and `run`; a stage that fails passes its text on unchanged,
+unless it is a blocker, whose failure or refusal raises `Blocked` naming the
+stage and what to do. No shipped stage blocks: a refused pull request
+description would stall its task, so `redact` replaces. What each stage did
+rides on the result (`Checked.report`), from which the caller records
+`writing_checked`, with `redacted` when credentials were taken out. A new stage is
+a class placed in `STAGES`, where its order is its meaning.
+
+#### Credential redaction
+
+The `redact` stage is off unless the task policy says
+`credential_redaction: true`, a switch on the Task policy page. A policy that
+cannot be read keeps the switch as it was last read. On, the stage replaces
+credentials and nothing else (`outbound/credentials.py`):
+
+- By shape: a private key block, a user name and password inside a URL, a
+  Slack webhook URL, a `Basic` or `Bearer` authorization header, a JSON Web
+  Token, and the tokens of GitHub, Anthropic, OpenAI, AWS, Google, Slack,
+  Atlassian, npm and PyPI.
+- By value: this service's own secrets, which are the environment variables
+  whose names end in `KEY`, `TOKEN`, `SECRET` or `PASSWORD`, and the password
+  in any variable that is a URL. A value under 12 characters, or one that is a
+  file's path, is left alone.
+
+It does not look for personal data: a name, an email address, a phone number
+or an address is posted as written. Each redaction is logged as a warning that
+names the kind of credential and never its value, since a credential that
+reached a post needs replacing.
+
+
 Everything the meta-harness posts on a code host for people to read is
 checked for the tells of model-written text before it is posted: filler,
 puffery, "not X but Y" framing, long sentences, runs of em dashes. It applies
 to text written from now on; nothing already posted is changed. Code, diffs,
 quoted text, log output and check output are never touched.
 
-It is done twice. First by the run: each profile that writes for people
-names the `no-ai-slop2` skill, and its prompt (`repo-task-v1`, `fix-v1`,
-`review-v4`, `plan-v1`) tells the run to apply the skill to its summary, its
+It is done three times. First in the prompt: every prompt whose answer a
+person reads ends with the same short block of writing rules
+(`src/meta_harness/outbound/rules.py`), so the text comes out clean and the
+rewrite below rarely runs. That is each run prompt above a summary, a review
+or a plan's issues (`repo-task-v1`, `fix-v1`, `review-v4`, `plan-v1`), and
+each model call the control plane makes itself through the HTTP Gateway's
+`/v1/structured`: a goal's updates, a plan's suggested fixes, a goal's draft
+and name, an issue's sizing, a split's parts, a task's name, a failure's
+diagnosis and the writing pass's own rewrite. The block is a file of the
+writing skill, `WRITING-RULES.md`, named by `config/planner.json`'s
+`writing_pass.rules`, so the rules a model is told and the rules the scanner
+holds it to are kept together. It is read from the shipped file, never from
+the stored configuration: the skill is locked (Skills), since the rules end
+every prompt. A test
+fails a `/v1/structured` call whose system prompt leaves the block out.
+
+Then by the run: each profile that writes for people
+names the `no-ai-slop2` skill, and its prompt tells the run to apply the
+skill to its summary, its
 review or its issue drafts before it finishes. A task or review run can run
 the skill's scanner with `python3`. A planning run cannot: its profile reads
 only, so it applies the skill's rules by reading them.
 
-Then by the control plane, in the writing pass
+Last by the control plane, in the writing pass
 (`src/meta_harness/run_service/writing.py`), which needs no run:
 
 | Text | Where the pass runs |
@@ -1293,19 +1389,31 @@ Then by the control plane, in the writing pass
 | A review's summary and each finding | The activity that posts the review |
 | A comment: findings an operator dismissed, an operator's verdict | The activity that posts the comment |
 | The body of an issue a plan drafted | The planner, when the plan is approved |
+| A goal's update: its headline, body, what comes next and each thing it asks of the operator | The planner, before the update is saved. An update is shown on the goal's page and posted nowhere; it goes through the same pipeline, as `own` text. A pass that found something rides on the update's `goal_update_written` event as `writing`, and its rewrite's cost is a writing cost of the goal |
 
 1. The text goes through the skill's scanner, `no-ai-slop-scan.py`, read
-   from the active `skills` configuration and run as a child process with no
-   model. Only the hits the scanner decides by itself count as findings; a
-   candidate that needs a reader to confirm does not.
+   from the shipped skill, which is locked (Skills), and run as a child
+   process with no model and none of this process's environment. Only the hits the scanner decides by itself count as findings; a
+   candidate that needs a reader to confirm does not. Neither does a word
+   `writing_pass.names` lists: the scanner's word lists hold `harness`, which
+   is this product's name, so a text that only names the meta-harness is
+   posted with no rewrite. A hit on a line the rewrite must keep (step 3) is
+   no finding either: a long acceptance check scans as a long sentence, and
+   no rewrite could clear it.
 2. A text with findings gets one rewrite, on the model
    `config/planner.json`'s `writing_pass` names, through the HTTP Gateway's
-   `/v1/structured`. A text over 20,000 characters is not rewritten.
+   `/v1/structured`. A text over 20,000 characters is not rewritten. The
+   model is given each finding with its line. The scanner reports a long
+   sentence as a line and a word count only, and a line of a description is
+   a whole paragraph, so the pass finds the sentence and quotes it. Told the
+   line alone, the model split the wrong sentence in over half of the
+   rewrites production recorded, and each of those was dropped.
 3. The rewrite is kept only when the scanner finds nothing in it and it
-   keeps every heading, link, code span, code block and number of the
-   original, and every line the control plane reads back: `Paths:`,
+   keeps every heading, link, code span, code block, number and listed name
+   of the original, and every line the control plane reads back: `Paths:`,
    `Depends on:`, `Closes`, and each line under `## Acceptance checks`.
-   Otherwise the rewrite is dropped and the original is posted.
+   Otherwise the rewrite is dropped and the original is posted, and the
+   record's reason names the findings the rewrite still had.
 
 The pass never stops a post. A scanner that cannot run, a HTTP Gateway that
 does not answer, or a pass that takes over 70 seconds leaves the text as it
@@ -1317,8 +1425,18 @@ cost, and the original and the rewrite of each text that changed. The task's
 Timeline shows it as a note on the step it happened in. A rewrite's cost is a model cost of kind
 `writing`, of the task or the plan's goal. The task policy's
 `writing_pass: false` turns the pass off, with a switch on the Task policy
-page; runs are still told to apply the skill. `writing_pass`'s settings are
+page; prompts still carry the writing rules, and runs are still told to
+apply the skill. `writing_pass`'s settings, and the rules file they name, are
 checked when the planner and the run service's worker start.
+
+The pass looks only at model-written text, so the strings this code and the
+console write for people are held to the same scanner in CI
+(`tests/outbound/test_fixed_strings.py`). It scans every string of three
+words or more under `src/` and `console/src`, and a hit the scanner decides
+by itself fails the change that wrote it, naming the file, the words and the
+fix. Docstrings, SQL, migrations, test files and the strings a model reads (a
+prompt, a response schema's descriptions) are left out; the test's
+`MODEL_FACING` names those.
 
 Not built: the pass on merge-check notes, which are a task's status reason
 and are not posted, and a pull request description updated after a fix run,
@@ -2158,6 +2276,9 @@ walks every remedy `decide` can name and fails one with no module.
 | `wait` | A pull request whose checks have not reported | Nothing this pass | — |
 | `retry_stronger` | A task that failed on its own account (it could not finish the work), whose last route was below the complex tier | Runs it again with `complexity: high`, so its route is the complex tier: a stronger model and the careful profile | The task policy's `remedies.retry_stronger` (1) |
 | `fix_again` | A review its fix rounds did not settle, on a swept goal | Sends it back through its review loop with `complexity: high`: a fresh set of fix rounds, on the complex tier | The task policy's `remedies.fix_again` (1) |
+| `auto_split` (planner) | An open issue of an active goal the sweep held as too large, that no one split, ran anyway or made a task of | After the sweep, drafts the parts (`splits.draft`) and splits it as the Split button would (`split_issue.py`). Keyed in the ledger by the issue's `ref`; a try that fails counts, so it stops at its limit and the issue keeps its Split and Run anyway | The task policy's `remedies.auto_split` (1) |
+| `rerun_checks` (run service) | A pull request's head commit whose checks ended with a failed GitHub Actions job (`wait_checks`) | Re-runs the failed jobs of each such workflow run (`POST .../actions/runs/{id}/rerun-failed-jobs`, the GitHub App's Actions write permission) and waits on; one that passes counts as passed, one that fails again goes to its fix run. Stateless: a workflow run already past its attempts is not re-run. Never on a merge commit, where a re-run could deploy an old commit | The task policy's `remedies.rerun_checks` (1), counted by the workflow run's own attempt |
+| `raise_limit` | A running task held at its own spend limit (`budget_request` for `task`), whose next run needs at most twice that limit, when its goal's budget has room for the raise | Raises the task's spend limit to what the run needs, as an operator's Raise would. A goal's budget is never raised by a remedy | The task policy's `remedies.raise_limit` (1) |
 
 A remedy with a setting in the task policy's `remedies` (0 to 3 tries; 0 turns
 it off; 1 when the policy names none) counts its tries in the ledger, and is
@@ -2172,6 +2293,24 @@ Every try is one record in the ledger (`supervisor/ledger.py`): a
 sentences for a person, a page or the planner's update, so none of them needs
 to read raw events to learn what was done for a task. A try that could not be
 applied is recorded `failed`, with its error, and is tried again later.
+A plan's draft that names a whole top-level directory on its `Paths:` line
+(`tests`, `src`) gets a gap saying every other task touching it would wait for
+it, so the planner's suggested fix can narrow it; the planning prompt asks for
+the files, or the narrowest directories, from the start.
+A failure whose reason names neither kind the rules know (`failures.known`) is
+read once by a model (`supervisor/diagnose.py`): one structured call that
+answers `transient` or `permanent` with a one-line why, recorded in the ledger
+as a `diagnose` row whose `finding` is the kind, keyed by the reason, so the
+same failure is not read again. The answer is only the rules' `failure` fact:
+the model classifies, and never picks an action. A call that fails leaves the
+failure the task's own, as before. Each call is a `failure_diagnosed` event,
+counted as planning cost.
+
+The ledger is shown where an operator looks. The task's path notes each try on
+the step it started ("Unstuck: ran it again on the complex tier, with a
+stronger model (try 1 of 1). Next: …"). The planner's update is given what was
+unstuck since the last one (`unstuck` in its facts, and in its digest, so it is
+news once) and says it as something done, not asked.
 `GET /v1/supervisor/remedies` serves the ledger for a task (`task_id`), a goal
 (`goal_id`) or every task, newest first.
 
@@ -2281,7 +2420,7 @@ credential.
 | POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on: by `add_usd`, or with no body by a worked-out amount (what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar). Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |
-| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its sizing (`size`, `size_reasons`, `missing`, `split`, its `paths` and `checks_named`; null and empty for an issue not sized), why it is held (`held_reason`) and what it was split into (`split_into`), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded. The task's facts come from the Task API and the `pull_request_*` events on it. With them, the goal's status (`goal_status`), and for a goal no sweep covers, when its open issues' states were last read from the tracker (`states_checked_at`, at most a minute old) and whether every one could be read (`states_complete`); `GET /v1/goals/{id}` reads them the same way | built |
+| GET | `/v1/goals/{id}/issues` | Planner | Each of the goal's issues with its `title` (as its last sweep read it; null before one has), its sizing (`size`, `size_reasons`, `missing`, `split`, its `paths` and `checks_named`; null and empty for an issue not sized), why it is held (`held_reason`) and what it was split into (`split_into`), its task's status, what the task waits on (`task_waiting_on`), pull request URL, pull request state (`open`, `merged` or `closed`) and checks: the newest recorded head commit's `passed` or `failed` with the failed check names, or `pending` while an open pull request has none recorded, and whose words its description's opening summary is (`summary_source`: `run`, or `recorded` or `files` for a fallback the meta-harness wrote; null when none was recorded) with how many fix rounds' summaries the meta-harness wrote (`fix_summaries_written`). The goal's board shows the two apart: a badge for the opening summary's source, and one for those fix rounds. The task's facts come from the Task API and the `pull_request_*` events on it. With them, the goal's status (`goal_status`), and for a goal no sweep covers, when its open issues' states were last read from the tracker (`states_checked_at`, at most a minute old) and whether every one could be read (`states_complete`); `GET /v1/goals/{id}` reads them the same way | built |
 | GET, PUT | `/v1/goals/{id}/plan` | Planner | GET: the goal's newest plan version (`version`, `drafts`, its decisions on the goal's issues in `items`, those `issues`, its `summary` and `gaps`, `invalid` reasons, `source` planned or edited, `created`: the issue each draft became, `tracked`: where an approval put them). PUT takes `drafts` and, when given, `items`, the planning task still drafting if one is (`planning_task_id`), and the label its issues carry. PUT: an operator's edited `drafts`, saved as the next version, valid or not. Only for a goal in `planning` with no planning task in flight | built |
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve (`track`, default true: whether the new tasks become issues in the goal's tracker or are kept in the meta-harness): apply the newest plan, settling each decision on the goal's issues, and create its new tasks' issues, in dependency order, with the goal's label, hold them for the goal, and make it `active`. Each draft's body goes through the writing pass before it becomes an issue. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or remove one from it, with or without a task. A ref another goal holds is refused, naming that goal. Removing an issue cancels its task when the task has not ended, and answers `{dropped, task_canceled}`; a task with a pull request open is refused (409) unless `force=true`, which cancels the task and leaves the pull request open. The goal keeps the ref marked `dropped`, so its label never sweeps the issue back in; adding it back by ref clears the mark, and another goal may take it meanwhile | built |
@@ -2292,6 +2431,7 @@ credential.
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. A tier candidate's model select offers them | built |
 | GET | `/v1/config/images` | Configuration, in the planner process | The harness images the deployment builds, which a harness profile's image is picked from: the one image `make images` (`mh-images.service`) builds, `HARNESS_IMAGE` from `HARNESS_DIR`, and `default`, the image a profile with no image runs. Another directory under `images/` is not listed, since nothing builds it. 422 says why when the build directory has no readable Dockerfile (`config/images.py`) | built |
+| GET | `/v1/config/images/programs` | Configuration, in the planner process | The programs a harness image has (`?image=`, empty for the default), which a harness profile's bash allowlist is picked from: every executable file on the image's PATH and bash's builtins, listed by a container of the image with no network and no capabilities, and kept per image id. Only an image the deployment builds is run. 422 says why when they cannot be listed (`config/programs.py`) | built |
 | GET | `/v1/config/classifiers` | Configuration, in the planner process | The engines the router's classifier can name, each with its models: the engines ai-api-unified's provider registry lists for classification, and `none`; each engine's models from its model registry (`openai-decisions` its Decisions models, the others their provider's priced completions models, `openai-compatible` none, so its model is typed). The tiers view picks the classifier's engine and model from them, and refuses a name the list lacks | built |
 | GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles`, `repos` or `task_policy`; `modalities` and `access` are planned | built |
 | GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history | built |
@@ -3275,7 +3415,7 @@ Meta-harness services append through the event service client library:
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason and the kind of hold, recorded when a task's reason is new or has changed. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v4` (`review-v3` before it showed the description), `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server, and just before it the run's `run_provenance` (Run provenance). One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
-| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL; rounds are numbered over the task's life, so a resumed task's, or a merge fix's, follow the ones it had, behind the `resumed-rounds` patch), `writing_checked` for the writing pass on each pull request description, review and comment it posts (the planner records it for a plan's issues), `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
+| Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL; rounds are numbered over the task's life, so a resumed task's, or a merge fix's, follow the ones it had, behind the `resumed-rounds` patch), `writing_checked` for the writing pass on each pull request description, review and comment it posts (the planner records it for a plan's issues), `pull_request_summary` for the summary each pull request description and fix round holds (fix round, source `run`, `recorded` or `files`, heading, text), `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
 | Harness analyzer | `proposal_opened`, and operator approvals and rejections of harness analyzer proposals as audit events with the actor |
 | Configuration, in the planner process | `config_changed` for every configuration version an operator saves, approves or rolls back, with the actor |
@@ -3489,8 +3629,10 @@ change stay read-only.
   change), description, thinking and candidates (added, removed and
   reordered), the classifier, the default tier and what happens when a tier
   is used up. Harness profiles: each profile's tools, max turns, max minutes,
-  vCPU and memory, Bash allowlist and image (picked from the images the
-  deployment builds, `GET /v1/config/images`; empty is the default image),
+  vCPU and memory, Bash allowlist (picked from the programs the profile's
+  image has, `GET /v1/config/images/programs`) and image (picked from the
+  images the deployment builds, `GET /v1/config/images`; empty is the default
+  image),
   and a profile is added or
   removed from the table. Repo registry: each repo's tracker and default
   acceptance checks. Task policy: max parallel (with the VM's ceiling), fix
@@ -3582,7 +3724,7 @@ what the task is doing now and for how long, from the same steps.
 |---|---|---|
 | A wait: Queued, Held by the scheduler, Blocked, Held for budget, Held for an operator, Review taken by an operator, Queued again | `task_created`, `task_held`, `budget_hold`, `review_hold`, `operator_review_claimed`, `task_retried`, `task_driven`, `task_recovered`, a status change to `queued` or `blocked` | Its reason and how long it lasted, drawn with a dashed edge. A retry, and a task the supervisor sent back, name who did it |
 | A run: Task run, Fix run | `run_prompt`, `run_finished`, `attempt_finished` | Its candidate, how it ended, its length, cost and turns. A run that did not finish is red, with why |
-| Pull request opened, Checks | `pull_request_opened`, `pull_request_checks` | The pull request's number and files changed; the checks' result, the failed ones by name, and how long they took |
+| Pull request opened, Checks | `pull_request_opened`, `pull_request_checks`, `pull_request_summary` | The pull request's number and files changed; whose words its description's summary is, as a note on the run that wrote it; the checks' result, the failed ones by name, and how long they took |
 | A review round | the review run's events and `pull_request_reviewed` | Its round, verdict and number of findings, its reviewer, length and cost |
 | Merged, Merge commit's checks | `pull_request_merged`, `merge_checks` | The merge commit, and its checks' result |
 | Where it rests: Ready to merge, Review unresolved, Taken over | a status change to one of them | Why, how long it has rested, and what the supervisor asks of the operator |
@@ -3967,8 +4109,10 @@ Model text arrives once per turn, and token by token once the HTTP Gateway
 streams.
 
 Event payloads contain repository content. The operator console
-scrubs secrets from the events it reads. The HTTP Gateway's per-turn
-redaction applies to what the model receives.
+scrubs secrets from the events it reads. The HTTP Gateway can redact
+personal data from what a model receives (its `pii_redaction` middleware, set
+in the gateway's own `config/models.json`); that is the gateway's setting, and
+nothing here turns it on.
 
 ### Alerts
 

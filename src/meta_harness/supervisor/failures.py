@@ -76,6 +76,12 @@ def restart(reason: str | None) -> bool:
     return bool(_RESTART.search(reason or "")) and not _PERMANENT.search(reason or "")
 
 
+def known(reason: str | None) -> bool:
+    """Whether the rules here can tell the reason's kind: it names a failure of either kind."""
+    text = reason or ""
+    return bool(_PERMANENT.search(text) or _TRANSIENT.search(text))
+
+
 def kind(reason: str | None) -> str:
     """transient when the recorded reason names a failure of the system, else permanent."""
     text = reason or ""

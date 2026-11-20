@@ -280,3 +280,22 @@ async def test_a_runs_workspace_diff_counts_changed_and_new_files_against_its_cl
     ]
     assert "+B" in diff["patch"] and diff["missing"] is False
     assert (await code_host.workspace_diff("t-1", "t-1:run-9"))["missing"] is True
+
+
+async def test_a_pull_request_s_description_is_read_from_github_or_from_a_local_record(monkeypatch, tmp_path):
+    asked = []
+
+    async def github(repo, permissions, method, path, **kwargs):
+        asked.append((repo, method, path))
+        return {"body": "## Summary from the run\r\n\r\nFixed it.\r\n"}
+
+    monkeypatch.setattr(code_host, "_github", github)
+    record = tmp_path / "pull-request.md"
+
+    assert await code_host.description("o/r", "https://github.com/o/r/pull/7", record) == (
+        "## Summary from the run\n\nFixed it.\n"
+    )
+    assert asked == [("o/r", "GET", "/repos/o/r/pulls/7")]
+    assert await code_host.description(str(tmp_path), f"file://{record}", record) == ""
+    record.write_text("# Fix\n\nbody\n", encoding="utf-8")
+    assert await code_host.description(str(tmp_path), f"file://{record}", record) == "# Fix\n\nbody\n"

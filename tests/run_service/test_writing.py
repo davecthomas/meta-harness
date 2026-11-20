@@ -6,6 +6,7 @@ import httpx
 import pytest
 from temporalio.testing import ActivityEnvironment
 
+from meta_harness.config import skills
 from meta_harness.config import store as config_store
 from meta_harness.run_service import activities, code_host, writing
 from meta_harness.run_service.provenance import parse, stamp
@@ -46,6 +47,38 @@ def test_the_shipped_scanner_decides_findings_in_sloppy_text_and_none_in_plain_t
 
     assert {hit["match"] for hit in found} >= {"robust", "seamless", "rich tapestry"}
     assert writing.decided(writing.scan(PLAIN)) == []
+
+
+def test_a_line_a_rewrite_must_keep_is_never_a_finding():
+    check = "- uv run pytest -q tests/a.py tests/b.py tests/c.py and then run the console tests with npm test in the console directory and check that every one passes with no skipped test at all"
+    closes = "Closes #12 with a note that runs on for well over twenty five words in all so that the scanner counts it as a sentence that is too long for it"
+    issue = f"Add the export.\n\nPaths: src/a\n\n## Acceptance checks\n\n{check}\n\n## Notes\n\n{closes}\n"
+
+    assert len(writing.decided(writing.scan(issue))) == 2, "the scanner counts both as long sentences"
+    assert writing.read_back_lines(issue) == {3, 7, 11}
+    assert writing.findings(issue) == []
+    assert [hit["match"] for hit in writing.findings(issue + "\nIt is a robust export.\n")] == ["robust"]
+
+
+def test_this_products_own_name_is_not_a_finding_and_a_rewrite_must_keep_it():
+    named = "The meta-harness opened the pull request. The harness server ran 3 checks."
+
+    assert "harness" in {hit["match"] for hit in writing.scan(named)["hits"] if hit.get("decides")}
+    assert writing.decided(writing.scan(named)) == []
+    # Beside a real finding, only that one counts, and a rewrite that renames the product is dropped.
+    sloppy = named + " It is a robust fix."
+    assert [hit["match"] for hit in writing.decided(writing.scan(sloppy))] == ["robust"]
+    assert writing.lost(sloppy, named + " It is a fix.") == ""
+    assert "name" in writing.lost(sloppy, "The meta-tool opened the pull request. The harness server ran 3 checks.")
+
+
+async def test_a_text_that_only_names_the_product_is_posted_with_no_rewrite():
+    asked: list = []
+
+    outcome = await writing.check("The meta-harness merged it.", _gateway("The tool merged it.", asked=asked))
+
+    assert (outcome.text, outcome.findings, outcome.rewritten) == ("The meta-harness merged it.", 0, False)
+    assert asked == []
 
 
 def test_a_rewrite_must_keep_headings_links_code_numbers_and_the_lines_the_meta_harness_reads():
@@ -96,6 +129,45 @@ async def test_a_rewrite_that_fails_its_checks_is_dropped_and_the_original_is_po
     assert outcome.text == SLOPPY and not outcome.kept and reason in outcome.reason
 
 
+def test_a_long_sentence_finding_quotes_its_sentence_to_the_model_that_rewrites_it():
+    long_one = (
+        "- **Tests (`GoalPlan.test.tsx`):** one each for the open issues offered, an entry the list lacks "
+        "refused, and typing still open when the list cannot be read."
+    )
+    other = (
+        "The draft form now offers the open issues of the goal, and it refuses an entry that the list of "
+        "issues lacks, and it says so in an error under the field."
+    )
+    text = f"A short one. {long_one} I added an argument.\n\nThis is robust.\n\n{other} {other}"
+    hits = writing.findings(text)
+    assert [hit["match"][:11] for hit in hits] == ["sentence of", "robust", "sentence of", "sentence of"]
+
+    named = writing.long_sentences(text, hits)
+    assert named == {0: long_one, 2: other, 3: other}, "each finding gets a sentence of its own, by word count"
+    prompt = writing._prompt(text, hits)
+    assert f'Fix: split it, or cut a clause. The sentence: "{long_one}"' in prompt
+    assert 'line 3: "robust" (excess vocabulary). Fix:' in prompt and prompt.count("The sentence:") == 3
+    # A finding whose line or count matches no sentence is still listed, without one.
+    stray = [{"line": 99, "match": "sentence of 40 words"}, {"line": 1, "match": "sentence of 90 words"}]
+    assert writing.long_sentences(text, stray) == {}
+    assert "25 words" in writing.REWRITE_SYSTEM_PROMPT
+
+
+def test_the_scanner_is_the_shipped_file_and_runs_with_none_of_this_process_environment(monkeypatch):
+    def stored(kind: str) -> dict:
+        return {"skills": {"no-ai-slop2": {"files": {"no-ai-slop-scan.py": "raise SystemExit(3)"}}}}
+
+    monkeypatch.setattr(config_store, "current_document", stored)
+    shipped = (skills.skills_dir() / "no-ai-slop2" / "no-ai-slop-scan.py").read_text(encoding="utf-8")
+    assert writing.scanner_source() == shipped, "a stored copy of the scanner is never what runs"
+
+    monkeypatch.setenv("GATEWAY_API_KEY", "a-key-the-scanner-must-not-see")
+    telling = 'import json, os\nprint(json.dumps({"hits": [], "seen": sorted(os.environ)}))'
+    seen = writing.scan("Some text.", telling)["seen"]
+    assert "GATEWAY_API_KEY" not in seen and "PATH" not in seen
+    assert writing.decided(writing.scan("Café costs €5, naïvely.")) == [], "text beyond ASCII still scans"
+
+
 async def test_a_scanner_that_cannot_run_or_a_missing_gateway_leaves_the_original(monkeypatch):
     monkeypatch.delenv("GATEWAY_API_KEY")
     no_gateway = await writing.check(SLOPPY)
@@ -133,7 +205,13 @@ async def test_one_posts_texts_are_recorded_together_with_only_the_changed_ones_
 def test_the_settings_are_checked_and_a_bad_one_is_named(monkeypatch):
     writing.check_settings()
     good = dict(writing.settings())
-    for key, bad in (("model", ""), ("scanner", None), ("max_response_tokens", 0)):
+    for key, bad in (
+        ("model", ""),
+        ("scanner", None),
+        ("max_response_tokens", 0),
+        ("names", "harness"),
+        ("names", [""]),
+    ):
         monkeypatch.setattr(writing, "settings", lambda key=key, bad=bad: {**good, key: bad})
         with pytest.raises(RuntimeError, match=f"writing_pass.{key}"):
             writing.check_settings()

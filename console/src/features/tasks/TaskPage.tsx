@@ -22,6 +22,7 @@ import { Plan } from "./Plan";
 import { SteerBox } from "./SteerBox";
 import { CompareAttempts, RunAttempts } from "./Attempts";
 import { Changes } from "./Changes";
+import { OpeningSummaryBadge, PullSummaries } from "./PullSummaries";
 import { provenanceFacts } from "./Provenance";
 import { SpendLine, spendOf } from "./Spend";
 import { PROVENANCE_EVENT, RunProvenance } from "./RunProvenance";
@@ -344,7 +345,7 @@ export function TaskPage() {
             ["Repo", <Code>{task.repo}</Code>],
             ["Issue", <IssueLink issueRef={task.external_ref} />],
             ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
-            ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
+            ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text><OpeningSummaryBadge events={events} /></Group> : <Text size="sm" c="dimmed">None yet</Text>],
             ...provenanceFacts(events),
             ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
             ["Run provenance", <RunProvenance events={events} />],
@@ -394,7 +395,10 @@ export function TaskPage() {
       ) : tab === "attempts" ? (
         <CompareAttempts taskId={task.id} />
       ) : tab === "changes" && task.pr_url ? (
-        <Changes taskId={task.id} />
+        <>
+          <PullSummaries events={events} />
+          <Changes taskId={task.id} />
+        </>
       ) : tab === "timeline" ? (
         <TaskPath
           events={events}
@@ -402,7 +406,7 @@ export function TaskPage() {
           usd={spent}
           pick={onlyRun}
           onOpenRun={(run) => setParams({ tab: "terminal", run })}
-          onOpenReviews={() => setParams({ tab: "reviews" })}
+          onOpenReviews={(round) => setParams(round !== undefined ? { tab: "reviews", round: String(round) } : { tab: "reviews" })}
           onPickRun={(run) => void api.runEvents(run).then((found) => setEvents((current) => merge(current, found)), () => undefined)}
         />
       ) : (

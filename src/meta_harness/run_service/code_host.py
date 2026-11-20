@@ -31,12 +31,13 @@ import asyncio
 import os
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
 from pathlib import Path
 from typing import Any
 
+from meta_harness import outbound
 from meta_harness.github_app import GitHubAppError, GitHubApps, git_auth_env
 from meta_harness.run_service.provenance import Provenance, commit_message, stamp
 
@@ -53,6 +54,11 @@ OPEN_PULL_REQUEST = {"pull_requests": "write", "issues": "write"}
 READ_CHECKS = {"checks": "read", "statuses": "read"}
 REVIEW = {"pull_requests": "write"}
 READ_PULL_REQUEST = {"pull_requests": "read"}
+READ_ACTIONS = {"actions": "read"}
+# Re-running a pull request's failed GitHub Actions jobs, once, before a fix run is sent for them.
+WRITE_ACTIONS = {"actions": "write"}
+# A check run's GitHub Actions workflow run, from its details link.
+ACTIONS_RUN = re.compile(r"/actions/runs/(\d+)")
 # A check run that ends with one of these did not fail.
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
 PR_URL_PATTERN = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)$")
@@ -87,6 +93,8 @@ class Published:
     files: list[str]
     pr_url: str
     created: bool
+    # The files the run created that carry a provenance header (run_service/provenance_headers.py).
+    stamped: list[str] = field(default_factory=list)
 
 
 @cache
@@ -269,6 +277,7 @@ async def publish(
     body: str | Callable[[list[str]], Awaitable[str]],
     commit_message: str,
     pr_record: Path,
+    headers: Callable[[list[str]], Awaitable[list[str]]] | None = None,
 ) -> Published | None:
     """Commits whatever pi changed onto a new branch, pushes it, and opens the pull request.
 
@@ -278,6 +287,12 @@ async def publish(
     branch changes: it is called only when a pull request is opened, so a
     description that costs something to write is not written for a push to
     a pull request already open.
+    headers, when given, is called before the commit with the files the run
+    created (`created_files`); it may add a provenance header to them, and
+    returns the files that carry one, which the result's `stamped` lists.
+    A retried attempt that finds the earlier attempt's commit, and nothing
+    left to commit, hands it the files that commit created instead
+    (`committed_files`), so `stamped` still lists them.
     Every git command names git_dir and the workspace outright, so the
     `.git` file pi could rewrite in the workspace decides nothing.
     """
@@ -287,6 +302,15 @@ async def publish(
     if current != branch:
         await _git(git_dir, workspace, "checkout", "--quiet", "-B", branch)
     await _git(git_dir, workspace, "add", "--all")
+    stamped: list[str] = []
+    if headers is not None:
+        created = await created_files(git_dir, workspace)
+        if not created and not await _git(git_dir, workspace, "status", "--porcelain"):
+            created = await committed_files(git_dir, workspace, commit_message)
+        if created:
+            stamped = await headers(created)
+        if stamped:
+            await _git(git_dir, workspace, "add", "--all")
     if await _git(git_dir, workspace, "status", "--porcelain"):
         await _git(
             git_dir,
@@ -324,15 +348,17 @@ async def publish(
             # sections earlier runs added; only the head it names moves to the new commit.
             record = _HEAD_LINE.sub(lambda _: f"head: {branch} at {commit}", existing_record, count=1)
         pr_record.write_text(record, encoding="utf-8")
-        return Published(branch, base, commit, files, f"file://{pr_record}", created)
+        return Published(branch, base, commit, files, f"file://{pr_record}", created, stamped=stamped)
     owner = repo.split("/", 1)[0]
     existing = await _github(
         repo, OPEN_PULL_REQUEST, "GET", f"/repos/{repo}/pulls", params={"head": f"{owner}:{branch}", "state": "open"}
     )
     if existing:
-        return Published(branch, base, commit, files, existing[0]["html_url"], False)
+        return Published(branch, base, commit, files, existing[0]["html_url"], False, stamped=stamped)
     if not isinstance(body, str):
         body = await body(files)
+    outbound.require(title, "a pull request's title", outbound.GITHUB, title=True)
+    outbound.require(body, "a pull request's description", outbound.GITHUB)
     pull = await _github(
         repo,
         OPEN_PULL_REQUEST,
@@ -344,7 +370,45 @@ async def publish(
     await _github(
         repo, OPEN_PULL_REQUEST, "POST", f"/repos/{repo}/issues/{pull['number']}/labels", json={"labels": [PR_LABEL]}
     )
-    return Published(branch, base, commit, files, pull["html_url"], True)
+    return Published(branch, base, commit, files, pull["html_url"], True, stamped=stamped)
+
+
+async def created_files(git_dir: Path, workspace: Path) -> list[str]:
+    """The files the run created, from what is staged: added against HEAD, with a file the run only moved left
+    out, and, while a merge is in progress, the files the merged branch brought too."""
+    staged = await _git(
+        git_dir, workspace, "diff", "--cached", "--name-only", "--diff-filter=A", "--find-renames", "-z", "HEAD"
+    )
+    added = [name for name in staged.split("\0") if name]
+    if added and (git_dir / "MERGE_HEAD").is_file():
+        merged = await _git(git_dir, workspace, "ls-tree", "-r", "-z", "--name-only", "MERGE_HEAD")
+        brought = set(merged.split("\0"))
+        added = [name for name in added if name not in brought]
+    return added
+
+
+async def committed_files(git_dir: Path, workspace: Path, commit_message: str) -> list[str]:
+    """The files an earlier attempt of this publish created, when HEAD is the commit it made (its author and
+    message are this publish's); else none. Like `created_files`: added against the first parent, a moved file
+    left out, and, for a merge, the files another parent brought too."""
+    made = await _git(git_dir, workspace, "log", "-1", "--format=%an%n%B", "HEAD")
+    author, _, message = made.partition("\n")
+    if author != COMMIT_NAME or message.strip() != commit_message.strip():
+        return []
+    parents = (await _git(git_dir, workspace, "rev-list", "--parents", "-n", "1", "HEAD")).split()[1:]
+    if not parents:
+        return []
+    changed = await _git(
+        git_dir, workspace, "diff", "--name-only", "--diff-filter=A", "--find-renames", "-z", parents[0], "HEAD"
+    )
+    added = [name for name in changed.split("\0") if name]
+    for other in parents[1:]:
+        if not added:
+            break
+        merged = await _git(git_dir, workspace, "ls-tree", "-r", "-z", "--name-only", other)
+        brought = set(merged.split("\0"))
+        added = [name for name in added if name not in brought]
+    return added
 
 
 def pr_number(pr_url: str) -> tuple[str, int]:
@@ -362,6 +426,8 @@ class CheckRun:
     status: str
     conclusion: str | None
     summary: str
+    # The GitHub Actions workflow run behind the check, when it is one: what a re-run of its failed jobs names.
+    actions_run: int | None = None
 
 
 async def check_runs(repo: str, sha: str) -> list[CheckRun]:
@@ -373,6 +439,7 @@ async def check_runs(repo: str, sha: str) -> list[CheckRun]:
             status=run["status"],
             conclusion=run.get("conclusion"),
             summary=_check_summary(run.get("output") or {}),
+            actions_run=_actions_run(run.get("details_url") or run.get("html_url") or ""),
         )
         for run in runs.get("check_runs", [])
     ]
@@ -388,6 +455,22 @@ async def check_runs(repo: str, sha: str) -> list[CheckRun]:
             )
         )
     return found
+
+
+def _actions_run(url: str) -> int | None:
+    found = ACTIONS_RUN.search(url)
+    return int(found[1]) if found else None
+
+
+async def run_attempt(repo: str, run_id: int) -> int:
+    """Which attempt a GitHub Actions workflow run is on: 1 until its jobs are re-run."""
+    run = await _github(repo, READ_ACTIONS, "GET", f"/repos/{repo}/actions/runs/{run_id}")
+    return int(run.get("run_attempt") or 1)
+
+
+async def rerun_failed_jobs(repo: str, run_id: int) -> None:
+    """Re-run a GitHub Actions workflow run's failed jobs, as Re-run failed jobs on GitHub does."""
+    await _github(repo, WRITE_ACTIONS, "POST", f"/repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs")
 
 
 def _seconds(started: str | None, completed: str | None) -> int | None:
@@ -514,6 +597,10 @@ async def post_review(
     with one.
     """
 
+    outbound.require(body, "a review's body", outbound.GITHUB)
+    for placed_comment in comments:
+        outbound.require(placed_comment["body"], "a review's inline comment", outbound.GITHUB)
+
     def stamped(text: str) -> str:
         return stamp(text, provenance) if provenance else text
 
@@ -571,6 +658,7 @@ async def comment_on_lines(
 ) -> str:
     """Posts a review comment on lines of the pull request's head commit (the new side), and returns its URL.
     With provenance, the comment ends with its provenance line."""
+    outbound.require(body, "a comment on a pull request's lines", outbound.GITHUB)
     body = stamp(body, provenance) if provenance else body
     payload: dict = {"commit_id": head_sha, "path": path, "line": line, "side": "RIGHT", "body": body}
     if start_line is not None and start_line < line:
@@ -582,6 +670,7 @@ async def comment_on_lines(
 async def comment(repo: str, number: int, body: str, provenance: Provenance | None = None) -> str:
     """Posts a comment on the pull request's conversation, and returns its URL. With provenance, the comment
     ends with its provenance line."""
+    outbound.require(body, "a comment on a pull request", outbound.GITHUB)
     body = stamp(body, provenance) if provenance else body
     posted = await _github(repo, REVIEW, "POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})
     return str((posted or {}).get("html_url", ""))
@@ -769,27 +858,42 @@ async def _merged_into(repo: str, base: str, commit: str | None) -> bool:
     return bool(found) and found == await _run("git", f"--git-dir={repo}", "rev-parse", commit, check=False)
 
 
-async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr_record: Path) -> None:
+async def description(repo: str, pr_url: str, pr_record: Path) -> str:
+    """The pull request's description as the code host holds it now. A local repo's pull request is its record
+    file. Read only."""
+    if is_local(repo):
+        return pr_record.read_text(encoding="utf-8") if pr_record.exists() else ""
+    owner_repo, number = pr_number(pr_url)
+    pull = await _github(owner_repo, READ_PULL_REQUEST, "GET", f"/repos/{owner_repo}/pulls/{number}") or {}
+    return str(pull.get("body") or "").replace("\r\n", "\n")
+
+
+async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr_record: Path) -> str:
     """Adds a section to the pull request's description, once: a retry finds its heading there and adds
-    nothing. A local repo's pull request is its record file."""
+    nothing. Returns the description as it then stands, so a caller can read back the section it holds, which
+    is an earlier attempt's when one added it. A local repo's pull request is its record file."""
+    outbound.require(text, "a section added to a pull request's description", outbound.GITHUB)
     section = f"\n\n## {heading}\n\n{text.strip()}\n"
     if is_local(repo):
         current = pr_record.read_text(encoding="utf-8") if pr_record.exists() else ""
         if f"## {heading}\n" not in current:
-            pr_record.write_text(current.rstrip() + section, encoding="utf-8")
-        return
+            current = current.rstrip() + section
+            pr_record.write_text(current, encoding="utf-8")
+        return current
     owner_repo, number = pr_number(pr_url)
     pull = await _github(owner_repo, READ_PULL_REQUEST, "GET", f"/repos/{owner_repo}/pulls/{number}") or {}
     current = str(pull.get("body") or "")
     if f"## {heading}\n" in current:
-        return
+        return current.replace("\r\n", "\n")
+    current = current.rstrip() + section
     await _github(
         owner_repo,
         OPEN_PULL_REQUEST,
         "PATCH",
         f"/repos/{owner_repo}/pulls/{number}",
-        json={"body": current.rstrip() + section},
+        json={"body": current},
     )
+    return current.replace("\r\n", "\n")
 
 
 async def merge_local(repo: str, base: str, head_sha: str) -> tuple[str, str, str, str]:
@@ -839,7 +943,7 @@ def refuse_nested_repos(workspace: Path) -> None:
         if Path(folder) != workspace and ".git" in (*dirs, *files):
             where = Path(folder).relative_to(workspace)
             raise CodeHostError(
-                f"the run left a git repository inside its workspace, at {where}; the control plane runs no git "
+                f"the run left a git repository inside its workspace, at {where}. The control plane runs no git "
                 "command over a workspace that holds one, because git would run what that repository's "
                 "configuration names. Retry the task; if the task needs a second repository, clone it outside "
                 "the workspace.",

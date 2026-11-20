@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from meta_harness import retrying
+from meta_harness.outbound import rules as writing_rules
 from meta_harness.planner import updates
 from meta_harness.tasks import store as task_store
 
@@ -86,7 +87,7 @@ async def write(
     body = {
         "engine": engine,
         "model": name,
-        "system_prompt": PROMPT,
+        "system_prompt": writing_rules.after(PROMPT),
         "prompt": f"--- tasks ---\n{json.dumps(shown, indent=1)}\n--- end of tasks ---",
         "response_schema": SCHEMA,
         "max_response_tokens": 60 * len(batch) + 200,

@@ -135,6 +135,7 @@ async def test_a_fix_run_pushed_to_an_open_pull_request_adds_its_provenance_once
 
     monkeypatch.setattr(activities.code_host, "publish", publish)
     monkeypatch.setattr(activities.sandbox, "task_dir_for", lambda ref: tmp_path)
+    monkeypatch.setattr(activities.events, "client", lambda: _client([]))
     made = run_provenance.build(ORIGIN, "t-1:run-3", "fix", "harness:a/b:c", "fix-v1", follows="t-1:run-2")
     request = PublishRequest(
         run_id="t-1:run-3",
@@ -181,6 +182,7 @@ async def test_a_local_pull_request_keeps_every_runs_provenance_across_fix_runs_
     activity retry would. Each push keeps the description, so every run's section stays in it once."""
     origin = _bare_repo(tmp_path)
     monkeypatch.setattr(activities.sandbox, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(activities.events, "client", lambda: _client([]))
     environment = ActivityEnvironment()
     environment.info = dataclasses.replace(environment.info, workflow_id="t-1")
     ref = activities.ref_for("t-1")
