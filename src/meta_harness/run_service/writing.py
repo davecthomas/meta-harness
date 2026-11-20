@@ -126,7 +126,7 @@ def check_settings() -> None:
         raise RuntimeError(f"{CONFIG_PATH.name}: no writing_pass settings ({err})") from err
     if not isinstance(config, dict):
         raise RuntimeError(f"{CONFIG_PATH.name}: writing_pass must be an object")
-    for key in ("skill", "scanner", "engine", "model"):
+    for key in ("skill", "scanner", "rules", "engine", "model"):
         if not isinstance(config.get(key), str) or not config[key]:
             raise RuntimeError(f"{CONFIG_PATH.name}: writing_pass.{key} must name one")
     tokens = config.get("max_response_tokens")
@@ -248,6 +248,9 @@ async def rewrite(
     text: str, hits: list[dict[str, Any]], transport: httpx.AsyncBaseTransport | None = None
 ) -> tuple[str, str]:
     """One model call that rewrites text to clear the findings. Returns (the rewrite, what the call cost)."""
+    # Here, not at the top: the rules module reads this one's settings.
+    from meta_harness.outbound import rules as writing_rules
+
     config = settings()
     url = os.environ.get("GATEWAY_URL", "").rstrip("/")
     key = os.environ.get("GATEWAY_API_KEY", "")
@@ -256,7 +259,7 @@ async def rewrite(
     body = {
         "engine": config["engine"],
         "model": config["model"],
-        "system_prompt": REWRITE_SYSTEM_PROMPT,
+        "system_prompt": writing_rules.after(REWRITE_SYSTEM_PROMPT),
         "prompt": _prompt(text, hits),
         "response_schema": REWRITE_SCHEMA,
         "max_response_tokens": int(config["max_response_tokens"]),

@@ -61,8 +61,8 @@ class Redact(Stage):
 
 
 class Deslop(Stage):
-    """The writing pass, for text a model wrote. Titles are scanned and never rewritten: a rewrite is checked
-    against a text's headings, links and numbers, which a title has too few of to hold it to."""
+    """The writing pass, for text a model wrote. A title skips it: a rewrite is checked against a text's
+    headings, links and numbers, which a title has too few of to hold it to."""
 
     name = "deslop"
 

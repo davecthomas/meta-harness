@@ -29,6 +29,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from meta_harness import db, retrying
+from meta_harness.outbound import rules as writing_rules
 from meta_harness.planner import planning, plans, updates, voice
 
 log = logging.getLogger("meta_harness.planner")
@@ -108,7 +109,7 @@ async def assess(
     body = {
         "engine": engine,
         "model": name,
-        "system_prompt": f"{ASSESS_PROMPT} {voice.instructions(planning.settings(), 'update')}",
+        "system_prompt": writing_rules.after(f"{ASSESS_PROMPT} {voice.instructions(planning.settings(), 'update')}"),
         "prompt": f"--- plan ---\n{json.dumps(shown, indent=1)}\n--- end of plan ---",
         "response_schema": ASSESS_SCHEMA,
         "max_response_tokens": 800,

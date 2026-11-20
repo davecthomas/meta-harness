@@ -55,6 +55,7 @@ from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
 from meta_harness import outbound
+from meta_harness.outbound import rules as writing_rules
 from meta_harness.run_service import (
     code_host,
     events,
@@ -154,7 +155,9 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         title = _title_from(text)
     if request.task_type == "plan":
         template = (PROMPTS_DIR / f"{PLAN_TEMPLATE}.txt").read_text(encoding="utf-8")
-        prompt = Template(template).safe_substitute(repo=repo, title=title, description=description)
+        prompt = Template(template).safe_substitute(
+            repo=repo, title=title, description=description, writing_rules=writing_rules.block()
+        )
         activity.logger.info("prepare: a planning task in %s", repo)
         return PreparedRun(
             template=PLAN_TEMPLATE,
@@ -174,6 +177,7 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         description=description,
         checks=listed,
         paths=code_host.paths_rule(description, "task"),
+        writing_rules=writing_rules.block(),
     )
     activity.logger.info(
         "prepare: a repo task in %s%s, %d acceptance checks",
@@ -1169,6 +1173,7 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
         "previous": _previous(request),
         "checks_rule": _checks_rule(request),
         "pr_description": await _pr_description(request) if request.kind == "review" else "",
+        "writing_rules": writing_rules.block(),
     }
     name = loop_template(request.kind)
     template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")

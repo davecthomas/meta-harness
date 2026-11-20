@@ -30,6 +30,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from meta_harness import db, retrying
+from meta_harness.outbound import rules as writing_rules
 from meta_harness.planner import drafting, planning, plans, splits, store, voice
 from meta_harness.supervisor import ledger
 
@@ -392,7 +393,7 @@ async def write_update(
     body = {
         "engine": engine,
         "model": model,
-        "system_prompt": f"{SYSTEM_PROMPT} {voice.instructions(planning.settings(), 'update')}",
+        "system_prompt": writing_rules.after(f"{SYSTEM_PROMPT} {voice.instructions(planning.settings(), 'update')}"),
         "prompt": prompt,
         "response_schema": SCHEMA,
         "max_response_tokens": int(config["max_response_tokens"]),

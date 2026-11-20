@@ -1306,14 +1306,30 @@ puffery, "not X but Y" framing, long sentences, runs of em dashes. It applies
 to text written from now on; nothing already posted is changed. Code, diffs,
 quoted text, log output and check output are never touched.
 
-It is done twice. First by the run: each profile that writes for people
-names the `no-ai-slop2` skill, and its prompt (`repo-task-v1`, `fix-v1`,
-`review-v4`, `plan-v1`) tells the run to apply the skill to its summary, its
+It is done three times. First in the prompt: every prompt whose answer a
+person reads ends with the same short block of writing rules
+(`src/meta_harness/outbound/rules.py`), so the text comes out clean and the
+rewrite below rarely runs. That is each run prompt above a summary, a review
+or a plan's issues (`repo-task-v1`, `fix-v1`, `review-v4`, `plan-v1`), and
+each model call the control plane makes itself through the HTTP Gateway's
+`/v1/structured`: a goal's updates, a plan's suggested fixes, a goal's draft
+and name, an issue's sizing, a split's parts, a task's name, a failure's
+diagnosis and the writing pass's own rewrite. The block is a file of the
+writing skill, `WRITING-RULES.md`, named by `config/planner.json`'s
+`writing_pass.rules`, so the rules a model is told and the rules the scanner
+holds it to are kept together. It is read from the active `skills`
+configuration, where an admin may change it, and from the shipped file when
+that skill does not hold it or the configuration cannot be read. A test
+fails a `/v1/structured` call whose system prompt leaves the block out.
+
+Then by the run: each profile that writes for people
+names the `no-ai-slop2` skill, and its prompt tells the run to apply the
+skill to its summary, its
 review or its issue drafts before it finishes. A task or review run can run
 the skill's scanner with `python3`. A planning run cannot: its profile reads
 only, so it applies the skill's rules by reading them.
 
-Then by the control plane, in the writing pass
+Last by the control plane, in the writing pass
 (`src/meta_harness/run_service/writing.py`), which needs no run:
 
 | Text | Where the pass runs |
@@ -1346,7 +1362,8 @@ cost, and the original and the rewrite of each text that changed. The task's
 Timeline shows it as a note on the step it happened in. A rewrite's cost is a model cost of kind
 `writing`, of the task or the plan's goal. The task policy's
 `writing_pass: false` turns the pass off, with a switch on the Task policy
-page; runs are still told to apply the skill. `writing_pass`'s settings are
+page; prompts still carry the writing rules, and runs are still told to
+apply the skill. `writing_pass`'s settings, and the rules file they name, are
 checked when the planner and the run service's worker start.
 
 Not built: the pass on merge-check notes, which are a task's status reason
