@@ -277,6 +277,12 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 			if (!run) return send(response, 404, { error: "No run with that id." });
 			return send(response, 200, { run_id: run.run_id, status: run.status, ...run.usage });
 		}
+		case "GET /record": {
+			const run = harness.getRun(url.searchParams.get("run_id"));
+			const record = harness.getRecord(url.searchParams.get("run_id"));
+			if (!run || !record) return send(response, 404, { error: "No run with that id." });
+			return send(response, 200, { run_id: run.run_id, status: run.status, ...record });
+		}
 		default:
 			return send(response, 404, { error: `No route ${key}.` });
 	}
