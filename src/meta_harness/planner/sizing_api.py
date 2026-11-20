@@ -1,13 +1,16 @@
 """The held-issue routes of the planner's API: an operator's answer to an issue the sweep held (sizing.py).
 
     POST /v1/goals/{id}/issues/run-anyway   {ref}: make the held issue a task whatever its size and gaps
+    POST /v1/goals/{id}/issues/split-drafts {ref}: the parts a model drafts for the held issue, to edit
     POST /v1/goals/{id}/issues/split        {ref, issues: [{title, body}]}: create the smaller issues
 
 A split creates each issue in the held issue's repo with the goal's label, so
 the goal's next sweep takes them in; a goal with no label holds them by ref
-instead. Each one's body names its paths on a `Paths:` line. The held issue
-stays held, saying what it was split into, until it is closed: the planner
-never closes an issue a person wrote. The split is recorded on its link
+instead. Each one is a complete issue (planner/splits.py): its body has
+acceptance checks and a `Paths:` line, or the split is refused naming the part
+and what it lacks, and it ends with a `Split from` line. The held issue gets a
+comment naming its parts, needs nothing more from anyone, and closes when its
+parts are done. The split is recorded on its link
 (split_into), with its issue_split event (and issue_added for a labelless
 goal) even when GitHub refuses an issue partway: what was created is the
 split. So later sweeps keep that reason, and an issue split once is
@@ -26,9 +29,8 @@ from pydantic import BaseModel, Field
 
 from meta_harness import db
 from meta_harness.trackers.base import TrackerError
-from meta_harness.planner import sizing, store
+from meta_harness.planner import splits, store
 from meta_harness.planner.sweep import goal_tracker
-from meta_harness.run_service.code_host import issue_paths
 
 MAX_SPLIT_ISSUES = 20
 
@@ -127,11 +129,15 @@ def register(
     async def split(goal_id: str, body: SplitIn, who: str = Depends(operator)) -> dict:
         """Create the smaller issues a held one splits into, each with the goal's label and a `Paths:` line."""
         goal, link = await held_open(goal_id, body.ref)
-        pathless = [issue.title for issue in body.issues if not issue_paths(issue.body)]
-        if pathless:
+        short = [
+            f"{issue.title}: needs {' and '.join(lack)}"
+            for issue in body.issues
+            if (lack := splits.lacking(issue.body))
+        ]
+        if short:
             raise HTTPException(
                 status_code=422,
-                detail=f"each issue names its paths on a Paths: line; these do not: {'; '.join(pathless)}",
+                detail=f"each part must be a complete issue. Add what each lacks, then split again: {'; '.join(short)}",
             )
         repo, label = link["repo"], goal["label"]
 
@@ -143,7 +149,7 @@ def register(
             with db.connect(autocommit=True) as conn:
                 # A goal with no label takes the new issues by ref, as an operator's pick.
                 added = [] if label or not created else store.add_refs(conn, goal_id, [(ref, repo) for ref in created])
-                store.record_split(conn, body.ref, created, sizing.split_reason(created) if created else None)
+                store.record_split(conn, body.ref, created, splits.reason(created) if created else None)
                 return added
 
         if link.get("split_into") is not None or not await asyncio.to_thread(claim):
@@ -170,7 +176,7 @@ def register(
                 await goal_tracker(tracker, goal).ensure_label(repo, label)
             for issue in body.issues:
                 made = await goal_tracker(tracker, goal).create_issue(
-                    repo, issue.title.strip(), issue.body, [label] if label else []
+                    repo, issue.title.strip(), splits.with_origin(issue.body, body.ref), [label] if label else []
                 )
                 created.append(made.ref)
         except TrackerError as err:
@@ -183,5 +189,27 @@ def register(
             raise
 
         audit(created, await asyncio.to_thread(record, created))
+        await splits.announce(goal_tracker(tracker, goal), body.ref, created)
         sweep_if_active(goal)
         return {"goal_id": goal_id, "ref": body.ref, "created": created}
+
+    @app.post("/v1/goals/{goal_id}/issues/split-drafts")
+    async def split_drafts(goal_id: str, body: HeldIn, who: str = Depends(operator)) -> dict:
+        """The parts of a held issue as a model drafts them, each a complete issue to edit before splitting.
+        502 when the issue cannot be read or the model cannot draft them, saying what to do."""
+        goal, link = await held_open(goal_id, body.ref)
+        try:
+            issue = await goal_tracker(tracker, goal).read(body.ref)
+            titles = list(((link.get("sizing") or {}).get("split")) or [])
+            drafts, model, cost = await splits.draft(issue, titles)
+        except TrackerError as err:
+            raise HTTPException(status_code=502, detail=f"could not read {body.ref}: {err}. Try Split again") from err
+        except splits.SplitError as err:
+            raise HTTPException(status_code=502, detail=str(err)) from err
+        events.emit(
+            "split_drafted",
+            {"goal_id": goal_id, "ref": body.ref, "parts": len(drafts), "model": model, "usd_cost": cost},
+            actor=who,
+            tags={"goal_id": goal_id},
+        )
+        return {"ref": body.ref, "drafts": drafts}

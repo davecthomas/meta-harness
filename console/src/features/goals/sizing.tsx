@@ -3,8 +3,8 @@
 // (src/meta_harness/planner/sizing.py): a large one is held to split, and one missing something runs with
 // the gap shown, unless the goal is strict.
 
-import { useState } from "react";
-import { Alert, Badge, Button, Group, Modal, Stack, Text, TextInput, Textarea, Tooltip } from "@mantine/core";
+import { useEffect, useState } from "react";
+import { Alert, Badge, Button, Group, Loader, Modal, Stack, Text, TextInput, Textarea, Tooltip } from "@mantine/core";
 import { IconPlayerPlay, IconPlus, IconScissors, IconTrash } from "@tabler/icons-react";
 import { api, type Goal, type IssueGap, type IssueProgress, type IssueSize, type SplitDraft } from "../../api";
 import { InlineSwitch } from "./InlineEdit";
@@ -17,6 +17,8 @@ const GAP_WORDS: Record<IssueGap, string> = {
 const SIZE_COLORS: Record<IssueSize, string> = { small: "teal", medium: "blue", large: "orange" };
 // A body names its paths on a line such as "Paths: console/src, docs", as the planner reads it.
 const PATHS_LINE = /^\s*paths:\s*\S/im;
+// An item under a "## Acceptance checks" heading, as the planner reads checks from an issue.
+const CHECK_ITEM = /^##\s+acceptance checks\s*$(?:\n(?!#).*)*?\n\s*[-*]\s+\S/im;
 
 // What an issue lacks, in words: "Missing acceptance checks and a Paths: line".
 export function gapText(missing: IssueGap[] | undefined): string | null {
@@ -43,7 +45,8 @@ export function splitDrafts(issue: IssueProgress): SplitDraft[] {
   const titles = issue.split?.length ? issue.split : [issue.title ?? shortRef(issue.ref)];
   const paths = issue.paths?.length ? issue.paths.join(", ") : "";
   const checks = issue.checks_named?.length ? `\n\n## Acceptance checks\n\n${issue.checks_named.map((c) => `- ${c}`).join("\n")}` : "";
-  return titles.map((title) => ({ title, body: `Split from ${shortRef(issue.ref)}.\n\nPaths: ${paths}${checks}` }));
+  const checkList = checks || "\n\n## Acceptance checks\n\n- ";
+  return titles.map((title) => ({ title, body: `What to change.\n\n## Outcome\n\nWhat a reviewer sees when it is done.\n\nPaths: ${paths}${checkList}` }));
 }
 
 // The suggested issues as drafts to edit, add to or drop, then create. Each carries the goal's label and needs a
@@ -57,11 +60,29 @@ export function SplitModal(props: {
   onSplit: (created: string[]) => void;
 }) {
   const [drafts, setDrafts] = useState<SplitDraft[]>(() => splitDrafts(props.issue));
+  // The planner writes each part as a complete issue (what to change, its outcome, paths and checks); until it
+  // answers, and if it cannot, the outline from the issue's suggested split stands, to fill in by hand.
+  const [drafting, setDrafting] = useState(true);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.splitDrafts(props.goalId, props.issue.ref).then(
+      (found) => live && found.drafts.length > 0 && setDrafts(found.drafts),
+      (err) => live && setDraftError(err instanceof Error ? err.message : String(err)),
+    ).finally(() => live && setDrafting(false));
+    return () => {
+      live = false;
+    };
+  }, [props.goalId, props.issue.ref]);
   const set = (n: number, fields: Partial<SplitDraft>) => setDrafts(drafts.map((d, i) => (i === n ? { ...d, ...fields } : d)));
-  const pathless = (d: SplitDraft) => !PATHS_LINE.test(d.body);
-  const ok = drafts.length > 0 && drafts.every((d) => d.title.trim() && !pathless(d));
+  // What a part lacks to be an issue the planner runs, as the split itself checks.
+  const lacks = (d: SplitDraft): string | null => {
+    const missing = [!PATHS_LINE.test(d.body) && "a Paths: line", !CHECK_ITEM.test(d.body) && "an acceptance check under ## Acceptance checks"].filter(Boolean);
+    return missing.length ? `Needs ${missing.join(" and ")}` : null;
+  };
+  const ok = !drafting && drafts.length > 0 && drafts.every((d) => d.title.trim() && !lacks(d));
 
   async function create() {
     setSaving(true);
@@ -83,8 +104,10 @@ export function SplitModal(props: {
         <Text size="sm" c="dimmed">
           Each issue is created in {props.issue.repo}
           {props.label ? <> with the label <Badge variant="outline" tt="none" radius="sm">{props.label}</Badge>, so the goal takes it in</> : ", and the goal takes it in"}.
-          The issue you split stays held until you close it.
+          The issue you split runs as these parts, and closes itself once they are all done.
         </Text>
+        {drafting && <Group gap="xs"><Loader size="xs" /><Text size="sm">The planner is drafting each part…</Text></Group>}
+        {draftError && <Alert color="orange" variant="light">The planner could not draft the parts: {draftError}. Fill each one in below.</Alert>}
         {drafts.map((d, n) => (
           <Stack key={n} gap={6} data-testid={`split-draft-${n}`}>
             <Group align="flex-end" gap="xs">
@@ -99,14 +122,14 @@ export function SplitModal(props: {
               minRows={4}
               maxRows={14}
               value={d.body}
-              error={pathless(d) ? "Name its paths on a Paths: line" : undefined}
+              error={drafting ? undefined : lacks(d) ?? undefined}
               onChange={(e) => set(n, { body: e.currentTarget.value })}
               styles={{ input: { fontFamily: "var(--mantine-font-family-monospace)", fontSize: 13 } }}
             />
           </Stack>
         ))}
         <Group justify="space-between">
-          <Button variant="default" leftSection={<IconPlus size={16} />} onClick={() => setDrafts([...drafts, { title: "", body: `Split from ${shortRef(props.issue.ref)}.\n\nPaths: ` }])}>
+          <Button variant="default" leftSection={<IconPlus size={16} />} onClick={() => setDrafts([...drafts, { title: "", body: `What to change.\n\n## Outcome\n\nWhat a reviewer sees when it is done.\n\nPaths: \n\n## Acceptance checks\n\n- \n` }])}>
             Add an issue
           </Button>
           <Group gap="xs">

@@ -176,7 +176,9 @@ def register(
         # In the tracker when asked, or when the goal's tracker is the only one there is to write to.
         tracked = getattr(writer, "scheme", "") != OWN and (track or kept is None)
         try:
-            await planning.approve(goal, writer if tracked or kept is None else kept, events, who, tracked)
+            await planning.approve(
+                goal, writer if tracked or kept is None else kept, events, who, tracked, originals=writer
+            )
         except planning.PlanError as err:
             code = 502 if str(err).startswith(planning.REFUSED) else 409
             raise HTTPException(status_code=code, detail=str(err)) from err

@@ -500,6 +500,21 @@ REGISTRY: list[EventType] = [
             ["goal_id", "version", "fixes", "model", "usd_cost"],
         ),
     ),
+    # A model drafted the parts of a held issue for an operator to edit before splitting it (planner/splits.py).
+    EventType(
+        "split_drafted",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "ref": {"type": "string"},
+                "parts": {"type": "integer"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "ref", "parts", "model", "usd_cost"],
+        ),
+    ),
     # The planner gave a goal's tasks their short names (planner/naming.py): one model call. goal_id is empty
     # for tasks of no goal.
     EventType(

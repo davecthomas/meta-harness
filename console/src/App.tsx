@@ -34,6 +34,7 @@ import { AdminProvider } from "./components/Role";
 import { loadTrackers } from "./features/trackers/refs";
 import { KillSwitchBanner, KillSwitchButton } from "./components/KillSwitch";
 import { TreeItem } from "./components/NavTree";
+import { NewVersion } from "./components/NewVersion";
 
 // The navigation's entries, from the features, in order; admin entries only for an admin. The Admin section's
 // entries go in one menu at the bottom of the pane.
@@ -158,6 +159,7 @@ export function App() {
             {who && <VersionTag />}
           </Group>
           <Group gap="xs" wrap="nowrap">
+            {who && <NewVersion />}
             {who && admin && <KillSwitchButton />}
             {who && <CommandPalette admin={admin} />}
             {who && <Inbox />}

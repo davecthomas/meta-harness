@@ -96,8 +96,28 @@ test("Run anyway asks the planner to make the held issue a task", async () => {
   expect(asked[0]).toMatchObject({ method: "POST", body: { ref: LARGE.ref } });
 });
 
-test("Split opens the suggested issues as drafts with a Paths: line, and creates them as edited", async () => {
-  const asked = answering({ goal_id: "g-1", ref: LARGE.ref, created: ["github:o/r#10", "github:o/r#11"] });
+const PART = (title: string, path: string) => ({
+  title,
+  body: `Do ${title}.\n\n## Outcome\n\n${title} show.\n\nPaths: ${path}\n\n## Acceptance checks\n\n- \`npm test\`\n\nSplit from #1\n`,
+});
+
+// The planner drafts the parts; the split creates them.
+function splitting(drafted: { ok: boolean; drafts?: unknown[] }) {
+  const asked: { url: string; body: any }[] = [];
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    asked.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+    if (url.endsWith("/split-drafts")) {
+      return Promise.resolve(drafted.ok
+        ? new Response(JSON.stringify({ ref: LARGE.ref, drafts: drafted.drafts }), { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response(JSON.stringify({ detail: "the HTTP Gateway answered 503: busy. Try Split again" }), { status: 502, headers: { "Content-Type": "application/json" } }));
+    }
+    return Promise.resolve(new Response(JSON.stringify({ goal_id: "g-1", ref: LARGE.ref, created: ["github:o/r#10", "github:o/r#11"] }), { status: 201, headers: { "Content-Type": "application/json" } }));
+  });
+  return asked;
+}
+
+test("Split opens the planner's complete drafts of each part, refuses a part that is not complete, and creates them as edited", async () => {
+  const asked = splitting({ ok: true, drafts: [PART("Edit titles", "console/src/features/goals"), PART("Edit labels", "console/src/features/labels")] });
   const changed: number[] = [];
   renderIn(<HeldActions goalId="g-1" label={LABEL} issue={LARGE} onChanged={() => changed.push(1)} />);
 
@@ -105,23 +125,33 @@ test("Split opens the suggested issues as drafts with a Paths: line, and creates
 
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByText(LABEL)).toBeTruthy();
-  expect((within(dialog).getByLabelText("Issue 1") as HTMLInputElement).value).toBe("Edit titles");
+  await waitFor(() => expect((within(dialog).getByLabelText("Body of issue 2") as HTMLTextAreaElement).value).toContain("## Outcome"));
   const body = within(dialog).getByLabelText("Body of issue 2") as HTMLTextAreaElement;
-  expect(body.value).toContain("Paths: console/src/features/goals");
-  expect(body.value).toContain("- npm test");
+  expect(body.value).toContain("Paths: console/src/features/labels");
+  expect(body.value).toContain("- `npm test`");
 
-  // A draft with no Paths: line cannot be created.
-  fireEvent.change(body, { target: { value: "No paths." } });
+  // A part with no acceptance check cannot be created, and says what it lacks.
+  fireEvent.change(body, { target: { value: "Labels only.\n\nPaths: console/src/features/labels" } });
+  expect(within(dialog).getByText("Needs an acceptance check under ## Acceptance checks")).toBeTruthy();
   expect((within(dialog).getByRole("button", { name: "Create 2 issues" }) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.change(body, { target: { value: "Labels only.\n\nPaths: console/src/features/goals/labels" } });
+  fireEvent.change(body, { target: { value: PART("Edit labels", "console/src/features/labels").body } });
   fireEvent.change(within(dialog).getByLabelText("Issue 1"), { target: { value: "Edit the titles" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Create 2 issues" }));
 
   await waitFor(() => expect(changed).toEqual([1]));
-  expect(asked[0].url).toContain("/v1/goals/g-1/issues/split");
-  expect(asked[0].body.ref).toBe(LARGE.ref);
-  expect(asked[0].body.issues.map((i: { title: string }) => i.title)).toEqual(["Edit the titles", "Edit labels"]);
-  expect(asked[0].body.issues[1].body).toContain("Paths: console/src/features/goals/labels");
+  const split = asked.find((a) => a.url.endsWith("/issues/split"))!;
+  expect(split.body.ref).toBe(LARGE.ref);
+  expect(split.body.issues.map((i: { title: string }) => i.title)).toEqual(["Edit the titles", "Edit labels"]);
+});
+
+test("when the planner cannot draft the parts, Split says so and starts from an outline to fill in", async () => {
+  splitting({ ok: false });
+  renderIn(<HeldActions goalId="g-1" label={LABEL} issue={LARGE} onChanged={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Split" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText(/The planner could not draft the parts: the HTTP Gateway answered 503/)).toBeTruthy();
+  expect((within(dialog).getByLabelText("Issue 1") as HTMLInputElement).value).toBe("Edit titles");
+  expect((within(dialog).getByLabelText("Body of issue 1") as HTMLTextAreaElement).value).toContain("## Outcome");
 });
 
 test("an issue split already offers only Run anyway, and a closed goal offers neither", () => {
@@ -140,7 +170,7 @@ test("an issue split already offers only Run anyway, and a closed goal offers ne
 
 test("an issue with no suggested split starts from one draft of itself", () => {
   const drafts = splitDrafts({ ...LARGE, split: [], paths: [], checks_named: [] });
-  expect(drafts).toEqual([{ title: "Edit everything", body: "Split from o/r#1.\n\nPaths: " }]);
+  expect(drafts).toEqual([{ title: "Edit everything", body: "What to change.\n\n## Outcome\n\nWhat a reviewer sees when it is done.\n\nPaths: \n\n## Acceptance checks\n\n- " }]);
 });
 
 test("the strict switch saves strict_issues", async () => {
