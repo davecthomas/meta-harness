@@ -1271,6 +1271,35 @@ claimed round has waited longer than `review.operator_alert_minutes`, and a
 
 ### What the meta-harness writes
 
+Every text the control plane writes for people (a tracker issue or comment, a
+pull request's description, a review, a comment on one) leaves through one
+pipeline, `src/meta_harness/outbound/`. `outbound.prepare(text, Context)` runs
+its stages in a fixed order and returns the text as `Checked`, a string only
+the pipeline makes. The adapters that write to the outside (the GitHub, Jira
+and own trackers, and the code host's publish, review and comment calls) take
+nothing else: `outbound.require` refuses a plain string with how to fix it, so
+a write that skips the pipeline fails the first time it runs.
+
+| Stage | What it does | Applies to |
+|---|---|---|
+| `redact` | Secrets by their issuers' shapes (GitHub, Anthropic, OpenAI, AWS, Google, Slack and Atlassian tokens, JWTs, bearer tokens, private key blocks) become `[redacted]`. First, so no later stage or model sees one | Every text |
+| `deslop` | The writing pass below: scan, one rewrite when there are findings, kept only when clean and whole | Text a model wrote (`source: generated`), never a title, an operator's own words (`person`) or the fixed strings in this code (`fixed`) |
+| `fit` | Cuts the text to what its destination takes (GitHub 64,000 characters, Jira 31,000, a title 250), and says that it was cut | Every text |
+| `stamp` | The provenance line, last, so nothing rewrites or cuts it | A text given a provenance, never a title |
+
+A post composed here from parts (a pull request's description around the run's
+summary, a review's body around its findings) sends each model-written part
+through as `generated`, then the whole as `fixed`: redacted and cut as a whole,
+with no second rewrite. A stage (`outbound/stages.py`) is a small class with
+`applies(context)` and `run`; a stage that fails passes its text on unchanged,
+unless it is a blocker, whose failure or refusal raises `Blocked` naming the
+stage and what to do. No shipped stage blocks: a refused pull request
+description would stall its task, so `redact` replaces. What each stage did
+rides on the result (`Checked.report`), from which the caller records
+`writing_checked`, with `redacted` when secrets were taken out. A new stage is
+a class placed in `STAGES`, where its order is its meaning.
+
+
 Everything the meta-harness posts on a code host for people to read is
 checked for the tells of model-written text before it is posted: filler,
 puffery, "not X but Y" framing, long sentences, runs of em dashes. It applies

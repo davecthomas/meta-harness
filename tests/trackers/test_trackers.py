@@ -7,6 +7,8 @@ from meta_harness.trackers import DONE, IN_PROGRESS, TODO, GitHubTracker, Tracke
 from meta_harness.trackers import registry
 from meta_harness.trackers.base import scheme_of
 
+pytestmark = pytest.mark.usefixtures("unchecked_text")
+
 REF = "github:o/r#7"
 
 

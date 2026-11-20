@@ -54,6 +54,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
+from meta_harness import outbound
 from meta_harness.run_service import (
     code_host,
     events,
@@ -374,7 +375,7 @@ async def publish(request: PublishRequest) -> PublishResult:
         lines the meta-harness adds around it stay as they are. The whole description carries the provenance."""
         part = await _summary_section(request, files)
         opened.append(part)
-        return provenance.stamp(_pr_body(request, part), signed)
+        return await _sealed(_pr_body(request, part), signed=signed)
 
     async def headers(created: list[str]) -> list[str]:
         """The provenance header on the files the run created, when the task's goal, else the configuration,
@@ -400,7 +401,7 @@ async def publish(request: PublishRequest) -> PublishResult:
             workspace=workspace,
             git_dir=sandbox.git_dir_for(ref, request.run_id),
             branch=request.branch or f"mh/{ref}",
-            title=request.title,
+            title=await _sealed(request.title, outbound.TITLE),
             body=body,
             commit_message=message,
             pr_record=sandbox.task_dir_for(ref) / "pull-request.md",
@@ -431,7 +432,7 @@ async def publish(request: PublishRequest) -> PublishResult:
                 request.repo,
                 published.pr_url,
                 heading,
-                provenance.stamp(part.text, signed),
+                await _sealed(part.text, signed=signed),
                 sandbox.task_dir_for(ref) / "pull-request.md",
             )
         except code_host.CodeHostError as err:
@@ -512,13 +513,18 @@ def _signed(request: PublishRequest) -> provenance.Provenance:
     return provenance.Provenance(provenance.PULL_REQUEST, **_signed_fields(request))
 
 
-async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> list[str]:
-    """The texts of one post after the writing pass, in order: each one's rewrite where the pass kept it, else
-    the text as given. What the pass found and changed is recorded on the task as `writing_checked`, once for
-    the same texts however often the activity is retried."""
-    outcomes = await writing.check_all(texts)
-    payload = writing.record(kind, outcomes, **extra)
+async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> list[outbound.Checked]:
+    """The texts of one post after the outbound pipeline, in order: redacted, and each one's rewrite where the
+    writing pass kept it. What the pass found and changed is recorded on the task as `writing_checked`, once
+    for the same texts however often the activity is retried."""
+    where = outbound.Context(
+        outbound.GITHUB, outbound.COMMENT if kind == "comment" else outbound.BODY, outbound.GENERATED
+    )
+    checked = list(await asyncio.gather(*(outbound.prepare(text, where) for text in texts)))
+    payload = writing.record(kind, outbound.writing_outcomes(checked), **extra)
     if payload and task_id:
+        if redacted := outbound.redactions(checked):
+            payload["redacted"] = redacted
         key = hashlib.sha256("\x00".join(texts).encode()).hexdigest()[:16]
         events.emit(
             "writing_checked",
@@ -526,7 +532,13 @@ async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> l
             task_id=task_id,
             event_id=events.stable_id(task_id, "writing_checked", kind, key),
         )
-    return [outcome.text if outcome else text for outcome, text in zip(outcomes, texts, strict=True)]
+    return checked
+
+
+async def _sealed(text: str, kind: str = outbound.BODY, signed: Any = None) -> outbound.Checked:
+    """A text composed here from parts that went through `_written` and the fixed lines around them, ready to
+    post: redacted and cut to fit as a whole, and ending with its provenance when given."""
+    return await outbound.prepare(text, outbound.Context(outbound.GITHUB, kind, outbound.FIXED, provenance=signed))
 
 
 async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summary.Section:
@@ -1313,6 +1325,10 @@ async def post_review(request: PostReviewRequest) -> str:
     signed = provenance.Provenance(
         provenance.REVIEW, task=request.task_id, model=request.reviewer, round=request.round_no
     )
+    # The review as composed here goes out through the pipeline as a whole: its body, and each placed comment.
+    body = await _sealed(body)
+    for placed in comments:
+        placed["body"] = await _sealed(placed["body"], outbound.COMMENT)
     if code_host.is_local(request.repo):
         ref = ref_for(activity.info().workflow_id)
         path = sandbox.task_dir_for(ref) / f"review-{request.round_no}.md"

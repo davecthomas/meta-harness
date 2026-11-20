@@ -43,6 +43,7 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from meta_harness import outbound
 from meta_harness import auth, db
 from meta_harness.costs import api as costs_api
 from meta_harness.config import api as config_api
@@ -870,7 +871,11 @@ def create_app(
                 pull.head_sha,
                 body.path,
                 body.line,
-                f"**{who}** wrote:\n\n{body.body}",
+                # The operator's own words: redacted and cut to fit, never rewritten.
+                await outbound.prepare(
+                    f"**{who}** wrote:\n\n{body.body}",
+                    outbound.Context(outbound.GITHUB, outbound.COMMENT, outbound.PERSON),
+                ),
                 body.start_line,
                 provenance=signed,
             )

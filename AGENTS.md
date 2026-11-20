@@ -49,6 +49,12 @@ and what is planned.
   client built without it. Never report a transient failure after one try.
 - Every new or changed setting is checked at service startup, so a bad one
   stops the service with its name.
+- Every text written for people to a tracker or the code host goes through
+  `outbound.prepare` (`src/meta_harness/outbound/`): it redacts secrets, runs
+  the writing pass on model-written text, cuts to the destination's limit and
+  adds provenance. The adapters refuse a plain string, so a new write names
+  its `Context` (destination, kind, and whether a model, this code or a person
+  wrote it) and posts what `prepare` returns.
 - Only the control plane writes to a code host. Nothing in a per-run sandbox
   may hold a code-host credential or write where the host will run it.
 - Keep `docs/technical-design.md` true to the code: a change that alters a

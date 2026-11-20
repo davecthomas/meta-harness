@@ -42,6 +42,7 @@ from typing import Any
 
 import httpx
 
+from meta_harness import outbound
 from meta_harness import retrying
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 from meta_harness.trackers.base import (
@@ -403,6 +404,8 @@ class JiraTracker:
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
         """Creates the issue in the goal's project. For a goal with several repos its description says which
         one it is for, the way the planner reads it back."""
+        outbound.require(title, "an issue's title")
+        outbound.require(body, "an issue's body")
         several = self.source is not None and len(self.source.repos) > 1
         await self._check_name(self._project(), "issue_type", self._site().issue_type_of(self._project()))
         made = await self._call(
@@ -423,6 +426,7 @@ class JiraTracker:
         return await self.read(ref_for(made["key"]))
 
     async def comment(self, ref: str, body: str) -> str:
+        outbound.require(body, "a comment on an issue")
         key = parse_ref(ref)
         await self.mark(ref)
         made = await self._call("POST", f"/issue/{key}/comment", json={"body": body})

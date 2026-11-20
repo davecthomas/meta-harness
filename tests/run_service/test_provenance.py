@@ -12,6 +12,8 @@ from meta_harness.run_service.code_host import CodeHostError, Published
 from meta_harness.run_service.provenance import COMMENT, COMMIT, PULL_REQUEST, REVIEW, Provenance
 from meta_harness.run_service.shared import PostReviewRequest, PublishRequest
 
+pytestmark = pytest.mark.usefixtures("unchecked_text")
+
 
 def test_a_line_names_the_version_and_kind_then_each_known_field_and_reads_back():
     signed = Provenance(REVIEW, task="t-12", model="harness:pi-review/claude:opus", round=2, version="1.2.3")
