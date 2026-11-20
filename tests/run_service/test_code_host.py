@@ -173,6 +173,31 @@ async def test_publish_again_finds_the_branch_and_the_record(origin: Path, run_d
     assert second.commit == first.commit
 
 
+async def test_a_description_written_by_a_function_is_given_the_files_the_branch_changes(origin: Path, run_dir: Path):
+    workspace, git_dir = run_dir / "workspace", run_dir / "git"
+    await code_host.clone(str(origin), workspace, git_dir)
+    (workspace / "hello.txt").write_text("changed\n")
+    given = []
+
+    async def body(files: list[str]) -> str:
+        given.append(files)
+        return f"changes {', '.join(files)}"
+
+    published = await code_host.publish(
+        repo=str(origin),
+        workspace=workspace,
+        git_dir=git_dir,
+        branch="mh/task",
+        title="t",
+        body=body,
+        commit_message="m",
+        pr_record=run_dir / "pull-request.md",
+    )
+
+    assert published is not None and given == [published.files] and "hello.txt" in published.files
+    assert "changes hello.txt" in (run_dir / "pull-request.md").read_text()
+
+
 async def test_a_runs_workspace_diff_counts_changed_and_new_files_against_its_clone(tmp_path, monkeypatch):
     import subprocess
 
