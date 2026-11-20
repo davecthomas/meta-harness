@@ -31,6 +31,7 @@ from psycopg.types.json import Jsonb
 
 from meta_harness import db, retrying
 from meta_harness.planner import drafting, planning, plans, splits, store, voice
+from meta_harness.supervisor import ledger
 
 log = logging.getLogger("meta_harness.planner")
 
@@ -90,7 +91,8 @@ SYSTEM_PROMPT = (
     "You are the planner of a software goal, keeping the person who owns it up to date. You are given facts "
     "about the goal as it stands now, and your last update. Write the next update. Say only what the facts say: "
     "invent no progress, no cause and no number. Do not repeat the last update: say what changed. Ask the operator only for what a fact says waits on the "
-    "operator, and never for something a fact says needs nothing from them. While a plan waits for approval, your update is where the operator reads it: say in the body "
+    "operator, and never for something a fact says needs nothing from them. When the facts list what was done to "
+    "unstick work (unstuck), say it in a few plain words, as something you did, not something to do. While a plan waits for approval, your update is where the operator reads it: say in the body "
     "what the plan does, from its summary, and put in needs_you approving it and each of its gaps the operator "
     "should weigh before approving. When the plan has a suggested_fix, ask first whether to accept it, with "
     "action accept_fix, saying in a few words what it changes, and do not list the gaps it fixes. Name a task by a few "
@@ -267,9 +269,15 @@ def stage(link: dict, task: dict | None, auto_merge: bool) -> str:
 
 
 def facts(
-    goal: dict, links: list[dict], tasks: list[dict], plan: dict | None, suggestion: dict | None = None
+    goal: dict,
+    links: list[dict],
+    tasks: list[dict],
+    plan: dict | None,
+    suggestion: dict | None = None,
+    unstuck: list[dict] | None = None,
 ) -> dict[str, Any]:
-    """What the planner's records say of the goal now, for an update to be written from."""
+    """What the planner's records say of the goal now, for an update to be written from. unstuck: what the
+    supervisor and the planner did to unstick its work since the last update (supervisor/ledger.py)."""
     by_id = {task["id"]: task for task in tasks}
     planning_task = by_id.get(goal.get("plan_task_id") or "")
     issues = []
@@ -317,12 +325,26 @@ def facts(
         else None,
         "issues": issues,
         "issues_not_shown": max(0, len(links) - MAX_ISSUES),
+        # What was done, by rule, to unstick the goal's work since the last update: told to the operator in a
+        # few words, never asked of them.
+        "unstuck": [
+            {
+                "task": next((t.get("name") or t["title"] for t in tasks if t["id"] == r.get("task_id")), None)
+                or r.get("ref"),
+                "why": r["because"],
+                "did": r["did"],
+                "outcome": r["outcome"],
+                "next": r["next"],
+            }
+            for r in unstuck or []
+        ],
     }
 
 
 def digest(found: dict[str, Any]) -> str:
     """The facts reduced to what an update is worth writing for: the goal's status, where its plan stands, and
-    for each issue whether it is open, where its task is, and whether it is held or needs the operator. Spend,
+    for each issue whether it is open, where its task is, and whether it is held or needs the operator, and what
+    was done to unstick its work since the last update. Spend,
     and the words of a reason, change without the goal moving, and are left out."""
     plan = found.get("plan") or {}
     key = {
@@ -346,6 +368,8 @@ def digest(found: dict[str, Any]) -> str:
             ]
             for i in found["issues"]
         ),
+        # Something done to unstick the goal's work since the last update is news, said once.
+        "unstuck": sorted([u["task"] or "", u["did"], u["outcome"]] for u in found.get("unstuck") or []),
     }
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -461,10 +485,12 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
     links, plan = await asyncio.to_thread(read)
     suggestion = await asyncio.to_thread(suggestions.current, goal["id"]) if goal["status"] == "planning" else None
     tasks_of_goal = await asyncio.to_thread(tasks.list, None, goal["id"], 500)
-    found = facts(goal, links, tasks_of_goal, plan, suggestion)
-    state = digest(found)
     earlier = await asyncio.to_thread(latest, goal["id"], 1)
     before = earlier[0] if earlier else None
+    since = before["created_at"] if before else ""
+    remedies = await asyncio.to_thread(ledger.read, None, goal["id"], 20)
+    found = facts(goal, links, tasks_of_goal, plan, suggestion, [r for r in remedies if r["created_at"] > since][:10])
+    state = digest(found)
     if before and not asked:
         if before["digest"] == state:
             return None

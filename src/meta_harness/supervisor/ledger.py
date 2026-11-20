@@ -10,16 +10,16 @@ from psycopg.rows import dict_row
 
 from meta_harness import db
 
-COLUMNS = "task_id, ref, goal_id, situation, remedy, try, of, outcome, because, did, next, error, created_at"
+COLUMNS = "task_id, ref, goal_id, situation, remedy, try, of, outcome, because, did, next, error, finding, created_at"
 
 
 def write(record: dict[str, Any]) -> None:
     with db.connect(autocommit=True) as conn:
         conn.execute(
             "INSERT INTO supervisor.remedy (task_id, ref, goal_id, situation, remedy, try, of, outcome, because, did, "
-            "next, error) VALUES (%(task_id)s, %(ref)s, %(goal_id)s, %(situation)s, %(remedy)s, %(try)s, %(of)s, "
-            "%(outcome)s, %(because)s, %(did)s, %(next)s, %(error)s)",
-            {"ref": None, "task_id": None, **record},
+            "next, error, finding) VALUES (%(task_id)s, %(ref)s, %(goal_id)s, %(situation)s, %(remedy)s, %(try)s, "
+            "%(of)s, %(outcome)s, %(because)s, %(did)s, %(next)s, %(error)s, %(finding)s)",
+            {"ref": None, "task_id": None, "finding": None, **record},
         )
 
 
@@ -64,3 +64,14 @@ def tries_for_issue(ref: str, remedy: str) -> int:
             "SELECT count(*) FROM supervisor.remedy WHERE ref = %s AND remedy = %s", (ref, remedy)
         ).fetchone()
     return int(found[0])
+
+
+def finding(task_id: str, remedy: str, because: str) -> str | None:
+    """What the remedy found for the task the last time it ran on this same reason; None when it has not."""
+    with db.connect(autocommit=True) as conn:
+        found = conn.execute(
+            "SELECT finding FROM supervisor.remedy WHERE task_id = %s AND remedy = %s AND because = %s "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id, remedy, because),
+        ).fetchone()
+    return found[0] if found else None

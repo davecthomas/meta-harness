@@ -199,7 +199,9 @@ export function steps(events: MhEvent[]): Step[] {
     const runId = e.run_id ?? (p.run_id as string | undefined) ?? "";
     switch (e.event_type) {
       case "task_created":
-        waitFor({ key: `p${e.position}`, column: 0, title: "Queued", detail: "", tone: "plain", start: time });
+        // A task made blocked waits on other issues first: that time is its own wait, not "Queued".
+        if (p.status === "blocked") waitFor({ key: `p${e.position}`, column: 0, title: "Blocked", detail: "Waits for the issues it depends on to be done", tone: "plain", start: time });
+        else waitFor({ key: `p${e.position}`, column: 0, title: "Queued", detail: "", tone: "plain", start: time });
         break;
       case "task_held": {
         const reason = heldLine(p);
@@ -211,12 +213,13 @@ export function steps(events: MhEvent[]): Step[] {
         endWait(time);
         break;
       case "task_unblocked":
-        waitFor({ key: `p${e.position}`, column: 0, title: "Queued", detail: "What it was blocked on is done", tone: "plain", start: time });
+        // Its status change to queued, recorded with it, already starts the wait.
         break;
       case "task_status_changed": {
         const to = String(p.to);
         const reason = moneyText(String(p.reason ?? ""));
         if (to === "running") endWait(time);
+        else if (to === "queued" && p.from === "blocked") waitFor({ key: `p${e.position}`, column: 0, title: "Queued", detail: "What it waited on is done", tone: "plain", start: time });
         else if (to === "queued") queuedAgain(time, `p${e.position}`, "Queued again", reason);
         else if (to === "blocked") waitFor({ key: `p${e.position}`, column: 0, title: "Blocked", detail: reason, tone: "plain", start: time });
         else if (ENDS[to]) add({ key: `p${e.position}`, kind: "end", column: 4, title: ENDS[to][0], detail: reason, tone: ENDS[to][1], start: time, end: time });
@@ -231,6 +234,10 @@ export function steps(events: MhEvent[]): Step[] {
         break;
       case "task_recovered":
         queuedAgain(time, `p${e.position}`, "Recovered by the supervisor", moneyText(String(p.why ?? "")));
+        break;
+      case "remedy_applied":
+        // What the supervisor or the planner did to unstick it, on the step it started.
+        note(`Unstuck: ${p.did}${p.of ? ` (try ${p.try} of ${p.of})` : ""}. Next: ${p.next}`);
         break;
       case "task_standing":
         if (p.owner === "operator" && p.ask && out.at(-1)?.column === 4) note(`Needs you: ${p.ask}`);
