@@ -16,6 +16,7 @@ import asyncio
 import logging
 from typing import Any, Protocol
 
+from meta_harness import outbound
 from meta_harness import db
 from meta_harness.config import kinds as config_kinds
 from meta_harness.config import store as config_store
@@ -421,18 +422,22 @@ async def approve(
             labels = list(dict.fromkeys([label, *draft["labels"]]))
             # The draft's body goes through the writing pass before it becomes an issue. The plan keeps the
             # draft as it was approved; the pass's record says what changed.
-            [checked] = await writing.check_all([draft["body"]])
-            if payload := writing.record("issue", [checked], goal_id=goal["id"], draft_id=draft["draft_id"]):
+            where = getattr(writer, "scheme", "github")
+            checked = await outbound.for_tracker(draft["body"], where, outbound.BODY, outbound.GENERATED)
+            payload = writing.record(
+                "issue", outbound.writing_outcomes([checked]), goal_id=goal["id"], draft_id=draft["draft_id"]
+            )
+            if payload:
                 events.emit("writing_checked", payload, actor="planner", tags={"goal_id": goal["id"]})
-            written = {**draft, "body": checked.text} if checked else draft
-            text = issue_body(written, created)
+            text = issue_body({**draft, "body": str(checked)}, created)
             if draft["draft_id"] in origin:
                 text = splits.with_origin(text, origin[draft["draft_id"]])
             # Last, after the writing pass: the issue says which goal's plan, drafted by which planning task and
-            # approved by whom, it came from.
+            # approved by whom, it came from. The lines added here are fixed, so the whole goes out as composed.
             signed = provenance.Provenance(provenance.ISSUE, goal=goal["id"], task=plan.get("task_id") or "", by=who)
-            text = provenance.stamp(text, signed) + "\n"
-            issue = await writer.create_issue(draft["repo"], draft["title"], text, labels)
+            text = await outbound.for_tracker(text, where, outbound.BODY, provenance=signed)
+            title = await outbound.for_tracker(draft["title"], where, outbound.TITLE, outbound.GENERATED)
+            issue = await writer.create_issue(draft["repo"], title, text, labels)
             ref = issue.ref or ref_for(draft["repo"], issue.number)
             created[draft["draft_id"]] = ref
 

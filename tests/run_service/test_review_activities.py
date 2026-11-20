@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from temporalio.testing import ActivityEnvironment
 
+from meta_harness import outbound
 from meta_harness.run_service import activities, code_host, routing
 from meta_harness.run_service.code_host import CheckRun, CodeHostError
 from meta_harness.run_service.shared import ChecksRequest, FailedCheck, LoopPromptRequest, PostReviewRequest
@@ -447,7 +448,7 @@ async def test_a_fix_runs_summary_is_added_to_a_local_pull_requests_description_
     record.write_text("# Fix the bug\n\nThe first run's summary.\n", encoding="utf-8")
     for words in ("Why lib.py changed.", "Why lib.py was changed."):
         returned = await code_host.add_to_description(
-            str(tmp_path / "repo.git"), "", "Fix round 1 (t:run-3)", words, record
+            str(tmp_path / "repo.git"), "", "Fix round 1 (t:run-3)", outbound.trusted(words), record
         )
     text = record.read_text(encoding="utf-8")
     assert text.count("## Fix round 1 (t:run-3)") == 1 and "Why lib.py changed." in text

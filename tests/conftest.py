@@ -69,3 +69,12 @@ def goals_run_unplanned(monkeypatch):
     from meta_harness.planner import planning
 
     monkeypatch.setattr(planning, "plans_every_goal", lambda: False)
+
+
+@pytest.fixture
+def unchecked_text(monkeypatch):
+    """Lets a test of an adapter's own behavior hand it plain strings: the adapters otherwise take only text
+    that came through the outbound pipeline (outbound.require), which tests/outbound proves on its own."""
+    from meta_harness import outbound
+
+    monkeypatch.setattr(outbound, "require", lambda text, what: None)

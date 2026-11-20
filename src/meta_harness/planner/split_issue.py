@@ -10,10 +10,11 @@ comment naming its parts (splits.announce).
 import asyncio
 from typing import Any
 
+from meta_harness import outbound
 from meta_harness import db
 from meta_harness.planner import splits, store
 from meta_harness.planner.sweep import goal_tracker
-from meta_harness.run_service import provenance
+from meta_harness.run_service import provenance, writing
 from meta_harness.trackers.base import TrackerError
 
 
@@ -69,9 +70,18 @@ async def split_issue(
             await writer.ensure_label(repo, label)
         # Each part says it came from the goal, and who split it: an operator, or the planner itself.
         signed = provenance.Provenance(provenance.ISSUE, goal=goal_id, by=who)
+        where = getattr(writer, "scheme", "") or ref
         for title, body in parts:
-            text = provenance.stamp(splits.with_origin(body, ref), signed) + "\n"
-            made = await writer.create_issue(repo, title.strip(), text, [label] if label else [])
+            # The part's own words go through the writing pass; its Split from line and provenance are added
+            # after, and the whole goes out as composed.
+            checked = await outbound.for_tracker(body, where, outbound.BODY, outbound.GENERATED)
+            if payload := writing.record("issue", outbound.writing_outcomes([checked]), goal_id=goal_id):
+                events.emit("writing_checked", payload, actor="planner", tags={"goal_id": goal_id})
+            text = await outbound.for_tracker(
+                splits.with_origin(str(checked), ref), where, outbound.BODY, provenance=signed
+            )
+            name = await outbound.for_tracker(title.strip(), where, outbound.TITLE, outbound.GENERATED)
+            made = await writer.create_issue(repo, name, text, [label] if label else [])
             created.append(made.ref)
     except TrackerError as err:
         # What was created is recorded as the split, so a retry never creates it twice; none: it may be split again.

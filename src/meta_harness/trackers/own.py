@@ -22,6 +22,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from meta_harness import outbound
 from meta_harness import db
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 from meta_harness.trackers.base import DONE, STATUSES, Issue, Source, Supported, TrackerError
@@ -115,6 +116,8 @@ class OwnTracker:
         return None
 
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
+        outbound.require(title, "an issue's title")
+        outbound.require(body, "an issue's body")
         issue_id = f"i-{secrets.token_hex(6)}"
         query = (
             "INSERT INTO planner.own_issue (id, repo, title, body, labels) VALUES (%s, %s, %s, %s, %s) "
@@ -125,6 +128,7 @@ class OwnTracker:
 
     async def comment(self, ref: str, body: str) -> str:
         """Keeps the comment with the issue. There is no page to link to."""
+        outbound.require(body, "a comment on an issue")
         query = "UPDATE planner.own_issue SET comments = comments || %s::jsonb, updated_at = now() WHERE id = %s RETURNING id"
         note = json.dumps([{"body": body}])
         if not await asyncio.to_thread(self._all, query, (note, parse_ref(ref))):

@@ -6,6 +6,7 @@ An issue's ref is `github:<owner>/<repo>#<number>`. Every call goes through the 
 
 import re
 
+from meta_harness import outbound
 from meta_harness.github_app import GitHubAppError, GitHubApps
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 from collections.abc import Callable
@@ -130,6 +131,8 @@ class GitHubTracker:
 
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
         """Creates one issue. Only the planner calls it, and only for a plan an operator approved."""
+        outbound.require(title, "an issue's title")
+        outbound.require(body, "an issue's body")
         carried = list(dict.fromkeys([*labels, self.label()]))
         created = await self._call(
             repo, WRITE_ISSUES, "POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": carried}
@@ -139,6 +142,7 @@ class GitHubTracker:
         return made
 
     async def comment(self, ref: str, body: str) -> str:
+        outbound.require(body, "a comment on an issue")
         repo, number = parse_ref(ref)
         await self.mark(ref)
         made = await self._call(
