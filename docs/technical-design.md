@@ -728,7 +728,10 @@ Built today: `max_parallel`, which the scheduler reads each admission pass,
 `review.reviewers` and `review.max_rounds`, which the run service reads, and
 `max_usd_by_size`, which the planner reads when it makes an issue a task, and
 `writing_pass`, a switch: `false` turns the writing pass off (What the
-meta-harness writes), and left out or `true` it is on. Also `max_task_usd`, the
+meta-harness writes), and left out or `true` it is on. Also
+`credential_redaction`, a switch: only `true` turns on the replacing of
+tokens, keys and passwords in what is posted (Credential redaction), and
+left out or `false` it is off. Also `max_task_usd`, the
 most one task may spend whatever else is set (Budgets).
 The other fields below are planned.
 
@@ -1282,7 +1285,7 @@ a write that skips the pipeline fails the first time it runs.
 
 | Stage | What it does | Applies to |
 |---|---|---|
-| `redact` | Secrets by their issuers' shapes (GitHub, Anthropic, OpenAI, AWS, Google, Slack and Atlassian tokens, JWTs, bearer tokens, private key blocks) become `[redacted]`. First, so no later stage or model sees one | Every text |
+| `redact` | Credentials become `[redacted]`: tokens, keys and passwords, never personal data (Credential redaction, below). First, so no later stage or model sees one | Every text, and only when the task policy's `credential_redaction` is `true`. It is off by default |
 | `deslop` | The writing pass below: scan, one rewrite when there are findings, kept only when clean and whole | Text a model wrote (`source: generated`), never a title, an operator's own words (`person`) or the fixed strings in this code (`fixed`) |
 | `fit` | Cuts the text to what its destination takes (GitHub 64,000 characters, Jira 31,000, a title 250), and says that it was cut | Every text |
 | `stamp` | The provenance line, last, so nothing rewrites or cuts it | A text given a provenance, never a title |
@@ -1296,8 +1299,29 @@ unless it is a blocker, whose failure or refusal raises `Blocked` naming the
 stage and what to do. No shipped stage blocks: a refused pull request
 description would stall its task, so `redact` replaces. What each stage did
 rides on the result (`Checked.report`), from which the caller records
-`writing_checked`, with `redacted` when secrets were taken out. A new stage is
+`writing_checked`, with `redacted` when credentials were taken out. A new stage is
 a class placed in `STAGES`, where its order is its meaning.
+
+#### Credential redaction
+
+The `redact` stage is off unless the task policy says
+`credential_redaction: true`, a switch on the Task policy page. A policy that
+cannot be read keeps the switch as it was last read. On, the stage replaces
+credentials and nothing else (`outbound/credentials.py`):
+
+- By shape: a private key block, a user name and password inside a URL, a
+  Slack webhook URL, a `Basic` or `Bearer` authorization header, a JSON Web
+  Token, and the tokens of GitHub, Anthropic, OpenAI, AWS, Google, Slack,
+  Atlassian, npm and PyPI.
+- By value: this service's own secrets, which are the environment variables
+  whose names end in `KEY`, `TOKEN`, `SECRET` or `PASSWORD`, and the password
+  in any variable that is a URL. A value under 12 characters, or one that is a
+  file's path, is left alone.
+
+It does not look for personal data: a name, an email address, a phone number
+or an address is posted as written. Each redaction is logged as a warning that
+names the kind of credential and never its value, since a credential that
+reached a post needs replacing.
 
 
 Everything the meta-harness posts on a code host for people to read is
@@ -4016,8 +4040,10 @@ Model text arrives once per turn, and token by token once the HTTP Gateway
 streams.
 
 Event payloads contain repository content. The operator console
-scrubs secrets from the events it reads. The HTTP Gateway's per-turn
-redaction applies to what the model receives.
+scrubs secrets from the events it reads. The HTTP Gateway can redact
+personal data from what a model receives (its `pii_redaction` middleware, set
+in the gateway's own `config/models.json`); that is the gateway's setting, and
+nothing here turns it on.
 
 ### Alerts
 

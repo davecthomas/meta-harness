@@ -1,29 +1,12 @@
 """The outbound pipeline's stages, in the order they run (outbound/__init__.py)."""
 
-import re
+import logging
 
-from meta_harness.outbound import BODY, COMMENT, GENERATED, GITHUB, JIRA, OWN, TITLE, Context, Result
+from meta_harness.outbound import BODY, COMMENT, GENERATED, GITHUB, JIRA, OWN, TITLE, Context, Result, credentials
 from meta_harness.run_service import provenance, writing
 
-REDACTED = "[redacted]"
-# Secrets by the shape their issuers give them. Each is specific enough that ordinary text does not match.
-SECRETS = re.compile(
-    "|".join(
-        [
-            r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
-            r"\bgh[pousr]_[A-Za-z0-9]{36,}\b",
-            r"\bgithub_pat_[A-Za-z0-9_]{60,}\b",
-            r"\bsk-ant-[A-Za-z0-9_-]{20,}\b",
-            r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b",
-            r"\bAKIA[0-9A-Z]{16}\b",
-            r"\bAIza[0-9A-Za-z_-]{35}\b",
-            r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b",
-            r"\bATATT3[A-Za-z0-9_=-]{20,}\b",
-            r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
-            r"\b(?:[Aa]uthorization:\s*)?[Bb]earer\s+[A-Za-z0-9._~+/=-]{24,}",
-        ]
-    )
-)
+log = logging.getLogger(__name__)
+
 # The most characters each destination takes, by kind, with room left for a provenance line.
 LIMITS = {
     (GITHUB, BODY): 64000,
@@ -51,13 +34,31 @@ class Stage:
 
 
 class Redact(Stage):
-    """Secrets become [redacted], whoever wrote the text and wherever it goes."""
+    """Credentials become [redacted], whoever wrote the text and wherever it goes: tokens, keys and passwords,
+    never personal data (credentials.py). Off unless the task policy's `credential_redaction` is true."""
 
     name = "redact"
 
+    def applies(self, context: Context) -> bool:
+        return credentials.enabled()
+
     async def run(self, text: str, context: Context) -> Result:
-        cleaned, found = SECRETS.subn(REDACTED, text)
-        return Result(cleaned, note=f"{found} secret{'' if found == 1 else 's'} redacted" if found else "")
+        cleaned, found = credentials.redact(text)
+        count = sum(found.values())
+        if not count:
+            return Result(text)
+        # The kinds, never the values: whoever reads the log replaces the credential.
+        kinds = ", ".join(f"{n} {kind}" for kind, n in found.items())
+        log.warning(
+            "redacted %d credential(s) from a %s %s for %s: %s. Replace each one: it reached text that was "
+            "about to be posted",
+            count,
+            context.source,
+            context.kind,
+            context.destination,
+            kinds,
+        )
+        return Result(cleaned, note=f"{count} credential{'' if count == 1 else 's'} redacted", extra=dict(found))
 
 
 class Deslop(Stage):

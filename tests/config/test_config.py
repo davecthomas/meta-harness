@@ -421,6 +421,16 @@ def test_the_task_policys_writing_pass_is_a_switch_or_left_out(monkeypatch):
         assert reason.startswith("writing_pass must be true or false")
 
 
+def test_the_task_policys_credential_redaction_is_a_switch_or_left_out(monkeypatch):
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
+    policy = {"max_parallel": 4, "review": {"reviewers": ["harness:pi-review/x:y"], "max_rounds": 3}}
+    assert kinds.check_task_policy({**policy, "credential_redaction": True}) == []
+    assert kinds.check_task_policy({**policy, "credential_redaction": False}) == []
+    for bad in ("on", 1, []):
+        [reason] = kinds.check_task_policy({**policy, "credential_redaction": bad})
+        assert reason.startswith("credential_redaction must be true or false.")
+
+
 def test_every_profile_that_writes_for_people_names_the_writing_skill():
     from meta_harness.run_service import writing
 
