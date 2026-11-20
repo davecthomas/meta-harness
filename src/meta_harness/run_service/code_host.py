@@ -303,7 +303,11 @@ async def publish(
     env = None if is_local(repo) else git_auth_env(await _token(repo, WRITE_CODE))
     await _git(git_dir, workspace, "push", "--quiet", "--force-with-lease", "origin", f"{branch}:{branch}", env=env)
     if is_local(repo):
-        created = not pr_record.exists()
+        existing_record = pr_record.read_text(encoding="utf-8") if pr_record.exists() else ""
+        # The record is this branch's pull request only when its head names this branch. A merge-check fix
+        # publishes on a new branch while the record still holds the merged pull request, so that is a new one.
+        head = _HEAD_LINE.search(existing_record)
+        created = head is None or head.group(1) != branch
         if created:
             if not isinstance(body, str):
                 body = await body(files)
@@ -311,9 +315,7 @@ async def publish(
         else:
             # A push to a pull request already open keeps its description, as GitHub does, and with it the
             # sections earlier runs added; only the head it names moves to the new commit.
-            record = _HEAD_LINE.sub(
-                lambda _: f"head: {branch} at {commit}", pr_record.read_text(encoding="utf-8"), count=1
-            )
+            record = _HEAD_LINE.sub(lambda _: f"head: {branch} at {commit}", existing_record, count=1)
         pr_record.write_text(record, encoding="utf-8")
         return Published(branch, base, commit, files, f"file://{pr_record}", created)
     owner = repo.split("/", 1)[0]
@@ -716,7 +718,7 @@ async def changed_lines(repo: str, since: str, head_sha: str) -> dict[str, list[
     return found
 
 
-_HEAD_LINE = re.compile(r"^head: .*$", re.MULTILINE)
+_HEAD_LINE = re.compile(r"^head: (\S+)(?: at \S*)?$", re.MULTILINE)
 
 
 async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr_record: Path) -> None:
