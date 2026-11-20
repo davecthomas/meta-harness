@@ -56,6 +56,7 @@ from meta_harness.planner import (
     cost_facts,
     drafting,
     goal_costs,
+    merge_checks,
     naming,
     plan_api,
     planning,
@@ -813,6 +814,10 @@ def create_app(
             pull = await code_host.read_pull_request(repo, number)
             sha = pull.merge_sha or pull.head_sha
             checks = await code_host.check_details(repo, sha) if sha else []
+            # A merged task's run that a newer merge canceled or replaced counts by the newer run, as the task's
+            # own wait counts it.
+            if pull.merge_sha and checks:
+                checks = await merge_checks.judged(repo, pull.merge_sha, checks)
         except code_host.CodeHostError as err:
             raise HTTPException(status_code=502, detail=str(err)) from err
         usual = await usual_seconds(repo)

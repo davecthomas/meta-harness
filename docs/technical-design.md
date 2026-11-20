@@ -3430,7 +3430,13 @@ its state, its time counted by the second, how long it usually takes, and a
 link to its log. The waiting step, the line above the terminal and the tab's
 name say how they stand ("4 of 6 passed, sandbox running 2m 10s, usually about
 4m in all"). "Usually" is how long each check took on the default branch's
-newest commit, kept ten minutes per repo. The terminal prints a line when a
+newest commit, kept ten minutes per repo. On a merged task, a check that did
+not pass is shown as the same check on the default branch's newest commit when
+that commit holds the merge (`planner/merge_checks.py`), the rule the task's own
+merge wait applies: a newer merge cancels the checks still running on the one
+before, and that one's deploy then fails for want of them, and neither is its
+failure. Such a row says what it replaced ("Canceled by a newer merge"). The
+tab says the checks run at the same time, a deploy waiting for the rest. The terminal prints a line when a
 wait for checks starts and when it ends, with the result, and one for each
 review round and for the merge. On a goal's board a running task's card says
 what the task is doing now and for how long, from the same steps.

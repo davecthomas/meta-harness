@@ -99,8 +99,8 @@ export function Checks({ checks, error }: { checks: PullChecks | null; error: st
       </Text>
       <Text size="xs" c="dimmed">
         {checks.of === "merge"
-          ? "The code host runs these on the merge. The task closes when they pass."
-          : "The code host runs these on every new commit. The task's review starts when they have all passed; a failed one sends the task to a fix run."}
+          ? "These run at the same time on the merge; a deploy waits for the rest to pass. The task closes when they all pass. A run a newer merge replaced counts by the newer run."
+          : "These run at the same time on every new commit. The task's review starts when they have all passed; a failed one sends the task to a fix run."}
       </Text>
       {error && <Text size="xs" c="orange">The last read failed, so this may be out of date: {error}</Text>}
       {checks.total > 0 && (
@@ -109,7 +109,14 @@ export function Checks({ checks, error }: { checks: PullChecks | null; error: st
             const took = ran(check, now);
             return (
               <Table.Tr key={check.name} data-testid={`check-${check.name}`}>
-                <Table.Td><Text size="sm">{check.name}</Text></Table.Td>
+                <Table.Td>
+                  <Text size="sm">{check.name}</Text>
+                  {check.replaced && (
+                    <Text size="sm" c="dimmed" data-testid="check-replaced">
+                      {check.replaced.conclusion === "cancelled" ? "Canceled by a newer merge" : "Failed here"}; the newer commit's run counts
+                    </Text>
+                  )}
+                </Table.Td>
                 <Table.Td><StateBadge check={check} /></Table.Td>
                 <Table.Td><Text size="sm" ff="monospace">{took === null ? "" : `${span(took)}${ended(check) ? "" : " so far"}`}</Text></Table.Td>
                 <Table.Td><Text size="sm" c="dimmed" ff="monospace">{check.usual_seconds === null ? "" : span(check.usual_seconds * 1000)}</Text></Table.Td>
