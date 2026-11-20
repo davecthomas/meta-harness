@@ -1346,7 +1346,9 @@ Last by the control plane, in the writing pass
    candidate that needs a reader to confirm does not. Neither does a word
    `writing_pass.names` lists: the scanner's word lists hold `harness`, which
    is this product's name, so a text that only names the meta-harness is
-   posted with no rewrite.
+   posted with no rewrite. A hit on a line the rewrite must keep (step 3) is
+   no finding either: a long acceptance check scans as a long sentence, and
+   no rewrite could clear it.
 2. A text with findings gets one rewrite, on the model
    `config/planner.json`'s `writing_pass` names, through the HTTP Gateway's
    `/v1/structured`. A text over 20,000 characters is not rewritten.
@@ -1354,7 +1356,8 @@ Last by the control plane, in the writing pass
    keeps every heading, link, code span, code block, number and listed name
    of the original, and every line the control plane reads back: `Paths:`,
    `Depends on:`, `Closes`, and each line under `## Acceptance checks`.
-   Otherwise the rewrite is dropped and the original is posted.
+   Otherwise the rewrite is dropped and the original is posted, and the
+   record's reason names the findings the rewrite still had.
 
 The pass never stops a post. A scanner that cannot run, a HTTP Gateway that
 does not answer, or a pass that takes over 70 seconds leaves the text as it

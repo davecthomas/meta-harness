@@ -48,6 +48,17 @@ def test_the_shipped_scanner_decides_findings_in_sloppy_text_and_none_in_plain_t
     assert writing.decided(writing.scan(PLAIN)) == []
 
 
+def test_a_line_a_rewrite_must_keep_is_never_a_finding():
+    check = "- uv run pytest -q tests/a.py tests/b.py tests/c.py and then run the console tests with npm test in the console directory and check that every one passes with no skipped test at all"
+    closes = "Closes #12 with a note that runs on for well over twenty five words in all so that the scanner counts it as a sentence that is too long for it"
+    issue = f"Add the export.\n\nPaths: src/a\n\n## Acceptance checks\n\n{check}\n\n## Notes\n\n{closes}\n"
+
+    assert len(writing.decided(writing.scan(issue))) == 2, "the scanner counts both as long sentences"
+    assert writing.read_back_lines(issue) == {3, 7, 11}
+    assert writing.findings(issue) == []
+    assert [hit["match"] for hit in writing.findings(issue + "\nIt is a robust export.\n")] == ["robust"]
+
+
 def test_this_products_own_name_is_not_a_finding_and_a_rewrite_must_keep_it():
     named = "The meta-harness opened the pull request. The harness server ran 3 checks."
 
