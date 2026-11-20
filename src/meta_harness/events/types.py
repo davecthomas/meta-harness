@@ -500,6 +500,26 @@ REGISTRY: list[EventType] = [
             ["goal_id", "version", "fixes", "model", "usd_cost"],
         ),
     ),
+    # The supervisor applied a remedy to a stuck task (supervisor/remedies): one try, with why, what it did and
+    # what comes next in plain sentences. of is the most tries the remedy makes before asking; 0 for no limit.
+    EventType(
+        "remedy_applied",
+        1,
+        _object(
+            {
+                "situation": {"type": "string"},
+                "remedy": {"type": "string"},
+                "try": {"type": "integer"},
+                "of": {"type": "integer"},
+                "outcome": {"type": "string", "enum": ["started", "done", "failed"]},
+                "because": {"type": "string"},
+                "did": {"type": "string"},
+                "next": {"type": "string"},
+                "error": {"type": "string"},
+            },
+            ["situation", "remedy", "try", "of", "outcome", "because", "did", "next"],
+        ),
+    ),
     # A model drafted the parts of a held issue for an operator to edit before splitting it (planner/splits.py).
     EventType(
         "split_drafted",

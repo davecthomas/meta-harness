@@ -35,10 +35,10 @@ from typing import Any, Protocol
 
 from meta_harness import db
 from meta_harness.planner import cost_facts, store as goal_store
-from meta_harness.planner import sweep
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CodeHostError
-from meta_harness.supervisor import failures, pulls, standing
+from meta_harness.supervisor import failures, ledger, pulls, remedies, standing
+from meta_harness.supervisor.remedies import registry
 from meta_harness.supervisor.rules import OPEN_STATUSES, SWEPT, Decision, Facts, decide
 from meta_harness.tasks.store import MAX_DRIVES
 from meta_harness.tasks.client import TaskApiError, TaskClient
@@ -254,39 +254,70 @@ class Supervisor:
         self._mergeable[task["id"]] = (time.monotonic(), how)
         return how
 
+    def forget_reads(self, task_id: str) -> None:
+        """Drop what was read of the task's pull request, so the next pass reads it fresh after a remedy."""
+        self._mergeable.pop(task_id, None)
+        self._pulls.pop(task_id, None)
+
     async def _act(self, task: dict, goal: dict | None, pull: Any, decision: Decision, result: PassResult) -> None:
+        """Apply the remedy the decision names, and record the try in the ledger (ledger.py)."""
         task_id = task["id"]
         try:
-            if decision.action == "recover":
-                spent = await asyncio.to_thread(spent_so_far, self.events, task_id)
-                recovered = await asyncio.to_thread(self.tasks.recover, task_id, decision.reason, str(spent))
-                (result.recovered if recovered["status"] == "queued" else result.ended).append(task_id)
-            elif decision.action == "end_at_pull_request":
-                await sweep._record_end(goal, task, pull, self.tasks, self.events, sweep.SweepResult(""))
-                self._pulls.pop(task_id, None)
-                result.ended.append(task_id)
-            elif decision.action in ("merge", "review", "retry"):
-                spent = await asyncio.to_thread(spent_so_far, self.events, task_id)
-                counted = not (decision.action == "retry" and failures.restart(task.get("status_reason")))
-                await asyncio.to_thread(
-                    self.tasks.drive, task_id, decision.action, decision.reason, str(spent), counted
-                )
-                self._mergeable.pop(task_id, None)
-                self._pulls.pop(task_id, None)
-                result.driven.append(task_id)
-            elif decision.action == "wait":
-                return
-            elif decision.action == "cancel_for_goal":
-                await asyncio.to_thread(self.tasks.cancel, task_id, decision.reason, "supervisor")
-                result.canceled.append(task_id)
-            else:
-                raise ValueError(f"no action {decision.action!r}")
+            remedy = registry.get(decision.action)
+        except ValueError as err:
+            result.errors.append(f"{task_id}: {err}")
+            return
+        tried = remedy.tries(task) + 1
+        record = {
+            "task_id": task_id,
+            "goal_id": task.get("goal_id"),
+            "situation": decision.situation,
+            "remedy": remedy.id,
+            "try": tried,
+            "of": remedy.of(task),
+            "because": decision.reason,
+        }
+        try:
+            outcome = await remedy.apply(remedies.Context(task, goal, pull, decision, self))
         except (TaskApiError, CodeHostError, ValueError) as err:
             result.errors.append(f"{task_id}: {decision.action}: {err}")
             await asyncio.to_thread(_acted, task_id, str(err)[:500])
+            await self._record(
+                {
+                    **record,
+                    "outcome": "failed",
+                    "did": "could not apply it",
+                    "next": "it is tried again later",
+                    "error": str(err)[:500],
+                }
+            )
             return
+        if outcome is None:
+            return
+        if remedy.id == "cancel_for_goal":
+            result.canceled.append(task_id)
+        elif outcome.outcome == "done":
+            result.ended.append(task_id)
+        else:
+            (result.recovered if remedy.id == "recover" else result.driven).append(task_id)
         await asyncio.to_thread(_acted, task_id, "")
-        log.warning("task %s: %s, so the supervisor did %s", task_id, decision.reason, decision.action)
+        await self._record(
+            {**record, "outcome": outcome.outcome, "did": outcome.did, "next": outcome.next, "error": None}
+        )
+        log.warning("task %s: %s, so the supervisor %s", task_id, decision.reason, outcome.did)
+
+    async def _record(self, record: dict) -> None:
+        """One try in the ledger: its row, and its remedy_applied event. A ledger that cannot be written is
+        logged: the remedy stands either way."""
+        try:
+            await asyncio.to_thread(ledger.write, record)
+        except Exception as err:  # noqa: BLE001 - the remedy was applied; only its record is missing
+            log.error("task %s: could not record remedy %s: %s", record["task_id"], record["remedy"], err)
+        payload = {k: record[k] for k in ("situation", "remedy", "try", "outcome", "because", "did", "next")}
+        payload["of"] = record["of"] or 0
+        if record.get("error"):
+            payload["error"] = record["error"]
+        self.events.emit("remedy_applied", payload, task_id=record["task_id"], actor="supervisor")
 
 
 def _due(decision: Decision, earlier: standing.Standing | None, now: datetime) -> bool:

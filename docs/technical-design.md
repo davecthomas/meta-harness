@@ -2064,6 +2064,37 @@ first part, which waits until an operator has had Remove from goal to take
 out what should not run again); and a reminder outside the console when a
 wait for an operator grows long.
 
+#### Remedies
+
+When the supervisor has a task, `rules.decide` names the situation it is in
+and the remedy for it. The choice is deterministic: the same facts always give
+the same remedy. Each remedy is a small class in its own module under
+`supervisor/remedies/`, listed by id in `remedies/registry.py`. It knows its
+most tries (`of`) and how many it has made (`tries`), and `apply` carries it
+out through the Task API or the planner. Adding a remedy means writing its
+module, listing it, and having `decide` name it for its situation. A test
+walks every remedy `decide` can name and fails one with no module.
+
+| Remedy | Situation | What it does | Tries |
+|---|---|---|---|
+| `recover` | A task with no workflow behind it | Queues it again where its pull request stands, with what it spent carried over; cancels one asked to cancel | The Task API's recovery cap |
+| `end_at_pull_request` | A parked task whose pull request merged or closed, which no sweep covers | Closes or cancels it to match | — |
+| `merge` | A ready task of an auto-merge goal that the code host would merge, or that conflicts | Sends it back for its merge | The task's drives |
+| `review` | A task whose checks failed after its review | Sends it back through the review loop | The task's drives |
+| `retry` | A task that failed on the system's side | Runs it again after a wait that grows each try | The task's drives |
+| `cancel_for_goal` | An unstarted task of an ended goal | Cancels it | — |
+| `wait` | A pull request whose checks have not reported | Nothing this pass | — |
+
+Every try is one record in the ledger (`supervisor/ledger.py`): a
+`supervisor.remedy` row and a `remedy_applied` event, with the same fields.
+`situation`, `remedy`, `try`, `of` and `outcome` (`started`, `done` or
+`failed`) are for code and tests. `because`, `did` and `next` are plain
+sentences for a person, a page or the planner's update, so none of them needs
+to read raw events to learn what was done for a task. A try that could not be
+applied is recorded `failed`, with its error, and is tried again later.
+`GET /v1/supervisor/remedies` serves the ledger for a task (`task_id`), a goal
+(`goal_id`) or every task, newest first.
+
 ### Throughput
 
 | Resource | Scales by | Notes |
@@ -2152,6 +2183,7 @@ credential.
 | POST | `/v1/tasks/{id}/recover` | Task service | The supervisor's move for a `running` task, or a `queued` one the scheduler started, with no RunTask workflow behind it (`why`, and `spent_usd`, what its runs have spent): back to `queued` to resume at its pull request, `canceled` when it was asked to cancel, or `failed` after three recoveries. Services only. 409 for a task in any other status | built |
 | POST | `/v1/tasks/{id}/drive` | Task service | The supervisor's move for a `ready` or `review_unresolved` task it can move on (`action` `merge` or `review`, `why`, `spent_usd`), or for a `failed` one whose failure was the system's (`retry`): back to `queued`, with its spend carried. Services only. 409 for a task in any other status, a merge or review with no pull request, or a task already sent back three times | built |
 | GET | `/v1/supervisor` | Planner | The supervisor's last pass: when it ran, how many tasks each owner has, what it recovered, ended and canceled, what it could not do, and how often it runs | built |
+| GET | `/v1/supervisor/remedies` | Planner | What the supervisor did to unstick tasks, newest first, for a task (`task_id`), a goal (`goal_id`) or all: each try's situation, remedy, try of how many, outcome, and why, what it did and what comes next as sentences | built |
 | POST | `/v1/tasks/{id}/take-over` | Meta-harness run service | Stop the active run, publish its work so far, and hand the task to the calling operator | planned |
 | POST | `/v1/tasks/{id}/hand-back`, `/close` | Meta-harness run service | End a takeover: a follow-up run continues on the branch, or the task closes with the operator's outcome | planned |
 | GET | `/v1/runs/{id}` | Meta-harness run service | Run state, candidate, token usage and cost so far | planned |
