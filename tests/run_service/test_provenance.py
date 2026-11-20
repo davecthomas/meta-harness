@@ -110,9 +110,21 @@ async def test_a_review_ends_with_its_provenance_even_when_its_comments_move_int
     await code_host.post_review("o/r", 7, "abc", "Two findings.", comments, provenance=signed)
 
     assert calls[0]["body"] == f"Two findings.\n\n{provenance.line(signed)}"
-    assert calls[0]["comments"] == comments
+    assert calls[0]["comments"] == [{**comments[0], "body": f"Off by one.\n\n{provenance.line(signed)}"}]
+    assert comments[0]["body"] == "Off by one.", "the caller's comments are left as they were"
     moved = calls[-1]["body"]
     assert "Off by one." in moved and moved.endswith(provenance.line(signed))
+    assert len(provenance.parse(moved)) == 1, "a comment moved into the body carries no second line"
+    assert calls[-1]["comments"] == []
+
+
+async def test_a_review_without_provenance_leaves_its_inline_comments_as_they_are(github):
+    calls, _ = github
+    comments = [{"path": "a.py", "line": 3, "side": "RIGHT", "body": "Off by one."}]
+
+    await code_host.post_review("o/r", 7, "abc", "Two findings.", comments)
+
+    assert calls[0]["comments"] == comments
 
 
 async def test_a_comment_and_a_line_comment_end_with_their_provenance(github):

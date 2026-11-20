@@ -496,13 +496,16 @@ async def post_review(
     from the pull request's own author, and the meta-harness's GitHub App
     opened it. A comment GitHub cannot place on the diff (422) moves into the
     review's body, so the review is never lost to a finding on an unchanged line.
-    With provenance, the review's body ends with its provenance line, after any comment moved into it.
+    With provenance, the review's body and each inline comment end with its provenance line, as GitHub shows
+    each inline comment on its own. A comment moved into the body goes without its own line, as the body ends
+    with one.
     """
 
     def stamped(text: str) -> str:
         return stamp(text, provenance) if provenance else text
 
-    payload = {"commit_id": head_sha, "event": "COMMENT", "body": stamped(body), "comments": comments}
+    inline = [{**c, "body": stamped(c["body"])} for c in comments]
+    payload = {"commit_id": head_sha, "event": "COMMENT", "body": stamped(body), "comments": inline}
     try:
         review = await _github(repo, REVIEW, "POST", f"/repos/{repo}/pulls/{number}/reviews", json=payload)
     except CodeHostError as err:
@@ -574,11 +577,6 @@ async def comment(repo: str, number: int, body: str, provenance: Provenance | No
 MERGE = {"contents": "write", "pull_requests": "write"}
 
 
-# How often, and how many times, merge_pull_request looks for GitHub to have brought the base into a branch.
-UPDATE_BRANCH_POLL_SECONDS = 2
-UPDATE_BRANCH_POLLS = 20
-
-
 async def newest_containing(repo: str, base: str, sha: str) -> str | None:
     """The newest commit on base, when it contains sha; None when base does not hold sha."""
     head = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/commits/{base}") or {}
@@ -608,13 +606,13 @@ async def merge_pull_request(
     kind (fix, feature or none) goes into the merge commit's message as a `Version:` line, and provenance as
     the trailers after it.
 
-    With base, a branch that lacks the base's newest commits is not merged: GitHub merges the base into it
-    and the new head comes back as head_changed, so its checks and review run again before it merges. So no
+    With base, a branch that lacks the base's newest commits is not merged: the base is merged into it, in a
+    merge commit that carries provenance's trailers, and the new head comes back as head_changed, so its checks and review run again before it merges. So no
     pull request merges against a base it was not checked on, though other tasks' pull requests merged
     while it was reviewed.
     """
     if base:
-        brought = await _bring_base_in(repo, number, base, head_sha)
+        brought = await _bring_base_in(repo, number, base, head_sha, provenance)
         if brought is not None:
             return brought
     merge = {"sha": head_sha, "merge_method": "squash"}
@@ -641,35 +639,42 @@ async def merge_pull_request(
     return "blocked", "", head_sha, f"{refused} (mergeable_state {pull.get('mergeable_state')})"
 
 
-async def _bring_base_in(repo: str, number: int, base: str, head_sha: str) -> tuple[str, str, str, str] | None:
+async def _bring_base_in(
+    repo: str, number: int, base: str, head_sha: str, provenance: Provenance | None = None
+) -> tuple[str, str, str, str] | None:
     """None when head_sha holds the base's newest commit. Otherwise merges the base into the branch and returns
-    head_changed with the new head, or conflict when the base does not merge in cleanly."""
+    head_changed with the new head, or conflict when the base does not merge in cleanly.
+
+    The merge goes through GitHub's merges endpoint, not update-branch, so its commit message is ours and
+    carries provenance's trailers. That endpoint takes no expected head, so the branch's head is read first;
+    a commit pushed between that read and the merge only ends up under the merge commit, whose new head
+    comes back as head_changed and is checked and reviewed again like any other."""
     compare = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/compare/{base}...{head_sha}") or {}
     behind = int(compare.get("behind_by") or 0)
     if behind == 0:
         return None
+    pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
+    head = str(pull.get("head", {}).get("sha", ""))
+    if head and head != head_sha:
+        return "head_changed", "", head, f"{head[:12]} landed after {head_sha[:12]}"
+    branch = str(pull.get("head", {}).get("ref", ""))
+    if not branch:
+        raise CodeHostError(f"pull request {number} names no head branch to bring {base} into")
+    subject = f"Merge {base} into {branch}"
+    message = commit_message(subject, provenance) if provenance else subject
     try:
-        await _github(
-            repo, MERGE, "PUT", f"/repos/{repo}/pulls/{number}/update-branch", json={"expected_head_sha": head_sha}
+        merged = await _github(
+            repo, MERGE, "POST", f"/repos/{repo}/merges", json={"base": branch, "head": base, "commit_message": message}
         )
     except CodeHostError as err:
-        if err.status != 422:
+        if err.status != 409:
             raise
-        pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
-        head = str(pull.get("head", {}).get("sha", ""))
-        if head and head != head_sha:
-            return "head_changed", "", head, str(err)
         return "conflict", "", head_sha, f"{base} is {behind} commits ahead and does not merge in cleanly: {err}"
-    # GitHub updates the branch in the background: wait for its new head.
-    for _ in range(UPDATE_BRANCH_POLLS):
-        await asyncio.sleep(UPDATE_BRANCH_POLL_SECONDS)
-        pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
-        head = str(pull.get("head", {}).get("sha", ""))
-        if head and head != head_sha:
-            return "head_changed", "", head, f"brought in {behind} new commits from {base}"
-    raise CodeHostError(
-        f"GitHub did not bring {base} into pull request {number} within {UPDATE_BRANCH_POLLS * UPDATE_BRANCH_POLL_SECONDS}s"
-    )
+    new_head = str((merged or {}).get("sha", ""))
+    if not new_head:
+        # 204: GitHub found nothing to merge, so the branch already holds the base.
+        return None
+    return "head_changed", "", new_head, f"brought in {behind} new commits from {base}"
 
 
 # GitHub's compare lists at most this many files; a diff that may be cut is never called the same.

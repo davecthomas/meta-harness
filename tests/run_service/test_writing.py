@@ -187,7 +187,7 @@ async def test_a_posted_review_carries_the_checked_summary_and_findings_and_reco
     await ActivityEnvironment().run(activities.post_review, request)
 
     assert "rich tapestry" not in posted[0]["body"] and PLAIN.strip() in posted[0]["body"]
-    assert posted[0]["comments"][0]["body"] == "Off by one."
+    assert posted[0]["comments"][0]["body"].startswith("Off by one.\n\nProvenance: meta-harness ")
     assert review["summary"] == SLOPPY, "the fix run still gets the review as the run wrote it"
     [(kind, payload, fields)] = [e for e in passed if e[0] == "writing_checked"]
     assert (payload["kind"], payload["texts"], payload["kept"], payload["round"]) == ("review", 3, 2, 1)

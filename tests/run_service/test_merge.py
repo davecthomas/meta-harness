@@ -203,23 +203,22 @@ async def test_auto_merge_is_read_from_the_goal_as_the_planner_has_it(monkeypatc
     assert await ActivityEnvironment().run(activities.goal_auto_merge, "g-off") is False
 
 
-def _behind(monkeypatch, behind_by: int, update_status: int | None, heads: list[str]):
+def _behind(monkeypatch, behind_by: int, update_status: int | None, heads: list[str], merged: dict | None = None):
     """A code host whose base is behind_by commits ahead of the branch; GETs of the pull request return heads
-    in turn."""
+    in turn, and a merge of the base into the branch returns merged."""
     calls = []
-    monkeypatch.setattr(code_host, "UPDATE_BRANCH_POLL_SECONDS", 0)
 
     async def github(repo, permissions, method, path, **kwargs):
         calls.append((method, path, kwargs.get("json")))
         if "/compare/" in path:
             return {"behind_by": behind_by}
-        if path.endswith("/update-branch"):
+        if path.endswith("/merges"):
             if update_status:
-                raise CodeHostError("GitHub answered 422: merge conflict", retryable=False, status=update_status)
-            return {"message": "Updating pull request branch."}
+                raise CodeHostError("GitHub answered 409: merge conflict", retryable=False, status=update_status)
+            return {"sha": "with-base"} if merged is None else merged
         if method == "PUT":
             return {"sha": "m1", "merged": True}
-        return {"head": {"sha": heads.pop(0) if len(heads) > 1 else heads[0]}}
+        return {"head": {"sha": heads.pop(0) if len(heads) > 1 else heads[0], "ref": "mh/t-1"}}
 
     monkeypatch.setattr(code_host, "_github", github)
     return calls
@@ -233,16 +232,41 @@ async def test_a_branch_that_holds_the_base_merges_at_once(monkeypatch):
 
 
 async def test_a_branch_behind_its_base_gets_the_base_and_goes_back_to_checks_and_review(monkeypatch):
-    calls = _behind(monkeypatch, 2, None, ["abc", "abc", "with-base"])
+    calls = _behind(monkeypatch, 2, None, ["abc"])
     state, sha, head, detail = await code_host.merge_pull_request("o/r", 7, "abc", "main")
     assert (state, sha, head) == ("head_changed", "", "with-base")
     assert "brought in 2 new commits from main" in detail
-    assert ("PUT", "/repos/o/r/pulls/7/update-branch", {"expected_head_sha": "abc"}) in calls
+    merge_in = {"base": "mh/t-1", "head": "main", "commit_message": "Merge main into mh/t-1"}
+    assert ("POST", "/repos/o/r/merges", merge_in) in calls
     assert not any(path.endswith("/merge") for _, path, _ in calls), "it does not merge before the new head is checked"
 
 
+async def test_the_commit_that_brings_the_base_in_carries_its_provenance_as_trailers(monkeypatch):
+    calls = _behind(monkeypatch, 2, None, ["abc"])
+    signed = Provenance(COMMIT, task="t-1", version="1.2.3")
+
+    await code_host.merge_pull_request("o/r", 7, "abc", "main", kind="fix", provenance=signed)
+
+    [message] = [body["commit_message"] for _, path, body in calls if path.endswith("/merges")]
+    assert message == "Merge main into mh/t-1\n\nMeta-Harness-Version: 1.2.3\nMeta-Harness-Task: t-1"
+    assert not any(path.endswith("/update-branch") for _, path, _ in calls), "update-branch writes its own message"
+
+
+async def test_a_head_that_moved_before_the_base_is_brought_in_is_a_new_head_and_nothing_is_merged(monkeypatch):
+    calls = _behind(monkeypatch, 2, None, ["newer"])
+    state, _, head, _ = await code_host.merge_pull_request("o/r", 7, "abc", "main")
+    assert (state, head) == ("head_changed", "newer")
+    assert not any(method != "GET" for method, _, _ in calls)
+
+
+async def test_a_base_already_in_the_branch_when_merged_in_goes_on_to_the_merge(monkeypatch):
+    _behind(monkeypatch, 1, None, ["abc"], merged={})
+    state, sha, head, _ = await code_host.merge_pull_request("o/r", 7, "abc", "main")
+    assert (state, sha, head) == ("merged", "m1", "abc")
+
+
 async def test_a_base_that_does_not_merge_in_cleanly_is_a_conflict_for_a_fix_run(monkeypatch):
-    _behind(monkeypatch, 1, 422, ["abc"])
+    _behind(monkeypatch, 1, 409, ["abc"])
     state, _, head, _ = await code_host.merge_pull_request("o/r", 7, "abc", "main")
     assert (state, head) == ("conflict", "abc")
 
