@@ -295,6 +295,44 @@ def test_a_shipped_profile_the_check_would_refuse_is_not_added(monkeypatch):
         assert store.active(conn, "profiles")["version"] == before["version"]
 
 
+def test_a_deploy_sets_a_locked_skill_to_its_shipped_files_and_leaves_the_others():
+    from meta_harness.config import skills
+
+    shipped = skills.seed_skills()["skills"]
+    with db.connect(autocommit=True) as conn:
+        assert store.sync_locked(conn) == [], "the seeded version already holds the shipped files"
+        # A version from before the lock: the scanner changed, and a skill imported beside it.
+        old = copy.deepcopy(shipped)
+        old["no-ai-slop2"]["files"]["no-ai-slop-scan.py"] = "print('changed')"
+        old["no-ai-slop2"]["source"] = {"kind": "shipped"}
+        head = "---\nname: tidy-notes\ndescription: Tidy the notes.\n---\n"
+        old["tidy-notes"] = {
+            "description": "Tidy the notes.",
+            "source": {"kind": "upload"},
+            "files": {"SKILL.md": head},
+        }
+        store._insert(conn, "skills", {"skills": old}, "op@example.com", "before the lock", "edit", None)
+
+        [saved] = store.sync_locked(conn)
+
+        assert (saved["kind"], saved["origin"], saved["edited_by"]) == ("skills", "shipped", "meta-harness")
+        assert saved["note"] == "locked skills set to the shipped files: no-ai-slop2"
+        now = store.active(conn, "skills")["document"]["skills"]
+        assert now["no-ai-slop2"] == shipped["no-ai-slop2"] and now["tidy-notes"] == old["tidy-notes"]
+        assert store.sync_locked(conn) == [], "a second start changes nothing"
+
+        with pytest.raises(store.ConfigError) as refused:
+            store.save(conn, "skills", {"skills": old}, "op@example.com", "change the scanner")
+        assert refused.value.reasons[0].startswith("no-ai-slop2 is locked and cannot be changed here")
+
+
+def test_an_import_under_a_locked_skills_name_is_refused(client):
+    files = {"SKILL.md": "---\nname: no-ai-slop2\ndescription: Another one.\n---\n"}
+    response = client.post("/v1/config/skills/read", json={"files": files})
+    assert response.status_code == 422
+    assert response.json()["detail"].startswith("no-ai-slop2 is locked")
+
+
 def test_the_planner_adds_shipped_profiles_at_startup_and_records_it(monkeypatch):
     from meta_harness.planner.service import add_shipped_configuration
 

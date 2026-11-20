@@ -6,6 +6,7 @@ import httpx
 import pytest
 from temporalio.testing import ActivityEnvironment
 
+from meta_harness.config import skills
 from meta_harness.config import store as config_store
 from meta_harness.run_service import activities, code_host, writing
 from meta_harness.run_service.provenance import parse, stamp
@@ -126,6 +127,21 @@ async def test_a_rewrite_that_fails_its_checks_is_dropped_and_the_original_is_po
     outcome = await writing.check(SLOPPY, _gateway(answer, status))
 
     assert outcome.text == SLOPPY and not outcome.kept and reason in outcome.reason
+
+
+def test_the_scanner_is_the_shipped_file_and_runs_with_none_of_this_process_environment(monkeypatch):
+    def stored(kind: str) -> dict:
+        return {"skills": {"no-ai-slop2": {"files": {"no-ai-slop-scan.py": "raise SystemExit(3)"}}}}
+
+    monkeypatch.setattr(config_store, "current_document", stored)
+    shipped = (skills.skills_dir() / "no-ai-slop2" / "no-ai-slop-scan.py").read_text(encoding="utf-8")
+    assert writing.scanner_source() == shipped, "a stored copy of the scanner is never what runs"
+
+    monkeypatch.setenv("GATEWAY_API_KEY", "a-key-the-scanner-must-not-see")
+    telling = 'import json, os\nprint(json.dumps({"hits": [], "seen": sorted(os.environ)}))'
+    seen = writing.scan("Some text.", telling)["seen"]
+    assert "GATEWAY_API_KEY" not in seen and "PATH" not in seen
+    assert writing.decided(writing.scan("Café costs €5, naïvely.")) == [], "text beyond ASCII still scans"
 
 
 async def test_a_scanner_that_cannot_run_or_a_missing_gateway_leaves_the_original(monkeypatch):

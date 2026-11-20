@@ -334,6 +334,28 @@ decides everything pi loads:
   needs it, so a skill it does not use costs a line of the prompt. A
   skill's scripts run inside the per-run sandbox, under the profile's bash
   allowlist and the egress proxy, so a skill grants no access.
+- **A locked skill** is one the control plane itself depends on: it runs
+  the skill's script in its own process, or puts the skill's text in its
+  prompts. An admin who could change such a skill could run code that holds
+  the control plane's credentials, so what it holds is decided by a pull
+  request. `config/skills/locked.json` names the locked skills; today
+  `no-ai-slop2`, for the writing pass's scanner and the writing rules. A
+  locked skill is always the shipped files, with `"locked": true` in its
+  source:
+  - A save or a rollback that changes or removes one is refused, and so is
+    an import under its name. Each refusal says to change it with a pull
+    request.
+  - Each deploy sets the stored copy, which runs load, to the shipped files
+    (`store.sync_locked`), as a new version.
+  - The control plane reads the script and the rules from the shipped files,
+    never from the stored configuration, and runs the script with none of
+    its own environment.
+  - The Skills page shows a lock on its row, which says why, and no remove
+    button.
+  - A service does not start when the list is unreadable, or leaves out the
+    skill `config/planner.json`'s `writing_pass.skill` names.
+
+  Every other skill is imported, changed and removed as before.
 - The kind is seeded from `config/skills/`, and a skill added there later
   reaches a deployment as a new version, as a shipped profile does. It
   ships `no-ai-slop2` (MIT, from codeandtheory/machine-ai-skills, with its
@@ -1341,9 +1363,9 @@ and name, an issue's sizing, a split's parts, a task's name, a failure's
 diagnosis and the writing pass's own rewrite. The block is a file of the
 writing skill, `WRITING-RULES.md`, named by `config/planner.json`'s
 `writing_pass.rules`, so the rules a model is told and the rules the scanner
-holds it to are kept together. It is read from the active `skills`
-configuration, where an admin may change it, and from the shipped file when
-that skill does not hold it or the configuration cannot be read. A test
+holds it to are kept together. It is read from the shipped file, never from
+the stored configuration: the skill is locked (Skills), since the rules end
+every prompt. A test
 fails a `/v1/structured` call whose system prompt leaves the block out.
 
 Then by the run: each profile that writes for people
@@ -1365,8 +1387,8 @@ Last by the control plane, in the writing pass
 | A goal's update: its headline, body, what comes next and each thing it asks of the operator | The planner, before the update is saved. An update is shown on the goal's page and posted nowhere; it goes through the same pipeline, as `own` text. A pass that found something rides on the update's `goal_update_written` event as `writing`, and its rewrite's cost is a writing cost of the goal |
 
 1. The text goes through the skill's scanner, `no-ai-slop-scan.py`, read
-   from the active `skills` configuration and run as a child process with no
-   model. Only the hits the scanner decides by itself count as findings; a
+   from the shipped skill, which is locked (Skills), and run as a child
+   process with no model and none of this process's environment. Only the hits the scanner decides by itself count as findings; a
    candidate that needs a reader to confirm does not. Neither does a word
    `writing_pass.names` lists: the scanner's word lists hold `harness`, which
    is this product's name, so a text that only names the meta-harness is

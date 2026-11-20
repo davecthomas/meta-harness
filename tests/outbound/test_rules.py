@@ -27,16 +27,24 @@ def _skills(monkeypatch, files: dict[str, str] | Exception) -> None:
     monkeypatch.setattr(config_store, "current_document", current_document)
 
 
-def test_the_rules_come_from_the_active_skill_and_from_the_shipped_file_when_it_lacks_them(monkeypatch):
-    _skills(monkeypatch, {"WRITING-RULES.md": "An admin's rules.\n"})
-    assert rules.block() == "An admin's rules."
-    assert rules.after("You write an update.") == "You write an update.\n\nAn admin's rules."
-
-    # A skill imported before the file shipped, an empty file, and a configuration that cannot be read.
-    for held in ({"SKILL.md": "..."}, {"WRITING-RULES.md": "  "}, RuntimeError("no database")):
+def test_the_rules_come_from_the_shipped_file_whatever_the_stored_skill_holds(monkeypatch):
+    # The rules end every prompt, so a stored copy never decides them: not a changed one, not an unreadable one.
+    for held in ({"WRITING-RULES.md": "An admin's rules.\n"}, {"SKILL.md": "..."}, RuntimeError("no database")):
         _skills(monkeypatch, held)
         assert rules.block() == SHIPPED
+    assert rules.after("You write an update.") == f"You write an update.\n\n{SHIPPED}"
     assert SHIPPED.startswith("Writing rules") and "under 25 words" in SHIPPED
+
+
+def test_a_service_does_not_start_with_the_writing_skill_unlocked(monkeypatch):
+    rules.check_settings()
+
+    def refuse(needed: list[str]) -> None:
+        raise RuntimeError(f"{needed[0]} must be locked")
+
+    monkeypatch.setattr(skills, "check_locked", refuse)
+    with pytest.raises(RuntimeError, match="no-ai-slop2 must be locked"):
+        rules.check_settings()
 
 
 def test_the_rules_setting_is_checked_at_startup_and_a_bad_one_is_named(monkeypatch):

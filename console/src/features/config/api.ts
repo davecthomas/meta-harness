@@ -5,7 +5,8 @@ export type ConfigKind = "tiers" | "profiles" | "repos" | "trackers" | "skills" 
 // A skill as the skills configuration keeps it: what it is for, where it came from, and its files.
 export interface SkillEntry {
   description: string;
-  source: { kind: "git" | "upload" | "shipped"; url?: string; ref?: string; path?: string; commit?: string; by?: string };
+  // locked: the control plane itself runs or quotes the skill, so it is always the shipped files.
+  source: { kind: "git" | "upload" | "shipped"; url?: string; ref?: string; path?: string; commit?: string; by?: string; locked?: boolean };
   files: Record<string, string>;
 }
 

@@ -6,16 +6,14 @@ text comes out clean and the rewrite rarely runs. The block is a file of the wri
 (config/planner.json's `writing_pass.skill` and `writing_pass.rules`), so the rules a model is told and the
 rules the scanner holds it to are kept in one place.
 
-`block` reads the file from the active `skills` configuration, where an admin may have changed it. A
-deployment whose skill was imported before the file shipped does not hold it, and a configuration that
-cannot be read holds nothing: both fall back to the shipped file, config/skills/<skill>/<rules>. A prompt is
-never built without the rules because a read failed.
+`block` reads the shipped file, config/skills/<skill>/<rules>, never the stored `skills` configuration: the
+rules end every prompt, so what they say is decided by a pull request. The skill is locked
+(config/skills.py), and `check_settings` stops a service whose lock list leaves it out.
 """
 
 import logging
 
 from meta_harness.config import skills as shipped_skills
-from meta_harness.config import store as config_store
 from meta_harness.run_service import writing
 
 log = logging.getLogger(__name__)
@@ -27,8 +25,16 @@ def _shipped() -> str:
 
 
 def check_settings() -> None:
-    """Raises RuntimeError naming what is wrong with writing_pass.rules, or with the file it names."""
+    """Raises RuntimeError naming what is wrong with writing_pass.rules, with the file it names, or with
+    the lock on the writing skill."""
     writing.check_settings()
+    shipped_skills.check_locked([writing.settings()["skill"]])
+    scanner = shipped_skills.skills_dir() / writing.settings()["skill"] / writing.settings()["scanner"]
+    if not scanner.is_file():
+        raise RuntimeError(
+            f"{writing.CONFIG_PATH.name}: writing_pass.scanner names {scanner.name}, which the shipped skill "
+            f"does not hold. Name a file under config/skills/{writing.settings()['skill']}/"
+        )
     try:
         found = _shipped()
     except OSError as err:
@@ -46,16 +52,9 @@ def check_settings() -> None:
 
 
 def block() -> str:
-    """The rules, as a block to end a prompt with. Never raises, and is never empty once `check_settings`
-    has passed: the shipped file answers when the active configuration cannot."""
+    """The rules, as a block to end a prompt with, from the shipped file. Never raises, and is never empty
+    once `check_settings` has passed."""
     config = writing.settings()
-    try:
-        skills = config_store.current_document("skills").get("skills") or {}
-        found = ((skills.get(config["skill"]) or {}).get("files") or {}).get(config["rules"])
-        if isinstance(found, str) and found.strip():
-            return found.strip()
-    except Exception as err:  # noqa: BLE001 - a prompt is built whatever stops this read
-        log.warning("the writing rules were read from the shipped file: the skills configuration failed: %s", err)
     try:
         return _shipped()
     except OSError as err:

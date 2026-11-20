@@ -143,6 +143,34 @@ def add_shipped(conn: psycopg.Connection) -> list[dict[str, Any]]:
     return saved
 
 
+def sync_locked(conn: psycopg.Connection) -> list[dict[str, Any]]:
+    """Sets each locked skill (config.skills.locked) to its shipped files, when the active version differs.
+
+    A locked skill is one the control plane runs or quotes, so a deploy decides what it holds: the stored
+    copy that runs load is the shipped one, whatever an earlier version held. Every other skill is left as
+    it is. The change is one new version, origin `shipped`, checked like any save. Returns the versions saved.
+    """
+    from meta_harness.config import skills
+
+    names = skills.locked()
+    if not names:
+        return []
+    shipped = skills.seed_skills()["skills"]
+    with conn.transaction():
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("config:skills",))
+        held = active(conn, "skills")["document"].get("skills") or {}
+        stale = sorted(name for name in names if held.get(name) != shipped[name])
+        if not stale:
+            return []
+        document = {"skills": {**held, **{name: shipped[name] for name in stale}}}
+        try:
+            check(conn, "skills", document)
+        except ConfigError:
+            return []
+        note = f"locked skills set to the shipped files: {', '.join(stale)}"
+        return [_insert(conn, "skills", document, SHIPPED_BY, note, "shipped", None)]
+
+
 # The lists in a shipped profile whose new members reach a deployment's profile of the same name: the skills
 # it loads and the commands its bash tool may run.
 SHIPPED_PROFILE_LISTS = ("skills", "bash_allow")

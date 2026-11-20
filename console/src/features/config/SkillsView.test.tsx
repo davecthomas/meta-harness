@@ -30,6 +30,21 @@ function Staged({ profiles }: { profiles: Record<string, { skills?: string[] }> 
 
 const show = (profiles: Record<string, { skills?: string[] }> = {}) => render(<MantineProvider theme={theme}><Staged profiles={profiles} /></MantineProvider>);
 
+test("a locked skill shows a lock that says why, and has no remove button; another skill keeps its own", () => {
+  const original = { skills: { "no-ai-slop2": { ...SLOP, source: { kind: "shipped" as const, locked: true } }, "tidy-notes": TIDY } };
+  const staging: Staging = { document: original, original, stage: () => {}, reasons: () => [] };
+  render(<MantineProvider theme={theme}><SkillsView staging={staging} profiles={{}} /></MantineProvider>);
+  const locked = screen.getByTestId("skill-no-ai-slop2");
+  expect(within(locked).getByRole("img", { name: "no-ai-slop2 is locked" })).toBeTruthy();
+  expect(within(locked).queryByRole("button", { name: "Remove skill no-ai-slop2" })).toBeNull();
+  const open = screen.getByTestId("skill-tidy-notes");
+  expect(within(open).queryByRole("img", { name: "tidy-notes is locked" })).toBeNull();
+  expect(within(open).getByRole("button", { name: "Remove skill tidy-notes" })).toBeTruthy();
+  fireEvent.click(within(locked).getByRole("button", { name: "no-ai-slop2" }));
+  expect(screen.getByRole("dialog").textContent).toContain("changes only by a pull request");
+  cleanup();
+});
+
 test("each skill shows what it is for, where it came from and which profiles use it; one in use cannot be removed", () => {
   show({ "pi-careful": { skills: ["no-ai-slop2"] } });
   const row = screen.getByTestId("skill-no-ai-slop2");
