@@ -78,10 +78,12 @@ def posted(description: str, end: str) -> Section | None:
     return Section(heading, text, from_run=heading == RUN_HEADING)
 
 
-def posted_round(description: str, heading: str) -> Section | None:
+def posted_round(description: str, heading: str, known: Section) -> Section | None:
     """A fix round's summary, read back from the description: the text under heading, up to the provenance
     line that ends the section, or the description's end when it has none. None when the description holds no
-    such heading. Its source comes from the text, since the round's heading does not say it."""
+    such heading. Its heading and source are those of known, the section this round's request gives: the same
+    request gives the same source on every attempt, and the text's first words cannot tell a run's marked
+    summary that opens with FALLBACK_PREFIX from a fallback."""
     description = description.replace("\r\n", "\n")
     at = _line_at(description, f"## {heading}\n")
     if at < 0:
@@ -89,9 +91,7 @@ def posted_round(description: str, heading: str) -> Section | None:
     rest = description[at + len(f"## {heading}\n") :]
     end = provenance.LINE.search(rest)
     text = (rest[: end.start()] if end else rest).strip()
-    if text.startswith((FALLBACK_PREFIX, EARLIER_PREFIX)):
-        return Section(FALLBACK_HEADING, text, from_run=False)
-    return Section(RUN_HEADING, text, from_run=True)
+    return Section(known.heading, text, from_run=known.from_run)
 
 
 def _line_at(text: str, line: str) -> int:

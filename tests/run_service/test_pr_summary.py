@@ -281,6 +281,16 @@ async def test_a_fallback_is_recorded_as_the_meta_harness_s(host):
     assert summary["source"] == "files" and summary["heading"] == pr_summary.FALLBACK_HEADING
 
 
+async def test_a_fix_round_s_summary_in_the_fallback_s_words_is_recorded_as_the_run_s(host):
+    host["created"] = False
+    text = f"{pr_summary.FALLBACK_PREFIX}. It edited `src/app.py`."
+
+    await ActivityEnvironment().run(activities.publish, _request(text, summary_source="run", fix_round=1))
+
+    [summary] = _summaries(host)
+    assert (summary["source"], summary["heading"], summary["text"]) == ("run", pr_summary.RUN_HEADING, text)
+
+
 async def test_a_fix_round_records_its_summary_with_its_round(host):
     host["created"] = False
 
@@ -412,13 +422,27 @@ def test_a_fix_round_s_summary_is_read_back_up_to_its_provenance_line():
         f"\n\n## Fix round 2 (run-task-t-1:run-4)\n\n{provenance.stamp(fallback, signed)}\n"
     )
 
-    assert pr_summary.posted_round(body.replace("\n", "\r\n"), "Fix round 1 (run-task-t-1:run-3)") == (
+    run_part = pr_summary.section(OWN, FILES, "run")
+    files_part = pr_summary.section("Done.", FILES)
+
+    assert pr_summary.posted_round(body.replace("\n", "\r\n"), "Fix round 1 (run-task-t-1:run-3)", run_part) == (
         pr_summary.Section(pr_summary.RUN_HEADING, own, from_run=True)
     )
-    second = pr_summary.posted_round(body, "Fix round 2 (run-task-t-1:run-4)")
+    second = pr_summary.posted_round(body, "Fix round 2 (run-task-t-1:run-4)", files_part)
     assert second == pr_summary.Section(pr_summary.FALLBACK_HEADING, fallback, from_run=False)
     assert second.source == "files"
-    assert pr_summary.posted_round(body, "Fix round 3 (run-task-t-1:run-5)") is None
+    assert pr_summary.posted_round(body, "Fix round 3 (run-task-t-1:run-5)", run_part) is None
+
+
+def test_a_fix_round_s_summary_read_back_keeps_the_source_it_was_posted_with():
+    """A run's marked summary that opens with the fallback's words is still the run's when read back."""
+    text = f"{pr_summary.FALLBACK_PREFIX}. It edited `src/app.py`."
+    body = f"## Fix round 1 (r)\n\n{text}\n"
+    part = pr_summary.section(text, FILES, "run")
+
+    read = pr_summary.posted_round(body, "Fix round 1 (r)", part)
+
+    assert read == pr_summary.Section(pr_summary.RUN_HEADING, text, from_run=True) and read.source == "run"
 
 
 def test_the_summary_event_is_registered_with_every_source():

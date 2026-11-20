@@ -420,8 +420,10 @@ async def publish(request: PublishRequest) -> PublishResult:
         except code_host.CodeHostError as err:
             raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
         # A retry adds nothing when an earlier attempt added the round's section, and its writing pass may have
-        # rewritten the summary differently, so what is recorded is the section the description holds.
-        _record_summary(request, published.pr_url, pr_summary.posted_round(description or "", heading) or part)
+        # rewritten the summary differently, so what is recorded is the section the description holds. Its source
+        # is the one this request gives, which every attempt shares, not a guess from the text's first words.
+        posted = pr_summary.posted_round(description or "", heading, part)
+        _record_summary(request, published.pr_url, posted or part)
     print(
         f"[{request.run_id} publish] {', '.join(published.files)} on branch {published.branch} at "
         f"{published.commit[:12]}, pull request {'opened' if published.created else 'already open'}: {published.pr_url}",
