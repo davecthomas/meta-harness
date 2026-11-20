@@ -127,6 +127,8 @@ class GoalIn(BaseModel):
     priority: int = 0
     # True: an issue missing acceptance checks, paths or a testable outcome is held, not run (sizing.py).
     strict_issues: bool = False
+    # Whether the files its runs create take a provenance header. None: config/provenance.json decides.
+    provenance: bool | None = None
     # The issue tracker the goal uses, one for all its issues. Left out: the default tracker.
     tracker: str | None = Field(default=None, min_length=1, max_length=40)
     # What the tracker asks of a goal besides its repos (GET /v1/trackers, goal_settings): for Jira, its project.
@@ -178,6 +180,9 @@ class GoalPatch(BaseModel):
     max_parallel: int | None = Field(default=None, ge=1)
     # An issue it has not made a task yet is held, or let go, at the next sweep.
     strict_issues: bool | None = None
+    # Whether the files its runs create from now on take a provenance header. Sent as null:
+    # config/provenance.json decides again.
+    provenance: bool | None = None
 
 
 def system_max_parallel() -> int | None:
@@ -1387,11 +1392,11 @@ def create_app(
 
     @app.patch("/v1/goals/{goal_id}")
     async def patch(goal_id: str, body: GoalPatch, who: str = Depends(operator)) -> dict:
-        """Change only the fields sent. A field that may be empty (label, max_usd, max_parallel) is cleared
-        when sent as null; any other sent as null is left as it is. A change to the budget takes effect at
+        """Change only the fields sent. A field that may be empty (label, max_usd, max_parallel, provenance) is
+        cleared when sent as null; any other sent as null is left as it is. A change to the budget takes effect at
         once: the goal's standing is worked out again, and its tasks held for the budget look again."""
         fields = {k: v for k, v in body.model_dump().items() if v is not None}
-        for clearable in ("label", "max_usd", "max_parallel"):
+        for clearable in ("label", "max_usd", "max_parallel", "provenance"):
             if clearable in body.model_fields_set:
                 fields[clearable] = getattr(body, clearable)
         if "max_parallel" in fields and (why := parallel_reason(body.max_parallel)):

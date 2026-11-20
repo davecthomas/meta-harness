@@ -197,6 +197,8 @@ class RunTask:
     def __init__(self) -> None:
         self._current_run_id: str | None = None
         self._task_id = ""
+        # The task's goal, for the publish activity's provenance headers.
+        self._goal_id = ""
         self._route_no = 0
         # Operators' messages to the run in progress, in the order they came, until each is handed over.
         self._messages: list[OperatorMessage] = []
@@ -296,6 +298,7 @@ class RunTask:
             task_type=spec.task_type,
         )
         self._task_type = spec.task_type
+        self._goal_id = spec.goal_id or ""
         again = f" again (retry {spec.retries})" if spec.retries else ""
         await self._task_status("running", f"the meta-harness run service started its RunTask workflow{again}")
         try:
@@ -725,6 +728,7 @@ class RunTask:
                 spent_usd=str(spent),
                 task_id=self._task_id,
                 fix_round=fix_round,
+                goal_id=self._goal_id,
             ),
             start_to_close_timeout=PUBLISH_TIMEOUT,
             retry_policy=PUBLISH_RETRY,
@@ -1055,6 +1059,7 @@ class RunTask:
                         "This pull request fixes that. It closes no issue: the merged one closed it."
                     ),
                     task_id=self._task_id,
+                    goal_id=self._goal_id,
                 ),
                 start_to_close_timeout=PUBLISH_TIMEOUT,
                 retry_policy=PUBLISH_RETRY,

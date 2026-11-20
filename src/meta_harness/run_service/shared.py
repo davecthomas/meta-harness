@@ -171,6 +171,8 @@ class PublishRequest:
     # A fix run's round: its summary is added to the open pull request's description, which is where a review
     # looks for what the change owes an explanation for, such as a file outside the task's paths.
     fix_round: int = 0
+    # The task's goal, whose provenance setting outranks the configuration's for the files the run created.
+    goal_id: str = ""
 
 
 @dataclass

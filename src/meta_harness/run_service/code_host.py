@@ -31,7 +31,7 @@ import asyncio
 import os
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
 from pathlib import Path
@@ -87,6 +87,8 @@ class Published:
     files: list[str]
     pr_url: str
     created: bool
+    # The files the run created that carry a provenance header (run_service/provenance_headers.py).
+    stamped: list[str] = field(default_factory=list)
 
 
 @cache
@@ -269,6 +271,7 @@ async def publish(
     body: str | Callable[[list[str]], Awaitable[str]],
     commit_message: str,
     pr_record: Path,
+    headers: Callable[[list[str]], Awaitable[list[str]]] | None = None,
 ) -> Published | None:
     """Commits whatever pi changed onto a new branch, pushes it, and opens the pull request.
 
@@ -278,6 +281,12 @@ async def publish(
     branch changes: it is called only when a pull request is opened, so a
     description that costs something to write is not written for a push to
     a pull request already open.
+    headers, when given, is called before the commit with the files the run
+    created (`created_files`); it may add a provenance header to them, and
+    returns the files that carry one, which the result's `stamped` lists.
+    A retried attempt that finds the earlier attempt's commit, and nothing
+    left to commit, hands it the files that commit created instead
+    (`committed_files`), so `stamped` still lists them.
     Every git command names git_dir and the workspace outright, so the
     `.git` file pi could rewrite in the workspace decides nothing.
     """
@@ -287,6 +296,15 @@ async def publish(
     if current != branch:
         await _git(git_dir, workspace, "checkout", "--quiet", "-B", branch)
     await _git(git_dir, workspace, "add", "--all")
+    stamped: list[str] = []
+    if headers is not None:
+        created = await created_files(git_dir, workspace)
+        if not created and not await _git(git_dir, workspace, "status", "--porcelain"):
+            created = await committed_files(git_dir, workspace, commit_message)
+        if created:
+            stamped = await headers(created)
+        if stamped:
+            await _git(git_dir, workspace, "add", "--all")
     if await _git(git_dir, workspace, "status", "--porcelain"):
         await _git(
             git_dir,
@@ -312,13 +330,13 @@ async def publish(
         if not isinstance(body, str):
             body = await body(files)
         pr_record.write_text(f"# {title}\n\nbase: {base}\nhead: {branch} at {commit}\n\n{body}\n", encoding="utf-8")
-        return Published(branch, base, commit, files, f"file://{pr_record}", created)
+        return Published(branch, base, commit, files, f"file://{pr_record}", created, stamped=stamped)
     owner = repo.split("/", 1)[0]
     existing = await _github(
         repo, OPEN_PULL_REQUEST, "GET", f"/repos/{repo}/pulls", params={"head": f"{owner}:{branch}", "state": "open"}
     )
     if existing:
-        return Published(branch, base, commit, files, existing[0]["html_url"], False)
+        return Published(branch, base, commit, files, existing[0]["html_url"], False, stamped=stamped)
     if not isinstance(body, str):
         body = await body(files)
     pull = await _github(
@@ -332,7 +350,45 @@ async def publish(
     await _github(
         repo, OPEN_PULL_REQUEST, "POST", f"/repos/{repo}/issues/{pull['number']}/labels", json={"labels": [PR_LABEL]}
     )
-    return Published(branch, base, commit, files, pull["html_url"], True)
+    return Published(branch, base, commit, files, pull["html_url"], True, stamped=stamped)
+
+
+async def created_files(git_dir: Path, workspace: Path) -> list[str]:
+    """The files the run created, from what is staged: added against HEAD, with a file the run only moved left
+    out, and, while a merge is in progress, the files the merged branch brought too."""
+    staged = await _git(
+        git_dir, workspace, "diff", "--cached", "--name-only", "--diff-filter=A", "--find-renames", "-z", "HEAD"
+    )
+    added = [name for name in staged.split("\0") if name]
+    if added and (git_dir / "MERGE_HEAD").is_file():
+        merged = await _git(git_dir, workspace, "ls-tree", "-r", "-z", "--name-only", "MERGE_HEAD")
+        brought = set(merged.split("\0"))
+        added = [name for name in added if name not in brought]
+    return added
+
+
+async def committed_files(git_dir: Path, workspace: Path, commit_message: str) -> list[str]:
+    """The files an earlier attempt of this publish created, when HEAD is the commit it made (its author and
+    message are this publish's); else none. Like `created_files`: added against the first parent, a moved file
+    left out, and, for a merge, the files another parent brought too."""
+    made = await _git(git_dir, workspace, "log", "-1", "--format=%an%n%B", "HEAD")
+    author, _, message = made.partition("\n")
+    if author != COMMIT_NAME or message.strip() != commit_message.strip():
+        return []
+    parents = (await _git(git_dir, workspace, "rev-list", "--parents", "-n", "1", "HEAD")).split()[1:]
+    if not parents:
+        return []
+    changed = await _git(
+        git_dir, workspace, "diff", "--name-only", "--diff-filter=A", "--find-renames", "-z", parents[0], "HEAD"
+    )
+    added = [name for name in changed.split("\0") if name]
+    for other in parents[1:]:
+        if not added:
+            break
+        merged = await _git(git_dir, workspace, "ls-tree", "-r", "-z", "--name-only", other)
+        brought = set(merged.split("\0"))
+        added = [name for name in added if name not in brought]
+    return added
 
 
 def pr_number(pr_url: str) -> tuple[str, int]:

@@ -21,7 +21,7 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from meta_harness.run_service import events, routing, writing
+from meta_harness.run_service import events, provenance_headers, routing, writing
 from meta_harness import logs
 from meta_harness.logs import JournalFormatter
 from meta_harness.run_service.activities import (
@@ -87,6 +87,11 @@ async def main() -> None:
         writing.check_settings()
     except RuntimeError as err:
         print(f"[worker] the writing pass's settings are not usable: {err}", flush=True)
+        sys.exit(1)
+    try:
+        provenance_headers.check_settings()
+    except RuntimeError as err:
+        print(f"[worker] the provenance header settings are not usable: {err}", flush=True)
         sys.exit(1)
     client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
     worker = Worker(

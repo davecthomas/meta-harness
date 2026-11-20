@@ -35,7 +35,7 @@ GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
     "status, created_at, updated_at, started_at, closed_at, title, max_parallel, plan_task_id, plan_approved_at, "
     "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to, strict_issues, tracker, "
-    "tracker_settings, planned"
+    "tracker_settings, planned, provenance"
 )
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
@@ -90,6 +90,8 @@ class NewGoal:
     # True: a planning task plans the goal, and nothing runs until an operator approves its plan. A goal that
     # plans its issues from its description always is.
     planned: bool = False
+    # Whether its runs' new files take a provenance header. None: config/provenance.json decides.
+    provenance: bool | None = None
 
 
 def _check_budget(mode: str | None, overage_percent: int | None) -> None:
@@ -114,9 +116,9 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
         cur.execute(
             f"INSERT INTO planner.goal (id, created_by, statement, repos, label, modality, modality_source, "
             f"auto_merge, max_usd, priority, status, started_at, title, max_parallel, budget_mode, "
-            f"budget_overage_percent, strict_issues, tracker, tracker_settings, planned) "
+            f"budget_overage_percent, strict_issues, tracker, tracker_settings, planned, provenance) "
             f"VALUES (%s, %s, %s, %s, %s, %s, 'operator', %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, %s, "
-            f"%s, %s, %s, %s, %s, %s) "
+            f"%s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING {GOAL_COLUMNS}",
             (
                 new_goal_id(),
@@ -138,6 +140,7 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
                 goal.tracker,
                 Jsonb(goal.tracker_settings) if goal.tracker_settings else None,
                 planned,
+                goal.provenance,
             ),
         )
         return _goal(cur.fetchone())
@@ -189,7 +192,7 @@ def update(
     **fields: Any,
 ) -> tuple[dict, dict]:
     """Change title, statement, label, repos, auto_merge, priority, max_usd, budget_mode,
-    budget_overage_percent, max_parallel, strict_issues or status. Returns (goal, the fields that changed with their old values).
+    budget_overage_percent, max_parallel, strict_issues, provenance or status. Returns (goal, the fields that changed with their old values).
 
     only_if: change nothing unless the goal's status is this one when its row is locked.
 
@@ -203,7 +206,7 @@ def update(
     can tell a goal's first start, which sweeps at once, from a resume.
     """
     allowed = {"title", "statement", "label", "repos", "auto_merge", "priority", "max_usd", "max_parallel", "status"}
-    allowed |= {"budget_mode", "budget_overage_percent", "strict_issues"}
+    allowed |= {"budget_mode", "budget_overage_percent", "strict_issues", "provenance"}
     if set(fields) - allowed:
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
     _check_budget(fields.get("budget_mode"), fields.get("budget_overage_percent"))

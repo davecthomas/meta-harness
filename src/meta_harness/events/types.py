@@ -235,6 +235,20 @@ REGISTRY: list[EventType] = [
             ["kind", "texts", "findings", "rewritten", "kept"],
         ),
     ),
+    # The files a run created that carry a provenance header (run_service/provenance_headers.py): count is how many,
+    # files the first of them
+    EventType(
+        "provenance_added",
+        1,
+        _object(
+            {
+                "run_id": {"type": "string"},
+                "count": {"type": "integer"},
+                "files": {"type": "array", "items": {"type": "string"}},
+            },
+            ["run_id", "count", "files"],
+        ),
+    ),
     # A running task held for budget, and the operator's answer
     EventType("budget_hold", 1, _object({"reason": {"type": "string"}}, ["reason"])),
     EventType(
