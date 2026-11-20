@@ -5,10 +5,22 @@ from meta_harness.supervisor.remedies.cancel_for_goal import CancelForGoal
 from meta_harness.supervisor.remedies.drive import Merge, Retry, Review
 from meta_harness.supervisor.remedies.end_at_pull_request import EndAtPullRequest
 from meta_harness.supervisor.remedies.recover import Recover
+from meta_harness.supervisor.remedies.stronger import FixAgain, RetryStronger
 from meta_harness.supervisor.remedies.wait import Wait
 
 REMEDIES: dict[str, Remedy] = {
-    remedy.id: remedy for remedy in (Recover(), EndAtPullRequest(), Merge(), Review(), Retry(), CancelForGoal(), Wait())
+    remedy.id: remedy
+    for remedy in (
+        Recover(),
+        EndAtPullRequest(),
+        Merge(),
+        Review(),
+        Retry(),
+        CancelForGoal(),
+        Wait(),
+        RetryStronger(),
+        FixAgain(),
+    )
 }
 
 

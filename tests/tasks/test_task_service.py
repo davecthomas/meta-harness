@@ -811,6 +811,20 @@ def test_the_supervisor_retries_a_failed_task_and_only_a_failed_one(api):
     assert (retried["status"], retried["resume"], retried["drives"]) == ("queued", None, 1)
     assert retried["status_reason"].endswith("so the supervisor retried it (try 1 of 3)")
     assert Decimal(retried["spent_carried_usd"]) == Decimal("1")
+    assert retried["complexity"] is None
+
+
+def test_a_drive_can_raise_a_tasks_tier_for_its_next_runs(api):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
+    stronger = {"action": "retry", "why": "it failed on its own account", "complexity": "high"}
+
+    retried = api.post(f"/v1/tasks/{task['id']}/drive", json=stronger, headers=_as(SERVICE_KEY)).json()
+
+    assert (retried["status"], retried["complexity"]) == ("queued", "high")
+    bad = {**stronger, "complexity": "extreme"}
+    assert api.post(f"/v1/tasks/{task['id']}/drive", json=bad, headers=_as(SERVICE_KEY)).status_code == 422
 
 
 def test_an_uncounted_drive_is_none_of_the_tasks_tries_and_tasks_are_listed_by_who_has_them(api):
