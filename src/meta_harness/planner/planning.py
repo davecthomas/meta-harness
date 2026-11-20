@@ -148,8 +148,9 @@ def prompt(
         "  tasks to one large one.",
         "- Its body says what to build and why, then states its checks under a '## Acceptance checks' heading,",
         "  as a list of commands that pass when it is done.",
-        "- Its body names the paths it changes on a 'Paths:' line, so tasks that touch different paths can run",
-        "  side by side.",
+        "- Its body names the paths it changes on a 'Paths:' line: the files it changes, or the narrowest",
+        "  directories that hold them. Never a whole top-level directory such as tests, src or console: tasks",
+        "  whose paths overlap run one after another, so a broad path makes every other task wait for this one.",
         "- depends_on names what must be done first: a new task by its draft_id, an existing issue by its ref as",
         "  shown above. Name a dependency only when the work truly needs it: what does not wait runs in parallel.",
         "",
@@ -299,6 +300,9 @@ async def gather(goal: dict, task: dict, events: Events, issues: list[dict[str, 
     drafts = plans.latest_drafts(of("issue_drafted"))
     items = plans.complete(plans.latest_items(of("issue_planned")), issues)
     summary, gaps = plans.latest_summary(of("plan_summarized"))
+    # A draft that names a whole top-level directory would make every task touching it wait for this one: a
+    # gap the planner's suggested fix can settle by naming the files.
+    gaps = [*gaps, *plans.broad_path_gaps(drafts)]
     if task["status"] != "closed":
         invalid = [f"the planning task ended {task['status']}: {task.get('status_reason') or 'no reason was recorded'}"]
     else:

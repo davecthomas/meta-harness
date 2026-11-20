@@ -2123,6 +2123,7 @@ walks every remedy `decide` can name and fails one with no module.
 | `wait` | A pull request whose checks have not reported | Nothing this pass | — |
 | `retry_stronger` | A task that failed on its own account (it could not finish the work), whose last route was below the complex tier | Runs it again with `complexity: high`, so its route is the complex tier: a stronger model and the careful profile | The task policy's `remedies.retry_stronger` (1) |
 | `fix_again` | A review its fix rounds did not settle, on a swept goal | Sends it back through its review loop with `complexity: high`: a fresh set of fix rounds, on the complex tier | The task policy's `remedies.fix_again` (1) |
+| `auto_split` (planner) | An open issue of an active goal the sweep held as too large, that no one split, ran anyway or made a task of | After the sweep, drafts the parts (`splits.draft`) and splits it as the Split button would (`split_issue.py`). Keyed in the ledger by the issue's `ref`; a try that fails counts, so it stops at its limit and the issue keeps its Split and Run anyway | The task policy's `remedies.auto_split` (1) |
 | `raise_limit` | A running task held at its own spend limit (`budget_request` for `task`), whose next run needs at most twice that limit, when its goal's budget has room for the raise | Raises the task's spend limit to what the run needs, as an operator's Raise would. A goal's budget is never raised by a remedy | The task policy's `remedies.raise_limit` (1) |
 
 A remedy with a setting in the task policy's `remedies` (0 to 3 tries; 0 turns
@@ -2138,6 +2139,10 @@ Every try is one record in the ledger (`supervisor/ledger.py`): a
 sentences for a person, a page or the planner's update, so none of them needs
 to read raw events to learn what was done for a task. A try that could not be
 applied is recorded `failed`, with its error, and is tried again later.
+A plan's draft that names a whole top-level directory on its `Paths:` line
+(`tests`, `src`) gets a gap saying every other task touching it would wait for
+it, so the planner's suggested fix can narrow it; the planning prompt asks for
+the files, or the narrowest directories, from the start.
 `GET /v1/supervisor/remedies` serves the ledger for a task (`task_id`), a goal
 (`goal_id`) or every task, newest first.
 

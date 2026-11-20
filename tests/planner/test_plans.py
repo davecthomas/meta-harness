@@ -199,3 +199,16 @@ def test_the_planning_candidates_profile_must_exist_and_be_able_to_record_a_plan
     assert gone == "candidate names the harness profile pi-gone, which the profiles lack: pick one of pi-lean, pi-plan"
     [toolless] = kinds.check_planning({**shipped, "candidate": "harness:pi-lean/claude:m"}, profiles)
     assert "has no create_issue tool" in toolless and "Pick a planning profile" in toolless
+
+
+def test_a_draft_that_names_a_whole_top_level_directory_gets_a_gap_saying_what_it_costs():
+    from meta_harness.planner import plans
+
+    drafts = [
+        {"draft_id": "a", "title": "Capture summaries", "body": "Do it.\n\nPaths: src/meta_harness/run_service/review.py, tests"},
+        {"draft_id": "b", "title": "Narrow", "body": "Do it.\n\nPaths: console/src/features/goals/GoalPage.tsx, Makefile.am"},
+    ]
+    [gap] = plans.broad_path_gaps(drafts)
+    assert gap.startswith("Capture summaries names the whole tests directory as its paths")
+    assert gap.endswith("Name the files it changes instead")
+    assert plans.broad_paths("Paths: tests, src, docs/x.md") == ["tests", "src"]

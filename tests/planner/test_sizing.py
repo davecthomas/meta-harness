@@ -975,3 +975,41 @@ def test_a_split_issue_is_never_asked_about_and_counts_done_once_its_parts_are()
     assert sweep.issues_done(links), "a split issue whose parts are done counts as done, whatever its tracker says"
     assert splits.short("github:o/r#12") == "#12" and splits.short("jira:VL-1") == "VL-1"
     assert splits.is_part("Do it.\n\nSplit from VL-1\n") and not splits.is_part("Do it.")
+
+
+def test_the_planner_splits_an_issue_it_held_as_too_large_itself_once_and_records_it(world, monkeypatch):
+    from meta_harness.supervisor import ledger
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    big = tracker.add(REPO, _number(), body=f"Everything.\n\nPaths: console\n\n{CHECKS}", labels=[goal["label"]])
+    stubborn = tracker.add(REPO, _number(), body=f"All of it.\n\nPaths: src\n\n{CHECKS}", labels=[goal["label"]])
+    for ref in (big, stubborn):
+        sizer.answers[ref] = {"size": "large", "reasons": ["too much"], "missing": [], "split": ["Titles", "Labels"]}
+
+    async def draft(issue, titles):
+        if issue.ref == stubborn:
+            raise splits.SplitError("the HTTP Gateway answered 503: busy. Try Split again")
+        parts = [
+            {"title": t, "body": splits.compose(f"Do {t}.", f"{t} show.", ["console"], ["make test"], issue.ref)}
+            for t in titles
+        ]
+        return parts, "claude:test-model", "0.001"
+
+    monkeypatch.setattr(splits, "draft", draft)
+    swept = _sweep(client, goal)
+
+    assert swept["split"] == [big]
+    created = _shown(client, goal)[big]["split_into"]
+    assert len(created) == 2 and all(
+        f"\nSplit from #{big.rsplit('#', 1)[-1]}\n" in i.body for i in tracker.created
+    )
+    [done] = ledger.read(ref=big)
+    assert (done["remedy"], done["outcome"], done["try"], done["of"]) == ("auto_split", "done", 1, 1)
+    assert done["did"].startswith("split it into 2 smaller issues") and "closes once" in done["next"]
+    [failed] = ledger.read(ref=stubborn)
+    assert failed["outcome"] == "failed" and failed["next"] == "split it, or run it as one, from the goal's page"
+
+    # Its one try is used: the stubborn issue waits for an operator, and is not drafted again each sweep.
+    _sweep(client, goal)
+    assert len(ledger.read(ref=stubborn)) == 1 and not _shown(client, goal)[stubborn]["split_into"]

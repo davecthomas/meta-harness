@@ -31,8 +31,8 @@ from pydantic import BaseModel, Field
 from meta_harness import db
 from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import splits, store
+from meta_harness.planner.split_issue import SplitRefused, split_issue
 from meta_harness.planner.sweep import goal_tracker
-from meta_harness.run_service import provenance
 
 MAX_SPLIT_ISSUES = 20
 
@@ -129,72 +129,12 @@ def register(
 
     @app.post("/v1/goals/{goal_id}/issues/split", status_code=201)
     async def split(goal_id: str, body: SplitIn, who: str = Depends(operator)) -> dict:
-        """Create the smaller issues a held one splits into, each with the goal's label and a `Paths:` line."""
+        """Create the smaller issues a held one splits into, each a complete issue with the goal's label."""
         goal, link = await held_open(goal_id, body.ref)
-        short = [
-            f"{issue.title}: needs {' and '.join(lack)}"
-            for issue in body.issues
-            if (lack := splits.lacking(issue.body))
-        ]
-        if short:
-            raise HTTPException(
-                status_code=422,
-                detail=f"each part must be a complete issue. Add what each lacks, then split again: {'; '.join(short)}",
-            )
-        repo, label = link["repo"], goal["label"]
-
-        def claim() -> bool:
-            with db.connect(autocommit=True) as conn:
-                return store.claim_split(conn, goal_id, body.ref)
-
-        def record(created: list[str]) -> list[str]:
-            with db.connect(autocommit=True) as conn:
-                # A goal with no label takes the new issues by ref, as an operator's pick.
-                added = [] if label or not created else store.add_refs(conn, goal_id, [(ref, repo) for ref in created])
-                store.record_split(conn, body.ref, created, splits.reason(created) if created else None)
-                return added
-
-        if link.get("split_into") is not None or not await asyncio.to_thread(claim):
-            done = ", ".join(link.get("split_into") or [])
-            raise HTTPException(
-                status_code=409, detail=f"{body.ref} was split already" + (f" into {done}" if done else "")
-            )
-
-        def audit(created: list[str], added: list[str]) -> None:
-            """The events of a recorded split: each issue a labelless goal took in, then the split itself."""
-            for ref in added:
-                events.emit("issue_added", {"ref": ref, "goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
-            if created:
-                events.emit(
-                    "issue_split",
-                    {"ref": body.ref, "goal_id": goal_id, "issues": created},
-                    actor=who,
-                    tags={"goal_id": goal_id},
-                )
-
-        created: list[str] = []
         try:
-            if label:
-                await goal_tracker(tracker, goal).ensure_label(repo, label)
-            # Each part says it came from the goal and the operator who split it.
-            signed = provenance.Provenance(provenance.ISSUE, goal=goal_id, by=who)
-            for issue in body.issues:
-                text = provenance.stamp(splits.with_origin(issue.body, body.ref), signed) + "\n"
-                made = await goal_tracker(tracker, goal).create_issue(
-                    repo, issue.title.strip(), text, [label] if label else []
-                )
-                created.append(made.ref)
-        except TrackerError as err:
-            # What was created is recorded as the split, so a retry never creates it twice; none: it may be split again.
-            audit(created, await asyncio.to_thread(record, created))
-            done = f"; created before it refused: {', '.join(created)}" if created else ""
-            raise HTTPException(status_code=502, detail=f"GitHub refused an issue: {err}{done}") from err
-        except Exception:
-            audit(created, await asyncio.to_thread(record, created))
-            raise
-
-        audit(created, await asyncio.to_thread(record, created))
-        await splits.announce(goal_tracker(tracker, goal), body.ref, created, goal_id=goal_id, by=who)
+            created = await split_issue(goal, link, [(i.title, i.body) for i in body.issues], tracker, events, who)
+        except SplitRefused as err:
+            raise HTTPException(status_code=err.status, detail=str(err)) from err
         sweep_if_active(goal)
         return {"goal_id": goal_id, "ref": body.ref, "created": created}
 
