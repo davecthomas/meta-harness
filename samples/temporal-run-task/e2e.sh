@@ -141,7 +141,7 @@ fi
 if step admission env REF="e2e-$STAMP-admission" DEMO=admission ./stack.sh run; then
   pass "admission: the scheduler ran two tasks on one repo area in turn, with no command starting either"
 else
-  fail "admission: expected the scheduler to run both tasks, the second after the first was ready" admission
+  fail "admission: expected the scheduler to run both tasks, the second once the first's pull request was open" admission
 fi
 if step planned-goal env REF="e2e-$STAMP-planned-goal" DEMO=planned-goal ORIGIN="$PLANNED_ORIGIN" ./stack.sh run; then
   pass "planned-goal: a goal with no issue tracker was planned, approved and run, and the planner wrote its update"
