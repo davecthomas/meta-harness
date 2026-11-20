@@ -1342,13 +1342,16 @@ Last by the control plane, in the writing pass
 1. The text goes through the skill's scanner, `no-ai-slop-scan.py`, read
    from the active `skills` configuration and run as a child process with no
    model. Only the hits the scanner decides by itself count as findings; a
-   candidate that needs a reader to confirm does not.
+   candidate that needs a reader to confirm does not. Neither does a word
+   `writing_pass.names` lists: the scanner's word lists hold `harness`, which
+   is this product's name, so a text that only names the meta-harness is
+   posted with no rewrite.
 2. A text with findings gets one rewrite, on the model
    `config/planner.json`'s `writing_pass` names, through the HTTP Gateway's
    `/v1/structured`. A text over 20,000 characters is not rewritten.
 3. The rewrite is kept only when the scanner finds nothing in it and it
-   keeps every heading, link, code span, code block and number of the
-   original, and every line the control plane reads back: `Paths:`,
+   keeps every heading, link, code span, code block, number and listed name
+   of the original, and every line the control plane reads back: `Paths:`,
    `Depends on:`, `Closes`, and each line under `## Acceptance checks`.
    Otherwise the rewrite is dropped and the original is posted.
 
