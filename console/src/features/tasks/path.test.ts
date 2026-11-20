@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { MhEvent } from "../../api";
-import { candidateName, rows, span, steps, totals } from "./path";
+import { STEP_EVENTS, candidateName, rows, span, steps, totals } from "./path";
 
 let n = 0;
 let clock = Date.parse("2026-11-11T18:00:00Z");
@@ -208,4 +208,23 @@ test("a repeat inside a repeating cycle keeps every count", () => {
   const held = path.filter((s) => s.title === "Waiting its turn" && s.detail === "a");
   expect(held).toHaveLength(1);
   expect(held[0].times).toBe(4);
+});
+
+test("the page reads the supervisor's remedies with the rest of a task's steps", () => {
+  expect(STEP_EVENTS).toContain("remedy_applied");
+});
+
+test("a task made blocked waits as Blocked, is Queued once what it waited on is done, and shows what unstuck it", () => {
+  const path = steps([
+    ev("task_created", { status: "blocked" }),
+    ev("task_status_changed", { from: "blocked", to: "queued", reason: "every issue it depends on is closed" }, 3600),
+    ev("task_unblocked", { ref: "jira:VL-1" }, 3600),
+    ev("task_admitted", {}, 3700),
+    ev("task_status_changed", { from: "queued", to: "running" }, 3700),
+    ev("task_status_changed", { from: "running", to: "failed", reason: "TaskFailed: pi changed nothing" }, 4000),
+    ev("task_driven", { action: "retry", why: "the task failed on its own account" }, 4300),
+    ev("remedy_applied", { remedy: "retry_stronger", try: 1, of: 1, did: "ran it again on the complex tier, with a stronger model", next: "if it fails again, I will ask you what to do" }, 4300),
+  ]);
+  expect(path.filter((s) => s.column === 0).map((s) => s.title)).toEqual(["Blocked", "Queued", "Sent back for its retry by the supervisor"]);
+  expect(path.at(-1)!.notes).toContain("Unstuck: ran it again on the complex tier, with a stronger model (try 1 of 1). Next: if it fails again, I will ask you what to do");
 });

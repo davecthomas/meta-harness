@@ -337,3 +337,35 @@ def test_a_tasks_or_issues_own_state_picks_the_buttons_whatever_the_model_wrote(
     assert action("mh:i-3", "open_issue") == "split_or_run"
     assert action("mh:i-4", "open_issue") == "open_issue", "already split: nothing left to choose"
     assert action("mh:i-5", "review") == "merge"
+
+
+def test_what_was_unstuck_since_the_last_update_is_a_fact_told_not_asked():
+    tasks = [{"id": "t-1", "name": "Skill import", "title": "Import a skill", "status": "queued", "pr_url": None}]
+    links = [{"ref": "mh:i-1", "task_id": "t-1", "state": "open", "title": "Import a skill"}]
+    unstuck = [
+        {
+            "task_id": "t-1",
+            "ref": None,
+            "because": "it failed on its own account",
+            "did": "ran it again on the complex tier, with a stronger model",
+            "outcome": "started",
+            "next": "if it fails again, I will ask you",
+        },
+        {
+            "task_id": None,
+            "ref": "jira:VL-9",
+            "because": "too large",
+            "did": "split it into 3 smaller issues",
+            "outcome": "done",
+            "next": "they run in its place",
+        },
+    ]
+    found = updates.facts({"status": "active"}, links, tasks, None, None, unstuck)
+    assert [(u["task"], u["did"]) for u in found["unstuck"]] == [
+        ("Skill import", "ran it again on the complex tier, with a stronger model"),
+        ("jira:VL-9", "split it into 3 smaller issues"),
+    ]
+    assert updates.digest(found) != updates.digest(updates.facts({"status": "active"}, links, tasks, None)), (
+        "something unstuck is news: the next update says it"
+    )
+    assert "unstick" in updates.SYSTEM_PROMPT and "not something to do" in updates.SYSTEM_PROMPT

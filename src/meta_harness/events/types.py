@@ -550,6 +550,20 @@ REGISTRY: list[EventType] = [
             ["situation", "remedy", "try", "of", "outcome", "because", "did", "next"],
         ),
     ),
+    # The supervisor had a model read a failure its rules could not sort (supervisor/diagnose.py): one call.
+    EventType(
+        "failure_diagnosed",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "kind": {"type": "string", "enum": ["transient", "permanent"]},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "kind", "model", "usd_cost"],
+        ),
+    ),
     # A model drafted the parts of a held issue for an operator to edit before splitting it (planner/splits.py).
     EventType(
         "split_drafted",

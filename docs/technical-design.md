@@ -2143,6 +2143,20 @@ A plan's draft that names a whole top-level directory on its `Paths:` line
 (`tests`, `src`) gets a gap saying every other task touching it would wait for
 it, so the planner's suggested fix can narrow it; the planning prompt asks for
 the files, or the narrowest directories, from the start.
+A failure whose reason names neither kind the rules know (`failures.known`) is
+read once by a model (`supervisor/diagnose.py`): one structured call that
+answers `transient` or `permanent` with a one-line why, recorded in the ledger
+as a `diagnose` row whose `finding` is the kind, keyed by the reason, so the
+same failure is not read again. The answer is only the rules' `failure` fact:
+the model classifies, and never picks an action. A call that fails leaves the
+failure the task's own, as before. Each call is a `failure_diagnosed` event,
+counted as planning cost.
+
+The ledger is shown where an operator looks. The task's path notes each try on
+the step it started ("Unstuck: ran it again on the complex tier, with a
+stronger model (try 1 of 1). Next: …"). The planner's update is given what was
+unstuck since the last one (`unstuck` in its facts, and in its digest, so it is
+news once) and says it as something done, not asked.
 `GET /v1/supervisor/remedies` serves the ledger for a task (`task_id`), a goal
 (`goal_id`) or every task, newest first.
 
