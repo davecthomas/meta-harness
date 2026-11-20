@@ -44,6 +44,7 @@ import contextlib
 import hashlib
 import os
 import re
+from dataclasses import replace
 from pathlib import Path
 from string import Template
 from typing import Any
@@ -54,6 +55,7 @@ from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
 from meta_harness.run_service import code_host, events, harness_client, routing, run_grants, sandbox, writing
+from meta_harness.run_service import pr_summary
 from meta_harness.run_service.prompt_activities import loop_template
 from meta_harness.run_service.shared import (
     DeliverRequest,
@@ -341,13 +343,11 @@ async def publish(request: PublishRequest) -> PublishResult:
     ref = ref_for(activity.info().workflow_id)
     workspace = sandbox.workspace_for(ref, request.run_id)
 
-    async def body() -> str:
+    async def body(files: list[str]) -> str:
         """The description, written once a pull request is to be opened: the run's summary goes through the
-        writing pass, and the lines the meta-harness adds around it stay as they are."""
-        if not request.summary:
-            return _pr_body(request)
-        [summary] = await _written("pull_request", [request.summary], request.task_id, run_id=request.run_id)
-        return _pr_body(request, summary)
+        writing pass, or a fallback from the branch's files stands in for one the run did not leave, and the
+        lines the meta-harness adds around it stay as they are."""
+        return _pr_body(request, await _summary_section(request, files))
 
     message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
         f"\n\nCloses {request.ticket}" if request.ticket else ""
@@ -368,15 +368,16 @@ async def publish(request: PublishRequest) -> PublishResult:
     if published is None:
         print(f"[{request.run_id} publish] pi changed nothing in {workspace}, so there is no pull request", flush=True)
         return PublishResult(branch="", base="", commit="", files=[], pr_url="", created=False)
-    if request.fix_round and request.summary and not published.created:
-        # The fix run was asked to say in its summary why it changed what it did; the review reads it here.
-        [summary] = await _written("pull_request", [request.summary], request.task_id, run_id=request.run_id)
+    if request.fix_round and not published.created:
+        # The fix run was asked to say in its summary why it changed what it did; the review reads it here. A fix
+        # run that left none usable gets the fallback, so the round still shows in the description.
+        part = await _summary_section(request, published.files)
         try:
             await code_host.add_to_description(
                 request.repo,
                 published.pr_url,
                 f"Fix round {request.fix_round} ({request.run_id})",
-                summary,
+                part.text,
                 sandbox.task_dir_for(ref) / "pull-request.md",
             )
         except code_host.CodeHostError as err:
@@ -413,11 +414,20 @@ async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> l
     return [outcome.text if outcome else text for outcome, text in zip(outcomes, texts, strict=True)]
 
 
-def _pr_body(request: PublishRequest, summary: str | None = None) -> str:
+async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summary.Section:
+    """The run's summary for its pull request after the writing pass, or the fallback, which skips the pass."""
+    part = pr_summary.section(request.summary, files)
+    if not part.from_run:
+        return part
+    [text] = await _written("pull_request", [part.text], request.task_id, run_id=request.run_id)
+    return replace(part, text=text)
+
+
+def _pr_body(request: PublishRequest, summary: pr_summary.Section) -> str:
     lines = [request.note, ""] if request.note else []
     if request.ticket:
         lines += [f"Closes {request.ticket}", ""]
-    lines += ["## Summary from the run", "", summary or request.summary or "(the run left no summary)", ""]
+    lines += [f"## {summary.heading}", "", summary.text, ""]
     lines += [
         "## Run",
         "",
