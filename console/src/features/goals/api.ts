@@ -124,6 +124,11 @@ export interface IssueProgress {
   pr_url: string | null;
   pr_state: "open" | "merged" | "closed" | null;
   checks: { head_sha: string | null; state: "passed" | "failed" | "pending" | "none"; failed: string[] } | null;
+  // Whose words the pull request description's opening summary is: the run's own, or a fallback the
+  // meta-harness wrote from its record of the run or from the branch's files. Null when none was recorded.
+  summary_source?: "run" | "recorded" | "files" | null;
+  // How many fix rounds' summaries the meta-harness wrote because their runs left none usable.
+  fix_summaries_written?: number;
   // What the planner's sizing found before the issue became a task; null and empty for an issue not sized.
   size?: IssueSize | null;
   size_reasons?: string[];

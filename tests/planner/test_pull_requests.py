@@ -336,6 +336,30 @@ def test_each_issue_shows_its_task_status_pull_request_state_and_checks():
     assert shown["github:o/r#4"]["task_status"] is None and shown["github:o/r#4"]["refused_reason"] == "no checks"
 
 
+def test_each_issue_says_whose_words_its_pull_request_s_summary_is():
+    links = [
+        {"ref": "github:o/r#1", "repo": "o/r", "state": "open", "task_id": "t-1", "depends_on": []},
+        {"ref": "github:o/r#2", "repo": "o/r", "state": "open", "task_id": "t-2", "depends_on": []},
+        {"ref": "github:o/r#3", "repo": "o/r", "state": "open", "task_id": "t-3", "depends_on": []},
+        {"ref": "github:o/r#4", "repo": "o/r", "state": "open", "task_id": None},
+    ]
+    pr = "https://github.com/o/r/pull/"
+    tasks = [{"id": f"t-{n}", "status": "running", "pr_url": f"{pr}{n}", "head_sha": "h"} for n in (1, 2, 3)]
+    recorded = [
+        _event(1, "t-1", "pull_request_summary", pr_url=f"{pr}1", fix_round=0, source="run"),
+        _event(2, "t-1", "pull_request_summary", pr_url=f"{pr}1", fix_round=1, source="files"),
+        _event(3, "t-1", "pull_request_summary", pr_url=f"{pr}1", fix_round=2, source="run"),
+        _event(4, "t-2", "pull_request_summary", pr_url=f"{pr}2", fix_round=0, source="recorded"),
+    ]
+    shown = {i["ref"]: i for i in progress.issues_progress(links, tasks, recorded)}
+
+    assert (shown["github:o/r#1"]["summary_source"], shown["github:o/r#1"]["fix_summaries_written"]) == ("run", 1)
+    assert (shown["github:o/r#2"]["summary_source"], shown["github:o/r#2"]["fix_summaries_written"]) == ("recorded", 0)
+    assert shown["github:o/r#3"]["summary_source"] is None, "a pull request from before summaries were recorded"
+    assert shown["github:o/r#4"]["summary_source"] is None and shown["github:o/r#4"]["fix_summaries_written"] == 0
+    assert "pull_request_summary" in progress.PR_EVENT_TYPES
+
+
 def test_an_open_pull_request_with_no_recorded_checks_is_pending_and_a_closed_one_says_so():
     task = {"id": "t-1", "status": "ready", "pr_url": "https://github.com/o/r/pull/9", "head_sha": "h0"}
     assert progress.pull_request_view(task, [])["checks"] == {"head_sha": "h0", "state": "pending", "failed": []}

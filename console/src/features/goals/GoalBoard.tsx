@@ -9,6 +9,7 @@ import { projection } from "../tasks/Spend";
 import { NowLine } from "../tasks/TaskPath";
 import { moneyText } from "../../money";
 import { SizeBadge, gapText } from "./sizing";
+import { SummarySource } from "./SummarySource";
 
 // The board's columns, in order, each with its color in the board and the graph.
 export const COLUMNS = [
@@ -107,6 +108,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
                 <Badge size="xs" variant="light" color={checks === "passed" ? "teal" : checks === "failed" ? "red" : "yellow"}>checks {checks}</Badge>
               </Tooltip>
             )}
+            <SummarySource issue={issue} />
           </Group>
         )}
         {issue.refused_reason && <Text size="xs" c="red">{issue.refused_reason}</Text>}
