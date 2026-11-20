@@ -200,8 +200,12 @@ test("when a list cannot be read the field says why and still takes a typed valu
   expect(await screen.findByText("The registered repositories could not be listed, so type each exactly: the registry is down")).toBeTruthy();
   await commit("Repository", URL);
   expect(await screen.findByText(/The branches and tags could not be listed, so type each exactly: could not read .*Repository not found\./)).toBeTruthy();
+  // The same failure leaves the path field without its list too, and it says so.
+  expect(await screen.findByText(/The skill directories could not be listed, so type each exactly: could not read .*Repository not found\./)).toBeTruthy();
   expect((await pickFrom("Branch or tag", "release")).getAttribute("placeholder")).toBe("Type its name");
   await commit("Branch or tag", "release");
+  expect(await screen.findByText(/The skill directories could not be listed, so type each exactly: could not read .*Repository not found\./)).toBeTruthy();
+  expect((await pickFrom("Path to the skill", "skills/tidy-notes")).getAttribute("placeholder")).toBe("Type its name");
   await commit("Path to the skill", "skills/tidy-notes");
 
   fireEvent.click(screen.getByRole("button", { name: "Read the skill" }));

@@ -125,7 +125,7 @@ function GitSource({ url, gitRef: ref, path, repos, refs, paths, onUrl, onRef, o
         </Labeled>
         <Labeled label="Path to the skill" description="The directory that holds its SKILL.md. Empty is the repository's top.">
           <PickedName label="Path to the skill" what="skill directory" where={`${url || "The repository"} at ${at}`} value={path} empty={url && loading(paths) ? "Loading…" : "the repository's top"} known={url ? paths.known : []} unreadable={paths.error} testId="skill-path-unknown" strict readOnly={!url || loading(paths)} onCommit={onPath} />
-          <Unreadable what="skill directories" error={url && !refs.error ? paths.error : null} />
+          <Unreadable what="skill directories" error={url ? paths.error : null} />
         </Labeled>
       </Group>
     </Stack>
