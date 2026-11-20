@@ -53,7 +53,16 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
-from meta_harness.run_service import code_host, events, harness_client, routing, run_grants, sandbox, writing
+from meta_harness.run_service import (
+    code_host,
+    events,
+    harness_client,
+    provenance,
+    routing,
+    run_grants,
+    sandbox,
+    writing,
+)
 from meta_harness.run_service.prompt_activities import loop_template
 from meta_harness.run_service.shared import (
     DeliverRequest,
@@ -349,9 +358,7 @@ async def publish(request: PublishRequest) -> PublishResult:
         [summary] = await _written("pull_request", [request.summary], request.task_id, run_id=request.run_id)
         return _pr_body(request, summary)
 
-    message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
-        f"\n\nCloses {request.ticket}" if request.ticket else ""
-    )
+    message = _commit_message(request)
     try:
         published = await code_host.publish(
             repo=request.repo,
@@ -413,6 +420,15 @@ async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> l
     return [outcome.text if outcome else text for outcome, text in zip(outcomes, texts, strict=True)]
 
 
+def _commit_message(request: PublishRequest) -> str:
+    """The commit's message: the title, the run, the issue it closes, and the run's provenance as git trailers."""
+    message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
+        f"\n\nCloses {request.ticket}" if request.ticket else ""
+    )
+    trailers = provenance.trailers(request.provenance)
+    return message + ("\n\n" + "\n".join(trailers) if trailers else "")
+
+
 def _pr_body(request: PublishRequest, summary: str | None = None) -> str:
     lines = [request.note, ""] if request.note else []
     if request.ticket:
@@ -424,6 +440,7 @@ def _pr_body(request: PublishRequest, summary: str | None = None) -> str:
         f"- Run: `{request.run_id}`",
         f"- Harness profile and model: `{request.candidate}`",
         f"- Model spend for the task so far: ${request.spent_usd}",
+        *provenance.pr_lines(request.provenance),
         "",
         (
             "Opened by the meta-harness. pi worked in a clone of this repo inside a per-run sandbox that holds "

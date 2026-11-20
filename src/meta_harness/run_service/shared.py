@@ -171,6 +171,9 @@ class PublishRequest:
     # A fix run's round: its summary is added to the open pull request's description, which is where a review
     # looks for what the change owes an explanation for, such as a file outside the task's paths.
     fix_round: int = 0
+    # The run's provenance (run_service/provenance.py), written into the description and the commit message.
+    # None for a run outside the Task API.
+    provenance: dict[str, Any] | None = None
 
 
 @dataclass
@@ -269,6 +272,9 @@ class TaskSpec:
     # How many times the task was sent back: its workflows after the first say so in what they record.
     retries: int = 0
     task_type: str = ""
+    # Where the task came from, for each run's provenance: its tracker issue and the task that made it.
+    external_ref: str = ""
+    parent_task_id: str = ""
 
 
 @dataclass

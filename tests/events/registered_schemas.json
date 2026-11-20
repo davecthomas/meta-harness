@@ -1082,6 +1082,90 @@
     ],
     "type": "object"
   },
+  "run_provenance v1": {
+    "additionalProperties": true,
+    "properties": {
+      "attempt": {
+        "type": "integer"
+      },
+      "candidate": {
+        "type": "string"
+      },
+      "follows": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "goal_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "issue": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "kind": {
+        "enum": [
+          "task",
+          "review",
+          "fix"
+        ],
+        "type": "string"
+      },
+      "parent_task_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "repo": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "run_id": {
+        "type": "string"
+      },
+      "task_id": {
+        "type": "string"
+      },
+      "task_type": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "template": {
+        "type": "string"
+      },
+      "tier": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "workflow": {
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "task_id",
+      "run_id",
+      "attempt",
+      "kind",
+      "candidate",
+      "template",
+      "workflow"
+    ],
+    "type": "object"
+  },
   "split_drafted v1": {
     "additionalProperties": true,
     "properties": {
