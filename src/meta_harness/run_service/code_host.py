@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from meta_harness.github_app import GitHubAppError, GitHubApps, git_auth_env
+from meta_harness.run_service.provenance import Provenance, commit_message, stamp
 
 PR_LABEL = "ai:meta-harness"
 COMMIT_NAME = "meta-harness"
@@ -86,7 +87,7 @@ class Published:
     files: list[str]
     pr_url: str
     created: bool
-    # The files the run created that carry a provenance header (run_service/provenance.py).
+    # The files the run created that carry a provenance header (run_service/provenance_headers.py).
     stamped: list[str] = field(default_factory=list)
 
 
@@ -211,9 +212,12 @@ def acceptance_checks(body: str) -> list[str]:
     return checks
 
 
-async def clone(repo: str, workspace: Path, git_dir: Path, branch: str = "", merge_base: str = "") -> str:
+async def clone(
+    repo: str, workspace: Path, git_dir: Path, branch: str = "", merge_base: str = "", merge_message: str = ""
+) -> str:
     """Clones repo into workspace, unless an earlier attempt did, and checks out branch, else the default
-    branch. Returns the branch checked out.
+    branch. Returns the branch checked out. merge_message, with merge_base, is the message of the merge
+    commit a clean merge makes, with its provenance; empty leaves git's own.
 
     The repository's git directory goes to git_dir, outside the workspace
     (`git clone --separate-git-dir`). The per-run sandbox mounts the
@@ -249,6 +253,7 @@ async def clone(repo: str, workspace: Path, git_dir: Path, branch: str = "", mer
             f"user.email={COMMIT_EMAIL}",
             "merge",
             "--no-edit",
+            *(["--message", merge_message] if merge_message else []),
             f"origin/{merge_base}",
             check=False,
             cwd=workspace,
@@ -539,22 +544,32 @@ def _check_summary(output: dict) -> str:
     return text[:CHECK_SUMMARY_CHARS]
 
 
-async def post_review(repo: str, number: int, head_sha: str, body: str, comments: list[dict]) -> str:
+async def post_review(
+    repo: str, number: int, head_sha: str, body: str, comments: list[dict], provenance: Provenance | None = None
+) -> str:
     """Posts a review on the pull request at head_sha, with inline comments, and returns its URL.
 
     It is a comment review: GitHub refuses an approval or a change request
     from the pull request's own author, and the meta-harness's GitHub App
     opened it. A comment GitHub cannot place on the diff (422) moves into the
     review's body, so the review is never lost to a finding on an unchanged line.
+    With provenance, the review's body and each inline comment end with its provenance line, as GitHub shows
+    each inline comment on its own. A comment moved into the body goes without its own line, as the body ends
+    with one.
     """
-    payload = {"commit_id": head_sha, "event": "COMMENT", "body": body, "comments": comments}
+
+    def stamped(text: str) -> str:
+        return stamp(text, provenance) if provenance else text
+
+    inline = [{**c, "body": stamped(c["body"])} for c in comments]
+    payload = {"commit_id": head_sha, "event": "COMMENT", "body": stamped(body), "comments": inline}
     try:
         review = await _github(repo, REVIEW, "POST", f"/repos/{repo}/pulls/{number}/reviews", json=payload)
     except CodeHostError as err:
         if not comments or err.status != 422:
             raise
         placed = "\n".join(f"- `{c['path']}` line {c['line']}: {c['body']}" for c in comments)
-        payload = {"commit_id": head_sha, "event": "COMMENT", "body": f"{body}\n\n{placed}", "comments": []}
+        payload = {"commit_id": head_sha, "event": "COMMENT", "body": stamped(f"{body}\n\n{placed}"), "comments": []}
         review = await _github(repo, REVIEW, "POST", f"/repos/{repo}/pulls/{number}/reviews", json=payload)
     return str(review.get("html_url", ""))
 
@@ -589,9 +604,18 @@ async def pull_request_files(repo: str, number: int) -> list[dict]:
 
 
 async def comment_on_lines(
-    repo: str, number: int, head_sha: str, path: str, line: int, body: str, start_line: int | None = None
+    repo: str,
+    number: int,
+    head_sha: str,
+    path: str,
+    line: int,
+    body: str,
+    start_line: int | None = None,
+    provenance: Provenance | None = None,
 ) -> str:
-    """Posts a review comment on lines of the pull request's head commit (the new side), and returns its URL."""
+    """Posts a review comment on lines of the pull request's head commit (the new side), and returns its URL.
+    With provenance, the comment ends with its provenance line."""
+    body = stamp(body, provenance) if provenance else body
     payload: dict = {"commit_id": head_sha, "path": path, "line": line, "side": "RIGHT", "body": body}
     if start_line is not None and start_line < line:
         payload |= {"start_line": start_line, "start_side": "RIGHT"}
@@ -599,18 +623,15 @@ async def comment_on_lines(
     return str(comment.get("html_url", ""))
 
 
-async def comment(repo: str, number: int, body: str) -> str:
-    """Posts a comment on the pull request's conversation, and returns its URL."""
+async def comment(repo: str, number: int, body: str, provenance: Provenance | None = None) -> str:
+    """Posts a comment on the pull request's conversation, and returns its URL. With provenance, the comment
+    ends with its provenance line."""
+    body = stamp(body, provenance) if provenance else body
     posted = await _github(repo, REVIEW, "POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})
     return str((posted or {}).get("html_url", ""))
 
 
 MERGE = {"contents": "write", "pull_requests": "write"}
-
-
-# How often, and how many times, merge_pull_request looks for GitHub to have brought the base into a branch.
-UPDATE_BRANCH_POLL_SECONDS = 2
-UPDATE_BRANCH_POLLS = 20
 
 
 async def newest_containing(repo: str, base: str, sha: str) -> str | None:
@@ -626,7 +647,12 @@ async def newest_containing(repo: str, base: str, sha: str) -> str | None:
 
 
 async def merge_pull_request(
-    repo: str, number: int, head_sha: str, base: str | None = None, kind: str = ""
+    repo: str,
+    number: int,
+    head_sha: str,
+    base: str | None = None,
+    kind: str = "",
+    provenance: Provenance | None = None,
 ) -> tuple[str, str, str, str]:
     """Squash-merges the pull request if its head is still head_sha. Returns (state, merge sha, head, detail).
 
@@ -634,22 +660,26 @@ async def merge_pull_request(
     new one), conflict (the branch conflicts with its base), or blocked (GitHub refused for another reason,
     such as branch protection or a required human review).
 
-    kind (fix, feature or none) goes into the merge commit's message as a `Version:` line.
+    kind (fix, feature or none) goes into the merge commit's message as a `Version:` line, and provenance as
+    the trailers after it.
 
-    With base, a branch that lacks the base's newest commits is not merged: GitHub merges the base into it
-    and the new head comes back as head_changed, so its checks and review run again before it merges. So no
+    With base, a branch that lacks the base's newest commits is not merged: the base is merged into it, in a
+    merge commit that carries provenance's trailers, and the new head comes back as head_changed, so its checks and review run again before it merges. So no
     pull request merges against a base it was not checked on, though other tasks' pull requests merged
     while it was reviewed.
     """
     if base:
-        brought = await _bring_base_in(repo, number, base, head_sha)
+        brought = await _bring_base_in(repo, number, base, head_sha, provenance)
         if brought is not None:
             return brought
     merge = {"sha": head_sha, "merge_method": "squash"}
-    if kind:
-        # The merge commit says what kind of change it is, so a repo that works its version out from its
-        # history (as this one does) counts it right: a feature, a fix, or a change that ships nothing.
-        merge["commit_message"] = f"Version: {kind}"
+    # The merge commit says what kind of change it is, so a repo that works its version out from its
+    # history (as this one does) counts it right: a feature, a fix, or a change that ships nothing.
+    version = [f"Version: {kind}"] if kind else []
+    if provenance:
+        merge["commit_message"] = commit_message("", provenance, *version)
+    elif version:
+        merge["commit_message"] = version[0]
     try:
         merged = await _github(repo, MERGE, "PUT", f"/repos/{repo}/pulls/{number}/merge", json=merge)
         return "merged", str(merged.get("sha", "")), head_sha, ""
@@ -666,35 +696,42 @@ async def merge_pull_request(
     return "blocked", "", head_sha, f"{refused} (mergeable_state {pull.get('mergeable_state')})"
 
 
-async def _bring_base_in(repo: str, number: int, base: str, head_sha: str) -> tuple[str, str, str, str] | None:
+async def _bring_base_in(
+    repo: str, number: int, base: str, head_sha: str, provenance: Provenance | None = None
+) -> tuple[str, str, str, str] | None:
     """None when head_sha holds the base's newest commit. Otherwise merges the base into the branch and returns
-    head_changed with the new head, or conflict when the base does not merge in cleanly."""
+    head_changed with the new head, or conflict when the base does not merge in cleanly.
+
+    The merge goes through GitHub's merges endpoint, not update-branch, so its commit message is ours and
+    carries provenance's trailers. That endpoint takes no expected head, so the branch's head is read first;
+    a commit pushed between that read and the merge only ends up under the merge commit, whose new head
+    comes back as head_changed and is checked and reviewed again like any other."""
     compare = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/compare/{base}...{head_sha}") or {}
     behind = int(compare.get("behind_by") or 0)
     if behind == 0:
         return None
+    pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
+    head = str(pull.get("head", {}).get("sha", ""))
+    if head and head != head_sha:
+        return "head_changed", "", head, f"{head[:12]} landed after {head_sha[:12]}"
+    branch = str(pull.get("head", {}).get("ref", ""))
+    if not branch:
+        raise CodeHostError(f"pull request {number} names no head branch to bring {base} into")
+    subject = f"Merge {base} into {branch}"
+    message = commit_message(subject, provenance) if provenance else subject
     try:
-        await _github(
-            repo, MERGE, "PUT", f"/repos/{repo}/pulls/{number}/update-branch", json={"expected_head_sha": head_sha}
+        merged = await _github(
+            repo, MERGE, "POST", f"/repos/{repo}/merges", json={"base": branch, "head": base, "commit_message": message}
         )
     except CodeHostError as err:
-        if err.status != 422:
+        if err.status != 409:
             raise
-        pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
-        head = str(pull.get("head", {}).get("sha", ""))
-        if head and head != head_sha:
-            return "head_changed", "", head, str(err)
         return "conflict", "", head_sha, f"{base} is {behind} commits ahead and does not merge in cleanly: {err}"
-    # GitHub updates the branch in the background: wait for its new head.
-    for _ in range(UPDATE_BRANCH_POLLS):
-        await asyncio.sleep(UPDATE_BRANCH_POLL_SECONDS)
-        pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
-        head = str(pull.get("head", {}).get("sha", ""))
-        if head and head != head_sha:
-            return "head_changed", "", head, f"brought in {behind} new commits from {base}"
-    raise CodeHostError(
-        f"GitHub did not bring {base} into pull request {number} within {UPDATE_BRANCH_POLLS * UPDATE_BRANCH_POLL_SECONDS}s"
-    )
+    new_head = str((merged or {}).get("sha", ""))
+    if not new_head:
+        # 204: GitHub found nothing to merge, so the branch already holds the base.
+        return None
+    return "head_changed", "", new_head, f"brought in {behind} new commits from {base}"
 
 
 # GitHub's compare lists at most this many files; a diff that may be cut is never called the same.

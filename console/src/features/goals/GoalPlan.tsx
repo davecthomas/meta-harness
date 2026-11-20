@@ -4,6 +4,7 @@ import { IconCheck, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/i
 import { Link } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanDraft, type PlanItem } from "../../api";
 import { OWN, goalSource, refLabel, trackerTitle } from "../trackers/refs";
+import { SIGNED_ISSUES } from "./provenance";
 import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview";
 import { APPROVE_PLAN, PLAN_CHANGED } from "./PlannerUpdates";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
@@ -427,7 +428,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
               label={`Add the ${base.length === 1 ? "new task" : `${base.length} new tasks`} to ${tracker} as ${base.length === 1 ? "an issue" : "issues"}`}
               description={
                 track
-                  ? `Each becomes an issue there, with the label ${shown.label}.`
+                  ? `Each becomes an issue there, with the label ${shown.label}. ${SIGNED_ISSUES}`
                   : `Off: kept in the meta-harness only. Nothing is written to ${tracker}.`
               }
             />

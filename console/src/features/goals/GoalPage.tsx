@@ -20,7 +20,7 @@ import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
 import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { HeldActions, StrictIssuesEdit } from "./sizing";
-import { ProvenanceEdit, provenanceSummary, type ProvenanceGoal } from "./provenance";
+import { ProvenanceEdit, provenanceSummary, type ProvenanceGoal } from "./provenanceHeaders";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 import { ConfirmButton } from "../../components/ConfirmButton";

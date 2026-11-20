@@ -50,6 +50,7 @@ from meta_harness.config import store as config_store
 from meta_harness.config.kinds import ConfigError, sandbox_ceiling
 from meta_harness.github_app import GitHubApps
 from meta_harness.run_service import code_host, writing
+from meta_harness.run_service.provenance import COMMENT, Provenance, payload
 from meta_harness.planner import (
     activity,
     budget_api,
@@ -852,13 +853,21 @@ def create_app(
         _, repo, number = await task_pull(task_id)
         try:
             pull = await code_host.read_pull_request(repo, number)
+            signed = Provenance(COMMENT, task=task_id, by=who)
             url = await code_host.comment_on_lines(
-                repo, number, pull.head_sha, body.path, body.line, f"**{who}** wrote:\n\n{body.body}", body.start_line
+                repo,
+                number,
+                pull.head_sha,
+                body.path,
+                body.line,
+                f"**{who}** wrote:\n\n{body.body}",
+                body.start_line,
+                provenance=signed,
             )
         except code_host.CodeHostError as err:
             raise HTTPException(status_code=422 if err.status == 422 else 502, detail=str(err)) from err
         comment = {"path": body.path, "line": body.line, "start_line": body.start_line, "body": body.body, "url": url}
-        events.emit("pull_request_commented", comment, task_id=task_id, actor=who)
+        events.emit("pull_request_commented", {**comment, "provenance": payload(signed)}, task_id=task_id, actor=who)
         return comment
 
     @app.get("/v1/search")

@@ -1,7 +1,7 @@
 import type { MhEvent } from "../../api";
 import { moneyText, usd } from "../../money";
 import { heldLine } from "./hold";
-import { provenanceLine } from "./provenance";
+import { provenanceLine } from "./provenanceHeaders";
 import { writingLine } from "./writing";
 
 // The stages a task passes through, left to right. A step sits in its stage's column, and a step that

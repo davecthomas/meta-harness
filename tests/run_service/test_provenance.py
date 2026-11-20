@@ -1,352 +1,249 @@
-"""Provenance headers on the files a run creates: what config/provenance.json allows, where each header goes, which
-files take one, and the publish that adds them before it commits."""
+"""Provenance: each thing the meta-harness writes on a code host or tracker says where it came from."""
 
-import copy
-import json
 import subprocess
-from pathlib import Path
 
 import pytest
 from temporalio.testing import ActivityEnvironment
 
-from meta_harness.planner import client as planner_client
+import meta_harness
+from meta_harness import versioning
 from meta_harness.run_service import activities, code_host, provenance
-from meta_harness.run_service.shared import PublishRequest
-
-CONTEXT = provenance.Context(run_id="task-t-1:run-1", candidate="harness:pi-lean/x:y", task_id="t-1", repo="o/r")
-CONFIG = {
-    "version": "test",
-    "enabled": True,
-    "text": "Made by run $run_id.",
-    "repos": {},
-    "skip": ["*.min.js", "vendor/*"],
-    "styles": {
-        "#": [".py", ".sh", ".yaml", "Dockerfile"],
-        "//": [".ts", ".js", ".go"],
-        "<!-- -->": [".md", ".html", ".xml"],
-        "/* */": [".css"],
-    },
-}
-PY = "# Made by run task-t-1:run-1."
+from meta_harness.run_service.code_host import CodeHostError, Published
+from meta_harness.run_service.provenance import COMMENT, COMMIT, PULL_REQUEST, REVIEW, Provenance
+from meta_harness.run_service.shared import PostReviewRequest, PublishRequest
 
 
-def _config(**changes) -> dict:
-    return {**copy.deepcopy(CONFIG), **changes}
+def test_a_line_names_the_version_and_kind_then_each_known_field_and_reads_back():
+    signed = Provenance(REVIEW, task="t-12", model="harness:pi-review/claude:opus", round=2, version="1.2.3")
 
+    line = provenance.line(signed)
 
-def _stamp(content: str, path: str, text: str = "Made by run task-t-1:run-1.") -> str | None:
-    style = provenance.style_for(path, CONFIG)
-    assert style is not None
-    return provenance.stamped(content, path, provenance.header_lines(text, style))
-
-
-# --- The configuration ----------------------------------------------------------------------------------
-
-
-def test_the_shipped_configuration_is_usable():
-    shipped = json.loads(provenance.CONFIG_PATH.read_text(encoding="utf-8"))
-    provenance.check_settings(shipped)
-    assert provenance.style_for("src/app.py", shipped) == ("#", "")
-    assert provenance.style_for("web/a.tsx", shipped) == ("//", "")
-    assert provenance.style_for("docs/a.md", shipped) == ("<!--", "-->")
-    assert provenance.style_for("docs/a.mdx", shipped) == ("{/*", "*/}"), "MDX takes no HTML comment"
-    assert provenance.style_for("images/Dockerfile", shipped) == ("#", "")
-    assert provenance.style_for("data.json", shipped) is None, "JSON has no comments"
-    assert provenance.style_for("dist/app.min.js", shipped) is None
-
-
-@pytest.mark.parametrize(
-    ("changes", "named"),
-    [
-        ({"enabled": "yes"}, "enabled must be true or false"),
-        ({"text": "  "}, "text must be"),
-        ({"text": "x" * 501}, "longer than 500"),
-        ({"text": "run $run, on $candidate"}, "text names $run"),
-        ({"text": "costs $5"}, "write $$ for a dollar sign"),
-        ({"text": "ends */ early"}, "would end a '/* */' comment early"),
-        ({"repos": {"o/r": "off"}}, "repos must map"),
-        ({"skip": [""]}, "skip must be"),
-        ({"styles": {}}, "styles must map"),
-        ({"styles": {"a b c": [".x"]}}, "one line marker or an opening and closing pair"),
-        ({"styles": {"#": [".py"], "//": [".PY"]}}, ".PY is in both"),
-    ],
-)
-def test_a_bad_setting_is_named(changes, named):
-    with pytest.raises(RuntimeError, match=named.replace("$", r"\$").replace("*", r"\*")):
-        provenance.check_settings(_config(**changes))
-
-
-def test_the_goal_outranks_the_repo_which_outranks_the_default():
-    config = _config(repos={"o/off": False, "o/on": True})
-    assert provenance.wanted("o/r", None, config) is True
-    assert provenance.wanted("o/off", None, config) is False
-    assert provenance.wanted("o/off", True, config) is True
-    assert provenance.wanted("o/r", False, config) is False
-    assert provenance.wanted("o/on", None, _config(enabled=False, repos={"o/on": True})) is True
-    assert provenance.wanted("o/r", None, _config(enabled=False)) is False
-
-
-def test_the_header_names_what_the_run_has_and_none_for_what_it_has_not():
-    config = _config(text="Run $run_id for task $task_id of goal $goal_id ($candidate, $repo).")
-    assert provenance.render(CONTEXT, config) == (
-        "Run task-t-1:run-1 for task t-1 of goal none (harness:pi-lean/x:y, o/r)."
-    )
-
-
-# --- Where the header goes --------------------------------------------------------------------------------
-
-
-def test_a_header_goes_on_top_with_a_blank_line_after_it():
-    assert _stamp("print('hi')\n", "a.py") == f"{PY}\n\nprint('hi')\n"
-    assert _stamp("export const a = 1;\n", "a.ts") == "// Made by run task-t-1:run-1.\n\nexport const a = 1;\n"
-    assert _stamp("body {}\n", "a.css") == "/* Made by run task-t-1:run-1. */\n\nbody {}\n"
-    assert _stamp("", "empty.py") == f"{PY}\n", "an empty file gets the header alone"
-    assert _stamp("FROM python:3.12\n", "images/Dockerfile") == f"{PY}\n\nFROM python:3.12\n"
-
-
-def test_what_must_stay_first_stays_first():
-    assert _stamp("#!/bin/sh\necho hi\n", "run.sh") == f"#!/bin/sh\n{PY}\n\necho hi\n"
-    assert _stamp("#!/usr/bin/env python\n# -*- coding: latin-1 -*-\nx = 1\n", "a.py") == (
-        f"#!/usr/bin/env python\n# -*- coding: latin-1 -*-\n{PY}\n\nx = 1\n"
-    )
-    assert _stamp('<?xml version="1.0"?>\n<a/>\n', "a.xml") == (
-        '<?xml version="1.0"?>\n<!-- Made by run task-t-1:run-1. -->\n\n<a/>\n'
-    )
-    assert _stamp("<!DOCTYPE html>\n<html></html>\n", "a.html") == (
-        "<!DOCTYPE html>\n<!-- Made by run task-t-1:run-1. -->\n\n<html></html>\n"
-    )
-    assert _stamp("---\ntitle: A\n---\n# A\n", "docs/a.md") == (
-        "---\ntitle: A\n---\n<!-- Made by run task-t-1:run-1. -->\n\n# A\n"
-    )
-    assert _stamp("#!/bin/sh", "run.sh") == f"#!/bin/sh\n{PY}\n", "a first line with no newline gets one"
-
-
-def test_dockerfile_parser_directives_stay_ahead_of_the_header():
-    assert _stamp("# syntax=docker/dockerfile:1\nFROM python:3.12\n", "Dockerfile") == (
-        f"# syntax=docker/dockerfile:1\n{PY}\n\nFROM python:3.12\n"
-    )
-    assert _stamp("# syntax = docker/dockerfile:1\n#Escape=`\n# check=skip=all\nFROM x\n", "Dockerfile") == (
-        f"# syntax = docker/dockerfile:1\n#Escape=`\n# check=skip=all\n{PY}\n\nFROM x\n"
-    )
-    assert _stamp("# a comment\n# syntax=docker/dockerfile:1\nFROM x\n", "Dockerfile") == (
-        f"{PY}\n\n# a comment\n# syntax=docker/dockerfile:1\nFROM x\n"
-    ), "a directive after a comment is a comment already"
-    assert _stamp("# syntax=docker/dockerfile:1\nprint(1)\n", "a.py") == (
-        f"{PY}\n\n# syntax=docker/dockerfile:1\nprint(1)\n"
-    ), "only a Dockerfile has directives"
-    once = _stamp("# escape=`\nFROM x\n", "Dockerfile")
-    assert once is not None and _stamp(once, "Dockerfile") is None
-
-
-def test_an_mdx_file_gets_an_mdx_comment_after_its_front_matter():
-    shipped = json.loads(provenance.CONFIG_PATH.read_text(encoding="utf-8"))
-    style = provenance.style_for("docs/a.mdx", shipped)
-    assert style is not None
-    header = provenance.header_lines("Made by run r.", style)
-    assert provenance.stamped("---\ntitle: A\n---\n# A\n", "docs/a.mdx", header) == (
-        "---\ntitle: A\n---\n{/* Made by run r. */}\n\n# A\n"
-    )
-
-
-def test_line_endings_a_byte_order_mark_and_several_lines_are_kept():
-    assert _stamp("a = 1\r\nb = 2\r\n", "a.py") == f"{PY}\r\n\r\na = 1\r\nb = 2\r\n"
-    assert _stamp("\ufeffa = 1\n", "a.py") == f"\ufeff{PY}\n\na = 1\n"
     assert (
-        _stamp("x {}\n", "a.css", "Made by a run.\nSee its task.") == "/*\nMade by a run.\nSee its task.\n*/\n\nx {}\n"
+        line == "Provenance: meta-harness 1.2.3; kind review; task t-12; model harness:pi-review/claude:opus; round 2"
     )
-    assert _stamp("a = 1\n", "a.py", "Made by a run.\nSee its task.") == "# Made by a run.\n# See its task.\n\na = 1\n"
+    assert provenance.parse(f"Looks good.\n\n{line}") == [
+        {"version": "1.2.3", "kind": "review", "task": "t-12", "model": "harness:pi-review/claude:opus", "round": "2"}
+    ]
 
 
-def test_a_file_that_starts_with_the_header_is_left_as_it_is():
-    once = _stamp("#!/bin/sh\necho hi\n", "run.sh")
-    assert once is not None and _stamp(once, "run.sh") is None
-    empty = _stamp("", "a.py")
-    assert empty is not None and _stamp(empty, "a.py") is None
-    front = _stamp("---\ntitle: A\n---\n# A\n", "a.md")
-    assert front is not None and _stamp(front, "a.md") is None
-
-
-def test_apply_skips_what_takes_no_header(tmp_path: Path):
-    (tmp_path / "vendor").mkdir()
-    files = {
-        "a.py": b"x = 1\n",
-        "b.json": b"{}\n",
-        "app.min.js": b"var a;\n",
-        "vendor/lib.py": b"y = 2\n",
-        "image.py": b"\x00\x01binary",
-        "latin.py": "caf\xe9 = 1\n".encode("latin-1"),
+def test_the_version_is_the_running_meta_harnesses_when_none_is_given():
+    assert provenance.payload(Provenance(COMMENT, task="t-1")) == {
+        "kind": "comment",
+        "version": meta_harness.__version__,
+        "task": "t-1",
     }
-    for name, data in files.items():
-        (tmp_path / name).write_bytes(data)
-    outside = tmp_path.parent / f"{tmp_path.name}-outside.py"
-    outside.write_text("z = 3\n")
-    (tmp_path / "link.py").symlink_to(outside)
-
-    carried = provenance.apply(tmp_path, [*files, "link.py", "gone.py"], CONTEXT, CONFIG)
-
-    assert carried == ["a.py"]
-    assert (tmp_path / "a.py").read_text() == f"{PY}\n\nx = 1\n"
-    for name, data in files.items():
-        if name != "a.py":
-            assert (tmp_path / name).read_bytes() == data, name
-    assert outside.read_text() == "z = 3\n", "a link out of the workspace is not followed"
-    assert provenance.apply(tmp_path, ["a.py"], CONTEXT, CONFIG) == ["a.py"]
-    assert (tmp_path / "a.py").read_text() == f"{PY}\n\nx = 1\n", "a second pass adds nothing"
 
 
-# --- The publish ------------------------------------------------------------------------------------------
+def test_a_field_cannot_break_the_line_or_add_a_field_of_its_own():
+    signed = Provenance(COMMENT, by="dave; kind issue\nProvenance: meta-harness 9", version="1")
+
+    [said] = provenance.parse(provenance.stamp("Hi.", signed))
+
+    assert said["kind"] == "comment" and said["by"] == "dave, kind issue Provenance: meta-harness 9"
 
 
-def _git(*args: str, cwd: Path) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+def test_a_kind_it_does_not_know_is_refused():
+    with pytest.raises(ValueError, match="provenance kind"):
+        Provenance("note")
 
 
-@pytest.fixture
-def origin(tmp_path: Path) -> Path:
-    seed = tmp_path / "seed"
-    seed.mkdir()
-    _git("init", "--quiet", "--initial-branch=main", cwd=seed)
-    (seed / "old.py").write_text("old = 1\n")
-    (seed / "moved.py").write_text("moved = 1\n")
-    _git("add", ".", cwd=seed)
-    _git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "seed", cwd=seed)
-    bare = tmp_path / "origin.git"
-    _git("clone", "--quiet", "--bare", str(seed), str(bare), cwd=tmp_path)
-    _git("symbolic-ref", "HEAD", "refs/heads/main", cwd=bare)
-    return bare
+def test_stamping_puts_the_line_last_once_however_often_it_is_done():
+    first = Provenance(PULL_REQUEST, run="r-1", version="1")
+    second = Provenance(PULL_REQUEST, run="r-2", version="1")
+
+    once = provenance.stamp("Body.\n", first)
+    twice = provenance.stamp(once, second)
+
+    assert once == f"Body.\n\n{provenance.line(first)}"
+    assert twice == f"Body.\n\n{provenance.line(second)}"
+    assert provenance.stamp("", first) == provenance.line(first)
 
 
-async def test_publish_heads_only_the_files_the_run_created(origin: Path, tmp_path: Path):
-    run_dir = tmp_path / "runs" / "task" / "run-1"
-    workspace, git_dir = run_dir / "workspace", run_dir / "git"
-    await code_host.clone(str(origin), workspace, git_dir)
-    (workspace / "old.py").write_text("old = 2\n")
-    (workspace / "moved.py").rename(workspace / "renamed.py")
-    (workspace / "pkg").mkdir()
-    (workspace / "pkg" / "new.py").write_text("new = 1\n")
-    (workspace / "notes.json").write_text("{}\n")
-    given: list[list[str]] = []
+def test_a_commit_carries_git_trailers_after_its_version_line_and_git_reads_them():
+    signed = Provenance(COMMIT, task="t-1", run="run-task-t-1:run-1", model="harness:pi-lean/x:y", version="1.2.3")
 
-    async def headers(created: list[str]) -> list[str]:
-        given.append(created)
-        return provenance.apply(workspace, created, CONTEXT, CONFIG)
+    message = provenance.commit_message("Fix save\n\nRun run-task-t-1:run-1.", signed, "Version: fix")
 
-    kwargs = dict(
-        repo=str(origin), workspace=workspace, git_dir=git_dir, branch="mh/task", title="t", body="b",
-        commit_message="m", pr_record=run_dir / "pull-request.md", headers=headers,
-    )  # fmt: skip
-    published = await code_host.publish(**kwargs)
-
-    assert given == [["notes.json", "pkg/new.py"]], "a changed or moved file was not created by the run"
-    assert published is not None and published.stamped == ["pkg/new.py"]
-    assert _git("show", "mh/task:pkg/new.py", cwd=origin) == f"{PY}\n\nnew = 1"
-    assert _git("show", "mh/task:old.py", cwd=origin) == "old = 2"
-    assert _git("show", "mh/task:renamed.py", cwd=origin) == "moved = 1"
-
-    again = await code_host.publish(**kwargs)
-    assert again is not None and again.commit == published.commit
-    assert again.stamped == ["pkg/new.py"], "a retry after the commit still reports the headed files"
-    assert given[1] == ["notes.json", "pkg/new.py"], "the retry finds them in the commit the first attempt made"
-    assert _git("show", "mh/task:pkg/new.py", cwd=origin) == f"{PY}\n\nnew = 1", "and heads nothing twice"
-
-    other = await code_host.publish(**{**kwargs, "commit_message": "another run's"})
-    assert other is not None and other.stamped == [], "a commit this publish did not make is not its own"
-
-
-async def test_files_a_conflicted_merge_brought_are_not_the_run_s(origin: Path, tmp_path: Path):
-    seed = tmp_path / "other"
-    _git("clone", "--quiet", str(origin), str(seed), cwd=tmp_path)
-    (seed / "from_base.py").write_text("base = 1\n")
-    _git("add", ".", cwd=seed)
-    _git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "base", cwd=seed)
-    _git("push", "--quiet", "origin", "HEAD:refs/heads/next", cwd=seed)
-    run_dir = tmp_path / "runs" / "task" / "run-2"
-    workspace, git_dir = run_dir / "workspace", run_dir / "git"
-    await code_host.clone(str(origin), workspace, git_dir)
-    (git_dir / "MERGE_HEAD").write_text(_git("rev-parse", "next", cwd=origin) + "\n")
-    (workspace / "from_base.py").write_text("base = 1\n")
-    (workspace / "mine.py").write_text("mine = 1\n")
-    await code_host._git(git_dir, workspace, "add", "--all")
-
-    assert await code_host.created_files(git_dir, workspace) == ["mine.py"]
-
-
-# --- The publish activity ---------------------------------------------------------------------------------
-
-
-@pytest.fixture
-def publishing(monkeypatch, tmp_path: Path):
-    """code_host.publish faked to hand the activity's headers function two created files, with the goal the planner
-    returns, the events emitted and what provenance.apply was given recorded."""
-    seen: dict = {"goal": {"id": "g-1", "provenance": None}, "emitted": [], "applied": [], "asked": []}
-
-    async def publish(*, headers, **kwargs):
-        stamped = await headers(["a.py", "b.json"])
-        return code_host.Published(
-            "mh/t-1", "main", "c1", ["a.py", "b.json"], "https://x/pull/1", True, stamped=stamped
-        )
-
-    class Goals:
-        def __init__(self, api_key):
-            pass
-
-        def get(self, goal_id):
-            seen["asked"].append(goal_id)
-            if isinstance(seen["goal"], Exception):
-                raise seen["goal"]
-            return seen["goal"]
-
-    def apply(workspace, files, context):
-        seen["applied"].append((files, context))
-        return files[:1]
-
-    monkeypatch.setenv("MH_SERVICE_KEY", "k")
-    monkeypatch.setattr(code_host, "publish", publish)
-    monkeypatch.setattr(planner_client, "GoalsClient", Goals)
-    monkeypatch.setattr(provenance, "apply", apply)
-    monkeypatch.setattr(provenance, "settings", lambda: _config(repos={"o/quiet": False}))
-    monkeypatch.setattr(activities.events, "emit", lambda *args, **kwargs: seen["emitted"].append((args, kwargs)))
-    return seen
-
-
-def _request(**extra) -> PublishRequest:
-    fields = dict(
-        run_id="task-t-1:run-1", repo="o/r", ticket="", title="t", candidate="harness:pi-lean/x:y", summary=None,
-        spent_usd="0", task_id="t-1", goal_id="g-1",
-    )  # fmt: skip
-    return PublishRequest(**{**fields, **extra})
-
-
-async def test_the_publish_activity_heads_new_files_and_records_it_on_the_task(publishing):
-    await ActivityEnvironment().run(activities.publish, _request())
-
-    [(files, context)] = publishing["applied"]
-    assert files == ["a.py", "b.json"]
-    assert context == provenance.Context(
-        run_id="task-t-1:run-1", candidate="harness:pi-lean/x:y", task_id="t-1", goal_id="g-1", repo="o/r"
+    assert message.endswith(
+        "\n\nVersion: fix\nMeta-Harness-Version: 1.2.3\nMeta-Harness-Task: t-1\n"
+        "Meta-Harness-Run: run-task-t-1:run-1\nMeta-Harness-Model: harness:pi-lean/x:y"
     )
-    recorded = [(args, kwargs) for args, kwargs in publishing["emitted"] if args[0] == "provenance_added"]
-    [((_, payload), fields)] = recorded
-    assert payload == {"run_id": "task-t-1:run-1", "count": 1, "files": ["a.py"]}
-    assert fields["task_id"] == "t-1" and fields["run_id"] == "task-t-1:run-1" and fields["event_id"]
+    parsed = subprocess.run(
+        ["git", "interpret-trailers", "--parse"], input=message, capture_output=True, text=True, check=True
+    ).stdout
+    assert "Meta-Harness-Task: t-1" in parsed and "Version: fix" in parsed
+    assert versioning.kind_of("Fix save (#7)", message) == "fix"
+    assert provenance.parse_trailers(message) == {
+        "version": "1.2.3",
+        "task": "t-1",
+        "run": "run-task-t-1:run-1",
+        "model": "harness:pi-lean/x:y",
+    }
 
 
-async def test_a_goal_that_turned_headers_off_gets_none_and_one_that_turned_them_on_does(publishing):
-    publishing["goal"] = {"id": "g-1", "provenance": False}
-    await ActivityEnvironment().run(activities.publish, _request())
-    assert publishing["applied"] == [] and not [e for e in publishing["emitted"] if e[0][0] == "provenance_added"]
-
-    publishing["goal"] = {"id": "g-1", "provenance": True}
-    await ActivityEnvironment().run(activities.publish, _request(repo="o/quiet"))
-    assert len(publishing["applied"]) == 1, "the goal's choice outranks the repo's"
+# --- Where the code host posts --------------------------------------------------------------------------
 
 
-async def test_a_repo_turned_off_gets_no_header_and_a_task_with_no_goal_asks_no_planner(publishing):
-    await ActivityEnvironment().run(activities.publish, _request(repo="o/quiet", goal_id=""))
-    assert publishing["applied"] == [] and publishing["asked"] == []
+@pytest.fixture
+def github(monkeypatch):
+    """GitHub's API faked: each call's JSON, and a status to refuse the first call with."""
+    calls: list[dict] = []
+    refuse: list[int] = []
+
+    async def fake(repo, permissions, method, path, **kwargs):
+        calls.append(kwargs.get("json") or {})
+        if refuse:
+            raise CodeHostError("refused", status=refuse.pop())
+        return {"html_url": "https://github.com/o/r/pull/7#x"}
+
+    monkeypatch.setattr(code_host, "_github", fake)
+    return calls, refuse
 
 
-async def test_a_planner_that_does_not_answer_leaves_it_to_the_configuration(publishing):
-    publishing["goal"] = RuntimeError("connection refused")
-    await ActivityEnvironment().run(activities.publish, _request())
-    assert publishing["asked"] == ["g-1"] and len(publishing["applied"]) == 1
+async def test_a_review_ends_with_its_provenance_even_when_its_comments_move_into_its_body(github):
+    calls, refuse = github
+    signed = Provenance(REVIEW, task="t-1", round=1, version="1")
+    comments = [{"path": "a.py", "line": 3, "side": "RIGHT", "body": "Off by one."}]
+
+    await code_host.post_review("o/r", 7, "abc", "Two findings.", comments, provenance=signed)
+    refuse.append(422)
+    await code_host.post_review("o/r", 7, "abc", "Two findings.", comments, provenance=signed)
+
+    assert calls[0]["body"] == f"Two findings.\n\n{provenance.line(signed)}"
+    assert calls[0]["comments"] == [{**comments[0], "body": f"Off by one.\n\n{provenance.line(signed)}"}]
+    assert comments[0]["body"] == "Off by one.", "the caller's comments are left as they were"
+    moved = calls[-1]["body"]
+    assert "Off by one." in moved and moved.endswith(provenance.line(signed))
+    assert len(provenance.parse(moved)) == 1, "a comment moved into the body carries no second line"
+    assert calls[-1]["comments"] == []
+
+
+async def test_a_review_without_provenance_leaves_its_inline_comments_as_they_are(github):
+    calls, _ = github
+    comments = [{"path": "a.py", "line": 3, "side": "RIGHT", "body": "Off by one."}]
+
+    await code_host.post_review("o/r", 7, "abc", "Two findings.", comments)
+
+    assert calls[0]["comments"] == comments
+
+
+async def test_a_comment_and_a_line_comment_end_with_their_provenance(github):
+    calls, _ = github
+    signed = Provenance(COMMENT, task="t-1", by="dave", version="1")
+
+    await code_host.comment("o/r", 7, "Merged.", provenance=signed)
+    await code_host.comment_on_lines("o/r", 7, "abc", "a.py", 2, "**dave** wrote:\n\nName it.", provenance=signed)
+    await code_host.comment("o/r", 7, "Plain.")
+
+    assert [c["body"] for c in calls] == [
+        f"Merged.\n\n{provenance.line(signed)}",
+        f"**dave** wrote:\n\nName it.\n\n{provenance.line(signed)}",
+        "Plain.",
+    ]
+
+
+# --- Where the run service publishes ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def emitted(monkeypatch):
+    found: list = []
+    monkeypatch.setattr(activities.events, "emit", lambda kind, payload, **fields: found.append((kind, payload)))
+
+    async def unchanged(texts, transport=None):
+        return [None for _ in texts]
+
+    monkeypatch.setattr(activities.writing, "check_all", unchanged)
+    return found
+
+
+async def test_a_published_pull_request_and_its_commit_say_which_task_run_and_model_wrote_them(monkeypatch, emitted):
+    seen: dict = {}
+
+    async def publish(**kwargs):
+        seen["body"] = await kwargs["body"](["a.py"])
+        seen["message"] = kwargs["commit_message"]
+        return Published(branch="mh/t-1", base="main", commit="c1", files=["a.py"], pr_url="u", created=True)
+
+    monkeypatch.setattr(code_host, "publish", publish)
+    request = PublishRequest(
+        run_id="run-task-t-1:run-1",
+        repo="owner/repo",
+        ticket="owner/repo#9",
+        title="Fix save",
+        candidate="harness:pi-lean/x:y",
+        summary="Saves now write once.",
+        spent_usd="0.40",
+        task_id="t-1",
+    )
+
+    result = await ActivityEnvironment().run(activities.publish, request)
+
+    [said] = provenance.parse(seen["body"])
+    assert seen["body"].rstrip().endswith(provenance.line(Provenance(**said)))
+    assert (said["kind"], said["task"], said["run"], said["model"]) == (
+        "pull_request",
+        "t-1",
+        "run-task-t-1:run-1",
+        "harness:pi-lean/x:y",
+    )
+    assert "Closes owner/repo#9" in seen["body"], "the description keeps its own lines"
+    assert provenance.parse_trailers(seen["message"]) == {
+        "version": meta_harness.__version__,
+        "task": "t-1",
+        "run": "run-task-t-1:run-1",
+        "model": "harness:pi-lean/x:y",
+    }
+    assert seen["message"].startswith("Fix save\n\nRun run-task-t-1:run-1 on harness:pi-lean/x:y.")
+    assert result.provenance == said, "pull_request_opened carries what the description says"
+
+
+async def test_a_fix_rounds_section_names_its_round(monkeypatch, emitted):
+    added: list = []
+
+    async def publish(**kwargs):
+        return Published(branch="mh/t-1", base="main", commit="c2", files=["a.py"], pr_url="u", created=False)
+
+    async def add_to_description(repo, pr_url, heading, text, pr_record):
+        added.append((heading, text))
+
+    monkeypatch.setattr(code_host, "publish", publish)
+    monkeypatch.setattr(code_host, "add_to_description", add_to_description)
+    request = PublishRequest(
+        run_id="run-task-t-1:run-2",
+        repo="owner/repo",
+        ticket="",
+        title="Fix save",
+        candidate="harness:pi-lean/x:y",
+        summary="Moved the check.",
+        spent_usd="0.10",
+        task_id="t-1",
+        fix_round=1,
+    )
+
+    await ActivityEnvironment().run(activities.publish, request)
+
+    [(heading, text)] = added
+    assert heading == "Fix round 1 (run-task-t-1:run-2)"
+    [said] = provenance.parse(text)
+    assert (said["kind"], said["run"], said["round"]) == ("pull_request", "run-task-t-1:run-2", "1")
+
+
+async def test_a_posted_review_and_its_event_say_which_reviewer_and_round(github, emitted):
+    calls, _ = github
+    request = PostReviewRequest(
+        repo="owner/repo",
+        pr_url="https://github.com/owner/repo/pull/7",
+        head_sha="abc",
+        round_no=2,
+        reviewer="harness:pi-review/x:y",
+        review={"verdict": "approve", "summary": "Fine.", "findings": []},
+        task_id="t-1",
+    )
+
+    await ActivityEnvironment().run(activities.post_review, request)
+
+    [said] = provenance.parse(calls[0]["body"])
+    assert (said["kind"], said["task"], said["model"], said["round"]) == ("review", "t-1", "harness:pi-review/x:y", "2")
+    [reviewed] = [p for k, p in emitted if k == "pull_request_reviewed"]
+    assert reviewed["provenance"] == said

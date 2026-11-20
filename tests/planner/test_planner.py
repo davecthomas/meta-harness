@@ -1428,7 +1428,7 @@ def test_a_tasks_diff_and_a_line_comment_that_names_the_operator(api, parts, mon
     events, _, tasks = parts
     tasks.tasks["t-pr"] = {"id": "t-pr", "status": "ready", "pr_url": "https://github.com/o/r/pull/7", "goal_id": None}
     tasks.tasks["t-none"] = {"id": "t-none", "status": "running", "pr_url": None, "goal_id": None}
-    posted = []
+    posted, signed = [], []
 
     async def read_pull_request(repo, number):
         return PullRequest(repo=repo, number=number, url="", state="open", head_sha="abc", merge_sha="")
@@ -1438,8 +1438,9 @@ def test_a_tasks_diff_and_a_line_comment_that_names_the_operator(api, parts, mon
             {"path": "a.py", "status": "modified", "additions": 2, "deletions": 1, "patch": "@@ -1 +1,2 @@\n-x\n+y\n+z"}
         ]
 
-    async def comment_on_lines(repo, number, head_sha, path, line, body, start_line=None):
+    async def comment_on_lines(repo, number, head_sha, path, line, body, start_line=None, provenance=None):
         posted.append((repo, number, head_sha, path, line, start_line, body))
+        signed.append(provenance)
         return "https://github.com/o/r/pull/7#c1"
 
     monkeypatch.setattr(code_host, "read_pull_request", read_pull_request)
@@ -1457,7 +1458,10 @@ def test_a_tasks_diff_and_a_line_comment_that_names_the_operator(api, parts, mon
     )
     assert made.status_code == 201 and made.json()["url"].endswith("#c1")
     assert posted == [("o/r", 7, "abc", "a.py", 2, 1, "**dave** wrote:\n\nName it.")]
-    assert [p["path"] for t, p in events.events if t == "pull_request_commented"] == ["a.py"]
+    assert [(p.kind, p.task, p.by) for p in signed] == [("comment", "t-pr", "dave")], "it says who and which task"
+    [commented] = [p for t, p in events.events if t == "pull_request_commented"]
+    assert commented["path"] == "a.py"
+    assert (commented["provenance"]["kind"], commented["provenance"]["by"]) == ("comment", "dave")
     assert api.get("/v1/pulls/t-none/diff", headers=OPERATOR).status_code == 404
 
 

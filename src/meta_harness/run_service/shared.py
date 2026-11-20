@@ -185,6 +185,8 @@ class PublishResult:
     files: list[str]
     pr_url: str
     created: bool
+    # What the pull request's description says it came from (provenance.payload). None when there is none.
+    provenance: dict[str, Any] | None = None
 
 
 @dataclass

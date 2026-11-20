@@ -219,7 +219,7 @@ REGISTRY: list[EventType] = [
             ["kind", "texts", "findings", "rewritten", "kept"],
         ),
     ),
-    # The files a run created that carry a provenance header (run_service/provenance.py): count is how many,
+    # The files a run created that carry a provenance header (run_service/provenance_headers.py): count is how many,
     # files the first of them
     EventType(
         "provenance_added",

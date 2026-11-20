@@ -4,7 +4,7 @@ import { IconChevronDown, IconChevronRight, IconFile, IconRobot, IconSettings } 
 import type { MhEvent } from "../../api";
 import { moneyText, usd } from "../../money";
 import { heldLine } from "./hold";
-import { provenanceLine } from "./provenance";
+import { provenanceLine } from "./provenanceHeaders";
 import { writingLine } from "./writing";
 
 // One entry on the timeline: a turn with what happened in it, or an event between turns.

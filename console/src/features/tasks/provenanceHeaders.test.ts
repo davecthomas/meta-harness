@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { MhEvent } from "../../api";
 import { STEP_EVENTS } from "./path";
-import { provenanceLine } from "./provenance";
+import { provenanceLine } from "./provenanceHeaders";
 import { entries } from "./Timeline";
 
 test("the provenance line says how many new files got a header, and names the first few", () => {

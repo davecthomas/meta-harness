@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { expect, test } from "vitest";
 import { theme } from "../../theme";
-import { ProvenanceEdit, provenanceChoice, provenanceSummary, provenanceValue, type ProvenanceGoal } from "./provenance";
+import { ProvenanceEdit, provenanceChoice, provenanceSummary, provenanceValue, type ProvenanceGoal } from "./provenanceHeaders";
 
 function renderIn(element: React.ReactElement) {
   return render(<MantineProvider theme={theme}>{element}</MantineProvider>);
