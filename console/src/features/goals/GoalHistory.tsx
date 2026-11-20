@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { waitReason } from "../tasks/WaitingToStart";
 import { taskName } from "../../components/TaskName";
 import { useLocation } from "react-router-dom";
 import { api, goalStatus, goalTitle, type Goal, type Task } from "../../api";
@@ -66,6 +67,12 @@ function rank(status: string): number {
   return 2;
 }
 
+// A row's hover text: the task's title, and why it waits when it does.
+const waiting = (t: Task) => {
+  const why = waitReason(t);
+  return why ? `${t.title}. It ${why}` : t.title;
+};
+
 function GoalTasks({ goalId }: { goalId: string }) {
   const { rows, error } = useRows(() => api.tasks({ goalId }, 0, MOST).then((page) => page.items), `goal-tasks:${goalId}`);
   if (!rows) return <TreeNote error={!!error}>{error ? readFailed("its tasks", error) : "Loading…"}</TreeNote>;
@@ -73,7 +80,7 @@ function GoalTasks({ goalId }: { goalId: string }) {
   const live = tasks.filter((t) => !FINISHED.has(t.status)).sort((a, b) => rank(a.status) - rank(b.status));
   const done = tasks.filter((t) => FINISHED.has(t.status));
   const leaf = ({ task: t, status }: { task: Task; status: string }) => (
-    <LeafItem key={t.id} label={taskName(t)} title={t.title} to={`/tasks/${t.id}`} status={status} />
+    <LeafItem key={t.id} label={taskName(t)} title={waiting(t)} to={`/tasks/${t.id}`} status={status} />
   );
   return (
     <>

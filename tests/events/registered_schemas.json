@@ -969,6 +969,54 @@
     ],
     "type": "object"
   },
+  "remedy_applied v1": {
+    "additionalProperties": true,
+    "properties": {
+      "because": {
+        "type": "string"
+      },
+      "did": {
+        "type": "string"
+      },
+      "error": {
+        "type": "string"
+      },
+      "next": {
+        "type": "string"
+      },
+      "of": {
+        "type": "integer"
+      },
+      "outcome": {
+        "enum": [
+          "started",
+          "done",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "remedy": {
+        "type": "string"
+      },
+      "situation": {
+        "type": "string"
+      },
+      "try": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "situation",
+      "remedy",
+      "try",
+      "of",
+      "outcome",
+      "because",
+      "did",
+      "next"
+    ],
+    "type": "object"
+  },
   "review_hold v1": {
     "additionalProperties": true,
     "properties": {

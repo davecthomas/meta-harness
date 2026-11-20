@@ -109,6 +109,33 @@ async def test_two_tasks_on_one_repo_area_run_in_turn(repo):
     assert result.started == [second]
 
 
+async def test_a_task_behind_several_holders_names_them_all_in_one_order_every_pass(repo):
+    tasks = Tasks()
+    one, two = tasks.add(repo, priority=3, paths=["src/a"]), tasks.add(repo, priority=2, paths=["tests"])
+    waiting = tasks.add(repo, paths=["src/a", "tests"])
+    admission, _ = _admission(tasks)
+
+    reasons = [(await admission.pass_once()).held[waiting] for _ in range(3)]
+
+    assert all(r.endswith(f"held by {', '.join(sorted([one, two]))}") for r in reasons)
+    assert len(set(reasons)) == 1, "the same holders give the same reason, so no new hold is recorded"
+
+
+async def test_a_task_with_its_pull_request_open_blocks_no_one_with_its_areas(repo):
+    tasks = Tasks()
+    writing = tasks.add(repo, priority=2, paths=["tests"])
+    waiting = tasks.add(repo, paths=["tests/run_service"])
+    admission, started = _admission(tasks)
+    result = await admission.pass_once()
+    assert result.started == [writing] and "held by " + writing in result.held[waiting]
+
+    # Its change is written and its pull request is open: the review loop needs no lock on the files.
+    tasks.tasks[writing]["pr_url"] = "https://github.com/o/r/pull/1"
+    result = await admission.pass_once()
+    assert waiting in result.started, "the waiting task starts while the first one is reviewed"
+    assert writing not in result.released, "the task in review still counts as running"
+
+
 async def test_a_task_back_only_to_merge_waits_on_no_area_and_holds_none(repo):
     tasks = Tasks()
     running = tasks.add(repo, priority=2, paths=["console/src"])
