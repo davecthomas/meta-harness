@@ -1,6 +1,7 @@
 import type { MhEvent } from "../../api";
 import { moneyText, usd } from "../../money";
 import { heldLine } from "./hold";
+import { provenanceLine } from "./provenanceHeaders";
 import { writingLine } from "./writing";
 import { summaryLine } from "./summaries";
 
@@ -36,6 +37,8 @@ export interface Step {
   chosen?: boolean;
   // What an operator, the supervisor or the writing pass did during the step.
   notes: string[];
+  // What the step's box has no room for, shown on its hover: a review's summary and findings, a run's plan.
+  more?: string[];
   // The task is here now.
   now: boolean;
   // A step that came again the same way, folded into this one: how many times, when the first began, and how
@@ -58,7 +61,13 @@ export const STEP_EVENTS = [
   "merge_checks", "task_retried", "task_driven", "task_recovered", "task_standing", "task_held", "task_admitted",
   "task_unblocked", "budget_hold", "budget_decision", "review_hold", "review_proceeded", "finding_dismissed",
   "operator_review_claimed", "operator_review_released", "operator_review_submitted", "operator_message", "attempt_chosen", "writing_checked",
+  "provenance_added",
   "pull_request_summary",
+  // What the supervisor or the planner did to unstick the task, noted on the step it started.
+  "remedy_applied",
+  // A review's summary and findings, and a run's plan: what a step's hover shows beyond its box.
+  "review_submitted",
+  "plan_updated",
 ];
 
 const PARKED: Record<string, string> = {
@@ -197,7 +206,9 @@ export function steps(events: MhEvent[]): Step[] {
     const runId = e.run_id ?? (p.run_id as string | undefined) ?? "";
     switch (e.event_type) {
       case "task_created":
-        waitFor({ key: `p${e.position}`, column: 0, title: "Queued", detail: "", tone: "plain", start: time });
+        // A task made blocked waits on other issues first: that time is its own wait, not "Queued".
+        if (p.status === "blocked") waitFor({ key: `p${e.position}`, column: 0, title: "Blocked", detail: "Waits for the issues it depends on to be done", tone: "plain", start: time });
+        else waitFor({ key: `p${e.position}`, column: 0, title: "Queued", detail: "", tone: "plain", start: time });
         break;
       case "task_held": {
         const reason = heldLine(p);
@@ -209,12 +220,13 @@ export function steps(events: MhEvent[]): Step[] {
         endWait(time);
         break;
       case "task_unblocked":
-        waitFor({ key: `p${e.position}`, column: 0, title: "Queued", detail: "What it was blocked on is done", tone: "plain", start: time });
+        // Its status change to queued, recorded with it, already starts the wait.
         break;
       case "task_status_changed": {
         const to = String(p.to);
         const reason = moneyText(String(p.reason ?? ""));
         if (to === "running") endWait(time);
+        else if (to === "queued" && p.from === "blocked") waitFor({ key: `p${e.position}`, column: 0, title: "Queued", detail: "What it waited on is done", tone: "plain", start: time });
         else if (to === "queued") queuedAgain(time, `p${e.position}`, "Queued again", reason);
         else if (to === "blocked") waitFor({ key: `p${e.position}`, column: 0, title: "Blocked", detail: reason, tone: "plain", start: time });
         else if (ENDS[to]) add({ key: `p${e.position}`, kind: "end", column: 4, title: ENDS[to][0], detail: reason, tone: ENDS[to][1], start: time, end: time });
@@ -229,6 +241,32 @@ export function steps(events: MhEvent[]): Step[] {
         break;
       case "task_recovered":
         queuedAgain(time, `p${e.position}`, "Recovered by the supervisor", moneyText(String(p.why ?? "")));
+        break;
+      case "review_submitted": {
+        const step = runs.get(runId);
+        const found = Array.isArray(p.findings) ? (p.findings as { path?: string; line?: number; body?: string }[]) : [];
+        if (step) {
+          step.more = [
+            ...(p.summary ? [String(p.summary)] : []),
+            ...found.slice(0, 5).map((f) => `${f.path ? `${f.path}${f.line ? `:${f.line}` : ""}: ` : ""}${String(f.body ?? "").slice(0, 160)}`),
+            ...(found.length > 5 ? [`and ${found.length - 5} more`] : []),
+          ];
+        }
+        break;
+      }
+      case "plan_updated": {
+        // The run's plan as it last stood: what it set out to do, and how far it got.
+        const step = runs.get(runId);
+        const planned = Array.isArray(p.steps) ? (p.steps as { step?: string; status?: string }[]) : [];
+        if (step && planned.length) {
+          const done = planned.filter((s) => s.status === "done").length;
+          step.more = [`Its plan, ${done} of ${planned.length} done:`, ...planned.slice(0, 6).map((s) => `${s.status === "done" ? "✓" : s.status === "in_progress" ? "→" : "·"} ${s.step ?? ""}`)];
+        }
+        break;
+      }
+      case "remedy_applied":
+        // What the supervisor or the planner did to unstick it, on the step it started.
+        note(`Unstuck: ${p.did}${p.of ? ` (try ${p.try} of ${p.of})` : ""}. Next: ${p.next}`);
         break;
       case "task_standing":
         if (p.owner === "operator" && p.ask && out.at(-1)?.column === 4) note(`Needs you: ${p.ask}`);
@@ -319,6 +357,9 @@ export function steps(events: MhEvent[]): Step[] {
         break;
       case "writing_checked":
         note(writingLine(p));
+        break;
+      case "provenance_added":
+        note(provenanceLine(p));
         break;
       case "pull_request_summary":
         note(summaryLine(p));

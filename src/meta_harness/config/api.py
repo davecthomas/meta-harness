@@ -5,6 +5,8 @@
     GET  /v1/config/classifiers           the router classifier's engines, each with its models, for the tier form
     GET  /v1/config/images                the harness images the deployment builds, for a profile's image; 422
                                           says why when they cannot be listed
+    GET  /v1/config/images/programs       the programs a harness image has, ?image= (empty: the default), for a
+                                          profile's bash allowlist; 422 says why when they cannot be listed
     GET  /v1/config/{kind}                the active version, with its document
     GET  /v1/config/{kind}/versions       the version history, newest first
     PUT  /v1/config/{kind}                save a new version: {document, note}; 422 lists every reason it is refused
@@ -27,7 +29,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from meta_harness import auth
-from meta_harness.config import images, skills, store
+from meta_harness.config import images, programs, skills, store
 from meta_harness.config.classifiers import classifier_engines
 from meta_harness.config.kinds import KINDS, ConfigError, sandbox_ceiling
 from meta_harness.config.models import catalog
@@ -123,6 +125,14 @@ def router(
         except images.ImagesUnreadable as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
 
+    @api.get("/v1/config/images/programs")
+    def image_programs(image: str | None = Query(default=None, max_length=300), who: str = Depends(operator)) -> dict:
+        """The programs a harness image has (meta_harness.config.programs), for a profile's bash allowlist."""
+        try:
+            return programs.listed(image)
+        except programs.ProgramsUnreadable as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
+
     @api.get("/v1/config/classifiers")
     def classifiers(who: str = Depends(operator)) -> dict:
         """Every engine the router's classifier can name, with the models each offers."""
@@ -139,6 +149,12 @@ def router(
                 name, skill = skills.from_git(body.url.strip(), (body.ref or "").strip() or None, body.path)
             else:
                 raise skills.SkillError("give a git url, or the skill's files")
+            if name in skills.locked():
+                raise skills.SkillError(
+                    f"{name} is locked: it ships with the meta-harness and nothing imported may take its name. "
+                    f"Give the imported skill another name, or change {name} with a pull request to "
+                    f"config/skills/{name}/"
+                )
         except skills.SkillError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
         return {"name": name, "skill": skill}

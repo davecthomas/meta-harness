@@ -36,16 +36,23 @@ export function numbers(step: Step, now: number): string {
   return parts.join(" · ");
 }
 
-// Everything known about a step, for the hover.
-function About({ step, now }: { step: Step; now: number }) {
+// The box cuts a line this long or longer short, so the hover gives it whole.
+const CUT = 80;
+
+// What the hover adds to the box: never what the box already shows. When it happened, a line the box cut
+// short, and what the box has no room for (a review's summary and findings, a run's plan). A review's box
+// opens its round, said last.
+export function About({ step }: { step: Step }) {
+  const cut = [step.detail, ...step.notes].filter((t): t is string => !!t && t.length >= CUT);
   return (
-    <Stack gap={2} maw={360}>
-      {step.detail && <Text size="xs">{step.detail}</Text>}
-      {step.candidate && <Text size="xs">{step.candidate}</Text>}
-      {step.runId && <Text size="xs" ff="monospace">{step.runId}</Text>}
-      <Text size="xs">{when(step.start)}{step.end && step.end !== step.start ? ` to ${when(step.end)}` : ""}</Text>
-      {numbers(step, now) && <Text size="xs">{numbers(step, now)}</Text>}
-      {step.notes.map((n, i) => <Text key={i} size="xs">{n}</Text>)}
+    <Stack gap={4} maw={420}>
+      <Text size="xs" c="dimmed">
+        {when(step.start)}
+        {step.end && step.end !== step.start ? ` to ${when(step.end).replace(/^.*?, \d{4}, /, "")}` : step.end ? "" : ", still going"}
+      </Text>
+      {cut.map((t, i) => <Text key={`c${i}`} size="xs">{t}</Text>)}
+      {(step.more ?? []).map((t, i) => <Text key={`m${i}`} size="xs" style={{ whiteSpace: "pre-wrap" }}>{t}</Text>)}
+      {step.kind === "review" && step.round !== undefined && <Text size="xs" c="dimmed">Click to open round {step.round} in Reviews.</Text>}
     </Stack>
   );
 }
@@ -56,7 +63,7 @@ function StepCard({ step, now, picked, onPick, checks }: { step: Step; now: numb
   const color = COLORS[step.tone];
   const waiting = step.kind === "wait" || step.kind === "parked";
   return (
-    <Tooltip label={<About step={step} now={now} />} multiline withArrow openDelay={250} position="bottom">
+    <Tooltip label={<About step={step} />} multiline withArrow openDelay={250} position="bottom">
       <UnstyledButton onClick={onPick} aria-pressed={picked} data-testid={`step-${step.key}`} w="100%">
         <Paper
           p={8}
@@ -93,13 +100,13 @@ function StepCard({ step, now, picked, onPick, checks }: { step: Step; now: numb
 
 // What a picked step opens: its run's terminal, its review round, its checks or its pull request, and
 // under them the run's turns one by one.
-function Picked({ step, events, onOpenRun, onOpenReviews }: { step: Step; events: MhEvent[]; onOpenRun: (runId: string) => void; onOpenReviews: () => void }) {
+function Picked({ step, events, onOpenRun, onOpenReviews }: { step: Step; events: MhEvent[]; onOpenRun: (runId: string) => void; onOpenReviews: (round?: number) => void }) {
   return (
     <Stack gap="sm" mt="md" data-testid="picked">
       <Group gap="xs">
         <Text size="sm" fw={600}>{step.title}</Text>
         {step.runId && <Button size="compact-xs" variant="light" onClick={() => onOpenRun(step.runId!)}>Open its terminal</Button>}
-        {step.kind === "review" && <Button size="compact-xs" variant="light" onClick={onOpenReviews}>Open its review round</Button>}
+        {step.kind === "review" && <Button size="compact-xs" variant="light" onClick={() => onOpenReviews(step.round)}>Open its review round</Button>}
         {step.url && <Anchor href={step.url} target="_blank" rel="noreferrer" size="sm">{step.kind === "checks" ? "Open its checks" : "Open the pull request"}</Anchor>}
       </Group>
       {step.detail && <Text size="sm" c={step.tone === "bad" ? "red" : undefined}>{step.detail}</Text>}
@@ -144,7 +151,7 @@ export function NowLine({ events, checks, compact }: { events: MhEvent[]; checks
 // back to an earlier stage (a review's findings to a fix run, a retry, a merge the supervisor asked for
 // again) it starts a new row, so a loop shows as a return, not as a longer line.
 // usd: what the task's runs have spent, as its Spend tab counts it; the path's own sum of its steps without it.
-export function TaskPath(props: { events: MhEvent[]; checks?: PullChecks | null; usd?: number; pick?: string | null; onOpenRun: (runId: string) => void; onOpenReviews: () => void; onPickRun?: (runId: string) => void }) {
+export function TaskPath(props: { events: MhEvent[]; checks?: PullChecks | null; usd?: number; pick?: string | null; onOpenRun: (runId: string) => void; onOpenReviews: (round?: number) => void; onPickRun?: (runId: string) => void }) {
   const path = steps(props.events);
   // A link that names a run opens on that run's step.
   const [picked, setPicked] = useState<string | null>(props.pick ?? null);
@@ -197,6 +204,9 @@ export function TaskPath(props: { events: MhEvent[]; checks?: PullChecks | null;
                             checks={props.checks}
                             picked={picked === s.key}
                             onPick={() => {
+                              // A review's box opens its round in Reviews, where its findings are dismissed or
+                              // taken over; any other box opens below the path.
+                              if (s.kind === "review" && s.round !== undefined) return props.onOpenReviews(s.round);
                               setPicked(picked === s.key ? null : s.key);
                               if (s.runId && picked !== s.key) props.onPickRun?.(s.runId);
                             }}

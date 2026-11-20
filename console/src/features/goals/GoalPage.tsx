@@ -20,6 +20,7 @@ import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
 import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { HeldActions, StrictIssuesEdit } from "./sizing";
+import { ProvenanceEdit, provenanceSummary, type ProvenanceGoal } from "./provenanceHeaders";
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 import { ConfirmButton } from "../../components/ConfirmButton";
@@ -324,6 +325,7 @@ export function GoalPage() {
               goal.repos.join(", "),
               goal.max_usd ? `budget ${usd(goal.max_usd)}` : "no budget",
               goal.auto_merge ? "auto-merge on" : "auto-merge off",
+              ...provenanceSummary((goal as ProvenanceGoal).provenance),
             ].join(" · ")}
           </Text>
           <Button size="compact-sm" variant="subtle" onClick={() => setSettingsOpen(!showSettings)} aria-expanded={showSettings} aria-controls="goal-settings-body">
@@ -358,6 +360,7 @@ export function GoalPage() {
               ["Priority", <PriorityEdit {...editable} />],
               ["Parallel tasks", <ParallelEdit {...editable} system={systemParallel} />],
               ["Strict issues", <StrictIssuesEdit goal={goal} readOnly={!open} save={(fields) => saveField(fields as Partial<Goal>)} />],
+              ["Provenance headers", <ProvenanceEdit goal={goal} readOnly={!open} save={(fields) => saveField(fields as Partial<Goal>)} />],
               ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
               ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
               ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),

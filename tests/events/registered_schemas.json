@@ -153,6 +153,34 @@
     ],
     "type": "object"
   },
+  "failure_diagnosed v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "kind": {
+        "enum": [
+          "transient",
+          "permanent"
+        ],
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "kind",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
   "file_changed v1": {
     "additionalProperties": true,
     "properties": {},
@@ -824,6 +852,29 @@
     "additionalProperties": true,
     "properties": {},
     "required": [],
+    "type": "object"
+  },
+  "provenance_added v1": {
+    "additionalProperties": true,
+    "properties": {
+      "count": {
+        "type": "integer"
+      },
+      "files": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "run_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id",
+      "count",
+      "files"
+    ],
     "type": "object"
   },
   "pull_request_checks v1": {

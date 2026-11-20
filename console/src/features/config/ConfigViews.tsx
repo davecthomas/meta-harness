@@ -117,6 +117,26 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
           </Stack>,
         ],
         [
+          "Credential redaction",
+          <Stack gap={2}>
+            <InlineField
+              kind="switch"
+              label="Credential redaction"
+              value={doc.credential_redaction === true}
+              switchLabel={doc.credential_redaction === true ? "Replace credentials in what is posted" : "Post text as it is"}
+              changed={changed(s, ["credential_redaction"])}
+              reasons={s.reasons("credential_redaction")}
+              readOnly={s.readOnly}
+              onCommit={(on) => s.stage(["credential_redaction"], on ? true : undefined)}
+            />
+            <Text size="sm" c="dimmed">
+              {doc.credential_redaction === true
+                ? "Access tokens, API keys, private keys, passwords in a URL and this service's own secrets become [redacted] before a text is posted. Personal data is not looked for: names, email addresses and phone numbers stay as written."
+                : "Off. Nothing is replaced in what is posted. Turned on, it replaces tokens, keys and passwords. It never looks for personal data."}
+            </Text>
+          </Stack>,
+        ],
+        [
           "Fix rounds",
           <InlineField
             kind="number"
@@ -166,13 +186,79 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
               <Text size="sm">
                 {(doc.remedies?.fix_again ?? 1) === 0
                   ? "Off: a review its fixes did not settle waits for you"
-                  : `A review its fixes did not settle gets another set of fix rounds on the complex tier, up to ${doc.remedies?.fix_again ?? 1} time${(doc.remedies?.fix_again ?? 1) === 1 ? "" : "s"}, before it waits for you`}
+                  : `A review its fixes did not settle gets another set of fix rounds on the complex tier, at most ${doc.remedies?.fix_again ?? 1} time${(doc.remedies?.fix_again ?? 1) === 1 ? "" : "s"}. Then it waits for you.`}
               </Text>
             }
             changed={changed(s, ["remedies", "fix_again"])}
             reasons={s.reasons("fix_again")}
             readOnly={s.readOnly}
             onCommit={(v) => s.stage(["remedies", "fix_again"], v)}
+          />,
+        ],
+        [
+          "Spend limit raise",
+          <InlineField
+            kind="number"
+            label="Spend limit raise"
+            value={doc.remedies?.raise_limit ?? 1}
+            min={0}
+            max={3}
+            decimalScale={0}
+            display={
+              <Text size="sm">
+                {(doc.remedies?.raise_limit ?? 1) === 0
+                  ? "Off: a task at its spend limit waits for you"
+                  : `A task at its own spend limit is raised to what its next run needs, ${doc.remedies?.raise_limit ?? 1} time${(doc.remedies?.raise_limit ?? 1) === 1 ? "" : "s"}, before it waits for you. A raise goes up to twice the limit and stays within the goal's budget. A goal's budget is never raised for you.`}
+              </Text>
+            }
+            changed={changed(s, ["remedies", "raise_limit"])}
+            reasons={s.reasons("raise_limit")}
+            readOnly={s.readOnly}
+            onCommit={(v) => s.stage(["remedies", "raise_limit"], v)}
+          />,
+        ],
+        [
+          "Split large issues",
+          <InlineField
+            kind="number"
+            label="Split large issues"
+            value={doc.remedies?.auto_split ?? 1}
+            min={0}
+            max={3}
+            decimalScale={0}
+            display={
+              <Text size="sm">
+                {(doc.remedies?.auto_split ?? 1) === 0
+                  ? "Off: an issue too large for one pull request waits for you to split it or run it as one"
+                  : `An issue too large for one pull request is split by the planner into complete parts, up to ${doc.remedies?.auto_split ?? 1} tr${(doc.remedies?.auto_split ?? 1) === 1 ? "y" : "ies"}, before it waits for you`}
+              </Text>
+            }
+            changed={changed(s, ["remedies", "auto_split"])}
+            reasons={s.reasons("auto_split")}
+            readOnly={s.readOnly}
+            onCommit={(v) => s.stage(["remedies", "auto_split"], v)}
+          />,
+        ],
+        [
+          "Re-run failed checks",
+          <InlineField
+            kind="number"
+            label="Re-run failed checks"
+            value={doc.remedies?.rerun_checks ?? 1}
+            min={0}
+            max={3}
+            decimalScale={0}
+            display={
+              <Text size="sm">
+                {(doc.remedies?.rerun_checks ?? 1) === 0
+                  ? "Off: a failed check goes straight to a fix run"
+                  : `A pull request's failed GitHub Actions jobs are re-run ${doc.remedies?.rerun_checks ?? 1} time${(doc.remedies?.rerun_checks ?? 1) === 1 ? "" : "s"} first, so one that failed by chance costs no fix run`}
+              </Text>
+            }
+            changed={changed(s, ["remedies", "rerun_checks"])}
+            reasons={s.reasons("rerun_checks")}
+            readOnly={s.readOnly}
+            onCommit={(v) => s.stage(["remedies", "rerun_checks"], v)}
           />,
         ],
         [

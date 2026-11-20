@@ -14,9 +14,10 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
+from meta_harness import outbound
 from meta_harness import db
 from meta_harness.planner import store
-from meta_harness.run_service.provenance import COMMENT, Provenance, stamp
+from meta_harness.run_service.provenance import COMMENT, Provenance
 from meta_harness.trackers.base import DONE, IN_PROGRESS, IN_REVIEW, Tracker, TrackerError
 
 log = logging.getLogger("meta_harness.planner.tracker_progress")
@@ -95,7 +96,12 @@ async def write(goal: dict, tracker: Tracker, tasks, errors: list[str]) -> list[
             if task.get("pr_url"):
                 await tracker.link_pull_request(link["ref"], task["pr_url"], task.get("title") or task["pr_url"])
             signed = Provenance(COMMENT, goal=goal["id"], task=task["id"])
-            await tracker.comment(link["ref"], stamp(told.comment, signed))
+            await tracker.comment(
+                link["ref"],
+                await outbound.for_tracker(
+                    told.comment, link["ref"], outbound.COMMENT, outbound.FIXED, provenance=signed
+                ),
+            )
         except TrackerError as err:
             errors.append(f"{link['ref']}: could not tell its tracker {told.key.split(':')[0]}: {err}")
             continue

@@ -244,7 +244,7 @@ def check_size_limits(limits: Any, ceiling: Decimal | None = None) -> list[str]:
 
 # The supervisor's remedies whose tries the task policy sets (supervisor/remedies), and their tries when it
 # sets none. 0 turns a remedy off.
-REMEDY_TRIES = {"retry_stronger": 1, "fix_again": 1}
+REMEDY_TRIES = {"retry_stronger": 1, "fix_again": 1, "raise_limit": 1, "auto_split": 1, "rerun_checks": 1}
 
 
 def remedy_tries(document: dict[str, Any], name: str) -> int:
@@ -298,14 +298,20 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
             task_ceiling = amount
         else:
             reasons.append(
-                f"max_task_usd must be an amount above 0 and at most {MAX_TASK_USD}: the most one task may "
-                "spend, whatever its own limit or the budget policy says"
+                f"max_task_usd must be an amount above 0 and at most {MAX_TASK_USD}. It is the most one task "
+                "may spend, whatever its own limit or the budget policy says"
             )
     writing = document.get("writing_pass")
     if writing is not None and not isinstance(writing, bool):
         reasons.append(
             "writing_pass must be true or false: false posts what a run wrote without the writing pass's "
             "check and rewrite"
+        )
+    redaction = document.get("credential_redaction")
+    if redaction is not None and not isinstance(redaction, bool):
+        reasons.append(
+            "credential_redaction must be true or false. True replaces tokens, keys and passwords with "
+            "[redacted] in what the meta-harness posts. False, or left out, posts the text as it is"
         )
     remedies = document.get("remedies")
     if remedies is not None:

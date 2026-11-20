@@ -131,6 +131,37 @@ def test_an_update_is_written_once_for_a_state_and_again_when_the_goal_moves(wor
     assert [u["number"] for u in shown["updates"]] == [2, 1] and shown["enabled"] is True and shown["error"] is None
 
 
+def test_an_updates_words_go_through_the_writing_pass_before_a_person_reads_them(world, at_once, monkeypatch):
+    from meta_harness.run_service import writing
+
+    client, events, tasks, writer = world
+    goal = _feature(client)
+    seen: list[str] = []
+
+    async def check_all(texts, transport=None):
+        seen.extend(texts)
+        plain = "The plan is ready."
+        return [
+            writing.Outcome(
+                text=plain, before=t, findings=1, rewritten=True, kept=True, model="claude:w", usd_cost="0.001"
+            )
+            if t == "The plan is being drafted."
+            else writing.Outcome(text=t)
+            for t in texts
+        ]
+
+    monkeypatch.setattr(writing, "check_all", check_all)
+    saved = _write(goal, tasks, events, writer)
+
+    assert saved["body"] == "The plan is ready." and saved["headline"] == "Update 1"
+    assert {"Update 1", "The plan is being drafted.", "Tasks start once you approve."} <= set(seen)
+    assert all(need["what"] in seen for need in saved["needs_you"])
+    [event] = [e for e in events.events if e[0] == "goal_update_written"]
+    passed = event[1]["writing"]
+    assert (passed["kind"], passed["rewritten"], passed["kept"], passed["usd_cost"]) == ("update", 1, 1, "0.001")
+    assert passed["changes"] == [{"before": "The plan is being drafted.", "after": "The plan is ready."}]
+
+
 def test_two_updates_keep_their_distance_and_a_goal_has_only_its_share(world, monkeypatch):
     client, events, tasks, writer = world
     goal = _feature(client)
@@ -337,3 +368,35 @@ def test_a_tasks_or_issues_own_state_picks_the_buttons_whatever_the_model_wrote(
     assert action("mh:i-3", "open_issue") == "split_or_run"
     assert action("mh:i-4", "open_issue") == "open_issue", "already split: nothing left to choose"
     assert action("mh:i-5", "review") == "merge"
+
+
+def test_what_was_unstuck_since_the_last_update_is_a_fact_told_not_asked():
+    tasks = [{"id": "t-1", "name": "Skill import", "title": "Import a skill", "status": "queued", "pr_url": None}]
+    links = [{"ref": "mh:i-1", "task_id": "t-1", "state": "open", "title": "Import a skill"}]
+    unstuck = [
+        {
+            "task_id": "t-1",
+            "ref": None,
+            "because": "it failed on its own account",
+            "did": "ran it again on the complex tier, with a stronger model",
+            "outcome": "started",
+            "next": "if it fails again, I will ask you",
+        },
+        {
+            "task_id": None,
+            "ref": "jira:VL-9",
+            "because": "too large",
+            "did": "split it into 3 smaller issues",
+            "outcome": "done",
+            "next": "they run in its place",
+        },
+    ]
+    found = updates.facts({"status": "active"}, links, tasks, None, None, unstuck)
+    assert [(u["task"], u["did"]) for u in found["unstuck"]] == [
+        ("Skill import", "ran it again on the complex tier, with a stronger model"),
+        ("jira:VL-9", "split it into 3 smaller issues"),
+    ]
+    assert updates.digest(found) != updates.digest(updates.facts({"status": "active"}, links, tasks, None)), (
+        "something unstuck is news: the next update says it"
+    )
+    assert "unstick" in updates.SYSTEM_PROMPT and "not something to do" in updates.SYSTEM_PROMPT

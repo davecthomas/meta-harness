@@ -11,9 +11,10 @@ nothing there either.
 
 import asyncio
 
+from meta_harness import outbound
 from meta_harness import db
 from meta_harness.planner import store
-from meta_harness.run_service.provenance import COMMENT, Provenance, stamp
+from meta_harness.run_service.provenance import COMMENT, Provenance
 from meta_harness.trackers.base import Tracker, TrackerError
 
 
@@ -42,7 +43,13 @@ async def write(goal: dict, tracker: Tracker, errors: list[str]) -> list[str]:
         if not reason or reason == link.get("replied"):
             continue
         try:
-            await tracker.comment(link["ref"], stamp(reply_for(reason), Provenance(COMMENT, goal=goal["id"])))
+            signed = Provenance(COMMENT, goal=goal["id"])
+            await tracker.comment(
+                link["ref"],
+                await outbound.for_tracker(
+                    reply_for(reason), link["ref"], outbound.COMMENT, outbound.FIXED, provenance=signed
+                ),
+            )
         except TrackerError as err:
             errors.append(f"{link['ref']}: could not tell its tracker why it is not started: {err}")
             continue

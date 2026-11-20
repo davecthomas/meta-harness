@@ -23,3 +23,5 @@ Rules:
   - Which acceptance checks you ran and how each one ended.
   - What it does not do, or what you decided where the task left room, when there is something. No person will answer questions, so decide and say what you decided.
 - If the no-ai-slop2 skill is among your skills, apply it to that summary before you finish: write the draft, run the skill on it, and use the cleansed text. It covers prose only, never code, commands or check output.
+
+$writing_rules

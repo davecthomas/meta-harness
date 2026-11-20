@@ -37,8 +37,9 @@ from meta_harness import db
 from meta_harness.planner import cost_facts, store as goal_store
 from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CodeHostError
-from meta_harness.supervisor import failures, ledger, pulls, remedies, standing
+from meta_harness.supervisor import diagnose, failures, ledger, pulls, remedies, standing
 from meta_harness.supervisor.remedies import registry
+from meta_harness.supervisor.remedies.raise_limit import raise_to
 from meta_harness.config.kinds import remedy_tries
 from meta_harness.run_service import routing
 from meta_harness.supervisor.rules import OPEN_STATUSES, SWEPT, Decision, Facts, decide
@@ -120,9 +121,17 @@ class TemporalWorkflows:
 
 
 class Supervisor:
-    def __init__(self, tasks: TaskClient, events: Events, workflows: Workflows, host: Any = None) -> None:
+    def __init__(
+        self,
+        tasks: TaskClient,
+        events: Events,
+        workflows: Workflows,
+        host: Any = None,
+        diagnoser: diagnose.Diagnoser | None = None,
+    ) -> None:
         self.tasks = tasks
         self.events = events
+        self.diagnoser = diagnoser or diagnose.diagnose
         self.workflows = workflows
         self.host = host or code_host
         self._pulls: dict[str, tuple[float, Any]] = {}
@@ -210,9 +219,7 @@ class Supervisor:
                 # A retry after the worker's own restart is not one of the task's tries, so it always has one.
                 drives_left=int(task.get("drives") or 0) < MAX_DRIVES
                 or (status == "failed" and failures.restart(task.get("status_reason"))),
-                failure=failures.kind(task.get("status_reason"))
-                if status in ("failed", "review_unresolved")
-                else "permanent",
+                failure=await self._failure(task) if status in ("failed", "review_unresolved") else "permanent",
                 retry_due=_since_status(task, now)
                 >= RETRY_WAITS[min(int(task.get("drives") or 0), len(RETRY_WAITS) - 1)],
                 failed_long_ago=_since_status(task, now) > RETRY_WINDOW,
@@ -223,8 +230,57 @@ class Supervisor:
                     if status in ("failed", "review_unresolved")
                     else {}
                 ),
+                raise_left=task.get("waiting_on") == "budget" and await asyncio.to_thread(self._may_raise, task, goal),
             ),
             pull,
+        )
+
+    async def _failure(self, task: dict) -> str:
+        """Whether the task's failure was the system's or its own: by the rules (failures.kind) when its reason
+        names a failure they know, else as a model read it once (diagnose.py), recorded in the ledger."""
+        reason = str(task.get("status_reason") or "")
+        if not reason or failures.known(reason):
+            return failures.kind(reason)
+        because = reason[:500]
+        found = await asyncio.to_thread(ledger.finding, task["id"], "diagnose", because)
+        if found:
+            return found
+        try:
+            kind, why, model, cost = await self.diagnoser(reason)
+        except diagnose.DiagnoseError as err:
+            log.warning("task %s: could not read its failure: %s. It is left to an operator", task["id"], err)
+            return failures.PERMANENT
+        system = kind == failures.TRANSIENT
+        self.events.emit(
+            "failure_diagnosed",
+            {"goal_id": task.get("goal_id") or "", "kind": kind, "model": model, "usd_cost": cost},
+            task_id=task["id"],
+            actor="supervisor",
+        )
+        await self._record(
+            {
+                "task_id": task["id"],
+                "goal_id": task.get("goal_id"),
+                "situation": "failure_unclear",
+                "remedy": "diagnose",
+                "try": 1,
+                "of": 1,
+                "because": because,
+                "outcome": "done",
+                "did": f"read its failure as {'the system' if system else 'its own'}: {why}",
+                "next": "it is retried like any failure on the system's side"
+                if system
+                else "it is handled like any failure of its own",
+                "error": None,
+                "finding": kind,
+            }
+        )
+        return kind
+
+    def _may_raise(self, task: dict, goal: dict | None) -> bool:
+        """Whether a task held for budget may have its spend limit raised by the supervisor (raise_limit)."""
+        return raise_to(task, goal) is not None and ledger.tries(task["id"], "raise_limit") < remedy_tries(
+            routing.task_policy(), "raise_limit"
         )
 
     def _remedies_left(self, task: dict) -> dict[str, bool]:

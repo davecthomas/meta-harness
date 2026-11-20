@@ -197,6 +197,8 @@ class RunTask:
     def __init__(self) -> None:
         self._current_run_id: str | None = None
         self._task_id = ""
+        # The task's goal, for the publish activity's provenance headers.
+        self._goal_id = ""
         self._route_no = 0
         # Operators' messages to the run in progress, in the order they came, until each is handed over.
         self._messages: list[OperatorMessage] = []
@@ -296,6 +298,7 @@ class RunTask:
             task_type=spec.task_type,
         )
         self._task_type = spec.task_type
+        self._goal_id = spec.goal_id or ""
         again = f" again (retry {spec.retries})" if spec.retries else ""
         await self._task_status("running", f"the meta-harness run service started its RunTask workflow{again}")
         try:
@@ -726,6 +729,7 @@ class RunTask:
                 spent_usd=str(spent),
                 task_id=self._task_id,
                 fix_round=fix_round,
+                goal_id=self._goal_id,
             ),
             start_to_close_timeout=PUBLISH_TIMEOUT,
             retry_policy=PUBLISH_RETRY,
@@ -1016,7 +1020,7 @@ class RunTask:
                 # that failed with no output is for an operator, with the check's run on the code host.
                 return "merge_checks_failed", (
                     f"{reason}; {names} failed on the merge commit {loop.merge_sha[:12]} with no output a fix run "
-                    "could act on, so no fix run started: see the check's run on the code host"
+                    "could act on, so no fix run started. See the check's run on the code host"
                 )
             if rounds >= loop.max_rounds:
                 return "merge_checks_failed", (
@@ -1057,6 +1061,7 @@ class RunTask:
                         "This pull request fixes that. It closes no issue: the merged one closed it."
                     ),
                     task_id=self._task_id,
+                    goal_id=self._goal_id,
                 ),
                 start_to_close_timeout=PUBLISH_TIMEOUT,
                 retry_policy=PUBLISH_RETRY,

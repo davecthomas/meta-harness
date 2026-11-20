@@ -135,6 +135,8 @@ class SweepResult:
     refused: list[str] = field(default_factory=list)
     # Issues held for an operator instead of made tasks: sized large, or missing what a strict goal asks for.
     held: list[str] = field(default_factory=list)
+    # Held issues the planner split itself after the sweep (auto_split.py).
+    split: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
     unblocked: list[str] = field(default_factory=list)
     # Task ids canceled because their issue was closed with their work not yet published.
@@ -461,7 +463,7 @@ async def _take_in(
     covered = any((existing or {}).get(key) for key in ("planned_at", "picked", "run_anyway"))
     if goal.get("planned") and goal.get("plan_approved_at") and not covered:
         reason = (
-            "it joined the goal after its plan was approved, so the plan does not cover it: add it to the plan "
+            "it joined the goal after its plan was approved, so the plan does not cover it. Add it to the plan "
             "as it is (Run anyway), or plan the goal again"
         )
         if not existing:

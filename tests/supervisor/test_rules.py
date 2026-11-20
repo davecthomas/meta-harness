@@ -55,7 +55,9 @@ def _every() -> list[Facts]:
         if facts.status == "blocked"
         for how in DEPENDENCIES
     ]
-    return found + failed + blocked
+    # Whether its spend limit may be raised is read only for a task held for budget.
+    held = [dataclasses.replace(facts, raise_left=True) for facts in found if facts.waiting_on == "budget"]
+    return found + failed + blocked + held
 
 
 def test_the_rules_cover_every_status_a_task_can_be_left_in():
@@ -254,3 +256,9 @@ def test_a_review_its_fixes_did_not_settle_gets_one_more_set_of_fix_rounds_befor
     assert decide(dataclasses.replace(stuck, fix_again_left=True)).action == "fix_again"
     assert decide(stuck).situation == "review_unresolved"
     assert decide(dataclasses.replace(stuck, fix_again_left=True, drives_left=False)).owner == "operator"
+
+
+def test_a_task_held_at_its_own_spend_limit_is_raised_once_within_bounds_then_its_operators():
+    held = Facts("running", workflow="running", goal="active", waiting_on="budget")
+    assert decide(dataclasses.replace(held, raise_left=True)).action == "raise_limit"
+    assert decide(held).owner == "operator", "past the bounds, or once raised, an operator decides"

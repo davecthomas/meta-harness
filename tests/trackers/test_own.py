@@ -9,7 +9,7 @@ from meta_harness.trackers import DONE, IN_PROGRESS, Issue, OwnTracker, Source, 
 from meta_harness.trackers.own import parse_ref
 from meta_harness.trackers.router import WithOwn
 
-pytestmark = pytest.mark.db
+pytestmark = [pytest.mark.db, pytest.mark.usefixtures("unchecked_text")]
 REPO = "o/r"
 BODY = "Build the store.\n\n## Acceptance checks\n\n- make test\n\nPaths: src/store\n"
 

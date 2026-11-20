@@ -20,6 +20,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from meta_harness.run_service.code_host import issue_paths
+
 DRAFT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 EXISTING_REF = re.compile(r"^(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$")
 CHECKS_HEADING = re.compile(r"^##\s+acceptance checks\s*$", re.IGNORECASE | re.MULTILINE)
@@ -105,6 +107,23 @@ def latest_drafts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         draft = clean(event.get("payload") or {})
         drafts[draft["draft_id"]] = draft
     return list(drafts.values())
+
+
+def broad_paths(body: str) -> list[str]:
+    """The paths a body names that are a whole top-level directory (one part, no file extension): `tests`,
+    `src`. A task that names one locks everything under it."""
+    return [p for p in issue_paths(body) if "/" not in p and "." not in p]
+
+
+def broad_path_gaps(drafts: list[dict[str, Any]]) -> list[str]:
+    """A gap for each draft that names a whole top-level directory, saying what it costs and how to fix it."""
+    return [
+        f"{d['title'] or d['draft_id']} names the whole {', '.join(found)} "
+        f"{'directory' if len(found) == 1 else 'directories'} as its paths, so every other task that touches "
+        f"{'it' if len(found) == 1 else 'them'} waits for this one. Name the files it changes instead"
+        for d in drafts
+        if (found := broad_paths(d.get("body") or ""))
+    ]
 
 
 def validate(

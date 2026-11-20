@@ -235,6 +235,20 @@ REGISTRY: list[EventType] = [
             ["kind", "texts", "findings", "rewritten", "kept"],
         ),
     ),
+    # The files a run created that carry a provenance header (run_service/provenance_headers.py): count is how many,
+    # files the first of them
+    EventType(
+        "provenance_added",
+        1,
+        _object(
+            {
+                "run_id": {"type": "string"},
+                "count": {"type": "integer"},
+                "files": {"type": "array", "items": {"type": "string"}},
+            },
+            ["run_id", "count", "files"],
+        ),
+    ),
     # A running task held for budget, and the operator's answer
     EventType("budget_hold", 1, _object({"reason": {"type": "string"}}, ["reason"])),
     EventType(
@@ -534,6 +548,20 @@ REGISTRY: list[EventType] = [
                 "error": {"type": "string"},
             },
             ["situation", "remedy", "try", "of", "outcome", "because", "did", "next"],
+        ),
+    ),
+    # The supervisor had a model read a failure its rules could not sort (supervisor/diagnose.py): one call.
+    EventType(
+        "failure_diagnosed",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "kind": {"type": "string", "enum": ["transient", "permanent"]},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "kind", "model", "usd_cost"],
         ),
     ),
     # A model drafted the parts of a held issue for an operator to edit before splitting it (planner/splits.py).

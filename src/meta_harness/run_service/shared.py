@@ -174,6 +174,8 @@ class PublishRequest:
     # Where summary came from: HarnessResult.answer_source. Only a summary marked recorded is handled as the run
     # service's fallback, whatever its words say.
     summary_source: str = ""
+    # The task's goal, whose provenance setting outranks the configuration's for the files the run created.
+    goal_id: str = ""
 
 
 @dataclass

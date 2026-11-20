@@ -5,7 +5,8 @@ export type ConfigKind = "tiers" | "profiles" | "repos" | "trackers" | "skills" 
 // A skill as the skills configuration keeps it: what it is for, where it came from, and its files.
 export interface SkillEntry {
   description: string;
-  source: { kind: "git" | "upload" | "shipped"; url?: string; ref?: string; path?: string; commit?: string; by?: string };
+  // locked: the control plane itself runs or quotes the skill, so it is always the shipped files.
+  source: { kind: "git" | "upload" | "shipped"; url?: string; ref?: string; path?: string; commit?: string; by?: string; locked?: boolean };
   files: Record<string, string>;
 }
 
@@ -54,6 +55,10 @@ export const configApi = {
   // profile with no image runs. A 422 says why they cannot be listed.
   configImages: () =>
     call<{ images: { name: string; directory: string; default: boolean }[]; default: string }>("/v1/config/images"),
+  // The programs a harness image has, which a profile's bash allowlist is picked from; no image: the default.
+  // A 422 says why they cannot be listed.
+  configImagePrograms: (image?: string) =>
+    call<{ image: string; programs: string[] }>(`/v1/config/images/programs${query({ image })}`),
   configClassifiers: () => call<{ engines?: ClassifierEngine[] }>("/v1/config/classifiers").then((r) => r?.engines ?? []),
   // Read a skill from a git repository or from its files, to look at before it is staged. Saves nothing.
   readSkill: (from: { url?: string; ref?: string; path?: string; files?: Record<string, string> }) =>

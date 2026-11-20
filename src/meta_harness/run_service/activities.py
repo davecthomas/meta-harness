@@ -54,12 +54,15 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
+from meta_harness import outbound
+from meta_harness.outbound import rules as writing_rules
 from meta_harness.run_service import (
     code_host,
     events,
     harness_client,
     pr_summary,
     provenance,
+    provenance_headers,
     routing,
     run_grants,
     sandbox,
@@ -152,7 +155,9 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         title = _title_from(text)
     if request.task_type == "plan":
         template = (PROMPTS_DIR / f"{PLAN_TEMPLATE}.txt").read_text(encoding="utf-8")
-        prompt = Template(template).safe_substitute(repo=repo, title=title, description=description)
+        prompt = Template(template).safe_substitute(
+            repo=repo, title=title, description=description, writing_rules=writing_rules.block()
+        )
         activity.logger.info("prepare: a planning task in %s", repo)
         return PreparedRun(
             template=PLAN_TEMPLATE,
@@ -172,6 +177,7 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         description=description,
         checks=listed,
         paths=code_host.paths_rule(description, "task"),
+        writing_rules=writing_rules.block(),
     )
     activity.logger.info(
         "prepare: a repo task in %s%s, %d acceptance checks",
@@ -374,7 +380,21 @@ async def publish(request: PublishRequest) -> PublishResult:
         lines the meta-harness adds around it stay as they are. The whole description carries the provenance."""
         part = await _summary_section(request, files)
         opened.append(part)
-        return provenance.stamp(_pr_body(request, part), signed)
+        return await _sealed(_pr_body(request, part), signed=signed)
+
+    async def headers(created: list[str]) -> list[str]:
+        """The provenance header on the files the run created, when the task's goal, else the configuration,
+        wants one."""
+        if not provenance_headers.wanted(request.repo, await _goal_provenance(request.goal_id)):
+            return []
+        context = provenance_headers.Context(
+            run_id=request.run_id,
+            candidate=request.candidate,
+            task_id=request.task_id,
+            goal_id=request.goal_id,
+            repo=request.repo,
+        )
+        return await asyncio.to_thread(provenance_headers.apply, workspace, created, context)
 
     message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
         f"\n\nCloses {request.ticket}" if request.ticket else ""
@@ -386,13 +406,16 @@ async def publish(request: PublishRequest) -> PublishResult:
             workspace=workspace,
             git_dir=sandbox.git_dir_for(ref, request.run_id),
             branch=request.branch or f"mh/{ref}",
-            title=request.title,
+            title=await _sealed(request.title, outbound.TITLE),
             body=body,
             commit_message=message,
             pr_record=sandbox.task_dir_for(ref) / "pull-request.md",
+            headers=headers,
         )
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    if published is not None and published.stamped:
+        _record_provenance(request, published.stamped)
     if published is None:
         print(f"[{request.run_id} publish] pi changed nothing in {workspace}, so there is no pull request", flush=True)
         return PublishResult(branch="", base="", commit="", files=[], pr_url="", created=False)
@@ -414,7 +437,7 @@ async def publish(request: PublishRequest) -> PublishResult:
                 request.repo,
                 published.pr_url,
                 heading,
-                provenance.stamp(part.text, signed),
+                await _sealed(part.text, signed=signed),
                 sandbox.task_dir_for(ref) / "pull-request.md",
             )
         except code_host.CodeHostError as err:
@@ -440,6 +463,48 @@ async def publish(request: PublishRequest) -> PublishResult:
     )
 
 
+async def _goal_provenance(goal_id: str) -> bool | None:
+    """The goal's provenance setting: True or False when it set one, None to leave it to the configuration. A
+    planner that cannot be read leaves it to the configuration too, so a header never stops a publish."""
+    if not goal_id:
+        return None
+    from meta_harness.planner.client import GoalsClient
+
+    key = os.environ.get("MH_SERVICE_KEY", "")
+    if not key:
+        activity.logger.warning(
+            "publish: MH_SERVICE_KEY is not set, so goal %s's provenance setting is not read; the configuration "
+            "decides",
+            goal_id,
+        )
+        return None
+    try:
+        goal = await asyncio.to_thread(lambda: GoalsClient(api_key=key).get(goal_id))
+    except Exception as err:  # noqa: BLE001 - the configuration decides when the planner does not answer
+        activity.logger.error("publish: could not read goal %s's provenance setting from the planner: %s", goal_id, err)
+        return None
+    choice = goal.get("provenance")
+    return choice if isinstance(choice, bool) else None
+
+
+# The most file paths a provenance_added event lists; its count says how many there were.
+PROVENANCE_LISTED = 200
+
+
+def _record_provenance(request: PublishRequest, stamped: list[str]) -> None:
+    """Records on the task which of the files its run created carry a provenance header, once per run."""
+    print(f"[{request.run_id} publish] provenance header on {len(stamped)} new files", flush=True)
+    if not request.task_id:
+        return
+    events.emit(
+        "provenance_added",
+        {"run_id": request.run_id, "count": len(stamped), "files": stamped[:PROVENANCE_LISTED]},
+        task_id=request.task_id,
+        run_id=request.run_id,
+        event_id=events.stable_id(request.task_id, "provenance_added", request.run_id),
+    )
+
+
 def _signed_fields(request: PublishRequest) -> dict[str, Any]:
     """What a publish's description and commit name: its task, run and model, and a fix run's round."""
     return {
@@ -455,13 +520,18 @@ def _signed(request: PublishRequest) -> provenance.Provenance:
     return provenance.Provenance(provenance.PULL_REQUEST, **_signed_fields(request))
 
 
-async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> list[str]:
-    """The texts of one post after the writing pass, in order: each one's rewrite where the pass kept it, else
-    the text as given. What the pass found and changed is recorded on the task as `writing_checked`, once for
-    the same texts however often the activity is retried."""
-    outcomes = await writing.check_all(texts)
-    payload = writing.record(kind, outcomes, **extra)
+async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> list[outbound.Checked]:
+    """The texts of one post after the outbound pipeline, in order: redacted, and each one's rewrite where the
+    writing pass kept it. What the pass found and changed is recorded on the task as `writing_checked`, once
+    for the same texts however often the activity is retried."""
+    where = outbound.Context(
+        outbound.GITHUB, outbound.COMMENT if kind == "comment" else outbound.BODY, outbound.GENERATED
+    )
+    checked = list(await asyncio.gather(*(outbound.prepare(text, where) for text in texts)))
+    payload = writing.record(kind, outbound.writing_outcomes(checked), **extra)
     if payload and task_id:
+        if redacted := outbound.redactions(checked):
+            payload["redacted"] = redacted
         key = hashlib.sha256("\x00".join(texts).encode()).hexdigest()[:16]
         events.emit(
             "writing_checked",
@@ -469,7 +539,13 @@ async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> l
             task_id=task_id,
             event_id=events.stable_id(task_id, "writing_checked", kind, key),
         )
-    return [outcome.text if outcome else text for outcome, text in zip(outcomes, texts, strict=True)]
+    return checked
+
+
+async def _sealed(text: str, kind: str = outbound.BODY, signed: Any = None) -> outbound.Checked:
+    """A text composed here from parts that went through `_written` and the fixed lines around them, ready to
+    post: redacted and cut to fit as a whole, and ending with its provenance when given."""
+    return await outbound.prepare(text, outbound.Context(outbound.GITHUB, kind, outbound.FIXED, provenance=signed))
 
 
 async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summary.Section:
@@ -812,6 +888,63 @@ CHECKS_POLL_SECONDS = 30
 NO_CHECKS_SECONDS = 300
 # A check run that ends with one of these did not fail.
 PASSING_CONCLUSIONS = code_host.PASSING_CONCLUSIONS
+# How long a wait looks for a re-run's jobs to appear before it takes the old failures as the result.
+RERUN_SHOWS_SECONDS = 180
+
+
+async def _rerun_flaky(request: ChecksRequest, runs: list[code_host.CheckRun]) -> list[str]:
+    """Re-run the failed GitHub Actions jobs of a pull request's head commit, once, before a fix run is sent
+    for them: a check that failed by chance passes on its re-run, and one that fails again goes to the fix run.
+    Stateless: a workflow run past the task policy's `remedies.rerun_checks` attempts is not re-run again.
+    Returns the checks re-run; none when nothing qualifies or the code host refuses (the failure stands)."""
+    from meta_harness.config.kinds import remedy_tries
+
+    most = remedy_tries(routing.task_policy(), "rerun_checks")
+    failed = [r for r in runs if r.conclusion not in PASSING_CONCLUSIONS and r.actions_run]
+    if not most or not failed:
+        return []
+    rerun: list[str] = []
+    for run_id in sorted({r.actions_run for r in failed if r.actions_run}):
+        try:
+            attempt = await code_host.run_attempt(request.repo, run_id)
+            if attempt > most:
+                continue
+            await code_host.rerun_failed_jobs(request.repo, run_id)
+        except code_host.CodeHostError as err:
+            activity.logger.warning(
+                "wait_checks: could not re-run workflow run %s: %s; its failure stands", run_id, err
+            )
+            continue
+        rerun += [r.name for r in failed if r.actions_run == run_id]
+    if rerun and request.task_id:
+        names = ", ".join(rerun)
+        record = {
+            "task_id": request.task_id,
+            "goal_id": None,
+            "situation": "checks_failed",
+            "remedy": "rerun_checks",
+            "try": 1,
+            "of": most,
+            "outcome": "started",
+            "because": f"{names} failed on {request.head_sha[:7]}",
+            "did": f"re-ran the failed jobs of {names}, in case they failed by chance",
+            "next": "if they fail again, a fix run takes them on",
+            "error": None,
+        }
+        try:
+            from meta_harness.supervisor import ledger
+
+            await asyncio.to_thread(ledger.write, record)
+        except Exception as err:  # noqa: BLE001 - the re-run stands; only its record is missing
+            activity.logger.warning("wait_checks: could not record the re-run: %s", err)
+        payload = {k: record[k] for k in ("situation", "remedy", "try", "outcome", "because", "did", "next")}
+        events.emit(
+            "remedy_applied",
+            {**payload, "of": most},
+            task_id=request.task_id,
+            event_id=events.stable_id(request.task_id, "rerun_checks", request.head_sha),
+        )
+    return rerun
 
 
 @activity.defn
@@ -821,12 +954,31 @@ async def wait_checks(request: ChecksRequest) -> ChecksResult:
     waited = int(details[0]) if details else 0
     # A local bare repo has no code host, so it runs no checks.
     result = ChecksResult(state="none") if code_host.is_local(request.repo) else None
+    rerun, restarted = False, False
+    # When the re-run was asked for, in seconds of this wait; None while there was none.
+    rerun_at: int | None = None
     while result is None:
         try:
             runs = await code_host.check_runs(request.repo, request.head_sha)
         except code_host.CodeHostError as err:
             raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
         pending = [r.name for r in runs if r.status != "completed"]
+        restarted = restarted or bool(pending)
+        if runs and not pending and not rerun and any(r.conclusion not in PASSING_CONCLUSIONS for r in runs):
+            # A failure may be chance: its jobs are re-run once, and this wait goes on for their result.
+            rerun = True
+            if await _rerun_flaky(request, runs):
+                rerun_at, restarted = waited, False
+                activity.heartbeat(waited)
+                await asyncio.sleep(CHECKS_POLL_SECONDS)
+                waited += CHECKS_POLL_SECONDS
+                continue
+        if rerun_at is not None and not restarted and not pending and waited - rerun_at < RERUN_SHOWS_SECONDS:
+            # The re-run's jobs have not appeared yet: the old failures are still the newest the host shows.
+            activity.heartbeat(waited)
+            await asyncio.sleep(CHECKS_POLL_SECONDS)
+            waited += CHECKS_POLL_SECONDS
+            continue
         if runs and not pending:
             failed = [FailedCheck(r.name, r.summary) for r in runs if r.conclusion not in PASSING_CONCLUSIONS]
             passed = sorted({r.name for r in runs if r.conclusion in PASSING_CONCLUSIONS})
@@ -1024,6 +1176,7 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
         "previous": _previous(request),
         "checks_rule": _checks_rule(request),
         "pr_description": await _pr_description(request) if request.kind == "review" else "",
+        "writing_rules": writing_rules.block(),
     }
     name = loop_template(request.kind)
     template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
@@ -1160,8 +1313,8 @@ async def post_review(request: PostReviewRequest) -> str:
         + (
             [
                 "",
-                f"{len(follow)} of the findings are follow-ups: they are on code an earlier round passed that no "
-                "fix has touched since, so they do not hold the merge. Each is worth its own issue.",
+                f"{len(follow)} of the findings are follow-ups, so they do not hold the merge. They are on code "
+                "an earlier round passed that no fix has touched since. Each is worth its own issue.",
             ]
             if follow
             else []
@@ -1180,6 +1333,10 @@ async def post_review(request: PostReviewRequest) -> str:
     signed = provenance.Provenance(
         provenance.REVIEW, task=request.task_id, model=request.reviewer, round=request.round_no
     )
+    # The review as composed here goes out through the pipeline as a whole: its body, and each placed comment.
+    body = await _sealed(body)
+    for placed in comments:
+        placed["body"] = await _sealed(placed["body"], outbound.COMMENT)
     if code_host.is_local(request.repo):
         ref = ref_for(activity.info().workflow_id)
         path = sandbox.task_dir_for(ref) / f"review-{request.round_no}.md"
@@ -1349,7 +1506,7 @@ async def merge_pr(request: MergeRequest) -> MergeResult:
                         state="blocked",
                         detail=(
                             f"{HELD_FOR_OPERATOR}: it changes {shown}, which run with the control plane's own "
-                            "authority once merged, so no pull request that changes them merges on a review "
+                            "authority once merged. No pull request that changes them merges on a review "
                             "alone. Read the change, then use Merge on the task's page."
                         ),
                     )

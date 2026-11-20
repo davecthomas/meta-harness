@@ -7,6 +7,7 @@ the events after the position the last one reached, and saves their costs with t
 transaction, so an event is counted once however a harvest ends.
 """
 
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Callable
@@ -19,7 +20,7 @@ from meta_harness.costs.store import Cost
 SOURCE = "model"
 EVENT_TYPES = (
     "attempt_finished,goal_drafted,goal_titled,goal_update_written,issue_sized,plan_fixes_assessed,"
-    "split_drafted,task_names_written,writing_checked"
+    "failure_diagnosed,split_drafted,task_names_written,writing_checked"
 )
 PAGE = 2000
 # The kind of cost a writing pass's rewrite is.
@@ -113,6 +114,11 @@ def harvest(
                 )
             if usd:
                 costs.append(cost)
+            # An update's own writing pass rides on its event: the rewrite's cost is a writing cost of the goal.
+            passed = payload.get("writing") if event["event_type"] == "goal_update_written" else None
+            if isinstance(passed, dict) and (rewrite_usd := Decimal(str(passed.get("usd_cost") or 0))):
+                engine, model = model_of(str(passed.get("model") or ""))
+                costs.append(replace(cost, item=WRITING, usd=rewrite_usd, model=model, engine=engine))
         position = max(int(event["position"]) for event in found)
         store.add(conn, SOURCE, costs, position)
         counted += len(found)
