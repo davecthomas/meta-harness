@@ -675,8 +675,22 @@ def _record(progress: dict[str, Any], event: dict[str, Any]) -> None:
     data = event["data"]
     if event["type"] == "file_changed" and data["path"] not in progress["files_changed"]:
         progress["files_changed"].append(data["path"])
-    if event["type"] == "turn_finished" and isinstance(data.get("text"), str) and data["text"]:
-        progress["answer"] = data["text"].strip()
+    if event["type"] == "turn_finished":
+        progress["answer"] = _answer_after(progress.get("answer"), data)
+
+
+def _answer_after(current: str | None, data: dict[str, Any]) -> str | None:
+    """The run's reviewer-facing summary after one more turn. Only a turn with no tool call can hold it: the
+    text of a turn that goes on to call tools is narration ("now I will run the tests"), so it is never the
+    summary and drops an earlier one. A long text arrives cut, as {"preview": ...}."""
+    if data.get("tool_calls"):
+        return None
+    text = data.get("text")
+    if isinstance(text, dict):
+        text = text.get("preview")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    return current
 
 
 # --- The review loop --------------------------------------------------------------------------------

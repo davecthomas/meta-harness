@@ -2087,6 +2087,14 @@ walks every remedy `decide` can name and fails one with no module.
 | `retry` | A task that failed on the system's side | Runs it again after a wait that grows each try | The task's drives |
 | `cancel_for_goal` | An unstarted task of an ended goal | Cancels it | — |
 | `wait` | A pull request whose checks have not reported | Nothing this pass | — |
+| `retry_stronger` | A task that failed on its own account (it could not finish the work), whose last route was below the complex tier | Runs it again with `complexity: high`, so its route is the complex tier: a stronger model and the careful profile | The task policy's `remedies.retry_stronger` (1) |
+| `fix_again` | A review its fix rounds did not settle, on a swept goal | Sends it back through its review loop with `complexity: high`: a fresh set of fix rounds, on the complex tier | The task policy's `remedies.fix_again` (1) |
+
+A remedy with a setting in the task policy's `remedies` (0 to 3 tries; 0 turns
+it off; 1 when the policy names none) counts its tries in the ledger, and is
+also one of the task's drives, so the Task API's own cap holds too. Once its
+tries are used, the task's situation is the operator's again, with the ask it
+had before. The console's Task policy view edits both settings.
 
 Every try is one record in the ledger (`supervisor/ledger.py`): a
 `supervisor.remedy` row and a `remedy_applied` event, with the same fields.

@@ -43,8 +43,10 @@ def _every() -> list[Facts]:
     for facts in found:
         if facts.status in ("failed", "review_unresolved"):
             failed += [
-                dataclasses.replace(facts, failure=kind, retry_due=due, failed_long_ago=old)
-                for kind, due, old in itertools.product(FAILURES, flags, flags)
+                dataclasses.replace(
+                    facts, failure=kind, retry_due=due, failed_long_ago=old, stronger_left=strong, fix_again_left=again
+                )
+                for kind, due, old, strong, again in itertools.product(FAILURES, flags, flags, flags, flags)
             ]
     # Where its dependencies stand is read only for a blocked task.
     blocked = [
@@ -237,3 +239,18 @@ def test_a_blocked_task_behind_a_stuck_or_unheld_issue_is_an_operators_and_names
     unheld = decide(Facts("blocked", goal="active", dependency="unheld", blocker="o/r#9"))
     assert unheld.owner == "operator" and "o/r#9, which no goal holds" in unheld.reason
     assert decide(Facts("blocked", goal="active")).owner == "planner"
+
+
+def test_a_task_that_failed_on_its_own_tries_a_stronger_model_once_before_anyone_is_asked():
+    own = Facts("failed", goal="active", failure="permanent")
+    assert decide(dataclasses.replace(own, stronger_left=True)).action == "retry_stronger"
+    assert decide(own).owner == "operator", "once its stronger try is used, an operator decides"
+    assert decide(dataclasses.replace(own, stronger_left=True, failed_long_ago=True)).owner == "operator"
+    assert decide(dataclasses.replace(own, stronger_left=True, goal="paused")).owner == "operator"
+
+
+def test_a_review_its_fixes_did_not_settle_gets_one_more_set_of_fix_rounds_before_anyone_is_asked():
+    stuck = Facts("review_unresolved", pull="open", goal="active", failure="permanent")
+    assert decide(dataclasses.replace(stuck, fix_again_left=True)).action == "fix_again"
+    assert decide(stuck).situation == "review_unresolved"
+    assert decide(dataclasses.replace(stuck, fix_again_left=True, drives_left=False)).owner == "operator"

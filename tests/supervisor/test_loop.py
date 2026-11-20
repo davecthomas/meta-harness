@@ -61,11 +61,13 @@ class Tasks:
         task["status"] = "canceled" if task.get("cancel_requested") else "queued"
         return task
 
-    def drive(self, task_id, action, why, spent_usd="0", counted=True):
+    def drive(self, task_id, action, why, spent_usd="0", counted=True, complexity=None):
         self.driven.append((task_id, action, why, spent_usd))
         self.uncounted += [] if counted else [task_id]
         task = self.tasks[task_id]
         task.update(status="queued", drives=int(task.get("drives") or 0) + (1 if counted else 0))
+        if complexity:
+            task["complexity"] = complexity
         return task
 
     def cancel(self, task_id, reason="", actor=None):
@@ -368,7 +370,11 @@ async def test_a_task_that_failed_in_an_outage_is_retried_after_a_wait_and_one_t
         status_reason="TaskFailed: run 2 finished, but pi changed nothing in o/r",
         status_changed_at=(now - timedelta(minutes=10)).isoformat(),
     )
-    events.stored = [{"task_id": due["id"], "event_type": "attempt_finished", "payload": {"spent_usd": "1.50"}}]
+    events.stored = [
+        {"task_id": due["id"], "event_type": "attempt_finished", "payload": {"spent_usd": "1.50"}},
+        # It already ran on the complex tier, so no stronger model is left to try it (test_remedies.py).
+        {"task_id": own["id"], "event_type": "task_routed", "payload": {"tier": "complex"}},
+    ]
 
     result = await supervisor.pass_once(now)
 

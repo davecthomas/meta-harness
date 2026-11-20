@@ -161,6 +161,8 @@ export function reasonTarget(kind: ConfigKind, document: Record<string, any>, re
   if (reason.startsWith("review.reviewers") || reason.startsWith("reviewer ")) return "reviewers";
   if (reason.startsWith("review.max_rounds")) return "max_rounds";
   if (reason.startsWith("review.hold_minutes")) return "hold_minutes";
+  if (reason.startsWith("remedies.retry_stronger")) return "retry_stronger";
+  if (reason.startsWith("remedies.fix_again")) return "fix_again";
   return null;
 }
 

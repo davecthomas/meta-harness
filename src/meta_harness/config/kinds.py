@@ -242,6 +242,17 @@ def check_size_limits(limits: Any, ceiling: Decimal | None = None) -> list[str]:
     return reasons
 
 
+# The supervisor's remedies whose tries the task policy sets (supervisor/remedies), and their tries when it
+# sets none. 0 turns a remedy off.
+REMEDY_TRIES = {"retry_stronger": 1, "fix_again": 1}
+
+
+def remedy_tries(document: dict[str, Any], name: str) -> int:
+    """How many tries the task policy gives a remedy: its own setting, else the default."""
+    found = (document.get("remedies") or {}).get(name)
+    return found if isinstance(found, int) and not isinstance(found, bool) else REMEDY_TRIES[name]
+
+
 def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]] | None = None) -> list[str]:
     """Problems with a task policy. Reviewer pairs are checked against the profiles when others holds them."""
     reasons = []
@@ -296,6 +307,20 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
             "writing_pass must be true or false: false posts what a run wrote without the writing pass's "
             "check and rewrite"
         )
+    remedies = document.get("remedies")
+    if remedies is not None:
+        if not isinstance(remedies, dict):
+            reasons.append("remedies must be an object of remedy names and how many tries each makes")
+        else:
+            for name, tries in remedies.items():
+                if name not in REMEDY_TRIES:
+                    reasons.append(
+                        f"remedies.{name} is no remedy; the remedies with tries are {', '.join(REMEDY_TRIES)}"
+                    )
+                elif isinstance(tries, bool) or not isinstance(tries, int) or not 0 <= tries <= 3:
+                    reasons.append(
+                        f"remedies.{name} must be a whole number from 0 to 3: how many tries it makes (0 turns it off)"
+                    )
     wait = document.get("merge_wait_minutes")
     if wait is not None and (isinstance(wait, bool) or not isinstance(wait, int) or wait < 0):
         reasons.append("merge_wait_minutes must be a whole number of minutes, 0 or more (0: merge without waiting)")
