@@ -2277,6 +2277,7 @@ credential.
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. A tier candidate's model select offers them | built |
 | GET | `/v1/config/images` | Configuration, in the planner process | The harness images the deployment builds, which a harness profile's image is picked from: the one image `make images` (`mh-images.service`) builds, `HARNESS_IMAGE` from `HARNESS_DIR`, and `default`, the image a profile with no image runs. Another directory under `images/` is not listed, since nothing builds it. 422 says why when the build directory has no readable Dockerfile (`config/images.py`) | built |
+| GET | `/v1/config/images/programs` | Configuration, in the planner process | The programs a harness image has (`?image=`, empty for the default), which a harness profile's bash allowlist is picked from: every executable file on the image's PATH and bash's builtins, listed by a container of the image with no network and no capabilities, and kept per image id. Only an image the deployment builds is run. 422 says why when they cannot be listed (`config/programs.py`) | built |
 | GET | `/v1/config/classifiers` | Configuration, in the planner process | The engines the router's classifier can name, each with its models: the engines ai-api-unified's provider registry lists for classification, and `none`; each engine's models from its model registry (`openai-decisions` its Decisions models, the others their provider's priced completions models, `openai-compatible` none, so its model is typed). The tiers view picks the classifier's engine and model from them, and refuses a name the list lacks | built |
 | GET | `/v1/config/{kind}` | Configuration, in the planner process | The active version of `tiers`, `profiles`, `repos` or `task_policy`; `modalities` and `access` are planned | built |
 | GET | `/v1/config/{kind}/versions` | Configuration, in the planner process | The document's version history | built |
@@ -3474,8 +3475,10 @@ change stay read-only.
   change), description, thinking and candidates (added, removed and
   reordered), the classifier, the default tier and what happens when a tier
   is used up. Harness profiles: each profile's tools, max turns, max minutes,
-  vCPU and memory, Bash allowlist and image (picked from the images the
-  deployment builds, `GET /v1/config/images`; empty is the default image),
+  vCPU and memory, Bash allowlist (picked from the programs the profile's
+  image has, `GET /v1/config/images/programs`) and image (picked from the
+  images the deployment builds, `GET /v1/config/images`; empty is the default
+  image),
   and a profile is added or
   removed from the table. Repo registry: each repo's tracker and default
   acceptance checks. Task policy: max parallel (with the VM's ceiling), fix

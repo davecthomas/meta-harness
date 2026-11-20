@@ -54,6 +54,10 @@ export const configApi = {
   // profile with no image runs. A 422 says why they cannot be listed.
   configImages: () =>
     call<{ images: { name: string; directory: string; default: boolean }[]; default: string }>("/v1/config/images"),
+  // The programs a harness image has, which a profile's bash allowlist is picked from; no image: the default.
+  // A 422 says why they cannot be listed.
+  configImagePrograms: (image?: string) =>
+    call<{ image: string; programs: string[] }>(`/v1/config/images/programs${query({ image })}`),
   configClassifiers: () => call<{ engines?: ClassifierEngine[] }>("/v1/config/classifiers").then((r) => r?.engines ?? []),
   // Read a skill from a git repository or from its files, to look at before it is staged. Saves nothing.
   readSkill: (from: { url?: string; ref?: string; path?: string; files?: Record<string, string> }) =>
