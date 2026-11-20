@@ -97,6 +97,18 @@ def test_the_skill_directories_are_those_at_the_ref_asked_for(origin, client):
     assert blank["ref"] == "main", "an empty ref is the default branch"
 
 
+def test_every_branch_is_listed_however_many_there_are(origin, client):
+    # A list cut short would leave a branch out of the picker, and the import would refuse it.
+    head = subprocess.run(["git", "-C", str(origin), "rev-parse", "HEAD"], check=True, capture_output=True, text=True)
+    many = [f"b{n:04d}" for n in range(1200)]
+    updates = "".join(f"create refs/heads/{name} {head.stdout.strip()}\n" for name in many)
+    subprocess.run(["git", "-C", str(origin), "update-ref", "--stdin"], input=updates, check=True, text=True)
+
+    listed = client.get("/v1/config/skills/source", params={"url": URL}).json()
+
+    assert listed["branches"] == sorted([*many, "main", "next"])
+
+
 def test_a_ref_the_repository_lacks_is_a_422_that_names_it(origin, client):
     response = client.get("/v1/config/skills/source", params={"url": URL, "ref": "nope"})
 

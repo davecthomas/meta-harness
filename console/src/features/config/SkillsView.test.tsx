@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
 import type { SkillEntry } from "../../api";
@@ -44,11 +44,17 @@ const URL = "https://github.com/acme/skills";
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
 
 // The service the import form asks: the registered repos, what a repository offers at each ref, and the read.
-// A list given as a string cannot be read, and answers 422 with it as the reason.
-function serve({ repos = ["acme/skills", "acme/tools"] as string[] | string, source = "listed" as "listed" | string } = {}) {
+// A list given as a string cannot be read, and answers 422 with it as the reason. A request held answers only
+// once release is called.
+function serve({ repos = ["acme/skills", "acme/tools"] as string[] | string, source = "listed" as "listed" | string, held = (_path: string): boolean => false } = {}) {
   const read: unknown[] = [];
   const listed: string[] = [];
-  vi.stubGlobal("fetch", (path: string, init?: RequestInit) => {
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.stubGlobal("fetch", async (path: string, init?: RequestInit) => {
+    if (held(path)) await released;
     if (path === "/v1/config/repos") {
       return typeof repos === "string" ? json({ detail: repos }, 422) : json({ kind: "repos", version: 1, document: { repos: Object.fromEntries(repos.map((r) => [r, {}])) } });
     }
@@ -63,7 +69,7 @@ function serve({ repos = ["acme/skills", "acme/tools"] as string[] | string, sou
     read.push(JSON.parse(String(init?.body)));
     return json({ name: "tidy-notes", skill: TIDY });
   });
-  return { read, listed };
+  return { read, listed, release };
 }
 
 function openImport() {
@@ -81,15 +87,15 @@ function typeInto(label: string, value: string) {
   return input;
 }
 
-// Opens a field once its list has loaded (or failed to), then types into it.
+// Opens a field once its list has loaded (or failed to): until then it has no pencil. Then types into it.
 async function pickFrom(label: string, value: string) {
-  if (!screen.queryByRole("combobox", { name: label })) fireEvent.click(screen.getByRole("button", { name: `Edit ${label}` }));
+  if (!screen.queryByRole("combobox", { name: label })) fireEvent.click(await screen.findByRole("button", { name: `Edit ${label}` }));
   await waitFor(() => expect(screen.getByRole("combobox", { name: label }).getAttribute("placeholder")).not.toBe("Loading…"));
   return typeInto(label, value);
 }
 
 async function commit(label: string, value: string) {
-  fireEvent.keyDown(typeInto(label, value), { key: "Enter" });
+  fireEvent.keyDown(await pickFrom(label, value), { key: "Enter" });
   await waitFor(() => expect(screen.queryByRole("combobox", { name: label })).toBeNull());
 }
 
@@ -129,17 +135,42 @@ test("a repository, branch or tag, or path the list lacks is refused; an empty b
   serve();
   openImport();
 
-  fireEvent.keyDown(typeInto("Repository", "https://github.com/other/skills"), { key: "Enter" });
+  fireEvent.keyDown(await pickFrom("Repository", "https://github.com/other/skills"), { key: "Enter" });
   expect(await screen.findByText(/The registry has no repository named https:\/\/github.com\/other\/skills/)).toBeTruthy();
   await commit("Repository", URL);
   expect(await screen.findByText("the default branch (main)")).toBeTruthy();
 
-  fireEvent.keyDown(typeInto("Branch or tag", "nope"), { key: "Enter" });
+  fireEvent.keyDown(await pickFrom("Branch or tag", "nope"), { key: "Enter" });
   expect(await screen.findByText(`${URL} has no branch or tag named nope: pick one from the list, or leave it empty for the usual`)).toBeTruthy();
   await commit("Branch or tag", "");
 
-  fireEvent.keyDown(typeInto("Path to the skill", "skills/plan"), { key: "Enter" });
+  fireEvent.keyDown(await pickFrom("Path to the skill", "skills/plan"), { key: "Enter" });
   expect(await screen.findByText(new RegExp(`${URL} at main has no skill directory named skills/plan`))).toBeTruthy();
+});
+
+test("a field takes no name while its list loads, so none the list lacks is committed before it arrives", async () => {
+  const readButton = () => screen.getByRole("button", { name: "Read the skill" });
+  const repos = serve({ held: (path) => path === "/v1/config/repos" });
+  openImport();
+  expect(await screen.findByText("Loading…")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Edit Repository" })).toBeNull();
+  expect(readButton().hasAttribute("disabled")).toBe(true);
+  repos.release();
+  fireEvent.keyDown(await pickFrom("Repository", "https://github.com/other/skills"), { key: "Enter" });
+  expect(await screen.findByText(/The registry has no repository named https:\/\/github.com\/other\/skills/)).toBeTruthy();
+  cleanup();
+
+  // The branches and tags, then the skill directories at the ref picked, each hold their field until they come.
+  const source = serve({ held: (path) => path.startsWith("/v1/config/skills/source") });
+  openImport();
+  await commit("Repository", URL);
+  expect(screen.queryByRole("button", { name: "Edit Branch or tag" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Edit Path to the skill" })).toBeNull();
+  expect(readButton().hasAttribute("disabled")).toBe(true);
+  source.release();
+  await commit("Branch or tag", "v2");
+  await commit("Path to the skill", "skills/plan");
+  expect(readButton().hasAttribute("disabled")).toBe(false);
 });
 
 test("when a list cannot be read the field says why and still takes a typed value", async () => {
@@ -149,7 +180,7 @@ test("when a list cannot be read the field says why and still takes a typed valu
   expect(await screen.findByText("The registered repositories could not be listed, so type each exactly: the registry is down")).toBeTruthy();
   await commit("Repository", URL);
   expect(await screen.findByText(/The branches and tags could not be listed, so type each exactly: could not read .*Repository not found\./)).toBeTruthy();
-  expect(typeInto("Branch or tag", "release").getAttribute("placeholder")).toBe("Type its name");
+  expect((await pickFrom("Branch or tag", "release")).getAttribute("placeholder")).toBe("Type its name");
   await commit("Branch or tag", "release");
   await commit("Path to the skill", "skills/tidy-notes");
 

@@ -38,8 +38,6 @@ MAX_SKILL_BYTES = 2 * 1024 * 1024
 # Only https: a git URL may name a local path or another protocol, which the planner's process must not read.
 GIT_URL = re.compile(r"^https://[A-Za-z0-9.\-]+(:[0-9]+)?/[^\s]+$")
 GIT_TIMEOUT_SECONDS = 60
-# The most branches, tags or skill directories one listing of a repository holds.
-MAX_LISTED = 1000
 # Directories never taken into a skill: version control and caches.
 SKIPPED = {".git", "__pycache__", "node_modules", ".venv"}
 
@@ -264,7 +262,8 @@ def from_git(url: str, ref: str | None, path: str | None) -> tuple[str, dict[str
 def git_source(url: str, ref: str | None) -> dict[str, Any]:
     """What a git repository offers an import, as of now: its branches and tags, its default branch, and the
     directories that hold a SKILL.md at ref (the default branch when None), by their path in the repository.
-    A SKILL.md at the top is not listed, since an empty path reads it. At most MAX_LISTED of each are listed.
+    A SKILL.md at the top is not listed, since an empty path reads it.
+    Every one is listed: a list cut short would make the import refuse a name the repository has.
 
     Raises:
         SkillError: The URL is not https on a public host, the repository cannot be read, or it has no such ref.
@@ -296,11 +295,11 @@ def git_source(url: str, ref: str | None) -> dict[str, Any]:
             if len(parts) > 1 and parts[-1] == "SKILL.md" and not SKIPPED.intersection(parts):
                 paths.append("/".join(parts[:-1]))
     return {
-        "branches": sorted(branches)[:MAX_LISTED],
-        "tags": sorted(tags)[:MAX_LISTED],
+        "branches": sorted(branches),
+        "tags": sorted(tags),
         "default_branch": default,
         "ref": ref or default,
-        "paths": sorted(paths)[:MAX_LISTED],
+        "paths": sorted(paths),
     }
 
 

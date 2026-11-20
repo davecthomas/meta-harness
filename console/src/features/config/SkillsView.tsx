@@ -43,6 +43,11 @@ function SkillFiles({ skill }: { skill: SkillEntry }) {
 type Listed = { known: string[] | null; error: string | null };
 const LOADING: Listed = { known: null, error: null };
 const why = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const loading = (list: Listed) => list.known === null && list.error === null;
+// Whether a committed name is one its list offers. An empty name, an empty list and a list that cannot be read
+// take any name, as the picked-name field does; a list still loading takes none.
+const offered = (list: Listed, name: string) =>
+  !name || (!loading(list) && (!list.known?.length || list.known.some((k) => k.toLowerCase() === name.trim().toLowerCase())));
 
 // The registered repositories, as the https addresses a skill is imported from.
 function useRegisteredRepos(): Listed {
@@ -102,23 +107,23 @@ function Labeled({ label, description, children }: { label: string; description:
 // Where in git a skill is read from: a registered repository, one of its branches or tags, and a directory
 // that holds a SKILL.md, each picked from what can be listed. An empty branch is the default branch, and an
 // empty path the repository's top. A list that cannot be read says why, and its field takes a typed value.
-function GitSource({ url, gitRef: ref, path, onUrl, onRef, onPath }: { url: string; gitRef: string; path: string; onUrl: (v: string) => void; onRef: (v: string) => void; onPath: (v: string) => void }) {
-  const repos = useRegisteredRepos();
-  const { refs, paths } = useSkillSource(url, ref);
+// A field takes no name while its list loads: a name typed then would be committed before the list could
+// refuse it.
+function GitSource({ url, gitRef: ref, path, repos, refs, paths, onUrl, onRef, onPath }: { url: string; gitRef: string; path: string; repos: Listed; refs: Listed & { fallback: string | null }; paths: Listed; onUrl: (v: string) => void; onRef: (v: string) => void; onPath: (v: string) => void }) {
   const at = ref || refs.fallback || "the default branch";
   return (
     <Stack gap="sm">
       <Labeled label="Repository" description="A registered repository. The planner reads it as it is now; later changes there change nothing here.">
-        <PickedName label="Repository" what="repository" where="The registry" value={url} empty="Pick a repository" known={repos.known} unreadable={repos.error} testId="skill-repo-unknown" onCommit={onUrl} />
+        <PickedName label="Repository" what="repository" where="The registry" value={url} empty={loading(repos) ? "Loading…" : "Pick a repository"} known={repos.known} unreadable={repos.error} testId="skill-repo-unknown" readOnly={loading(repos)} onCommit={onUrl} />
         <Unreadable what="registered repositories" error={repos.error} />
       </Labeled>
       <Group grow align="flex-start">
         <Labeled label="Branch or tag" description="Empty is the default branch.">
-          <PickedName label="Branch or tag" what="branch or tag" where={url || "The repository"} value={ref} empty={refs.fallback ? `the default branch (${refs.fallback})` : "the default branch"} known={url ? refs.known : []} unreadable={refs.error} testId="skill-ref-unknown" readOnly={!url} onCommit={onRef} />
+          <PickedName label="Branch or tag" what="branch or tag" where={url || "The repository"} value={ref} empty={url && loading(refs) ? "Loading…" : refs.fallback ? `the default branch (${refs.fallback})` : "the default branch"} known={url ? refs.known : []} unreadable={refs.error} testId="skill-ref-unknown" readOnly={!url || loading(refs)} onCommit={onRef} />
           <Unreadable what="branches and tags" error={url ? refs.error : null} />
         </Labeled>
         <Labeled label="Path to the skill" description="The directory that holds its SKILL.md. Empty is the repository's top.">
-          <PickedName label="Path to the skill" what="skill directory" where={`${url || "The repository"} at ${at}`} value={path} empty="the repository's top" known={url ? paths.known : []} unreadable={paths.error} testId="skill-path-unknown" readOnly={!url} onCommit={onPath} />
+          <PickedName label="Path to the skill" what="skill directory" where={`${url || "The repository"} at ${at}`} value={path} empty={url && loading(paths) ? "Loading…" : "the repository's top"} known={url ? paths.known : []} unreadable={paths.error} testId="skill-path-unknown" readOnly={!url || loading(paths)} onCommit={onPath} />
           <Unreadable what="skill directories" error={url && !refs.error ? paths.error : null} />
         </Labeled>
       </Group>
@@ -135,6 +140,10 @@ function ImportDialog({ names, onClose, onAdd }: { names: string[]; onClose: () 
   const [read, setRead] = useState<{ name: string; skill: SkillEntry } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const repos = useRegisteredRepos();
+  const { refs, paths } = useSkillSource(url, ref);
+  // Each committed name is checked again against its list as it now stands, so none the list lacks is read.
+  const gitReady = !!url.trim() && offered(repos, url) && offered(refs, ref) && offered(paths, path) && !loading(refs) && !loading(paths);
 
   async function pick(list: FileList | null) {
     if (!list?.length) return;
@@ -171,6 +180,9 @@ function ImportDialog({ names, onClose, onAdd }: { names: string[]; onClose: () 
                 url={url}
                 gitRef={ref}
                 path={path}
+                repos={repos}
+                refs={refs}
+                paths={paths}
                 // A new repository or ref starts its branch and path over: the old ones may not be there.
                 onUrl={(v) => { if (v !== url) { setUrl(v); setRef(""); setPath(""); } }}
                 onRef={(v) => { if (v !== ref) { setRef(v); setPath(""); } }}
@@ -187,7 +199,7 @@ function ImportDialog({ names, onClose, onAdd }: { names: string[]; onClose: () 
             {error && <Alert color="red" role="alert">{error}</Alert>}
             <Group justify="flex-end">
               <Button variant="default" onClick={onClose}>Cancel</Button>
-              <Button loading={busy} disabled={from === "git" ? !url.trim() : !files} onClick={() => void readSkill()}>Read the skill</Button>
+              <Button loading={busy} disabled={from === "git" ? !gitReady : !files} onClick={() => void readSkill()}>Read the skill</Button>
             </Group>
           </>
         ) : (
