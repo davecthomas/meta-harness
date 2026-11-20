@@ -3,7 +3,7 @@
 import pytest
 from temporalio.testing import ActivityEnvironment
 
-from meta_harness.run_service import activities, code_host, pr_summary, provenance, writing
+from meta_harness.run_service import activities, code_host, pr_summary, provenance, summaries, writing
 from meta_harness.run_service.shared import PublishRequest
 
 FILES = ["src/app.py", "tests/test_app.py"]
@@ -48,7 +48,7 @@ def test_the_fallback_says_plainly_that_the_run_left_no_summary():
     assert pr_summary.fallback(FILES).startswith("The run left no summary of its change, so this section lists")
 
 
-def test_a_fallback_the_run_service_already_wrote_is_kept_as_it_is():
+def test_a_fallback_the_run_service_already_wrote_is_kept_with_the_branch_s_files():
     recorded = (
         f"{pr_summary.FALLBACK_PREFIX} from what the harness recorded.\n\n"
         "Acceptance checks, as the run last ran each one:\n- `make test`: passed"
@@ -56,7 +56,8 @@ def test_a_fallback_the_run_service_already_wrote_is_kept_as_it_is():
 
     part = pr_summary.section(recorded, FILES)
 
-    assert part == pr_summary.Section(pr_summary.FALLBACK_HEADING, recorded, from_run=False)
+    listed = "Other files the branch changes:\n- `src/app.py`\n- `tests/test_app.py`"
+    assert part == pr_summary.Section(pr_summary.FALLBACK_HEADING, f"{recorded}\n\n{listed}", from_run=False)
 
 
 def test_a_long_file_list_is_cut_with_a_count_of_the_rest():
@@ -71,10 +72,28 @@ def test_a_fallback_with_no_files_says_so():
     assert "could not list the files" in pr_summary.fallback([])
 
 
+def test_a_recorded_fallback_gains_the_branch_files_the_record_does_not_name():
+    """A mixed run: it edited src/app.py with its edit tool, and changed tests/test_app.py with a bash command,
+    which the record does not see. The branch names both."""
+    recorded, _ = summaries.choose(None, {"files_changed": ["src/app.py"], "checks": []}, [])
+    assert recorded is not None and "tests/test_app.py" not in recorded
+
+    part = pr_summary.section(recorded, FILES)
+
+    assert part.heading == pr_summary.FALLBACK_HEADING and not part.from_run
+    assert part.text == f"{recorded}\n\nOther files the branch changes:\n- `tests/test_app.py`"
+
+
+def test_a_recorded_fallback_that_names_every_branch_file_is_kept_as_it_is():
+    recorded, _ = summaries.choose(None, {"files_changed": FILES, "checks": []}, [])
+
+    assert pr_summary.section(recorded, FILES).text == recorded
+
+
 def test_a_fallback_written_before_the_new_prefix_is_still_kept_as_it_is():
     earlier = f"{pr_summary.EARLIER_PREFIX} from what the harness recorded.\n\n- `a.py`"
 
-    assert pr_summary.section(earlier, FILES) == pr_summary.Section(pr_summary.FALLBACK_HEADING, earlier, False)
+    assert pr_summary.section(earlier, ["a.py"]) == pr_summary.Section(pr_summary.FALLBACK_HEADING, earlier, False)
 
 
 # --- The publish activity ----------------------------------------------------------------------------
@@ -136,6 +155,17 @@ async def test_a_pull_request_whose_run_left_no_summary_carries_the_fallback_unc
     assert "- `src/app.py`" in body and "Closes o/r#9" in body and "`run-task-t-1:run-1`" in body
     assert pr_summary.RUN_HEADING not in body
     assert host["checked"] == [], "the meta-harness's own lines skip the writing pass"
+
+
+async def test_a_pull_request_lists_the_files_a_command_changed_beside_the_recorded_ones(host):
+    recorded, _ = summaries.choose(None, {"files_changed": ["src/app.py"], "checks": []}, [])
+
+    await ActivityEnvironment().run(activities.publish, _request(recorded))
+
+    [body] = host["bodies"]
+    assert f"## {pr_summary.FALLBACK_HEADING}\n\n{recorded}\n\nOther files the branch changes:\n" in body
+    assert "- `src/app.py`" in body and "- `tests/test_app.py`" in body
+    assert host["checked"] == []
 
 
 async def test_a_fix_round_with_no_usable_summary_adds_the_fallback_to_the_description(host):

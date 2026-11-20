@@ -4,7 +4,9 @@ A run is told to end with a marked summary for its pull request, and the run ser
 (summaries.py, HarnessResult.answer). When it says something, it goes in the description under RUN_HEADING,
 after the writing pass. When the run left none, or one too short to say anything about the change ("Done."),
 the meta-harness writes the section itself from what Publish knows: the files the branch changes. A summary the
-run service already wrote from the harness's record of the run starts with FALLBACK_PREFIX and is kept as it is.
+run service already wrote from the harness's record of the run starts with FALLBACK_PREFIX and is kept, with the
+files the branch changes that it does not name added after it: the record lists only the files the run's write
+and edit tools changed, so a file a command changed, or an earlier run, is named only by the branch.
 
 Either fallback goes under FALLBACK_HEADING, and its first line says plainly that the run left no summary. It
 holds none of the run's own words, and it skips the writing pass: it holds only the meta-harness's own lines
@@ -52,10 +54,25 @@ def section(summary: str | None, files: list[str]) -> Section:
     """The summary for a description: the run's own when usable, else a fallback from the branch's files."""
     text = (summary or "").strip()
     if is_fallback(text):
-        return Section(FALLBACK_HEADING, text, from_run=False)
+        return Section(FALLBACK_HEADING, with_branch_files(text, files), from_run=False)
     if usable(text):
         return Section(RUN_HEADING, text, from_run=True)
     return Section(FALLBACK_HEADING, fallback(files), from_run=False)
+
+
+def with_branch_files(text: str, files: list[str]) -> str:
+    """A fallback the run service wrote, with the files the branch changes that it does not name listed after it."""
+    missing = [f for f in dict.fromkeys(files) if f and f"`{f}`" not in text]
+    if not missing:
+        return text
+    return "\n".join([text, "", "Other files the branch changes:", *_listed(missing)])
+
+
+def _listed(files: list[str]) -> list[str]:
+    listed = [f"- `{f}`" for f in files[:MAX_FILES]]
+    if len(files) > MAX_FILES:
+        listed.append(f"- and {len(files) - MAX_FILES} more")
+    return listed
 
 
 def fallback(files: list[str]) -> str:
@@ -63,10 +80,7 @@ def fallback(files: list[str]) -> str:
     lines = [FALLBACK_LEAD, ""]
     named = [f for f in files if f]
     if named:
-        listed = [f"- `{f}`" for f in named[:MAX_FILES]]
-        if len(named) > MAX_FILES:
-            listed.append(f"- and {len(named) - MAX_FILES} more")
-        lines += ["Files the branch changes:", *listed]
+        lines += ["Files the branch changes:", *_listed(named)]
     else:
         lines.append("The meta-harness could not list the files the branch changes.")
     return "\n".join(lines).rstrip()

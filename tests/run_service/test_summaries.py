@@ -94,7 +94,71 @@ def test_with_a_record_an_earlier_turn_s_text_is_not_the_summary():
     assert "run the tests" not in summary
 
 
-def test_the_fallback_lists_the_files_checks_plan_and_commands():
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Both checks pass and the changeset stays within the required paths.",
+        "All acceptance checks passed.\nThe change stays inside the task's paths.",
+        "Here is the summary of the work.",
+        "Done. Let me know if anything else is needed.",
+    ],
+)
+def test_a_text_of_only_narration_is_not_usable(text):
+    assert not summaries.usable(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Both checks pass. The save path now goes through the store's lock.",
+        "Fixed the flaky test so it passes on CI.",
+        "The `save` call stays within the task's paths again.",
+    ],
+)
+def test_a_text_that_says_what_changed_beside_narration_is_usable(text):
+    assert summaries.usable(text)
+
+
+def test_a_marked_summary_of_only_narration_gives_way_to_the_record():
+    """PR #341's section: the marked part says the checks pass and nothing about what changed."""
+    narration = "Both checks pass and the changeset stays within the required paths."
+    record = {**RECORD, "final_text": _marked(narration)}
+
+    summary, source = summaries.choose(None, record, [])
+
+    assert source == "recorded"
+    assert summary == summaries.choose(None, RECORD, [])[0] and narration not in summary
+
+
+async def test_the_run_service_uses_the_recorded_fallback_for_a_narration_only_summary():
+    """What run_harness does at Collect: read the record from the harness server, then choose from it."""
+    record = {**RECORD, "final_text": _marked("Both checks pass and the changeset stays within the required paths.")}
+
+    async with _client(lambda request: httpx.Response(200, json=record)) as client:
+        fetched = await summaries.fetch(client, "t:0")
+
+    summary, source = summaries.choose(_marked("Fixed the save path."), fetched, ["src/app.py"])
+    assert source == "recorded" and summary is not None and summary.startswith(summaries.FALLBACK_LEAD)
+    assert "changeset" not in summary and "Fixed the save path" not in summary
+
+
+def test_the_fallback_leaves_out_the_plan_the_run_wrote():
+    plan = [
+        {"step": "Both checks pass and the changeset stays within the required paths.", "status": "done"},
+        {"step": "I think the bug is in the cache, so I will rewrite it", "status": "in_progress"},
+    ]
+    summary, source = summaries.choose(None, {**RECORD, "plan": plan}, [])
+
+    assert source == "recorded" and summary is not None
+    assert "changeset" not in summary and "cache" not in summary and "plan" not in summary
+
+
+def test_a_record_with_only_a_plan_gives_no_fallback():
+    record = {"final_text": None, "plan": [{"step": "Read the code", "status": "done"}], "files_changed": []}
+    assert summaries.choose(None, record, []) == (None, "none")
+
+
+def test_the_fallback_lists_the_files_checks_and_commands():
     summary, source = summaries.choose(None, {**RECORD, "final_text": "Done."}, [])
     assert source == "recorded"
     assert summary == "\n".join(
@@ -110,10 +174,6 @@ def test_the_fallback_lists_the_files_checks_plan_and_commands():
             "- `uv run ruff check .`: failed",
             "- `make lint`: no command the run made contained it",
             "- `make docs`: ran, but the command's exit status does not show how it ended",
-            "",
-            "The run's last plan:",
-            "- done: Read the code",
-            "- in_progress: Fix the bug",
             "",
             "Commands run: 7, of which 2 failed.",
         ]
