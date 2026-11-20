@@ -51,6 +51,33 @@ class Section:
         return "files" if self.text.startswith(FALLBACK_LEAD) else "recorded"
 
 
+def posted(description: str, end: str) -> Section | None:
+    """The summary section a description holds, read back from it: under RUN_HEADING or FALLBACK_HEADING, up to
+    end, the line that follows the summary. None when the description holds no such section before end."""
+    description = description.replace("\r\n", "\n")
+    stop = description.find(end)
+    if stop < 0:
+        return None
+    starts = [
+        (at, heading)
+        for heading in (RUN_HEADING, FALLBACK_HEADING)
+        if (at := _line_at(description[:stop], f"## {heading}\n")) >= 0
+    ]
+    if not starts:
+        return None
+    at, heading = min(starts)
+    text = description[at + len(f"## {heading}\n") : stop].strip()
+    return Section(heading, text, from_run=heading == RUN_HEADING)
+
+
+def _line_at(text: str, line: str) -> int:
+    """Where line first starts a line of text, or -1."""
+    if text.startswith(line):
+        return 0
+    at = text.find(f"\n{line}")
+    return at + 1 if at >= 0 else -1
+
+
 def usable(text: str | None) -> bool:
     """True when the text can stand as the run's summary: it says something in at least MIN_WORDS words."""
     return len(re.findall(r"\w+", text or "")) >= MIN_WORDS

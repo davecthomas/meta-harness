@@ -708,6 +708,16 @@ async def changed_lines(repo: str, since: str, head_sha: str) -> dict[str, list[
     return found
 
 
+async def description(repo: str, pr_url: str, pr_record: Path) -> str:
+    """The pull request's description as the code host holds it now. A local repo's pull request is its record
+    file. Read only."""
+    if is_local(repo):
+        return pr_record.read_text(encoding="utf-8") if pr_record.exists() else ""
+    owner_repo, number = pr_number(pr_url)
+    pull = await _github(owner_repo, READ_PULL_REQUEST, "GET", f"/repos/{owner_repo}/pulls/{number}") or {}
+    return str(pull.get("body") or "").replace("\r\n", "\n")
+
+
 async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr_record: Path) -> None:
     """Adds a section to the pull request's description, once: a retry finds its heading there and adds
     nothing. A local repo's pull request is its record file."""
