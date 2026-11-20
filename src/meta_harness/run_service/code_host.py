@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from meta_harness.github_app import GitHubAppError, GitHubApps, git_auth_env
+from meta_harness.run_service.provenance import Provenance, commit_message, stamp
 
 PR_LABEL = "ai:meta-harness"
 COMMIT_NAME = "meta-harness"
@@ -209,9 +210,12 @@ def acceptance_checks(body: str) -> list[str]:
     return checks
 
 
-async def clone(repo: str, workspace: Path, git_dir: Path, branch: str = "", merge_base: str = "") -> str:
+async def clone(
+    repo: str, workspace: Path, git_dir: Path, branch: str = "", merge_base: str = "", merge_message: str = ""
+) -> str:
     """Clones repo into workspace, unless an earlier attempt did, and checks out branch, else the default
-    branch. Returns the branch checked out.
+    branch. Returns the branch checked out. merge_message, with merge_base, is the message of the merge
+    commit a clean merge makes, with its provenance; empty leaves git's own.
 
     The repository's git directory goes to git_dir, outside the workspace
     (`git clone --separate-git-dir`). The per-run sandbox mounts the
@@ -247,6 +251,7 @@ async def clone(repo: str, workspace: Path, git_dir: Path, branch: str = "", mer
             f"user.email={COMMIT_EMAIL}",
             "merge",
             "--no-edit",
+            *(["--message", merge_message] if merge_message else []),
             f"origin/{merge_base}",
             check=False,
             cwd=workspace,
@@ -482,22 +487,29 @@ def _check_summary(output: dict) -> str:
     return text[:CHECK_SUMMARY_CHARS]
 
 
-async def post_review(repo: str, number: int, head_sha: str, body: str, comments: list[dict]) -> str:
+async def post_review(
+    repo: str, number: int, head_sha: str, body: str, comments: list[dict], provenance: Provenance | None = None
+) -> str:
     """Posts a review on the pull request at head_sha, with inline comments, and returns its URL.
 
     It is a comment review: GitHub refuses an approval or a change request
     from the pull request's own author, and the meta-harness's GitHub App
     opened it. A comment GitHub cannot place on the diff (422) moves into the
     review's body, so the review is never lost to a finding on an unchanged line.
+    With provenance, the review's body ends with its provenance line, after any comment moved into it.
     """
-    payload = {"commit_id": head_sha, "event": "COMMENT", "body": body, "comments": comments}
+
+    def stamped(text: str) -> str:
+        return stamp(text, provenance) if provenance else text
+
+    payload = {"commit_id": head_sha, "event": "COMMENT", "body": stamped(body), "comments": comments}
     try:
         review = await _github(repo, REVIEW, "POST", f"/repos/{repo}/pulls/{number}/reviews", json=payload)
     except CodeHostError as err:
         if not comments or err.status != 422:
             raise
         placed = "\n".join(f"- `{c['path']}` line {c['line']}: {c['body']}" for c in comments)
-        payload = {"commit_id": head_sha, "event": "COMMENT", "body": f"{body}\n\n{placed}", "comments": []}
+        payload = {"commit_id": head_sha, "event": "COMMENT", "body": stamped(f"{body}\n\n{placed}"), "comments": []}
         review = await _github(repo, REVIEW, "POST", f"/repos/{repo}/pulls/{number}/reviews", json=payload)
     return str(review.get("html_url", ""))
 
@@ -532,9 +544,18 @@ async def pull_request_files(repo: str, number: int) -> list[dict]:
 
 
 async def comment_on_lines(
-    repo: str, number: int, head_sha: str, path: str, line: int, body: str, start_line: int | None = None
+    repo: str,
+    number: int,
+    head_sha: str,
+    path: str,
+    line: int,
+    body: str,
+    start_line: int | None = None,
+    provenance: Provenance | None = None,
 ) -> str:
-    """Posts a review comment on lines of the pull request's head commit (the new side), and returns its URL."""
+    """Posts a review comment on lines of the pull request's head commit (the new side), and returns its URL.
+    With provenance, the comment ends with its provenance line."""
+    body = stamp(body, provenance) if provenance else body
     payload: dict = {"commit_id": head_sha, "path": path, "line": line, "side": "RIGHT", "body": body}
     if start_line is not None and start_line < line:
         payload |= {"start_line": start_line, "start_side": "RIGHT"}
@@ -542,8 +563,10 @@ async def comment_on_lines(
     return str(comment.get("html_url", ""))
 
 
-async def comment(repo: str, number: int, body: str) -> str:
-    """Posts a comment on the pull request's conversation, and returns its URL."""
+async def comment(repo: str, number: int, body: str, provenance: Provenance | None = None) -> str:
+    """Posts a comment on the pull request's conversation, and returns its URL. With provenance, the comment
+    ends with its provenance line."""
+    body = stamp(body, provenance) if provenance else body
     posted = await _github(repo, REVIEW, "POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})
     return str((posted or {}).get("html_url", ""))
 
@@ -569,7 +592,12 @@ async def newest_containing(repo: str, base: str, sha: str) -> str | None:
 
 
 async def merge_pull_request(
-    repo: str, number: int, head_sha: str, base: str | None = None, kind: str = ""
+    repo: str,
+    number: int,
+    head_sha: str,
+    base: str | None = None,
+    kind: str = "",
+    provenance: Provenance | None = None,
 ) -> tuple[str, str, str, str]:
     """Squash-merges the pull request if its head is still head_sha. Returns (state, merge sha, head, detail).
 
@@ -577,7 +605,8 @@ async def merge_pull_request(
     new one), conflict (the branch conflicts with its base), or blocked (GitHub refused for another reason,
     such as branch protection or a required human review).
 
-    kind (fix, feature or none) goes into the merge commit's message as a `Version:` line.
+    kind (fix, feature or none) goes into the merge commit's message as a `Version:` line, and provenance as
+    the trailers after it.
 
     With base, a branch that lacks the base's newest commits is not merged: GitHub merges the base into it
     and the new head comes back as head_changed, so its checks and review run again before it merges. So no
@@ -589,10 +618,13 @@ async def merge_pull_request(
         if brought is not None:
             return brought
     merge = {"sha": head_sha, "merge_method": "squash"}
-    if kind:
-        # The merge commit says what kind of change it is, so a repo that works its version out from its
-        # history (as this one does) counts it right: a feature, a fix, or a change that ships nothing.
-        merge["commit_message"] = f"Version: {kind}"
+    # The merge commit says what kind of change it is, so a repo that works its version out from its
+    # history (as this one does) counts it right: a feature, a fix, or a change that ships nothing.
+    version = [f"Version: {kind}"] if kind else []
+    if provenance:
+        merge["commit_message"] = commit_message("", provenance, *version)
+    elif version:
+        merge["commit_message"] = version[0]
     try:
         merged = await _github(repo, MERGE, "PUT", f"/repos/{repo}/pulls/{number}/merge", json=merge)
         return "merged", str(merged.get("sha", "")), head_sha, ""

@@ -8,7 +8,8 @@ A split creates each issue in the held issue's repo with the goal's label, so
 the goal's next sweep takes them in; a goal with no label holds them by ref
 instead. Each one is a complete issue (planner/splits.py): its body has
 acceptance checks and a `Paths:` line, or the split is refused naming the part
-and what it lacks, and it ends with a `Split from` line. The held issue gets a
+and what it lacks, and it ends with a `Split from` line and its provenance line
+(run_service/provenance.py). The held issue gets a
 comment naming its parts, needs nothing more from anyone, and closes when its
 parts are done. The split is recorded on its link
 (split_into), with its issue_split event (and issue_added for a labelless
@@ -31,6 +32,7 @@ from meta_harness import db
 from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import splits, store
 from meta_harness.planner.sweep import goal_tracker
+from meta_harness.run_service import provenance
 
 MAX_SPLIT_ISSUES = 20
 
@@ -174,9 +176,12 @@ def register(
         try:
             if label:
                 await goal_tracker(tracker, goal).ensure_label(repo, label)
+            # Each part says it came from the goal and the operator who split it.
+            signed = provenance.Provenance(provenance.ISSUE, goal=goal_id, by=who)
             for issue in body.issues:
+                text = provenance.stamp(splits.with_origin(issue.body, body.ref), signed) + "\n"
                 made = await goal_tracker(tracker, goal).create_issue(
-                    repo, issue.title.strip(), splits.with_origin(issue.body, body.ref), [label] if label else []
+                    repo, issue.title.strip(), text, [label] if label else []
                 )
                 created.append(made.ref)
         except TrackerError as err:
@@ -189,7 +194,7 @@ def register(
             raise
 
         audit(created, await asyncio.to_thread(record, created))
-        await splits.announce(goal_tracker(tracker, goal), body.ref, created)
+        await splits.announce(goal_tracker(tracker, goal), body.ref, created, goal_id=goal_id, by=who)
         sweep_if_active(goal)
         return {"goal_id": goal_id, "ref": body.ref, "created": created}
 

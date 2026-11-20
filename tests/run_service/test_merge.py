@@ -7,8 +7,11 @@ from pathlib import Path
 import pytest
 from temporalio.testing import ActivityEnvironment
 
-from meta_harness.run_service import activities, code_host
+import meta_harness
+from meta_harness import versioning
+from meta_harness.run_service import activities, code_host, provenance
 from meta_harness.run_service.code_host import CodeHostError
+from meta_harness.run_service.provenance import COMMIT, Provenance
 from meta_harness.run_service.shared import MergeRequest
 
 
@@ -49,6 +52,36 @@ async def test_a_conflict_fix_run_gets_the_base_merged_in_with_its_markers(diver
     text = (workspace / "app.py").read_text()
     assert "<<<<<<<" in text and "x = 2" in text and "x = 3" in text
     assert (git_dir / "MERGE_HEAD").is_file(), "the publish's commit completes the merge"
+
+
+async def test_a_clean_merge_of_the_base_says_where_it_came_from(tmp_path: Path):
+    """A conflict fix's merge that needs no resolving is a commit the meta-harness makes, with its trailers."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git("init", "--quiet", "--initial-branch=main", cwd=seed)
+    (seed / "app.py").write_text("x = 1\n")
+    (seed / "other.py").write_text("y = 1\n")
+    _git("add", ".", cwd=seed)
+    _commit(seed, "seed")
+    _git("checkout", "--quiet", "-b", "mh/t-1", cwd=seed)
+    (seed / "app.py").write_text("x = 2\n")
+    _commit(seed, "the task")
+    _git("checkout", "--quiet", "main", cwd=seed)
+    (seed / "other.py").write_text("y = 2\n")
+    _commit(seed, "main moved on elsewhere")
+    bare = tmp_path / "origin.git"
+    _git("clone", "--quiet", "--bare", str(seed), str(bare), cwd=tmp_path)
+    _git("symbolic-ref", "HEAD", "refs/heads/main", cwd=bare)
+    workspace, git_dir = tmp_path / "run" / "workspace", tmp_path / "run" / "git"
+    signed = Provenance(COMMIT, task="t-1", run="run-task-t-1:run-2", version="1.2.3")
+    message = provenance.commit_message("Merge origin/main", signed)
+
+    await code_host.clone(str(bare), workspace, git_dir, branch="mh/t-1", merge_base="main", merge_message=message)
+
+    assert not (git_dir / "MERGE_HEAD").is_file(), "the base merged in cleanly"
+    logged = _git(f"--git-dir={git_dir}", "log", "-1", "--format=%B", cwd=tmp_path)
+    assert logged.startswith("Merge origin/main")
+    assert provenance.parse_trailers(logged) == {"version": "1.2.3", "task": "t-1", "run": "run-task-t-1:run-2"}
 
 
 async def test_a_local_merge_fast_forwards_the_base_or_reports_a_conflict(diverged: Path):
@@ -94,6 +127,17 @@ async def test_a_merge_says_what_kind_of_change_it_is_in_the_merge_commit(monkey
     assert calls[0][2] == {"sha": "abc", "merge_method": "squash", "commit_message": "Version: feature"}
 
 
+async def test_a_merge_commit_carries_its_provenance_as_trailers_after_its_version_line(monkeypatch):
+    calls = _github(monkeypatch, None, {})
+    signed = Provenance(COMMIT, task="t-1", version="1.2.3")
+
+    await code_host.merge_pull_request("o/r", 7, "abc", kind="fix", provenance=signed)
+
+    message = calls[0][2]["commit_message"]
+    assert message == "Version: fix\nMeta-Harness-Version: 1.2.3\nMeta-Harness-Task: t-1"
+    assert versioning.kind_of("Some task (#7)", message) == "fix", "the version line still counts"
+
+
 @pytest.mark.parametrize(
     ("status", "pull", "expected"),
     [
@@ -132,9 +176,14 @@ async def test_a_merge_records_the_merged_event(monkeypatch):
     result = await ActivityEnvironment().run(activities.merge_pr, request)
 
     assert result.state == "merged" and result.merge_sha == "m1"
-    assert emitted == [
-        ("pull_request_merged", {"pr_url": "https://github.com/o/r/pull/7", "head_sha": "abc", "merge_sha": "m1"})
-    ]
+    [(kind, payload)] = emitted
+    assert kind == "pull_request_merged"
+    assert {k: payload[k] for k in ("pr_url", "head_sha", "merge_sha")} == {
+        "pr_url": "https://github.com/o/r/pull/7",
+        "head_sha": "abc",
+        "merge_sha": "m1",
+    }
+    assert payload["provenance"] == {"kind": "commit", "version": meta_harness.__version__, "task": "t-1"}
 
 
 async def test_auto_merge_is_read_from_the_goal_as_the_planner_has_it(monkeypatch):
@@ -288,7 +337,7 @@ async def test_merge_pr_holds_a_change_to_ci_or_deploy_files_for_an_operator(mon
     that changes one does not merge on a model's review alone; an operator's own merge goes through."""
     merges = []
 
-    async def merge_pull_request(repo, number, head_sha, base, kind=""):
+    async def merge_pull_request(repo, number, head_sha, base, kind="", provenance=None):
         merges.append(number)
         return "merged", "m1", head_sha, ""
 
@@ -317,7 +366,7 @@ async def test_merge_pr_holds_a_change_to_ci_or_deploy_files_for_an_operator(mon
 
 
 async def test_merge_pr_says_when_the_base_came_in_without_changing_the_diff(monkeypatch):
-    async def merge_pull_request(repo, number, head_sha, base, kind=""):
+    async def merge_pull_request(repo, number, head_sha, base, kind="", provenance=None):
         return "head_changed", "", "new", "brought in 2 new commits from main"
 
     async def same_diff(repo, base, before, after):

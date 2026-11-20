@@ -236,7 +236,13 @@ async def record_published(record: PublishedRecord) -> None:
         raise _task_api_error(err) from err
     events.emit(
         "pull_request_opened",
-        {"pr_url": p.pr_url, "branch": p.branch, "files": p.files},
+        {
+            "pr_url": p.pr_url,
+            "branch": p.branch,
+            "files": p.files,
+            # What the description says it came from, for the task's page; none from a resumed pull request.
+            **({"provenance": p.provenance} if p.provenance else {}),
+        },
         task_id=record.task_id,
         event_id=events.stable_id(record.task_id, "pull_request_opened", p.commit),
     )

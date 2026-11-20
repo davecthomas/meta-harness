@@ -114,6 +114,7 @@ test("Approve says what it will create, creates the issues and tells the page", 
   expect(toTracker.checked).toBe(true);
   expect(dialog.textContent).toContain("Add the 3 new tasks to GitHub as issues");
   expect(dialog.textContent).toContain("with the label meta-harness:goal-g-1");
+  expect(dialog.textContent).toContain("Each one ends with a provenance line naming this goal and you.");
   fireEvent.click(within(dialog).getByRole("button", { name: "Approve and start" }));
   await waitFor(() => expect(approved).toHaveLength(1));
   expect(asked.at(-1)).toMatchObject({ url: "/v1/goals/g-1/approve", method: "POST", body: { track: true } });
