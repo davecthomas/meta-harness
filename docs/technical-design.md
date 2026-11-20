@@ -1149,7 +1149,9 @@ is its `Version:` line, else its subject's prefix (`feat/`, `fix/`, or
 version out, with the whole history checked out, and gives it to the edge
 image as a build argument and to the VM's services in their environment, as
 `MH_VERSION`; the version files hold the base and change only with
-`VERSION`. CI fails a pull request that changes a version file. A merged pull
+`VERSION`. A deploy that passes its smoke task publishes its version as a
+GitHub release (`v<version>`, on the deployed commit), which the README's
+version badge reads. CI fails a pull request that changes a version file. A merged pull
 request's `Closes` line closes the issue. The task then waits, still `running`
 and holding its repo-area lock, for every check on the merge commit,
 deploys included, recorded as `merge_checks`, and its status reason says so
