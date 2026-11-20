@@ -64,8 +64,20 @@ async def record_prompt(record: RunPromptRecord) -> None:
         "run_prompt",
         {"run_id": record.run_id, "kind": record.kind, "template": record.template, "prompt": record.prompt},
         record,
-        events.stable_id(record.run_id, "run_prompt"),
+        _prompt_event_id(record),
     )
+
+
+def _prompt_event_id(record: RunPromptRecord) -> str:
+    """The run_prompt event id: the run id, and the workflow's number when the provenance gives one.
+
+    A task sent back with no pull request numbers its runs from 1 again, so without the workflow a
+    later run's prompt would share an earlier run's event id and the event service would drop it.
+    """
+    workflow = (record.provenance or {}).get("workflow")
+    if isinstance(workflow, int) and not isinstance(workflow, bool) and workflow >= 1:
+        return events.stable_id(record.run_id, "run_prompt", workflow)
+    return events.stable_id(record.run_id, "run_prompt")
 
 
 def _append(event_type: str, payload: dict[str, Any], record: RunPromptRecord, event_id: str) -> None:

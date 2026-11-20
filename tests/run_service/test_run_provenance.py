@@ -334,6 +334,30 @@ async def test_record_prompt_appends_the_provenance_before_the_prompt(monkeypatc
     assert sent[4]["event_id"] != event["event_id"]
 
 
+async def test_a_retry_with_the_same_run_id_records_its_new_prompt(monkeypatch):
+    sent: list[dict] = []
+    monkeypatch.setattr(prompt_activities.events, "client", lambda: _client(sent))
+    first = run_provenance.build(run_provenance.TaskOrigin(task_id="t-1"), "t-1:run-1", "task", "c", "repo-task-v1")
+    # The task sent back with no pull request starts again at run 1, in its second workflow.
+    second = run_provenance.build(
+        run_provenance.TaskOrigin(task_id="t-1", retries=1), "t-1:run-1", "task", "c", "repo-task-v1"
+    )
+
+    for made, prompt in ((first, "Old"), (second, "New")):
+        await ActivityEnvironment().run(
+            prompt_activities.record_prompt, RunPromptRecord("t-1", "t-1:run-1", "task", "repo-task-v1", prompt, made)
+        )
+
+    prompts = [e for e in sent if e["event_type"] == "run_prompt"]
+    assert [e["payload"]["prompt"] for e in prompts] == ["Old", "New"]
+    assert prompts[0]["event_id"] != prompts[1]["event_id"]
+    # A workflow that predates provenance keeps the event id it always had.
+    await ActivityEnvironment().run(
+        prompt_activities.record_prompt, RunPromptRecord("t-1", "t-1:run-1", "task", "repo-task-v1", "Old")
+    )
+    assert sent[-1]["event_id"] == prompt_activities.events.stable_id("t-1:run-1", "run_prompt")
+
+
 async def test_a_record_that_does_not_hold_together_is_not_appended_and_the_run_goes_on(monkeypatch):
     sent: list[dict] = []
     monkeypatch.setattr(prompt_activities.events, "client", lambda: _client(sent))
