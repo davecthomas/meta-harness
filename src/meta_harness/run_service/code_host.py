@@ -345,8 +345,8 @@ async def publish(
         return Published(branch, base, commit, files, existing[0]["html_url"], False, stamped=stamped)
     if not isinstance(body, str):
         body = await body(files)
-    outbound.require(title, "a pull request's title")
-    outbound.require(body, "a pull request's description")
+    outbound.require(title, "a pull request's title", outbound.GITHUB, title=True)
+    outbound.require(body, "a pull request's description", outbound.GITHUB)
     pull = await _github(
         repo,
         OPEN_PULL_REQUEST,
@@ -585,9 +585,9 @@ async def post_review(
     with one.
     """
 
-    outbound.require(body, "a review's body")
+    outbound.require(body, "a review's body", outbound.GITHUB)
     for placed_comment in comments:
-        outbound.require(placed_comment["body"], "a review's inline comment")
+        outbound.require(placed_comment["body"], "a review's inline comment", outbound.GITHUB)
 
     def stamped(text: str) -> str:
         return stamp(text, provenance) if provenance else text
@@ -646,7 +646,7 @@ async def comment_on_lines(
 ) -> str:
     """Posts a review comment on lines of the pull request's head commit (the new side), and returns its URL.
     With provenance, the comment ends with its provenance line."""
-    outbound.require(body, "a comment on a pull request's lines")
+    outbound.require(body, "a comment on a pull request's lines", outbound.GITHUB)
     body = stamp(body, provenance) if provenance else body
     payload: dict = {"commit_id": head_sha, "path": path, "line": line, "side": "RIGHT", "body": body}
     if start_line is not None and start_line < line:
@@ -658,7 +658,7 @@ async def comment_on_lines(
 async def comment(repo: str, number: int, body: str, provenance: Provenance | None = None) -> str:
     """Posts a comment on the pull request's conversation, and returns its URL. With provenance, the comment
     ends with its provenance line."""
-    outbound.require(body, "a comment on a pull request")
+    outbound.require(body, "a comment on a pull request", outbound.GITHUB)
     body = stamp(body, provenance) if provenance else body
     posted = await _github(repo, REVIEW, "POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})
     return str((posted or {}).get("html_url", ""))
@@ -848,7 +848,7 @@ async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr
     """Adds a section to the pull request's description, once: a retry finds its heading there and adds
     nothing. Returns the description as it then stands, so a caller can read back the section it holds, which
     is an earlier attempt's when one added it. A local repo's pull request is its record file."""
-    outbound.require(text, "a section added to a pull request's description")
+    outbound.require(text, "a section added to a pull request's description", outbound.GITHUB)
     section = f"\n\n## {heading}\n\n{text.strip()}\n"
     if is_local(repo):
         current = pr_record.read_text(encoding="utf-8") if pr_record.exists() else ""

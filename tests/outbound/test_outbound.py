@@ -159,3 +159,54 @@ def test_a_context_names_a_known_destination_kind_and_source():
         outbound.Context("slack")
     assert outbound.destination_of("jira:VL-1") == outbound.JIRA
     assert outbound.destination_of("mh:i-1") == outbound.OWN and outbound.destination_of("github") == outbound.GITHUB
+
+
+def test_a_mention_and_an_issue_a_models_text_closes_go_in_code_spans_on_the_way_to_github(no_pass):
+    text = (
+        "Thanks @octocat and @acme/platform. This fixes #12 and closes acme/app#7.\n"
+        "Resolves: https://github.com/acme/app/issues/9. Mail ada@example.com, run `@types/node`.\n\n"
+        "```\n@pytest.fixture\nfixes #3\n```\n"
+    )
+    made = _prepare(text, source=outbound.GENERATED)
+    assert "`@octocat`" in made and "`@acme/platform`" in made
+    assert "fixes `#12`" in made and "closes `acme/app#7`" in made
+    assert "Resolves: `https://github.com/acme/app/issues/9`" in made
+    assert "ada@example.com" in made and "run `@types/node`." in made, "an address and code are left alone"
+    assert "```\n@pytest.fixture\nfixes #3\n```" in made, "nothing in a code block notifies or closes"
+    [did] = [o for o in made.report if o.stage == "inert"]
+    assert did.note == "2 mentions and 3 closing references put in code spans"
+
+    title = _prepare("Bump @types/node, fixes #4", kind=outbound.TITLE, source=outbound.GENERATED)
+    assert title == "Bump `@types/node`, fixes `#4`"
+
+
+def test_the_control_planes_own_closes_line_stays_and_a_persons_words_are_never_changed(no_pass):
+    composed = "The run's summary.\n\nCloses acme/app#12\n\nThe log named @types/node."
+    made = _prepare(composed, source=outbound.FIXED, kind=outbound.BODY)
+    assert "Closes acme/app#12\n" in made, "the line this code adds is what closes the issue"
+    assert "`@types/node`" in made, "a name from a log or an error notifies no one"
+
+    said = "@octocat please look, this fixes #12"
+    assert _prepare(said, source=outbound.PERSON) == said
+    assert _prepare(said, source=outbound.GENERATED, destination=outbound.JIRA) == said, "Jira acts on neither"
+    plain = "No one is named and nothing is closed."
+    assert _prepare(plain, source=outbound.GENERATED) == plain
+
+
+def test_a_checked_text_is_refused_where_it_was_not_prepared_for(no_pass):
+    body = _prepare("A body.", destination=outbound.OWN, kind=outbound.BODY)
+    outbound.require(body, "an issue's body", outbound.OWN)
+    with pytest.raises(TypeError, match="was prepared for own and is being posted to github"):
+        outbound.require(body, "a pull request's description", outbound.GITHUB)
+    with pytest.raises(TypeError, match="was prepared as a body. Prepare it with the kind outbound.TITLE"):
+        outbound.require(body, "an issue's title", outbound.OWN, title=True)
+    title = _prepare("A title", kind=outbound.TITLE)
+    outbound.require(title, "a pull request's title", outbound.GITHUB, title=True)
+    with pytest.raises(TypeError, match="was prepared as a title"):
+        outbound.require(title, "a comment on a pull request", outbound.GITHUB)
+    outbound.require(outbound.trusted("a test's text"), "an issue's body", outbound.JIRA)
+
+
+def test_a_text_for_a_tracker_always_names_its_kind_and_who_wrote_it():
+    with pytest.raises(TypeError):
+        asyncio.run(outbound.for_tracker("A comment.", "github:o/r#1"))

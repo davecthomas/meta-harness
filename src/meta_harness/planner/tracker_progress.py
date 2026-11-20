@@ -96,7 +96,12 @@ async def write(goal: dict, tracker: Tracker, tasks, errors: list[str]) -> list[
             if task.get("pr_url"):
                 await tracker.link_pull_request(link["ref"], task["pr_url"], task.get("title") or task["pr_url"])
             signed = Provenance(COMMENT, goal=goal["id"], task=task["id"])
-            await tracker.comment(link["ref"], await outbound.for_tracker(told.comment, link["ref"], provenance=signed))
+            await tracker.comment(
+                link["ref"],
+                await outbound.for_tracker(
+                    told.comment, link["ref"], outbound.COMMENT, outbound.FIXED, provenance=signed
+                ),
+            )
         except TrackerError as err:
             errors.append(f"{link['ref']}: could not tell its tracker {told.key.split(':')[0]}: {err}")
             continue

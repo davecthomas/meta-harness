@@ -77,4 +77,4 @@ def unchecked_text(monkeypatch):
     that came through the outbound pipeline (outbound.require), which tests/outbound proves on its own."""
     from meta_harness import outbound
 
-    monkeypatch.setattr(outbound, "require", lambda text, what: None)
+    monkeypatch.setattr(outbound, "require", lambda text, what, destination, title=False: None)

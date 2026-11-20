@@ -45,7 +45,10 @@ async def write(goal: dict, tracker: Tracker, errors: list[str]) -> list[str]:
         try:
             signed = Provenance(COMMENT, goal=goal["id"])
             await tracker.comment(
-                link["ref"], await outbound.for_tracker(reply_for(reason), link["ref"], provenance=signed)
+                link["ref"],
+                await outbound.for_tracker(
+                    reply_for(reason), link["ref"], outbound.COMMENT, outbound.FIXED, provenance=signed
+                ),
             )
         except TrackerError as err:
             errors.append(f"{link['ref']}: could not tell its tracker why it is not started: {err}")

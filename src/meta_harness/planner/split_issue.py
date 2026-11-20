@@ -78,7 +78,7 @@ async def split_issue(
             if payload := writing.record("issue", outbound.writing_outcomes([checked]), goal_id=goal_id):
                 events.emit("writing_checked", payload, actor="planner", tags={"goal_id": goal_id})
             text = await outbound.for_tracker(
-                splits.with_origin(str(checked), ref), where, outbound.BODY, provenance=signed
+                splits.with_origin(str(checked), ref), where, outbound.BODY, outbound.FIXED, provenance=signed
             )
             name = await outbound.for_tracker(title.strip(), where, outbound.TITLE, outbound.GENERATED)
             made = await writer.create_issue(repo, name, text, [label] if label else [])

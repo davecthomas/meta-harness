@@ -143,7 +143,9 @@ async def announce(tracker: Any, original: str, parts: list[str], goal_id: str =
     names = ", ".join(short(p) for p in parts)
     said = f"Split into {names}. They run in place of this issue, and it closes once they are all done."
     try:
-        body = await outbound.for_tracker(said, original, provenance=Provenance(COMMENT, goal=goal_id, by=by))
+        body = await outbound.for_tracker(
+            said, original, outbound.COMMENT, outbound.FIXED, provenance=Provenance(COMMENT, goal=goal_id, by=by)
+        )
         await tracker.comment(original, body)
     # Refused, or a tracker that cannot write to that issue: the split stands either way, so it is only logged.
     except (TrackerError, ValueError, AttributeError) as err:
@@ -164,7 +166,10 @@ async def close_done(tracker: Tracker, links: list[dict]) -> list[str]:
             names = ", ".join(short(p) for p in link["split_into"])
             signed = Provenance(COMMENT, goal=str(link.get("goal_id") or ""))
             said = f"Closed: the issues it was split into are all done ({names})."
-            await tracker.comment(link["ref"], await outbound.for_tracker(said, link["ref"], provenance=signed))
+            await tracker.comment(
+                link["ref"],
+                await outbound.for_tracker(said, link["ref"], outbound.COMMENT, outbound.FIXED, provenance=signed),
+            )
         except TrackerError as err:
             log.warning(
                 "could not close %s, whose parts are all done: %s. The next sweep tries again", link["ref"], err

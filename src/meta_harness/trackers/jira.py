@@ -404,8 +404,8 @@ class JiraTracker:
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
         """Creates the issue in the goal's project. For a goal with several repos its description says which
         one it is for, the way the planner reads it back."""
-        outbound.require(title, "an issue's title")
-        outbound.require(body, "an issue's body")
+        outbound.require(title, "an issue's title", outbound.JIRA, title=True)
+        outbound.require(body, "an issue's body", outbound.JIRA)
         several = self.source is not None and len(self.source.repos) > 1
         await self._check_name(self._project(), "issue_type", self._site().issue_type_of(self._project()))
         made = await self._call(
@@ -426,7 +426,7 @@ class JiraTracker:
         return await self.read(ref_for(made["key"]))
 
     async def comment(self, ref: str, body: str) -> str:
-        outbound.require(body, "a comment on an issue")
+        outbound.require(body, "a comment on an issue", outbound.JIRA)
         key = parse_ref(ref)
         await self.mark(ref)
         made = await self._call("POST", f"/issue/{key}/comment", json={"body": body})
