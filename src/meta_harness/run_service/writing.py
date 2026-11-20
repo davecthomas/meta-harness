@@ -224,6 +224,23 @@ READ_BACK = re.compile(r"^(?:Paths|Depends on|Closes|Fixes|Resolves)\b.*$", re.M
 CHECKS_SECTION = re.compile(r"^#{1,6}[ \t]+Acceptance checks[ \t]*\n(.*?)(?=^#{1,6}[ \t]|\Z)", re.MULTILINE | re.DOTALL)
 
 
+def read_back_lines(text: str) -> set[int]:
+    """The numbers of the lines the control plane reads back (READ_BACK, and each line under an Acceptance
+    checks heading), counted from 1. A rewrite must keep them as they are, so the scanner's hit on one, such
+    as a long check counted as a long sentence, is no finding: no rewrite could clear it."""
+    found = {text.count("\n", 0, match.start()) + 1 for match in READ_BACK.finditer(text)}
+    for section in CHECKS_SECTION.finditer(text):
+        first = text.count("\n", 0, section.start(1)) + 1
+        found.update(first + offset for offset, line in enumerate(section.group(1).splitlines()) if line.strip())
+    return found
+
+
+def findings(text: str, source: str | None = None) -> list[dict[str, Any]]:
+    """The scanner's findings in a text: its decided hits, but for those on a line a rewrite must keep."""
+    kept = read_back_lines(text)
+    return [hit for hit in decided(scan(text, source)) if hit.get("line") not in kept]
+
+
 def kept_parts(text: str) -> dict[str, Counter]:
     """The parts of a text a rewrite must keep, each with how often it occurs: the lines the control plane
     reads back, fenced code blocks, code spans, headings, link targets, and the numbers and this deployment's
@@ -310,7 +327,7 @@ async def check(text: str, transport: httpx.AsyncBaseTransport | None = None) ->
     outcome = Outcome(text=text)
     try:
         source = await asyncio.to_thread(scanner_source)
-        hits = decided(await asyncio.to_thread(scan, text, source))
+        hits = await asyncio.to_thread(findings, text, source)
         outcome.findings = len(hits)
         outcome.categories = dict(Counter(str(hit.get("category_name") or hit.get("category")) for hit in hits))
         if not hits:
@@ -322,10 +339,12 @@ async def check(text: str, transport: httpx.AsyncBaseTransport | None = None) ->
         outcome.model = f"{config['engine']}:{config['model']}"
         written, outcome.usd_cost = await rewrite(text, hits, transport)
         outcome.rewritten = True
-        left = decided(await asyncio.to_thread(scan, written, source))
+        left = await asyncio.to_thread(findings, written, source)
         outcome.findings_after = len(left)
         if left:
-            outcome.reason = f"the rewrite still has {len(left)} of the scanner's findings"
+            # Which ones, so a record of dropped rewrites shows what the model could not clear.
+            named = ", ".join(dict.fromkeys(str(hit.get("match"))[:40] for hit in left[:3]))
+            outcome.reason = f"the rewrite still has {len(left)} of the scanner's findings ({named})"
         elif reason := lost(text, written):
             outcome.reason = reason
         else:
