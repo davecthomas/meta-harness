@@ -6,11 +6,16 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FINAL_TEXT_CHARS, normalizeCommand, RunRecord, runsCheck } from "../server/run-record.ts";
+import { FINAL_TEXT_CHARS, matchCheck, normalizeCommand, RunRecord, runsCheck } from "../server/run-record.ts";
 
-test("a command runs a check when the check, as written, is part of it", () => {
+test("a command runs a check when the check's steps are whole steps of it", () => {
 	assert.equal(runsCheck("uv run pytest -q tests", "uv run pytest -q tests"), true);
-	assert.equal(runsCheck("uv sync &&  uv run   pytest -q tests 2>&1 | tail", "uv run pytest -q tests"), true);
+	assert.equal(runsCheck("uv sync &&  uv run   pytest -q tests", "uv run pytest -q tests"), true);
+	assert.equal(runsCheck("uv run pytest -q tests/run_service", "uv run pytest -q tests"), false, "a narrower run");
+	assert.equal(runsCheck("echo uv run pytest -q tests", "uv run pytest -q tests"), false, "a print of it");
+	assert.equal(runsCheck("echo 'uv run pytest -q tests'", "uv run pytest -q tests"), false);
+	assert.equal(runsCheck("cd images/harness-pi && uv run pytest -q tests", "uv run pytest -q tests"), false, "another dir");
+	assert.equal(runsCheck("cd images/harness-pi && npm ci && npm test", "cd images/harness-pi && npm ci"), true);
 	assert.equal(runsCheck("cd /workspace && uv run pytest -q tests", "uv run pytest -q tests", "/workspace"), true);
 	assert.equal(
 		runsCheck("cd /workspace/images/harness-pi && npm test", "cd images/harness-pi && npm test", "/workspace/"),
@@ -20,6 +25,54 @@ test("a command runs a check when the check, as written, is part of it", () => {
 	assert.equal(runsCheck("uv run pytest -q tests/run_service", "uv run ruff check ."), false);
 	assert.equal(runsCheck("anything", "   "), false, "an empty check matches nothing");
 	assert.equal(normalizeCommand("  a \n b  "), "a b");
+});
+
+test("what a command's exit status proves about a check depends on how the command holds it", () => {
+	const check = "uv run pytest -q tests";
+	assert.equal(matchCheck("uv run pytest -q tests", check), "exact");
+	assert.equal(matchCheck("cd /workspace && uv run pytest -q tests", check, "/workspace"), "exact");
+	assert.equal(matchCheck("uv sync && uv run pytest -q tests", check), "chained");
+	assert.equal(matchCheck("uv run pytest -q tests 2>&1 && uv run ruff check .", "uv run ruff check ."), "chained");
+	assert.equal(matchCheck("uv sync && uv run pytest -q tests | tail", check), "opaque", "a pipe hides its status");
+	assert.equal(matchCheck("uv run pytest -q tests && echo ok | tail", check), "opaque");
+	assert.equal(matchCheck("uv run pytest -q tests || true", check), "opaque");
+	assert.equal(matchCheck("uv sync\nuv run pytest -q tests", check), "opaque", "a newline separates steps");
+	assert.equal(matchCheck("echo uv run pytest -q tests | tail", check), "none");
+	assert.equal(matchCheck("uv run pytest -q tests && make x || true", check), "opaque");
+	assert.equal(matchCheck("uv run ruff check .; uv run pytest -q tests && ls", check), "opaque");
+	assert.equal(matchCheck("uv run pytest -q tests && ls &", check), "opaque");
+});
+
+test("a chain proves its checks passed only when it passed, and proves none failed", () => {
+	const checks = ["uv run pytest -q tests", "uv run ruff check .", "cd images/harness-pi && npm ci && npm test"];
+	const record = new RunRecord(checks, "/workspace");
+	record.command("uv run pytest -q tests/run_service", false);
+	record.command("echo uv run ruff check .", false);
+	assert.deepEqual(
+		record.view().checks.map((c) => c.ran),
+		[false, false, false],
+		"neither a narrower run nor a print counts",
+	);
+
+	record.command("uv run pytest -q tests && uv run ruff check .", true);
+	assert.deepEqual(record.view().checks.slice(0, 2), [
+		{ check: checks[0], ran: true, passed: null },
+		{ check: checks[1], ran: true, passed: null },
+	]);
+
+	record.command("cd /workspace && uv run pytest -q tests && uv run ruff check .", false);
+	record.command("cd /workspace/images/harness-pi && npm ci && npm test", false);
+	assert.deepEqual(
+		record.view().checks.map((c) => c.passed),
+		[true, true, true],
+	);
+
+	record.command("uv run ruff check .", true);
+	record.command("uv run pytest -q tests && echo done | tee log", false);
+	assert.deepEqual(record.view().checks.slice(0, 2), [
+		{ check: checks[0], ran: true, passed: null },
+		{ check: checks[1], ran: true, passed: false },
+	]);
 });
 
 test("the final words are the last turn's text only when that turn called no tool", () => {

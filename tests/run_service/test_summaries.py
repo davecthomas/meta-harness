@@ -15,6 +15,7 @@ RECORD = {
         {"check": "uv run pytest -q", "ran": True, "passed": True},
         {"check": "uv run ruff check .", "ran": True, "passed": False},
         {"check": "make lint", "ran": False, "passed": None},
+        {"check": "make docs", "ran": True, "passed": None},
     ],
     "commands": {"run": 7, "failed": 2},
 }
@@ -63,6 +64,7 @@ def test_the_fallback_lists_the_files_checks_plan_and_commands():
             "- `uv run pytest -q`: passed",
             "- `uv run ruff check .`: failed",
             "- `make lint`: no command the run made contained it",
+            "- `make docs`: ran, but the command's exit status does not show how it ended",
             "",
             "The run's last plan:",
             "- done: Read the code",

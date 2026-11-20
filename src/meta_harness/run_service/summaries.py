@@ -102,10 +102,12 @@ def _fallback(text: str | None, record: dict[str, Any]) -> str | None:
 def _check_line(check: dict[str, Any]) -> str:
     if not check.get("ran"):
         outcome = "no command the run made contained it"
-    elif check.get("passed"):
+    elif check.get("passed") is True:
         outcome = "passed"
-    else:
+    elif check.get("passed") is False:
         outcome = "failed"
+    else:
+        outcome = "ran, but the command's exit status does not show how it ended"
     return f"- `{check['check']}`: {outcome}"
 
 

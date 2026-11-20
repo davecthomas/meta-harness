@@ -13,7 +13,11 @@ import type { PlanStep } from "../extension/owned-tools.ts";
 /** A final text over this many characters is cut, so a runaway reply cannot bloat the record. */
 export const FINAL_TEXT_CHARS = 20_000;
 
-/** How one acceptance check ended: `ran` is false when no command matched it, and `passed` is then null. */
+/**
+ * How one acceptance check ended. `ran` is false when no command ran it, and `passed` is then null. `ran` is
+ * true with `passed` null when a command ran the check but its exit status cannot prove how the check ended:
+ * a chain that failed, or one whose operators hide a step's status.
+ */
 export interface CheckOutcome {
 	check: string;
 	ran: boolean;
@@ -43,10 +47,59 @@ export function normalizeCommand(command: string, workspaceDir = ""): string {
 	return text;
 }
 
-/** True when the command runs the check: the check, as written, is part of the command. */
+/**
+ * The shell's step separators: `&&`, `||`, `;`, `|` and a lone `&`. A newline is read as `;` before this.
+ * `2>&1`, `&>` and the like are redirections, not separators.
+ */
+const SEPARATORS = /&&|\|\||;|\||(?<![>&<0-9])&(?![&>])/;
+
+/**
+ * What, besides `&&`, can run a step without its status deciding the command's: every other separator, and
+ * subshell or substitution syntax.
+ */
+const HIDING_OPERATORS = /\|\||;|\||(?<![>&<0-9])&(?![&>])|`|\$\(|[()]/;
+
+/** A command's steps, split on every separator, each trimmed. */
+function steps(command: string): string[] {
+	return command.split(SEPARATORS).map((step) => step.trim());
+}
+
+/**
+ * Whether the command runs the check, and what its exit status proves about it.
+ *
+ * The command runs the check when the check's steps appear, whole and in order, among the
+ * command's steps, with no `cd` before them that the check does not make itself. A step that only prints or
+ * extends the check, like `echo <check>` or `<check>/run_service`, does not match.
+ *
+ * - `"none"`: the command does not run the check.
+ * - `"exact"`: the command is the check, so its exit status is the check's.
+ * - `"chained"`: the command is a plain `&&` chain holding the check. A zero exit proves every step ran and
+ *   passed; a failure does not say which step failed or whether the check ran at all.
+ * - `"opaque"`: the command holds the check, but other operators hide its steps' status.
+ */
+export function matchCheck(command: string, check: string, workspaceDir = ""): "none" | "exact" | "chained" | "opaque" {
+	const wanted = steps(normalizeCommand(check));
+	if (wanted.every((step) => !step)) return "none";
+	const normalized = normalizeCommand(command.trim().replace(/\n/g, " ; "), workspaceDir);
+	const have = steps(normalized);
+	const at = findRun(have, wanted);
+	if (at < 0) return "none";
+	if (have.slice(0, at).some((step) => /^(cd|pushd)(\s|$)/.test(step))) return "none";
+	if (HIDING_OPERATORS.test(normalized)) return "opaque";
+	return have.length === wanted.length ? "exact" : "chained";
+}
+
+/** Where `wanted` starts as a contiguous run of whole steps in `have`, or -1. */
+function findRun(have: string[], wanted: string[]): number {
+	for (let i = 0; i + wanted.length <= have.length; i += 1) {
+		if (wanted.every((step, j) => have[i + j] === step)) return i;
+	}
+	return -1;
+}
+
+/** True when the command runs the check. */
 export function runsCheck(command: string, check: string, workspaceDir = ""): boolean {
-	const wanted = normalizeCommand(check);
-	return wanted.length > 0 && normalizeCommand(command, workspaceDir).includes(wanted);
+	return matchCheck(command, check, workspaceDir) !== "none";
 }
 
 export class RunRecord {
@@ -77,14 +130,20 @@ export class RunRecord {
 		if (!this.files.includes(path)) this.files.push(path);
 	}
 
-	/** One bash command that ended. A later run of a check replaces how an earlier one ended. */
+	/**
+	 * One bash command that ended. A later run of a check replaces how an earlier one ended, even when the later
+	 * run's result is unknown, since the earlier result may no longer hold.
+	 */
 	command(command: string, failed: boolean): void {
 		this.commandsRun += 1;
 		if (failed) this.commandsFailed += 1;
 		for (const outcome of this.checks) {
-			if (!runsCheck(command, outcome.check, this.workspaceDir)) continue;
+			const match = matchCheck(command, outcome.check, this.workspaceDir);
+			if (match === "none") continue;
 			outcome.ran = true;
-			outcome.passed = !failed;
+			if (match === "exact") outcome.passed = !failed;
+			else if (match === "chained") outcome.passed = failed ? null : true;
+			else outcome.passed = null;
 		}
 	}
 
