@@ -1,6 +1,6 @@
 import { Badge, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import type { MhEvent } from "../../api";
-import { provenance, summariesOf, type PullSummary, type SummarySource } from "./provenance";
+import { provenance, summariesOf, type PullSummary, type SummarySource } from "./summaries";
 
 // A summary's source as a badge, with what that means on hover.
 export function SummaryBadge({ source, size = "sm" }: { source: SummarySource; size?: "xs" | "sm" }) {

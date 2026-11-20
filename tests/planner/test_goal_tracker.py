@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from meta_harness.planner.service import create_app
+from meta_harness.run_service import provenance
 from meta_harness.trackers import Issue, TrackerError, Trackers
 from meta_harness.trackers import registry as tracker_registry
 
@@ -248,6 +249,17 @@ def test_the_trackers_are_listed_as_their_adapters_describe_them_and_issue_lists
     assert [i["ref"] for i in named.json()["issues"]] == [f"github:{REPO}#78"]
 
 
+def _unsigned(told: list[tuple]) -> list[tuple]:
+    """What the tracker was told, each comment without the provenance line it ends with."""
+    plain = []
+    for kind, ref, value in told:
+        if kind == "comment":
+            value, _, signed = value.rpartition("\n\n")
+            assert provenance.parse(signed), f"a comment with no provenance: {value!r}"
+        plain.append((kind, ref, value))
+    return plain
+
+
 def test_a_jira_issue_is_told_how_its_task_goes_once_per_change_and_done_closes_it(world):
     """Nothing in Jira shows a task's progress, or closes its issue, unless the planner says: each change is
     written once, a write that failed is tried again, and done is what lets the goal be met."""
@@ -261,7 +273,9 @@ def test_a_jira_issue_is_told_how_its_task_goes_once_per_change_and_done_closes_
 
     task["status"] = "running"
     assert sweep()["told"] == [ref]
-    assert jira.told == [
+    [said] = provenance.parse(jira.told[1][2])
+    assert (said["kind"], said["goal"], said["task"]) == ("comment", goal["id"], task["id"]), "it names its task"
+    assert _unsigned(jira.told) == [
         ("status", ref, "in_progress"),
         ("comment", ref, f"The meta-harness started work on this issue (task {task['id']})."),
     ]
@@ -275,7 +289,7 @@ def test_a_jira_issue_is_told_how_its_task_goes_once_per_change_and_done_closes_
     jira.refuse_comments = False
     jira.told.clear()
     assert sweep()["told"] == [ref], "the write that failed is made again"
-    assert jira.told == [
+    assert _unsigned(jira.told) == [
         ("status", ref, "in_review"),
         ("link", ref, pr),
         ("comment", ref, f"A pull request is open, and it is ready to merge: {pr}"),
@@ -284,7 +298,7 @@ def test_a_jira_issue_is_told_how_its_task_goes_once_per_change_and_done_closes_
     task["status"] = "closed"
     jira.told.clear()
     done = sweep()
-    assert jira.told[0] == ("status", ref, "done") and jira.told[-1] == (
+    assert jira.told[0] == ("status", ref, "done") and _unsigned(jira.told)[-1] == (
         "comment",
         ref,
         f"Done: the pull request merged. {pr}",

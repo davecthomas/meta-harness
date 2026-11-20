@@ -2,7 +2,7 @@ import type { MhEvent } from "../../api";
 import { moneyText, usd } from "../../money";
 import { heldLine } from "./hold";
 import { writingLine } from "./writing";
-import { summaryLine } from "./provenance";
+import { summaryLine } from "./summaries";
 
 // The stages a task passes through, left to right. A step sits in its stage's column, and a step that
 // belongs to an earlier stage than the one before it starts a new row: that is how a loop back shows.

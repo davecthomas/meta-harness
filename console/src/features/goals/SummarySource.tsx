@@ -1,6 +1,6 @@
 import { Badge, Tooltip } from "@mantine/core";
 import type { IssueProgress } from "../../api";
-import { provenance } from "../tasks/provenance";
+import { provenance } from "../tasks/summaries";
 
 // Whose words an issue's pull request description holds, on its card. One badge for the opening summary: the
 // run's own, or one the meta-harness wrote because the run left none usable. A second badge, apart from it,

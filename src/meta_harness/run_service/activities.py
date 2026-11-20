@@ -59,6 +59,7 @@ from meta_harness.run_service import (
     events,
     harness_client,
     pr_summary,
+    provenance,
     routing,
     run_grants,
     sandbox,
@@ -260,6 +261,10 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
     ref = ref_for(info.workflow_id)
     image = str(request.candidate.profile["image"])
     if request.repo:
+        # A conflict fix's clean merge is a commit the meta-harness makes, so it says where it came from.
+        signed = provenance.Provenance(
+            provenance.COMMIT, task=request.task_id, run=run_id, model=request.candidate.label
+        )
         await _clone(
             tag,
             request.repo,
@@ -267,6 +272,7 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
             sandbox.git_dir_for(ref, run_id),
             request.branch,
             request.merge_base,
+            provenance.commit_message(f"Merge origin/{request.merge_base}", signed) if request.merge_base else "",
         )
     profile = request.candidate.profile
     box = await _lease(tag, run_id, ref, image, sandbox.Resources.from_profile(profile), sandbox.services_for(profile))
@@ -357,20 +363,22 @@ async def publish(request: PublishRequest) -> PublishResult:
     """
     ref = ref_for(activity.info().workflow_id)
     workspace = sandbox.workspace_for(ref, request.run_id)
+    signed = _signed(request)
     # The summary the description was written with, once a pull request is opened, to record its source.
     opened: list[pr_summary.Section] = []
 
     async def body(files: list[str]) -> str:
         """The description, written once a pull request is to be opened: the run's summary goes through the
         writing pass, or a fallback from the branch's files stands in for one the run did not leave, and the
-        lines the meta-harness adds around it stay as they are."""
+        lines the meta-harness adds around it stay as they are. The whole description carries the provenance."""
         part = await _summary_section(request, files)
         opened.append(part)
-        return _pr_body(request, part)
+        return provenance.stamp(_pr_body(request, part), signed)
 
     message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
         f"\n\nCloses {request.ticket}" if request.ticket else ""
     )
+    message = provenance.commit_message(message, provenance.Provenance(provenance.COMMIT, **_signed_fields(request)))
     try:
         published = await code_host.publish(
             repo=request.repo,
@@ -404,7 +412,7 @@ async def publish(request: PublishRequest) -> PublishResult:
                 request.repo,
                 published.pr_url,
                 f"Fix round {request.fix_round} ({request.run_id})",
-                part.text,
+                provenance.stamp(part.text, signed),
                 sandbox.task_dir_for(ref) / "pull-request.md",
             )
         except code_host.CodeHostError as err:
@@ -422,7 +430,23 @@ async def publish(request: PublishRequest) -> PublishResult:
         files=published.files,
         pr_url=published.pr_url,
         created=published.created,
+        provenance=provenance.payload(signed),
     )
+
+
+def _signed_fields(request: PublishRequest) -> dict[str, Any]:
+    """What a publish's description and commit name: its task, run and model, and a fix run's round."""
+    return {
+        "task": request.task_id,
+        "run": request.run_id,
+        "model": request.candidate,
+        "round": request.fix_round or None,
+    }
+
+
+def _signed(request: PublishRequest) -> provenance.Provenance:
+    """The provenance of a pull request's description, or of the fix round's section a fix run adds to it."""
+    return provenance.Provenance(provenance.PULL_REQUEST, **_signed_fields(request))
 
 
 async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> list[str]:
@@ -533,7 +557,9 @@ async def cleanup_run(run_id: str) -> CleanupResult:
     return CleanupResult(grant_spent_usd=spent)
 
 
-async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path, branch: str = "", merge_base: str = "") -> None:
+async def _clone(
+    tag: str, repo: str, workspace: Path, git_dir: Path, branch: str = "", merge_base: str = "", merge_message: str = ""
+) -> None:
     """The repo task's clone, made on this machine before the per-run sandbox starts.
 
     The git directory goes beside the workspace, not inside it, so the
@@ -541,7 +567,7 @@ async def _clone(tag: str, repo: str, workspace: Path, git_dir: Path, branch: st
     """
     existed = git_dir.is_dir()
     try:
-        checked_out = await code_host.clone(repo, workspace, git_dir, branch, merge_base)
+        checked_out = await code_host.clone(repo, workspace, git_dir, branch, merge_base, merge_message)
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     if not existed:
@@ -937,7 +963,8 @@ async def post_comment(request: CommentRequest) -> str:
     try:
         repo, number = code_host.pr_number(request.pr_url)
         [body] = await _written("comment", [request.body], request.task_id)
-        return await code_host.comment(repo, number, body)
+        signed = provenance.Provenance(provenance.COMMENT, task=request.task_id)
+        return await code_host.comment(repo, number, body, provenance=signed)
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
 
@@ -1144,16 +1171,19 @@ async def post_review(request: PostReviewRequest) -> str:
         for f in findings
         if f.get("path") and f.get("line")
     ]
+    signed = provenance.Provenance(
+        provenance.REVIEW, task=request.task_id, model=request.reviewer, round=request.round_no
+    )
     if code_host.is_local(request.repo):
         ref = ref_for(activity.info().workflow_id)
         path = sandbox.task_dir_for(ref) / f"review-{request.round_no}.md"
         placed = "\n".join(f"- `{c['path']}` line {c['line']}: {c['body']}" for c in comments)
-        path.write_text(f"{body}\n\n{placed}\n", encoding="utf-8")
+        path.write_text(provenance.stamp(f"{body}\n\n{placed}", signed) + "\n", encoding="utf-8")
         url = f"file://{path}"
     else:
         try:
             repo, number = code_host.pr_number(request.pr_url)
-            url = await code_host.post_review(repo, number, request.head_sha, body, comments)
+            url = await code_host.post_review(repo, number, request.head_sha, body, comments, provenance=signed)
         except code_host.CodeHostError as err:
             raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     if request.task_id:
@@ -1168,6 +1198,8 @@ async def post_review(request: PostReviewRequest) -> str:
                 "review_url": url,
                 # Which findings (from 1) are follow-ups, for the task's Reviews tab.
                 "follow_ups": sorted(n + 1 for n in follow),
+                # What the review's body says it came from, for the task's page.
+                "provenance": provenance.payload(signed),
             },
             task_id=request.task_id,
             event_id=events.stable_id(request.task_id, "pull_request_reviewed", request.round_no),
@@ -1298,6 +1330,7 @@ async def merge_pr(request: MergeRequest) -> MergeResult:
     One merge at a time per repo: a task holds the repo's merge lock from checking that its branch holds the
     base's newest commit to merging, so no other pull request merges between the two."""
     same = False
+    merged_by = provenance.Provenance(provenance.COMMIT, task=request.task_id)
     try:
         async with merge_lock(request.repo):
             if code_host.is_local(request.repo):
@@ -1315,7 +1348,7 @@ async def merge_pr(request: MergeRequest) -> MergeResult:
                         ),
                     )
                 state, sha, head, detail = await code_host.merge_pull_request(
-                    repo, number, request.head_sha, request.base, request.kind
+                    repo, number, request.head_sha, request.base, request.kind, provenance=merged_by
                 )
                 if state == "head_changed" and head:
                     same = await code_host.same_diff(repo, request.base, request.head_sha, head)
@@ -1324,7 +1357,13 @@ async def merge_pr(request: MergeRequest) -> MergeResult:
     if state == "merged" and request.task_id:
         events.emit(
             "pull_request_merged",
-            {"pr_url": request.pr_url, "head_sha": request.head_sha, "merge_sha": sha},
+            {
+                "pr_url": request.pr_url,
+                "head_sha": request.head_sha,
+                "merge_sha": sha,
+                # A local repo's merge only moves its base, so only a code host's merge commit carries trailers.
+                **({} if code_host.is_local(request.repo) else {"provenance": provenance.payload(merged_by)}),
+            },
             task_id=request.task_id,
             event_id=events.stable_id(request.task_id, "pull_request_merged"),
         )

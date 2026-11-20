@@ -1108,8 +1108,9 @@ through. Merges are one at a time per repo:
 the run service's merge activity holds the repo's merge lock, a Postgres
 advisory lock, from checking the branch to merging it. A branch that lacks the
 base's newest commits, because another task's pull request merged while it
-was reviewed, is not merged: GitHub merges the base into it (`update-branch`),
-and the new head goes back to the checks. So no pull request merges against a
+was reviewed, is not merged: the base is merged into it through GitHub's
+merges endpoint, not `update-branch`, so the merge commit carries provenance
+trailers, and the new head goes back to the checks. So no pull request merges against a
 base it was not checked on. Whether it is also reviewed again depends on the
 pull request's own diff against the base, which the merge activity compares
 at the reviewed head and the new one (`same_diff` in its result). When the
@@ -1322,6 +1323,38 @@ checked when the planner and the run service's worker start.
 Not built: the pass on merge-check notes, which are a task's status reason
 and are not posted, and a pull request description updated after a fix run,
 since no description is updated today.
+
+#### Provenance
+
+Each thing the meta-harness writes on a code host or a tracker says where it
+came from (`src/meta_harness/run_service/provenance.py`). Text for people to
+read ends with one line, added after the writing pass so the pass never
+rewrites it:
+
+    Provenance: meta-harness 0.49.0; kind review; task t-12; model harness:pi-review/x:y; round 2
+
+The line names the meta-harness version and the kind of post (`pull_request`,
+`review`, `comment`, `issue`), then whichever of goal, task, run, model,
+round and operator (`by`) are known where the post is written:
+
+| Post | What its line names |
+|---|---|
+| A pull request's description, and a fix round's section in it | Task, run, model; the fix round |
+| A review, and each of its inline comments | Task, the reviewer's model, the round |
+| A comment on a pull request | Task; for a line comment from the console, the operator |
+| An issue a plan or a split creates | Goal; the planning task; the operator who approved or split |
+| A comment on a tracker issue: progress, a reply, a split | Goal; the task, for progress |
+
+A commit the meta-harness makes ends with git trailers instead:
+`Meta-Harness-Version`, `-Goal`, `-Task`, `-Run`, `-Model`, `-Round` and
+`-By`. That covers a run's commit, a conflict fix's clean merge of its base,
+the merge that brings a stale branch's base in before it merges, and the
+squash merge, where they follow the `Version:` line. The
+`pull_request_opened`, `pull_request_reviewed`, `pull_request_merged` and
+`pull_request_commented` events carry the same fields as `provenance`. The
+task page's details show the newest of each as a Provenance row. Nothing
+already posted is changed. A local repo's merge only moves its base, so it
+makes no commit and carries no trailers.
 
 ### Sequences
 

@@ -7,7 +7,7 @@ import pytest
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 
-from meta_harness.run_service import activities, code_host, pr_summary, writing
+from meta_harness.run_service import activities, code_host, pr_summary, provenance, writing
 from meta_harness.run_service.shared import PublishRequest
 
 FILES = ["src/app.py", "tests/test_app.py"]
@@ -157,7 +157,9 @@ async def test_a_fix_round_s_own_summary_is_added_after_the_writing_pass(host):
 
     await ActivityEnvironment().run(activities.publish, _request(OWN, fix_round=1))
 
-    assert host["added"] == [("Fix round 1 (run-task-t-1:run-1)", OWN)]
+    [(heading, text)] = host["added"]
+    assert heading == "Fix round 1 (run-task-t-1:run-1)"
+    assert text.startswith(f"{OWN}\n\n") and provenance.parse(text), "the round's section carries its provenance"
     assert host["checked"] == [[OWN]]
 
 

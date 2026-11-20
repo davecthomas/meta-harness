@@ -13,6 +13,7 @@ import asyncio
 
 from meta_harness import db
 from meta_harness.planner import store
+from meta_harness.run_service.provenance import COMMENT, Provenance, stamp
 from meta_harness.trackers.base import Tracker, TrackerError
 
 
@@ -41,7 +42,7 @@ async def write(goal: dict, tracker: Tracker, errors: list[str]) -> list[str]:
         if not reason or reason == link.get("replied"):
             continue
         try:
-            await tracker.comment(link["ref"], reply_for(reason))
+            await tracker.comment(link["ref"], stamp(reply_for(reason), Provenance(COMMENT, goal=goal["id"])))
         except TrackerError as err:
             errors.append(f"{link['ref']}: could not tell its tracker why it is not started: {err}")
             continue

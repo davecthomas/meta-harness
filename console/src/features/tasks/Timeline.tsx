@@ -5,7 +5,7 @@ import type { MhEvent } from "../../api";
 import { moneyText, usd } from "../../money";
 import { heldLine } from "./hold";
 import { writingLine } from "./writing";
-import { summaryLine } from "./provenance";
+import { summaryLine } from "./summaries";
 
 // One entry on the timeline: a turn with what happened in it, or an event between turns.
 export type Entry =

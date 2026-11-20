@@ -5,7 +5,7 @@ import type { MhEvent } from "../../api";
 import { theme } from "../../theme";
 import { entries } from "./Timeline";
 import { steps } from "./path";
-import { summariesOf, summaryLine } from "./provenance";
+import { summariesOf, summaryLine } from "./summaries";
 import { OpeningSummaryBadge, PullSummaries } from "./PullSummaries";
 
 let n = 0;

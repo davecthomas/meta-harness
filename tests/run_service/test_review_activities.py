@@ -258,7 +258,10 @@ async def test_a_review_posts_line_findings_inline_and_the_rest_in_its_body(monk
     method, path, body = posted[0]
     assert (method, path) == ("POST", "/repos/owner/repo/pulls/7/reviews")
     assert body["event"] == "COMMENT" and body["commit_id"] == "abc"
-    assert body["comments"] == [{"path": "app.py", "line": 3, "side": "RIGHT", "body": "Off by one."}]
+    [inline] = body["comments"]
+    assert {k: inline[k] for k in ("path", "line", "side")} == {"path": "app.py", "line": 3, "side": "RIGHT"}
+    finding, _, signed = inline["body"].partition("\n\n")
+    assert finding == "Off by one." and signed.startswith("Provenance: meta-harness ")
     assert "`changes`" in body["body"] and "Two things." in body["body"] and "- Docs." in body["body"]
 
 
