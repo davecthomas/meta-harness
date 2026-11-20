@@ -225,6 +225,9 @@ export const goalsApi = {
       method: "POST",
       body: JSON.stringify({ ref }),
     }),
+  // The parts of a held issue as the planner drafts them: each a complete issue, to edit before splitting.
+  splitDrafts: (id: string, ref: string) =>
+    call<{ ref: string; drafts: SplitDraft[] }>(`/v1/goals/${id}/issues/split-drafts`, { method: "POST", body: JSON.stringify({ ref }) }),
   splitIssue: (id: string, ref: string, issues: SplitDraft[]) =>
     call<{ goal_id: string; ref: string; created: string[] }>(`/v1/goals/${id}/issues/split`, {
       method: "POST",

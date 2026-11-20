@@ -92,6 +92,7 @@ from meta_harness.planner import (
     cost_facts,
     repos,
     sizing,
+    splits,
     store,
     tracker_progress,
     tracker_replies,
@@ -199,10 +200,12 @@ async def sweep_goal(
     result.replied = await tracker_replies.write(goal, tracker, result.errors)
     # Before the goal is looked at for being met: for a tracker that is told, done is what closes an issue.
     result.told = await tracker_progress.write(goal, goal_tracker(tracker, goal), tasks, result.errors)
-    if result.told:
+    # A split issue whose parts are all done is closed, with a comment: it needs nothing from anyone.
+    replaced = await splits.close_done(tracker, await asyncio.to_thread(_links, goal["id"]))
+    if result.told or replaced:
         # Telling a tracker done is what closed those issues, so their closing is recorded now, not a sweep
         # later: a goal whose last task just merged is met in this sweep.
-        await _record_closed(goal, seen - set(result.told), tracker, events, result)
+        await _record_closed(goal, seen - set(result.told) - set(replaced), tracker, events, result)
     if not result.errors:
         await _complete_if_met(goal, tracker, tasks, events, result)
     try:
@@ -306,8 +309,10 @@ async def cancel_goal_tasks(goal: dict, tasks: TaskClient, who: str) -> dict[str
 
 
 def issues_done(links: list[dict]) -> bool:
-    """Whether a goal's issues are all closed. A goal that never held an issue waits for its first one."""
-    return bool(links) and all(link["state"] == "closed" for link in links)
+    """Whether a goal's issues are all closed, a split one counting as closed once its parts are, whatever its
+    tracker could do with it. A goal that never held an issue waits for its first one."""
+    by_ref = {link["ref"]: link for link in links}
+    return bool(links) and all(link["state"] == "closed" or splits.replaced_done(link, by_ref) for link in links)
 
 
 async def _complete_if_met(goal: dict, tracker: Tracker, tasks: TaskClient, events: Events, result: SweepResult):
@@ -476,8 +481,13 @@ async def _take_in(
         return
     size, sized = found
     was_held = (existing or {}).get("held_reason")
-    # An issue its goal's approved plan took in is not held for its size or its gaps: the plan was the review.
-    if not (existing or {}).get("run_anyway") and not (existing or {}).get("planned_at"):
+    # An issue its goal's approved plan took in is not held for its size or its gaps: the plan was the review. Nor
+    # is a part of a split: it was cut to size already.
+    if (
+        not (existing or {}).get("run_anyway")
+        and not (existing or {}).get("planned_at")
+        and not splits.is_part(issue.body)
+    ):
         held = sizing.hold_reason(size, sized, bool(goal.get("strict_issues")))
         if held:
             if held != was_held:

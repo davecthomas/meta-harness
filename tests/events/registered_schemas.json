@@ -1034,6 +1034,34 @@
     ],
     "type": "object"
   },
+  "split_drafted v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "parts": {
+        "type": "integer"
+      },
+      "ref": {
+        "type": "string"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "ref",
+      "parts",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
   "task_admitted v1": {
     "additionalProperties": true,
     "properties": {

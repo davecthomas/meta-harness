@@ -30,7 +30,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from meta_harness import db, retrying
-from meta_harness.planner import drafting, planning, plans, store, voice
+from meta_harness.planner import drafting, planning, plans, splits, store, voice
 
 log = logging.getLogger("meta_harness.planner")
 
@@ -169,6 +169,9 @@ def actionable(
     out = []
     for need in needs:
         link = by_ref.get(need.get("ref") or "")
+        # A split issue's parts run in its place and it closes itself: nothing about it is the operator's.
+        if link and splits.is_replaced(link) and not need.get("action") == "accept_fix":
+            continue
         task = by_id.get((link or {}).get("task_id") or "")
         wanted = need.get("action") if need.get("action") in ACTIONS else ""
         pr = (task or {}).get("pr_url") or ""
@@ -231,6 +234,11 @@ def stage(link: dict, task: dict | None, auto_merge: bool) -> str:
     meta-harness itself, which no one need act on."""
     if link["state"] != "open":
         return "done: its issue is closed"
+    if splits.is_replaced(link):
+        return (
+            f"split into {', '.join(splits.short(p) for p in link['split_into'])}, which run in its place. It closes "
+            "by itself once they are done. Nothing is needed from the operator"
+        )
     if task is None:
         if link.get("refused_reason"):
             return "not started: refused. It waits on the operator"
@@ -277,7 +285,7 @@ def facts(
                 "task_reason": ((task or {}).get("status_reason") or "")[:300] or None,
                 "waiting_on_operator_for": (task or {}).get("waiting_on"),
                 "pull_request": (task or {}).get("pr_url"),
-                "held": link.get("held_reason"),
+                "held": None if splits.is_replaced(link) else link.get("held_reason"),
                 "refused": link.get("refused_reason"),
                 "waits_on": list(
                     dict.fromkeys([*(link.get("depends_on") or []), *(link.get("plan_depends_on") or [])])

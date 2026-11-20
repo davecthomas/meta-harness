@@ -2159,7 +2159,7 @@ credential.
 | POST | `/v1/goals/{id}/approve`, `/replan` | Planner | Approve (`track`, default true: whether the new tasks become issues in the goal's tracker or are kept in the meta-harness): apply the newest plan, settling each decision on the goal's issues, and create its new tasks' issues, in dependency order, with the goal's label, hold them for the goal, and make it `active`. Each draft's body goes through the writing pass before it becomes an issue. An invalid plan is refused (409) with its reasons; a refusal by GitHub (502, with GitHub's reason) leaves the goal in `planning`, and approving again carries on from the next draft, making none twice. Replan, with an optional `note`: start a new planning task, given the note and the plan it replaces. Approving a phase is planned | built |
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or remove one from it, with or without a task. A ref another goal holds is refused, naming that goal. Removing an issue cancels its task when the task has not ended, and answers `{dropped, task_canceled}`; a task with a pull request open is refused (409) unless `force=true`, which cancels the task and leaves the pull request open. The goal keeps the ref marked `dropped`, so its label never sweeps the issue back in; adding it back by ref clears the mark, and another goal may take it meanwhile | built |
 | POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps, at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold or removed, 409 for one not held, closed (the route reads the issue from GitHub first and records it closed; 502 when it cannot be read), or a met or canceled goal. Records `issue_released` | built |
-| POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label; a goal with no label holds them by ref. Each body must name its paths on a `Paths:` line (422 names those that do not); a refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps; one split already is refused (409), as is a closed one; one the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
+| POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label; a goal with no label holds them by ref. Each body must have acceptance checks and a `Paths:` line (422 names each part and what it lacks), and gets a `Split from` line; the original gets a comment naming its parts and closes once they are done; a refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps; one split already is refused (409), as is a closed one; one the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row: each one's state (in review, waiting, blocked, merged, closed; merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting, not closed), when it was opened and reached that state, its fix rounds and latest run; the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
@@ -2344,18 +2344,26 @@ After sizing:
   `held_reason` says why, with the suggested split. The goal's board shows it
   under Needs attention with two actions. Run anyway
   (`POST /v1/goals/{id}/issues/run-anyway`, `issue_released`) makes it a task
-  at the next sweep, which an active goal runs at once. Split opens the
-  suggested issues as drafts to edit, drop or add to, each starting with the
-  held issue's paths on a `Paths:` line and its acceptance checks; creating
-  them (`POST /v1/goals/{id}/issues/split`, `issue_split`) opens each in the
-  held issue's repo with the goal's label, refuses a draft with no `Paths:`
-  line, and holds them by ref for a goal with no label. The goal takes them in
+  at the next sweep, which an active goal runs at once. Split asks the planner
+  for the parts (`POST /v1/goals/{id}/issues/split-drafts`, one model call,
+  `split_drafted`, a planning cost; `planner/splits.py`): each a complete issue
+  saying what to change, the outcome a reviewer checks, its paths on a `Paths:`
+  line and its acceptance checks, to edit, drop or add to. When the planner
+  cannot draft them, the dialog says why and starts from an outline of the
+  suggested split. Creating them (`POST /v1/goals/{id}/issues/split`,
+  `issue_split`) opens each in the held issue's repo with the goal's label and
+  a `Split from` line naming the original, refuses a part with no acceptance
+  check or no `Paths:` line (422, naming each part and what it lacks), and
+  holds them by ref for a goal with no label. A part, known by its `Split from`
+  line, is never held for its size: it was cut to size already. The goal takes them in
   as it takes any issue. When GitHub refuses a draft partway, the issues
   created before it are the split: they are recorded, with `issue_split` (and
   `issue_added` for each one a goal with no label holds by ref), and the 502
-  names them. The held issue stays held, saying what it was split
-  into, until it is closed or run anyway: the planner closes no issue a person
-  wrote. The split is recorded on its link (`split_into`), so later sweeps
+  names them. The original gets a comment naming its parts, and the same holds
+  for an issue an approved plan split. It needs nothing from the operator: an
+  update never asks about it. Once every part is closed, the sweep closes it
+  with a comment saying so, and a goal counts it done from then on, even in a
+  tracker with no done state to move it to. The split is recorded on its link (`split_into`), so later sweeps
   keep that reason and neither size nor split it again, and a second Split
   is refused (409). While a split is creating its issues, its claim
   (`split_into` empty) refuses Run anyway (409), so the original never

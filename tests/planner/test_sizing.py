@@ -11,7 +11,7 @@ from meta_harness import db
 from fastapi.testclient import TestClient
 
 from meta_harness.config import kinds
-from meta_harness.planner import sizing
+from meta_harness.planner import sizing, splits
 from meta_harness.planner.service import create_app
 from meta_harness.planner.sizing import size_issue  # as it is, before conftest.py turns it off with no gateway
 from meta_harness.planner.tracker import Issue
@@ -678,7 +678,7 @@ def test_an_issue_split_while_the_sweep_sizes_it_makes_no_task_and_keeps_its_spl
     tracker.issues[ref].updated_at = "2026-11-12T10:00:00Z"
     sizer.answers[ref] = {"size": "small", "reasons": [], "missing": [], "split": []}
     created = [f"github:{REPO}#{_number()}", f"github:{REPO}#{_number()}"]
-    reason = sizing.split_reason(created)
+    reason = splits.reason(created)
 
     def split(issue: Issue) -> None:
         with db.connect(autocommit=True) as conn:
@@ -874,3 +874,98 @@ async def test_a_sizing_answer_cut_short_is_asked_for_once_more_with_room_to_fin
     always = httpx.MockTransport(lambda r: httpx.Response(200, json={"data": None, "finish_reason": "length"}))
     with pytest.raises(sizing.SizingError, match="did not finish \\(length\\)"):
         await sizing.size_issue(_issue("A long one."), always)
+
+
+def test_a_split_drafts_complete_parts_links_both_ways_and_closes_the_original_once_its_parts_are_done(
+    world, monkeypatch
+):
+    client, events, tracker, tasks, sizer = world
+    statuses: list[tuple[str, str]] = []
+
+    async def set_status(ref, status):
+        statuses.append((ref, status))
+        tracker.issues[ref] = dataclasses.replace(tracker.issues[ref], state="closed")
+        return True
+
+    tracker.set_status = set_status
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Everything.\n\nPaths: console, src\n\n{CHECKS}", labels=[goal["label"]])
+    sizer.answers[ref] = {"size": "large", "reasons": [], "missing": [], "split": ["Titles", "Labels"]}
+    _sweep(client, goal)
+
+    # Split asks the planner for complete parts to edit: what to change, an outcome, paths and checks.
+    async def draft(issue, titles):
+        assert (issue.ref, titles) == (ref, ["Titles", "Labels"])
+        parts = [
+            {"title": t, "body": splits.compose(f"Do {t}.", f"{t} show.", ["console"], ["make test"], ref)}
+            for t in titles
+        ]
+        return parts, "claude:test-model", "0.002"
+
+    monkeypatch.setattr(splits, "draft", draft)
+    drafted = client.post(f"/v1/goals/{goal['id']}/issues/split-drafts", json={"ref": ref}, headers=OPERATOR)
+    assert drafted.status_code == 200, drafted.text
+    parts = drafted.json()["drafts"]
+    assert "## Outcome" in parts[0]["body"] and "- `make test`" in parts[0]["body"]
+    assert _payloads(events, "split_drafted")[-1]["usd_cost"] == "0.002"
+
+    # A part that is not a complete issue is refused, naming what it lacks; nothing is created.
+    url = f"/v1/goals/{goal['id']}/issues/split"
+    thin = client.post(
+        url, json={"ref": ref, "issues": [{"title": "Titles", "body": "Paths: console"}]}, headers=OPERATOR
+    )
+    assert thin.status_code == 422 and "Titles: needs an acceptance check" in thin.json()["detail"]
+    assert tracker.created == []
+
+    split = client.post(url, json={"ref": ref, "issues": parts}, headers=OPERATOR)
+    assert split.status_code == 201, split.text
+    created = split.json()["created"]
+    number = "#" + ref.rsplit("#", 1)[-1]
+    assert all(i.body.rstrip().endswith(f"Split from {number}") for i in tracker.created)
+    assert (
+        ref,
+        f"Split into {', '.join('#' + c.rsplit('#', 1)[-1] for c in created)}. They run in place of this "
+        "issue, and it closes once they are all done.",
+    ) in tracker.comments
+
+    # The parts are sized large too, but a part is not held for its size: it was cut to size already.
+    for issue in tracker.created:
+        issue.paths, issue.checks = ["console"], ["make test"]
+        sizer.answers[issue.ref] = {"size": "large", "reasons": ["still big"], "missing": [], "split": ["a", "b"]}
+    swept = _sweep(client, goal)
+    assert all(_task(tasks, r) is not None for r in created) and not set(created) & set(swept["held"])
+
+    # Once every part is done, the sweep closes the original with a comment, and the goal is met.
+    for r in created:
+        tracker.issues[r] = dataclasses.replace(tracker.issues[r], state="closed")
+    _sweep(client, goal)
+    assert statuses == [(ref, "done")]
+    assert any(
+        r == ref and b.startswith("Closed: the issues it was split into are all done") for r, b in tracker.comments
+    )
+    assert _shown(client, goal)[ref]["state"] == "closed"
+
+
+def test_a_split_issue_is_never_asked_about_and_counts_done_once_its_parts_are():
+    from meta_harness.planner import sweep, updates
+
+    links = [
+        {
+            "ref": "jira:VL-1",
+            "state": "open",
+            "split_into": ["jira:VL-2", "jira:VL-3"],
+            "run_anyway": None,
+            "task_id": None,
+            "held_reason": "split",
+        },
+        {"ref": "jira:VL-2", "state": "closed", "split_into": [], "task_id": "t-2"},
+        {"ref": "jira:VL-3", "state": "open", "split_into": [], "task_id": "t-3"},
+    ]
+    needs = [{"what": "Close VL-1 once its parts are done.", "ref": "jira:VL-1", "action": "open_issue"}]
+    assert updates.actionable(needs, {"status": "active"}, links, []) == []
+    assert "Nothing is needed from the operator" in updates.stage(links[0], None, False)
+    assert not sweep.issues_done(links)
+    links[2]["state"] = "closed"
+    assert sweep.issues_done(links), "a split issue whose parts are done counts as done, whatever its tracker says"
+    assert splits.short("github:o/r#12") == "#12" and splits.short("jira:VL-1") == "VL-1"
+    assert splits.is_part("Do it.\n\nSplit from VL-1\n") and not splits.is_part("Do it.")

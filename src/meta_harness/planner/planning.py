@@ -21,7 +21,7 @@ from meta_harness.config import kinds as config_kinds
 from meta_harness.config import store as config_store
 from meta_harness.planner import voice
 from meta_harness.trackers.base import TrackerError
-from meta_harness.planner import plans, store
+from meta_harness.planner import plans, splits, store
 from meta_harness.planner.drafting import PLANNER_CONFIG_PATH
 from meta_harness.planner.tracker import Issue, ref_for
 from meta_harness.run_service import writing
@@ -374,7 +374,9 @@ def issue_body(draft: dict[str, Any], created: dict[str, str]) -> str:
     return f"{body}\n\nDepends on: {', '.join(names)}\n" if names else f"{body}\n"
 
 
-async def approve(goal: dict, writer: IssueWriter, events: Events, who: str, tracked: bool = True) -> dict:
+async def approve(
+    goal: dict, writer: IssueWriter, events: Events, who: str, tracked: bool = True, originals: Any = None
+) -> dict:
     """Applies the goal's plan. Its new tasks become issues, in dependency order, with the goal's label, in
     the tracker `writer` writes to: the goal's own, or the meta-harness's (tracked says which, for the
     record). Then each decision on an issue the goal already had is settled: a kept one is taken into the goal
@@ -399,6 +401,13 @@ async def approve(goal: dict, writer: IssueWriter, events: Events, who: str, tra
         raise PlanError(f"the plan cannot be approved: {'; '.join(plan['invalid'])}")
     label = goal["label"] or goal_label(goal)
     created: dict[str, str] = dict(plan["created"])
+    # Each new task that takes the place of an issue the plan split, and that issue: its body says where it came from.
+    origin = {
+        draft_id: item["ref"]
+        for item in plan.get("items") or []
+        if item["decision"] == plans.SPLIT
+        for draft_id in item["replaced_by"]
+    }
     try:
         for repo in sorted({d["repo"] for d in plan["drafts"]}):
             await writer.ensure_label(repo, label)
@@ -412,7 +421,10 @@ async def approve(goal: dict, writer: IssueWriter, events: Events, who: str, tra
             if payload := writing.record("issue", [checked], goal_id=goal["id"], draft_id=draft["draft_id"]):
                 events.emit("writing_checked", payload, actor="planner", tags={"goal_id": goal["id"]})
             written = {**draft, "body": checked.text} if checked else draft
-            issue = await writer.create_issue(draft["repo"], draft["title"], issue_body(written, created), labels)
+            text = issue_body(written, created)
+            if draft["draft_id"] in origin:
+                text = splits.with_origin(text, origin[draft["draft_id"]])
+            issue = await writer.create_issue(draft["repo"], draft["title"], text, labels)
             ref = issue.ref or ref_for(draft["repo"], issue.number)
             created[draft["draft_id"]] = ref
 
@@ -462,6 +474,11 @@ async def approve(goal: dict, writer: IssueWriter, events: Events, who: str, tra
         raise PlanError(
             f"the plan cannot be applied: {err}. Remove that issue from the plan, then approve again"
         ) from err
+    # Each split issue's readers learn where its work went.
+    for item in plan.get("items") or []:
+        if item["decision"] == plans.SPLIT and (into := [created[d] for d in item["replaced_by"] if d in created]):
+            # The issue it split is the goal's tracker's, wherever the new tasks were written.
+            await splits.announce(originals or writer, item["ref"], into)
     events.emit(
         "plan_approved",
         {"goal_id": goal["id"], "version": plan["version"], "issues": list(created.values())},
