@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from meta_harness.trackers import TrackerError
 from meta_harness.planner.service import create_app
 from meta_harness.planner.tracker import Issue
+from meta_harness.run_service import provenance
 
 from .test_planner import OPERATOR, Events, FakeTasks, FakeTracker, _no_title, migrated, registry  # noqa: F401
 
@@ -175,8 +176,14 @@ def test_approving_creates_the_issues_in_order_with_the_goals_label_and_starts_t
     store_issue, api_issue, ui_issue = tracker.created
     assert tracker.labels == [(REPO, goal["label"])]
     assert ui_issue.labels == [goal["label"], "frontend"] and store_issue.labels == [goal["label"]]
-    assert api_issue.body.endswith(f"Depends on: #{store_issue.number}\n")
-    assert ui_issue.body.endswith(f"Depends on: #{api_issue.number}\n")
+    assert f"\n\nDepends on: #{store_issue.number}\n" in api_issue.body
+    assert f"\n\nDepends on: #{api_issue.number}\n" in ui_issue.body
+    # Each issue ends with where it came from: the goal, the planning task that drafted it, who approved it.
+    [plan_task] = [t["id"] for t in tasks.tasks.values() if t["task_type"] == "plan"]
+    for issue in tracker.created:
+        [said] = provenance.parse(issue.body)
+        assert (said["kind"], said["goal"], said["task"], said["by"]) == ("issue", goal["id"], plan_task, "dave")
+        assert issue.body.endswith(provenance.line(provenance.Provenance(**said)) + "\n")
     assert approved.json()["plan"]["created"] == {"store": store_issue.ref, "api": api_issue.ref, "ui": ui_issue.ref}
     after = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
     assert after["status"] == "active" and after["started_at"] and after["plan_approved_at"]
@@ -248,8 +255,10 @@ def test_an_approved_drafts_body_goes_through_the_writing_pass_before_it_becomes
 
     assert approved.status_code == 200, approved.text
     store_issue, api_issue = tracker.created
-    assert store_issue.body == f"{plain}\n" and "rich tapestry" not in store_issue.body
-    assert api_issue.body.endswith(f"Depends on: #{store_issue.number}\n")
+    assert (
+        store_issue.body.startswith(f"{plain}\n\nProvenance: meta-harness ") and "rich tapestry" not in store_issue.body
+    )
+    assert f"\n\nDepends on: #{store_issue.number}\n" in api_issue.body
     checked = [p for t, p in events.events if t == "writing_checked"]
     assert [(p["kind"], p["draft_id"], p["kept"], p["goal_id"]) for p in checked] == [
         ("issue", "store", 1, goal["id"]),
