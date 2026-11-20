@@ -20,7 +20,7 @@
     "names": ["harness", "harnesses"],
     "engine": "claude",
     "model": "claude-haiku-4-5",
-    "max_response_tokens": 4000
+    "max_response_tokens": 8000
   },
   "planning": {
     "candidate": "harness:pi-plan/claude:claude-opus-5-5",
