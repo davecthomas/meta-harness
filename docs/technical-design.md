@@ -2123,6 +2123,7 @@ walks every remedy `decide` can name and fails one with no module.
 | `wait` | A pull request whose checks have not reported | Nothing this pass | — |
 | `retry_stronger` | A task that failed on its own account (it could not finish the work), whose last route was below the complex tier | Runs it again with `complexity: high`, so its route is the complex tier: a stronger model and the careful profile | The task policy's `remedies.retry_stronger` (1) |
 | `fix_again` | A review its fix rounds did not settle, on a swept goal | Sends it back through its review loop with `complexity: high`: a fresh set of fix rounds, on the complex tier | The task policy's `remedies.fix_again` (1) |
+| `raise_limit` | A running task held at its own spend limit (`budget_request` for `task`), whose next run needs at most twice that limit, when its goal's budget has room for the raise | Raises the task's spend limit to what the run needs, as an operator's Raise would. A goal's budget is never raised by a remedy | The task policy's `remedies.raise_limit` (1) |
 
 A remedy with a setting in the task policy's `remedies` (0 to 3 tries; 0 turns
 it off; 1 when the policy names none) counts its tries in the ledger, and is

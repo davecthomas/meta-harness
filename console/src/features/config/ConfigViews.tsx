@@ -176,6 +176,28 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
           />,
         ],
         [
+          "Spend limit raise",
+          <InlineField
+            kind="number"
+            label="Spend limit raise"
+            value={doc.remedies?.raise_limit ?? 1}
+            min={0}
+            max={3}
+            decimalScale={0}
+            display={
+              <Text size="sm">
+                {(doc.remedies?.raise_limit ?? 1) === 0
+                  ? "Off: a task at its spend limit waits for you"
+                  : `A task at its own spend limit is raised to what its next run needs, up to twice the limit and within its goal's budget, ${doc.remedies?.raise_limit ?? 1} time${(doc.remedies?.raise_limit ?? 1) === 1 ? "" : "s"}, before it waits for you. A goal's budget is never raised for you.`}
+              </Text>
+            }
+            changed={changed(s, ["remedies", "raise_limit"])}
+            reasons={s.reasons("raise_limit")}
+            readOnly={s.readOnly}
+            onCommit={(v) => s.stage(["remedies", "raise_limit"], v)}
+          />,
+        ],
+        [
           "Wait before a fix run",
           <InlineField
             kind="number"
