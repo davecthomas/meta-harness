@@ -1,5 +1,9 @@
 """Each run of a task carries its provenance: built by the workflow, recorded before the run, and published with it."""
 
+import dataclasses
+import subprocess
+from pathlib import Path
+
 import jsonschema
 import pytest
 from temporalio import activity
@@ -151,6 +155,66 @@ async def test_a_fix_run_pushed_to_an_open_pull_request_adds_its_provenance_once
     assert "- Harness profile and model: `harness:a/b:c`" in section
     assert "- Follows run: `t-1:run-2`" in section
     assert "- Task: `t-1`" in section and "- Goal: `g-1`" in section
+
+
+def _bare_repo(tmp_path: Path) -> Path:
+    """A local bare repo with one commit on main, standing in for the code host."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    git = ["git", "-C", str(seed), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "--quiet", "--initial-branch=main"], check=True)
+    (seed / "app.py").write_text("a\n")
+    subprocess.run([*git, "add", "app.py"], check=True)
+    subprocess.run([*git, "commit", "--quiet", "-m", "seed"], check=True)
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "clone", "--quiet", "--bare", str(seed), str(bare)], check=True)
+    return bare
+
+
+async def test_a_local_pull_request_keeps_every_runs_provenance_across_fix_runs_and_retries(monkeypatch, tmp_path):
+    """The task's run opens the local pull request; two fix runs push to it, the second one twice, as an
+    activity retry would. Each push keeps the description, so every run's section stays in it once."""
+    origin = _bare_repo(tmp_path)
+    monkeypatch.setattr(activities.sandbox, "RUNS_DIR", tmp_path / "runs")
+    environment = ActivityEnvironment()
+    environment.info = dataclasses.replace(environment.info, workflow_id="t-1")
+    ref = activities.ref_for("t-1")
+    record = activities.sandbox.task_dir_for(ref) / "pull-request.md"
+
+    async def run(run_id: str, kind: str, follows: str | None, fix_round: int, content: str):
+        workspace = activities.sandbox.workspace_for(ref, run_id)
+        branch = f"mh/{ref}" if fix_round else ""
+        await code_host.clone(str(origin), workspace, activities.sandbox.git_dir_for(ref, run_id), branch)
+        (workspace / "app.py").write_text(content)
+        request = PublishRequest(
+            run_id=run_id,
+            repo=str(origin),
+            ticket="",
+            title="Fix the bug",
+            candidate="harness:a/b:c",
+            summary=None,
+            spent_usd="1.00",
+            task_id="t-1",
+            fix_round=fix_round,
+            provenance=provenance.build(ORIGIN, run_id, kind, "harness:a/b:c", f"{kind}-v1", follows=follows),
+        )
+        return await environment.run(activities.publish, request)
+
+    opened = await run("t-1:run-1", "task", None, 0, "b\n")
+    first_fix = await run("t-1:run-3", "fix", "t-1:run-2", 1, "c\n")
+    second_fix = await run("t-1:run-5", "fix", "t-1:run-4", 2, "d\n")
+    retried = await run("t-1:run-5", "fix", "t-1:run-4", 2, "d\n")
+
+    assert opened.created and not first_fix.created and not second_fix.created and not retried.created
+    text = record.read_text(encoding="utf-8")
+    assert text.startswith("# Fix the bug\n")
+    assert text.count("## Run\n") == 1 and "- Run: `t-1:run-1`" in text.split("## Run\n", 1)[1]
+    for heading in ("## Run for fix round 1 (t-1:run-3)\n", "## Run for fix round 2 (t-1:run-5)\n"):
+        assert text.count(heading) == 1
+    assert text.index("## Run\n") < text.index("fix round 1 (t-1:run-3)") < text.index("fix round 2 (t-1:run-5)")
+    assert "- Follows run: `t-1:run-4`" in text.split("## Run for fix round 2 (t-1:run-5)\n", 1)[1]
+    # The record names the head the last push left on the branch.
+    assert text.count("\nhead: ") == 1 and f"head: mh/{ref} at {retried.commit}\n" in text
 
 
 async def test_a_fix_run_without_provenance_adds_no_run_section(monkeypatch, tmp_path):

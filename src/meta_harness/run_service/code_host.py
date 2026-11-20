@@ -303,9 +303,17 @@ async def publish(
     await _git(git_dir, workspace, "push", "--quiet", "--force-with-lease", "origin", f"{branch}:{branch}", env=env)
     if is_local(repo):
         created = not pr_record.exists()
-        if not isinstance(body, str):
-            body = await body()
-        pr_record.write_text(f"# {title}\n\nbase: {base}\nhead: {branch} at {commit}\n\n{body}\n", encoding="utf-8")
+        if created:
+            if not isinstance(body, str):
+                body = await body()
+            record = f"# {title}\n\nbase: {base}\nhead: {branch} at {commit}\n\n{body}\n"
+        else:
+            # A push to a pull request already open keeps its description, as GitHub does, and with it the
+            # sections earlier runs added; only the head it names moves to the new commit.
+            record = _HEAD_LINE.sub(
+                lambda _: f"head: {branch} at {commit}", pr_record.read_text(encoding="utf-8"), count=1
+            )
+        pr_record.write_text(record, encoding="utf-8")
         return Published(branch, base, commit, files, f"file://{pr_record}", created)
     owner = repo.split("/", 1)[0]
     existing = await _github(
@@ -705,6 +713,9 @@ async def changed_lines(repo: str, since: str, head_sha: str) -> dict[str, list[
             return None
         found[str(changed["filename"])] = hunk_lines(changed["patch"])
     return found
+
+
+_HEAD_LINE = re.compile(r"^head: .*$", re.MULTILINE)
 
 
 async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr_record: Path) -> None:
