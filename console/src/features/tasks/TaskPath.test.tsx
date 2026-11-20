@@ -3,7 +3,8 @@ import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
 import type { MhEvent } from "../../api";
 import { theme } from "../../theme";
-import { TaskPath } from "./TaskPath";
+import { About, TaskPath } from "./TaskPath";
+import { steps } from "./path";
 
 let n = 0;
 const ev = (event_type: string, minute: number, payload: Record<string, unknown> = {}, run_id: string | null = null): MhEvent => ({
@@ -57,11 +58,11 @@ test("a run's step opens to its turns, and to its terminal", () => {
   expect(props.onOpenRun).toHaveBeenCalledWith("t:run-1");
 });
 
-test("a review's step opens its round, and a pull request's step links to it", () => {
+test("a review's box opens its round in Reviews, and a pull request's step links to it", () => {
   const props = show();
   fireEvent.click(screen.getByTestId("step-t:run-2"));
-  fireEvent.click(screen.getByText("Open its review round"));
-  expect(props.onOpenReviews).toHaveBeenCalled();
+  expect(props.onOpenReviews).toHaveBeenCalledWith(1);
+  expect(screen.queryByTestId("picked")).toBeNull();
   fireEvent.click(screen.getByText("Pull request #9 opened"));
   expect((screen.getByText("Open the pull request") as HTMLAnchorElement).href).toBe("https://github.com/o/r/pull/9");
 });
@@ -91,4 +92,32 @@ test("a step that is still going counts its time by the second", () => {
   expect(going()).toContain("8s so far");
   act(() => void vi.advanceTimersByTime(60_000));
   expect(going()).toContain("1m 8s so far");
+});
+
+
+test("a box's hover adds what the box does not show: a review's summary and findings, a run's plan, never its run id", () => {
+  const events = [
+    ...EVENTS.slice(0, 3),
+    ev("plan_updated", 4, { steps: [{ step: "List the refs", status: "done" }, { step: "Wire the picker", status: "in_progress" }] }, "t:run-1"),
+    ...EVENTS.slice(3, 9),
+    ev("review_submitted", 16, { summary: "The picker works, but a typed name is accepted unchecked.", findings: [{ path: "console/src/x.tsx", line: 42, body: "Refuse a name the list lacks." }] }, "t:run-2"),
+    ...EVENTS.slice(9),
+  ];
+  const path = steps(events);
+  const text = (key: string) => {
+    const { container, unmount } = render(<MantineProvider theme={theme}><About step={path.find((s) => s.key === key)!} /></MantineProvider>);
+    const found = container.textContent ?? "";
+    unmount();
+    return found;
+  };
+  const review = text("t:run-2");
+  expect(review).toContain("The picker works, but a typed name is accepted unchecked.");
+  expect(review).toContain("console/src/x.tsx:42: Refuse a name the list lacks.");
+  expect(review).toContain("Click to open round 1 in Reviews.");
+  expect(review).not.toContain("t:run-2");
+  expect(review).not.toContain("harness:pi-review");
+  const run = text("t:run-1");
+  expect(run).toContain("Its plan, 1 of 2 done:");
+  expect(run).toContain("✓ List the refs");
+  expect(run).not.toContain("$3.50");
 });
