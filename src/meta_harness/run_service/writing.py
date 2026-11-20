@@ -53,8 +53,9 @@ REWRITE_SYSTEM_PROMPT = (
     "description, a code review, an issue or a comment. A checker found the listed wording problems in it. "
     "Rewrite the text so that none of them remains, in plain words and short sentences. Keep the meaning and "
     "every fact. Keep every heading, link, code span, code block, number, file path and name exactly as it is, "
-    "and keep the Markdown structure. Change nothing the findings do not require. Add nothing: no preface, "
-    "no closing remark. Return the whole text."
+    "and keep the Markdown structure. A finding that counts a sentence's words quotes the sentence: make it two "
+    "sentences, or cut a clause, so that no sentence you leave has more than 25 words. Change nothing the "
+    "findings do not require. Add nothing: no preface, no closing remark. Return the whole text."
 )
 REWRITE_SCHEMA = {
     "type": "object",
@@ -281,11 +282,42 @@ def lost(original: str, rewrite: str) -> str:
     return ""
 
 
+LONG_SENTENCE = re.compile(r"^sentence of (\d+) words$")
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+SENTENCE_COUNT_SLACK = 4
+
+
+def long_sentences(text: str, hits: list[dict[str, Any]]) -> dict[int, str]:
+    """The sentence each long-sentence finding is about, by the finding's place in hits. The scanner reports
+    such a finding as a line number and a word count, and a line of a description is a whole paragraph: told
+    only that, the model rewriting it has to count lines and guess which of several sentences is meant. So
+    the sentence is found here: on that line, the one not yet named whose word count is nearest."""
+    lines = text.splitlines()
+    taken: dict[int, set[int]] = {}
+    found: dict[int, str] = {}
+    for place, hit in enumerate(hits):
+        counted = LONG_SENTENCE.match(str(hit.get("match") or ""))
+        number = hit.get("line")
+        if not counted or not isinstance(number, int) or not 0 < number <= len(lines):
+            continue
+        parts = [part.strip() for part in SENTENCE_END.split(lines[number - 1]) if part.strip()]
+        used = taken.setdefault(number, set())
+        # The scanner counts words after it masks code, so its count and this one may differ by a few.
+        words = int(counted.group(1))
+        near = [(abs(len(part.split()) - words), i) for i, part in enumerate(parts) if i not in used]
+        if near and min(near)[0] <= SENTENCE_COUNT_SLACK:
+            used.add(min(near)[1])
+            found[place] = parts[min(near)[1]]
+    return found
+
+
 def _prompt(text: str, hits: list[dict[str, Any]]) -> str:
+    sentences = long_sentences(text, hits)
     lines = ["--- findings ---"]
-    for hit in hits:
-        fix = f" Fix: {hit['fix']}" if hit.get("fix") else ""
-        lines.append(f'line {hit.get("line")}: "{hit.get("match")}" ({hit.get("category_name")}).{fix}')
+    for place, hit in enumerate(hits):
+        fix = f" Fix: {hit['fix']}." if hit.get("fix") else ""
+        which = f' The sentence: "{sentences[place]}"' if place in sentences else ""
+        lines.append(f'line {hit.get("line")}: "{hit.get("match")}" ({hit.get("category_name")}).{fix}{which}')
     return "\n".join([*lines, "--- end of findings ---", "--- text ---", text, "--- end of text ---"])
 
 

@@ -129,6 +129,30 @@ async def test_a_rewrite_that_fails_its_checks_is_dropped_and_the_original_is_po
     assert outcome.text == SLOPPY and not outcome.kept and reason in outcome.reason
 
 
+def test_a_long_sentence_finding_quotes_its_sentence_to_the_model_that_rewrites_it():
+    long_one = (
+        "- **Tests (`GoalPlan.test.tsx`):** one each for the open issues offered, an entry the list lacks "
+        "refused, and typing still open when the list cannot be read."
+    )
+    other = (
+        "The draft form now offers the open issues of the goal, and it refuses an entry that the list of "
+        "issues lacks, and it says so in an error under the field."
+    )
+    text = f"A short one. {long_one} I added an argument.\n\nThis is robust.\n\n{other} {other}"
+    hits = writing.findings(text)
+    assert [hit["match"][:11] for hit in hits] == ["sentence of", "robust", "sentence of", "sentence of"]
+
+    named = writing.long_sentences(text, hits)
+    assert named == {0: long_one, 2: other, 3: other}, "each finding gets a sentence of its own, by word count"
+    prompt = writing._prompt(text, hits)
+    assert f'Fix: split it, or cut a clause. The sentence: "{long_one}"' in prompt
+    assert 'line 3: "robust" (excess vocabulary). Fix:' in prompt and prompt.count("The sentence:") == 3
+    # A finding whose line or count matches no sentence is still listed, without one.
+    stray = [{"line": 99, "match": "sentence of 40 words"}, {"line": 1, "match": "sentence of 90 words"}]
+    assert writing.long_sentences(text, stray) == {}
+    assert "25 words" in writing.REWRITE_SYSTEM_PROMPT
+
+
 def test_the_scanner_is_the_shipped_file_and_runs_with_none_of_this_process_environment(monkeypatch):
     def stored(kind: str) -> dict:
         return {"skills": {"no-ai-slop2": {"files": {"no-ai-slop-scan.py": "raise SystemExit(3)"}}}}

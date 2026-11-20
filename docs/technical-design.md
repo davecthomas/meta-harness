@@ -1402,7 +1402,12 @@ Last by the control plane, in the writing pass
    no rewrite could clear it.
 2. A text with findings gets one rewrite, on the model
    `config/planner.json`'s `writing_pass` names, through the HTTP Gateway's
-   `/v1/structured`. A text over 20,000 characters is not rewritten.
+   `/v1/structured`. A text over 20,000 characters is not rewritten. The
+   model is given each finding with its line. The scanner reports a long
+   sentence as a line and a word count only, and a line of a description is
+   a whole paragraph, so the pass finds the sentence and quotes it. Told the
+   line alone, the model split the wrong sentence in over half of the
+   rewrites production recorded, and each of those was dropped.
 3. The rewrite is kept only when the scanner finds nothing in it and it
    keeps every heading, link, code span, code block, number and listed name
    of the original, and every line the control plane reads back: `Paths:`,
