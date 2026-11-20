@@ -92,5 +92,8 @@ def _append_provenance(record: RunPromptRecord, made: dict[str, Any]) -> None:
         return
     # A task sent back with no pull request numbers its runs from 1 again, so the workflow is in the event id.
     _append(
-        run_provenance.EVENT_TYPE, made, record, events.stable_id(record.run_id, run_provenance.EVENT_TYPE, made["workflow"])
+        run_provenance.EVENT_TYPE,
+        made,
+        record,
+        events.stable_id(record.run_id, run_provenance.EVENT_TYPE, made["workflow"]),
     )

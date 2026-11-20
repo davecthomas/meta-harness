@@ -31,7 +31,9 @@ def _schema():
 
 
 def test_a_record_names_the_task_the_run_and_the_run_it_follows():
-    made = run_provenance.build(ORIGIN, "t-1:run-3", "fix", "harness:a/b:c", "fix-v1", tier="complex", follows="t-1:run-2")
+    made = run_provenance.build(
+        ORIGIN, "t-1:run-3", "fix", "harness:a/b:c", "fix-v1", tier="complex", follows="t-1:run-2"
+    )
 
     assert made == {
         "task_id": "t-1",
@@ -85,7 +87,9 @@ def test_a_record_that_does_not_hold_together_is_refused(change, why):
 
 
 def test_a_hand_started_workflows_runs_are_its_tasks():
-    made = run_provenance.build(run_provenance.TaskOrigin(task_id="t-1"), "run-task-t-1:run-2", "review", "x", "review-v4")
+    made = run_provenance.build(
+        run_provenance.TaskOrigin(task_id="t-1"), "run-task-t-1:run-2", "review", "x", "review-v4"
+    )
     run_provenance.check({**made, "follows": "run-task-t-1:run-1"}, "t-1")
 
 
