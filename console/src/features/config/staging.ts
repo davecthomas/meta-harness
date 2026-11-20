@@ -164,6 +164,7 @@ export function reasonTarget(kind: ConfigKind, document: Record<string, any>, re
   if (reason.startsWith("remedies.retry_stronger")) return "retry_stronger";
   if (reason.startsWith("remedies.fix_again")) return "fix_again";
   if (reason.startsWith("remedies.raise_limit")) return "raise_limit";
+  if (reason.startsWith("remedies.auto_split")) return "auto_split";
   return null;
 }
 

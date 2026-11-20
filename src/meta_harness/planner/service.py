@@ -53,6 +53,7 @@ from meta_harness.run_service import code_host, writing
 from meta_harness.run_service.provenance import COMMENT, Provenance, payload
 from meta_harness.planner import (
     activity,
+    auto_split,
     budget_api,
     cost_facts,
     drafting,
@@ -268,7 +269,16 @@ def create_app(
 
     async def sweep_one(goal: dict) -> SweepResult:
         async with locks.setdefault(goal["id"], asyncio.Lock()):
-            return await sweep_goal(goal, tracker, tasks, events, host, size)
+            result = await sweep_goal(goal, tracker, tasks, events, host, size)
+            # An issue the sweep held for its size is split by the planner itself, within its tries; the next
+            # sweep takes the parts in.
+            try:
+                result.split = await auto_split.run(goal, tracker, events)
+            except Exception as err:  # noqa: BLE001 - logged; the held issue keeps its Split and Run anyway
+                log.error(
+                    "goal %s: the planner could not split its held issues: %s: %s", goal["id"], type(err).__name__, err
+                )
+            return result
 
     name = titler or drafting.title_goal
     # The GitHub Apps, to list the repos they are installed on: the tracker's, else the environment's.

@@ -135,6 +135,8 @@ class SweepResult:
     refused: list[str] = field(default_factory=list)
     # Issues held for an operator instead of made tasks: sized large, or missing what a strict goal asks for.
     held: list[str] = field(default_factory=list)
+    # Held issues the planner split itself after the sweep (auto_split.py).
+    split: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
     unblocked: list[str] = field(default_factory=list)
     # Task ids canceled because their issue was closed with their work not yet published.

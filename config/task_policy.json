@@ -17,6 +17,7 @@
   "remedies": {
     "retry_stronger": 1,
     "fix_again": 1,
-    "raise_limit": 1
+    "raise_limit": 1,
+    "auto_split": 1
   }
 }

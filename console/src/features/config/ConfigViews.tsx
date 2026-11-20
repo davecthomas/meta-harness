@@ -198,6 +198,28 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
           />,
         ],
         [
+          "Split large issues",
+          <InlineField
+            kind="number"
+            label="Split large issues"
+            value={doc.remedies?.auto_split ?? 1}
+            min={0}
+            max={3}
+            decimalScale={0}
+            display={
+              <Text size="sm">
+                {(doc.remedies?.auto_split ?? 1) === 0
+                  ? "Off: an issue too large for one pull request waits for you to split it or run it as one"
+                  : `An issue too large for one pull request is split by the planner into complete parts, up to ${doc.remedies?.auto_split ?? 1} tr${(doc.remedies?.auto_split ?? 1) === 1 ? "y" : "ies"}, before it waits for you`}
+              </Text>
+            }
+            changed={changed(s, ["remedies", "auto_split"])}
+            reasons={s.reasons("auto_split")}
+            readOnly={s.readOnly}
+            onCommit={(v) => s.stage(["remedies", "auto_split"], v)}
+          />,
+        ],
+        [
           "Wait before a fix run",
           <InlineField
             kind="number"
