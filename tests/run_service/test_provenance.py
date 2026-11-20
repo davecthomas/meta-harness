@@ -8,7 +8,7 @@ from temporalio.testing import ActivityEnvironment
 from temporalio.worker import Worker
 
 from meta_harness.events import types
-from meta_harness.run_service import activities, prompt_activities, provenance
+from meta_harness.run_service import activities, code_host, prompt_activities, provenance
 from meta_harness.run_service.prompt_activities import RunPromptRecord
 from meta_harness.run_service.shared import PublishRequest, RunTaskInput, TaskSpec
 from meta_harness.run_service.workflows import RunTask
@@ -82,6 +82,98 @@ def test_a_record_that_does_not_hold_together_is_refused(change, why):
 def test_a_hand_started_workflows_runs_are_its_tasks():
     made = provenance.build(provenance.TaskOrigin(task_id="t-1"), "run-task-t-1:run-2", "review", "x", "review-v4")
     provenance.check({**made, "follows": "run-task-t-1:run-1"}, "t-1")
+
+
+@pytest.mark.parametrize(
+    ("run_id", "follows"),
+    [
+        # A task first started by hand as run-task-<id>, retried by the scheduler under its task id, and back.
+        ("t-1:run-4", "run-task-t-1:run-3"),
+        ("run-task-t-1:run-4", "t-1:run-3"),
+    ],
+)
+def test_a_retry_under_the_tasks_other_workflow_id_follows_the_run_before_it(run_id, follows):
+    made = provenance.build(ORIGIN, run_id, "task", "harness:a/b:c", "repo-task-v1", follows=follows)
+    provenance.check(made, "t-1")
+
+
+@pytest.mark.parametrize("follows", ["run-task-t-1:run-4", "run-task-t-1:run-5", "run-task-t-2:run-1"])
+def test_a_retry_under_the_other_workflow_id_still_follows_only_an_earlier_run_of_its_task(follows):
+    made = provenance.build(ORIGIN, "t-1:run-4", "task", "harness:a/b:c", "repo-task-v1", follows=follows)
+    with pytest.raises(provenance.ProvenanceError):
+        provenance.check(made, "t-1")
+
+
+async def test_record_prompt_keeps_a_retrys_provenance_when_its_workflow_id_changed(monkeypatch):
+    sent: list[dict] = []
+    monkeypatch.setattr(prompt_activities.events, "client", lambda: _client(sent))
+    made = provenance.build(ORIGIN, "t-1:run-4", "task", "c", "repo-task-v1", follows="run-task-t-1:run-3")
+
+    await ActivityEnvironment().run(
+        prompt_activities.record_prompt, RunPromptRecord("t-1", "t-1:run-4", "task", "repo-task-v1", "P", made)
+    )
+
+    assert [e["event_type"] for e in sent] == ["run_provenance", "run_prompt"]
+    assert sent[0]["payload"]["follows"] == "run-task-t-1:run-3"
+
+
+async def test_a_fix_run_pushed_to_an_open_pull_request_adds_its_provenance_once(monkeypatch, tmp_path):
+    record = tmp_path / "pull-request.md"
+    record.write_text("# Fix the bug\n\n## Run\n\n- Run: `t-1:run-1`\n", encoding="utf-8")
+
+    async def publish(**_: object) -> code_host.Published:
+        return code_host.Published("mh/t-1", "main", "abc123", ["app.py"], f"file://{record}", False)
+
+    monkeypatch.setattr(activities.code_host, "publish", publish)
+    monkeypatch.setattr(activities.sandbox, "task_dir_for", lambda ref: tmp_path)
+    made = provenance.build(ORIGIN, "t-1:run-3", "fix", "harness:a/b:c", "fix-v1", follows="t-1:run-2")
+    request = PublishRequest(
+        run_id="t-1:run-3",
+        repo=str(tmp_path / "repo.git"),
+        ticket="owner/repo#7",
+        title="Fix the bug",
+        candidate="harness:a/b:c",
+        summary=None,
+        spent_usd="2.00",
+        task_id="t-1",
+        fix_round=1,
+        provenance=made,
+    )
+
+    for _ in range(2):
+        result = await ActivityEnvironment().run(activities.publish, request)
+
+    assert not result.created
+    text = record.read_text(encoding="utf-8")
+    assert text.count("## Run for fix round 1 (t-1:run-3)\n") == 1
+    section = text.split("## Run for fix round 1 (t-1:run-3)\n", 1)[1]
+    assert "- Run: `t-1:run-3`" in section
+    assert "- Harness profile and model: `harness:a/b:c`" in section
+    assert "- Follows run: `t-1:run-2`" in section
+    assert "- Task: `t-1`" in section and "- Goal: `g-1`" in section
+
+
+async def test_a_fix_run_without_provenance_adds_no_run_section(monkeypatch, tmp_path):
+    record = tmp_path / "pull-request.md"
+    record.write_text("# Fix the bug\n", encoding="utf-8")
+
+    async def publish(**_: object) -> code_host.Published:
+        return code_host.Published("mh/r", "main", "abc123", ["app.py"], f"file://{record}", False)
+
+    monkeypatch.setattr(activities.code_host, "publish", publish)
+    monkeypatch.setattr(activities.sandbox, "task_dir_for", lambda ref: tmp_path)
+    request = PublishRequest(
+        run_id="r:run-3",
+        repo=str(tmp_path / "repo.git"),
+        ticket="",
+        title="T",
+        candidate="c",
+        summary=None,
+        spent_usd="0",
+        fix_round=1,
+    )
+    await ActivityEnvironment().run(activities.publish, request)
+    assert record.read_text(encoding="utf-8") == "# Fix the bug\n"
 
 
 def test_the_pull_request_and_its_commit_carry_the_provenance():

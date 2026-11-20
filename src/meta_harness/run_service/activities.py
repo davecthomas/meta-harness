@@ -388,6 +388,19 @@ async def publish(request: PublishRequest) -> PublishResult:
             )
         except code_host.CodeHostError as err:
             raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    if request.fix_round and request.provenance and not published.created:
+        # The description's Run section names the run that opened the pull request; each fix run pushed to it adds
+        # its own provenance under a heading named for the run, so a retry of the activity adds it once.
+        try:
+            await code_host.add_to_description(
+                request.repo,
+                published.pr_url,
+                _fix_provenance_heading(request),
+                "\n".join(_run_lines(request)),
+                sandbox.task_dir_for(ref) / "pull-request.md",
+            )
+        except code_host.CodeHostError as err:
+            raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     print(
         f"[{request.run_id} publish] {', '.join(published.files)} on branch {published.branch} at "
         f"{published.commit[:12]}, pull request {'opened' if published.created else 'already open'}: {published.pr_url}",
@@ -437,10 +450,7 @@ def _pr_body(request: PublishRequest, summary: str | None = None) -> str:
     lines += [
         "## Run",
         "",
-        f"- Run: `{request.run_id}`",
-        f"- Harness profile and model: `{request.candidate}`",
-        f"- Model spend for the task so far: ${request.spent_usd}",
-        *provenance.pr_lines(request.provenance),
+        *_run_lines(request),
         "",
         (
             "Opened by the meta-harness. pi worked in a clone of this repo inside a per-run sandbox that holds "
@@ -448,6 +458,21 @@ def _pr_body(request: PublishRequest, summary: str | None = None) -> str:
         ),
     ]
     return "\n".join(lines)
+
+
+def _run_lines(request: PublishRequest) -> list[str]:
+    """The run's lines in the description: the run, its pair, the task's spend, and the run's provenance."""
+    return [
+        f"- Run: `{request.run_id}`",
+        f"- Harness profile and model: `{request.candidate}`",
+        f"- Model spend for the task so far: ${request.spent_usd}",
+        *provenance.pr_lines(request.provenance),
+    ]
+
+
+def _fix_provenance_heading(request: PublishRequest) -> str:
+    """The heading a fix run's provenance is added under in an open pull request's description, one per run."""
+    return f"Run for fix round {request.fix_round} ({request.run_id})"
 
 
 @activity.defn

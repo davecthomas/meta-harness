@@ -124,7 +124,9 @@ def check(record: dict[str, Any], task_id: str) -> None:
     if follows is None:
         return
     earlier = _RUN.match(str(follows))
-    if not earlier or earlier["workflow"] != match["workflow"]:
+    # A retry may start the task's next workflow under its other id (run-task-<id> then <id>, or back), so the
+    # earlier run belongs to the task when its workflow id is either form of the task's id.
+    if not earlier or not _of_task(earlier["workflow"], task_id):
         raise ProvenanceError(f"{run_id} follows {follows!r}, which is not a run of the same task")
     if int(earlier["attempt"]) >= int(match["attempt"]):
         raise ProvenanceError(f"{run_id} follows {follows}, which is not an earlier run")

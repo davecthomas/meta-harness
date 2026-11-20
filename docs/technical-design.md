@@ -1342,7 +1342,12 @@ more for each time it was sent back.
   heading (task, goal, issue, parent task, the run it follows, and the
   workflow when it is not the first) and as git trailers at the end of the
   commit message: `Meta-Harness-Task`, `Meta-Harness-Run`, `Meta-Harness-Goal`
-  and `Meta-Harness-Issue`.
+  and `Meta-Harness-Issue`. A fix run that pushes to the open pull request
+  adds its own run lines and provenance to the description under
+  `Run for fix round <n> (<run id>)`, once however often Publish is retried.
+- A task sent back may run its next workflow under its other id (`run-task-<id>`
+  or `<id>`): a run that follows one of the other id's runs still follows a run
+  of the same task, and its earlier run must still have a lower number.
 
 The record is built from the task the workflow loads and passed as activity
 input, so it changes no activity a workflow runs. A workflow already running
