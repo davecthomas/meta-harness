@@ -161,7 +161,7 @@ async def test_a_published_pull_request_and_its_commit_say_which_task_run_and_mo
     seen: dict = {}
 
     async def publish(**kwargs):
-        seen["body"] = await kwargs["body"]()
+        seen["body"] = await kwargs["body"](["a.py"])
         seen["message"] = kwargs["commit_message"]
         return Published(branch="mh/t-1", base="main", commit="c1", files=["a.py"], pr_url="u", created=True)
 
