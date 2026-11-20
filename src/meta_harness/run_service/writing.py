@@ -5,8 +5,8 @@ as it writes them. This pass checks the result once more, after the run, and
 needs no run: a pull request description, a review's summary and findings, a
 comment, an issue a plan drafted.
 
-    1. The text goes through the writing skill's scanner, the script the active
-       `skills` configuration holds, run here with no model.
+    1. The text goes through the writing skill's scanner, the script the shipped
+       skill holds (the skill is locked), run here with no model.
     2. Text with findings gets one rewrite on the model `config/planner.json`'s
        `writing_pass` names, through the HTTP Gateway.
     3. The rewrite is kept only when it has no findings left and keeps every
@@ -150,32 +150,39 @@ def enabled() -> bool:
 
 
 def scanner_source() -> str:
-    """The scanner script's text, from the active `skills` configuration."""
+    """The scanner script's text, from the shipped skill: config/skills/<skill>/<scanner>. Never from the
+    stored `skills` configuration: this process runs the script, so what it holds is decided by a pull
+    request, and the skill is locked (config/skills.py)."""
+    from meta_harness.config import skills
+
     config = settings()
+    path = skills.skills_dir() / config["skill"] / config["scanner"]
     try:
-        skills = config_store.current_document("skills").get("skills") or {}
-    except Exception as err:  # noqa: BLE001 - whatever stops the read, the text is posted unchecked
-        raise WritingError(f"could not read the skills configuration: {err}") from err
-    source = ((skills.get(config["skill"]) or {}).get("files") or {}).get(config["scanner"])
-    if not isinstance(source, str) or not source:
-        raise WritingError(f"the skills configuration has no {config['skill']}/{config['scanner']}")
+        source = path.read_text(encoding="utf-8")
+    except OSError as err:
+        raise WritingError(f"the shipped scanner could not be read: {err}") from err
+    if not source.strip():
+        raise WritingError(f"the shipped scanner {path} is empty")
     return source
 
 
 def scan(text: str, source: str | None = None) -> dict[str, Any]:
     """The scanner's report on text. The script runs as a child process with no model, isolated from this
-    process's Python path, and is given the text on standard input."""
+    process's Python path and given none of its environment, so it holds no credential. It is given the
+    text on standard input."""
     with tempfile.TemporaryDirectory(prefix="mh-writing-") as folder:
         script = Path(folder) / "scan.py"
         script.write_text(source if source is not None else scanner_source(), encoding="utf-8")
         try:
             done = subprocess.run(  # noqa: S603 - the script is the deployment's own configuration
-                [sys.executable, "-I", str(script), "--compact"],
+                [sys.executable, "-I", "-X", "utf8", str(script), "--compact"],
                 input=text,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=SCAN_SECONDS,
                 cwd=folder,
+                env={},
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as err:

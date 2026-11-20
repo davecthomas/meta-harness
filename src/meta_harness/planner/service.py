@@ -209,6 +209,7 @@ def add_shipped_configuration(pool, events: Events) -> None:
     """At startup: what the shipped files add to the configuration reaches the active versions."""
     with pool.connection() as conn:
         for saved in [
+            *config_store.sync_locked(conn),
             *config_store.add_shipped(conn),
             *config_store.add_shipped_to_profiles(conn),
             *config_store.replace_engines(conn),

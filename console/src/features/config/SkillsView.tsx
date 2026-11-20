@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { ActionIcon, Alert, Anchor, Badge, Button, Code, Group, Modal, Paper, ScrollArea, SegmentedControl, Stack, Table, Text, Tooltip } from "@mantine/core";
-import { IconDownload, IconTrash } from "@tabler/icons-react";
+import { IconDownload, IconLock, IconTrash } from "@tabler/icons-react";
 import { api, type SkillEntry } from "../../api";
 import { PickedName, Unreadable } from "../../components/PickedName";
 import { DataTable, Empty } from "../../components/ui";
@@ -227,6 +227,9 @@ function ImportDialog({ names, onClose, onAdd }: { names: string[]; onClose: () 
   );
 }
 
+// What a locked skill's lock says, on its row and where its files are read.
+export const LOCKED = "Locked: it ships with the meta-harness and changes only by a pull request.";
+
 // Which profiles name each skill, so a skill in use says so, and cannot be removed until they stop.
 function usedBy(profiles: Record<string, { skills?: string[] }>, name: string): string[] {
   return Object.entries(profiles).filter(([, p]) => (p.skills ?? []).includes(name)).map(([profile]) => profile);
@@ -240,7 +243,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
   return (
     <Stack gap="md">
       <Text size="sm" c="dimmed">
-        A harness profile names the skills its runs load. A run is told each one's name and description, and reads the rest when its work needs it. Nothing loads from a task's repo.
+        A harness profile names the skills its runs load. A run is told each one's name and description, and reads the rest when its work needs it. Nothing loads from a task's repo. A skill with a lock ships with the meta-harness and cannot be changed or removed here.
       </Text>
       {names.length ? (
         <DataTable head={["Skill", "What it is for", "Source", "Used by", ""]} minWidth={860}>
@@ -252,6 +255,11 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
                 <Table.Td>
                   <Group gap={6} wrap="nowrap">
                     <Anchor component="button" type="button" fw={600} size="sm" onClick={() => setReading(name)}>{name}</Anchor>
+                    {skill.source?.locked && (
+                      <Tooltip label={LOCKED}>
+                        <IconLock size={14} role="img" aria-label={`${name} is locked`} />
+                      </Tooltip>
+                    )}
                     {s.original.skills?.[name] === undefined && <Badge size="xs" color="yellow" variant="light" tt="none">not saved</Badge>}
                   </Group>
                   <Text size="xs" c="dimmed">{Object.keys(skill.files).length} files, {kb(skill.files)} KB</Text>
@@ -260,7 +268,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
                 <Table.Td maw={260}><Text size="xs" c="dimmed" style={{ wordBreak: "break-all" }}>{sourceLine(skill.source)}</Text></Table.Td>
                 <Table.Td><Text size="sm">{users.length ? users.join(", ") : <Text span size="sm" c="dimmed">No profile yet</Text>}</Text></Table.Td>
                 <Table.Td>
-                  {!s.readOnly && (
+                  {!s.readOnly && !skill.source?.locked && (
                     <Tooltip label={users.length ? `Named by ${users.join(", ")}: remove it from those profiles first` : `Remove ${name}`}>
                       <ActionIcon variant="subtle" color="red" aria-label={`Remove skill ${name}`} disabled={users.length > 0} onClick={() => s.stage(["skills", name], undefined)}>
                         <IconTrash size={16} />
@@ -290,6 +298,12 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
           <Stack gap="sm">
             <Text size="sm">{skills[reading].description}</Text>
             <Text size="xs" c="dimmed">{sourceLine(skills[reading].source)}</Text>
+            {skills[reading].source?.locked && (
+              <Group gap={6} wrap="nowrap">
+                <IconLock size={14} aria-hidden />
+                <Text size="xs">{LOCKED} The meta-harness runs its script and adds its writing rules to prompts.</Text>
+              </Group>
+            )}
             <SkillFiles skill={skills[reading]} />
           </Stack>
         </Modal>

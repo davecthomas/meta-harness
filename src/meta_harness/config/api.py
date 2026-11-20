@@ -149,6 +149,12 @@ def router(
                 name, skill = skills.from_git(body.url.strip(), (body.ref or "").strip() or None, body.path)
             else:
                 raise skills.SkillError("give a git url, or the skill's files")
+            if name in skills.locked():
+                raise skills.SkillError(
+                    f"{name} is locked: it ships with the meta-harness and nothing imported may take its name. "
+                    f"Give the imported skill another name, or change {name} with a pull request to "
+                    f"config/skills/{name}/"
+                )
         except skills.SkillError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
         return {"name": name, "skill": skill}
