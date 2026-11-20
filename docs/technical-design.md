@@ -947,7 +947,12 @@ others are never pushed. The path is behind the `parallel-attempts` patch.
 The RunTask workflow of the task that opened a pull request owns it until it
 merges or closes. Review and fix are runs of that task, inside its workflow,
 recorded as its attempts with tier `review` or `fix`. The task keeps its
-scheduler slot and its repo-area lock while they run, so separate review and
+scheduler slot while they run, and its repo-area lock, though once its pull
+request is open that lock blocks no other task: the review loop is checks,
+reviews and short fix runs, and holding the area through it kept every task
+behind it waiting for hours. A conflict a later merge brings is settled at the
+task's own merge, which takes in the base first and sends a conflict to a fix
+run. Separate review and
 fix tasks would add signals between workflows without adding control. The
 loop:
 
@@ -1864,6 +1869,9 @@ every task event:
    `max_usd` plus its allowed overage; a goal whose budget only warns is
    never held for budget), and runs fewer of its tasks than its
    `max_parallel`.
+
+A held area's reason names every task in the way, in a fixed order, so the
+same holders always give the same reason.
 
 Every queued task a pass does not start has a reason, and the scheduler
 stores it (`scheduler.task_hold`, `scheduler/holds.py`): one row per held
