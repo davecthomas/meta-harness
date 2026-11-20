@@ -131,6 +131,37 @@ def test_an_update_is_written_once_for_a_state_and_again_when_the_goal_moves(wor
     assert [u["number"] for u in shown["updates"]] == [2, 1] and shown["enabled"] is True and shown["error"] is None
 
 
+def test_an_updates_words_go_through_the_writing_pass_before_a_person_reads_them(world, at_once, monkeypatch):
+    from meta_harness.run_service import writing
+
+    client, events, tasks, writer = world
+    goal = _feature(client)
+    seen: list[str] = []
+
+    async def check_all(texts, transport=None):
+        seen.extend(texts)
+        plain = "The plan is ready."
+        return [
+            writing.Outcome(
+                text=plain, before=t, findings=1, rewritten=True, kept=True, model="claude:w", usd_cost="0.001"
+            )
+            if t == "The plan is being drafted."
+            else writing.Outcome(text=t)
+            for t in texts
+        ]
+
+    monkeypatch.setattr(writing, "check_all", check_all)
+    saved = _write(goal, tasks, events, writer)
+
+    assert saved["body"] == "The plan is ready." and saved["headline"] == "Update 1"
+    assert {"Update 1", "The plan is being drafted.", "Tasks start once you approve."} <= set(seen)
+    assert all(need["what"] in seen for need in saved["needs_you"])
+    [event] = [e for e in events.events if e[0] == "goal_update_written"]
+    passed = event[1]["writing"]
+    assert (passed["kind"], passed["rewritten"], passed["kept"], passed["usd_cost"]) == ("update", 1, 1, "0.001")
+    assert passed["changes"] == [{"before": "The plan is being drafted.", "after": "The plan is ready."}]
+
+
 def test_two_updates_keep_their_distance_and_a_goal_has_only_its_share(world, monkeypatch):
     client, events, tasks, writer = world
     goal = _feature(client)

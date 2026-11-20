@@ -1338,6 +1338,7 @@ Last by the control plane, in the writing pass
 | A review's summary and each finding | The activity that posts the review |
 | A comment: findings an operator dismissed, an operator's verdict | The activity that posts the comment |
 | The body of an issue a plan drafted | The planner, when the plan is approved |
+| A goal's update: its headline, body, what comes next and each thing it asks of the operator | The planner, before the update is saved. An update is shown on the goal's page and posted nowhere; it goes through the same pipeline, as `own` text. A pass that found something rides on the update's `goal_update_written` event as `writing`, and its rewrite's cost is a writing cost of the goal |
 
 1. The text goes through the skill's scanner, `no-ai-slop-scan.py`, read
    from the active `skills` configuration and run as a child process with no

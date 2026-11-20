@@ -29,9 +29,10 @@ import httpx
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from meta_harness import db, retrying
+from meta_harness import db, outbound, retrying
 from meta_harness.outbound import rules as writing_rules
 from meta_harness.planner import drafting, planning, plans, splits, store, voice
+from meta_harness.run_service import writing
 from meta_harness.supervisor import ledger
 
 log = logging.getLogger("meta_harness.planner")
@@ -464,6 +465,21 @@ def _save(goal_id: str, state: str, written: Written) -> dict:
         return _row(cur.fetchone())
 
 
+async def _checked(written: Written) -> dict | None:
+    """Sends the update's words through the outbound pipeline before a person reads them: secrets redacted,
+    and each text rewritten where the writing pass found something and its rewrite held. An update is shown
+    on the goal's page and posted nowhere, and it is still model-written text for a person. Changes
+    `written` in place. Returns the pass's record (writing.record, kind `update`), or None when the pass
+    looked at nothing."""
+    where = outbound.Context(outbound.OWN, outbound.COMMENT, outbound.GENERATED)
+    texts = [written.headline, written.body, written.next, *(str(need.get("what") or "") for need in written.needs_you)]
+    checked = list(await asyncio.gather(*(outbound.prepare(text, where) for text in texts)))
+    written.headline, written.body, written.next = (str(text) for text in checked[:3])
+    for need, text in zip(written.needs_you, checked[3:], strict=True):
+        need["what"] = str(text)
+    return writing.record("update", outbound.writing_outcomes(checked))
+
+
 async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = None, asked: bool = False) -> dict | None:
     """Writes the goal's next update when its state has changed since the last one. Returns the update saved,
     or None when there was nothing new to say, updates are off, the goal has had its share of them, or the
@@ -511,10 +527,15 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
     if not written.headline or not written.body:
         raise UpdateError("the model wrote an empty update")
     written.needs_you = actionable(written.needs_you, goal, links, tasks_of_goal, suggestion)
+    passed = await _checked(written)
     saved = await asyncio.to_thread(_save, goal["id"], state, written)
+    payload = {"goal_id": goal["id"], "number": saved["number"], "model": written.model, "usd_cost": written.usd_cost}
+    # Only a pass that found something is recorded: a clean update's event stays as it was.
+    if passed and (passed["findings"] or passed["reasons"]):
+        payload["writing"] = passed
     events.emit(
         "goal_update_written",
-        {"goal_id": goal["id"], "number": saved["number"], "model": written.model, "usd_cost": written.usd_cost},
+        payload,
         actor="planner",
         tags={"goal_id": goal["id"]},
     )
