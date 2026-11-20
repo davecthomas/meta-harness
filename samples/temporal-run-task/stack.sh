@@ -478,15 +478,16 @@ wait_for_status() {
   exit 1
 }
 
-# check_in_turn FIRST SECOND: SECOND started running only after FIRST became ready.
+# check_in_turn FIRST SECOND: SECOND started running only once FIRST had written its change and opened its pull
+# request. A task in its review loop holds its area for no one, so SECOND need not wait for FIRST to be ready.
 check_in_turn() {
-  local first_ready second_running
-  first_ready=$("$PY" -m meta_harness.cli events read --task "$1" --type task_status_changed \
-    | grep '"to": "ready"' | awk '{print $1}' | head -n 1)
+  local first_opened second_running
+  first_opened=$("$PY" -m meta_harness.cli events read --task "$1" --type pull_request_opened \
+    | awk '{print $1}' | head -n 1)
   second_running=$("$PY" -m meta_harness.cli events read --task "$2" --type task_status_changed \
     | grep '"to": "running"' | awk '{print $1}' | head -n 1)
-  [ -n "$first_ready" ] && [ -n "$second_running" ] && [ "$second_running" -gt "$first_ready" ] \
-    || { log "expected $2 to start after $1 was ready (positions $first_ready and $second_running)"; exit 1; }
+  [ -n "$first_opened" ] && [ -n "$second_running" ] && [ "$second_running" -gt "$first_opened" ] \
+    || { log "expected $2 to start after $1 opened its pull request (positions $first_opened and $second_running)"; exit 1; }
 }
 
 # make_origin PATH: a bare repo with one commit on main, standing in for the code host.

@@ -13,7 +13,8 @@ Every MH_ADMISSION_SECONDS the meta-harness scheduler runs one admission pass:
    to its blocking line (its `max_usd` plus its allowed overage; a `warn`
    goal is never held for budget), whose goal already runs its
    `max_parallel` tasks, or whose repo
-   area another task holds. A task's areas are its `paths`, from its issue's
+   area another task holds while writing its change: a task whose pull
+   request is open blocks no one with its areas. A task's areas are its `paths`, from its issue's
    `Paths:` lines. Two areas conflict when they are the same path or one is a
    directory above the other. A task with none takes no area and runs beside
    the others, since each run has its own clone and branch and the merge step
@@ -104,6 +105,8 @@ class Admission:
         self.max_running = max_running
         # Each task holding a lock, with its goal (None for a task with no goal), from the last release pass.
         self._running_goal: dict[str, str | None] = {}
+        # Tasks whose pull request is open: their locks block no one (see _release_and_renew).
+        self._published: set[str] = set()
         self._canceling: set[str] = set()
 
     async def pass_once(self) -> AdmissionResult:
@@ -148,7 +151,7 @@ class Admission:
             if hold is None:
                 hold = self._goal_parallel_hold(task, goals, per_goal)
             if hold is None:
-                hold = await asyncio.to_thread(_lock, task["id"], task["repo"], areas_for(task))
+                hold = await asyncio.to_thread(_lock, task["id"], task["repo"], areas_for(task), self._published)
             if hold is not None:
                 found[task["id"]] = hold
                 continue
@@ -219,6 +222,7 @@ class Admission:
 
     async def _release_and_renew(self, result: AdmissionResult) -> None:
         running: dict[str, str | None] = {}
+        published: set[str] = set()
         for task_id in {row["task_id"] for row in await asyncio.to_thread(_locks)}:
             try:
                 task = await asyncio.to_thread(self.tasks.get, task_id)
@@ -228,10 +232,17 @@ class Admission:
             if task["status"] in ("queued", "running", "taken_over"):
                 await asyncio.to_thread(_renew, task_id)
                 running[task_id] = task.get("goal_id")
+                # A task with its pull request open is in its review loop: checks, reviews and short fix runs.
+                # It still counts as running, but its areas block no one. Held for that loop, they jammed every
+                # task behind it for hours; a conflict a later merge brings is settled by the task's own merge,
+                # which takes in the base first and sends a conflict to a fix run.
+                if task.get("pr_url"):
+                    published.add(task_id)
             else:
                 await asyncio.to_thread(_unlock, task_id)
                 result.released.append(task_id)
         self._running_goal = running
+        self._published = published
 
     def _goal_parallel_hold(self, task: dict, goals: dict, per_goal: dict[str, int]) -> Hold | None:
         """Why the task waits for its goal's own parallel limit, when the goal sets one and runs that many."""
@@ -340,8 +351,9 @@ def _locks() -> list[dict]:
     return [{"task_id": r[0], "repo": r[1], "area": r[2]} for r in rows]
 
 
-def _lock(task_id: str, repo: str, areas: list[str]) -> Hold | None:
-    """Locks the task's areas, or returns why it cannot: the task holding a conflicting area."""
+def _lock(task_id: str, repo: str, areas: list[str], published: set[str] | frozenset[str] = frozenset()) -> Hold | None:
+    """Locks the task's areas, or returns why it cannot: the tasks holding a conflicting area. A task in
+    `published` has its pull request open, and its areas block no one."""
     repo = repo.lower()
     with db.connect(autocommit=True) as conn, conn.transaction():
         # One admission pass at a time per repo, so two schedulers never lock the same area.
@@ -351,14 +363,21 @@ def _lock(task_id: str, repo: str, areas: list[str]) -> Hold | None:
         for holder, area in conn.execute(
             "SELECT task_id, area FROM scheduler.repo_area_lock WHERE repo = %s AND task_id <> %s", (repo, task_id)
         ).fetchall():
-            held.setdefault(holder, []).append(area)
-        for holder, holder_areas in held.items():
-            if conflicts(areas, holder_areas):
-                return Hold(
-                    "repo_area",
-                    f"repo area {', '.join(areas)} of {repo} is held by {holder}",
-                    {"holders": [holder], "paths": areas, "held_paths": sorted(a for a in holder_areas if a)},
-                )
+            if holder not in published:
+                held.setdefault(holder, []).append(area)
+        # Every task in the way, in a fixed order: naming only the first one found made the reason flip between
+        # holders from one pass to the next, and each flip was recorded as a new hold.
+        blocking = sorted(holder for holder, holder_areas in held.items() if conflicts(areas, holder_areas))
+        if blocking:
+            return Hold(
+                "repo_area",
+                f"repo area {', '.join(areas)} of {repo} is held by {', '.join(blocking)}",
+                {
+                    "holders": blocking,
+                    "paths": areas,
+                    "held_paths": sorted({a for holder in blocking for a in held[holder] if a}),
+                },
+            )
         # A task with no area still holds one row, so it counts as running.
         for area in areas or [NO_AREA]:
             conn.execute(
