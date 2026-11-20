@@ -10,6 +10,8 @@ the pipeline fails the first time it runs.
              later stage or model sees one. Off unless the task policy turns it on (credentials.py)
     deslop   model-written text goes through the writing pass (run_service/writing.py); a person's own words
              and the fixed strings in this code do not
+    inert    on its way to GitHub, an @mention and an issue a model's text says it closes are put in code
+             spans, so the text notifies no one and closes nothing; a person's own words are left alone
     fit      the text is cut to what its destination takes, with a line saying so
     stamp    the provenance line goes last, where nothing rewrites it
 
@@ -75,13 +77,16 @@ class StageOutcome:
 
 
 class Checked(str):
-    """A text that came through the pipeline. Only `prepare` makes one (and `trusted`, for tests)."""
+    """A text that came through the pipeline. Only `prepare` makes one (and `trusted`, for tests). It
+    remembers the context it was prepared for, so `require` refuses one prepared for somewhere else."""
 
     report: list[StageOutcome]
+    context: Context | None
 
-    def __new__(cls, text: str, report: list[StageOutcome] | None = None) -> "Checked":
+    def __new__(cls, text: str, report: list[StageOutcome] | None = None, context: Context | None = None) -> "Checked":
         made = super().__new__(cls, text)
         made.report = report or []
+        made.context = context
         return made
 
 
@@ -136,28 +141,40 @@ async def prepare(text: str, context: Context) -> Checked:
         outcome.changed, outcome.note, outcome.detail = result.text != text, result.note, result.detail
         report.append(outcome)
         text = result.text
-    return Checked(text, report)
+    return Checked(text, report, context)
 
 
-async def for_tracker(
-    text: str, where: str, kind: str = COMMENT, source: str = FIXED, provenance: Any = None
-) -> Checked:
-    """`prepare` for a text going to a tracker. where: the issue's ref, or the tracker's scheme."""
+async def for_tracker(text: str, where: str, kind: str, source: str, provenance: Any = None) -> Checked:
+    """`prepare` for a text going to a tracker. where: the issue's ref, or the tracker's scheme. The kind and
+    the source are always named: a default would let a model's text skip the writing pass unnoticed."""
     return await prepare(text, Context(destination_of(where), kind, source, provenance))
 
 
-def require(text: str, what: str) -> None:
-    """Refuse a text that did not come through the pipeline. For the adapters that write to the outside."""
+def require(text: str, what: str, destination: str, title: bool = False) -> None:
+    """Refuse a text that did not come through the pipeline, or came through it for somewhere else. For the
+    adapters that write to the outside. destination: where the adapter writes. title: the text is posted as
+    a title, which has its own limit and carries no provenance."""
     if not isinstance(text, Checked):
         raise TypeError(
             f"{what} must come through the outbound pipeline: pass it to "
             "`await outbound.prepare(text, outbound.Context(...))` first, and post what that returns"
         )
+    prepared = text.context
+    if prepared is None:
+        return
+    if prepared.destination != destination:
+        raise TypeError(
+            f"{what} was prepared for {prepared.destination} and is being posted to {destination}, which has "
+            f"its own limits. Prepare it with the destination {destination!r}"
+        )
+    if (prepared.kind == TITLE) != title:
+        wanted = "the kind outbound.TITLE" if title else "the kind outbound.BODY or outbound.COMMENT"
+        raise TypeError(f"{what} was prepared as a {prepared.kind}. Prepare it with {wanted}")
 
 
 def trusted(text: str) -> Checked:
-    """A text marked as checked without the pipeline. For tests of an adapter only: a test fails any use of
-    it under src/."""
+    """A text marked as checked without the pipeline, for any destination. For tests of an adapter only: a
+    test fails any use of it under src/."""
     return Checked(text)
 
 

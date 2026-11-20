@@ -1,8 +1,21 @@
 """The outbound pipeline's stages, in the order they run (outbound/__init__.py)."""
 
 import logging
+import re
 
-from meta_harness.outbound import BODY, COMMENT, GENERATED, GITHUB, JIRA, OWN, TITLE, Context, Result, credentials
+from meta_harness.outbound import (
+    BODY,
+    COMMENT,
+    GENERATED,
+    GITHUB,
+    JIRA,
+    OWN,
+    PERSON,
+    TITLE,
+    Context,
+    Result,
+    credentials,
+)
 from meta_harness.run_service import provenance, writing
 
 log = logging.getLogger(__name__)
@@ -79,6 +92,53 @@ class Deslop(Stage):
         return Result(outcome.text, note=note, detail=outcome)
 
 
+# What GitHub acts on in a text. A name after @ notifies its person or team. An issue after one of these words
+# is closed when the pull request that says so merges.
+MENTION = re.compile(r"(?<![\w/.`@])@[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9_])?")
+CLOSING = re.compile(
+    r"\b((?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+)"
+    r"((?:[\w.-]+/[\w.-]+)?#\d+|https://github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+)",
+    re.IGNORECASE,
+)
+CODE = re.compile(f"{writing.FENCE.pattern}|{writing.CODE_SPAN.pattern}", writing.FENCE.flags)
+
+
+class Inert(Stage):
+    """Nothing in the text acts on GitHub by itself. A model writes from an issue anyone may have written, and
+    an error or a log may name a package like @types/node: posted as it is, such a text notifies a stranger,
+    or closes an issue its pull request has nothing to do with. So each @mention goes in a code span, where
+    it reads the same and notifies no one, and so does each issue a model's text says it closes. The control
+    plane's own `Closes` line is fixed text, added after, and stays. A person's own words are left alone."""
+
+    name = "inert"
+
+    def applies(self, context: Context) -> bool:
+        return context.destination == GITHUB and context.source != PERSON
+
+    async def run(self, text: str, context: Context) -> Result:
+        counts = {"mention": 0, "closing reference": 0}
+
+        def quiet(prose: str) -> str:
+            prose, counts["mention"] = _counted(MENTION.subn(lambda m: f"`{m.group(0)}`", prose), counts["mention"])
+            if context.source == GENERATED:
+                closed = CLOSING.subn(lambda m: f"{m.group(1)}`{m.group(2)}`", prose)
+                prose, counts["closing reference"] = _counted(closed, counts["closing reference"])
+            return prose
+
+        # Code is left as it is: nothing in a code span or a code block notifies or closes.
+        parts, last = [], 0
+        for code in CODE.finditer(text):
+            parts += [quiet(text[last : code.start()]), code.group(0)]
+            last = code.end()
+        made = "".join([*parts, quiet(text[last:])])
+        said = [f"{n} {what}{'' if n == 1 else 's'}" for what, n in counts.items() if n]
+        return Result(made, note=f"{' and '.join(said)} put in code spans" if said else "", extra=counts)
+
+
+def _counted(done: tuple[str, int], so_far: int) -> tuple[str, int]:
+    return done[0], so_far + done[1]
+
+
 class Fit(Stage):
     """Cut to what the destination takes. A body or comment says that it was cut; a title is cut at a word."""
 
@@ -107,4 +167,4 @@ class Stamp(Stage):
         return Result(provenance.stamp(text, context.provenance))
 
 
-STAGES: tuple[Stage, ...] = (Redact(), Deslop(), Fit(), Stamp())
+STAGES: tuple[Stage, ...] = (Redact(), Deslop(), Inert(), Fit(), Stamp())

@@ -435,7 +435,7 @@ async def approve(
             # Last, after the writing pass: the issue says which goal's plan, drafted by which planning task and
             # approved by whom, it came from. The lines added here are fixed, so the whole goes out as composed.
             signed = provenance.Provenance(provenance.ISSUE, goal=goal["id"], task=plan.get("task_id") or "", by=who)
-            text = await outbound.for_tracker(text, where, outbound.BODY, provenance=signed)
+            text = await outbound.for_tracker(text, where, outbound.BODY, outbound.FIXED, provenance=signed)
             title = await outbound.for_tracker(draft["title"], where, outbound.TITLE, outbound.GENERATED)
             issue = await writer.create_issue(draft["repo"], title, text, labels)
             ref = issue.ref or ref_for(draft["repo"], issue.number)

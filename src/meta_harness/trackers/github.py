@@ -131,8 +131,8 @@ class GitHubTracker:
 
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
         """Creates one issue. Only the planner calls it, and only for a plan an operator approved."""
-        outbound.require(title, "an issue's title")
-        outbound.require(body, "an issue's body")
+        outbound.require(title, "an issue's title", outbound.GITHUB, title=True)
+        outbound.require(body, "an issue's body", outbound.GITHUB)
         carried = list(dict.fromkeys([*labels, self.label()]))
         created = await self._call(
             repo, WRITE_ISSUES, "POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": carried}
@@ -142,7 +142,7 @@ class GitHubTracker:
         return made
 
     async def comment(self, ref: str, body: str) -> str:
-        outbound.require(body, "a comment on an issue")
+        outbound.require(body, "a comment on an issue", outbound.GITHUB)
         repo, number = parse_ref(ref)
         await self.mark(ref)
         made = await self._call(

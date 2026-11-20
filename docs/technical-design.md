@@ -1303,12 +1303,17 @@ its stages in a fixed order and returns the text as `Checked`, a string only
 the pipeline makes. The adapters that write to the outside (the GitHub, Jira
 and own trackers, and the code host's publish, review and comment calls) take
 nothing else: `outbound.require` refuses a plain string with how to fix it, so
-a write that skips the pipeline fails the first time it runs.
+a write that skips the pipeline fails the first time it runs. A `Checked` text
+remembers the context it was prepared for, and `require` also refuses one
+prepared for another destination, or a body where a title goes. A text for a
+tracker (`outbound.for_tracker`) always names its kind and who wrote it, since
+a default would let a model's text skip the writing pass unnoticed.
 
 | Stage | What it does | Applies to |
 |---|---|---|
 | `redact` | Credentials become `[redacted]`: tokens, keys and passwords, never personal data (Credential redaction, below). First, so no later stage or model sees one | Every text, and only when the task policy's `credential_redaction` is `true`. It is off by default |
 | `deslop` | The writing pass below: scan, one rewrite when there are findings, kept only when clean and whole | Text a model wrote (`source: generated`), never a title, an operator's own words (`person`) or the fixed strings in this code (`fixed`) |
+| `inert` | Puts each `@mention` in a code span, and each issue a model's text says it closes (`fixes #12`), so the text notifies no one and closes nothing. Code is left as it is, and so is the `Closes` line this code adds | A text for GitHub that a model wrote or this code composed; closing references only in a model's text; never an operator's own words |
 | `fit` | Cuts the text to what its destination takes (GitHub 64,000 characters, Jira 31,000, a title 250), and says that it was cut | Every text |
 | `stamp` | The provenance line, last, so nothing rewrites or cuts it | A text given a provenance, never a title |
 
