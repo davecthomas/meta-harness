@@ -482,7 +482,13 @@ def requeue(
 
 
 def drive(
-    conn: psycopg.Connection, task_id: str, action: str, why: str, spent_usd: Decimal, counted: bool = True
+    conn: psycopg.Connection,
+    task_id: str,
+    action: str,
+    why: str,
+    spent_usd: Decimal,
+    counted: bool = True,
+    complexity: str | None = None,
 ) -> tuple[dict, str]:
     """Sends a parked task back to the queue for the supervisor: a `ready` or `review_unresolved` task whose
     workflow ended with its pull request open, which the supervisor found it can move on.
@@ -493,7 +499,8 @@ def drive(
     counts spent_usd, what the task's runs spent so far, against its spend limit: unlike an operator's retry,
     a drive never gives a task its limit again. Refused once the task has been driven MAX_DRIVES times.
     counted False: the drive is not one of those tries, for a retry after the worker's own restart, which a
-    deploy causes; the spend it carries still bounds it. Returns (task, previous status).
+    deploy causes; the spend it carries still bounds it. complexity: set on the task, so its next runs route
+    to a stronger tier (high: complex). Returns (task, previous status).
     """
     if action not in ("merge", "review", "retry"):
         raise TaskError(f"a drive is merge, review or retry, not {action!r}")
@@ -521,6 +528,7 @@ def drive(
         cur.execute(
             "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
             "drives = drives + %s, cancel_requested = false, waiting_on = NULL, spent_carried_usd = %s, "
+            "complexity = coalesce(%s, complexity), "
             f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
             (
                 f"{why}, so the supervisor {what} "
@@ -528,6 +536,7 @@ def drive(
                 resume,
                 1 if counted else 0,
                 spent_usd,
+                complexity,
                 task_id,
             ),
         )

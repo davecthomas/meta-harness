@@ -33,7 +33,17 @@ GOALS = ("none", "planning", "active", "paused", "stalled", "budget_exhausted", 
 SWEPT = ("active", "budget_exhausted")
 WAITING_ON = ("", "budget", "review", "operator_review")
 # What the supervisor does itself. None: nothing, someone else has the task.
-ACTIONS = ("recover", "end_at_pull_request", "cancel_for_goal", "merge", "review", "retry", "wait")
+ACTIONS = (
+    "recover",
+    "end_at_pull_request",
+    "cancel_for_goal",
+    "merge",
+    "review",
+    "retry",
+    "wait",
+    "retry_stronger",
+    "fix_again",
+)
 # Where the issues a blocked task waits on stand. open: each is being worked, or will be. stuck: one's task
 # failed, was canceled or ended unresolved, and waits on an operator. unheld: one is in no goal, so nothing
 # is working on it.
@@ -75,6 +85,11 @@ class Facts:
     # For a blocked task: where the issues it waits on stand, and which of them is in the way.
     dependency: str = "open"
     blocker: str = ""
+    # Whether a remedy still has tries left for this task (the task policy's remedies, counted in the ledger):
+    # a run on the complex tier for a task that failed on its own, and one more set of fix rounds on it for a
+    # review the fixes did not settle.
+    stronger_left: bool = False
+    fix_again_left: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,6 +156,13 @@ def _failed(facts: Facts) -> Decision:
                 action="wait",
             )
         return Decision("supervisor", "retry_due", "the task failed on the system's side, not its own", action="retry")
+    if facts.failure == "permanent" and facts.goal in RUNNABLE and facts.stronger_left and not facts.failed_long_ago:
+        return Decision(
+            "supervisor",
+            "failed_try_stronger",
+            "the task failed on its own account, and a stronger model has not tried it yet",
+            action="retry_stronger",
+        )
     return Decision(
         "operator",
         "failed",
@@ -298,6 +320,13 @@ def _parked(facts: Facts) -> Decision:
                 "its review loop was stopped by a failure on the system's side; the supervisor sends it back after a wait",
                 action="wait",
             )
+    if facts.status == "review_unresolved" and facts.goal in SWEPT and facts.fix_again_left and facts.drives_left:
+        return Decision(
+            "supervisor",
+            "review_unresolved_fix_again",
+            "its review loop ended with findings its fixes did not settle, and a stronger model has not tried them",
+            action="fix_again",
+        )
     if facts.status == "review_unresolved":
         return Decision(
             "operator",

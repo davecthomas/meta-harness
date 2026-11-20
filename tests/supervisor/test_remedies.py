@@ -67,3 +67,35 @@ async def test_a_remedy_that_cannot_be_applied_is_recorded_as_failed_with_its_er
     [row] = ledger.read(task_id=lost["id"])
     assert (row["remedy"], row["outcome"]) == ("recover", "failed") and "restarting" in row["error"]
     assert row["next"] == "it is tried again later"
+
+
+async def test_a_task_that_failed_on_its_own_runs_once_more_on_the_complex_tier_then_waits_for_an_operator():
+    from meta_harness.supervisor.loop import Supervisor
+
+    with db.connect(autocommit=True) as conn:
+        conn.execute("TRUNCATE supervisor.standing, supervisor.remedy")
+    tasks, events = Tasks(), Events()
+    now = datetime.now(UTC)
+    own = "TaskFailed: run 2 finished, but pi changed nothing in o/r"
+    standard = tasks.add("failed", status_reason=own, status_changed_at=(now - timedelta(minutes=10)).isoformat())
+    complex_ = tasks.add("failed", status_reason=own, status_changed_at=(now - timedelta(minutes=10)).isoformat())
+    events.stored = [
+        {"task_id": standard["id"], "event_type": "task_routed", "payload": {"tier": "standard"}},
+        {"task_id": complex_["id"], "event_type": "task_routed", "payload": {"tier": "complex"}},
+    ]
+    supervisor = Supervisor(tasks, events, Workflows(), Host())
+
+    await supervisor.pass_once(now)
+
+    assert [(t, a) for t, a, *_ in tasks.driven] == [(standard["id"], "retry")]
+    assert standard["complexity"] == "high", "its next route is the complex tier"
+    [row] = ledger.read(task_id=standard["id"])
+    assert (row["remedy"], row["try"], row["of"]) == ("retry_stronger", 1, 1)
+    assert "stronger model" in row["did"] and "ask you" in row["next"]
+    # The task already ran on the complex tier has no stronger model to try: an operator decides.
+    assert ledger.read(task_id=complex_["id"]) == []
+
+    # It failed again: its one stronger try is used, so now an operator is asked.
+    standard.update(status="failed", status_changed_at=(now - timedelta(minutes=10)).isoformat())
+    await supervisor.pass_once(now + timedelta(minutes=5))
+    assert len(ledger.read(task_id=standard["id"])) == 1

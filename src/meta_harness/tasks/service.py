@@ -135,6 +135,8 @@ class DriveIn(BaseModel):
     spent_usd: Decimal = Field(default=Decimal(0), ge=0)
     # False: not one of the task's three tries, for a retry after the worker's own restart.
     counted: bool = True
+    # high: the task's next runs route at least to the complex tier, for a remedy that tries a stronger model.
+    complexity: Literal["high"] | None = None
 
 
 class DismissIn(BaseModel):
@@ -626,7 +628,9 @@ def create_app(
         in any other status, one with no pull request, or one already sent back as often as allowed."""
         try:
             with app.state.pool.connection() as conn:
-                task, previous = store.drive(conn, task_id, body.action, body.why, body.spent_usd, body.counted)
+                task, previous = store.drive(
+                    conn, task_id, body.action, body.why, body.spent_usd, body.counted, body.complexity
+                )
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such task") from err
         except store.TaskError as err:
