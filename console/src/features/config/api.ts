@@ -1,4 +1,4 @@
-import { call } from "../../client";
+import { call, query } from "../../client";
 
 export type ConfigKind = "tiers" | "profiles" | "repos" | "trackers" | "skills" | "planning" | "task_policy";
 
@@ -7,6 +7,15 @@ export interface SkillEntry {
   description: string;
   source: { kind: "git" | "upload" | "shipped"; url?: string; ref?: string; path?: string; commit?: string; by?: string };
   files: Record<string, string>;
+}
+
+// A git repository as a skill's import sees it; ref is the one paths were listed at.
+export interface SkillSource {
+  branches: string[];
+  tags: string[];
+  default_branch: string | null;
+  ref: string | null;
+  paths: string[];
 }
 
 export interface ConfigSummary {
@@ -49,6 +58,9 @@ export const configApi = {
   // Read a skill from a git repository or from its files, to look at before it is staged. Saves nothing.
   readSkill: (from: { url?: string; ref?: string; path?: string; files?: Record<string, string> }) =>
     call<{ name: string; skill: SkillEntry }>("/v1/config/skills/read", { method: "POST", body: JSON.stringify(from) }),
+  // What a git repository offers an import: its branches and tags, and the directories that hold a SKILL.md at
+  // ref (the default branch when empty). Saves nothing; a 422 says why the repository cannot be listed.
+  skillSource: (url: string, ref?: string) => call<SkillSource>(`/v1/config/skills/source${query({ url, ref })}`),
   config: (kind: ConfigKind) => call<ConfigVersion>(`/v1/config/${kind}`),
   configVersions: (kind: ConfigKind) =>
     call<{ versions: ConfigVersion[] }>(`/v1/config/${kind}/versions`).then((r) => r.versions),

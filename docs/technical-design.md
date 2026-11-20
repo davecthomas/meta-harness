@@ -348,7 +348,12 @@ decides everything pi loads:
   from an https git repository on a public host (a branch or tag and a
   path; the commit read is kept) or from a folder on their machine
   (`POST /v1/config/skills/read`, which saves nothing), reads every file
-  in full, and saves it as a new version. A skill holds text files only,
+  in full, and saves it as a new version. The import form picks the
+  repository from the registered repos, then a branch or tag and a
+  directory holding a `SKILL.md` from what the repository lists
+  (`GET /v1/config/skills/source`); a name a list lacks is refused, an
+  empty branch is the default branch, and a list that cannot be read says
+  why and takes a typed value. A skill holds text files only,
   at most 200 files and 2 MB; a skill a profile names cannot be removed.
 - pi SDK sessions leave out the pi CLI's built-in `codemode`, `tool_search`
   and MCP extensions, and the harness server keeps them out, because

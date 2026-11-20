@@ -14,7 +14,9 @@ The document:
 or `{"kind": "shipped"}`). Its content is stored with the version, so a run gets exactly what was approved,
 whatever its source does later.
 
-This module checks a document and reads a skill from a directory or from a git repository. Nothing here saves.
+This module checks a document, reads a skill from a directory or from a git repository, and lists what a
+git repository offers an import: its branches and tags, and its directories that hold a SKILL.md. Nothing
+here saves.
 """
 
 import ipaddress
@@ -36,6 +38,8 @@ MAX_SKILL_BYTES = 2 * 1024 * 1024
 # Only https: a git URL may name a local path or another protocol, which the planner's process must not read.
 GIT_URL = re.compile(r"^https://[A-Za-z0-9.\-]+(:[0-9]+)?/[^\s]+$")
 GIT_TIMEOUT_SECONDS = 60
+# The most branches, tags or skill directories one listing of a repository holds.
+MAX_LISTED = 1000
 # Directories never taken into a skill: version control and caches.
 SKIPPED = {".git", "__pycache__", "node_modules", ".venv"}
 
@@ -190,12 +194,11 @@ def _private_address(host: str) -> str | None:
     return None
 
 
-def from_git(url: str, ref: str | None, path: str | None) -> tuple[str, dict[str, Any]]:
-    """A skill read from a directory of a git repository at a branch, tag or commit, as of now. The commit it
-    was read at is kept in its source, so the import says exactly what was taken.
+def _check_url(url: str) -> None:
+    """Refuses a git URL that is not https on a public host by name.
 
     Raises:
-        SkillError: The URL is not https, the repository or ref cannot be read, or the path holds no skill.
+        SkillError: The URL is not https, or its host is an address, a private name or resolves inside a network.
     """
     host = url.split("/")[2].split(":")[0].lower() if GIT_URL.match(url) else ""
     # A public git host by name: never an address, this machine or a private network's name.
@@ -207,37 +210,98 @@ def from_git(url: str, ref: str | None, path: str | None) -> tuple[str, dict[str
             f"{host} is at {inside}, an address inside a private network: a skill is imported from a public "
             "git host, such as github.com"
         )
+
+
+def _git(command: list[str], url: str, ref: str | None) -> str:
+    """A git command's output. It never asks for a password and never follows a redirect: a public host must
+    not send it on to an address inside the network.
+
+    Raises:
+        SkillError: git failed or took too long; the message says which, with git's last line.
+    """
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true"}
+    env |= {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.followRedirects", "GIT_CONFIG_VALUE_0": "false"}
+    try:
+        return subprocess.run(
+            command, check=True, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, env=env
+        ).stdout
+    except subprocess.TimeoutExpired as err:
+        raise SkillError(f"reading {url} took longer than {GIT_TIMEOUT_SECONDS} seconds") from err
+    except subprocess.CalledProcessError as err:
+        reason = (err.stderr or "").strip().splitlines()[-1:] or ["git failed"]
+        raise SkillError(f"could not read {url}{f' at {ref}' if ref else ''}: {reason[0]}") from err
+
+
+def _clone(url: str, ref: str | None, clone: Path, *, files: bool) -> None:
+    """A shallow clone of one branch or tag. files=False takes the tree without the files' contents."""
+    command = ["git", "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch"]
+    command += [] if files else ["--filter=blob:none", "--no-checkout"]
+    command += ["--branch", ref] if ref else []
+    _git([*command, "--", url, str(clone)], url, ref)
+
+
+def from_git(url: str, ref: str | None, path: str | None) -> tuple[str, dict[str, Any]]:
+    """A skill read from a directory of a git repository at a branch, tag or commit, as of now. The commit it
+    was read at is kept in its source, so the import says exactly what was taken.
+
+    Raises:
+        SkillError: The URL is not https, the repository or ref cannot be read, or the path holds no skill.
+    """
+    _check_url(url)
     if path and not _safe(path):
         raise SkillError("the path is relative to the repository and stays inside it")
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true"}
-    # No redirects: a public host must not send the clone on to an address inside the network.
-    env |= {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.followRedirects", "GIT_CONFIG_VALUE_0": "false"}
     with tempfile.TemporaryDirectory(prefix="mh-skill-") as work:
         clone = Path(work) / "repo"
-        command = ["git", "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch"]
-        command += ["--branch", ref] if ref else []
-        try:
-            subprocess.run(
-                [*command, "--", url, str(clone)],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=GIT_TIMEOUT_SECONDS,
-                env=env,
-            )
-            commit = subprocess.run(
-                ["git", "-C", str(clone), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
-            ).stdout.strip()
-        except subprocess.TimeoutExpired as err:
-            raise SkillError(f"reading {url} took longer than {GIT_TIMEOUT_SECONDS} seconds") from err
-        except subprocess.CalledProcessError as err:
-            reason = (err.stderr or "").strip().splitlines()[-1:] or ["git failed"]
-            raise SkillError(f"could not read {url}{f' at {ref}' if ref else ''}: {reason[0]}") from err
+        _clone(url, ref, clone, files=True)
+        commit = _git(["git", "-C", str(clone), "rev-parse", "HEAD"], url, ref).strip()
         root = (clone / path) if path else clone
         if not (root / "SKILL.md").is_file():
             raise SkillError(f"{path or 'the repository top'} holds no SKILL.md")
         source = {"kind": "git", "url": url, "ref": ref or "", "path": path or "", "commit": commit}
         return from_files(read_dir(root), source)
+
+
+def git_source(url: str, ref: str | None) -> dict[str, Any]:
+    """What a git repository offers an import, as of now: its branches and tags, its default branch, and the
+    directories that hold a SKILL.md at ref (the default branch when None), by their path in the repository.
+    A SKILL.md at the top is not listed, since an empty path reads it. At most MAX_LISTED of each are listed.
+
+    Raises:
+        SkillError: The URL is not https on a public host, the repository cannot be read, or it has no such ref.
+    """
+    _check_url(url)
+    listed = _git(["git", "ls-remote", "--symref", "--", url, "HEAD", "refs/heads/*", "refs/tags/*"], url, None)
+    branches: set[str] = set()
+    tags: set[str] = set()
+    default = None
+    for line in listed.splitlines():
+        head, _, name = line.partition("\t")
+        if head.startswith("ref: refs/heads/") and name == "HEAD":
+            default = head.removeprefix("ref: refs/heads/")
+        elif name.startswith("refs/heads/"):
+            branches.add(name.removeprefix("refs/heads/"))
+        elif name.startswith("refs/tags/"):
+            tags.add(name.removeprefix("refs/tags/").removesuffix("^{}"))
+    ref = ref or None
+    if ref and ref not in branches and ref not in tags:
+        raise SkillError(f"{url} has no branch or tag named {ref}")
+    paths: list[str] = []
+    if branches or tags:
+        with tempfile.TemporaryDirectory(prefix="mh-skill-") as work:
+            clone = Path(work) / "repo"
+            _clone(url, ref, clone, files=False)
+            tree = _git(["git", "-C", str(clone), "ls-tree", "-r", "-z", "--name-only", "HEAD"], url, ref)
+        for name in tree.split("\0"):
+            parts = PurePosixPath(name).parts
+            if len(parts) > 1 and parts[-1] == "SKILL.md" and not SKIPPED.intersection(parts):
+                paths.append("/".join(parts[:-1]))
+    return {
+        "branches": sorted(branches)[:MAX_LISTED],
+        "tags": sorted(tags)[:MAX_LISTED],
+        "default_branch": default,
+        "ref": ref or default,
+        "paths": sorted(paths)[:MAX_LISTED],
+    }
 
 
 def for_run(skills: dict[str, Any], names: list[str]) -> list[dict[str, Any]]:

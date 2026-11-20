@@ -40,22 +40,138 @@ test("each skill shows what it is for, where it came from and which profiles use
   expect(sourceLine(TIDY.source)).toBe("https://github.com/acme/skills / skills/tidy-notes at main (0123456)");
 });
 
-test("a skill imported from git is read in full before it is added, then staged as new", async () => {
-  const asked: unknown[] = [];
-  vi.stubGlobal("fetch", (_url: string, init?: RequestInit) => {
-    asked.push(JSON.parse(String(init?.body)));
-    return Promise.resolve(new Response(JSON.stringify({ name: "tidy-notes", skill: TIDY }), { status: 200, headers: { "Content-Type": "application/json" } }));
+const URL = "https://github.com/acme/skills";
+const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+
+// The service the import form asks: the registered repos, what a repository offers at each ref, and the read.
+// A list given as a string cannot be read, and answers 422 with it as the reason.
+function serve({ repos = ["acme/skills", "acme/tools"] as string[] | string, source = "listed" as "listed" | string } = {}) {
+  const read: unknown[] = [];
+  const listed: string[] = [];
+  vi.stubGlobal("fetch", (path: string, init?: RequestInit) => {
+    if (path === "/v1/config/repos") {
+      return typeof repos === "string" ? json({ detail: repos }, 422) : json({ kind: "repos", version: 1, document: { repos: Object.fromEntries(repos.map((r) => [r, {}])) } });
+    }
+    if (path.startsWith("/v1/config/skills/source")) {
+      const params = new URLSearchParams(path.split("?")[1]);
+      listed.push(params.toString());
+      if (source !== "listed") return json({ detail: source }, 422);
+      const ref = params.get("ref") ?? "main";
+      const paths = ref === "v2" ? ["skills/plan", "skills/tidy-notes"] : ["skills/tidy-notes"];
+      return json({ branches: ["main", "next"], tags: ["v2"], default_branch: "main", ref, paths });
+    }
+    read.push(JSON.parse(String(init?.body)));
+    return json({ name: "tidy-notes", skill: TIDY });
   });
+  return { read, listed };
+}
+
+function openImport() {
   show();
   fireEvent.click(screen.getByRole("button", { name: "Import a skill" }));
-  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "https://github.com/acme/skills" } });
-  fireEvent.change(screen.getByLabelText("Path to the skill"), { target: { value: "skills/tidy-notes" } });
+}
+
+// Opens a picked-name field unless it is open, types into it, and returns its input; Enter commits what is typed.
+function typeInto(label: string, value: string) {
+  if (!screen.queryByRole("combobox", { name: label })) fireEvent.click(screen.getByRole("button", { name: `Edit ${label}` }));
+  const input = screen.getByRole("combobox", { name: label });
+  fireEvent.focus(input);
+  fireEvent.click(input);
+  fireEvent.change(input, { target: { value } });
+  return input;
+}
+
+// Opens a field once its list has loaded (or failed to), then types into it.
+async function pickFrom(label: string, value: string) {
+  if (!screen.queryByRole("combobox", { name: label })) fireEvent.click(screen.getByRole("button", { name: `Edit ${label}` }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: label }).getAttribute("placeholder")).not.toBe("Loading…"));
+  return typeInto(label, value);
+}
+
+async function commit(label: string, value: string) {
+  fireEvent.keyDown(typeInto(label, value), { key: "Enter" });
+  await waitFor(() => expect(screen.queryByRole("combobox", { name: label })).toBeNull());
+}
+
+// The options a field's list offers. jsdom lays nothing out, so the dropdown may be drawn hidden; its options
+// are still the ones offered.
+function options(label: string) {
+  const list = document.getElementById(screen.getByRole("combobox", { name: label }).getAttribute("aria-controls") ?? "");
+  return list ? within(list).queryAllByRole("option", { hidden: true }).map((o) => o.textContent) : [];
+}
+
+test("the import offers the registered repos, then the repository's branches and tags, then its skill directories at the ref", async () => {
+  const { read, listed } = serve();
+  openImport();
+
+  await pickFrom("Repository", "https://github.com/acme");
+  await waitFor(() => expect(options("Repository")).toEqual([URL, "https://github.com/acme/tools"]));
+  await commit("Repository", URL);
+
+  // Typed and cleared: an empty draft offers the whole list.
+  await pickFrom("Branch or tag", "x");
+  typeInto("Branch or tag", "");
+  await waitFor(() => expect(options("Branch or tag")).toEqual(["main", "next", "v2"]));
+  expect(screen.getByRole("combobox", { name: "Branch or tag" }).getAttribute("placeholder")).toBe("Pick a branch or tag");
+  await commit("Branch or tag", "v2");
+
+  await pickFrom("Path to the skill", "skills");
+  await waitFor(() => expect(options("Path to the skill")).toEqual(["skills/plan", "skills/tidy-notes"]));
+  await commit("Path to the skill", "skills/tidy-notes");
+  expect(listed).toEqual([`url=${encodeURIComponent(URL)}`, `url=${encodeURIComponent(URL)}&ref=v2`]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Read the skill" }));
+  expect(await screen.findByText("scripts/tidy.py")).toBeTruthy();
+  expect(read).toEqual([{ url: URL, ref: "v2", path: "skills/tidy-notes" }]);
+});
+
+test("a repository, branch or tag, or path the list lacks is refused; an empty branch is the default branch", async () => {
+  serve();
+  openImport();
+
+  fireEvent.keyDown(typeInto("Repository", "https://github.com/other/skills"), { key: "Enter" });
+  expect(await screen.findByText(/The registry has no repository named https:\/\/github.com\/other\/skills/)).toBeTruthy();
+  await commit("Repository", URL);
+  expect(await screen.findByText("the default branch (main)")).toBeTruthy();
+
+  fireEvent.keyDown(typeInto("Branch or tag", "nope"), { key: "Enter" });
+  expect(await screen.findByText(`${URL} has no branch or tag named nope: pick one from the list, or leave it empty for the usual`)).toBeTruthy();
+  await commit("Branch or tag", "");
+
+  fireEvent.keyDown(typeInto("Path to the skill", "skills/plan"), { key: "Enter" });
+  expect(await screen.findByText(new RegExp(`${URL} at main has no skill directory named skills/plan`))).toBeTruthy();
+});
+
+test("when a list cannot be read the field says why and still takes a typed value", async () => {
+  const { read } = serve({ repos: "the registry is down", source: "could not read https://github.com/acme/skills: Repository not found." });
+  openImport();
+
+  expect(await screen.findByText("The registered repositories could not be listed, so type each exactly: the registry is down")).toBeTruthy();
+  await commit("Repository", URL);
+  expect(await screen.findByText(/The branches and tags could not be listed, so type each exactly: could not read .*Repository not found\./)).toBeTruthy();
+  expect(typeInto("Branch or tag", "release").getAttribute("placeholder")).toBe("Type its name");
+  await commit("Branch or tag", "release");
+  await commit("Path to the skill", "skills/tidy-notes");
+
+  fireEvent.click(screen.getByRole("button", { name: "Read the skill" }));
+  expect(await screen.findByText("scripts/tidy.py")).toBeTruthy();
+  expect(read).toEqual([{ url: URL, ref: "release", path: "skills/tidy-notes" }]);
+});
+
+test("a skill imported from git is read in full before it is added, then staged as new", async () => {
+  const { read } = serve();
+  openImport();
+  await commit("Repository", URL);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Edit Path to the skill" })).toBeTruthy());
+  await pickFrom("Path to the skill", "skills");
+  await waitFor(() => expect(options("Path to the skill")).toEqual(["skills/tidy-notes"]));
+  await commit("Path to the skill", "skills/tidy-notes");
   fireEvent.click(screen.getByRole("button", { name: "Read the skill" }));
 
   // Every file is shown, in full, before anything is added.
   expect(await screen.findByText("scripts/tidy.py")).toBeTruthy();
   expect(screen.getByText(/Read the notes, then tidy them\./)).toBeTruthy();
-  expect(asked).toEqual([{ url: "https://github.com/acme/skills", path: "skills/tidy-notes" }]);
+  expect(read).toEqual([{ url: URL, path: "skills/tidy-notes" }]);
   expect(screen.queryByTestId("skill-tidy-notes")).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "Add the skill" }));
