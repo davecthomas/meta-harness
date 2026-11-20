@@ -398,7 +398,9 @@ exists, a run runs its acceptance checks with `bash`. The protected-path
 refusal on `write` and `edit` is planned too. Branch protection
 blocks default branches. The pull request description holds the run's final
 summary, which the harness prompt asks to list the assumptions the run made,
-since no person answers questions during a run.
+since no person answers questions during a run. When the run leaves no
+usable summary, the description holds a fallback the meta-harness writes
+instead, under a heading that says so (Publish, below).
 
 ### Loop policy
 
@@ -789,7 +791,7 @@ task's remaining spend, its attempts so far and the task policy's limits.
 | Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the harness profile's `max_minutes` plus 10 minutes, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
 | Collect | Reads the harness server's `/usage` and `/record`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. A final summary that is missing, or under three words, gives way to one the run service writes from `/record` (`run_service/summaries.py`): the files, how each acceptance check ended, the last plan and the command counts, under a line that says where it came from. A harness image without `/record` falls back to the files its events named. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
 | Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run whose activity ended because the worker under it shut down (`WorkerShutdown`, which every deploy's restart causes) is neither: the workflow waits 20 seconds for the worker to be back and takes the same run up again, up to five times, and the activity re-attaches to it by its run id, so the restart costs the task no attempt and no candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
-| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary, which goes through the writing pass first (What the meta-harness writes); the description is written when the pull request is opened, and no later push changes it. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
+| Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary, which goes through the writing pass first (What the meta-harness writes). A summary that is missing, or under three words, gives way to one the meta-harness writes under its own heading, `Summary written by the meta-harness`, from the files the branch changes, with the run's few words quoted; a summary the run service already wrote from the harness's record is kept as it is. Neither goes through the writing pass (`run_service/pr_summary.py`). The description is written when the pull request is opened, and no later push changes it. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
 The RunTask workflow's Temporal history records every attempt, tier candidate
 and decision. The operator console and the harness analyzer read each run's
@@ -1001,7 +1003,8 @@ loop:
    clean. A fix run's summary is added to the open pull request's
    description as a `Fix round <n>` section, once, so what a fix run is asked
    to explain there (why it changed a file outside the task's paths) is
-   where the next review reads it.
+   where the next review reads it. A fix run that leaves no usable summary
+   gets the same fallback as Publish, so its round still shows.
 3. On `changes` or a failed check, a fix run: the pair that opened the pull
    request, with the findings or the check output as its input. It continues
    the pull request's pi session in a follow-up run (`POST /followup`), and
@@ -2085,6 +2088,14 @@ walks every remedy `decide` can name and fails one with no module.
 | `retry` | A task that failed on the system's side | Runs it again after a wait that grows each try | The task's drives |
 | `cancel_for_goal` | An unstarted task of an ended goal | Cancels it | — |
 | `wait` | A pull request whose checks have not reported | Nothing this pass | — |
+| `retry_stronger` | A task that failed on its own account (it could not finish the work), whose last route was below the complex tier | Runs it again with `complexity: high`, so its route is the complex tier: a stronger model and the careful profile | The task policy's `remedies.retry_stronger` (1) |
+| `fix_again` | A review its fix rounds did not settle, on a swept goal | Sends it back through its review loop with `complexity: high`: a fresh set of fix rounds, on the complex tier | The task policy's `remedies.fix_again` (1) |
+
+A remedy with a setting in the task policy's `remedies` (0 to 3 tries; 0 turns
+it off; 1 when the policy names none) counts its tries in the ledger, and is
+also one of the task's drives, so the Task API's own cap holds too. Once its
+tries are used, the task's situation is the operator's again, with the ask it
+had before. The console's Task policy view edits both settings.
 
 Every try is one record in the ledger (`supervisor/ledger.py`): a
 `supervisor.remedy` row and a `remedy_applied` event, with the same fields.

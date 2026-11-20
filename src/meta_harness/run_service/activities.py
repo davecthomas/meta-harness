@@ -44,6 +44,7 @@ import contextlib
 import hashlib
 import os
 import re
+from dataclasses import replace
 from pathlib import Path
 from string import Template
 from typing import Any
@@ -57,6 +58,7 @@ from meta_harness.run_service import (
     code_host,
     events,
     harness_client,
+    pr_summary,
     routing,
     run_grants,
     sandbox,
@@ -356,13 +358,11 @@ async def publish(request: PublishRequest) -> PublishResult:
     ref = ref_for(activity.info().workflow_id)
     workspace = sandbox.workspace_for(ref, request.run_id)
 
-    async def body() -> str:
+    async def body(files: list[str]) -> str:
         """The description, written once a pull request is to be opened: the run's summary goes through the
-        writing pass, and the lines the meta-harness adds around it stay as they are."""
-        if not request.summary:
-            return _pr_body(request)
-        [summary] = await _written("pull_request", [request.summary], request.task_id, run_id=request.run_id)
-        return _pr_body(request, summary)
+        writing pass, or a fallback from the branch's files stands in for one the run did not leave, and the
+        lines the meta-harness adds around it stay as they are."""
+        return _pr_body(request, await _summary_section(request, files))
 
     message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
         f"\n\nCloses {request.ticket}" if request.ticket else ""
@@ -383,15 +383,16 @@ async def publish(request: PublishRequest) -> PublishResult:
     if published is None:
         print(f"[{request.run_id} publish] pi changed nothing in {workspace}, so there is no pull request", flush=True)
         return PublishResult(branch="", base="", commit="", files=[], pr_url="", created=False)
-    if request.fix_round and request.summary and not published.created:
-        # The fix run was asked to say in its summary why it changed what it did; the review reads it here.
-        [summary] = await _written("pull_request", [request.summary], request.task_id, run_id=request.run_id)
+    if request.fix_round and not published.created:
+        # The fix run was asked to say in its summary why it changed what it did; the review reads it here. A fix
+        # run that left none usable gets the fallback, so the round still shows in the description.
+        part = await _summary_section(request, published.files)
         try:
             await code_host.add_to_description(
                 request.repo,
                 published.pr_url,
                 f"Fix round {request.fix_round} ({request.run_id})",
-                summary,
+                part.text,
                 sandbox.task_dir_for(ref) / "pull-request.md",
             )
         except code_host.CodeHostError as err:
@@ -428,11 +429,20 @@ async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> l
     return [outcome.text if outcome else text for outcome, text in zip(outcomes, texts, strict=True)]
 
 
-def _pr_body(request: PublishRequest, summary: str | None = None) -> str:
+async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summary.Section:
+    """The run's summary for its pull request after the writing pass, or the fallback, which skips the pass."""
+    part = pr_summary.section(request.summary, files)
+    if not part.from_run:
+        return part
+    [text] = await _written("pull_request", [part.text], request.task_id, run_id=request.run_id)
+    return replace(part, text=text)
+
+
+def _pr_body(request: PublishRequest, summary: pr_summary.Section) -> str:
     lines = [request.note, ""] if request.note else []
     if request.ticket:
         lines += [f"Closes {request.ticket}", ""]
-    lines += ["## Summary from the run", "", summary or request.summary or "(the run left no summary)", ""]
+    lines += [f"## {summary.heading}", "", summary.text, ""]
     lines += [
         "## Run",
         "",
@@ -680,8 +690,22 @@ def _record(progress: dict[str, Any], event: dict[str, Any]) -> None:
     data = event["data"]
     if event["type"] == "file_changed" and data["path"] not in progress["files_changed"]:
         progress["files_changed"].append(data["path"])
-    if event["type"] == "turn_finished" and isinstance(data.get("text"), str) and data["text"]:
-        progress["answer"] = data["text"].strip()
+    if event["type"] == "turn_finished":
+        progress["answer"] = _answer_after(progress.get("answer"), data)
+
+
+def _answer_after(current: str | None, data: dict[str, Any]) -> str | None:
+    """The run's reviewer-facing summary after one more turn. Only a turn with no tool call can hold it: the
+    text of a turn that goes on to call tools is narration ("now I will run the tests"), so it is never the
+    summary and drops an earlier one. A long text arrives cut, as {"preview": ...}."""
+    if data.get("tool_calls"):
+        return None
+    text = data.get("text")
+    if isinstance(text, dict):
+        text = text.get("preview")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    return current
 
 
 # --- The review loop --------------------------------------------------------------------------------

@@ -132,6 +132,50 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
           />,
         ],
         [
+          "Stronger retry",
+          <InlineField
+            kind="number"
+            label="Stronger retry"
+            value={doc.remedies?.retry_stronger ?? 1}
+            min={0}
+            max={3}
+            decimalScale={0}
+            display={
+              <Text size="sm">
+                {(doc.remedies?.retry_stronger ?? 1) === 0
+                  ? "Off: a task that fails on its own waits for you"
+                  : `A task that fails on its own runs again on the complex tier, up to ${doc.remedies?.retry_stronger ?? 1} time${(doc.remedies?.retry_stronger ?? 1) === 1 ? "" : "s"}, before it waits for you`}
+              </Text>
+            }
+            changed={changed(s, ["remedies", "retry_stronger"])}
+            reasons={s.reasons("retry_stronger")}
+            readOnly={s.readOnly}
+            onCommit={(v) => s.stage(["remedies", "retry_stronger"], v)}
+          />,
+        ],
+        [
+          "Another set of fix rounds",
+          <InlineField
+            kind="number"
+            label="Another set of fix rounds"
+            value={doc.remedies?.fix_again ?? 1}
+            min={0}
+            max={3}
+            decimalScale={0}
+            display={
+              <Text size="sm">
+                {(doc.remedies?.fix_again ?? 1) === 0
+                  ? "Off: a review its fixes did not settle waits for you"
+                  : `A review its fixes did not settle gets another set of fix rounds on the complex tier, up to ${doc.remedies?.fix_again ?? 1} time${(doc.remedies?.fix_again ?? 1) === 1 ? "" : "s"}, before it waits for you`}
+              </Text>
+            }
+            changed={changed(s, ["remedies", "fix_again"])}
+            reasons={s.reasons("fix_again")}
+            readOnly={s.readOnly}
+            onCommit={(v) => s.stage(["remedies", "fix_again"], v)}
+          />,
+        ],
+        [
           "Wait before a fix run",
           <InlineField
             kind="number"

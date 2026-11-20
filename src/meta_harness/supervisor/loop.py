@@ -39,6 +39,8 @@ from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CodeHostError
 from meta_harness.supervisor import failures, ledger, pulls, remedies, standing
 from meta_harness.supervisor.remedies import registry
+from meta_harness.config.kinds import remedy_tries
+from meta_harness.run_service import routing
 from meta_harness.supervisor.rules import OPEN_STATUSES, SWEPT, Decision, Facts, decide
 from meta_harness.tasks.store import MAX_DRIVES
 from meta_harness.tasks.client import TaskApiError, TaskClient
@@ -216,9 +218,25 @@ class Supervisor:
                 failed_long_ago=_since_status(task, now) > RETRY_WINDOW,
                 # Only a wait can go stale: any other situation is acted on, or is an operator's already.
                 stale=stale,
+                **(
+                    await asyncio.to_thread(self._remedies_left, task)
+                    if status in ("failed", "review_unresolved")
+                    else {}
+                ),
             ),
             pull,
         )
+
+    def _remedies_left(self, task: dict) -> dict[str, bool]:
+        """Whether each remedy for a failed or unresolved task still has tries left: the task policy's tries,
+        less those the ledger counts. A task whose last route was already the complex tier has no stronger
+        model to try."""
+        policy = routing.task_policy()
+        stronger = last_tier(self.events, task["id"]) != "complex" and ledger.tries(
+            task["id"], "retry_stronger"
+        ) < remedy_tries(policy, "retry_stronger")
+        again = ledger.tries(task["id"], "fix_again") < remedy_tries(policy, "fix_again")
+        return {"stronger_left": stronger, "fix_again_left": again}
 
     async def _pull(self, task: dict) -> tuple[str, Any]:
         """The task's pull request's state on the code host, read at most once every PULL_SECONDS."""
@@ -360,6 +378,12 @@ def dependency(task: dict, by_id: dict[str, dict], before: dict[str, standing.St
             if ended and was and was.owner == "operator":
                 return "stuck", name
     return ("unheld", unheld) if unheld else ("open", "")
+
+
+def last_tier(events: Events, task_id: str) -> str:
+    """The tier the task's last route picked, from its task_routed events; empty when it was never routed."""
+    found = events.read(0, 500, task_id=task_id, event_type="task_routed").get("events") or []
+    return str((found[-1].get("payload") or {}).get("tier") or "") if found else ""
 
 
 def _since_status(task: dict, now: datetime) -> timedelta:

@@ -13,5 +13,9 @@
     "small": "3.00",
     "medium": "8.00",
     "large": "20.00"
+  },
+  "remedies": {
+    "retry_stronger": 1,
+    "fix_again": 1
   }
 }

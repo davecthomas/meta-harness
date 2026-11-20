@@ -474,3 +474,15 @@ def test_the_task_policys_ceiling_on_one_tasks_spend_is_an_amount_within_reach(m
         assert reason.startswith("max_task_usd must be an amount above 0 and at most 1000"), bad
     shipped = json.loads((REPO_ROOT / "config" / "task_policy.json").read_text())
     assert shipped["max_task_usd"] == "100.00"
+
+
+def test_the_task_policys_remedy_tries_are_0_to_3_and_name_a_remedy(monkeypatch):
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
+    policy = {"max_parallel": 4, "review": {"reviewers": ["harness:pi-review/x:y"], "max_rounds": 3}}
+    assert kinds.check_task_policy({**policy, "remedies": {"retry_stronger": 0, "fix_again": 2}}) == []
+    assert kinds.remedy_tries(policy, "fix_again") == 1, "a policy that sets none gets the default"
+    assert kinds.remedy_tries({"remedies": {"fix_again": 0}}, "fix_again") == 0
+    [unknown] = kinds.check_task_policy({**policy, "remedies": {"pray": 1}})
+    assert "remedies.pray is no remedy" in unknown
+    [many] = kinds.check_task_policy({**policy, "remedies": {"fix_again": 9}})
+    assert "from 0 to 3" in many

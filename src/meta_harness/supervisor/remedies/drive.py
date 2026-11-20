@@ -12,6 +12,10 @@ from meta_harness.tasks.store import MAX_DRIVES
 class Drive(Remedy):
     did = ""
     next = ""
+    # The Task API's drive action, when it is not the remedy's own id, and the complexity the task's next runs
+    # route at (None: as it was).
+    action = ""
+    complexity: str | None = None
 
     def of(self, task: dict) -> int | None:
         return MAX_DRIVES
@@ -28,7 +32,13 @@ class Drive(Remedy):
         sup, task = ctx.supervisor, ctx.task
         spent = await asyncio.to_thread(spent_so_far, sup.events, task["id"])
         await asyncio.to_thread(
-            sup.tasks.drive, task["id"], self.id, ctx.decision.reason, str(spent), self.counted(task)
+            sup.tasks.drive,
+            task["id"],
+            self.action or self.id,
+            ctx.decision.reason,
+            str(spent),
+            self.counted(task),
+            self.complexity,
         )
         sup.forget_reads(task["id"])
         return Outcome("started", self.did, self.next)

@@ -39,3 +39,13 @@ def read(task_id: str | None = None, goal_id: str | None = None, limit: int = 10
     for row in rows:
         row["created_at"] = row["created_at"].isoformat()
     return rows
+
+
+def tries(task_id: str, remedy: str) -> int:
+    """How many times the remedy was applied to the task: its tries that did not fail to be applied."""
+    with db.connect(autocommit=True) as conn:
+        found = conn.execute(
+            "SELECT count(*) FROM supervisor.remedy WHERE task_id = %s AND remedy = %s AND outcome <> 'failed'",
+            (task_id, remedy),
+        ).fetchone()
+    return int(found[0])
