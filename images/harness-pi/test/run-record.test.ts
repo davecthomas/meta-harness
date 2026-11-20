@@ -43,6 +43,25 @@ test("what a command's exit status proves about a check depends on how the comma
 	assert.equal(matchCheck("uv run pytest -q tests && ls &", check), "opaque");
 });
 
+test("a check behind a shell comment, quoting or an escape does not count as passed", () => {
+	const check = "uv run pytest -q tests";
+	assert.equal(matchCheck("echo ok # && uv run pytest -q tests", check), "none");
+	assert.equal(matchCheck("# uv run pytest -q tests", check), "none");
+	assert.equal(matchCheck("echo ok #x\nuv run pytest -q tests", check), "opaque", "a comment ends at its line");
+	assert.equal(matchCheck("uv run pytest -q tests # all", check), "exact");
+	assert.equal(matchCheck("uv sync && uv run pytest -q tests # all", check), "chained");
+	assert.equal(matchCheck("echo ' && uv run pytest -q tests && '", check), "opaque");
+	assert.equal(matchCheck('echo " # " && uv run pytest -q tests', check), "opaque");
+	assert.equal(matchCheck("echo \\\\# && uv run pytest -q tests", check), "opaque");
+	assert.equal(matchCheck('uv run pytest -k "a or b"', 'uv run pytest -k "a or b"'), "exact");
+
+	const record = new RunRecord([check]);
+	record.command("echo ok # && uv run pytest -q tests", false);
+	assert.deepEqual(record.view().checks, [{ check, ran: false, passed: null }]);
+	record.command("echo ' && uv run pytest -q tests && '", false);
+	assert.deepEqual(record.view().checks, [{ check, ran: true, passed: null }]);
+});
+
 test("a chain proves its checks passed only when it passed, and proves none failed", () => {
 	const checks = ["uv run pytest -q tests", "uv run ruff check .", "cd images/harness-pi && npm ci && npm test"];
 	const record = new RunRecord(checks, "/workspace");

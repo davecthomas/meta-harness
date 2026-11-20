@@ -16,7 +16,7 @@ export const FINAL_TEXT_CHARS = 20_000;
 /**
  * How one acceptance check ended. `ran` is false when no command ran it, and `passed` is then null. `ran` is
  * true with `passed` null when a command ran the check but its exit status cannot prove how the check ended:
- * a chain that failed, or one whose operators hide a step's status.
+ * a chain that failed, one whose operators hide a step's status, or one whose quoting makes its steps uncertain.
  */
 export interface CheckOutcome {
 	check: string;
@@ -59,6 +59,20 @@ const SEPARATORS = /&&|\|\||;|\||(?<![>&<0-9])&(?![&>])/;
  */
 const HIDING_OPERATORS = /\|\||;|\||(?<![>&<0-9])&(?![&>])|`|\$\(|[()]/;
 
+/** Quoting and escapes, which can hide separators and `#` from a plain split. */
+const QUOTING = /['"\\]/;
+
+/**
+ * The command with its shell comments dropped: a `#` that starts a word runs to the end of its line. Only
+ * sound for a command without quoting, which could hold a `#` that starts no comment.
+ */
+function stripComments(command: string): string {
+	return command
+		.split("\n")
+		.map((line) => line.replace(/(^|[\s;&|()])#.*$/, "$1"))
+		.join("\n");
+}
+
 /** A command's steps, split on every separator, each trimmed. */
 function steps(command: string): string[] {
 	return command.split(SEPARATORS).map((step) => step.trim());
@@ -75,16 +89,22 @@ function steps(command: string): string[] {
  * - `"exact"`: the command is the check, so its exit status is the check's.
  * - `"chained"`: the command is a plain `&&` chain holding the check. A zero exit proves every step ran and
  *   passed; a failure does not say which step failed or whether the check ran at all.
- * - `"opaque"`: the command holds the check, but other operators hide its steps' status.
+ * - `"opaque"`: the command holds the check, but other operators hide its steps' status, or quoting or
+ *   escapes make its steps uncertain.
+ *
+ * Shell comments are dropped first, so a check after a `#` does not count as run.
  */
 export function matchCheck(command: string, check: string, workspaceDir = ""): "none" | "exact" | "chained" | "opaque" {
 	const wanted = steps(normalizeCommand(check));
 	if (wanted.every((step) => !step)) return "none";
-	const normalized = normalizeCommand(command.trim().replace(/\n/g, " ; "), workspaceDir);
+	const quoted = QUOTING.test(command);
+	const source = quoted ? command : stripComments(command);
+	const normalized = normalizeCommand(source.trim().replace(/\n/g, " ; "), workspaceDir);
 	const have = steps(normalized);
 	const at = findRun(have, wanted);
 	if (at < 0) return "none";
 	if (have.slice(0, at).some((step) => /^(cd|pushd)(\s|$)/.test(step))) return "none";
+	if (quoted && normalized !== normalizeCommand(check)) return "opaque";
 	if (HIDING_OPERATORS.test(normalized)) return "opaque";
 	return have.length === wanted.length ? "exact" : "chained";
 }
