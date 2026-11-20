@@ -59,6 +59,7 @@ from meta_harness.run_service import (
     events,
     harness_client,
     pr_summary,
+    provenance,
     routing,
     run_grants,
     sandbox,
@@ -364,6 +365,20 @@ async def publish(request: PublishRequest) -> PublishResult:
         lines the meta-harness adds around it stay as they are."""
         return _pr_body(request, await _summary_section(request, files))
 
+    async def headers(created: list[str]) -> list[str]:
+        """The provenance header on the files the run created, when the task's goal, else the configuration,
+        wants one."""
+        if not provenance.wanted(request.repo, await _goal_provenance(request.goal_id)):
+            return []
+        context = provenance.Context(
+            run_id=request.run_id,
+            candidate=request.candidate,
+            task_id=request.task_id,
+            goal_id=request.goal_id,
+            repo=request.repo,
+        )
+        return await asyncio.to_thread(provenance.apply, workspace, created, context)
+
     message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
         f"\n\nCloses {request.ticket}" if request.ticket else ""
     )
@@ -377,9 +392,12 @@ async def publish(request: PublishRequest) -> PublishResult:
             body=body,
             commit_message=message,
             pr_record=sandbox.task_dir_for(ref) / "pull-request.md",
+            headers=headers,
         )
     except code_host.CodeHostError as err:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    if published is not None and published.stamped:
+        _record_provenance(request, published.stamped)
     if published is None:
         print(f"[{request.run_id} publish] pi changed nothing in {workspace}, so there is no pull request", flush=True)
         return PublishResult(branch="", base="", commit="", files=[], pr_url="", created=False)
@@ -409,6 +427,48 @@ async def publish(request: PublishRequest) -> PublishResult:
         files=published.files,
         pr_url=published.pr_url,
         created=published.created,
+    )
+
+
+async def _goal_provenance(goal_id: str) -> bool | None:
+    """The goal's provenance setting: True or False when it set one, None to leave it to the configuration. A
+    planner that cannot be read leaves it to the configuration too, so a header never stops a publish."""
+    if not goal_id:
+        return None
+    from meta_harness.planner.client import GoalsClient
+
+    key = os.environ.get("MH_SERVICE_KEY", "")
+    if not key:
+        activity.logger.warning(
+            "publish: MH_SERVICE_KEY is not set, so goal %s's provenance setting is not read; the configuration "
+            "decides",
+            goal_id,
+        )
+        return None
+    try:
+        goal = await asyncio.to_thread(lambda: GoalsClient(api_key=key).get(goal_id))
+    except Exception as err:  # noqa: BLE001 - the configuration decides when the planner does not answer
+        activity.logger.error("publish: could not read goal %s's provenance setting from the planner: %s", goal_id, err)
+        return None
+    choice = goal.get("provenance")
+    return choice if isinstance(choice, bool) else None
+
+
+# The most file paths a provenance_added event lists; its count says how many there were.
+PROVENANCE_LISTED = 200
+
+
+def _record_provenance(request: PublishRequest, stamped: list[str]) -> None:
+    """Records on the task which of the files its run created carry a provenance header, once per run."""
+    print(f"[{request.run_id} publish] provenance header on {len(stamped)} new files", flush=True)
+    if not request.task_id:
+        return
+    events.emit(
+        "provenance_added",
+        {"run_id": request.run_id, "count": len(stamped), "files": stamped[:PROVENANCE_LISTED]},
+        task_id=request.task_id,
+        run_id=request.run_id,
+        event_id=events.stable_id(request.task_id, "provenance_added", request.run_id),
     )
 
 

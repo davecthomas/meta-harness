@@ -1,0 +1,20 @@
+{
+  "version": "2026-11-20.1",
+  "enabled": true,
+  "text": "Created by the meta-harness in run $run_id on $candidate.",
+  "repos": {},
+  "skip": ["*.min.js", "*.min.css", "*.generated.*"],
+  "styles": {
+    "#": [
+      ".py", ".pyi", ".sh", ".bash", ".zsh", ".rb", ".pl", ".r", ".toml", ".yaml", ".yml", ".tf", ".tfvars", ".ps1",
+      ".mk", ".cfg", ".conf", ".dockerfile", "Dockerfile", "Makefile", "Containerfile"
+    ],
+    "//": [
+      ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".java", ".kt", ".kts", ".swift",
+      ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".scala", ".dart", ".proto"
+    ],
+    "--": [".sql", ".lua", ".hs"],
+    "<!-- -->": [".md", ".mdx", ".markdown", ".html", ".htm", ".xml", ".svg", ".vue"],
+    "/* */": [".css", ".scss", ".less"]
+  }
+}

@@ -826,6 +826,29 @@
     "required": [],
     "type": "object"
   },
+  "provenance_added v1": {
+    "additionalProperties": true,
+    "properties": {
+      "count": {
+        "type": "integer"
+      },
+      "files": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "run_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id",
+      "count",
+      "files"
+    ],
+    "type": "object"
+  },
   "pull_request_checks v1": {
     "additionalProperties": true,
     "properties": {

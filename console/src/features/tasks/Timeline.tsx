@@ -4,6 +4,7 @@ import { IconChevronDown, IconChevronRight, IconFile, IconRobot, IconSettings } 
 import type { MhEvent } from "../../api";
 import { moneyText, usd } from "../../money";
 import { heldLine } from "./hold";
+import { provenanceLine } from "./provenance";
 import { writingLine } from "./writing";
 
 // One entry on the timeline: a turn with what happened in it, or an event between turns.
@@ -103,6 +104,9 @@ export function entries(events: MhEvent[]): Entry[] {
         break;
       case "writing_checked":
         out.push({ kind: "status", position: e.position, text: writingLine(p), error: false });
+        break;
+      case "provenance_added":
+        out.push({ kind: "status", position: e.position, text: provenanceLine(p), error: false });
         break;
       case "task_status_changed":
         out.push({ kind: "status", position: e.position, text: `Status ${p.from} → ${p.to}${p.reason ? `: ${moneyText(String(p.reason))}` : ""}`, error: p.to === "failed" });

@@ -1,6 +1,7 @@
 import type { MhEvent } from "../../api";
 import { moneyText, usd } from "../../money";
 import { heldLine } from "./hold";
+import { provenanceLine } from "./provenance";
 import { writingLine } from "./writing";
 
 // The stages a task passes through, left to right. A step sits in its stage's column, and a step that
@@ -57,6 +58,7 @@ export const STEP_EVENTS = [
   "merge_checks", "task_retried", "task_driven", "task_recovered", "task_standing", "task_held", "task_admitted",
   "task_unblocked", "budget_hold", "budget_decision", "review_hold", "review_proceeded", "finding_dismissed",
   "operator_review_claimed", "operator_review_released", "operator_review_submitted", "operator_message", "attempt_chosen", "writing_checked",
+  "provenance_added",
 ];
 
 const PARKED: Record<string, string> = {
@@ -317,6 +319,9 @@ export function steps(events: MhEvent[]): Step[] {
         break;
       case "writing_checked":
         note(writingLine(p));
+        break;
+      case "provenance_added":
+        note(provenanceLine(p));
         break;
       case "pull_request_merged":
         add({ key: `p${e.position}`, kind: "merged", column: 4, title: "Merged", detail: `as ${String(p.merge_sha ?? "").slice(0, 12)}${e.actor ? ` by ${actorName(e.actor)}` : ""}`, tone: "ok", start: time, end: time, url: String(p.pr_url ?? pull) });
