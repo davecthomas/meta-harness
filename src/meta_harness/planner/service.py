@@ -88,6 +88,7 @@ from meta_harness.planner.sweep import (
 from meta_harness.planner.tracker import Tracker, TrackerError, parse_ref
 from meta_harness.trackers import registry as tracker_registry
 from meta_harness.trackers.base import Source
+from meta_harness.supervisor import ledger
 from meta_harness.supervisor.goals import goal_standing
 from meta_harness.supervisor.loop import Supervisor, TemporalWorkflows, Workflows
 from meta_harness.supervisor.rules import OPEN_STATUSES
@@ -1407,6 +1408,17 @@ def create_app(
         is off), so a page can tell a late pass from a quiet one."""
         failing = {goal_id: found for goal_id, found in app.state.sweeps.items() if found["errors"]}
         return {"every_seconds": supervise_seconds, "last_pass": app.state.supervised, "sweeps_failing": failing}
+
+    @app.get("/v1/supervisor/remedies")
+    def remedies_applied(
+        task_id: str | None = None,
+        goal_id: str | None = None,
+        limit: int = Query(100, ge=1, le=500),
+        who: str = Depends(operator),
+    ) -> dict:
+        """What the supervisor did to unstick tasks, newest first: for one task, one goal, or all. Each is one
+        try of one remedy, with why it was needed, what was done and what happens next (supervisor/ledger.py)."""
+        return {"remedies": ledger.read(task_id, goal_id, limit)}
 
     @app.get("/v1/limits")
     def limits(who: str = Depends(operator)) -> dict:
