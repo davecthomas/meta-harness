@@ -44,13 +44,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from meta_harness import outbound
+from meta_harness.outbound import rules as writing_rules
 from meta_harness import auth, db
 from meta_harness.costs import api as costs_api
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
 from meta_harness.config.kinds import ConfigError, sandbox_ceiling
 from meta_harness.github_app import GitHubApps
-from meta_harness.run_service import code_host, writing
+from meta_harness.run_service import code_host
 from meta_harness.run_service.provenance import COMMENT, Provenance, payload
 from meta_harness.planner import (
     activity,
@@ -584,7 +585,7 @@ def create_app(
     sizing.check_settings()
     costs_api.check_settings()
     planning.check_settings()
-    writing.check_settings()
+    writing_rules.check_settings()
     draft = drafter or drafting.draft_goal
 
     def registered(names: list[str]) -> list[str]:

@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from meta_harness import retrying
+from meta_harness.outbound import rules as writing_rules
 from meta_harness.supervisor.failures import PERMANENT, TRANSIENT
 
 SCHEMA = {
@@ -60,7 +61,7 @@ async def diagnose(reason: str, transport: httpx.AsyncBaseTransport | None = Non
     body = {
         "engine": engine,
         "model": name,
-        "system_prompt": PROMPT,
+        "system_prompt": writing_rules.after(PROMPT),
         "prompt": f"--- failure ---\n{json.dumps(reason[:4000])}\n--- end of failure ---",
         "response_schema": SCHEMA,
         "max_response_tokens": 200,

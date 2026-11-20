@@ -19,6 +19,9 @@ stage that fails passes its text on unchanged, unless it is a blocker, whose fai
 (`Checked.report`), for the caller to record.
 
 Adding a stage: write it in stages.py and place it in `STAGES`, where its order is its meaning.
+
+Before any of this, the prompt that asks a model for such a text carries the writing rules (rules.py), so the
+deslop stage's rewrite rarely has to run.
 """
 
 from dataclasses import dataclass, field
