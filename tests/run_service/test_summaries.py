@@ -101,6 +101,12 @@ def test_with_a_record_an_earlier_turn_s_text_is_not_the_summary():
         "All acceptance checks passed.\nThe change stays inside the task's paths.",
         "Here is the summary of the work.",
         "Done. Let me know if anything else is needed.",
+        "Both checks pass and I changed only the required files.",
+        "I changed only the required files.",
+        "All tests passed, and I modified only files within the task's paths.",
+        "I only touched the allowed paths and the lint is clean.",
+        "I changed nothing outside the required paths.",
+        "Updated the required files; the checks pass.",
     ],
 )
 def test_a_text_of_only_narration_is_not_usable(text):
@@ -113,6 +119,8 @@ def test_a_text_of_only_narration_is_not_usable(text):
         "Both checks pass. The save path now goes through the store's lock.",
         "Fixed the flaky test so it passes on CI.",
         "The `save` call stays within the task's paths again.",
+        "Fixed the save path and changed only the required files.",
+        "I updated the code to retry on timeout.",
     ],
 )
 def test_a_text_that_says_what_changed_beside_narration_is_usable(text):
@@ -125,6 +133,20 @@ def test_a_marked_summary_of_only_narration_gives_way_to_the_record():
     record = {**RECORD, "final_text": _marked(narration)}
 
     summary, source = summaries.choose(None, record, [])
+
+    assert source == "recorded"
+    assert summary == summaries.choose(None, RECORD, [])[0] and narration not in summary
+
+
+@pytest.mark.parametrize(
+    "narration",
+    [
+        "Both checks pass and I changed only the required files.",
+        "All checks passed. I modified only the files within the task's paths.",
+    ],
+)
+def test_a_marked_status_and_scope_claim_with_a_change_verb_gives_way_to_the_record(narration):
+    summary, source = summaries.choose(None, {**RECORD, "final_text": _marked(narration)}, [])
 
     assert source == "recorded"
     assert summary == summaries.choose(None, RECORD, [])[0] and narration not in summary

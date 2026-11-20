@@ -55,6 +55,28 @@ _STATUS = re.compile(
     r"|\bpaths?\b.*\b(stays?|stayed|within|inside|outside)\b|\b(stays?|stayed|within|inside|outside)\b.*\bpaths?\b",
     re.IGNORECASE,
 )
+# A generic claim about the change's scope: a change verb whose object is only "the required files" or "nothing
+# outside the paths" ("I changed only the required files", "touched nothing outside the task's paths"). It holds a
+# change verb but says nothing about what the change is, so it is taken out before _CHANGE is looked for.
+_SCOPE_VERB = r"(?:changed|edited|modified|touched|updated|wrote|made|kept|limited|restricted)"
+_SCOPE_QUAL = (
+    r"(?:required|allowed|needed|necessary|relevant|listed|expected|permitted|requested|named|given|specified"
+    r"|in-scope|in\s+scope)"
+)
+_SCOPE_NOUN = r"(?:files?|paths?|code|changes?|areas?|directories|folders?)"
+_SCOPE_TAIL = (
+    r"(?:\s+(?:within|inside|in|under|to)\s+(?:the\s+)?(?:task'?s?|issue'?s?|ticket'?s?|required|allowed|given)?"
+    r"\s*(?:paths?|scope|areas?))?"
+)
+_SCOPE = re.compile(
+    rf"\b(?:{_SCOPE_VERB}\s+(?:only|just)\s+(?:the\s+|those\s+)?(?:{_SCOPE_QUAL}\s+)?{_SCOPE_NOUN}"
+    rf"|(?:only|just)\s+{_SCOPE_VERB}\s+(?:the\s+|those\s+)?(?:{_SCOPE_QUAL}\s+)?{_SCOPE_NOUN}"
+    rf"|{_SCOPE_VERB}\s+(?:the\s+|those\s+)?{_SCOPE_QUAL}\s+{_SCOPE_NOUN}"
+    rf"|{_SCOPE_VERB}\s+(?:nothing|no\s+(?:other\s+)?{_SCOPE_NOUN})\s+(?:else\s+)?(?:outside|beyond)\b[^,;]*"
+    rf"|{_SCOPE_VERB}\s+(?:the\s+)?(?:changes?|changeset|edits?|work)\s+(?:within|inside|to)\b[^,;]*)"
+    rf"{_SCOPE_TAIL}",
+    re.IGNORECASE,
+)
 # What marks a sentence as saying what the change is: a change verb, code, or a file path. "Change" is left out,
 # since narration uses it as a noun ("The change stays inside the task's paths.").
 _CHANGE = re.compile(
@@ -95,10 +117,12 @@ def usable(text: str | None) -> bool:
 
 def narration(sentence: str) -> bool:
     """True when the sentence narrates the run (what it does next, that its checks pass, that it kept to its
-    paths) and says nothing about what the change is."""
+    paths) and says nothing about what the change is. A generic scope claim ("I changed only the required
+    files") does not count as saying what the change is, though it holds a change verb."""
     if _PROCESS.search(sentence):
         return True
-    return bool(_STATUS.search(sentence)) and not _CHANGE.search(sentence)
+    claims = bool(_STATUS.search(sentence)) or bool(_SCOPE.search(sentence))
+    return claims and not _CHANGE.search(_SCOPE.sub(" ", sentence))
 
 
 def marked(text: str | None) -> str | None:
