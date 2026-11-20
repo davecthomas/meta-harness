@@ -44,10 +44,11 @@ type Listed = { known: string[] | null; error: string | null };
 const LOADING: Listed = { known: null, error: null };
 const why = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const loading = (list: Listed) => list.known === null && list.error === null;
-// Whether a committed name is one its list offers. An empty name, an empty list and a list that cannot be read
-// take any name, as the picked-name field does; a list still loading takes none.
+// Whether a committed name is one its list offers. An empty name is always offered, and a list that cannot be
+// read takes any name. A list that was read, even an empty one, takes only its own names; one still loading
+// takes none.
 const offered = (list: Listed, name: string) =>
-  !name || (!loading(list) && (!list.known?.length || list.known.some((k) => k.toLowerCase() === name.trim().toLowerCase())));
+  !name || list.error !== null || (list.known ?? []).some((k) => k.toLowerCase() === name.trim().toLowerCase());
 
 // The registered repositories, as the https addresses a skill is imported from.
 function useRegisteredRepos(): Listed {
@@ -114,16 +115,16 @@ function GitSource({ url, gitRef: ref, path, repos, refs, paths, onUrl, onRef, o
   return (
     <Stack gap="sm">
       <Labeled label="Repository" description="A registered repository. The planner reads it as it is now; later changes there change nothing here.">
-        <PickedName label="Repository" what="repository" where="The registry" value={url} empty={loading(repos) ? "Loading…" : "Pick a repository"} known={repos.known} unreadable={repos.error} testId="skill-repo-unknown" readOnly={loading(repos)} onCommit={onUrl} />
+        <PickedName label="Repository" what="repository" where="The registry" value={url} empty={loading(repos) ? "Loading…" : "Pick a repository"} known={repos.known} unreadable={repos.error} testId="skill-repo-unknown" strict readOnly={loading(repos)} onCommit={onUrl} />
         <Unreadable what="registered repositories" error={repos.error} />
       </Labeled>
       <Group grow align="flex-start">
         <Labeled label="Branch or tag" description="Empty is the default branch.">
-          <PickedName label="Branch or tag" what="branch or tag" where={url || "The repository"} value={ref} empty={url && loading(refs) ? "Loading…" : refs.fallback ? `the default branch (${refs.fallback})` : "the default branch"} known={url ? refs.known : []} unreadable={refs.error} testId="skill-ref-unknown" readOnly={!url || loading(refs)} onCommit={onRef} />
+          <PickedName label="Branch or tag" what="branch or tag" where={url || "The repository"} value={ref} empty={url && loading(refs) ? "Loading…" : refs.fallback ? `the default branch (${refs.fallback})` : "the default branch"} known={url ? refs.known : []} unreadable={refs.error} testId="skill-ref-unknown" strict readOnly={!url || loading(refs)} onCommit={onRef} />
           <Unreadable what="branches and tags" error={url ? refs.error : null} />
         </Labeled>
         <Labeled label="Path to the skill" description="The directory that holds its SKILL.md. Empty is the repository's top.">
-          <PickedName label="Path to the skill" what="skill directory" where={`${url || "The repository"} at ${at}`} value={path} empty={url && loading(paths) ? "Loading…" : "the repository's top"} known={url ? paths.known : []} unreadable={paths.error} testId="skill-path-unknown" readOnly={!url || loading(paths)} onCommit={onPath} />
+          <PickedName label="Path to the skill" what="skill directory" where={`${url || "The repository"} at ${at}`} value={path} empty={url && loading(paths) ? "Loading…" : "the repository's top"} known={url ? paths.known : []} unreadable={paths.error} testId="skill-path-unknown" strict readOnly={!url || loading(paths)} onCommit={onPath} />
           <Unreadable what="skill directories" error={url && !refs.error ? paths.error : null} />
         </Labeled>
       </Group>

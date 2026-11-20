@@ -46,7 +46,7 @@ const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.
 // The service the import form asks: the registered repos, what a repository offers at each ref, and the read.
 // A list given as a string cannot be read, and answers 422 with it as the reason. A request held answers only
 // once release is called.
-function serve({ repos = ["acme/skills", "acme/tools"] as string[] | string, source = "listed" as "listed" | string, held = (_path: string): boolean => false } = {}) {
+function serve({ repos = ["acme/skills", "acme/tools"] as string[] | string, source = "listed" as "listed" | string, skills = null as string[] | null, held = (_path: string): boolean => false } = {}) {
   const read: unknown[] = [];
   const listed: string[] = [];
   let release = () => {};
@@ -63,7 +63,7 @@ function serve({ repos = ["acme/skills", "acme/tools"] as string[] | string, sou
       listed.push(params.toString());
       if (source !== "listed") return json({ detail: source }, 422);
       const ref = params.get("ref") ?? "main";
-      const paths = ref === "v2" ? ["skills/plan", "skills/tidy-notes"] : ["skills/tidy-notes"];
+      const paths = skills ?? (ref === "v2" ? ["skills/plan", "skills/tidy-notes"] : ["skills/tidy-notes"]);
       return json({ branches: ["main", "next"], tags: ["v2"], default_branch: "main", ref, paths });
     }
     read.push(JSON.parse(String(init?.body)));
@@ -146,6 +146,26 @@ test("a repository, branch or tag, or path the list lacks is refused; an empty b
 
   fireEvent.keyDown(await pickFrom("Path to the skill", "skills/plan"), { key: "Enter" });
   expect(await screen.findByText(new RegExp(`${URL} at main has no skill directory named skills/plan`))).toBeTruthy();
+});
+
+test("an empty list that was read refuses every name: no repository when none is registered, no path when none holds a SKILL.md", async () => {
+  const readButton = () => screen.getByRole("button", { name: "Read the skill" });
+  serve({ repos: [] });
+  openImport();
+  const repo = await pickFrom("Repository", URL);
+  expect(repo.getAttribute("placeholder")).toBe("No repository to pick");
+  fireEvent.keyDown(repo, { key: "Enter" });
+  expect(await screen.findByText(new RegExp(`The registry has no repository named ${URL}`))).toBeTruthy();
+  expect(readButton().hasAttribute("disabled")).toBe(true);
+  cleanup();
+
+  serve({ skills: [] });
+  openImport();
+  await commit("Repository", URL);
+  fireEvent.keyDown(await pickFrom("Path to the skill", "skills/tidy-notes"), { key: "Enter" });
+  expect(await screen.findByText(new RegExp(`${URL} at main has no skill directory named skills/tidy-notes`))).toBeTruthy();
+  // The refused path is not committed: the field stays open on it.
+  expect(screen.getByRole("combobox", { name: "Path to the skill" })).toBeTruthy();
 });
 
 test("a field takes no name while its list loads, so none the list lacks is committed before it arrives", async () => {
