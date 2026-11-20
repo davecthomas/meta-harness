@@ -1369,6 +1369,15 @@ page; prompts still carry the writing rules, and runs are still told to
 apply the skill. `writing_pass`'s settings, and the rules file they name, are
 checked when the planner and the run service's worker start.
 
+The pass looks only at model-written text, so the strings this code and the
+console write for people are held to the same scanner in CI
+(`tests/outbound/test_fixed_strings.py`). It scans every string of three
+words or more under `src/` and `console/src`, and a hit the scanner decides
+by itself fails the change that wrote it, naming the file, the words and the
+fix. Docstrings, SQL, migrations, test files and the strings a model reads (a
+prompt, a response schema's descriptions) are left out; the test's
+`MODEL_FACING` names those.
+
 Not built: the pass on merge-check notes, which are a task's status reason
 and are not posted, and a pull request description updated after a fix run,
 since no description is updated today.

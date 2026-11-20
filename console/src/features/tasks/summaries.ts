@@ -22,7 +22,7 @@ const SOURCES: Record<SummarySource, { label: string; says: string; color: strin
   },
   recorded: {
     label: "Written by the meta-harness",
-    says: "The run left no usable summary, so the meta-harness wrote this one from its record of the run: the files it changed, how each acceptance check ended, its last plan and the commands it ran.",
+    says: "The run left no usable summary, so the meta-harness wrote this one from its record of the run. That record holds the files it changed, how each acceptance check ended, its last plan and the commands it ran.",
     color: "orange",
   },
   files: {

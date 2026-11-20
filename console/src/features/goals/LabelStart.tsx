@@ -219,7 +219,7 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
               Drafted by {draft.model} for ${draft.usd_cost}. The issues read as {draft.modality}.{" "}
               {draft.label
                 ? "The form below has the title, description, label and repos: edit them, then create the goal. The goal takes every open issue with that label, now and later; Pick issues adds others."
-                : `The form below has the title, description and repos, and the ${draft.refs.length} issues read here as picked issues: a goal takes one label, so with several it holds these issues and none labeled later. Edit them, then create the goal.`}
+                : `The form below has the title, description and repos, and the ${draft.refs.length} issues read here as picked issues. A goal takes one label, so with several it holds these issues and none labeled later. Edit them, then create the goal.`}
             </Text>
           </Alert>
         )}

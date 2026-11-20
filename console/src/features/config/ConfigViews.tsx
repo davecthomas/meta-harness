@@ -166,7 +166,7 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
               <Text size="sm">
                 {(doc.remedies?.fix_again ?? 1) === 0
                   ? "Off: a review its fixes did not settle waits for you"
-                  : `A review its fixes did not settle gets another set of fix rounds on the complex tier, up to ${doc.remedies?.fix_again ?? 1} time${(doc.remedies?.fix_again ?? 1) === 1 ? "" : "s"}, before it waits for you`}
+                  : `A review its fixes did not settle gets another set of fix rounds on the complex tier, at most ${doc.remedies?.fix_again ?? 1} time${(doc.remedies?.fix_again ?? 1) === 1 ? "" : "s"}. Then it waits for you.`}
               </Text>
             }
             changed={changed(s, ["remedies", "fix_again"])}
@@ -188,7 +188,7 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
               <Text size="sm">
                 {(doc.remedies?.raise_limit ?? 1) === 0
                   ? "Off: a task at its spend limit waits for you"
-                  : `A task at its own spend limit is raised to what its next run needs, up to twice the limit and within its goal's budget, ${doc.remedies?.raise_limit ?? 1} time${(doc.remedies?.raise_limit ?? 1) === 1 ? "" : "s"}, before it waits for you. A goal's budget is never raised for you.`}
+                  : `A task at its own spend limit is raised to what its next run needs, ${doc.remedies?.raise_limit ?? 1} time${(doc.remedies?.raise_limit ?? 1) === 1 ? "" : "s"}, before it waits for you. A raise goes up to twice the limit and stays within the goal's budget. A goal's budget is never raised for you.`}
               </Text>
             }
             changed={changed(s, ["remedies", "raise_limit"])}

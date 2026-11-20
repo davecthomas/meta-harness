@@ -1019,7 +1019,7 @@ class RunTask:
                 # that failed with no output is for an operator, with the check's run on the code host.
                 return "merge_checks_failed", (
                     f"{reason}; {names} failed on the merge commit {loop.merge_sha[:12]} with no output a fix run "
-                    "could act on, so no fix run started: see the check's run on the code host"
+                    "could act on, so no fix run started. See the check's run on the code host"
                 )
             if rounds >= loop.max_rounds:
                 return "merge_checks_failed", (

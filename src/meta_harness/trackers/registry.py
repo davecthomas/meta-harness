@@ -93,8 +93,8 @@ def check(document: dict[str, Any], others: dict[str, dict[str, Any]] | None) ->
     label = document.get("label", MARK_LABEL)
     if not isinstance(label, str) or not label or len(label) > 50 or re.search(r"[\s,]", label):
         reasons.append(
-            "label is the label every issue the meta-harness creates or changes carries: up to 50 characters "
-            f"with no space or comma, such as {MARK_LABEL} (a Jira label has no spaces)"
+            "label is the label put on every issue the meta-harness creates or changes. It is up to 50 "
+            f"characters with no space or comma, such as {MARK_LABEL} (a Jira label has no spaces)"
         )
     registered = (others or {}).get("repos", {}).get("repos")
     names = {name.lower() for name in registered} if isinstance(registered, dict) else None

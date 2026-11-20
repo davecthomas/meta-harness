@@ -1310,8 +1310,8 @@ async def post_review(request: PostReviewRequest) -> str:
         + (
             [
                 "",
-                f"{len(follow)} of the findings are follow-ups: they are on code an earlier round passed that no "
-                "fix has touched since, so they do not hold the merge. Each is worth its own issue.",
+                f"{len(follow)} of the findings are follow-ups, so they do not hold the merge. They are on code "
+                "an earlier round passed that no fix has touched since. Each is worth its own issue.",
             ]
             if follow
             else []
@@ -1503,7 +1503,7 @@ async def merge_pr(request: MergeRequest) -> MergeResult:
                         state="blocked",
                         detail=(
                             f"{HELD_FOR_OPERATOR}: it changes {shown}, which run with the control plane's own "
-                            "authority once merged, so no pull request that changes them merges on a review "
+                            "authority once merged. No pull request that changes them merges on a review "
                             "alone. Read the change, then use Merge on the task's page."
                         ),
                     )

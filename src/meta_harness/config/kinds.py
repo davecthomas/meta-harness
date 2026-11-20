@@ -298,8 +298,8 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
             task_ceiling = amount
         else:
             reasons.append(
-                f"max_task_usd must be an amount above 0 and at most {MAX_TASK_USD}: the most one task may "
-                "spend, whatever its own limit or the budget policy says"
+                f"max_task_usd must be an amount above 0 and at most {MAX_TASK_USD}. It is the most one task "
+                "may spend, whatever its own limit or the budget policy says"
             )
     writing = document.get("writing_pass")
     if writing is not None and not isinstance(writing, bool):

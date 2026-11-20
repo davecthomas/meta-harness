@@ -636,8 +636,8 @@ def check_goal(settings: dict[str, Any], site: dict[str, Any] | None = None) -> 
         )
     elif listed and project not in listed:
         reasons.append(
-            f"{project} is not one of the Jira projects the meta-harness works in ({', '.join(sorted(listed))}): "
-            "choose one of those, or add it under Configuration, Issue trackers, Jira, Projects"
+            f"{project} is not one of the Jira projects the meta-harness works in ({', '.join(sorted(listed))}). "
+            "Choose one of those, or add it under Configuration, Issue trackers, Jira, Projects"
         )
     if settings.get("assigned", "") not in ("", "yes"):
         reasons.append('assigned is "yes" for a goal that takes the issues assigned to the meta-harness, else left out')
@@ -698,8 +698,8 @@ SPEC = Supported(
             "assigned",
             "Take issues assigned to the meta-harness",
             kind="switch",
-            help="On: the goal also takes every open issue of the project that is assigned, in Jira, to the "
-            "account the meta-harness signs in as, whatever its labels. Assigning an issue there hands it over.",
+            help="On: the goal also takes every open issue of the project assigned, in Jira, to the account "
+            "the meta-harness signs in as, whatever its labels. Assigning an issue there hands it over.",
         ),
     ],
     check_goal=check_goal,
