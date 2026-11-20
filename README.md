@@ -1,22 +1,23 @@
 # Meta-Harness
 
-**Set a goal. Get merged pull requests.**
+**Agentic engineering, from goal to merged code.**
 
 [![control plane](https://github.com/davecthomas/meta-harness/actions/workflows/control-plane.yml/badge.svg?branch=main)](https://github.com/davecthomas/meta-harness/actions/workflows/control-plane.yml)
 [![end-to-end](https://github.com/davecthomas/meta-harness/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/davecthomas/meta-harness/actions/workflows/e2e.yml)
 [![deploy](https://github.com/davecthomas/meta-harness/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/davecthomas/meta-harness/actions/workflows/deploy.yml)
 [![version](https://img.shields.io/github/v/release/davecthomas/meta-harness?sort=semver&label=version)](https://github.com/davecthomas/meta-harness/releases/latest)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
 ![Node 22](https://img.shields.io/badge/node-22-5FA04E?logo=nodedotjs&logoColor=white)
 ![Temporal](https://img.shields.io/badge/workflows-Temporal-000000?logo=temporal&logoColor=white)
 ![Google Cloud](https://img.shields.io/badge/runs%20on-Google%20Cloud-4285F4?logo=googlecloud&logoColor=white)
 
-Meta-Harness is a control plane for AI coding agents at team scale. You give it
-a goal and the repos it covers. It plans the work as tasks, runs each task in an
-isolated sandbox on the model and agent harness that fit its difficulty, has a
-second model review every pull request, fixes what the review finds, and merges
-the result. You watch it in a web console and step in only when a decision is
-yours.
+Meta-Harness is a control plane for coding agents. You state a goal. A planning
+agent reads your repos and turns the goal into dependency-ordered tasks. A router
+sends each task to the model and agent harness that fit its difficulty. Agents
+work in parallel in isolated sandboxes, a second model reviews every pull
+request, fix runs settle what the review finds, and the result merges. You make
+the decisions only you can make, and nothing else.
 
 It builds itself: Meta-Harness planned, wrote, reviewed and merged most changes
 to this repository, from goals set in its own console.
@@ -25,7 +26,7 @@ to this repository, from goals set in its own console.
 
 ## Contents
 
-- [Why Meta-Harness](#why-meta-harness)
+- [What makes it different](#what-makes-it-different)
 - [Features](#features)
 - [How a goal becomes merged code](#how-a-goal-becomes-merged-code)
 - [Architecture](#architecture)
@@ -39,51 +40,78 @@ to this repository, from goals set in its own console.
 - [Contributing](#contributing)
 - [License](#license)
 
-## Why Meta-Harness
+## What makes it different
 
-One coding agent in one terminal speeds up one developer. A team needs more:
-dozens of tasks across many repos, running at once, without anyone babysitting a
-session. Each needs the right model for its difficulty and a spend limit, and
-someone must review every change before it merges.
+A coding agent in a terminal still needs a developer at the keyboard: to break
+the work down, choose the model, prompt, watch, review the diff, and fix what it
+missed. Meta-Harness does each of those steps itself.
 
-Meta-Harness provides it. Agents run in parallel and in isolation, so
-one task's failure or one provider's outage leaves the rest running. It
-meters every model call and records every decision, and nothing reaches your
-code host except through the control plane.
+### Agentic planning
+
+- **A goal becomes a plan.** Write the goal in a sentence or point it at a tracker
+  label. A planning agent runs in a sandbox on your repos and drafts the work as
+  issues in dependency order. Each issue names the paths it changes, the outcome a
+  reviewer checks, and the commands that prove it done.
+- **Latitude sets the scope.** At 0 the planner works only the issues you name. At
+  higher latitude it may add the tests, docs and refactors the goal needs, and say
+  why for each.
+- **The planner sizes every issue first.** One too large for a single pull request is split
+  into parts that run in its place, and the original closes when they finish.
+- **The planner checks its own plan.** It lists the gaps that need your call, and
+  drafts a revised plan for the gaps it can settle itself, for you to accept in one
+  click.
+- **Plans change as the work does.** Replan a goal under way, and tasks already
+  running carry on.
+
+### Model routing
+
+- **Each task gets a difficulty tier.** A classifier model reads the task and picks
+  a tier. The shipped tiers are `standard`, for a change inside one module, and
+  `complex`, for cross-module changes, migrations, concurrency and security work.
+  An issue's size sets a floor.
+- **Each tier is an ordered list of candidates.** A candidate is a harness profile
+  and a model, run at the tier's thinking level. For example, `standard` runs the
+  lean pi profile on Claude Sonnet or GPT-5.6, and `complex` runs the careful
+  profile on Claude Opus or GPT-6. A candidate that fails hands the task to the
+  next, and a tier that runs out escalates.
+- **The reviewer is never the author.** Review runs on a different model from the
+  one that wrote the change, so one model's blind spots don't pass their own review.
+- **Attempts can race.** Run a task on several candidates at once and pick the best
+  result.
+- **Cost per finished task.** Failed runs count too, so you can compare models
+  and profiles on what a merged change costs, and tune the tiers on
+  evidence. Tiers, profiles and models are configuration, edited and versioned in
+  the console.
+
+### Trust without watching
+
+- **Review until clean.** Findings go to fix runs until the review comes back clean,
+  and checks must pass again on the merge commit before a task closes.
+- **Hard limits.** Spend caps per run, per task and per goal stop work when
+  reached. A kill switch stops everything at once.
+- **Isolation.** Each run is a sandbox with no code-host credentials. Only the
+  control plane pushes, opens pull requests and merges.
+- **A full record.** Every decision, by a service, a model or a person, is an event
+  you can trace.
+
+### Your attention only where it counts
+
+The planner reports in a few plain sentences, in the tone and detail you set. Each
+thing it needs from you comes with the button that does it: approve the plan,
+merge, try another fix, split an issue or run it whole, raise the budget.
 
 ## Features
 
-**Goals and planning**
-- A goal names its repos, its tracker label or a plain description, a budget and a priority.
-- The planner drafts a plan of tasks with their order and dependencies, and flags open questions.
-  You approve it, edit it, or accept a fix the planner drafted for a gap it found.
-- Issues come from GitHub Issues or Jira. An issue too large for one pull request is split, or run
-  whole at your call.
-- The planner writes short updates in plain language, in the tone and level of detail you choose. Anything
-  it needs from you comes with the button that does it.
-
-**Execution**
-- Each task runs in its own sandbox container, behind an egress proxy, with no code-host credentials.
-- Routing picks a harness profile, a model and a thinking level for each task's difficulty tier,
-  with fallback candidates when one fails.
-- Several attempts can run side by side on different candidates, for you to compare and pick.
-- Tasks that touch the same files take turns, so parallel work doesn't collide.
-
-**Review and merge**
-- A different model reviews every pull request. Findings go to fix runs until the review comes back clean.
-- Checks must pass on the pull request, and again on the merge commit, before a task closes.
-- Merges happen automatically for goals that allow it, or on your approval for those that don't.
-
-**Control and cost**
-- Spend limits per run, per task and per goal are hard caps, enforced in the model gateway and the scheduler.
-- A kill switch stops all work at once. Drain mode lets running work finish before a deploy.
-- A supervisor checks every open task each minute, records who has it, and moves tasks that no one does.
-- Model and cloud costs roll up by goal, task, repo, model and operator.
-
-**Operator console**
-- Live goal boards, task timelines, a streaming terminal, diffs with line comments, checks and reviews.
-- Versioned configuration with validation on save and one-click rollback.
-- A command palette and keyboard shortcuts throughout.
+- **Trackers:** issues come from GitHub Issues or Jira, and the planner writes progress, comments and
+  pull request links back to them.
+- **Parallel work:** tasks that touch the same files take turns, so parallel work doesn't collide. Tasks
+  wait on the issues they depend on.
+- **Supervision:** a supervisor checks every open task each minute, records who has it, and moves tasks
+  that no one does.
+- **Merging:** goals that allow it merge on a clean review, and the rest wait for your approval.
+- **Costs:** model and cloud costs roll up by goal, task, repo, model and outcome.
+- **Operator console:** live goal boards, task timelines, a streaming terminal, diffs with line comments,
+  checks, reviews, versioned configuration with rollback, a command palette and keyboard shortcuts.
 
 ## How a goal becomes merged code
 
@@ -257,7 +285,7 @@ Every merge to `main` deploys itself to Google Cloud through
 2. The **release** stack updates the running VM to the commit in place. Services restart one at a time
    and running tasks drain first.
 3. A smoke task runs through the deployed system. A failed boot rolls the VM back, and a failed deploy
-   opens an issue for the team.
+   opens an issue to fix it.
 
 The deployment's coordinates live in a git-ignored settings file and a repository secret, never in the
 repository. [`deploy/README.md`](deploy/README.md) covers setting up a new project, `make platform`,
@@ -297,4 +325,5 @@ the same rules, in [`AGENTS.md`](AGENTS.md):
 
 ## License
 
-The repository has no license file yet, so it grants no license to use, copy or modify it.
+Meta-Harness is licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Dave Thomas; see
+[`NOTICE`](NOTICE).
