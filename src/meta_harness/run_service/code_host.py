@@ -311,8 +311,10 @@ async def publish(
         existing_record = pr_record.read_text(encoding="utf-8") if pr_record.exists() else ""
         # The record is this branch's pull request only when its head names this branch. A merge-check fix
         # publishes on a new branch while the record still holds the merged pull request, so that is a new one.
+        # A record whose head commit the base already holds has merged too: a later run on that branch opens
+        # a new one, with its own description and provenance.
         head = _HEAD_LINE.search(existing_record)
-        created = head is None or head.group(1) != branch
+        created = head is None or head.group(1) != branch or await _merged_into(repo, base, head.group(2))
         if created:
             if not isinstance(body, str):
                 body = await body(files)
@@ -755,7 +757,16 @@ async def changed_lines(repo: str, since: str, head_sha: str) -> dict[str, list[
     return found
 
 
-_HEAD_LINE = re.compile(r"^head: (\S+)(?: at \S*)?$", re.MULTILINE)
+_HEAD_LINE = re.compile(r"^head: (\S+)(?: at (\S*))?$", re.MULTILINE)
+
+
+async def _merged_into(repo: str, base: str, commit: str | None) -> bool:
+    """Whether a local bare repo's base holds commit, so the pull request at that head has merged. A commit
+    the repo does not know has not merged."""
+    if not commit:
+        return False
+    found = await _run("git", f"--git-dir={repo}", "merge-base", base, commit, check=False)
+    return bool(found) and found == await _run("git", f"--git-dir={repo}", "rev-parse", commit, check=False)
 
 
 async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr_record: Path) -> None:

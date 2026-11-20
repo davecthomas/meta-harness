@@ -200,6 +200,37 @@ async def test_a_merge_fix_on_a_new_branch_opens_a_new_record(origin: Path, run_
     assert "fix body" in record.read_text() and "other body" not in record.read_text()
 
 
+async def test_a_run_after_a_local_merge_on_the_same_branch_opens_a_new_record(origin: Path, run_dir: Path):
+    """The record's pull request merged into main; a later task run on the same branch is a new pull request,
+    with its own body and provenance."""
+    workspace, git_dir = run_dir / "workspace", run_dir / "git"
+    await code_host.clone(str(origin), workspace, git_dir)
+    (workspace / "hello.txt").write_text("changed\n")
+    record = run_dir / "pull-request.md"
+    first = await code_host.publish(
+        repo=str(origin), workspace=workspace, git_dir=git_dir, branch="mh/task", title="t", body="first body",
+        commit_message="m", pr_record=record,
+    )  # fmt: skip
+    assert first is not None and first.created
+    state, *_ = await code_host.merge_local(str(origin), "main", first.commit)
+    assert state == "merged"
+
+    later = run_dir.parent / "run-2"
+    workspace, git_dir = later / "workspace", later / "git"
+    await code_host.clone(str(origin), workspace, git_dir, branch="mh/task")
+    (workspace / "hello.txt").write_text("changed again\n")
+    second = await code_host.publish(
+        repo=str(origin), workspace=workspace, git_dir=git_dir, branch="mh/task", title="t2",
+        body="second body\n\n## Provenance\n\nrun: t-1:run-2", commit_message="m", pr_record=record,
+    )  # fmt: skip
+
+    assert second is not None and second.created
+    text = record.read_text()
+    assert f"head: mh/task at {second.commit}" in text
+    assert "second body" in text and "run: t-1:run-2" in text
+    assert "first body" not in text
+
+
 async def test_a_description_written_by_a_function_is_given_the_files_the_branch_changes(origin: Path, run_dir: Path):
     workspace, git_dir = run_dir / "workspace", run_dir / "git"
     await code_host.clone(str(origin), workspace, git_dir)
