@@ -485,3 +485,78 @@ async def test_a_local_repos_changed_lines_between_two_commits(tmp_path):
 
     changed = await code_host.changed_lines(str(work / ".git"), before, after)
     assert changed == {"app.py": [(7, 7)]}
+
+
+def _checks(monkeypatch, answers: list[list[CheckRun]], attempts: dict[int, int]):
+    """wait_checks against a code host that answers each read with the next list, and records re-runs."""
+    seen = {"reads": 0, "rerun": [], "emitted": []}
+
+    async def check_runs(repo, sha):
+        found = answers[min(seen["reads"], len(answers) - 1)]
+        seen["reads"] += 1
+        return found
+
+    async def run_attempt(repo, run_id):
+        return attempts.get(run_id, 1)
+
+    async def rerun_failed_jobs(repo, run_id):
+        seen["rerun"].append(run_id)
+
+    async def no_wait(seconds):
+        return None
+
+    monkeypatch.setattr(activities.code_host, "check_runs", check_runs)
+    monkeypatch.setattr(activities.code_host, "run_attempt", run_attempt)
+    monkeypatch.setattr(activities.code_host, "rerun_failed_jobs", rerun_failed_jobs)
+    monkeypatch.setattr(activities.asyncio, "sleep", no_wait)
+    monkeypatch.setattr(activities.events, "emit", lambda *a, **k: seen["emitted"].append((a, k)))
+    return seen
+
+
+async def test_a_failed_actions_check_is_re_run_once_and_a_pass_on_the_re_run_counts(monkeypatch):
+    failed = [
+        CheckRun("tests", "completed", "failure", "flaky", actions_run=7),
+        CheckRun("lint", "completed", "success", ""),
+    ]
+    rerunning = [CheckRun("tests", "queued", None, "", actions_run=7), CheckRun("lint", "completed", "success", "")]
+    passed = [
+        CheckRun("tests", "completed", "success", "", actions_run=7),
+        CheckRun("lint", "completed", "success", ""),
+    ]
+    seen = _checks(monkeypatch, [failed, failed, rerunning, passed], {7: 1})
+
+    result = await ActivityEnvironment().run(
+        activities.wait_checks, ChecksRequest(repo="o/r", head_sha="abc1234", task_id="t-1")
+    )
+
+    assert seen["rerun"] == [7]
+    assert result.state == "passed", "a check that passes on its re-run is no failure, and no fix run is sent"
+    [remedy] = [a for a, k in seen["emitted"] if a[0] == "remedy_applied"]
+    assert remedy[1]["did"] == "re-ran the failed jobs of tests, in case they failed by chance"
+
+
+async def test_a_check_that_fails_again_or_was_re_run_already_or_is_not_actions_goes_to_its_fix_run(monkeypatch):
+    failed = [CheckRun("tests", "completed", "failure", "real", actions_run=7)]
+    rerunning = [CheckRun("tests", "in_progress", None, "", actions_run=7)]
+    seen = _checks(monkeypatch, [failed, rerunning, failed], {7: 1})
+    again = await ActivityEnvironment().run(
+        activities.wait_checks, ChecksRequest(repo="o/r", head_sha="abc", task_id="t-1")
+    )
+    assert again.state == "failed" and seen["rerun"] == [7], "re-run once, and its second failure stands"
+
+    seen = _checks(monkeypatch, [failed], {7: 2})
+    done = await ActivityEnvironment().run(
+        activities.wait_checks, ChecksRequest(repo="o/r", head_sha="abc", task_id="t-1")
+    )
+    assert done.state == "failed" and seen["rerun"] == [], "a workflow run past its re-run is not re-run again"
+
+    seen = _checks(monkeypatch, [[CheckRun("ci/legacy", "completed", "failure", "x")]], {})
+    other = await ActivityEnvironment().run(
+        activities.wait_checks, ChecksRequest(repo="o/r", head_sha="abc", task_id="t-1")
+    )
+    assert other.state == "failed" and seen["rerun"] == [], "a status that is not a GitHub Actions run is not re-run"
+
+
+def test_a_check_runs_actions_run_is_read_from_its_details_link():
+    assert code_host._actions_run("https://github.com/o/r/actions/runs/123456/job/789") == 123456
+    assert code_host._actions_run("https://ci.example.com/build/4") is None

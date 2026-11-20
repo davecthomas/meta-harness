@@ -53,6 +53,11 @@ OPEN_PULL_REQUEST = {"pull_requests": "write", "issues": "write"}
 READ_CHECKS = {"checks": "read", "statuses": "read"}
 REVIEW = {"pull_requests": "write"}
 READ_PULL_REQUEST = {"pull_requests": "read"}
+READ_ACTIONS = {"actions": "read"}
+# Re-running a pull request's failed GitHub Actions jobs, once, before a fix run is sent for them.
+WRITE_ACTIONS = {"actions": "write"}
+# A check run's GitHub Actions workflow run, from its details link.
+ACTIONS_RUN = re.compile(r"/actions/runs/(\d+)")
 # A check run that ends with one of these did not fail.
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
 PR_URL_PATTERN = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)$")
@@ -406,6 +411,8 @@ class CheckRun:
     status: str
     conclusion: str | None
     summary: str
+    # The GitHub Actions workflow run behind the check, when it is one: what a re-run of its failed jobs names.
+    actions_run: int | None = None
 
 
 async def check_runs(repo: str, sha: str) -> list[CheckRun]:
@@ -417,6 +424,7 @@ async def check_runs(repo: str, sha: str) -> list[CheckRun]:
             status=run["status"],
             conclusion=run.get("conclusion"),
             summary=_check_summary(run.get("output") or {}),
+            actions_run=_actions_run(run.get("details_url") or run.get("html_url") or ""),
         )
         for run in runs.get("check_runs", [])
     ]
@@ -432,6 +440,22 @@ async def check_runs(repo: str, sha: str) -> list[CheckRun]:
             )
         )
     return found
+
+
+def _actions_run(url: str) -> int | None:
+    found = ACTIONS_RUN.search(url)
+    return int(found[1]) if found else None
+
+
+async def run_attempt(repo: str, run_id: int) -> int:
+    """Which attempt a GitHub Actions workflow run is on: 1 until its jobs are re-run."""
+    run = await _github(repo, READ_ACTIONS, "GET", f"/repos/{repo}/actions/runs/{run_id}")
+    return int(run.get("run_attempt") or 1)
+
+
+async def rerun_failed_jobs(repo: str, run_id: int) -> None:
+    """Re-run a GitHub Actions workflow run's failed jobs, as Re-run failed jobs on GitHub does."""
+    await _github(repo, WRITE_ACTIONS, "POST", f"/repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs")
 
 
 def _seconds(started: str | None, completed: str | None) -> int | None:

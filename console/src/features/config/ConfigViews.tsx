@@ -220,6 +220,28 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
           />,
         ],
         [
+          "Re-run failed checks",
+          <InlineField
+            kind="number"
+            label="Re-run failed checks"
+            value={doc.remedies?.rerun_checks ?? 1}
+            min={0}
+            max={3}
+            decimalScale={0}
+            display={
+              <Text size="sm">
+                {(doc.remedies?.rerun_checks ?? 1) === 0
+                  ? "Off: a failed check goes straight to a fix run"
+                  : `A pull request's failed GitHub Actions jobs are re-run ${doc.remedies?.rerun_checks ?? 1} time${(doc.remedies?.rerun_checks ?? 1) === 1 ? "" : "s"} first, so one that failed by chance costs no fix run`}
+              </Text>
+            }
+            changed={changed(s, ["remedies", "rerun_checks"])}
+            reasons={s.reasons("rerun_checks")}
+            readOnly={s.readOnly}
+            onCommit={(v) => s.stage(["remedies", "rerun_checks"], v)}
+          />,
+        ],
+        [
           "Wait before a fix run",
           <InlineField
             kind="number"

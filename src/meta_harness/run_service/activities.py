@@ -869,6 +869,63 @@ CHECKS_POLL_SECONDS = 30
 NO_CHECKS_SECONDS = 300
 # A check run that ends with one of these did not fail.
 PASSING_CONCLUSIONS = code_host.PASSING_CONCLUSIONS
+# How long a wait looks for a re-run's jobs to appear before it takes the old failures as the result.
+RERUN_SHOWS_SECONDS = 180
+
+
+async def _rerun_flaky(request: ChecksRequest, runs: list[code_host.CheckRun]) -> list[str]:
+    """Re-run the failed GitHub Actions jobs of a pull request's head commit, once, before a fix run is sent
+    for them: a check that failed by chance passes on its re-run, and one that fails again goes to the fix run.
+    Stateless: a workflow run past the task policy's `remedies.rerun_checks` attempts is not re-run again.
+    Returns the checks re-run; none when nothing qualifies or the code host refuses (the failure stands)."""
+    from meta_harness.config.kinds import remedy_tries
+
+    most = remedy_tries(routing.task_policy(), "rerun_checks")
+    failed = [r for r in runs if r.conclusion not in PASSING_CONCLUSIONS and r.actions_run]
+    if not most or not failed:
+        return []
+    rerun: list[str] = []
+    for run_id in sorted({r.actions_run for r in failed if r.actions_run}):
+        try:
+            attempt = await code_host.run_attempt(request.repo, run_id)
+            if attempt > most:
+                continue
+            await code_host.rerun_failed_jobs(request.repo, run_id)
+        except code_host.CodeHostError as err:
+            activity.logger.warning(
+                "wait_checks: could not re-run workflow run %s: %s; its failure stands", run_id, err
+            )
+            continue
+        rerun += [r.name for r in failed if r.actions_run == run_id]
+    if rerun and request.task_id:
+        names = ", ".join(rerun)
+        record = {
+            "task_id": request.task_id,
+            "goal_id": None,
+            "situation": "checks_failed",
+            "remedy": "rerun_checks",
+            "try": 1,
+            "of": most,
+            "outcome": "started",
+            "because": f"{names} failed on {request.head_sha[:7]}",
+            "did": f"re-ran the failed jobs of {names}, in case they failed by chance",
+            "next": "if they fail again, a fix run takes them on",
+            "error": None,
+        }
+        try:
+            from meta_harness.supervisor import ledger
+
+            await asyncio.to_thread(ledger.write, record)
+        except Exception as err:  # noqa: BLE001 - the re-run stands; only its record is missing
+            activity.logger.warning("wait_checks: could not record the re-run: %s", err)
+        payload = {k: record[k] for k in ("situation", "remedy", "try", "outcome", "because", "did", "next")}
+        events.emit(
+            "remedy_applied",
+            {**payload, "of": most},
+            task_id=request.task_id,
+            event_id=events.stable_id(request.task_id, "rerun_checks", request.head_sha),
+        )
+    return rerun
 
 
 @activity.defn
@@ -878,12 +935,31 @@ async def wait_checks(request: ChecksRequest) -> ChecksResult:
     waited = int(details[0]) if details else 0
     # A local bare repo has no code host, so it runs no checks.
     result = ChecksResult(state="none") if code_host.is_local(request.repo) else None
+    rerun, restarted = False, False
+    # When the re-run was asked for, in seconds of this wait; None while there was none.
+    rerun_at: int | None = None
     while result is None:
         try:
             runs = await code_host.check_runs(request.repo, request.head_sha)
         except code_host.CodeHostError as err:
             raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
         pending = [r.name for r in runs if r.status != "completed"]
+        restarted = restarted or bool(pending)
+        if runs and not pending and not rerun and any(r.conclusion not in PASSING_CONCLUSIONS for r in runs):
+            # A failure may be chance: its jobs are re-run once, and this wait goes on for their result.
+            rerun = True
+            if await _rerun_flaky(request, runs):
+                rerun_at, restarted = waited, False
+                activity.heartbeat(waited)
+                await asyncio.sleep(CHECKS_POLL_SECONDS)
+                waited += CHECKS_POLL_SECONDS
+                continue
+        if rerun_at is not None and not restarted and not pending and waited - rerun_at < RERUN_SHOWS_SECONDS:
+            # The re-run's jobs have not appeared yet: the old failures are still the newest the host shows.
+            activity.heartbeat(waited)
+            await asyncio.sleep(CHECKS_POLL_SECONDS)
+            waited += CHECKS_POLL_SECONDS
+            continue
         if runs and not pending:
             failed = [FailedCheck(r.name, r.summary) for r in runs if r.conclusion not in PASSING_CONCLUSIONS]
             passed = sorted({r.name for r in runs if r.conclusion in PASSING_CONCLUSIONS})
