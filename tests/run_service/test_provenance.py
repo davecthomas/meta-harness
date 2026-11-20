@@ -12,7 +12,7 @@ from temporalio.testing import ActivityEnvironment
 from temporalio.worker import Worker
 
 from meta_harness.events import types
-from meta_harness.run_service import activities, code_host, prompt_activities, provenance
+from meta_harness.run_service import activities, code_host, pr_summary, prompt_activities, provenance
 from meta_harness.run_service.prompt_activities import RunPromptRecord
 from meta_harness.run_service.shared import PublishRequest, RunTaskInput, TaskSpec
 from meta_harness.run_service.workflows import RunTask
@@ -237,7 +237,10 @@ async def test_a_fix_run_without_provenance_adds_no_run_section(monkeypatch, tmp
         fix_round=1,
     )
     await ActivityEnvironment().run(activities.publish, request)
-    assert record.read_text(encoding="utf-8") == "# Fix the bug\n"
+    text = record.read_text(encoding="utf-8")
+    # The fix round still shows, with the fallback summary, but no Run section is added without provenance.
+    assert "## Fix round 1 (r:run-3)" in text
+    assert "## Run for fix round" not in text
 
 
 def test_the_pull_request_and_its_commit_carry_the_provenance():
@@ -254,7 +257,7 @@ def test_the_pull_request_and_its_commit_carry_the_provenance():
         provenance=made,
     )
 
-    body = activities._pr_body(request)
+    body = activities._pr_body(request, pr_summary.section(request.summary, []))
     assert "- Task: `t-1`" in body
     assert "- Goal: `g-1`" in body
     assert "- Issue: `github:owner/repo#7`" in body
@@ -277,7 +280,7 @@ def test_a_run_outside_the_task_api_publishes_as_before():
         run_id="r:run-1", repo="owner/repo", ticket="", title="T", candidate="c", summary=None, spent_usd="0"
     )
     assert activities._commit_message(request) == "T\n\nRun r:run-1 on c."
-    assert "- Task:" not in activities._pr_body(request)
+    assert "- Task:" not in activities._pr_body(request, pr_summary.section(request.summary, []))
 
 
 def _client(sent: list[dict]):

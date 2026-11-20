@@ -261,7 +261,7 @@ async def publish(
     git_dir: Path,
     branch: str,
     title: str,
-    body: str | Callable[[], Awaitable[str]],
+    body: str | Callable[[list[str]], Awaitable[str]],
     commit_message: str,
     pr_record: Path,
 ) -> Published | None:
@@ -269,9 +269,10 @@ async def publish(
 
     Returns None when pi changed nothing. A retried attempt finds the branch
     and the pull request the earlier attempt made, and makes neither again.
-    body may be a function that writes the description: it is called only
-    when a pull request is opened, so a description that costs something to
-    write is not written for a push to a pull request already open.
+    body may be a function that writes the description from the files the
+    branch changes: it is called only when a pull request is opened, so a
+    description that costs something to write is not written for a push to
+    a pull request already open.
     Every git command names git_dir and the workspace outright, so the
     `.git` file pi could rewrite in the workspace decides nothing.
     """
@@ -305,7 +306,7 @@ async def publish(
         created = not pr_record.exists()
         if created:
             if not isinstance(body, str):
-                body = await body()
+                body = await body(files)
             record = f"# {title}\n\nbase: {base}\nhead: {branch} at {commit}\n\n{body}\n"
         else:
             # A push to a pull request already open keeps its description, as GitHub does, and with it the
@@ -322,7 +323,7 @@ async def publish(
     if existing:
         return Published(branch, base, commit, files, existing[0]["html_url"], False)
     if not isinstance(body, str):
-        body = await body()
+        body = await body(files)
     pull = await _github(
         repo,
         OPEN_PULL_REQUEST,
