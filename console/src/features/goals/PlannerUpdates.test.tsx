@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
@@ -27,7 +27,7 @@ const TASKS: Record<string, unknown> = {
   "t-3": { id: "t-3", title: "Question", status: "running", pr_url: null, max_usd: "5" },
   "t-4": { id: "t-4", title: "Broken", status: "failed", pr_url: null, max_usd: "5" },
 };
-const ISSUES = [{ ref: "jira:VL-8", repo: "o/r", state: "open", depends_on: [], refused_reason: null, held_reason: "it is large: 4 areas", task_id: null, task_status: null, task_status_reason: null, pr_url: null, pr_state: null, checks: null, split: [] }];
+const ISSUES = [{ ref: "jira:VL-9", repo: "o/r", state: "open", depends_on: [], refused_reason: null, held_reason: "it is large: 5 areas", task_id: null, task_status: null, task_status_reason: null, pr_url: null, pr_state: null, checks: null, split: [] }, { ref: "jira:VL-8", repo: "o/r", state: "open", depends_on: [], refused_reason: null, held_reason: "it is large: 4 areas", task_id: null, task_status: null, task_status_reason: null, pr_url: null, pr_state: null, checks: null, split: [] }];
 const FIRST = { number: 1, headline: "The plan is ready for you.", body: "Three tasks, in order.", needs_you: [], next: "", created_at: "2026-11-19T11:00:00Z" };
 
 // The panel over a fake API. reads: what each GET answers, the last one repeating. Returns the POSTs made.
@@ -138,6 +138,13 @@ test("every need comes with the button that resolves it, from its task's state n
   fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Merge" }));
   await waitFor(() => expect(posts).toContain("/v1/tasks/t-1/merge"));
   expect(posts).toContain("/v1/goals/g-1/updates");
+
+  // An update written before needs carried state-based actions still offers the choice for a held issue.
+  cleanup();
+  show([{ updates: [{ ...LATEST, needs_you: [{ what: "Say whether to split VL-9.", ref: "jira:VL-9", action: "open_issue" }] }], enabled: true, error: null }]);
+  const [old] = await screen.findAllByTestId("planner-need");
+  expect(await within(old).findByRole("button", { name: "Run anyway" })).toBeTruthy();
+  expect(within(old).getByRole("button", { name: "Split" })).toBeTruthy();
   window.removeEventListener("mh:approve-plan", approve);
   window.removeEventListener("mh:open-settings", settings);
 });
