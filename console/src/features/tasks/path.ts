@@ -37,6 +37,8 @@ export interface Step {
   chosen?: boolean;
   // What an operator, the supervisor or the writing pass did during the step.
   notes: string[];
+  // What the step's box has no room for, shown on its hover: a review's summary and findings, a run's plan.
+  more?: string[];
   // The task is here now.
   now: boolean;
   // A step that came again the same way, folded into this one: how many times, when the first began, and how
@@ -63,6 +65,9 @@ export const STEP_EVENTS = [
   "pull_request_summary",
   // What the supervisor or the planner did to unstick the task, noted on the step it started.
   "remedy_applied",
+  // A review's summary and findings, and a run's plan: what a step's hover shows beyond its box.
+  "review_submitted",
+  "plan_updated",
 ];
 
 const PARKED: Record<string, string> = {
@@ -237,6 +242,28 @@ export function steps(events: MhEvent[]): Step[] {
       case "task_recovered":
         queuedAgain(time, `p${e.position}`, "Recovered by the supervisor", moneyText(String(p.why ?? "")));
         break;
+      case "review_submitted": {
+        const step = runs.get(runId);
+        const found = Array.isArray(p.findings) ? (p.findings as { path?: string; line?: number; body?: string }[]) : [];
+        if (step) {
+          step.more = [
+            ...(p.summary ? [String(p.summary)] : []),
+            ...found.slice(0, 5).map((f) => `${f.path ? `${f.path}${f.line ? `:${f.line}` : ""}: ` : ""}${String(f.body ?? "").slice(0, 160)}`),
+            ...(found.length > 5 ? [`and ${found.length - 5} more`] : []),
+          ];
+        }
+        break;
+      }
+      case "plan_updated": {
+        // The run's plan as it last stood: what it set out to do, and how far it got.
+        const step = runs.get(runId);
+        const planned = Array.isArray(p.steps) ? (p.steps as { step?: string; status?: string }[]) : [];
+        if (step && planned.length) {
+          const done = planned.filter((s) => s.status === "done").length;
+          step.more = [`Its plan, ${done} of ${planned.length} done:`, ...planned.slice(0, 6).map((s) => `${s.status === "done" ? "✓" : s.status === "in_progress" ? "→" : "·"} ${s.step ?? ""}`)];
+        }
+        break;
+      }
       case "remedy_applied":
         // What the supervisor or the planner did to unstick it, on the step it started.
         note(`Unstuck: ${p.did}${p.of ? ` (try ${p.try} of ${p.of})` : ""}. Next: ${p.next}`);

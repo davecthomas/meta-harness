@@ -403,7 +403,7 @@ export function TaskPage() {
           usd={spent}
           pick={onlyRun}
           onOpenRun={(run) => setParams({ tab: "terminal", run })}
-          onOpenReviews={() => setParams({ tab: "reviews" })}
+          onOpenReviews={(round) => setParams(round !== undefined ? { tab: "reviews", round: String(round) } : { tab: "reviews" })}
           onPickRun={(run) => void api.runEvents(run).then((found) => setEvents((current) => merge(current, found)), () => undefined)}
         />
       ) : (

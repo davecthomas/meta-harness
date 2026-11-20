@@ -48,3 +48,16 @@ test("a pull request with no review yet says why", () => {
   );
   expect(screen.getByText(/the checks or the review run are under way/)).toBeTruthy();
 });
+
+
+test("a round named in the address is marked, as a review's box on the timeline opens it", () => {
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/tasks/t-1?tab=reviews&round=2"]}>
+        <Reviews task={TASK} rounds={ROUNDS} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  expect(screen.getByTestId("review-2").getAttribute("data-asked")).toBe("true");
+  expect(screen.getByTestId("review-1").getAttribute("data-asked")).toBeNull();
+});
