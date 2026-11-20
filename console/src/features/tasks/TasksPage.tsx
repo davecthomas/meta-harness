@@ -6,6 +6,7 @@ import { useInfinite } from "../../hooks";
 import { TileGrid, type TileSize } from "../../components/TileGrid";
 import { VerdictBadge } from "./words";
 import { waitReason } from "./WaitingToStart";
+import { WaitLine } from "./WaitLine";
 import { useRowKeys } from "../../components/CommandPalette";
 import { DataTable, Empty, ErrorAlert, IssueLink, PageHeader, PrLink, StatusBadge, TitleLink, when } from "../../components/ui";
 import { shownStatus } from "./shownStatus";
@@ -197,11 +198,12 @@ export function TasksPage() {
                   </Table.Td>
                 )}
                 <Table.Td maw={420}><TitleLink to={`/tasks/${t.id}`} title={t.title} id={t.id} name={t.name} /></Table.Td>
-                <Table.Td>
+                <Table.Td maw={320}>
                   <Group gap={4} wrap="nowrap">
                     <StatusBadge status={shownStatus(t)} />
                     {showVerdicts && verdicts[t.id] && <VerdictBadge verdict={verdicts[t.id]} />}
                   </Group>
+                  {filter[0] !== "waiting" && <WaitLine task={t} />}
                 </Table.Td>
                 {filter[0] === "waiting" && <Table.Td maw={360}><Text size="sm">{waitReason(t)}</Text></Table.Td>}
                 <Table.Td><Text ff="monospace" size="xs">{t.repo}</Text></Table.Td>
