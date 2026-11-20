@@ -25,6 +25,7 @@ import { Changes } from "./Changes";
 import { OpeningSummaryBadge, PullSummaries } from "./PullSummaries";
 import { provenanceFacts } from "./Provenance";
 import { SpendLine, spendOf } from "./Spend";
+import { PROVENANCE_EVENT, RunProvenance } from "./RunProvenance";
 import { useEventStream } from "../../hooks";
 import { describe, fold, type Line, type TileFacts } from "../../terminal";
 import { Terminal } from "../../components/Terminal";
@@ -166,7 +167,8 @@ export function TaskPage() {
         // The terminal gets them too, so an older run's Terminal opens on its prompt.
         // Every step of the task's path too, however old, so the picture of it is whole.
         // turn_started too, so the header counts every turn and run, not only those on the loaded pages.
-        api.taskEvents([taskId], [...new Set(["run_prompt", "turn_started", ...STEP_EVENTS])]).then((prompts) => {
+        // Every run's provenance too, for the details' list of where each run came from.
+        api.taskEvents([taskId], [...new Set(["run_prompt", "turn_started", PROVENANCE_EVENT, ...STEP_EVENTS])]).then((prompts) => {
           if (stale) return;
           setEvents((current) => merge(current, prompts));
           // The terminal takes only the prompts: older steps reach it in order, as it scrolls up.
@@ -346,6 +348,7 @@ export function TaskPage() {
             ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text><OpeningSummaryBadge events={events} /></Group> : <Text size="sm" c="dimmed">None yet</Text>],
             ...provenanceFacts(events),
             ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
+            ["Run provenance", <RunProvenance events={events} />],
             ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} model={facts.model} /></Stack>],
           ]}
         />

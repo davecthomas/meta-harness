@@ -100,6 +100,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from meta_harness.run_service.budget_activities import BudgetHold, budget_hold, goal_budget
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
+    from meta_harness.run_service import run_provenance
     from meta_harness.run_service.resume_activities import resume_state
     from meta_harness.money import usd
     from meta_harness import budget_request
@@ -215,6 +216,9 @@ class RunTask:
         # JSON: {"keep": [the agent's findings they keep, from 1], "findings": [their own]}.
         self._review_claim = ""
         self._operator_verdict: str | None = None
+        # What the Task API task came from, and each of its runs' provenance by run id, built as the run starts.
+        self._origin: run_provenance.TaskOrigin | None = None
+        self._provenance: dict[str, dict] = {}
 
     @workflow.signal
     def operator_message(self, message: OperatorMessage) -> None:
@@ -298,6 +302,15 @@ class RunTask:
             task_type=spec.task_type,
         )
         self._task_type = spec.task_type
+        self._origin = run_provenance.TaskOrigin(
+            task_id=spec.task_id,
+            goal_id=spec.goal_id,
+            issue=spec.external_ref,
+            parent_task_id=spec.parent_task_id,
+            task_type=spec.task_type,
+            repo=spec.repo,
+            retries=spec.retries,
+        )
         self._goal_id = spec.goal_id or ""
         again = f" again (retry {spec.retries})" if spec.retries else ""
         await self._task_status("running", f"the meta-harness run service started its RunTask workflow{again}")
@@ -503,6 +516,8 @@ class RunTask:
                     route_result.thinking if route_result is not None and not prepared.pinned else None,
                     kind="task",
                     template=prepared.template,
+                    tier=tier,
+                    follows=attempts[-1].run_id if attempts else "",
                 )
                 spent += run_spent
                 attempts.append(
@@ -651,6 +666,7 @@ class RunTask:
                     route_result.thinking,
                     kind="task",
                     template=prepared.template,
+                    tier=route_result.tier,
                 )
                 for number, candidate in enumerate(picked, start=1)
             )
@@ -728,6 +744,7 @@ class RunTask:
                 spent_usd=str(spent),
                 task_id=self._task_id,
                 fix_round=fix_round,
+                provenance=self._provenance.get(harness.run_id),
                 goal_id=self._goal_id,
             ),
             start_to_close_timeout=PUBLISH_TIMEOUT,
@@ -1059,6 +1076,7 @@ class RunTask:
                         "This pull request fixes that. It closes no issue: the merged one closed it."
                     ),
                     task_id=self._task_id,
+                    provenance=self._provenance.get(harness.run_id),
                     goal_id=self._goal_id,
                 ),
                 start_to_close_timeout=PUBLISH_TIMEOUT,
@@ -1405,6 +1423,7 @@ class RunTask:
             merge_base=merge_base,
             kind=kind,
             template=loop_template(kind),
+            follows=loop.attempts[-1].run_id if loop.attempts else "",
         )
         loop.spent += run_spent
         loop.attempts.append(
@@ -1461,14 +1480,23 @@ class RunTask:
         merge_base: str = "",
         kind: str = "task",
         template: str = "",
+        tier: str | None = None,
+        follows: str = "",
     ) -> tuple[HarnessResult | None, str, str, Decimal]:
         """One run on one candidate. Returns the result, the decision, why, and what the run spent.
 
-        A Task API task's run first records its prompt as run_prompt, so an operator sees what the run was given.
+        A Task API task's run first records its prompt as run_prompt, so an operator sees what the run was given,
+        and its provenance as run_provenance: the task it came from and the run it follows (follows).
         """
+        made = None
+        if self._origin is not None:
+            made = run_provenance.build(self._origin, run_id, kind, candidate.label, template, tier, follows)
+            self._provenance[run_id] = made
         # Behind a patch: workflows started before it record no prompt, and replay as they ran.
         if self._task_id and workflow.patched("run-prompt"):
-            await self._record(record_prompt, RunPromptRecord(self._task_id, run_id, kind, template, prompt))
+            await self._record(
+                record_prompt, RunPromptRecord(self._task_id, run_id, kind, template, prompt, provenance=made)
+            )
         restarts = 0
         failed: ActivityError | None = None
         kind = ""

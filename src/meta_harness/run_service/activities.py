@@ -65,6 +65,7 @@ from meta_harness.run_service import (
     provenance_headers,
     routing,
     run_grants,
+    run_provenance,
     sandbox,
     summaries,
     writing,
@@ -395,10 +396,7 @@ async def publish(request: PublishRequest) -> PublishResult:
         )
         return await asyncio.to_thread(provenance_headers.apply, workspace, created, context)
 
-    message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
-        f"\n\nCloses {request.ticket}" if request.ticket else ""
-    )
-    message = provenance.commit_message(message, provenance.Provenance(provenance.COMMIT, **_signed_fields(request)))
+    message = _commit_message(request)
     try:
         published = await code_host.publish(
             repo=request.repo,
@@ -444,6 +442,19 @@ async def publish(request: PublishRequest) -> PublishResult:
         # A retry adds nothing when an earlier attempt added the round's section, and its writing pass may have
         # rewritten the summary differently, so what is recorded is the section the description holds.
         _record_summary(request, published.pr_url, pr_summary.posted_round(description or "", heading) or part)
+    if request.fix_round and request.provenance and not published.created:
+        # The description's Run section names the run that opened the pull request; each fix run pushed to it adds
+        # its own provenance under a heading named for the run, so a retry of the activity adds it once.
+        try:
+            await code_host.add_to_description(
+                request.repo,
+                published.pr_url,
+                _fix_provenance_heading(request),
+                await _sealed("\n".join(_run_lines(request))),
+                sandbox.task_dir_for(ref) / "pull-request.md",
+            )
+        except code_host.CodeHostError as err:
+            raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     print(
         f"[{request.run_id} publish] {', '.join(published.files)} on branch {published.branch} at "
         f"{published.commit[:12]}, pull request {'opened' if published.created else 'already open'}: {published.pr_url}",
@@ -503,8 +514,9 @@ def _record_provenance(request: PublishRequest, stamped: list[str]) -> None:
 
 
 def _signed_fields(request: PublishRequest) -> dict[str, Any]:
-    """What a publish's description and commit name: its task, run and model, and a fix run's round."""
+    """What a publish's description and commit name: its goal, task, run and model, and a fix run's round."""
     return {
+        "goal": (request.provenance or {}).get("goal_id") or "",
         "task": request.task_id,
         "run": request.run_id,
         "model": request.candidate,
@@ -543,6 +555,16 @@ async def _sealed(text: str, kind: str = outbound.BODY, signed: Any = None) -> o
     """A text composed here from parts that went through `_written` and the fixed lines around them, ready to
     post: redacted and cut to fit as a whole, and ending with its provenance when given."""
     return await outbound.prepare(text, outbound.Context(outbound.GITHUB, kind, outbound.FIXED, provenance=signed))
+
+
+def _commit_message(request: PublishRequest) -> str:
+    """The commit's message: the title, the run, the issue it closes, and the provenance as git trailers: the
+    run's issue from its record, then the version, goal, task, run, model and round."""
+    message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
+        f"\n\nCloses {request.ticket}" if request.ticket else ""
+    )
+    signed = provenance.Provenance(provenance.COMMIT, **_signed_fields(request))
+    return provenance.commit_message(message, signed, *run_provenance.trailers(request.provenance))
 
 
 async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summary.Section:
@@ -610,9 +632,7 @@ def _pr_body(request: PublishRequest, summary: pr_summary.Section) -> str:
     lines += [
         "## Run",
         "",
-        f"- Run: `{request.run_id}`",
-        f"- Harness profile and model: `{request.candidate}`",
-        f"- Model spend for the task so far: ${request.spent_usd}",
+        *_run_lines(request),
         "",
         (
             "Opened by the meta-harness. pi worked in a clone of this repo inside a per-run sandbox that holds "
@@ -620,6 +640,21 @@ def _pr_body(request: PublishRequest, summary: pr_summary.Section) -> str:
         ),
     ]
     return "\n".join(lines)
+
+
+def _run_lines(request: PublishRequest) -> list[str]:
+    """The run's lines in the description: the run, its pair, the task's spend, and the run's provenance."""
+    return [
+        f"- Run: `{request.run_id}`",
+        f"- Harness profile and model: `{request.candidate}`",
+        f"- Model spend for the task so far: ${request.spent_usd}",
+        *run_provenance.pr_lines(request.provenance),
+    ]
+
+
+def _fix_provenance_heading(request: PublishRequest) -> str:
+    """The heading a fix run's provenance is added under in an open pull request's description, one per run."""
+    return f"Run for fix round {request.fix_round} ({request.run_id})"
 
 
 @activity.defn

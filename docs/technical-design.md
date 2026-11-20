@@ -1474,6 +1474,41 @@ task page's details show the newest of each as a Provenance row. Nothing
 already posted is changed. A local repo's merge only moves its base, so it
 makes no commit and carries no trailers.
 
+### Run provenance
+
+Each run of a Task API task carries a record of where it came from, built
+by the RunTask workflow from what the control plane holds and never from the
+run's output (`src/meta_harness/run_service/run_provenance.py`): the task, its
+goal, its issue (`external_ref`), its parent task and type, the run's number,
+kind (`task`, `review`, `fix`), pair, template and route tier, the run it
+follows (the task's run before it, earlier workflows' runs included when the
+task resumes; none for the first run or for each of several attempts made at
+once), and its `workflow`, 1 for the task's first RunTask workflow and one
+more for each time it was sent back.
+
+- `record_prompt` appends it as `run_provenance` just before the run's
+  `run_prompt`, with a stable event id that includes the workflow, since a
+  task sent back with no pull request numbers its runs from 1 again. A record
+  whose run is not one of its task's runs, or whose earlier run is not an
+  earlier run of the same task, is logged as an error and not appended; the
+  run still starts.
+- The Publish activity writes it under the pull request description's Run
+  heading (task, goal, issue, parent task, the run it follows, and the
+  workflow when it is not the first). The commit message's trailers add
+  `Meta-Harness-Issue` before the commit's own provenance trailers (see
+  Provenance above), and the record's goal fills their `Meta-Harness-Goal`
+  and the description's provenance line. A fix run that pushes to the open pull request
+  adds its own run lines and provenance to the description under
+  `Run for fix round <n> (<run id>)`, once however often Publish is retried.
+- A task sent back may run its next workflow under its other id (`run-task-<id>`
+  or `<id>`): a run that follows one of the other id's runs still follows a run
+  of the same task, and its earlier run must still have a lower number.
+
+The record is built from the task the workflow loads and passed as activity
+input, so it changes no activity a workflow runs. A workflow already running
+when it deployed records it for its later runs, without the issue and parent
+task, which the task it loaded then did not carry.
+
 ### Sequences
 
 #### A task from admission to its pull request
@@ -3378,7 +3413,7 @@ Meta-harness services append through the event service client library:
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
 | Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume), `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line), `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created), `plan_requested` when a planning task starts (with the operator's note on a replan), `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is) and `plan_approved` with the issues created, `issue_sized` when an issue is sized before it becomes a task (its size, reasons, what it is missing and the suggested split, with the model and its cost), `issue_released` when an operator runs a held issue anyway and `issue_split` with the issues a held one was split into, `issue_joined` (with the issue's size and the spend limit it set, for a sized issue), `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason and the kind of hold, recorded when a task's reason is new or has changed. `kill_switch_changed` with the operator as actor |
-| Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v4` (`review-v3` before it showed the description), `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
+| Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v1`, `review-v4` (`review-v3` before it showed the description), `fix-v1`, or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server, and just before it the run's `run_provenance` (Run provenance). One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
 | Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL; rounds are numbered over the task's life, so a resumed task's, or a merge fix's, follow the ones it had, behind the `resumed-rounds` patch), `writing_checked` for the writing pass on each pull request description, review and comment it posts (the planner records it for a plan's issues), `pull_request_summary` for the summary each pull request description and fix round holds (fix round, source `run`, `recorded` or `files`, heading, text), `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
@@ -3636,7 +3671,9 @@ opens the Terminal on that run alone, with Show every run to bring the rest
 back. Each review round on the Reviews tab links to its own review run (Show
 review run) and, when it sent findings to a fix run, to that fix run.
 The Task page leads with its timeline. The task's facts (status and its
-reason, repo, issue, pull request, acceptance checks, turn and spend) are folded
+reason, repo, issue, pull request, acceptance checks, turn and spend, and
+each run's provenance from its `run_provenance`: its number and kind, the run
+it followed, its workflow, its pair, and the task that made this one) are folded
 behind one line that keeps the link to its goal, and open with Show details; a
 browser that leaves them open finds them open on the next task. The timeline's
 first figure, the time from the task's start, is set large and counted by the
