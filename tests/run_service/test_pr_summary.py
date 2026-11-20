@@ -30,11 +30,22 @@ def test_a_missing_summary_gives_way_to_a_fallback_from_the_branch_s_files():
     )
 
 
-def test_a_summary_too_short_to_say_anything_is_quoted_in_the_fallback():
+def test_a_summary_too_short_to_say_anything_gives_way_to_a_fallback_without_the_run_s_words():
     part = pr_summary.section("Done.", FILES)
 
     assert part.heading == pr_summary.FALLBACK_HEADING
-    assert part.text.startswith(pr_summary.FALLBACK_LEAD) and "The run's last words: Done." in part.text
+    assert part.text == pr_summary.fallback(FILES) and "Done." not in part.text
+
+
+def test_the_headings_say_what_a_reviewer_finds_not_how_it_was_made():
+    assert (pr_summary.RUN_HEADING, pr_summary.FALLBACK_HEADING) == (
+        "What this change does",
+        "What this change touches",
+    )
+
+
+def test_the_fallback_says_plainly_that_the_run_left_no_summary():
+    assert pr_summary.fallback(FILES).startswith("The run left no summary of its change, so this section lists")
 
 
 def test_a_fallback_the_run_service_already_wrote_is_kept_as_it_is():
@@ -51,13 +62,19 @@ def test_a_fallback_the_run_service_already_wrote_is_kept_as_it_is():
 def test_a_long_file_list_is_cut_with_a_count_of_the_rest():
     files = [f"f{i}.py" for i in range(pr_summary.MAX_FILES + 5)]
 
-    text = pr_summary.fallback("", files)
+    text = pr_summary.fallback(files)
 
     assert "- and 5 more" in text and f"f{pr_summary.MAX_FILES}.py" not in text
 
 
 def test_a_fallback_with_no_files_says_so():
-    assert "could not list the files" in pr_summary.fallback("", [])
+    assert "could not list the files" in pr_summary.fallback([])
+
+
+def test_a_fallback_written_before_the_new_prefix_is_still_kept_as_it_is():
+    earlier = f"{pr_summary.EARLIER_PREFIX} from what the harness recorded.\n\n- `a.py`"
+
+    assert pr_summary.section(earlier, FILES) == pr_summary.Section(pr_summary.FALLBACK_HEADING, earlier, False)
 
 
 # --- The publish activity ----------------------------------------------------------------------------
@@ -128,7 +145,7 @@ async def test_a_fix_round_with_no_usable_summary_adds_the_fallback_to_the_descr
 
     [(heading, text)] = host["added"]
     assert heading == "Fix round 2 (run-task-t-1:run-1)"
-    assert text.startswith(pr_summary.FALLBACK_LEAD) and "The run's last words: Done." in text
+    assert text.startswith(pr_summary.FALLBACK_LEAD) and "Done." not in text
     assert host["checked"] == []
 
 

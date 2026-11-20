@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from meta_harness.run_service import summaries
+from meta_harness.run_service import activities, pr_summary, summaries
 
 RECORD = {
     "run_id": "t:0",
@@ -30,12 +30,59 @@ def test_a_text_that_says_what_changed_is_usable():
     assert summaries.usable("Fixed the save path; the tests pass.")
 
 
-def test_the_run_s_own_final_words_stand_when_usable():
-    record = {**RECORD, "final_text": "  I fixed the save path, and both checks pass.  "}
+def _marked(text: str) -> str:
+    return f"{summaries.SUMMARY_OPEN}\n{text}\n{summaries.SUMMARY_CLOSE}"
+
+
+def test_the_run_s_marked_summary_stands_when_usable():
+    record = {**RECORD, "final_text": _marked("  I fixed the save path, and both checks pass.  ")}
     assert summaries.choose("an earlier turn's text", record, []) == (
         "I fixed the save path, and both checks pass.",
         "run",
     )
+
+
+def test_narration_around_the_marked_summary_is_left_out():
+    text = (
+        "Both checks pass and the changeset stays within the required paths.\n\n"
+        f"{_marked('Fixed the save path in app.py.')}\n\nLet me know if anything else is needed."
+    )
+    assert summaries.choose(None, {**RECORD, "final_text": text}, []) == ("Fixed the save path in app.py.", "run")
+
+
+def test_the_last_marked_summary_is_the_one_kept():
+    text = f"{_marked('A first draft of the summary.')}\nOn second thought:\n{_marked('The summary as it stands.')}"
+    assert summaries.marked(text) == "The summary as it stands."
+
+
+def test_a_marker_counts_only_on_a_line_of_its_own():
+    text = _marked("The prompt now asks for a `<pr-summary>` line and a `</pr-summary>` line.")
+    assert summaries.marked(text) == "The prompt now asks for a `<pr-summary>` line and a `</pr-summary>` line."
+    assert summaries.marked("It names <pr-summary> inline only.") is None
+
+
+def test_a_summary_cut_before_its_closing_line_is_kept_to_the_end():
+    assert summaries.marked(f"Narration.\n{summaries.SUMMARY_OPEN}\nFixed the save path in") == "Fixed the save path in"
+
+
+@pytest.mark.parametrize(
+    "text", [None, "", "Fixed the save path.", f"{summaries.SUMMARY_OPEN}\n \n{summaries.SUMMARY_CLOSE}"]
+)
+def test_a_text_that_marks_no_summary_has_none(text):
+    assert summaries.marked(text) is None
+
+
+def test_an_unmarked_last_message_is_not_a_summary():
+    """Only narration, however long: the description lists what the run service recorded instead."""
+    record = {**RECORD, "final_text": "Both checks pass and the changeset stays within the required paths."}
+    summary, source = summaries.choose(None, record, [])
+    assert source == "recorded"
+    assert summary is not None and summary.startswith(summaries.FALLBACK_LEAD) and "changeset" not in summary
+
+
+def test_a_marked_summary_too_short_to_say_anything_gives_way_to_the_record():
+    summary, source = summaries.choose(None, {**RECORD, "final_text": _marked("Done.")}, [])
+    assert source == "recorded" and summary is not None and "Done." not in summary
 
 
 def test_with_a_record_an_earlier_turn_s_text_is_not_the_summary():
@@ -53,8 +100,6 @@ def test_the_fallback_lists_the_files_checks_plan_and_commands():
     assert summary == "\n".join(
         [
             summaries.FALLBACK_LEAD,
-            "",
-            "The run's last words: Done.",
             "",
             "Files the run wrote or edited:",
             "- `src/app.py`",
@@ -77,7 +122,7 @@ def test_the_fallback_lists_the_files_checks_plan_and_commands():
 
 def test_without_a_record_the_event_stream_s_text_and_files_are_used():
     """A harness image from before GET /record: the answer from the events, or a fallback from their files."""
-    assert summaries.choose("Fixed the save path in app.py.", None, ["app.py"]) == (
+    assert summaries.choose(_marked("Fixed the save path in app.py."), None, ["app.py"]) == (
         "Fixed the save path in app.py.",
         "run",
     )
@@ -86,10 +131,32 @@ def test_without_a_record_the_event_stream_s_text_and_files_are_used():
     assert summary is not None and "- `app.py`" in summary and "Acceptance checks" not in summary
 
 
-def test_with_nothing_recorded_the_run_s_text_stands():
+def test_with_nothing_recorded_there_is_no_summary_and_the_run_s_text_is_dropped():
     empty = {"final_text": "Done.", "plan": [], "files_changed": [], "checks": [], "commands": {"run": 0, "failed": 0}}
-    assert summaries.choose(None, empty, []) == ("Done.", "none")
-    assert summaries.choose(None, None, []) == (None, "none")
+    assert summaries.choose(None, empty, []) == (None, "none")
+    assert summaries.choose("Now I will run the tests.", None, []) == (None, "none")
+
+
+def test_a_fallback_for_a_run_given_no_checks_says_so():
+    summary, _ = summaries.choose(None, {**RECORD, "checks": []}, [])
+    assert summary is not None and "The run was given no acceptance check." in summary
+
+
+def test_the_fallback_is_one_publish_keeps_under_its_own_heading():
+    summary, _ = summaries.choose(None, RECORD, [])
+    assert pr_summary.section(summary, []) == pr_summary.Section(pr_summary.FALLBACK_HEADING, summary, False)
+
+
+@pytest.mark.parametrize("name", ["repo-task-v2", "fix-v2"])
+def test_the_prompts_ask_for_the_summary_between_the_markers(name):
+    text = (activities.PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
+    assert f"a line `{summaries.SUMMARY_OPEN}` and a line `{summaries.SUMMARY_CLOSE}`" in text
+
+
+def test_the_task_prompt_asks_for_what_a_description_should_say():
+    text = (activities.PROMPTS_DIR / f"{activities.REPO_TEMPLATE}.txt").read_text(encoding="utf-8")
+    for part in ("What changed and why", "outside the task's paths", "acceptance checks", "What it does not do"):
+        assert part in text
 
 
 def test_a_malformed_record_is_read_for_what_it_holds():

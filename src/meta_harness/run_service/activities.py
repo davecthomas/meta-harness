@@ -96,7 +96,7 @@ from meta_harness.run_service.shared import (
 )
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-REPO_TEMPLATE = "repo-task-v1"
+REPO_TEMPLATE = "repo-task-v2"
 # A goal's planning task: the planner wrote what it asks; this wraps it with where the run is and what it may do.
 PLAN_TEMPLATE = "plan-v1"
 
@@ -938,7 +938,7 @@ async def base_health(request: BaseHealthRequest) -> BaseHealth:
 
 @activity.defn
 async def loop_prompt(request: LoopPromptRequest) -> str:
-    """A review or fix run's prompt, from prompts/review-v4.txt or prompts/fix-v1.txt. A review's shows the pull
+    """A review or fix run's prompt, from prompts/review-v4.txt or prompts/fix-v2.txt. A review's shows the pull
     request's description as it stands, since the reviewer judges what it explains (why a file outside the
     task's paths changed) and has no other way to read it."""
     checks = (

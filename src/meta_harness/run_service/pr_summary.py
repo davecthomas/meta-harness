@@ -1,14 +1,14 @@
 """The summary in a pull request's description: the run's own, or a fallback the meta-harness writes.
 
-A run is told to finish with a summary for its pull request, and the text of its last turn is that summary
-(HarnessResult.answer). When it says something, it goes in the description under RUN_HEADING, after the
-writing pass. When the run left none, or one too short to say anything about the change ("Done."), the
-meta-harness writes the section itself from what Publish knows: the files the branch changes, with the run's
-own few words quoted. A summary the run service already wrote from the harness's record of the run starts
-with FALLBACK_PREFIX and is kept as it is.
+A run is told to end with a marked summary for its pull request, and the run service keeps only the marked part
+(summaries.py, HarnessResult.answer). When it says something, it goes in the description under RUN_HEADING,
+after the writing pass. When the run left none, or one too short to say anything about the change ("Done."),
+the meta-harness writes the section itself from what Publish knows: the files the branch changes. A summary the
+run service already wrote from the harness's record of the run starts with FALLBACK_PREFIX and is kept as it is.
 
-Either fallback goes under FALLBACK_HEADING, and its first line says where it came from, so no reviewer reads
-it as the run's words. It skips the writing pass: it holds only the meta-harness's own lines and file paths.
+Either fallback goes under FALLBACK_HEADING, and its first line says plainly that the run left no summary. It
+holds none of the run's own words, and it skips the writing pass: it holds only the meta-harness's own lines
+and file paths.
 """
 
 import re
@@ -18,14 +18,15 @@ from dataclasses import dataclass
 MIN_WORDS = 3
 # The files are cut to this many lines in the fallback, with a count of the rest.
 MAX_FILES = 30
-# The run's own words, quoted in the fallback when they were too few to stand alone, are cut to this length.
-QUOTE_CHARS = 300
 
-RUN_HEADING = "Summary from the run"
-FALLBACK_HEADING = "Summary written by the meta-harness"
+# The headings say what a reviewer finds under them: what the change does, or, with no summary, what it touches.
+RUN_HEADING = "What this change does"
+FALLBACK_HEADING = "What this change touches"
 # The first words of every fallback, this module's and one the run service wrote from the harness's record.
-FALLBACK_PREFIX = "The run ended without a usable summary, so the meta-harness wrote this one"
-FALLBACK_LEAD = f"{FALLBACK_PREFIX} from the files the branch changes."
+FALLBACK_PREFIX = "The run left no summary of its change"
+# The first words of a fallback written before FALLBACK_PREFIX, which a task under way may still carry.
+EARLIER_PREFIX = "The run ended without a usable summary, so the meta-harness wrote this one"
+FALLBACK_LEAD = f"{FALLBACK_PREFIX}, so this section lists the files the branch changes."
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ def usable(text: str | None) -> bool:
 
 def is_fallback(text: str | None) -> bool:
     """True when the text is a summary the meta-harness wrote, not the run's own."""
-    return (text or "").lstrip().startswith(FALLBACK_PREFIX)
+    return (text or "").lstrip().startswith((FALLBACK_PREFIX, EARLIER_PREFIX))
 
 
 def section(summary: str | None, files: list[str]) -> Section:
@@ -54,15 +55,12 @@ def section(summary: str | None, files: list[str]) -> Section:
         return Section(FALLBACK_HEADING, text, from_run=False)
     if usable(text):
         return Section(RUN_HEADING, text, from_run=True)
-    return Section(FALLBACK_HEADING, fallback(text, files), from_run=False)
+    return Section(FALLBACK_HEADING, fallback(files), from_run=False)
 
 
-def fallback(text: str, files: list[str]) -> str:
-    """The summary the meta-harness writes when the run left none usable: its few words, if any, and the files."""
+def fallback(files: list[str]) -> str:
+    """The summary the meta-harness writes when the run left none usable: that it left none, and the files."""
     lines = [FALLBACK_LEAD, ""]
-    if text:
-        quoted = text if len(text) <= QUOTE_CHARS else text[:QUOTE_CHARS].rstrip() + "..."
-        lines += [f"The run's last words: {' '.join(quoted.split())}", ""]
     named = [f for f in files if f]
     if named:
         listed = [f"- `{f}`" for f in named[:MAX_FILES]]
