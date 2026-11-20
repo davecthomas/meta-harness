@@ -22,6 +22,7 @@ import { Plan } from "./Plan";
 import { SteerBox } from "./SteerBox";
 import { CompareAttempts, RunAttempts } from "./Attempts";
 import { Changes } from "./Changes";
+import { OpeningSummaryBadge, PullSummaries } from "./PullSummaries";
 import { SpendLine, spendOf } from "./Spend";
 import { useEventStream } from "../../hooks";
 import { describe, fold, type Line, type TileFacts } from "../../terminal";
@@ -341,7 +342,7 @@ export function TaskPage() {
             ["Repo", <Code>{task.repo}</Code>],
             ["Issue", <IssueLink issueRef={task.external_ref} />],
             ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
-            ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
+            ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text><OpeningSummaryBadge events={events} /></Group> : <Text size="sm" c="dimmed">None yet</Text>],
             ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
             ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} model={facts.model} /></Stack>],
           ]}
@@ -389,7 +390,10 @@ export function TaskPage() {
       ) : tab === "attempts" ? (
         <CompareAttempts taskId={task.id} />
       ) : tab === "changes" && task.pr_url ? (
-        <Changes taskId={task.id} />
+        <>
+          <PullSummaries events={events} />
+          <Changes taskId={task.id} />
+        </>
       ) : tab === "timeline" ? (
         <TaskPath
           events={events}

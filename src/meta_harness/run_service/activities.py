@@ -357,12 +357,16 @@ async def publish(request: PublishRequest) -> PublishResult:
     """
     ref = ref_for(activity.info().workflow_id)
     workspace = sandbox.workspace_for(ref, request.run_id)
+    # The summary the description was written with, once a pull request is opened, to record its source.
+    opened: list[pr_summary.Section] = []
 
     async def body(files: list[str]) -> str:
         """The description, written once a pull request is to be opened: the run's summary goes through the
         writing pass, or a fallback from the branch's files stands in for one the run did not leave, and the
         lines the meta-harness adds around it stay as they are."""
-        return _pr_body(request, await _summary_section(request, files))
+        part = await _summary_section(request, files)
+        opened.append(part)
+        return _pr_body(request, part)
 
     message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
         f"\n\nCloses {request.ticket}" if request.ticket else ""
@@ -383,6 +387,8 @@ async def publish(request: PublishRequest) -> PublishResult:
     if published is None:
         print(f"[{request.run_id} publish] pi changed nothing in {workspace}, so there is no pull request", flush=True)
         return PublishResult(branch="", base="", commit="", files=[], pr_url="", created=False)
+    if published.created and opened:
+        _record_summary(request, published.pr_url, opened[-1])
     if request.fix_round and not published.created:
         # The fix run was asked to say in its summary why it changed what it did; the review reads it here. A fix
         # run that left none usable gets the fallback, so the round still shows in the description.
@@ -397,6 +403,7 @@ async def publish(request: PublishRequest) -> PublishResult:
             )
         except code_host.CodeHostError as err:
             raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+        _record_summary(request, published.pr_url, part)
     print(
         f"[{request.run_id} publish] {', '.join(published.files)} on branch {published.branch} at "
         f"{published.commit[:12]}, pull request {'opened' if published.created else 'already open'}: {published.pr_url}",
@@ -436,6 +443,26 @@ async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summ
         return part
     [text] = await _written("pull_request", [part.text], request.task_id, run_id=request.run_id)
     return replace(part, text=text)
+
+
+def _record_summary(request: PublishRequest, pr_url: str, part: pr_summary.Section) -> None:
+    """Records on the task which summary went into its pull request's description and where it came from, so
+    the console can say whose words they are. Once per run and round, however often the activity is retried."""
+    if not request.task_id:
+        return
+    events.emit(
+        "pull_request_summary",
+        {
+            "pr_url": pr_url,
+            "fix_round": request.fix_round,
+            "source": part.source,
+            "heading": part.heading,
+            "text": part.text,
+        },
+        task_id=request.task_id,
+        run_id=request.run_id,
+        event_id=events.stable_id(request.task_id, "pull_request_summary", request.run_id, request.fix_round),
+    )
 
 
 def _pr_body(request: PublishRequest, summary: pr_summary.Section) -> str:

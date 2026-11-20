@@ -9,6 +9,9 @@ with FALLBACK_PREFIX and is kept as it is.
 
 Either fallback goes under FALLBACK_HEADING, and its first line says where it came from, so no reviewer reads
 it as the run's words. It skips the writing pass: it holds only the meta-harness's own lines and file paths.
+
+Where a summary came from is its source (SOURCES): Publish records it on the task as `pull_request_summary`,
+so the console's task, pull request and goal views can say whose words a description holds.
 """
 
 import re
@@ -27,6 +30,10 @@ FALLBACK_HEADING = "Summary written by the meta-harness"
 FALLBACK_PREFIX = "The run ended without a usable summary, so the meta-harness wrote this one"
 FALLBACK_LEAD = f"{FALLBACK_PREFIX} from the files the branch changes."
 
+# Where a description's summary came from: the run's own words, a fallback the run service wrote from the
+# harness's record of the run, or one this module wrote from the files the branch changes.
+SOURCES = ("run", "recorded", "files")
+
 
 @dataclass(frozen=True)
 class Section:
@@ -35,6 +42,13 @@ class Section:
     heading: str
     text: str
     from_run: bool
+
+    @property
+    def source(self) -> str:
+        """Where the summary came from, one of SOURCES."""
+        if self.from_run:
+            return "run"
+        return "files" if self.text.startswith(FALLBACK_LEAD) else "recorded"
 
 
 def usable(text: str | None) -> bool:

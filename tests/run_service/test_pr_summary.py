@@ -139,3 +139,64 @@ async def test_a_fix_round_s_own_summary_is_added_after_the_writing_pass(host):
 
     assert host["added"] == [("Fix round 1 (run-task-t-1:run-1)", OWN)]
     assert host["checked"] == [[OWN]]
+
+
+# --- Where the summary came from ---------------------------------------------------------------------
+
+
+def _summaries(host) -> list[dict]:
+    return [payload for event_type, payload in host["emitted"] if event_type == "pull_request_summary"]
+
+
+def test_each_summary_says_where_it_came_from():
+    recorded = f"{pr_summary.FALLBACK_PREFIX} from what the harness recorded.\n\nCommands run: 3, of which 0 failed."
+
+    assert pr_summary.section(OWN, FILES).source == "run"
+    assert pr_summary.section(recorded, FILES).source == "recorded"
+    assert pr_summary.section("Done.", FILES).source == "files"
+    assert {pr_summary.section(t, FILES).source for t in (OWN, recorded, None)} == set(pr_summary.SOURCES)
+
+
+async def test_an_opened_pull_request_records_its_summary_and_source(host):
+    await ActivityEnvironment().run(activities.publish, _request(OWN))
+
+    assert _summaries(host) == [
+        {
+            "pr_url": "https://github.com/o/r/pull/7",
+            "fix_round": 0,
+            "source": "run",
+            "heading": pr_summary.RUN_HEADING,
+            "text": OWN,
+        }
+    ]
+
+
+async def test_a_fallback_is_recorded_as_the_meta_harness_s(host):
+    await ActivityEnvironment().run(activities.publish, _request(None))
+
+    [summary] = _summaries(host)
+    assert summary["source"] == "files" and summary["heading"] == pr_summary.FALLBACK_HEADING
+
+
+async def test_a_fix_round_records_its_summary_with_its_round(host):
+    host["created"] = False
+
+    await ActivityEnvironment().run(activities.publish, _request("Done.", fix_round=2))
+
+    [summary] = _summaries(host)
+    assert (summary["fix_round"], summary["source"]) == (2, "files")
+
+
+async def test_a_retried_publish_that_finds_its_pull_request_records_no_second_summary(host):
+    host["created"] = False
+
+    await ActivityEnvironment().run(activities.publish, _request(OWN))
+
+    assert _summaries(host) == []
+
+
+def test_the_summary_event_is_registered_with_every_source():
+    from meta_harness.events.types import by_key
+
+    schema = by_key()[("pull_request_summary", 1)].json_schema
+    assert schema["properties"]["source"]["enum"] == list(pr_summary.SOURCES)
