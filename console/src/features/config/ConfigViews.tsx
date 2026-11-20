@@ -117,6 +117,26 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
           </Stack>,
         ],
         [
+          "Credential redaction",
+          <Stack gap={2}>
+            <InlineField
+              kind="switch"
+              label="Credential redaction"
+              value={doc.credential_redaction === true}
+              switchLabel={doc.credential_redaction === true ? "Replace credentials in what is posted" : "Post text as it is"}
+              changed={changed(s, ["credential_redaction"])}
+              reasons={s.reasons("credential_redaction")}
+              readOnly={s.readOnly}
+              onCommit={(on) => s.stage(["credential_redaction"], on ? true : undefined)}
+            />
+            <Text size="sm" c="dimmed">
+              {doc.credential_redaction === true
+                ? "Access tokens, API keys, private keys, passwords in a URL and this service's own secrets become [redacted] before a text is posted. Personal data is not looked for: names, email addresses and phone numbers stay as written."
+                : "Off. Nothing is replaced in what is posted. Turned on, it replaces tokens, keys and passwords. It never looks for personal data."}
+            </Text>
+          </Stack>,
+        ],
+        [
           "Fix rounds",
           <InlineField
             kind="number"

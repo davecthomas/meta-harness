@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from meta_harness import outbound
-from meta_harness.outbound import stages
+from meta_harness.outbound import credentials, stages
 from meta_harness.run_service import code_host, provenance, writing
 from meta_harness.trackers import GitHubTracker, OwnTracker
 from meta_harness.trackers.jira import JiraTracker
@@ -19,6 +19,13 @@ GH_TOKEN = "ghp_" + "a1B2" * 9
 def _prepare(text: str, **context) -> outbound.Checked:
     fields = {"destination": outbound.GITHUB, "kind": outbound.COMMENT, "source": outbound.FIXED, **context}
     return asyncio.run(outbound.prepare(text, outbound.Context(**fields)))
+
+
+@pytest.fixture(autouse=True)
+def redaction_on(monkeypatch):
+    """Credential redaction turned on, as a deployment's task policy turns it on (test_credentials.py has
+    the switch itself)."""
+    monkeypatch.setattr(credentials, "enabled", lambda: True)
 
 
 @pytest.fixture

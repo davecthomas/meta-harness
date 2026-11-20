@@ -6,7 +6,8 @@ to the outside (the trackers, the code host) take nothing else: `require` refuse
 fix it. So a new feature that writes somewhere gets every stage with nothing to remember, and one that skips
 the pipeline fails the first time it runs.
 
-    redact   secrets a run or a log may carry become [redacted]; first, so no later stage or model sees one
+    redact   credentials (tokens, keys, passwords) a run or a log may carry become [redacted]; first, so no
+             later stage or model sees one. Off unless the task policy turns it on (credentials.py)
     deslop   model-written text goes through the writing pass (run_service/writing.py); a person's own words
              and the fixed strings in this code do not
     fit      the text is cut to what its destination takes, with a line saying so
@@ -171,7 +172,7 @@ def writing_outcomes(texts: list[Checked]) -> list[Any]:
 
 
 def redactions(texts: list[Checked]) -> int:
-    """How many secrets the redact stage took out of the texts."""
+    """How many credentials the redact stage took out of the texts."""
     return sum(
         int(o.note.split()[0]) for t in texts for o in getattr(t, "report", []) if o.stage == "redact" and o.changed
     )
