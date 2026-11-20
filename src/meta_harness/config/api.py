@@ -11,6 +11,9 @@
     POST /v1/config/{kind}/rollback       make an earlier version active again: {version, note}
     POST /v1/config/skills/read           read a skill from a git repository or from uploaded files, to look at
                                           before it is saved: nothing is saved here
+    GET  /v1/config/skills/source         what a git repository offers an import, ?url=&ref=: its branches and
+                                          tags, and the directories that hold a SKILL.md at ref; 422 says why
+                                          when it cannot be read
 
 The planner process serves it for every kind, until the run service has an
 HTTP API of its own. Every save and rollback is a `config_changed` event with
@@ -19,7 +22,7 @@ the operator as actor.
 
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
@@ -139,6 +142,19 @@ def router(
         except skills.SkillError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
         return {"name": name, "skill": skill}
+
+    @api.get("/v1/config/skills/source", dependencies=[Depends(auth.admin_only)])
+    def skill_source(
+        url: str = Query(max_length=500),
+        ref: str | None = Query(default=None, max_length=200),
+        who: str = Depends(operator),
+    ) -> dict:
+        """A git repository's branches, tags and default branch, and its directories that hold a SKILL.md at ref
+        (the default branch when empty), for the import form to offer. Reads the repository as it is now."""
+        try:
+            return skills.git_source(url.strip(), (ref or "").strip() or None)
+        except skills.SkillError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
 
     @api.get("/v1/config/{kind}")
     def read(kind: str, who: str = Depends(operator)) -> dict:

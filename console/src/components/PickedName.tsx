@@ -22,15 +22,18 @@ export type PickedNameProps = {
   testId: string;
   changed?: boolean;
   readOnly?: boolean;
+  // A list that was read refuses every name it lacks, even when it is empty. Without strict an empty list
+  // takes any name.
+  strict?: boolean;
   onCommit: (name: string) => void;
 };
 
 // A name that must match something a service can list, such as a status or an issue type: picked from that
 // list, so it is not mistyped. A name the list lacks is refused, and one already saved is marked. When the
-// list cannot be read (unreadable: why), or is empty, the name can still be typed.
+// list cannot be read (unreadable: why), or is empty and the field is not strict, the name can still be typed.
 export function PickedName(props: PickedNameProps) {
   const { known } = props;
-  const listed = !!known?.length;
+  const listed = !!known?.length || (!!props.strict && known !== null && !props.unreadable);
   return (
     <div>
       <InlineField
@@ -48,7 +51,7 @@ export function PickedName(props: PickedNameProps) {
             aria-label={props.label}
             size="xs"
             w={220}
-            placeholder={known === null && !props.unreadable ? "Loading…" : listed ? `Pick ${/^[aeiou]/i.test(props.what) ? "an" : "a"} ${props.what}` : "Type its name"}
+            placeholder={known === null && !props.unreadable ? "Loading…" : known?.length ? `Pick ${/^[aeiou]/i.test(props.what) ? "an" : "a"} ${props.what}` : listed ? `No ${props.what} to pick` : "Type its name"}
             value={draft.value}
             onChange={draft.onChange}
             data={known ?? []}
