@@ -87,6 +87,14 @@ _CHANGE = re.compile(
     r"|drop|drops|dropped|split|splits)\b",
     re.IGNORECASE,
 )
+# A check command written as code ("Both checks `uv run pytest -q tests` pass"): a code span that starts with a
+# command runner. It says how the change was checked, not what it is, so it is taken out before _CHANGE is looked
+# for, along with the recorded acceptance checks wherever the text names them.
+_COMMAND = re.compile(
+    r"`\s*(?:\$\s*)?(?:uv|uvx|npm|npx|pnpm|yarn|pytest|ruff|mypy|tsc|cd|make|python3?|node|go|cargo|poetry|pip"
+    r"|bash|sh|tox|nox|just|eslint|prettier|jest|vitest|black)\b[^`]*`",
+    re.IGNORECASE,
+)
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
@@ -108,21 +116,29 @@ async def fetch(client: httpx.AsyncClient, run_id: str) -> dict[str, Any] | None
     return record if isinstance(record, dict) else None
 
 
-def usable(text: str | None) -> bool:
+def usable(text: str | None, checks: list[str] | None = None) -> bool:
     """True when the text can stand as the run's summary: it says something about the change in at least
-    MIN_WORDS words, not counting its sentences of narration."""
-    said = [s for s in _SENTENCE.split(text or "") if s.strip() and not narration(s)]
+    MIN_WORDS words, not counting its sentences of narration. `checks` are the run's acceptance check commands."""
+    said = [s for s in _SENTENCE.split(text or "") if s.strip() and not narration(s, checks)]
     return len(re.findall(r"\w+", " ".join(said))) >= MIN_WORDS
 
 
-def narration(sentence: str) -> bool:
+def narration(sentence: str, checks: list[str] | None = None) -> bool:
     """True when the sentence narrates the run (what it does next, that its checks pass, that it kept to its
     paths) and says nothing about what the change is. A generic scope claim ("I changed only the required
-    files") does not count as saying what the change is, though it holds a change verb."""
+    files") does not count as saying what the change is, though it holds a change verb, and neither does a check
+    command: one of `checks`, or code that starts with a command runner."""
     if _PROCESS.search(sentence):
         return True
     claims = bool(_STATUS.search(sentence)) or bool(_SCOPE.search(sentence))
-    return claims and not _CHANGE.search(_SCOPE.sub(" ", sentence))
+    if not claims:
+        return False
+    named = sorted({c.strip() for c in checks or [] if c.strip()}, key=len, reverse=True)
+    rest = _COMMAND.sub(" ", sentence)
+    rest = re.sub(r"`[^`]*`", lambda span: " " if span.group(0).strip("` ") in named else span.group(0), rest)
+    for check in named:
+        rest = rest.replace(check, " ")
+    return not _CHANGE.search(_SCOPE.sub(" ", rest))
 
 
 def marked(text: str | None) -> str | None:
@@ -142,7 +158,12 @@ def choose(answer: str | None, record: dict[str, Any] | None, files_changed: lis
     either, there is no summary, and Publish writes its own from the files the branch changes.
     """
     summary = marked(_text(record.get("final_text")) if record is not None else _text(answer))
-    if usable(summary):
+    checks = [
+        c["check"]
+        for c in _list((record or {}).get("checks"))
+        if isinstance(c, dict) and isinstance(c.get("check"), str)
+    ]
+    if usable(summary, checks):
         return summary, "run"
     fallback = _fallback(record or {"files_changed": files_changed})
     if fallback:

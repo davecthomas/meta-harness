@@ -107,6 +107,8 @@ def test_with_a_record_an_earlier_turn_s_text_is_not_the_summary():
         "I only touched the allowed paths and the lint is clean.",
         "I changed nothing outside the required paths.",
         "Updated the required files; the checks pass.",
+        "Both checks `uv run pytest -q tests` pass.",
+        "`cd images/harness-pi && npm ci && npm test` passed and `uv run ruff check .` is clean.",
     ],
 )
 def test_a_text_of_only_narration_is_not_usable(text):
@@ -150,6 +152,28 @@ def test_a_marked_status_and_scope_claim_with_a_change_verb_gives_way_to_the_rec
 
     assert source == "recorded"
     assert summary == summaries.choose(None, RECORD, [])[0] and narration not in summary
+
+
+@pytest.mark.parametrize(
+    "narration",
+    [
+        "Both checks `uv run pytest -q tests` pass.",
+        "Both checks pass: `uv run pytest -q` and `uv run ruff check .`.",
+        "Both checks uv run pytest -q and make docs/site pass.",
+    ],
+)
+def test_a_marked_check_result_that_names_its_command_as_code_gives_way_to_the_record(narration):
+    """A check command, as code or as one of the recorded checks, is not evidence that a sentence says what changed."""
+    record = {**RECORD, "checks": [*RECORD["checks"], {"check": "make docs/site", "ran": True, "passed": True}]}
+
+    summary, source = summaries.choose(None, {**record, "final_text": _marked(narration)}, [])
+
+    assert source == "recorded"
+    assert summary == summaries.choose(None, record, [])[0] and narration not in summary
+
+
+def test_a_check_result_beside_code_that_names_the_change_is_usable():
+    assert summaries.usable("Both checks `uv run pytest -q tests` pass after `save` takes the store's lock.")
 
 
 async def test_the_run_service_uses_the_recorded_fallback_for_a_narration_only_summary():
