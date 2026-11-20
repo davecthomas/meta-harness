@@ -1,7 +1,9 @@
-import { useState } from "react";
-import { ActionIcon, Badge, Button, Code, Group, Stack, Table, Text, TextInput, Tooltip } from "@mantine/core";
+import { useEffect, useState } from "react";
+import { ActionIcon, Badge, Button, Group, Stack, Table, Text, TextInput, Tooltip } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
+import { api } from "../../api";
 import { InlineField } from "../../components/InlineField";
+import { PickedName, Unreadable } from "../../components/PickedName";
 import { DataTable } from "../../components/ui";
 import { changed, Reasons, stageOptional, type Staging } from "./ConfigViews";
 import { RemovedRows, removedEntries } from "./RemovedRows";
@@ -12,10 +14,35 @@ const TOOLS = ["read", "write", "edit", "ls", "find", "grep", "bash", "submit_re
 // What a profile added from the table starts as: the lean profile's tools and limits, the default image.
 const NEW_PROFILE = { image: null, tools: ["read", "write", "edit", "ls", "find", "grep", "bash"], max_turns: 80, max_minutes: 45 };
 
+// The harness images the deployment builds, which a profile's image is picked from: known is null while they
+// load, and error says why they could not be listed. fallback: the image a profile with no image runs.
+function useImages() {
+  const [known, setKnown] = useState<string[] | null>(null);
+  const [fallback, setFallback] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    api.configImages().then(
+      (r) => {
+        if (stale) return;
+        setKnown(r.images.map((i) => i.name));
+        setFallback(r.default);
+      },
+      (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
+    );
+    return () => {
+      stale = true;
+    };
+  }, []);
+  return { known, fallback, error };
+}
+
 // The harness profiles, one row each: tools, limits, resources, bash allowlist and image, each edited in place.
-// skills: every skill a profile may name, from the skills configuration.
+// skills: every skill a profile may name, from the skills configuration. A profile's image is picked from the
+// images the deployment builds, since a run on an image that does not exist fails at start; empty is the default.
 export function ProfilesView({ staging: s, skills = [] }: { staging: Staging; skills?: string[] }) {
   const profiles: Record<string, any> = s.document.profiles ?? {};
+  const images = useImages();
   // Resources are both or neither: a value emptied drops it, and resources left empty are dropped.
   const stageResource = (name: string, key: string, value: number | null) => {
     const next = { ...(profiles[name].resources ?? {}) };
@@ -86,17 +113,20 @@ export function ProfilesView({ staging: s, skills = [] }: { staging: Staging; sk
               />
             </Table.Td>
             <Table.Td>
-              <InlineField
-                kind="text"
+              <PickedName
                 label={`Image of ${name}`}
+                what="harness image"
+                where="The deployment"
                 value={p.image ?? ""}
-                monospace
-                display={<Code>{p.image ?? "default"}</Code>}
+                empty={images.fallback ? `default (${images.fallback})` : "default"}
+                known={images.known}
+                unreadable={images.error}
+                testId={`image-unknown-${name}`}
                 changed={changed(s, at("image"))}
-                reasons={s.reasons(`profile:${name}:image`)}
                 readOnly={s.readOnly}
                 onCommit={(v) => s.stage(at("image"), v || null)}
               />
+              <Reasons reasons={s.reasons(`profile:${name}:image`)} />
             </Table.Td>
             <Table.Td>
               {!s.readOnly && (
@@ -110,6 +140,7 @@ export function ProfilesView({ staging: s, skills = [] }: { staging: Staging; sk
       })}
       {!s.readOnly && <AddProfileRow names={Object.keys(profiles)} onAdd={(name) => s.stage(["profiles", name], NEW_PROFILE)} />}
     </DataTable>
+    <Unreadable what="harness images" error={images.error} />
     {!s.readOnly && <RemovedRows what="profile" rows={removedEntries(s, "profiles")} />}
     </>
   );

@@ -41,6 +41,10 @@ export const configApi = {
   configKinds: () => call<{ kinds: ConfigSummary[]; source: "db" | "file"; max_sandboxes?: number | null }>("/v1/config"),
   configModels: () =>
     call<{ models: { name: string; engine: string; model: string; status: string }[] }>("/v1/config/models").then((r) => r.models),
+  // The harness images the deployment builds, which a profile's image is picked from; default: the image a
+  // profile with no image runs. A 422 says why they cannot be listed.
+  configImages: () =>
+    call<{ images: { name: string; directory: string; default: boolean }[]; default: string }>("/v1/config/images"),
   configClassifiers: () => call<{ engines?: ClassifierEngine[] }>("/v1/config/classifiers").then((r) => r?.engines ?? []),
   // Read a skill from a git repository or from its files, to look at before it is staged. Saves nothing.
   readSkill: (from: { url?: string; ref?: string; path?: string; files?: Record<string, string> }) =>
