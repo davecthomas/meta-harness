@@ -1001,9 +1001,7 @@ def test_the_planner_splits_an_issue_it_held_as_too_large_itself_once_and_record
 
     assert swept["split"] == [big]
     created = _shown(client, goal)[big]["split_into"]
-    assert len(created) == 2 and all(
-        f"\nSplit from #{big.rsplit('#', 1)[-1]}\n" in i.body for i in tracker.created
-    )
+    assert len(created) == 2 and all(f"\nSplit from #{big.rsplit('#', 1)[-1]}\n" in i.body for i in tracker.created)
     [done] = ledger.read(ref=big)
     assert (done["remedy"], done["outcome"], done["try"], done["of"]) == ("auto_split", "done", 1, 1)
     assert done["did"].startswith("split it into 2 smaller issues") and "closes once" in done["next"]

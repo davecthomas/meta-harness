@@ -205,8 +205,16 @@ def test_a_draft_that_names_a_whole_top_level_directory_gets_a_gap_saying_what_i
     from meta_harness.planner import plans
 
     drafts = [
-        {"draft_id": "a", "title": "Capture summaries", "body": "Do it.\n\nPaths: src/meta_harness/run_service/review.py, tests"},
-        {"draft_id": "b", "title": "Narrow", "body": "Do it.\n\nPaths: console/src/features/goals/GoalPage.tsx, Makefile.am"},
+        {
+            "draft_id": "a",
+            "title": "Capture summaries",
+            "body": "Do it.\n\nPaths: src/meta_harness/run_service/review.py, tests",
+        },
+        {
+            "draft_id": "b",
+            "title": "Narrow",
+            "body": "Do it.\n\nPaths: console/src/features/goals/GoalPage.tsx, Makefile.am",
+        },
     ]
     [gap] = plans.broad_path_gaps(drafts)
     assert gap.startswith("Capture summaries names the whole tests directory as its paths")
