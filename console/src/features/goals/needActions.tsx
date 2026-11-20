@@ -93,5 +93,7 @@ export function HeldIssueAction({ goalId, issueRef, label, fallback, onDone }: {
   }, [goalId, issueRef]);
   if (!issue) return <>{fallback}</>;
   if (issue.task_id) return <TaskNeedAction taskId={issue.task_id} onDone={onDone} />;
+  // Not held, or held for nothing there is a choice about: what the update offered.
+  if (!issue.held_reason) return <>{fallback}</>;
   return <HeldActions goalId={goalId} label={label} issue={issue} onChanged={onDone} />;
 }

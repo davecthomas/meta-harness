@@ -116,11 +116,14 @@ function NeedAction({ need, planning, goalId, label, onDone }: { need: Need; pla
       return <Button size="xs" variant="light" onClick={send(OPEN_SETTINGS)}>Raise the budget</Button>;
     default: {
       const url = need.ref ? issueUrl(need.ref) : null;
-      return url ? (
+      const open = url ? (
         <Button size="xs" variant="light" component="a" href={url} target="_blank" rel="noreferrer">Open the issue</Button>
       ) : (
         <Button size="xs" variant="light" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>
       );
+      // A need about an issue reads the issue as it is now, whatever the update said when it was written: a
+      // held one is split or run as one right here, one with a task gets its task's buttons.
+      return need.ref ? <HeldIssueAction goalId={goalId} issueRef={need.ref} label={label} fallback={open} onDone={onDone} /> : open;
     }
   }
 }
