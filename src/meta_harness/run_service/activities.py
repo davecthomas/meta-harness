@@ -407,17 +407,20 @@ async def publish(request: PublishRequest) -> PublishResult:
         # The fix run was asked to say in its summary why it changed what it did; the review reads it here. A fix
         # run that left none usable gets the fallback, so the round still shows in the description.
         part = await _summary_section(request, published.files)
+        heading = f"Fix round {request.fix_round} ({request.run_id})"
         try:
-            await code_host.add_to_description(
+            description = await code_host.add_to_description(
                 request.repo,
                 published.pr_url,
-                f"Fix round {request.fix_round} ({request.run_id})",
+                heading,
                 provenance.stamp(part.text, signed),
                 sandbox.task_dir_for(ref) / "pull-request.md",
             )
         except code_host.CodeHostError as err:
             raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
-        _record_summary(request, published.pr_url, part)
+        # A retry adds nothing when an earlier attempt added the round's section, and its writing pass may have
+        # rewritten the summary differently, so what is recorded is the section the description holds.
+        _record_summary(request, published.pr_url, pr_summary.posted_round(description or "", heading) or part)
     print(
         f"[{request.run_id} publish] {', '.join(published.files)} on branch {published.branch} at "
         f"{published.commit[:12]}, pull request {'opened' if published.created else 'already open'}: {published.pr_url}",

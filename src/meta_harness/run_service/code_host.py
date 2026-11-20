@@ -755,27 +755,31 @@ async def description(repo: str, pr_url: str, pr_record: Path) -> str:
     return str(pull.get("body") or "").replace("\r\n", "\n")
 
 
-async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr_record: Path) -> None:
+async def add_to_description(repo: str, pr_url: str, heading: str, text: str, pr_record: Path) -> str:
     """Adds a section to the pull request's description, once: a retry finds its heading there and adds
-    nothing. A local repo's pull request is its record file."""
+    nothing. Returns the description as it then stands, so a caller can read back the section it holds, which
+    is an earlier attempt's when one added it. A local repo's pull request is its record file."""
     section = f"\n\n## {heading}\n\n{text.strip()}\n"
     if is_local(repo):
         current = pr_record.read_text(encoding="utf-8") if pr_record.exists() else ""
         if f"## {heading}\n" not in current:
-            pr_record.write_text(current.rstrip() + section, encoding="utf-8")
-        return
+            current = current.rstrip() + section
+            pr_record.write_text(current, encoding="utf-8")
+        return current
     owner_repo, number = pr_number(pr_url)
     pull = await _github(owner_repo, READ_PULL_REQUEST, "GET", f"/repos/{owner_repo}/pulls/{number}") or {}
     current = str(pull.get("body") or "")
     if f"## {heading}\n" in current:
-        return
+        return current.replace("\r\n", "\n")
+    current = current.rstrip() + section
     await _github(
         owner_repo,
         OPEN_PULL_REQUEST,
         "PATCH",
         f"/repos/{owner_repo}/pulls/{number}",
-        json={"body": current.rstrip() + section},
+        json={"body": current},
     )
+    return current.replace("\r\n", "\n")
 
 
 async def merge_local(repo: str, base: str, head_sha: str) -> tuple[str, str, str, str]:

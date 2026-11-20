@@ -70,7 +70,8 @@ def test_a_fallback_with_no_files_says_so():
 @pytest.fixture
 def host(monkeypatch):
     """code_host's publish, description and add_to_description faked, the writing pass recorded with no model
-    call, and the events appended. A pull request already open has host["description"] as its description;
+    call, and the events appended. A pull request already open has host["description"] as its description,
+    which add_to_description adds a section to once;
     with host["label_fails"], opening one posts it and then fails, as a failed label request would."""
     seen: dict = {"bodies": [], "added": [], "checked": [], "emitted": [], "description": "", "label_fails": False}
 
@@ -94,6 +95,9 @@ def host(monkeypatch):
 
     async def add_to_description(repo, pr_url, heading, text, pr_record):
         seen["added"].append((heading, text))
+        if f"## {heading}\n" not in seen["description"]:
+            seen["description"] = seen["description"].rstrip() + f"\n\n## {heading}\n\n{text.strip()}\n"
+        return seen["description"]
 
     async def check_all(texts, transport=None):
         seen["checked"].append(list(texts))
@@ -258,6 +262,30 @@ async def test_a_retry_reads_back_the_run_s_words_as_the_first_attempt_s_writing
     assert (summary["source"], summary["heading"], summary["text"]) == ("run", pr_summary.RUN_HEADING, rewrite)
 
 
+async def test_a_fix_round_s_retry_records_the_section_its_first_attempt_posted(host, monkeypatch):
+    rewrites = iter(["Moved the check into save().", "The check now lives in save()."])
+
+    async def check_all(texts, transport=None):
+        return [writing.Outcome(text=next(rewrites), findings=1, rewritten=True, kept=True)]
+
+    monkeypatch.setattr(writing, "check_all", check_all)
+    host["created"], host["events_down"] = False, 1
+    with pytest.raises(httpx.ConnectError):
+        await ActivityEnvironment().run(activities.publish, _request(OWN, fix_round=1))
+
+    await ActivityEnvironment().run(activities.publish, _request(OWN, fix_round=1))
+
+    assert host["description"].count("## Fix round 1 (run-task-t-1:run-1)") == 1
+    assert "Moved the check into save()." in host["description"] and "lives in save()" not in host["description"]
+    [summary] = _summaries(host)
+    assert (summary["fix_round"], summary["source"], summary["heading"], summary["text"]) == (
+        1,
+        "run",
+        pr_summary.RUN_HEADING,
+        "Moved the check into save().",
+    ), "the event holds the text the description shows, not the retry's rewrite"
+
+
 async def test_a_summary_the_event_service_did_not_store_fails_publish_and_its_retry_records_it(host):
     host["events_down"] = 1
 
@@ -295,6 +323,25 @@ def test_a_posted_summary_is_read_back_from_the_description_up_to_its_run_sectio
     )
     assert pr_summary.posted(body, activities._summary_end("run-task-t-1:run-9")) is None
     assert pr_summary.posted("Closes o/r#9", activities._summary_end(request.run_id)) is None
+
+
+def test_a_fix_round_s_summary_is_read_back_up_to_its_provenance_line():
+    signed = provenance.Provenance(provenance.PULL_REQUEST, task="t-1", run="run-task-t-1:run-3", round=1)
+    own = "Moved the check.\n\n## Notes\n\nuv run pytest -q passes."
+    fallback = pr_summary.fallback("Done.", FILES)
+    body = (
+        "## Summary from the run\n\nFixed it.\n\n## Run\n\n- Run: `run-task-t-1:run-1`"
+        f"\n\n## Fix round 1 (run-task-t-1:run-3)\n\n{provenance.stamp(own, signed)}\n"
+        f"\n\n## Fix round 2 (run-task-t-1:run-4)\n\n{provenance.stamp(fallback, signed)}\n"
+    )
+
+    assert pr_summary.posted_round(body.replace("\n", "\r\n"), "Fix round 1 (run-task-t-1:run-3)") == (
+        pr_summary.Section(pr_summary.RUN_HEADING, own, from_run=True)
+    )
+    second = pr_summary.posted_round(body, "Fix round 2 (run-task-t-1:run-4)")
+    assert second == pr_summary.Section(pr_summary.FALLBACK_HEADING, fallback, from_run=False)
+    assert second.source == "files"
+    assert pr_summary.posted_round(body, "Fix round 3 (run-task-t-1:run-5)") is None
 
 
 def test_the_summary_event_is_registered_with_every_source():

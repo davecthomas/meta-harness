@@ -17,6 +17,8 @@ so the console's task, pull request and goal views can say whose words a descrip
 import re
 from dataclasses import dataclass
 
+from meta_harness.run_service import provenance
+
 # A summary of fewer words than this ("Done.", "All done.") says nothing about the change.
 MIN_WORDS = 3
 # The files are cut to this many lines in the fallback, with a count of the rest.
@@ -68,6 +70,22 @@ def posted(description: str, end: str) -> Section | None:
     at, heading = min(starts)
     text = description[at + len(f"## {heading}\n") : stop].strip()
     return Section(heading, text, from_run=heading == RUN_HEADING)
+
+
+def posted_round(description: str, heading: str) -> Section | None:
+    """A fix round's summary, read back from the description: the text under heading, up to the provenance
+    line that ends the section, or the description's end when it has none. None when the description holds no
+    such heading. Its source comes from the text, since the round's heading does not say it."""
+    description = description.replace("\r\n", "\n")
+    at = _line_at(description, f"## {heading}\n")
+    if at < 0:
+        return None
+    rest = description[at + len(f"## {heading}\n") :]
+    end = provenance.LINE.search(rest)
+    text = (rest[: end.start()] if end else rest).strip()
+    if is_fallback(text):
+        return Section(FALLBACK_HEADING, text, from_run=False)
+    return Section(RUN_HEADING, text, from_run=True)
 
 
 def _line_at(text: str, line: str) -> int:
