@@ -209,6 +209,9 @@ def test_a_marked_account_of_the_run_s_work_beside_the_change_stands(text):
         "All changes stay inside `src/app` and `tests/`.",
         "All tests passed and no files outside `src/app.py` were changed.",
         "I changed only files under `src/app`, and the lint is clean.",
+        "Both checks pass and I changed only src/app.py",
+        "Both checks pass and I only touched `src/app.py` and `tests/test_app.py`.",
+        "The tests pass; I edited just the files src/app.py, tests/test_app.py.",
     ],
 )
 def test_a_marked_scope_claim_that_names_its_paths_gives_way_to_the_record(narration):
@@ -225,6 +228,7 @@ def test_a_marked_scope_claim_that_names_its_paths_gives_way_to_the_record(narra
         "The parser lives under `src/parser` and keeps blank steps.",
         "All changes stay inside `src/app`. Added a lock around `save()` in `src/app/store.py`.",
         "Checks pass; `src/app/store.py` now retries on timeout.",
+        "Both checks pass and I changed only src/app.py to fix the retry on timeout.",
     ],
 )
 def test_a_path_beside_what_the_change_is_stands(text):

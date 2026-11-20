@@ -95,6 +95,13 @@ _SCOPE_PATH = re.compile(
     rf"{_PATH}(?:\s*(?:,\s*(?:and\s+|or\s+)?|\s+and\s+|\s+or\s+){_PATH})*",
     re.IGNORECASE,
 )
+# A path as the object of a scope claim ("I changed only src/app.py", "only touched `src/app` and `tests/`"):
+# the claim says where the change stays, not what it is. The path becomes "the files", so _SCOPE finds the claim.
+_PATHS = rf"{_PATH}(?:\s*(?:,\s*(?:and\s+|or\s+)?|\s+and\s+|\s+or\s+){_PATH})*"
+_SCOPE_OBJECT = re.compile(
+    rf"\b({_SCOPE_VERB}\s+(?:only|just)|(?:only|just)\s+{_SCOPE_VERB})\s+(?:the\s+)?(?:files?\s+)?{_PATHS}",
+    re.IGNORECASE,
+)
 # What the run did on its way, not what the change is: running its checks, keeping its plan ("I ran the checks
 # and updated the plan."). It holds a change verb ("updated") but says nothing about the change, so it is taken
 # out before _CHANGE is looked for, and a sentence that holds it is narration unless something else is left.
@@ -164,7 +171,7 @@ def narration(sentence: str, checks: list[str] | None = None) -> bool:
         return True
     # A path a scope claim names reads as "the paths", so the claim is found and taken out whether it names its
     # paths or not. A sentence that only says where code lives ("The parser lives under `src/parser`") makes no claim.
-    scoped = _SCOPE_PATH.sub(r"\1 the paths", sentence)
+    scoped = _scoped(sentence)
     claims = any(pattern.search(scoped) for pattern in (_STATUS, _SCOPE, _WORK))
     if not claims:
         return False
@@ -173,7 +180,12 @@ def narration(sentence: str, checks: list[str] | None = None) -> bool:
     rest = re.sub(r"`[^`]*`", lambda span: " " if span.group(0).strip("` ") in named else span.group(0), rest)
     for check in named:
         rest = rest.replace(check, " ")
-    return not _CHANGE.search(_SCOPE.sub(" ", _WORK.sub(" ", _SCOPE_PATH.sub(r"\1 the paths", rest))))
+    return not _CHANGE.search(_SCOPE.sub(" ", _WORK.sub(" ", _scoped(rest))))
+
+
+def _scoped(sentence: str) -> str:
+    """The sentence with the paths its scope claims name read as "the paths" or "the files"."""
+    return _SCOPE_OBJECT.sub(r"\1 the files", _SCOPE_PATH.sub(r"\1 the paths", sentence))
 
 
 def marked(text: str | None) -> str | None:
