@@ -113,6 +113,22 @@ REGISTRY: list[EventType] = [
             ["pr_url", "branch"],
         ),
     ),
+    # The summary a run's pull request description holds, from the opening (fix_round 0) or a fix round, and
+    # where it came from: the run's own words, or a fallback the meta-harness wrote (run_service/pr_summary.py).
+    EventType(
+        "pull_request_summary",
+        1,
+        _object(
+            {
+                "pr_url": {"type": "string"},
+                "fix_round": {"type": "integer"},
+                "source": {"type": "string", "enum": ["run", "recorded", "files"]},
+                "heading": {"type": "string"},
+                "text": {"type": "string"},
+            },
+            ["pr_url", "fix_round", "source"],
+        ),
+    ),
     # The review loop on a task's pull request
     # An operator sent a task whose workflow had ended back to the queue: a retry, or a merge they asked for
     EventType(

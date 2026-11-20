@@ -365,12 +365,16 @@ async def publish(request: PublishRequest) -> PublishResult:
     ref = ref_for(activity.info().workflow_id)
     workspace = sandbox.workspace_for(ref, request.run_id)
     signed = _signed(request)
+    # The summary the description was written with, once a pull request is opened, to record its source.
+    opened: list[pr_summary.Section] = []
 
     async def body(files: list[str]) -> str:
         """The description, written once a pull request is to be opened: the run's summary goes through the
         writing pass, or a fallback from the branch's files stands in for one the run did not leave, and the
         lines the meta-harness adds around it stay as they are. The whole description carries the provenance."""
-        return provenance.stamp(_pr_body(request, await _summary_section(request, files)), signed)
+        part = await _summary_section(request, files)
+        opened.append(part)
+        return provenance.stamp(_pr_body(request, part), signed)
 
     async def headers(created: list[str]) -> list[str]:
         """The provenance header on the files the run created, when the task's goal, else the configuration,
@@ -409,20 +413,32 @@ async def publish(request: PublishRequest) -> PublishResult:
     if published is None:
         print(f"[{request.run_id} publish] pi changed nothing in {workspace}, so there is no pull request", flush=True)
         return PublishResult(branch="", base="", commit="", files=[], pr_url="", created=False)
+    if published.created and opened:
+        _record_summary(request, published.pr_url, opened[-1])
+    elif not published.created and not request.fix_round:
+        # A retry after an attempt that opened the pull request and then failed (adding its label, or recording
+        # this event) finds it open: the summary is read back from the description that attempt posted.
+        posted = await _posted_summary(request, published.pr_url, sandbox.task_dir_for(ref) / "pull-request.md")
+        if posted:
+            _record_summary(request, published.pr_url, posted)
     if request.fix_round and not published.created:
         # The fix run was asked to say in its summary why it changed what it did; the review reads it here. A fix
         # run that left none usable gets the fallback, so the round still shows in the description.
         part = await _summary_section(request, published.files)
+        heading = f"Fix round {request.fix_round} ({request.run_id})"
         try:
-            await code_host.add_to_description(
+            description = await code_host.add_to_description(
                 request.repo,
                 published.pr_url,
-                f"Fix round {request.fix_round} ({request.run_id})",
+                heading,
                 provenance.stamp(part.text, signed),
                 sandbox.task_dir_for(ref) / "pull-request.md",
             )
         except code_host.CodeHostError as err:
             raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+        # A retry adds nothing when an earlier attempt added the round's section, and its writing pass may have
+        # rewritten the summary differently, so what is recorded is the section the description holds.
+        _record_summary(request, published.pr_url, pr_summary.posted_round(description or "", heading) or part)
     print(
         f"[{request.run_id} publish] {', '.join(published.files)} on branch {published.branch} at "
         f"{published.commit[:12]}, pull request {'opened' if published.created else 'already open'}: {published.pr_url}",
@@ -520,6 +536,54 @@ async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summ
         return part
     [text] = await _written("pull_request", [part.text], request.task_id, run_id=request.run_id)
     return replace(part, text=text)
+
+
+async def _posted_summary(request: PublishRequest, pr_url: str, pr_record: Path) -> pr_summary.Section | None:
+    """The opening summary this run posted, read back from the pull request's description. None when the
+    description is not this run's: another run opened the pull request, so its summary is already recorded."""
+    if not request.task_id:
+        return None
+    try:
+        description = await code_host.description(request.repo, pr_url, pr_record)
+    except code_host.CodeHostError as err:
+        raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
+    return pr_summary.posted(description, _summary_end(request.run_id))
+
+
+def _record_summary(request: PublishRequest, pr_url: str, part: pr_summary.Section) -> None:
+    """Records on the task which summary went into its pull request's description and where it came from, so
+    the console can say whose words they are. Once per run and round, however often the activity is retried.
+
+    It appends at once rather than through the outbox, so the event is stored before Publish returns. An
+    unreachable event service raises, so Temporal retries Publish, which finds the pull request and reads the
+    summary back from it. A rejected event (422) is a bug a retry cannot fix."""
+    if not request.task_id:
+        return
+    try:
+        events.append(
+            "pull_request_summary",
+            {
+                "pr_url": pr_url,
+                "fix_round": request.fix_round,
+                "source": part.source,
+                "heading": part.heading,
+                "text": part.text,
+            },
+            task_id=request.task_id,
+            run_id=request.run_id,
+            event_id=events.stable_id(request.task_id, "pull_request_summary", request.run_id, request.fix_round),
+        )
+    except httpx.HTTPStatusError as err:
+        if err.response.status_code == 422:
+            raise ApplicationError(
+                f"the event service refused pull_request_summary: {err.response.text}", non_retryable=True
+            ) from err
+        raise
+
+
+def _summary_end(run_id: str) -> str:
+    """What follows the summary in a description this run wrote: the heading of its Run section and its id."""
+    return f"\n## Run\n\n- Run: `{run_id}`"
 
 
 def _pr_body(request: PublishRequest, summary: pr_summary.Section) -> str:
