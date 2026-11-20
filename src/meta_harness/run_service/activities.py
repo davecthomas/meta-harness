@@ -53,7 +53,16 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
-from meta_harness.run_service import code_host, events, harness_client, routing, run_grants, sandbox, writing
+from meta_harness.run_service import (
+    code_host,
+    events,
+    harness_client,
+    routing,
+    run_grants,
+    sandbox,
+    summaries,
+    writing,
+)
 from meta_harness.run_service.prompt_activities import loop_template
 from meta_harness.run_service.shared import (
     DeliverRequest,
@@ -293,6 +302,7 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
             if finished is None:
                 raise ApplicationError("the event stream ended before run_finished", type="HarnessUnavailable")
             usage = (await client.get("/usage", params={"run_id": run_id})).json()
+            record = await summaries.fetch(client, run_id)
     except ApplicationError as err:
         # No later attempt will re-attach, so nothing needs the per-run sandbox or the grant.
         if err.non_retryable:
@@ -304,6 +314,11 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
     grant_spent = await _revoke_grant(tag, run_id)
     await _release(tag, run_id, ref)
     data = finished["data"]
+    answer, source = summaries.choose(progress["answer"], record, progress["files_changed"])
+    if source == "recorded":
+        activity.logger.info("run_harness: run %s left no usable summary, so one is written from its record", run_id)
+    elif source == "none":
+        activity.logger.info("run_harness: run %s left no usable summary, and no record to write one from", run_id)
     activity.logger.info(
         "run_harness attempt %d: run %s ended %s (%s), %d heartbeats sent, returning the result to Temporal",
         info.attempt,
@@ -324,7 +339,7 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         tokens_out=usage["output_tokens"],
         usd=usage["usd"],
         files_changed=progress["files_changed"],
-        answer=progress["answer"],
+        answer=answer,
         spend_limit_usd=request.spend_limit_usd,
         grant_spent_usd=grant_spent,
         error=data.get("error"),

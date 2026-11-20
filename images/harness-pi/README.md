@@ -92,6 +92,7 @@ trust until the server runs in a sandbox.
 | `GET /status` | The latest run's state, or `?run_id=` for a given run, plus `last_event_id`. `404` before any run |
 | `POST /cancel` | Stops pi with `abort()` and answers once the run has ended `CANCELED` |
 | `GET /usage` | The run's token totals, call counts and the gateway's dollar total. `?run_id=` for a given run |
+| `GET /record` | What the run did, for a summary when its own is missing or unusable (`server/run-record.ts`): `final_text`, the full text of its last turn when that turn called no tool, else null; `plan`, update_plan's last checklist; `files_changed`; `checks`, each acceptance check with `ran` and `passed`, from the last bash command that contained it as written; and `commands`, how many bash commands ran and how many failed. `?run_id=` for a given run, `404` for none |
 
 A `POST /run` body:
 
