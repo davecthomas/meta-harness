@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { WaitLine } from "../tasks/WaitLine";
 import { Anchor, Badge, Group, Paper, Progress, SimpleGrid, Stack, Text, Tooltip } from "@mantine/core";
 import { useNavigate } from "react-router-dom";
 import { issueUrl, type Goal, type IssueProgress, type MhEvent, type Task } from "../../api";
@@ -94,6 +95,8 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
           <SizeBadge issue={issue} />
           {props.usd !== undefined && props.usd > 0 && <Text size="xs" c="dimmed">${props.usd.toFixed(2)}</Text>}
         </Group>
+        {/* Why a task that has not started waits: which tasks are changing the same files, or what else. */}
+        {task && <WaitLine task={task} />}
         {/* What a running task is doing now, and for how long: "Working" alone does not say. */}
         {issue.task_status === "running" && props.events && <NowLine events={props.events} compact />}
         {issue.pr_url && (
