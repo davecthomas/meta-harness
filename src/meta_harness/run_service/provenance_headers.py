@@ -181,6 +181,11 @@ def _preamble(lines: list[str], path: PurePosixPath) -> int:
         kept = 1
     if kept < len(lines) and kept < 2 and CODING_LINE.match(lines[kept]):
         kept += 1
+    elif kept == 0 and len(lines) > 1 and CODING_LINE.match(lines[1]):
+        # Python reads a coding declaration on line two after any comment or blank line, not only a shebang.
+        first = lines[0].strip()
+        if not first or first.startswith("#"):
+            kept = 2
     if kept == 0 and lines:
         first = lines[0].lstrip().lower()
         if first.startswith("<?xml"):

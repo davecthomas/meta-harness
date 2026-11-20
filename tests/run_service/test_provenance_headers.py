@@ -111,6 +111,11 @@ def test_what_must_stay_first_stays_first():
     assert _stamp("#!/usr/bin/env python\n# -*- coding: latin-1 -*-\nx = 1\n", "a.py") == (
         f"#!/usr/bin/env python\n# -*- coding: latin-1 -*-\n{PY}\n\nx = 1\n"
     )
+    assert _stamp("# A module.\n# -*- coding: latin-1 -*-\nx = 1\n", "a.py") == (
+        f"# A module.\n# -*- coding: latin-1 -*-\n{PY}\n\nx = 1\n"
+    ), "a coding declaration on line two after an ordinary comment stays on line two"
+    assert _stamp("\n# coding: latin-1\nx = 1\n", "a.py") == f"\n# coding: latin-1\n{PY}\n\nx = 1\n"
+    assert _stamp("x = 1\n# coding: latin-1\n", "a.py") == f"{PY}\n\nx = 1\n# coding: latin-1\n"
     assert _stamp('<?xml version="1.0"?>\n<a/>\n', "a.xml") == (
         '<?xml version="1.0"?>\n<!-- Made by run task-t-1:run-1. -->\n\n<a/>\n'
     )
