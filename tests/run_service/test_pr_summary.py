@@ -1,6 +1,10 @@
 """The summary in a pull request's description: the run's own after the writing pass, or the fallback."""
 
+import dataclasses
+
+import httpx
 import pytest
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 
 from meta_harness.run_service import activities, code_host, pr_summary, provenance, summaries, writing
@@ -120,17 +124,35 @@ def test_a_fallback_written_before_the_new_prefix_is_still_kept_as_it_is():
 
 @pytest.fixture
 def host(monkeypatch):
-    """code_host's publish and add_to_description faked, and the writing pass recorded with no model call."""
-    seen: dict = {"bodies": [], "added": [], "checked": [], "emitted": []}
+    """code_host's publish, description and add_to_description faked, the writing pass recorded with no model
+    call, and the events appended. A pull request already open has host["description"] as its description,
+    which add_to_description adds a section to once;
+    with host["label_fails"], opening one posts it and then fails, as a failed label request would."""
+    seen: dict = {"bodies": [], "added": [], "checked": [], "emitted": [], "description": "", "label_fails": False}
 
     async def publish(*, body, **kwargs):
         if not seen["created"]:
             return code_host.Published("mh/t-1", "main", "c1", FILES, "https://github.com/o/r/pull/7", False)
         seen["bodies"].append(body if isinstance(body, str) else await body(FILES))
+        if seen["label_fails"]:
+            seen["created"], seen["description"] = False, seen["bodies"][-1]
+            raise code_host.CodeHostError("POST /repos/o/r/issues/7/labels: 502")
         return code_host.Published("mh/t-1", "main", "c1", FILES, "https://github.com/o/r/pull/7", True)
+
+    async def description(repo, pr_url, pr_record):
+        return seen["description"]
+
+    def append(event_type, payload, **fields):
+        if seen.get("events_down"):
+            seen["events_down"] -= 1
+            raise httpx.ConnectError("the event service is unreachable")
+        seen["emitted"].append((event_type, payload))
 
     async def add_to_description(repo, pr_url, heading, text, pr_record):
         seen["added"].append((heading, text))
+        if f"## {heading}\n" not in seen["description"]:
+            seen["description"] = seen["description"].rstrip() + f"\n\n## {heading}\n\n{text.strip()}\n"
+        return seen["description"]
 
     async def check_all(texts, transport=None):
         seen["checked"].append(list(texts))
@@ -139,6 +161,8 @@ def host(monkeypatch):
     seen["created"] = True
     monkeypatch.setattr(code_host, "publish", publish)
     monkeypatch.setattr(code_host, "add_to_description", add_to_description)
+    monkeypatch.setattr(code_host, "description", description)
+    monkeypatch.setattr(activities.events, "append", append)
     monkeypatch.setattr(writing, "check_all", check_all)
     monkeypatch.setattr(activities.events, "emit", lambda *args, **kwargs: seen["emitted"].append(args))
     return seen
@@ -217,3 +241,188 @@ async def test_a_fix_round_s_own_summary_is_added_after_the_writing_pass(host):
     assert heading == "Fix round 1 (run-task-t-1:run-1)"
     assert text.startswith(f"{OWN}\n\n") and provenance.parse(text), "the round's section carries its provenance"
     assert host["checked"] == [[OWN]]
+
+
+# --- Where the summary came from ---------------------------------------------------------------------
+
+
+def _summaries(host) -> list[dict]:
+    return [payload for event_type, payload in host["emitted"] if event_type == "pull_request_summary"]
+
+
+def test_each_summary_says_where_it_came_from():
+    recorded = f"{pr_summary.FALLBACK_PREFIX} from what the harness recorded.\n\nCommands run: 3, of which 0 failed."
+
+    assert pr_summary.section(OWN, FILES).source == "run"
+    assert pr_summary.section(recorded, FILES, "recorded").source == "recorded"
+    assert pr_summary.section("Done.", FILES).source == "files"
+    sources = {pr_summary.section(t, FILES, s).source for t, s in ((OWN, "run"), (recorded, "recorded"), (None, ""))}
+    assert sources == set(pr_summary.SOURCES)
+
+
+async def test_an_opened_pull_request_records_its_summary_and_source(host):
+    await ActivityEnvironment().run(activities.publish, _request(OWN))
+
+    assert _summaries(host) == [
+        {
+            "pr_url": "https://github.com/o/r/pull/7",
+            "fix_round": 0,
+            "source": "run",
+            "heading": pr_summary.RUN_HEADING,
+            "text": OWN,
+        }
+    ]
+
+
+async def test_a_fallback_is_recorded_as_the_meta_harness_s(host):
+    await ActivityEnvironment().run(activities.publish, _request(None))
+
+    [summary] = _summaries(host)
+    assert summary["source"] == "files" and summary["heading"] == pr_summary.FALLBACK_HEADING
+
+
+async def test_a_fix_round_records_its_summary_with_its_round(host):
+    host["created"] = False
+
+    await ActivityEnvironment().run(activities.publish, _request("Done.", fix_round=2))
+
+    [summary] = _summaries(host)
+    assert (summary["fix_round"], summary["source"]) == (2, "files")
+
+
+async def test_a_publish_that_finds_a_pull_request_another_run_opened_records_no_summary(host):
+    host["created"] = False
+    earlier = dataclasses.replace(_request(OWN), run_id="run-task-t-1:run-0")
+    host["description"] = activities._pr_body(earlier, pr_summary.section(OWN, FILES))
+
+    await ActivityEnvironment().run(activities.publish, _request(OWN))
+
+    assert _summaries(host) == []
+
+
+async def test_a_retry_after_the_label_request_failed_records_the_summary_the_first_attempt_posted(host):
+    host["label_fails"] = True
+
+    with pytest.raises(ApplicationError, match="labels"):
+        await ActivityEnvironment().run(activities.publish, _request("Done."))
+    assert _summaries(host) == []
+
+    result = await ActivityEnvironment().run(activities.publish, _request("Done."))
+
+    assert not result.created and len(host["bodies"]) == 1, "the retry opens no second pull request"
+    expected = pr_summary.section("Done.", FILES)
+    assert _summaries(host) == [
+        {
+            "pr_url": "https://github.com/o/r/pull/7",
+            "fix_round": 0,
+            "source": "files",
+            "heading": pr_summary.FALLBACK_HEADING,
+            "text": expected.text,
+        }
+    ]
+
+
+async def test_a_retry_reads_back_the_run_s_words_as_the_first_attempt_s_writing_pass_left_them(host, monkeypatch):
+    rewrite = "Fixed the save path.\n\n## Notes\n\nuv run pytest -q passes."
+
+    async def check_all(texts, transport=None):
+        return [writing.Outcome(text=rewrite, findings=1, rewritten=True, kept=True)]
+
+    monkeypatch.setattr(writing, "check_all", check_all)
+    host["label_fails"] = True
+    with pytest.raises(ApplicationError):
+        await ActivityEnvironment().run(activities.publish, _request(OWN))
+
+    await ActivityEnvironment().run(activities.publish, _request(OWN))
+
+    [summary] = _summaries(host)
+    assert (summary["source"], summary["heading"], summary["text"]) == ("run", pr_summary.RUN_HEADING, rewrite)
+
+
+async def test_a_fix_round_s_retry_records_the_section_its_first_attempt_posted(host, monkeypatch):
+    rewrites = iter(["Moved the check into save().", "The check now lives in save()."])
+
+    async def check_all(texts, transport=None):
+        return [writing.Outcome(text=next(rewrites), findings=1, rewritten=True, kept=True)]
+
+    monkeypatch.setattr(writing, "check_all", check_all)
+    host["created"], host["events_down"] = False, 1
+    with pytest.raises(httpx.ConnectError):
+        await ActivityEnvironment().run(activities.publish, _request(OWN, fix_round=1))
+
+    await ActivityEnvironment().run(activities.publish, _request(OWN, fix_round=1))
+
+    assert host["description"].count("## Fix round 1 (run-task-t-1:run-1)") == 1
+    assert "Moved the check into save()." in host["description"] and "lives in save()" not in host["description"]
+    [summary] = _summaries(host)
+    assert (summary["fix_round"], summary["source"], summary["heading"], summary["text"]) == (
+        1,
+        "run",
+        pr_summary.RUN_HEADING,
+        "Moved the check into save().",
+    ), "the event holds the text the description shows, not the retry's rewrite"
+
+
+async def test_a_summary_the_event_service_did_not_store_fails_publish_and_its_retry_records_it(host):
+    host["events_down"] = 1
+
+    with pytest.raises(httpx.ConnectError):
+        await ActivityEnvironment().run(activities.publish, _request(OWN))
+    host["created"], host["description"] = False, host["bodies"][-1]
+
+    await ActivityEnvironment().run(activities.publish, _request(OWN))
+
+    [summary] = _summaries(host)
+    assert (summary["fix_round"], summary["source"], summary["text"]) == (0, "run", OWN)
+
+
+async def test_a_summary_the_event_service_refuses_fails_publish_for_good(host, monkeypatch):
+    def refuse(event_type, payload, **fields):
+        request = httpx.Request("POST", "http://events/v1/events")
+        response = httpx.Response(422, text="bad payload", request=request)
+        raise httpx.HTTPStatusError("422", request=request, response=response)
+
+    monkeypatch.setattr(activities.events, "append", refuse)
+
+    with pytest.raises(ApplicationError, match="refused pull_request_summary") as raised:
+        await ActivityEnvironment().run(activities.publish, _request(OWN))
+    assert raised.value.non_retryable
+
+
+def test_a_posted_summary_is_read_back_from_the_description_up_to_its_run_section():
+    request = _request(OWN)
+    text = "Fixed it.\n\n## Details\n\nThe save path."
+    body = activities._pr_body(request, pr_summary.Section(pr_summary.RUN_HEADING, text, from_run=True))
+    body += "\n\n## Fix round 1 (run-task-t-1:run-3)\n\nMore.\n"
+
+    assert pr_summary.posted(body.replace("\n", "\r\n"), activities._summary_end(request.run_id)) == (
+        pr_summary.Section(pr_summary.RUN_HEADING, text, from_run=True)
+    )
+    assert pr_summary.posted(body, activities._summary_end("run-task-t-1:run-9")) is None
+    assert pr_summary.posted("Closes o/r#9", activities._summary_end(request.run_id)) is None
+
+
+def test_a_fix_round_s_summary_is_read_back_up_to_its_provenance_line():
+    signed = provenance.Provenance(provenance.PULL_REQUEST, task="t-1", run="run-task-t-1:run-3", round=1)
+    own = "Moved the check.\n\n## Notes\n\nuv run pytest -q passes."
+    fallback = pr_summary.fallback(FILES)
+    body = (
+        f"## {pr_summary.RUN_HEADING}\n\nFixed it.\n\n## Run\n\n- Run: `run-task-t-1:run-1`"
+        f"\n\n## Fix round 1 (run-task-t-1:run-3)\n\n{provenance.stamp(own, signed)}\n"
+        f"\n\n## Fix round 2 (run-task-t-1:run-4)\n\n{provenance.stamp(fallback, signed)}\n"
+    )
+
+    assert pr_summary.posted_round(body.replace("\n", "\r\n"), "Fix round 1 (run-task-t-1:run-3)") == (
+        pr_summary.Section(pr_summary.RUN_HEADING, own, from_run=True)
+    )
+    second = pr_summary.posted_round(body, "Fix round 2 (run-task-t-1:run-4)")
+    assert second == pr_summary.Section(pr_summary.FALLBACK_HEADING, fallback, from_run=False)
+    assert second.source == "files"
+    assert pr_summary.posted_round(body, "Fix round 3 (run-task-t-1:run-5)") is None
+
+
+def test_the_summary_event_is_registered_with_every_source():
+    from meta_harness.events.types import by_key
+
+    schema = by_key()[("pull_request_summary", 1)].json_schema
+    assert schema["properties"]["source"]["enum"] == list(pr_summary.SOURCES)

@@ -445,12 +445,13 @@ async def test_a_fix_runs_summary_is_added_to_a_local_pull_requests_description_
 
     record = tmp_path / "pull-request.md"
     record.write_text("# Fix the bug\n\nThe first run's summary.\n", encoding="utf-8")
-    for _ in range(2):
-        await code_host.add_to_description(
-            str(tmp_path / "repo.git"), "", "Fix round 1 (t:run-3)", "Why lib.py changed.", record
+    for words in ("Why lib.py changed.", "Why lib.py was changed."):
+        returned = await code_host.add_to_description(
+            str(tmp_path / "repo.git"), "", "Fix round 1 (t:run-3)", words, record
         )
     text = record.read_text(encoding="utf-8")
     assert text.count("## Fix round 1 (t:run-3)") == 1 and "Why lib.py changed." in text
+    assert returned == text, "a retry gets back the description holding the first attempt's section"
 
 
 async def test_a_local_repos_changed_lines_between_two_commits(tmp_path):

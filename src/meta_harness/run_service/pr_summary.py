@@ -12,10 +12,15 @@ not the summary's words, decides: a run's marked summary that opens with FALLBAC
 Either fallback goes under FALLBACK_HEADING, and its first line says plainly that the run left no summary. It
 holds none of the run's own words, and it skips the writing pass: it holds only the meta-harness's own lines
 and file paths.
+
+Where a summary came from is its source (SOURCES): Publish records it on the task as `pull_request_summary`,
+so the console's task, pull request and goal views can say whose words a description holds.
 """
 
 import re
 from dataclasses import dataclass
+
+from meta_harness.run_service import provenance
 
 # A summary of fewer words than this ("Done.", "All done.") says nothing about the change.
 MIN_WORDS = 3
@@ -30,6 +35,12 @@ FALLBACK_PREFIX = "The run left no summary of its change"
 # The first words of a fallback written before FALLBACK_PREFIX, which a task under way may still carry.
 EARLIER_PREFIX = "The run ended without a usable summary, so the meta-harness wrote this one"
 FALLBACK_LEAD = f"{FALLBACK_PREFIX}, so this section lists the files the branch changes."
+# This module's lead before FALLBACK_LEAD, which a description posted earlier may still hold.
+EARLIER_LEAD = f"{EARLIER_PREFIX} from the files the branch changes."
+
+# Where a description's summary came from: the run's own words, a fallback the run service wrote from the
+# harness's record of the run, or one this module wrote from the files the branch changes.
+SOURCES = ("run", "recorded", "files")
 
 
 @dataclass(frozen=True)
@@ -39,6 +50,56 @@ class Section:
     heading: str
     text: str
     from_run: bool
+
+    @property
+    def source(self) -> str:
+        """Where the summary came from, one of SOURCES."""
+        if self.from_run:
+            return "run"
+        return "files" if self.text.startswith((FALLBACK_LEAD, EARLIER_LEAD)) else "recorded"
+
+
+def posted(description: str, end: str) -> Section | None:
+    """The summary section a description holds, read back from it: under RUN_HEADING or FALLBACK_HEADING, up to
+    end, the line that follows the summary. None when the description holds no such section before end."""
+    description = description.replace("\r\n", "\n")
+    stop = description.find(end)
+    if stop < 0:
+        return None
+    starts = [
+        (at, heading)
+        for heading in (RUN_HEADING, FALLBACK_HEADING)
+        if (at := _line_at(description[:stop], f"## {heading}\n")) >= 0
+    ]
+    if not starts:
+        return None
+    at, heading = min(starts)
+    text = description[at + len(f"## {heading}\n") : stop].strip()
+    return Section(heading, text, from_run=heading == RUN_HEADING)
+
+
+def posted_round(description: str, heading: str) -> Section | None:
+    """A fix round's summary, read back from the description: the text under heading, up to the provenance
+    line that ends the section, or the description's end when it has none. None when the description holds no
+    such heading. Its source comes from the text, since the round's heading does not say it."""
+    description = description.replace("\r\n", "\n")
+    at = _line_at(description, f"## {heading}\n")
+    if at < 0:
+        return None
+    rest = description[at + len(f"## {heading}\n") :]
+    end = provenance.LINE.search(rest)
+    text = (rest[: end.start()] if end else rest).strip()
+    if text.startswith((FALLBACK_PREFIX, EARLIER_PREFIX)):
+        return Section(FALLBACK_HEADING, text, from_run=False)
+    return Section(RUN_HEADING, text, from_run=True)
+
+
+def _line_at(text: str, line: str) -> int:
+    """Where line first starts a line of text, or -1."""
+    if text.startswith(line):
+        return 0
+    at = text.find(f"\n{line}")
+    return at + 1 if at >= 0 else -1
 
 
 def usable(text: str | None) -> bool:

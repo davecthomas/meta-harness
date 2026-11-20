@@ -4,12 +4,19 @@ A task's facts come from their owners, not from another component's tables:
 its status and pull request URL from the Task API, and what became of the
 pull request from the events the RunTask workflow and the planner's sweep
 recorded on the task (`pull_request_opened`, `pull_request_checks`,
-`pull_request_merged`, `pull_request_closed`).
+`pull_request_merged`, `pull_request_closed`), and whose words its description's
+summary is from `pull_request_summary`.
 """
 
 from typing import Any, Protocol
 
-PR_EVENT_TYPES = ("pull_request_opened", "pull_request_checks", "pull_request_merged", "pull_request_closed")
+PR_EVENT_TYPES = (
+    "pull_request_opened",
+    "pull_request_checks",
+    "pull_request_merged",
+    "pull_request_closed",
+    "pull_request_summary",
+)
 # Task ids per event read, so a goal with many tasks never makes one long URL.
 TASKS_PER_READ = 100
 EVENTS_PER_READ = 5000
@@ -39,13 +46,18 @@ def pull_request_events(reader: EventReader, task_ids: list[str]) -> list[dict]:
 
 
 def pull_request_view(task: dict | None, events: list[dict]) -> dict[str, Any]:
-    """A task's pull request URL, its state (open, merged or closed) and its newest recorded checks.
+    """A task's pull request URL, its state (open, merged or closed), its newest recorded checks and where
+    its description's summary came from.
 
     checks is the newest head commit's recorded checks, passed or failed with the failed names, or
-    pending while an open pull request has none recorded yet. events are the task's, in position order.
+    pending while an open pull request has none recorded yet. summary_source is the opening summary's:
+    `run` for the run's own words, `recorded` or `files` for a fallback the meta-harness wrote, null when
+    none was recorded (a pull request from before it was). fix_summaries_written counts the fix rounds whose
+    summary the meta-harness wrote. events are the task's, in position order.
     """
     pr_url = (task or {}).get("pr_url")
     state, checks = None, None
+    summary_source, fix_summaries_written = None, 0
     for event in events:
         payload = event.get("payload") or {}
         kind = event["event_type"]
@@ -62,12 +74,23 @@ def pull_request_view(task: dict | None, events: list[dict]) -> dict[str, Any]:
             state = "merged"
         elif kind == "pull_request_closed" and state != "merged":
             state = "closed"
+        elif kind == "pull_request_summary":
+            if not payload.get("fix_round"):
+                summary_source = payload.get("source")
+            elif payload.get("source") != "run":
+                fix_summaries_written += 1
         pr_url = pr_url or payload.get("pr_url")
     if pr_url and state is None:
         state = "open"
     if state == "open" and checks is None:
         checks = {"head_sha": (task or {}).get("head_sha"), "state": "pending", "failed": []}
-    return {"pr_url": pr_url, "pr_state": state, "checks": checks}
+    return {
+        "pr_url": pr_url,
+        "pr_state": state,
+        "checks": checks,
+        "summary_source": summary_source,
+        "fix_summaries_written": fix_summaries_written,
+    }
 
 
 def issues_progress(links: list[dict], tasks: list[dict], events: list[dict]) -> list[dict]:
@@ -122,4 +145,4 @@ def _sizing_view(link: dict) -> dict[str, Any]:
 
 
 def _no_pull_request() -> dict[str, Any]:
-    return {"pr_url": None, "pr_state": None, "checks": None}
+    return {"pr_url": None, "pr_state": None, "checks": None, "summary_source": None, "fix_summaries_written": 0}

@@ -149,6 +149,8 @@ async def test_a_comment_and_a_line_comment_end_with_their_provenance(github):
 def emitted(monkeypatch):
     found: list = []
     monkeypatch.setattr(activities.events, "emit", lambda kind, payload, **fields: found.append((kind, payload)))
+    # Publish records the pull request's summary at once rather than through the outbox.
+    monkeypatch.setattr(activities.events, "append", lambda kind, payload, **fields: found.append((kind, payload)))
 
     async def unchanged(texts, transport=None):
         return [None for _ in texts]
