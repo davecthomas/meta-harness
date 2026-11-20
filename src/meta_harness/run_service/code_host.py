@@ -919,7 +919,7 @@ def refuse_nested_repos(workspace: Path) -> None:
         if Path(folder) != workspace and ".git" in (*dirs, *files):
             where = Path(folder).relative_to(workspace)
             raise CodeHostError(
-                f"the run left a git repository inside its workspace, at {where}; the control plane runs no git "
+                f"the run left a git repository inside its workspace, at {where}. The control plane runs no git "
                 "command over a workspace that holds one, because git would run what that repository's "
                 "configuration names. Retry the task; if the task needs a second repository, clone it outside "
                 "the workspace.",

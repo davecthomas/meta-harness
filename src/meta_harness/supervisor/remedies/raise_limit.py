@@ -55,5 +55,5 @@ class RaiseLimit(Remedy):
         return Outcome(
             "started",
             f"raised its spend limit from {usd(was)} to {usd(to)}, enough for its next run",
-            "it carries on; if it reaches this limit too, I will ask you",
+            "it keeps going; if it reaches this limit too, I will ask you",
         )

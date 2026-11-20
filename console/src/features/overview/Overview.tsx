@@ -74,7 +74,7 @@ export function Overview() {
         </Stack>
       )}
       {items !== null && items.length === 0 && !error && (
-        <Empty>Nothing needs you. A task shows here when it is ready to merge, fails, or waits for a decision; a goal when it passes its budget or stops moving.</Empty>
+        <Empty>Nothing needs you. A task shows here when it is ready to merge, fails, or waits for a decision. A goal shows when it passes its budget or stops moving.</Empty>
       )}
       {items === null && !error && <Text size="sm" c="dimmed" mb="lg">Loading…</Text>}
 

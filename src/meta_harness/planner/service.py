@@ -1118,8 +1118,8 @@ def create_app(
         if not body.label and not body.refs and not planned and not assigned:
             raise HTTPException(
                 status_code=422,
-                detail="a goal needs issues to take in: give it a label, or pick issues by ref, or, where its "
-                "tracker has it, turn on taking the issues assigned to the meta-harness",
+                detail="a goal needs issues to take in: give it a label, or pick issues by ref. Where its "
+                "tracker has it, you can also turn on taking the issues assigned to the meta-harness",
             )
         if why := parallel_reason(body.max_parallel):
             raise HTTPException(status_code=422, detail=why)

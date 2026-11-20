@@ -61,7 +61,7 @@ def test_the_label_is_the_deployments_or_the_usual_one_and_a_label_no_tracker_co
     assert registry.check({"default": "github", "trackers": {"github": {}}}, None) == []
     assert registry.check({"default": "github", "trackers": {"github": {}}, "label": "team-bot"}, None) == []
     [reason] = registry.check({"default": "github", "trackers": {"github": {}}, "label": "meta harness"}, None)
-    assert reason.startswith("label is the label every issue the meta-harness creates or changes carries")
+    assert reason.startswith("label is the label put on every issue the meta-harness creates or changes")
 
 
 async def test_done_closes_a_github_issue_once_and_a_status_it_has_no_state_for_changes_nothing():
