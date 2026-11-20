@@ -13,7 +13,9 @@ from meta_harness.planner import client as planner_client
 from meta_harness.run_service import activities, code_host, provenance_headers
 from meta_harness.run_service.shared import PublishRequest
 
-CONTEXT = provenance_headers.Context(run_id="task-t-1:run-1", candidate="harness:pi-lean/x:y", task_id="t-1", repo="o/r")
+CONTEXT = provenance_headers.Context(
+    run_id="task-t-1:run-1", candidate="harness:pi-lean/x:y", task_id="t-1", repo="o/r"
+)
 CONFIG = {
     "version": "test",
     "enabled": True,
