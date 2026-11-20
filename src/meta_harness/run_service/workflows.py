@@ -722,6 +722,7 @@ class RunTask:
                 title=prepared.title,
                 candidate=candidate.label,
                 summary=harness.answer,
+                summary_source=harness.answer_source,
                 spent_usd=str(spent),
                 task_id=self._task_id,
                 fix_round=fix_round,
@@ -1048,6 +1049,7 @@ class RunTask:
                     title=f"Fix {names} after #{merged_pr.rsplit('/', 1)[-1]}",
                     candidate=loop.author.label,
                     summary=harness.answer,
+                    summary_source=harness.answer_source,
                     spent_usd=str(loop.spent),
                     branch=f"mh/{ref_for(info.workflow_id)}-merge-{rounds}",
                     note=(

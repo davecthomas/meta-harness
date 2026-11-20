@@ -348,6 +348,7 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         usd=usage["usd"],
         files_changed=progress["files_changed"],
         answer=answer,
+        answer_source=source,
         spend_limit_usd=request.spend_limit_usd,
         grant_spent_usd=grant_spent,
         error=data.get("error"),
@@ -455,7 +456,7 @@ async def _written(kind: str, texts: list[str], task_id: str, **extra: Any) -> l
 
 async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summary.Section:
     """The run's summary for its pull request after the writing pass, or the fallback, which skips the pass."""
-    part = pr_summary.section(request.summary, files)
+    part = pr_summary.section(request.summary, files, request.summary_source)
     if not part.from_run:
         return part
     [text] = await _written("pull_request", [part.text], request.task_id, run_id=request.run_id)

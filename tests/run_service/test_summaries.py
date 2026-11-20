@@ -172,6 +172,35 @@ def test_a_marked_check_result_that_names_its_command_as_code_gives_way_to_the_r
     assert summary == summaries.choose(None, record, [])[0] and narration not in summary
 
 
+@pytest.mark.parametrize(
+    "narration",
+    [
+        "I ran the checks and updated the plan.",
+        "All checks passed and no files outside the task paths were changed.",
+        "I ran the acceptance checks. Only the required files were edited.",
+        "Files outside the task's paths were left untouched, and I updated my checklist.",
+    ],
+)
+def test_a_marked_account_of_the_run_s_work_gives_way_to_the_record(narration):
+    """Running the checks, keeping the plan and a passive scope claim say nothing about what the change is."""
+    summary, source = summaries.choose(None, {**RECORD, "final_text": _marked(narration)}, [])
+
+    assert source == "recorded"
+    assert summary == summaries.choose(None, RECORD, [])[0] and narration not in summary
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I ran the checks after I fixed the save path in app.py.",
+        "Updated the plan parser to keep blank steps.",
+        "No files outside the task paths were changed; the store now retries on timeout via `retry()`.",
+    ],
+)
+def test_a_marked_account_of_the_run_s_work_beside_the_change_stands(text):
+    assert summaries.choose(None, {**RECORD, "final_text": _marked(text)}, []) == (text, "run")
+
+
 def test_a_check_result_beside_code_that_names_the_change_is_usable():
     assert summaries.usable("Both checks `uv run pytest -q tests` pass after `save` takes the store's lock.")
 
@@ -249,8 +278,8 @@ def test_a_fallback_for_a_run_given_no_checks_says_so():
 
 
 def test_the_fallback_is_one_publish_keeps_under_its_own_heading():
-    summary, _ = summaries.choose(None, RECORD, [])
-    assert pr_summary.section(summary, []) == pr_summary.Section(pr_summary.FALLBACK_HEADING, summary, False)
+    summary, source = summaries.choose(None, RECORD, [])
+    assert pr_summary.section(summary, [], source) == pr_summary.Section(pr_summary.FALLBACK_HEADING, summary, False)
 
 
 @pytest.mark.parametrize("name", ["repo-task-v2", "fix-v2"])

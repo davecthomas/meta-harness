@@ -4,9 +4,10 @@ A run is told to end with a marked summary for its pull request, and the run ser
 (summaries.py, HarnessResult.answer). When it says something, it goes in the description under RUN_HEADING,
 after the writing pass. When the run left none, or one too short to say anything about the change ("Done."),
 the meta-harness writes the section itself from what Publish knows: the files the branch changes. A summary the
-run service already wrote from the harness's record of the run starts with FALLBACK_PREFIX and is kept, with the
-files the branch changes that it does not name added after it: the record lists only the files the run's write
-and edit tools changed, so a file a command changed, or an earlier run, is named only by the branch.
+run service already wrote from the harness's record of the run comes with the source `recorded`
+(PublishRequest.summary_source) and is kept, with the files the branch changes that it does not name added after it: the record lists only the files the run's write
+and edit tools changed, so a file a command changed, or an earlier run, is named only by the branch. The source,
+not the summary's words, decides: a run's marked summary that opens with FALLBACK_PREFIX is still the run's.
 
 Either fallback goes under FALLBACK_HEADING, and its first line says plainly that the run left no summary. It
 holds none of the run's own words, and it skips the writing pass: it holds only the meta-harness's own lines
@@ -45,15 +46,20 @@ def usable(text: str | None) -> bool:
     return len(re.findall(r"\w+", text or "")) >= MIN_WORDS
 
 
-def is_fallback(text: str | None) -> bool:
-    """True when the text is a summary the meta-harness wrote, not the run's own."""
-    return (text or "").lstrip().startswith((FALLBACK_PREFIX, EARLIER_PREFIX))
+def is_fallback(text: str | None, source: str = "") -> bool:
+    """True when the text is a summary the run service wrote, not the run's own. `source` is where it came from
+    (summaries.choose): only `recorded` is the run service's. A request from before the source was carried has
+    none, and then only a fallback in EARLIER_PREFIX's words, which that code wrote, counts."""
+    if source:
+        return source == "recorded" and bool((text or "").strip())
+    return (text or "").lstrip().startswith(EARLIER_PREFIX)
 
 
-def section(summary: str | None, files: list[str]) -> Section:
-    """The summary for a description: the run's own when usable, else a fallback from the branch's files."""
+def section(summary: str | None, files: list[str], source: str = "") -> Section:
+    """The summary for a description: the run service's fallback when `source` says it wrote one, the run's own
+    when usable, else a fallback from the branch's files."""
     text = (summary or "").strip()
-    if is_fallback(text):
+    if is_fallback(text, source):
         return Section(FALLBACK_HEADING, with_branch_files(text, files), from_run=False)
     if usable(text):
         return Section(RUN_HEADING, text, from_run=True)

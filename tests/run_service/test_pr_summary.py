@@ -54,7 +54,7 @@ def test_a_fallback_the_run_service_already_wrote_is_kept_with_the_branch_s_file
         "Acceptance checks, as the run last ran each one:\n- `make test`: passed"
     )
 
-    part = pr_summary.section(recorded, FILES)
+    part = pr_summary.section(recorded, FILES, "recorded")
 
     listed = "Other files the branch changes:\n- `src/app.py`\n- `tests/test_app.py`"
     assert part == pr_summary.Section(pr_summary.FALLBACK_HEADING, f"{recorded}\n\n{listed}", from_run=False)
@@ -75,19 +75,38 @@ def test_a_fallback_with_no_files_says_so():
 def test_a_recorded_fallback_gains_the_branch_files_the_record_does_not_name():
     """A mixed run: it edited src/app.py with its edit tool, and changed tests/test_app.py with a bash command,
     which the record does not see. The branch names both."""
-    recorded, _ = summaries.choose(None, {"files_changed": ["src/app.py"], "checks": []}, [])
+    recorded, source = summaries.choose(None, {"files_changed": ["src/app.py"], "checks": []}, [])
     assert recorded is not None and "tests/test_app.py" not in recorded
 
-    part = pr_summary.section(recorded, FILES)
+    part = pr_summary.section(recorded, FILES, source)
 
     assert part.heading == pr_summary.FALLBACK_HEADING and not part.from_run
     assert part.text == f"{recorded}\n\nOther files the branch changes:\n- `tests/test_app.py`"
 
 
 def test_a_recorded_fallback_that_names_every_branch_file_is_kept_as_it_is():
-    recorded, _ = summaries.choose(None, {"files_changed": FILES, "checks": []}, [])
+    recorded, source = summaries.choose(None, {"files_changed": FILES, "checks": []}, [])
 
-    assert pr_summary.section(recorded, FILES).text == recorded
+    assert pr_summary.section(recorded, FILES, source).text == recorded
+
+
+def test_a_run_s_marked_summary_in_the_fallback_s_words_is_still_the_run_s():
+    """The source, not the opening words, says who wrote a summary: a marked message that opens like the
+    fallback and names a file is the run's own, so it goes under the run's heading and through the writing pass."""
+    text = f"{pr_summary.FALLBACK_PREFIX}. It edited `src/app.py`."
+    record = {"final_text": f"{summaries.SUMMARY_OPEN}\n{text}\n{summaries.SUMMARY_CLOSE}", "files_changed": FILES}
+    summary, source = summaries.choose(None, record, [])
+    assert (summary, source) == (text, "run")
+
+    assert pr_summary.section(summary, FILES, source) == pr_summary.Section(pr_summary.RUN_HEADING, text, True)
+
+
+@pytest.mark.parametrize("source", ["", "run"])
+def test_without_the_recorded_source_the_fallback_s_words_are_not_a_fallback(source):
+    text = f"{pr_summary.FALLBACK_PREFIX}. It edited `src/app.py`."
+
+    assert pr_summary.section(text, FILES, source).from_run
+    assert not pr_summary.is_fallback(text, source)
 
 
 def test_a_fallback_written_before_the_new_prefix_is_still_kept_as_it_is():
@@ -158,14 +177,24 @@ async def test_a_pull_request_whose_run_left_no_summary_carries_the_fallback_unc
 
 
 async def test_a_pull_request_lists_the_files_a_command_changed_beside_the_recorded_ones(host):
-    recorded, _ = summaries.choose(None, {"files_changed": ["src/app.py"], "checks": []}, [])
+    recorded, source = summaries.choose(None, {"files_changed": ["src/app.py"], "checks": []}, [])
 
-    await ActivityEnvironment().run(activities.publish, _request(recorded))
+    await ActivityEnvironment().run(activities.publish, _request(recorded, summary_source=source))
 
     [body] = host["bodies"]
     assert f"## {pr_summary.FALLBACK_HEADING}\n\n{recorded}\n\nOther files the branch changes:\n" in body
     assert "- `src/app.py`" in body and "- `tests/test_app.py`" in body
     assert host["checked"] == []
+
+
+async def test_a_run_s_summary_in_the_fallback_s_words_goes_through_the_writing_pass(host):
+    text = f"{pr_summary.FALLBACK_PREFIX}. It edited `src/app.py`."
+
+    await ActivityEnvironment().run(activities.publish, _request(text, summary_source="run"))
+
+    [body] = host["bodies"]
+    assert f"## {pr_summary.RUN_HEADING}\n\n{text}\n" in body and pr_summary.FALLBACK_HEADING not in body
+    assert host["checked"] == [[text]]
 
 
 async def test_a_fix_round_with_no_usable_summary_adds_the_fallback_to_the_description(host):

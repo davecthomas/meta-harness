@@ -171,6 +171,9 @@ class PublishRequest:
     # A fix run's round: its summary is added to the open pull request's description, which is where a review
     # looks for what the change owes an explanation for, such as a file outside the task's paths.
     fix_round: int = 0
+    # Where summary came from: HarnessResult.answer_source. Only a summary marked recorded is handled as the run
+    # service's fallback, whatever its words say.
+    summary_source: str = ""
 
 
 @dataclass
@@ -203,6 +206,9 @@ class HarnessResult:
     usd: float
     files_changed: list[str]
     answer: str | None
+    # Where answer came from (summaries.choose): run (the run's marked summary), recorded (a fallback the run
+    # service wrote from its record of the run) or none. Empty in a result from before the source was carried.
+    answer_source: str = ""
     # The run grant's limit, and what the HTTP Gateway counted against it when the grant was revoked.
     spend_limit_usd: str = DEFAULT_SPEND_LIMIT_USD
     grant_spent_usd: str | None = None

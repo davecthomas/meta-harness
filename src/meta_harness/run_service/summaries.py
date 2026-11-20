@@ -73,8 +73,28 @@ _SCOPE = re.compile(
     rf"|(?:only|just)\s+{_SCOPE_VERB}\s+(?:the\s+|those\s+)?(?:{_SCOPE_QUAL}\s+)?{_SCOPE_NOUN}"
     rf"|{_SCOPE_VERB}\s+(?:the\s+|those\s+)?{_SCOPE_QUAL}\s+{_SCOPE_NOUN}"
     rf"|{_SCOPE_VERB}\s+(?:nothing|no\s+(?:other\s+)?{_SCOPE_NOUN})\s+(?:else\s+)?(?:outside|beyond)\b[^,;]*"
-    rf"|{_SCOPE_VERB}\s+(?:the\s+)?(?:changes?|changeset|edits?|work)\s+(?:within|inside|to)\b[^,;]*)"
+    rf"|{_SCOPE_VERB}\s+(?:the\s+)?(?:changes?|changeset|edits?|work)\s+(?:within|inside|to)\b[^,;]*"
+    # The same claims in the passive: "no files outside the task paths were changed", "only the required files
+    # were edited", "files outside the paths were left untouched".
+    rf"|(?:no|nothing|none)\s+(?:other\s+)?(?:{_SCOPE_NOUN}\s+)?(?:else\s+)?(?:outside|beyond)\b[^,;.]*?"
+    rf"\b(?:was|were|got|has\s+been|have\s+been)\s+{_SCOPE_VERB}"
+    rf"|(?:only|just)\s+(?:the\s+|those\s+)?(?:{_SCOPE_QUAL}\s+)?{_SCOPE_NOUN}\s+"
+    rf"(?:were|was|got|have\s+been|has\s+been)\s+{_SCOPE_VERB}"
+    rf"|{_SCOPE_NOUN}\s+(?:outside|beyond)\b[^,;.]*?\b(?:was|were|have\s+been|has\s+been|stayed|remained|are|is)\s+"
+    rf"(?:not\s+|left\s+)?(?:{_SCOPE_VERB}|untouched|unchanged))"
     rf"{_SCOPE_TAIL}",
+    re.IGNORECASE,
+)
+# What the run did on its way, not what the change is: running its checks, keeping its plan ("I ran the checks
+# and updated the plan."). It holds a change verb ("updated") but says nothing about the change, so it is taken
+# out before _CHANGE is looked for, and a sentence that holds it is narration unless something else is left.
+_WORK = re.compile(
+    r"\b(?:ran|run|reran|re-ran|executed|repeated)\s+(?:all\s+|both\s+|each\s+of\s+)?(?:the\s+|my\s+|its\s+)?"
+    r"(?:acceptance\s+|required\s+|listed\s+|given\s+)?"
+    r"(?:checks?|tests?|test\s+suite|suite|linters?|lint|typechecks?|type\s+checks?)\b"
+    r"|\b(?:updated|marked|followed|completed|finished|kept|ticked\s+off|checked\s+off)\s+"
+    r"(?:the\s+|my\s+|its\s+)?(?:plan|checklist|todo\s+list|todos?|steps|plan\s+steps)\b"
+    r"(?!\s+(?:module|parser|function|class|file|code|model|table|schema|type|format|view|page)\b)",
     re.IGNORECASE,
 )
 # What marks a sentence as saying what the change is: a change verb, code, or a file path. "Change" is left out,
@@ -125,12 +145,12 @@ def usable(text: str | None, checks: list[str] | None = None) -> bool:
 
 def narration(sentence: str, checks: list[str] | None = None) -> bool:
     """True when the sentence narrates the run (what it does next, that its checks pass, that it kept to its
-    paths) and says nothing about what the change is. A generic scope claim ("I changed only the required
-    files") does not count as saying what the change is, though it holds a change verb, and neither does a check
+    paths, that it ran its checks or kept its plan) and says nothing about what the change is. A generic scope
+    claim ("I changed only the required files", "no files outside the paths were changed") does not count as saying what the change is, though it holds a change verb, and neither does a check
     command: one of `checks`, or code that starts with a command runner."""
     if _PROCESS.search(sentence):
         return True
-    claims = bool(_STATUS.search(sentence)) or bool(_SCOPE.search(sentence))
+    claims = any(pattern.search(sentence) for pattern in (_STATUS, _SCOPE, _WORK))
     if not claims:
         return False
     named = sorted({c.strip() for c in checks or [] if c.strip()}, key=len, reverse=True)
@@ -138,7 +158,7 @@ def narration(sentence: str, checks: list[str] | None = None) -> bool:
     rest = re.sub(r"`[^`]*`", lambda span: " " if span.group(0).strip("` ") in named else span.group(0), rest)
     for check in named:
         rest = rest.replace(check, " ")
-    return not _CHANGE.search(_SCOPE.sub(" ", rest))
+    return not _CHANGE.search(_SCOPE.sub(" ", _WORK.sub(" ", rest)))
 
 
 def marked(text: str | None) -> str | None:
