@@ -163,6 +163,7 @@ export function reasonTarget(kind: ConfigKind, document: Record<string, any>, re
   if (reason.startsWith("review.hold_minutes")) return "hold_minutes";
   if (reason.startsWith("remedies.retry_stronger")) return "retry_stronger";
   if (reason.startsWith("remedies.fix_again")) return "fix_again";
+  if (reason.startsWith("remedies.raise_limit")) return "raise_limit";
   return null;
 }
 

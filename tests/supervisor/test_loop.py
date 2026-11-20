@@ -70,6 +70,11 @@ class Tasks:
             task["complexity"] = complexity
         return task
 
+    def budget(self, task_id, action, max_usd=None, actor=None):
+        self.budgeted = [*getattr(self, "budgeted", []), (task_id, action, max_usd)]
+        self.tasks[task_id].update(waiting_on=None, max_usd=max_usd)
+        return self.tasks[task_id]
+
     def cancel(self, task_id, reason="", actor=None):
         self.canceled.append((task_id, reason))
         self.tasks[task_id]["status"] = "canceled"

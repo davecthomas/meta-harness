@@ -43,6 +43,7 @@ ACTIONS = (
     "wait",
     "retry_stronger",
     "fix_again",
+    "raise_limit",
 )
 # Where the issues a blocked task waits on stand. open: each is being worked, or will be. stuck: one's task
 # failed, was canceled or ended unresolved, and waits on an operator. unheld: one is in no goal, so nothing
@@ -90,6 +91,9 @@ class Facts:
     # review the fixes did not settle.
     stronger_left: bool = False
     fix_again_left: bool = False
+    # For a task held at its own spend limit: whether the supervisor may raise it once, within twice the limit
+    # and what its goal's budget has left.
+    raise_left: bool = False
 
 
 @dataclass(frozen=True)
@@ -188,6 +192,13 @@ def _running(facts: Facts) -> Decision:
         return Decision("workflow", "workflow_unknown", "Temporal could not be asked whether its workflow is running")
     if facts.cancel_requested:
         return Decision("workflow", "stopping", "it was asked to cancel, and its workflow is stopping its run")
+    if facts.waiting_on == "budget" and facts.raise_left:
+        return Decision(
+            "supervisor",
+            "budget_hold_raise",
+            "the task reached its own spend limit, and a raise within twice that limit and its goal's budget covers its next run",
+            action="raise_limit",
+        )
     if facts.waiting_on == "budget":
         return Decision(
             "operator",

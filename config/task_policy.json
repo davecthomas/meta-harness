@@ -16,6 +16,7 @@
   },
   "remedies": {
     "retry_stronger": 1,
-    "fix_again": 1
+    "fix_again": 1,
+    "raise_limit": 1
   }
 }

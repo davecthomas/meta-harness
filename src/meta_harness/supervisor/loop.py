@@ -39,6 +39,7 @@ from meta_harness.run_service import code_host
 from meta_harness.run_service.code_host import CodeHostError
 from meta_harness.supervisor import failures, ledger, pulls, remedies, standing
 from meta_harness.supervisor.remedies import registry
+from meta_harness.supervisor.remedies.raise_limit import raise_to
 from meta_harness.config.kinds import remedy_tries
 from meta_harness.run_service import routing
 from meta_harness.supervisor.rules import OPEN_STATUSES, SWEPT, Decision, Facts, decide
@@ -223,8 +224,15 @@ class Supervisor:
                     if status in ("failed", "review_unresolved")
                     else {}
                 ),
+                raise_left=task.get("waiting_on") == "budget" and await asyncio.to_thread(self._may_raise, task, goal),
             ),
             pull,
+        )
+
+    def _may_raise(self, task: dict, goal: dict | None) -> bool:
+        """Whether a task held for budget may have its spend limit raised by the supervisor (raise_limit)."""
+        return raise_to(task, goal) is not None and ledger.tries(task["id"], "raise_limit") < remedy_tries(
+            routing.task_policy(), "raise_limit"
         )
 
     def _remedies_left(self, task: dict) -> dict[str, bool]:
