@@ -201,6 +201,36 @@ def test_a_marked_account_of_the_run_s_work_beside_the_change_stands(text):
     assert summaries.choose(None, {**RECORD, "final_text": _marked(text)}, []) == (text, "run")
 
 
+@pytest.mark.parametrize(
+    "narration",
+    [
+        "The checks pass and all changes stay inside `src/meta_harness/run_service`.",
+        "Both checks pass; the changes stay within src/meta_harness/run_service and tests/run_service.",
+        "All changes stay inside `src/app` and `tests/`.",
+        "All tests passed and no files outside `src/app.py` were changed.",
+        "I changed only files under `src/app`, and the lint is clean.",
+    ],
+)
+def test_a_marked_scope_claim_that_names_its_paths_gives_way_to_the_record(narration):
+    """A path a scope claim names says where the change stays, not what it is."""
+    summary, source = summaries.choose(None, {**RECORD, "final_text": _marked(narration)}, [])
+
+    assert source == "recorded"
+    assert summary == summaries.choose(None, RECORD, [])[0] and narration not in summary
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The parser lives under `src/parser` and keeps blank steps.",
+        "All changes stay inside `src/app`. Added a lock around `save()` in `src/app/store.py`.",
+        "Checks pass; `src/app/store.py` now retries on timeout.",
+    ],
+)
+def test_a_path_beside_what_the_change_is_stands(text):
+    assert summaries.choose(None, {**RECORD, "final_text": _marked(text)}, []) == (text, "run")
+
+
 def test_a_check_result_beside_code_that_names_the_change_is_usable():
     assert summaries.usable("Both checks `uv run pytest -q tests` pass after `save` takes the store's lock.")
 

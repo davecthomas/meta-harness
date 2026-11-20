@@ -412,6 +412,40 @@ def test_a_posted_summary_is_read_back_from_the_description_up_to_its_run_sectio
     assert pr_summary.posted("Closes o/r#9", activities._summary_end(request.run_id)) is None
 
 
+@pytest.mark.parametrize(
+    ("heading", "text", "source"),
+    [
+        (pr_summary.EARLIER_RUN_HEADING, OWN, "run"),
+        (pr_summary.EARLIER_FALLBACK_HEADING, f"{pr_summary.EARLIER_LEAD}\n\n- `src/app.py`", "files"),
+        (pr_summary.EARLIER_FALLBACK_HEADING, f"{pr_summary.EARLIER_PREFIX} from the record.", "recorded"),
+    ],
+)
+def test_a_summary_under_an_earlier_heading_is_read_back(heading, text, source):
+    """A pull request opened before the headings changed: a retry still finds its summary."""
+    request = _request(OWN)
+    body = activities._pr_body(request, pr_summary.Section(heading, text, from_run=source == "run"))
+
+    read = pr_summary.posted(body, activities._summary_end(request.run_id))
+
+    assert read is not None and (read.heading, read.text, read.source) == (heading, text, source)
+
+
+async def test_a_retry_records_the_summary_of_a_pull_request_opened_under_the_earlier_heading(host):
+    host["created"] = False
+    part = pr_summary.Section(pr_summary.EARLIER_RUN_HEADING, OWN, from_run=True)
+    host["description"] = activities._pr_body(_request(OWN), part)
+
+    await ActivityEnvironment().run(activities.publish, _request(OWN))
+
+    [summary] = _summaries(host)
+    assert (summary["source"], summary["heading"], summary["text"]) == ("run", pr_summary.EARLIER_RUN_HEADING, OWN)
+
+
+def test_a_new_description_uses_the_new_headings():
+    assert pr_summary.section(OWN, FILES).heading == pr_summary.RUN_HEADING
+    assert pr_summary.section("Done.", FILES).heading == pr_summary.FALLBACK_HEADING
+
+
 def test_a_fix_round_s_summary_is_read_back_up_to_its_provenance_line():
     signed = provenance.Provenance(provenance.PULL_REQUEST, task="t-1", run="run-task-t-1:run-3", round=1)
     own = "Moved the check.\n\n## Notes\n\nuv run pytest -q passes."

@@ -85,6 +85,16 @@ _SCOPE = re.compile(
     rf"{_SCOPE_TAIL}",
     re.IGNORECASE,
 )
+# A path a scope claim names ("all changes stay inside `src/app`", "nothing outside src/app and tests was
+# touched"): where the change stays, not what it is. It becomes "the paths" before _SCOPE and _CHANGE are looked
+# for, so a scope claim that names its paths is narration like one that names none.
+_PATH = r"(?:`[^`\n]*`|[\w.-]*[\w-]/[\w./-]*|[\w-]+\.(?:py|ts|js|tsx|json|md|txt|toml|yaml|yml|sql|sh)\b)"
+_SCOPE_PATH = re.compile(
+    rf"\b(within|inside|outside|beyond|under|(?:stays?|stayed|remains?|remained|kept|limited|confined|restricted)"
+    rf"\s+(?:in|to))\s+(?:the\s+)?(?:(?:task|issue|ticket)'?s?\s+)?(?:paths?\s+|directory\s+|folders?\s+)?"
+    rf"{_PATH}(?:\s*(?:,\s*(?:and\s+|or\s+)?|\s+and\s+|\s+or\s+){_PATH})*",
+    re.IGNORECASE,
+)
 # What the run did on its way, not what the change is: running its checks, keeping its plan ("I ran the checks
 # and updated the plan."). It holds a change verb ("updated") but says nothing about the change, so it is taken
 # out before _CHANGE is looked for, and a sentence that holds it is narration unless something else is left.
@@ -146,11 +156,16 @@ def usable(text: str | None, checks: list[str] | None = None) -> bool:
 def narration(sentence: str, checks: list[str] | None = None) -> bool:
     """True when the sentence narrates the run (what it does next, that its checks pass, that it kept to its
     paths, that it ran its checks or kept its plan) and says nothing about what the change is. A generic scope
-    claim ("I changed only the required files", "no files outside the paths were changed") does not count as saying what the change is, though it holds a change verb, and neither does a check
-    command: one of `checks`, or code that starts with a command runner."""
+    claim ("I changed only the required files", "no files outside the paths were changed") does not count as
+    saying what the change is, though it holds a change verb, and neither do the paths a scope claim names ("all
+    changes stay inside `src/app`") or a check command: one of `checks`, or code that starts with a command
+    runner."""
     if _PROCESS.search(sentence):
         return True
-    claims = any(pattern.search(sentence) for pattern in (_STATUS, _SCOPE, _WORK))
+    # A path a scope claim names reads as "the paths", so the claim is found and taken out whether it names its
+    # paths or not. A sentence that only says where code lives ("The parser lives under `src/parser`") makes no claim.
+    scoped = _SCOPE_PATH.sub(r"\1 the paths", sentence)
+    claims = any(pattern.search(scoped) for pattern in (_STATUS, _SCOPE, _WORK))
     if not claims:
         return False
     named = sorted({c.strip() for c in checks or [] if c.strip()}, key=len, reverse=True)
@@ -158,7 +173,7 @@ def narration(sentence: str, checks: list[str] | None = None) -> bool:
     rest = re.sub(r"`[^`]*`", lambda span: " " if span.group(0).strip("` ") in named else span.group(0), rest)
     for check in named:
         rest = rest.replace(check, " ")
-    return not _CHANGE.search(_SCOPE.sub(" ", _WORK.sub(" ", rest)))
+    return not _CHANGE.search(_SCOPE.sub(" ", _WORK.sub(" ", _SCOPE_PATH.sub(r"\1 the paths", rest))))
 
 
 def marked(text: str | None) -> str | None:

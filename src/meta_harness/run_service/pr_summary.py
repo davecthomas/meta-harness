@@ -30,6 +30,17 @@ MAX_FILES = 30
 # The headings say what a reviewer finds under them: what the change does, or, with no summary, what it touches.
 RUN_HEADING = "What this change does"
 FALLBACK_HEADING = "What this change touches"
+# The headings a description posted before RUN_HEADING and FALLBACK_HEADING holds. Publish reads them back when
+# a retry finds a pull request an earlier attempt opened, and never writes them.
+EARLIER_RUN_HEADING = "Summary from the run"
+EARLIER_FALLBACK_HEADING = "Summary written by the meta-harness"
+# Each heading posted() reads, and whether the summary under it is the run's own.
+_READ_HEADINGS = {
+    RUN_HEADING: True,
+    FALLBACK_HEADING: False,
+    EARLIER_RUN_HEADING: True,
+    EARLIER_FALLBACK_HEADING: False,
+}
 # The first words of every fallback, this module's and one the run service wrote from the harness's record.
 FALLBACK_PREFIX = "The run left no summary of its change"
 # The first words of a fallback written before FALLBACK_PREFIX, which a task under way may still carry.
@@ -60,22 +71,21 @@ class Section:
 
 
 def posted(description: str, end: str) -> Section | None:
-    """The summary section a description holds, read back from it: under RUN_HEADING or FALLBACK_HEADING, up to
-    end, the line that follows the summary. None when the description holds no such section before end."""
+    """The summary section a description holds, read back from it: under RUN_HEADING or FALLBACK_HEADING, or a
+    heading an earlier description used, up to end, the line that follows the summary. None when the description
+    holds no such section before end. The section keeps the heading the description holds."""
     description = description.replace("\r\n", "\n")
     stop = description.find(end)
     if stop < 0:
         return None
     starts = [
-        (at, heading)
-        for heading in (RUN_HEADING, FALLBACK_HEADING)
-        if (at := _line_at(description[:stop], f"## {heading}\n")) >= 0
+        (at, heading) for heading in _READ_HEADINGS if (at := _line_at(description[:stop], f"## {heading}\n")) >= 0
     ]
     if not starts:
         return None
     at, heading = min(starts)
     text = description[at + len(f"## {heading}\n") : stop].strip()
-    return Section(heading, text, from_run=heading == RUN_HEADING)
+    return Section(heading, text, from_run=_READ_HEADINGS[heading])
 
 
 def posted_round(description: str, heading: str, known: Section) -> Section | None:
