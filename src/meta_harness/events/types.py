@@ -105,7 +105,7 @@ REGISTRY: list[EventType] = [
             ["run_id", "kind", "template", "prompt"],
         ),
     ),
-    # Where a run came from, as the control plane knows it (run_service/provenance.py), before the run starts.
+    # Where a run came from, as the control plane knows it (run_service/run_provenance.py), before the run starts.
     EventType(
         "run_provenance",
         1,

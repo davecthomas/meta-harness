@@ -100,7 +100,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from meta_harness.run_service.budget_activities import BudgetHold, budget_hold, goal_budget
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
-    from meta_harness.run_service import provenance
+    from meta_harness.run_service import run_provenance
     from meta_harness.run_service.resume_activities import resume_state
     from meta_harness.money import usd
     from meta_harness import budget_request
@@ -215,7 +215,7 @@ class RunTask:
         self._review_claim = ""
         self._operator_verdict: str | None = None
         # What the Task API task came from, and each of its runs' provenance by run id, built as the run starts.
-        self._origin: provenance.TaskOrigin | None = None
+        self._origin: run_provenance.TaskOrigin | None = None
         self._provenance: dict[str, dict] = {}
 
     @workflow.signal
@@ -300,7 +300,7 @@ class RunTask:
             task_type=spec.task_type,
         )
         self._task_type = spec.task_type
-        self._origin = provenance.TaskOrigin(
+        self._origin = run_provenance.TaskOrigin(
             task_id=spec.task_id,
             goal_id=spec.goal_id,
             issue=spec.external_ref,
@@ -1485,7 +1485,7 @@ class RunTask:
         """
         made = None
         if self._origin is not None:
-            made = provenance.build(self._origin, run_id, kind, candidate.label, template, tier, follows)
+            made = run_provenance.build(self._origin, run_id, kind, candidate.label, template, tier, follows)
             self._provenance[run_id] = made
         # Behind a patch: workflows started before it record no prompt, and replay as they ran.
         if self._task_id and workflow.patched("run-prompt"):

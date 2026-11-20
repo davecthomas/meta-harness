@@ -789,7 +789,7 @@ task's remaining spend, its attempts so far and the task policy's limits.
 | Grant | Asks the HTTP Gateway for an HTTP Gateway run grant, which the HTTP Gateway issues and stores. The run grant holds the run id, tags, the tier candidate's inner model as a pin, the spend limit, and an expiry at `max_minutes` plus grace. Only the run grant key goes to the per-run sandbox. A retried run activity asks again with the same terms and gets a new run grant key for the live run grant. |
 | Start | When `session_state` is `new`, `POST /run` on the per-run sandbox's harness server Run API with the prompt, acceptance checks, harness profile, limits, bash allowlist, the tier's thinking level and run grant key. The pi model client extension sends that thinking level on every turn; a pinned run sends none, so the HTTP Gateway's default applies. When it is `kept` or `restored`, `POST /followup` with the new input and its own run grant key. |
 | Wait | Follows the harness server's event stream until `run_finished`, heartbeating the last harness server event id on every event. The run activity's heartbeat timeout catches a dead Temporal worker, and its start-to-close timeout, the harness profile's `max_minutes` plus 10 minutes, is the hard upper bound. A RunTask workflow cancel reaches the run activity through its heartbeat, and the run activity sends `POST /cancel` to the harness server. |
-| Collect | Reads the harness server's `/usage`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
+| Collect | Reads the harness server's `/usage` and `/record`, and a finished run's changes from `GET /bundle`. Then revokes the HTTP Gateway run grant and releases the pool manager lease. Returns the terminal state: status, end reason, turns, the files changed, the run's final summary, elapsed time and model token totals. A final summary that is missing, or under three words, gives way to one the run service writes from `/record` (`run_service/summaries.py`): the files, how each acceptance check ended, the last plan and the command counts, under a line that says where it came from. A harness image without `/record` falls back to the files its events named. The terminal state also holds the dollars the HTTP Gateway counted against the run grant. The RunTask workflow records one cost line per run from that figure. |
 | Decide | In the RunTask workflow. A run that ended `FINISHED` ends the candidate loop. A run that ended `ERROR` for an infrastructure reason (no per-run sandbox, a lost harness server, `model_error` from a provider outage) tries the next tier candidate. A run whose activity ended because the worker under it shut down (`WorkerShutdown`, which every deploy's restart causes) is neither: the workflow waits 20 seconds for the worker to be back and takes the same run up again, up to five times, and the activity re-attaches to it by its run id, so the restart costs the task no attempt and no candidate. A run that ended on a limit (`max_turns`, `max_minutes`, `spend_limit`) is final. Another candidate would spend the budget again, so only the task policy's retry-up rule or an operator repeats a run that ended on a limit. When every candidate of every tier it may reach fails on infrastructure, as in an HTTP Gateway outage, the task fails with every run listed. Pausing such a task to resume later is not built. |
 | Publish | A meta-harness run service activity, after Decide ends the loop on a finished run. Commits the run's changes to the branch `mh/<task>` and pushes it with the meta-harness run service's code-host app token. Opens the pull request, labeled `ai:meta-harness`, with `Closes <issue>` and the run's final summary, which goes through the writing pass first (What the meta-harness writes). A summary that is missing, or under three words, gives way to one the meta-harness writes under its own heading, `Summary written by the meta-harness`, from the files the branch changes, with the run's few words quoted; a summary the run service already wrote from the harness's record is kept as it is. Neither goes through the writing pass (`run_service/pr_summary.py`). The description is written when the pull request is opened, and no later push changes it. A retried Publish finds the branch and the pull request it made. A finished run that changed nothing fails the task. A fix run pushes to its pull request's branch. With the Docker executor backend, Publish commits and pushes from the workspace the host mounts. |
 
@@ -1108,8 +1108,9 @@ through. Merges are one at a time per repo:
 the run service's merge activity holds the repo's merge lock, a Postgres
 advisory lock, from checking the branch to merging it. A branch that lacks the
 base's newest commits, because another task's pull request merged while it
-was reviewed, is not merged: GitHub merges the base into it (`update-branch`),
-and the new head goes back to the checks. So no pull request merges against a
+was reviewed, is not merged: the base is merged into it through GitHub's
+merges endpoint, not `update-branch`, so the merge commit carries provenance
+trailers, and the new head goes back to the checks. So no pull request merges against a
 base it was not checked on. Whether it is also reviewed again depends on the
 pull request's own diff against the base, which the merge activity compares
 at the reviewed head and the new one (`same_diff` in its result). When the
@@ -1323,11 +1324,43 @@ Not built: the pass on merge-check notes, which are a task's status reason
 and are not posted, and a pull request description updated after a fix run,
 since no description is updated today.
 
+#### Provenance
+
+Each thing the meta-harness writes on a code host or a tracker says where it
+came from (`src/meta_harness/run_service/provenance.py`). Text for people to
+read ends with one line, added after the writing pass so the pass never
+rewrites it:
+
+    Provenance: meta-harness 0.49.0; kind review; task t-12; model harness:pi-review/x:y; round 2
+
+The line names the meta-harness version and the kind of post (`pull_request`,
+`review`, `comment`, `issue`), then whichever of goal, task, run, model,
+round and operator (`by`) are known where the post is written:
+
+| Post | What its line names |
+|---|---|
+| A pull request's description, and a fix round's section in it | Task, run, model; the fix round |
+| A review, and each of its inline comments | Task, the reviewer's model, the round |
+| A comment on a pull request | Task; for a line comment from the console, the operator |
+| An issue a plan or a split creates | Goal; the planning task; the operator who approved or split |
+| A comment on a tracker issue: progress, a reply, a split | Goal; the task, for progress |
+
+A commit the meta-harness makes ends with git trailers instead:
+`Meta-Harness-Version`, `-Goal`, `-Task`, `-Run`, `-Model`, `-Round` and
+`-By`. That covers a run's commit, a conflict fix's clean merge of its base,
+the merge that brings a stale branch's base in before it merges, and the
+squash merge, where they follow the `Version:` line. The
+`pull_request_opened`, `pull_request_reviewed`, `pull_request_merged` and
+`pull_request_commented` events carry the same fields as `provenance`. The
+task page's details show the newest of each as a Provenance row. Nothing
+already posted is changed. A local repo's merge only moves its base, so it
+makes no commit and carries no trailers.
+
 ### Run provenance
 
 Each run of a Task API task carries a record of where it came from, built
 by the RunTask workflow from what the control plane holds and never from the
-run's output (`src/meta_harness/run_service/provenance.py`): the task, its
+run's output (`src/meta_harness/run_service/run_provenance.py`): the task, its
 goal, its issue (`external_ref`), its parent task and type, the run's number,
 kind (`task`, `review`, `fix`), pair, template and route tier, the run it
 follows (the task's run before it, earlier workflows' runs included when the
@@ -1343,9 +1376,10 @@ more for each time it was sent back.
   run still starts.
 - The Publish activity writes it under the pull request description's Run
   heading (task, goal, issue, parent task, the run it follows, and the
-  workflow when it is not the first) and as git trailers at the end of the
-  commit message: `Meta-Harness-Task`, `Meta-Harness-Run`, `Meta-Harness-Goal`
-  and `Meta-Harness-Issue`. A fix run that pushes to the open pull request
+  workflow when it is not the first). The commit message's trailers add
+  `Meta-Harness-Issue` before the commit's own provenance trailers (see
+  Provenance above), and the record's goal fills their `Meta-Harness-Goal`
+  and the description's provenance line. A fix run that pushes to the open pull request
   adds its own run lines and provenance to the description under
   `Run for fix round <n> (<run id>)`, once however often Publish is retried.
 - A task sent back may run its next workflow under its other id (`run-task-<id>`
@@ -1726,6 +1760,7 @@ in-process through pi's SDK, using `AgentSessionRuntime` for `newSession()`,
 | `POST /stop` | End the run after the turn in progress, `FINISHED` with end reason `stopped_by_operator`, so its work publishes | `abort()` at the turn's end |
 | `POST /cancel` | Stop pi. The pi session file keeps every pi session entry written before the cancel, so a later follow-up run can continue the pi session. | `abort()`, which waits until the pi session is idle |
 | `GET /usage` | Model token totals (input, output, `cached_input_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens`), model call counts, and the HTTP Gateway's running total, as the pi model client extension recorded them. These totals serve reconciliation against the run's `model_call` meta-harness domain events | pi model client extension counters |
+| `GET /record` | What the run did, for a summary when its own is missing or unusable: the full text of its last turn when that turn called no tool, update_plan's last checklist, the files it wrote or edited, each acceptance check with whether a bash command containing it ran and passed the last time, and how many commands ran and failed | `session.subscribe()`: `turn_end`, `tool_execution_end` |
 | `GET /metrics` | Harness server OpenTelemetry metrics: pi turns, pi tool calls, files changed, test runs, elapsed time | harness server counters |
 | `GET /bundle` | The run's changes against the commit it cloned, as a git bundle, for the meta-harness run service's Publish step. The Docker executor backend reads the mounted workspace instead | none: git in the workspace |
 

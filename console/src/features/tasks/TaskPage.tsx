@@ -22,8 +22,9 @@ import { Plan } from "./Plan";
 import { SteerBox } from "./SteerBox";
 import { CompareAttempts, RunAttempts } from "./Attempts";
 import { Changes } from "./Changes";
+import { provenanceFacts } from "./Provenance";
 import { SpendLine, spendOf } from "./Spend";
-import { PROVENANCE_EVENT, RunProvenance } from "./Provenance";
+import { PROVENANCE_EVENT, RunProvenance } from "./RunProvenance";
 import { useEventStream } from "../../hooks";
 import { describe, fold, type Line, type TileFacts } from "../../terminal";
 import { Terminal } from "../../components/Terminal";
@@ -344,6 +345,7 @@ export function TaskPage() {
             ["Issue", <IssueLink issueRef={task.external_ref} />],
             ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),
             ["Pull request", task.pr_url ? <Group gap="xs"><PrLink url={task.pr_url} /><Text size="xs" c="dimmed">{task.pr_url}</Text></Group> : <Text size="sm" c="dimmed">None yet</Text>],
+            ...provenanceFacts(events),
             ["Acceptance checks", <Stack gap={2}>{task.acceptance_checks.map((c) => <Code key={c}>{c}</Code>)}</Stack>],
             ["Run provenance", <RunProvenance events={events} />],
             ["Turn and spend", <Stack gap={4}><SpendLine spend={spendOf(events)} turn={facts.turn} total={spent} running={status === "running"} model={facts.model} /></Stack>],

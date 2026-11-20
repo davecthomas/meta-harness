@@ -1,79 +1,69 @@
-import { Anchor, Group, Stack, Text } from "@mantine/core";
-import { Link } from "react-router-dom";
+import type { ReactNode } from "react";
+import { Code, Stack, Text } from "@mantine/core";
 import type { MhEvent } from "../../api";
-import { CandidateName } from "./words";
 
-// Where each of a task's runs came from, as the run service recorded it before the run started (the
-// run_provenance event): its kind, the pair that ran it, the run it followed on from, and which of the task's
-// workflows it ran in. The control plane writes it, never the run, so it is the record to trust over a run's
-// own words.
-
-export interface RunOrigin {
-  position: number;
-  runId: string;
-  attempt: number;
+// What a post the meta-harness wrote says it came from: the provenance line at the end of a pull request's
+// description, a review or a comment, or the trailers of a merge commit (run_service/provenance.py). The
+// events that record each post carry the same fields, so the task's page shows them without reading the host.
+export interface Provenance {
   kind: string;
-  candidate: string;
-  follows: string | null;
-  workflow: number;
-  parentTaskId: string | null;
+  version: string;
+  goal?: string;
+  task?: string;
+  run?: string;
+  model?: string;
+  round?: string;
+  by?: string;
 }
 
-export const PROVENANCE_EVENT = "run_provenance";
+// The event that records each kind of post, and how its line reads.
+const POSTS: Record<string, string> = {
+  pull_request_opened: "Pull request",
+  pull_request_reviewed: "Review",
+  pull_request_commented: "Line comment",
+  pull_request_merged: "Merge commit",
+};
 
-// The run's number within its task, from its run id (<workflow>:run-<n>); null for another id.
-export function runNumber(runId: string | null | undefined): number | null {
-  const match = /:run-(\d+)$/.exec(runId ?? "");
-  return match ? Number(match[1]) : null;
+export interface Signed {
+  what: string;
+  provenance: Provenance;
 }
 
-// Each run's provenance, oldest first, once each.
-export function provenanceOf(events: MhEvent[]): RunOrigin[] {
-  const seen = new Set<string>();
+// Each post's provenance, oldest first: the events that carry one, and nothing for a post written before
+// provenance was published.
+export function provenanceOf(events: MhEvent[]): Signed[] {
   return events
-    .filter((e) => e.event_type === PROVENANCE_EVENT)
-    .sort((a, b) => a.position - b.position)
-    .filter((e) => !seen.has(e.event_id) && !!seen.add(e.event_id))
-    .map((e) => ({
-      position: e.position,
-      runId: String(e.payload.run_id ?? e.run_id ?? ""),
-      attempt: Number(e.payload.attempt) || runNumber(e.payload.run_id) || 0,
-      kind: String(e.payload.kind ?? "task"),
-      candidate: String(e.payload.candidate ?? ""),
-      follows: e.payload.follows ?? null,
-      workflow: Number(e.payload.workflow) || 1,
-      parentTaskId: e.payload.parent_task_id ?? null,
-    }));
+    .filter((e) => e.event_type in POSTS && isProvenance(e.payload?.provenance))
+    .map((e) => ({ what: POSTS[e.event_type], provenance: e.payload.provenance as Provenance }));
 }
 
-const KINDS: Record<string, string> = { task: "the task's own run", review: "a review run", fix: "a fix run" };
-
-// One run's provenance in a sentence: "Run 3, a fix run, after run 2, in the task's second workflow".
-export function originText(origin: RunOrigin): string {
-  const parts = [`Run ${origin.attempt}`, KINDS[origin.kind] ?? `a ${origin.kind} run`];
-  const after = runNumber(origin.follows);
-  parts.push(after ? `after run ${after}` : "following no earlier run");
-  if (origin.workflow > 1) parts.push(`in workflow ${origin.workflow}, after ${origin.workflow - 1 === 1 ? "one retry" : `${origin.workflow - 1} retries`}`);
-  return parts.join(", ");
+function isProvenance(value: unknown): value is Provenance {
+  return !!value && typeof value === "object" && typeof (value as Provenance).kind === "string" && typeof (value as Provenance).version === "string";
 }
 
-export function RunProvenance({ events }: { events: MhEvent[] }) {
-  const origins = provenanceOf(events);
-  if (!origins.length) return <Text size="sm" c="dimmed">None recorded yet. A run's provenance is recorded as it starts.</Text>;
-  const parent = origins.find((o) => o.parentTaskId)?.parentTaskId;
-  return (
-    <Stack gap={4} data-testid="run-provenance">
-      {parent && (
-        <Text size="sm">
-          Made by task <Anchor component={Link} to={`/tasks/${parent}`} size="sm" ff="monospace">{parent}</Anchor>
-        </Text>
-      )}
-      {origins.map((o) => (
-        <Group key={o.position} gap="xs" wrap="nowrap" data-testid="run-origin">
-          <Text size="sm">{originText(o)}</Text>
-          <CandidateName pair={o.candidate} />
-        </Group>
+// One post's provenance as a sentence: the version that wrote it, then the model, run, round and operator it names.
+export function provenanceText({ what, provenance: p }: Signed): string {
+  const said = [
+    p.round && `round ${p.round}`,
+    `meta-harness ${p.version}`,
+    p.model && `model ${p.model}`,
+    p.run && `run ${p.run}`,
+    p.by && `for ${p.by}`,
+  ].filter(Boolean);
+  return `${what}: ${said.join(", ")}`;
+}
+
+// The Provenance row of the task's details, when a post carries one: the newest of each kind of post.
+export function provenanceFacts(events: MhEvent[]): [string, ReactNode][] {
+  const newest = new Map<string, Signed>();
+  for (const s of provenanceOf(events)) newest.set(s.what, s);
+  if (!newest.size) return [];
+  return [[
+    "Provenance",
+    <Stack gap={2} data-testid="task-provenance">
+      {[...newest.values()].map((s) => (
+        <Text key={s.what} size="sm"><Code>{provenanceText(s)}</Code></Text>
       ))}
-    </Stack>
-  );
+    </Stack>,
+  ]];
 }

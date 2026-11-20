@@ -21,6 +21,7 @@ import httpx
 
 from meta_harness import retrying
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
+from meta_harness.run_service.provenance import COMMENT, Provenance, stamp
 from meta_harness.trackers.base import DONE, Issue, Tracker, TrackerError
 
 log = logging.getLogger("meta_harness.planner")
@@ -133,11 +134,15 @@ def replaced_done(link: dict, by_ref: dict[str, dict]) -> bool:
     return is_replaced(link) and all((by_ref.get(p) or {}).get("state") == "closed" for p in link["split_into"])
 
 
-async def announce(tracker: Any, original: str, parts: list[str]) -> None:
+async def announce(tracker: Any, original: str, parts: list[str], goal_id: str = "", by: str = "") -> None:
     """Tell the original's readers where its work went. A comment that cannot be written is logged: the
-    parts carry `Split from` lines, and the goal's page shows the split."""
+    parts carry `Split from` lines, and the goal's page shows the split. The comment names the goal and the
+    operator who split it as its provenance."""
     names = ", ".join(short(p) for p in parts)
-    body = f"Split into {names}. They run in place of this issue, and it closes once they are all done."
+    body = stamp(
+        f"Split into {names}. They run in place of this issue, and it closes once they are all done.",
+        Provenance(COMMENT, goal=goal_id, by=by),
+    )
     try:
         await tracker.comment(original, body)
     # Refused, or a tracker that cannot write to that issue: the split stands either way, so it is only logged.
@@ -157,7 +162,10 @@ async def close_done(tracker: Tracker, links: list[dict]) -> list[str]:
             if not await tracker.set_status(link["ref"], DONE):
                 continue
             names = ", ".join(short(p) for p in link["split_into"])
-            await tracker.comment(link["ref"], f"Closed: the issues it was split into are all done ({names}).")
+            signed = Provenance(COMMENT, goal=str(link.get("goal_id") or ""))
+            await tracker.comment(
+                link["ref"], stamp(f"Closed: the issues it was split into are all done ({names}).", signed)
+            )
         except TrackerError as err:
             log.warning(
                 "could not close %s, whose parts are all done: %s. The next sweep tries again", link["ref"], err

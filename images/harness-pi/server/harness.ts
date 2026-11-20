@@ -47,6 +47,7 @@ import {
 	updatePlanTool,
 } from "../extension/owned-tools.ts";
 import { EventLog, type RunEventType } from "./event-log.ts";
+import { RunRecord, type RunRecordView } from "./run-record.ts";
 
 /** The Run API's status values, the contract with the harness engine. */
 export type RunStatus = "CREATING" | "RUNNING" | "FINISHED" | "ERROR" | "CANCELED" | "EXPIRED";
@@ -179,6 +180,8 @@ export class Harness {
 	private readonly modelRuntime: ModelRuntime;
 	private readonly model: Model<Api>;
 	private readonly runs = new Map<string, RunState>();
+	// What each run did, for a summary when the run's own is missing or unusable (run-record.ts).
+	private readonly records = new Map<string, RunRecord>();
 	private readonly finished = new Map<string, Promise<void>>();
 	private session?: AgentSession;
 	private sessionProfile?: Profile;
@@ -256,6 +259,12 @@ export class Harness {
 	/** The run with this id, or the latest run when no id is given. */
 	getRun(runId?: string | null): RunState | undefined {
 		return runId ? this.runs.get(runId) : this.current;
+	}
+
+	/** What the run with this id did, or the latest run's when no id is given. */
+	getRecord(runId?: string | null): RunRecordView | undefined {
+		const run = this.getRun(runId);
+		return run ? this.records.get(run.run_id)?.view() : undefined;
 	}
 
 	async health(): Promise<{ ok: boolean; checks: Record<string, boolean>; session_id: string | null }> {
@@ -379,6 +388,7 @@ export class Harness {
 			usage: emptyUsage(),
 		};
 		this.runs.set(runId, run);
+		this.records.set(runId, new RunRecord(acceptanceChecks, this.config.workspaceDir));
 		this.current = run;
 		this.config.log(`run ${runId} (${kind}) accepted, session ${sessionId}, profile ${profile.name}`);
 		return run;
@@ -548,6 +558,7 @@ export class Harness {
 	private onPlan(steps: PlanStep[]): void {
 		const run = this.current;
 		if (!run) return;
+		this.records.get(run.run_id)?.planUpdated(steps);
 		this.emit("plan_updated", run, { steps });
 	}
 
@@ -663,11 +674,13 @@ export class Harness {
 					.filter((block) => block.type === "text")
 					.map((block) => block.text)
 					.join("");
+				const toolCalls = message.content.filter((block) => block.type === "toolCall").length;
+				this.records.get(run.run_id)?.turn(text, toolCalls);
 				this.emit("turn_finished", run, {
 					turn: run.turns,
 					stop_reason: message.stopReason,
 					text: preview(text),
-					tool_calls: message.content.filter((block) => block.type === "toolCall").length,
+					tool_calls: toolCalls,
 				});
 				if (this.stopAfterThisTurn) void this.stop("operator_stop");
 				return;
@@ -679,7 +692,7 @@ export class Harness {
 			}
 			case "tool_execution_end": {
 				const pending = this.toolArgs.get(event.toolCallId) ?? [];
-				const args = pending.shift() as { path?: unknown } | undefined;
+				const args = pending.shift() as { path?: unknown; command?: unknown } | undefined;
 				if (pending.length === 0) this.toolArgs.delete(event.toolCallId);
 				const output = event.result?.content?.[0]?.text ?? event.result;
 				this.emit("tool_result", run, {
@@ -689,7 +702,10 @@ export class Harness {
 					output: preview(output),
 					duration_ms: event.durationMs ?? null,
 				});
+				const record = this.records.get(run.run_id);
+				if (event.toolName === "bash" && typeof args?.command === "string") record?.command(args.command, Boolean(event.isError));
 				if ((event.toolName === "write" || event.toolName === "edit") && !event.isError && typeof args?.path === "string") {
+					record?.fileChanged(args.path);
 					this.emit("file_changed", run, { path: args.path, tool: event.toolName });
 				}
 				return;

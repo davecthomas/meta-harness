@@ -171,7 +171,7 @@ class PublishRequest:
     # A fix run's round: its summary is added to the open pull request's description, which is where a review
     # looks for what the change owes an explanation for, such as a file outside the task's paths.
     fix_round: int = 0
-    # The run's provenance (run_service/provenance.py), written into the description and the commit message.
+    # The run's provenance (run_service/run_provenance.py), written into the description and the commit message.
     # None for a run outside the Task API.
     provenance: dict[str, Any] | None = None
 
@@ -186,6 +186,8 @@ class PublishResult:
     files: list[str]
     pr_url: str
     created: bool
+    # What the pull request's description says it came from (provenance.payload). None when there is none.
+    provenance: dict[str, Any] | None = None
 
 
 @dataclass

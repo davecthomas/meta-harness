@@ -386,6 +386,10 @@ test("the turn limit ends the run with ERROR max_turns", async () => {
 	assert.equal(finished.data.status, "ERROR");
 	assert.equal(finished.data.end_reason, "max_turns");
 	assert.equal(gateway.requests.length, 2);
+	// Every turn called a tool, so the run left no final words.
+	const record = await api(server, "GET", "/record?run_id=task-1:0");
+	assert.equal(record.status, 200);
+	assert.equal(record.json.final_text, null);
 	await server.stop();
 	await gateway.close();
 });
@@ -670,6 +674,50 @@ test("update_plan comes with write and records the plan as a plan_updated event"
 	assert.deepEqual(plans[0]!.data.steps, steps);
 	const offered = (gateway.requests[0]!.body.tools as { name: string }[]).map((t) => t.name);
 	assert.ok(offered.includes("update_plan"), `update_plan is offered: ${offered.join(", ")}`);
+	await server.stop();
+	await gateway.close();
+});
+
+test("GET /record returns the run's final words, plan, files and how each acceptance check ended", async () => {
+	const steps = [{ step: "Write the file", status: "done" }];
+	const call = (id: string, name: string, input: Record<string, unknown>) =>
+		turn({ finish_reason: "tool_use", tool_calls: [{ id: `toolu_${id}`, name, input }], token: `tok-${id}` });
+	const replies = [
+		call("plan", "update_plan", { steps }),
+		WRITE_TURN,
+		call("check1", "bash", { command: "test -f missing.txt" }),
+		call("check2", "bash", { command: "cd  WORKSPACE &&  test -f hello.txt" }),
+		call("other", "bash", { command: "false" }),
+		turn({ text: "  Wrote hello.txt, and test -f hello.txt passes.  ", finish_reason: "complete", token: "tok-done" }),
+	];
+	let workspace = "";
+	const gateway = await startGateway((n) => ({
+		body: JSON.parse(JSON.stringify(replies[n - 1] ?? DONE_TURN).replace("WORKSPACE", workspace)),
+	}));
+	const server = await startServer(gateway.url, { HARNESS_ALLOW_BASH: "1" });
+	workspace = server.workspace;
+	const profile = { name: "pi-lean", tools: ["read", "write", "bash"], max_turns: 10, max_minutes: 5 };
+	const checks = ["test -f hello.txt", "test -f missing.txt", "make lint"];
+	assert.equal((await api(server, "GET", "/record")).status, 404, "no run, no record");
+	await api(server, "POST", "/run", runBody({ profile, acceptance_checks: checks }));
+	await eventsUntilFinished(server, "task-1:0");
+
+	const record = await api(server, "GET", "/record?run_id=task-1:0");
+	assert.equal(record.status, 200);
+	assert.deepEqual(record.json, {
+		run_id: "task-1:0",
+		status: "FINISHED",
+		final_text: "Wrote hello.txt, and test -f hello.txt passes.",
+		plan: steps,
+		files_changed: ["hello.txt"],
+		checks: [
+			{ check: "test -f hello.txt", ran: true, passed: true },
+			{ check: "test -f missing.txt", ran: true, passed: false },
+			{ check: "make lint", ran: false, passed: null },
+		],
+		commands: { run: 3, failed: 2 },
+	});
+	assert.equal((await api(server, "GET", "/record?run_id=nope")).status, 404);
 	await server.stop();
 	await gateway.close();
 });

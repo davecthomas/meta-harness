@@ -9,7 +9,7 @@ before each run of a Task API task, behind the `run-prompt` patch, and it
 appends one `run_prompt` event on the task with the run's run_id, which the
 console shows at the top of that run.
 
-When the workflow gives the run's provenance (run_service/provenance.py), the
+When the workflow gives the run's provenance (run_service/run_provenance.py), the
 activity appends it too, as `run_provenance`, the same way and just before the
 prompt.
 """
@@ -21,7 +21,7 @@ import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from meta_harness.run_service import events, provenance
+from meta_harness.run_service import events, run_provenance
 
 # The template each review loop run's kind fills in, in prompts/.
 LOOP_TEMPLATES = {"review": "review-v4", "fix": "fix-v1"}
@@ -81,8 +81,8 @@ def _append(event_type: str, payload: dict[str, Any], record: RunPromptRecord, e
 
 def _append_provenance(record: RunPromptRecord, made: dict[str, Any]) -> None:
     try:
-        provenance.check(made, record.task_id)
-    except provenance.ProvenanceError as err:
+        run_provenance.check(made, record.task_id)
+    except run_provenance.ProvenanceError as err:
         activity.logger.error("task %s run %s: its provenance is not recorded: %s", record.task_id, record.run_id, err)
         return
     if made["run_id"] != record.run_id:
@@ -92,5 +92,5 @@ def _append_provenance(record: RunPromptRecord, made: dict[str, Any]) -> None:
         return
     # A task sent back with no pull request numbers its runs from 1 again, so the workflow is in the event id.
     _append(
-        provenance.EVENT_TYPE, made, record, events.stable_id(record.run_id, provenance.EVENT_TYPE, made["workflow"])
+        run_provenance.EVENT_TYPE, made, record, events.stable_id(record.run_id, run_provenance.EVENT_TYPE, made["workflow"])
     )

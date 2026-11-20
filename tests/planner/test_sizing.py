@@ -15,6 +15,7 @@ from meta_harness.planner import sizing, splits
 from meta_harness.planner.service import create_app
 from meta_harness.planner.sizing import size_issue  # as it is, before conftest.py turns it off with no gateway
 from meta_harness.planner.tracker import Issue
+from meta_harness.run_service import provenance
 
 from .test_planner import OPERATOR, Events, FakeTasks, _label, _no_title, _number, migrated, registry  # noqa: F401
 from .test_planning import WritingTracker
@@ -921,12 +922,16 @@ def test_a_split_drafts_complete_parts_links_both_ways_and_closes_the_original_o
     assert split.status_code == 201, split.text
     created = split.json()["created"]
     number = "#" + ref.rsplit("#", 1)[-1]
-    assert all(i.body.rstrip().endswith(f"Split from {number}") for i in tracker.created)
-    assert (
-        ref,
+    assert all(f"\nSplit from {number}\n" in i.body for i in tracker.created)
+    # Each part, and the comment on the original, ends with where it came from: the goal and who split it.
+    said = [provenance.parse(i.body)[-1] for i in tracker.created]
+    assert {(p["kind"], p["goal"], p["by"]) for p in said} == {("issue", goal["id"], "dave")}
+    announced = (
         f"Split into {', '.join('#' + c.rsplit('#', 1)[-1] for c in created)}. They run in place of this "
-        "issue, and it closes once they are all done.",
-    ) in tracker.comments
+        "issue, and it closes once they are all done.\n\nProvenance: meta-harness "
+    )
+    [comment] = [b for r, b in tracker.comments if r == ref and b.startswith(announced)]
+    assert provenance.parse(comment)[-1]["goal"] == goal["id"]
 
     # The parts are sized large too, but a part is not held for its size: it was cut to size already.
     for issue in tracker.created:
@@ -940,9 +945,10 @@ def test_a_split_drafts_complete_parts_links_both_ways_and_closes_the_original_o
         tracker.issues[r] = dataclasses.replace(tracker.issues[r], state="closed")
     _sweep(client, goal)
     assert statuses == [(ref, "done")]
-    assert any(
-        r == ref and b.startswith("Closed: the issues it was split into are all done") for r, b in tracker.comments
-    )
+    [closed] = [
+        b for r, b in tracker.comments if r == ref and b.startswith("Closed: the issues it was split into are all done")
+    ]
+    assert provenance.parse(closed)[-1]["kind"] == "comment"
     assert _shown(client, goal)[ref]["state"] == "closed"
 
 

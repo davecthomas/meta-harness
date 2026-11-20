@@ -8,6 +8,7 @@ import { Alert, Badge, Button, Group, Loader, Modal, Stack, Text, TextInput, Tex
 import { IconPlayerPlay, IconPlus, IconScissors, IconTrash } from "@tabler/icons-react";
 import { api, type Goal, type IssueGap, type IssueProgress, type IssueSize, type SplitDraft } from "../../api";
 import { InlineSwitch } from "./InlineEdit";
+import { SIGNED_ISSUES } from "./provenance";
 
 const GAP_WORDS: Record<IssueGap, string> = {
   acceptance_checks: "acceptance checks",
@@ -104,7 +105,7 @@ export function SplitModal(props: {
         <Text size="sm" c="dimmed">
           Each issue is created in {props.issue.repo}
           {props.label ? <> with the label <Badge variant="outline" tt="none" radius="sm">{props.label}</Badge>, so the goal takes it in</> : ", and the goal takes it in"}.
-          The issue you split runs as these parts, and closes itself once they are all done.
+          The issue you split runs as these parts, and closes itself once they are all done. {SIGNED_ISSUES}
         </Text>
         {drafting && <Group gap="xs"><Loader size="xs" /><Text size="sm">The planner is drafting each part…</Text></Group>}
         {draftError && <Alert color="orange" variant="light">The planner could not draft the parts: {draftError}. Fill each one in below.</Alert>}
