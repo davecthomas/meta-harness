@@ -41,9 +41,10 @@ export function CancelGoal({ tasks, onCancel }: { tasks: Pick<Task, "id" | "stat
       <Modal opened={asking} onClose={() => setAsking(false)} title="Cancel the goal">
         <Stack gap="md" data-testid="cancel-goal">
           <Text size="sm">
-            The goal takes in no more issues. {count(effect.canceled.length, "task that has not started is", "tasks that have not started are")} canceled
-            {effect.stopped.length > 0 && `, and ${count(effect.stopped.length, "running task is", "running tasks are")} stopped`}. Reopening the goal
-            later does not bring them back: it makes new tasks for its open issues.
+            The goal takes in no more issues.
+            {effect.canceled.length > 0 && ` ${count(effect.canceled.length, "task that has not started is", "tasks that have not started are")} canceled.`}
+            {effect.stopped.length > 0 && ` ${count(effect.stopped.length, "running task is", "running tasks are")} stopped.`}
+            {(effect.canceled.length > 0 || effect.stopped.length > 0) && " Reopening the goal later does not bring them back: it makes new tasks for its open issues."}
           </Text>
           {effect.left.length > 0 && (
             <Stack gap={4}>

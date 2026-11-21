@@ -49,7 +49,7 @@ export function TaskActions({ task, status, merged, onChanged, onError }: {
   const canMerge = MERGEABLE.includes(status) && !!task.pr_url && !merged;
   return (
     <>
-      {RETRYABLE.includes(status) && (
+      {RETRYABLE.includes(status) && !(task.task_type === "plan" && status === "canceled") && (
         <Tooltip label={describe("retry", task)} multiline w={320}>
           <Button variant="light" leftSection={<IconArrowBackUp size={16} />} onClick={() => setRetrying(true)}>Retry</Button>
         </Tooltip>

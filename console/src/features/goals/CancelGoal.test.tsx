@@ -44,11 +44,28 @@ test("Cancel goal asks first, says what happens to the tasks, and links those it
 
   const dialog = await screen.findByTestId("cancel-goal");
   expect(onCancel).not.toHaveBeenCalled();
-  expect(dialog.textContent).toContain("2 tasks that have not started are canceled, and 1 running task is stopped");
+  expect(dialog.textContent).toContain("2 tasks that have not started are canceled. 1 running task is stopped.");
   expect(dialog.textContent).toContain("2 tasks have a pull request open and are left as they are");
   expect((await screen.findByRole("link", { name: "Profile image picker" })).getAttribute("href")).toBe("/tasks/t-published");
   expect(screen.getByRole("link", { name: "Hint text contrast" }).getAttribute("href")).toBe("/tasks/t-ready");
 
   fireEvent.click(screen.getAllByRole("button", { name: "Cancel goal" }).at(-1)!);
   await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));
+});
+
+test("a goal with no tasks to cancel or stop says only that it takes in no more issues", async () => {
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <CancelGoal tasks={[]} onCancel={vi.fn(() => Promise.resolve())} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel goal" }));
+
+  const dialog = await screen.findByTestId("cancel-goal");
+  expect(dialog.textContent).toContain("The goal takes in no more issues.");
+  expect(dialog.textContent).not.toMatch(/\b0 tasks?\b/);
+  expect(dialog.textContent).not.toContain("Reopening the goal");
 });

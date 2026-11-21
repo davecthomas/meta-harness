@@ -266,7 +266,7 @@ export function GoalPage() {
             {budgetStops(goal) && ["active", "budget_exhausted"].includes(goal.status) && budgetStanding(goal, spentNow) !== "ok" && (
               <ResumeBudget goalId={goal.id} goal={goal} onResumed={() => void act(async () => undefined)} />
             )}
-            {["active", "paused", "stalled"].includes(goal.status) && (
+            {["active", "paused", "stalled"].includes(goal.status) && goal.started_at && (
               <ConfirmButton
                 label="Complete goal"
                 title="Mark this goal met?"
