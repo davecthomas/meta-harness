@@ -48,23 +48,30 @@ test("the path is drawn in rows, with the return a review's findings caused and 
   expect(screen.getByText(/10m · \$3\.50/)).toBeTruthy();
 });
 
-test("a run's step opens to its turns, and to its terminal", () => {
+test("a run's box opens its terminal at once", () => {
   const props = show();
   fireEvent.click(screen.getByTestId("step-t:run-1"));
-  expect(props.onPickRun).toHaveBeenCalledWith("t:run-1");
-  const picked = screen.getByTestId("picked");
-  expect(within(picked).getByText("I changed the file.")).toBeTruthy();
-  fireEvent.click(within(picked).getByText("Open its terminal"));
   expect(props.onOpenRun).toHaveBeenCalledWith("t:run-1");
+  expect(screen.queryByTestId("picked")).toBeNull();
 });
 
-test("a review's box opens its round in Reviews, and a pull request's step links to it", () => {
-  const props = show();
+test("a review's box opens its round, checks open the Checks tab, and a pull request opens its changes", () => {
+  const onOpenTab = vi.fn();
+  const props = show({ onOpenTab });
   fireEvent.click(screen.getByTestId("step-t:run-2"));
   expect(props.onOpenReviews).toHaveBeenCalledWith(1);
-  expect(screen.queryByTestId("picked")).toBeNull();
+  fireEvent.click(screen.getAllByText("Checks passed")[0]);
+  expect(onOpenTab).toHaveBeenLastCalledWith("checks");
   fireEvent.click(screen.getByText("Pull request #9 opened"));
-  expect((screen.getByText("Open the pull request") as HTMLAnchorElement).href).toBe("https://github.com/o/r/pull/9");
+  expect(onOpenTab).toHaveBeenLastCalledWith("changes");
+  expect(screen.queryByTestId("picked")).toBeNull();
+});
+
+test("a wait's box, which has nowhere else to go, opens below the path", () => {
+  show();
+  const wait = screen.getAllByRole("button").find((b) => b.getAttribute("data-testid")?.startsWith("step-") && /Queued|Waiting/.test(b.textContent ?? ""));
+  fireEvent.click(wait!);
+  expect(screen.getByTestId("picked")).toBeTruthy();
 });
 
 test("a link that names a run opens on that run's step, and no events is said plainly", () => {
