@@ -140,7 +140,7 @@ function AddRepo(props: { names: string[]; install: string[]; onClose: () => voi
       <Stack gap="md">
         <Select
           label="Repository"
-          description="A repository the deployment's GitHub App is installed on, that is not listed yet."
+          description="A repository not listed yet that the deployment's GitHub App is installed on."
           searchable
           data={props.names}
           value={name}

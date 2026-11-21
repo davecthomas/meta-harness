@@ -238,7 +238,7 @@ def renew(conn: psycopg.Connection, task_id: str, task: NewTask, actor: str) -> 
             f"WHERE id = %s RETURNING {COLUMNS}",
             (
                 status,
-                f"{actor} made it over from its issue as it is now",
+                f"{actor} remade it from its issue's current text",
                 "review" if row["pr_url"] else None,
                 task.title,
                 task.description,
@@ -450,15 +450,23 @@ def add_message(conn: psycopg.Connection, task_id: str, body: str, deliver: str,
 
 
 def requeue(
-    conn: psycopg.Connection, task_id: str, action: str, max_usd: Decimal | None, actor: str
+    conn: psycopg.Connection,
+    task_id: str,
+    action: str,
+    max_usd: Decimal | None,
+    actor: str,
+    complexity: str | None = None,
 ) -> tuple[dict, str]:
     """Sends a task whose workflow ended back to the queue, for a new RunTask workflow.
 
     action retry: from review_unresolved, failed or canceled. A task with a pull request resumes at its review
     loop; one without starts with a new first run. action merge: from ready or review_unresolved, with a pull
     request; the workflow merges it and waits for the merge commit's checks. max_usd, when given, is the task's
-    new spend limit; either way the new workflow's runs start from nothing spent.
+    new spend limit; either way the new workflow's runs start from nothing spent. complexity, when given, is
+    set on the task, so its next runs route to a stronger tier (high: complex).
     """
+    if complexity is not None and complexity not in COMPLEXITIES:
+        raise TaskError(f"complexity {complexity!r} is not one of {sorted(COMPLEXITIES)}")
     allowed = RETRYABLE if action == "retry" else MERGEABLE
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT status, pr_url FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
@@ -471,12 +479,14 @@ def requeue(
             raise TaskError("the task has no pull request to merge")
         resume = "merge" if action == "merge" else ("review" if row["pr_url"] else None)
         what = "asked for its pull request's merge" if action == "merge" else "retried it"
+        if complexity:
+            what += " with a stronger model"
         cur.execute(
             "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
             "cancel_requested = false, waiting_on = NULL, max_usd = coalesce(%s, max_usd), updated_at = now(), "
-            "status_changed_at = now(), spent_carried_usd = 0, drives = 0 "
+            "status_changed_at = now(), spent_carried_usd = 0, drives = 0, complexity = coalesce(%s, complexity) "
             f"WHERE id = %s RETURNING {COLUMNS}",
-            (f"{actor} {what}", resume, max_usd, task_id),
+            (f"{actor} {what}", resume, max_usd, complexity, task_id),
         )
         return _jsonable(cur.fetchone()), row["status"]
 
@@ -517,7 +527,7 @@ def drive(
         elif not row["pr_url"]:
             raise TaskError("the task has no pull request")
         if counted and row["drives"] >= MAX_DRIVES:
-            raise TaskError(f"the supervisor has already sent the task back {row['drives']} times")
+            raise TaskError(f"the Task Shepherd has already sent the task back {row['drives']} times")
         what = {
             "merge": "asked for its merge",
             "review": "sent it back through its review loop",
@@ -531,7 +541,7 @@ def drive(
             "complexity = coalesce(%s, complexity), "
             f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
             (
-                f"{why}, so the supervisor {what} "
+                f"{why}, so the Task Shepherd {what} "
                 + (f"(try {row['drives'] + 1} of {MAX_DRIVES})" if counted else "(not one of its tries)"),
                 resume,
                 1 if counted else 0,
@@ -571,7 +581,7 @@ def recover(conn: psycopg.Connection, task_id: str, why: str, spent_usd: Decimal
             )
         else:
             status, resume = "queued", ("review" if row["pr_url"] else None)
-            reason = f"{why}, so the supervisor sent it back to the queue (recovery {row['recoveries'] + 1})"
+            reason = f"{why}, so the Task Shepherd sent it back to the queue (recovery {row['recoveries'] + 1})"
         recovered = 1 if status == "queued" else 0
         cur.execute(
             "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, waiting_on = NULL, "

@@ -106,7 +106,7 @@ def test_a_locked_skill_is_always_the_shipped_files_and_every_other_skill_is_ope
 
     posing = {**held, "tidy-notes": {**_skill(), "source": {"kind": "upload", "locked": True}}}
     [reason] = skills.check_skills({"skills": posing}, {})
-    assert reason.startswith("tidy-notes: only a skill config/skills/locked.json names is locked")
+    assert reason.startswith("tidy-notes: only a skill named in config/skills/locked.json can be locked")
 
 
 def test_the_lock_list_is_checked_at_startup_and_a_bad_one_is_named(tmp_path: Path, monkeypatch):

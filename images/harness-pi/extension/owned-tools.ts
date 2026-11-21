@@ -68,6 +68,8 @@ export interface ReviewFinding {
 	path: string | null;
 	line: number | null;
 	body: string;
+	/** False for a follow-up: worth changing, in a later pull request, and no reason to hold this one. */
+	blocking: boolean;
 }
 
 export interface Review {
@@ -80,14 +82,23 @@ const FindingSchema = Type.Object({
 	path: Type.Optional(Type.String({ description: "The file the finding is about, relative to the repository root." })),
 	line: Type.Optional(Type.Integer({ minimum: 1, description: "The line in that file, when one line is at fault." })),
 	body: Type.String({ minLength: 1, description: "What is wrong and what to change." }),
+	blocking: Type.Optional(
+		Type.Boolean({
+			description:
+				"true when the pull request must not merge with this unfixed: the main branch would be worse with it " +
+				"than without it. false for a follow-up, which a later pull request makes. Left out, it is true.",
+		}),
+	),
 });
 
 const ReviewSchema = Type.Object({
 	verdict: Type.Union([Type.Literal("clean"), Type.Literal("changes")], {
-		description: "clean: the pull request may merge as it is. changes: it must change first.",
+		description: "clean: no finding blocks the merge. changes: at least one finding blocks it.",
 	}),
 	summary: Type.String({ minLength: 1, description: "The review in a few sentences." }),
-	findings: Type.Array(FindingSchema, { description: "Each change the pull request needs. Empty for clean." }),
+	findings: Type.Array(FindingSchema, {
+		description: "Each change worth making, blocking or follow-up. A clean review may list follow-ups.",
+	}),
 });
 
 /** The submit_review tool. `onReview` receives the review once, when pi calls the tool. */
@@ -98,8 +109,8 @@ export function submitReviewTool(onReview: (review: Review) => void): ToolDefini
 		label: "Submit review",
 		description:
 			"Submit your review of the pull request and end the review. Call it once, after you have read the " +
-			"change and run the checks. Use verdict clean when the pull request may merge as it is, and changes " +
-			"when it must change first, with one finding per needed change.",
+			"change and run the checks. Use verdict clean when no finding blocks the merge, and changes " +
+			"when at least one finding blocks the merge. Mark each finding blocking or not.",
 		promptSnippet: "submit_review: submit the review's verdict and findings, and end the review",
 		parameters: ReviewSchema,
 		async execute(_toolCallId, params) {
@@ -111,10 +122,20 @@ export function submitReviewTool(onReview: (review: Review) => void): ToolDefini
 					terminate: true,
 				};
 			}
-			const findings = params.findings.map((f) => ({ path: f.path ?? null, line: f.line ?? null, body: f.body }));
-			if (params.verdict === "changes" && findings.length === 0) {
+			const findings = params.findings.map((f) => ({
+				path: f.path ?? null,
+				line: f.line ?? null,
+				body: f.body,
+				blocking: f.blocking ?? true,
+			}));
+			if (params.verdict === "changes" && !findings.some((f) => f.blocking)) {
 				return {
-					content: [{ type: "text", text: "A changes verdict needs at least one finding. Call submit_review again." }],
+					content: [
+						{
+							type: "text",
+							text: "A changes verdict needs at least one blocking finding. Call submit_review again: with a finding that blocks, or with verdict clean and the follow-ups.",
+						},
+					],
 					details: undefined,
 					isError: true,
 				};

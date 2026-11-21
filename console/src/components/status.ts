@@ -25,7 +25,7 @@ export const STATUSES: Record<string, StatusWords> = {
   planning: { label: "Planning", color: "indigo", meaning: "A planning task is drafting its issues, for you to review and approve." },
   active: { label: "Active", color: "teal", meaning: "It takes in issues and runs their tasks." },
   paused: { label: "Paused", color: "yellow", meaning: "It takes in no issue and starts no task until it is resumed." },
-  not_started: { label: "Not started", color: "cyan", meaning: "It was saved and never started. Start begins it." },
+  not_started: { label: "Not started", color: "cyan", meaning: "It was saved and never started. Press Start to begin it." },
   stalled: { label: "Stalled", color: "orange", meaning: "It has work left and none of it is moving." },
   budget_exhausted: { label: "Out of budget", color: "orange", meaning: "It reached its budget, and starts no task until the budget is raised." },
   met: { label: "Met", color: "green", meaning: "Every issue it held is done." },

@@ -17,6 +17,7 @@ from temporalio.worker import Worker
 from meta_harness.run_service.shared import (
     BaseHealth,
     BaseHealthRequest,
+    BaseRequest,
     Candidate,
     ChecksRequest,
     CommentRequest,
@@ -102,6 +103,10 @@ class Script:
     # The follow-ups each review after the first is found to have, in order (finding indexes). None left: none.
     follow_ups: list[list[int]] = field(default_factory=list)
     follow_ups_asked: list[FollowUpsRequest] = field(default_factory=list)
+    # What bringing the base in before each review finds, in order: current, conflict, or (head_changed, new
+    # head), with "same" third when the pull request's own diff did not change. None left: current.
+    bases: list = field(default_factory=list)
+    bases_asked: list[BaseRequest] = field(default_factory=list)
 
     runs: list[HarnessRequest] = field(default_factory=list)
     prompts: list[LoopPromptRequest] = field(default_factory=list)
@@ -263,7 +268,15 @@ class Script:
                 same_diff=bool(same),
             )
 
+        @activity.defn(name="bring_base")
+        async def bring_base(request: BaseRequest) -> MergeResult:
+            self.bases_asked.append(request)
+            answer = self.bases.pop(0) if self.bases else "current"
+            state, head, *same = answer if isinstance(answer, tuple) else (answer, request.head_sha)
+            return MergeResult(state=state, head_sha=head, detail="x", same_diff=bool(same))
+
         return [
+            bring_base,
             goal_auto_merge,
             merge_pr,
             prepare,
@@ -655,6 +668,69 @@ async def test_a_conflict_goes_to_a_fix_run_that_resolves_the_merge_then_merges(
     assert [m.head_sha for m in script.merge_requests] == ["c0", "c1"]
 
 
+async def test_the_base_is_brought_in_before_a_review_which_reads_the_new_head(env):
+    script = Script(verdicts=[CLEAN], bases=[("head_changed", "c9")])
+
+    result = await _run(env, script)
+
+    assert result.outcome == "clean"
+    assert script.bases_asked[0].head_sha == "c0" and script.bases_asked[0].base == "main"
+    assert script.waited_on == ["c9"] and [p.head_sha for p in script.posted] == ["c9"]
+
+
+async def test_a_conflict_with_the_base_is_resolved_before_any_review_and_uses_no_fix_round(env):
+    # The task behind PR #437 passed review four times and never merged: each review read a branch that
+    # conflicted with its base, and each conflict fix was reviewed in full again.
+    script = Script(verdicts=[CHANGES, CLEAN], bases=["conflict"], fix_commits=["c1", "c2"], max_rounds=1)
+
+    result = await _run(env, script)
+
+    assert result.outcome == "clean"
+    assert _kinds(result) == ["standard", "fix", "review", "fix", "review"]
+    assert script.prompts[0].kind == "fix" and script.prompts[0].conflict
+    assert [p.head_sha for p in script.posted] == ["c1", "c2"], "no review of the head that conflicted"
+
+
+async def test_a_clean_review_a_conflict_keeps_from_merging_gets_its_conflict_fix_with_no_fix_round_left(env):
+    script = Script(
+        verdicts=[CHANGES, CLEAN, CLEAN],
+        auto_merge=True,
+        merges=["conflict", "merged"],
+        fix_commits=["c1", "c2"],
+        max_rounds=1,
+    )
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert _kinds(result) == ["standard", "review", "fix", "review", "fix", "review"]
+
+
+async def test_a_conflict_its_fix_runs_do_not_resolve_ends_the_loop_and_says_the_review_passed(env):
+    script = Script(
+        verdicts=[CLEAN],
+        auto_merge=True,
+        merges=["conflict"],
+        bases=["current", "conflict"],
+        fix_commits=["c1"],
+        max_rounds=1,
+    )
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "review_unresolved"
+    assert "came back clean" in result.outcome_reason
+    assert result.outcome_reason.endswith("conflicts with its base, and 1 conflict fix runs did not resolve it")
+
+
+async def test_the_loop_out_of_rounds_on_findings_still_says_so(env):
+    script = Script(verdicts=[CHANGES, CHANGES], fix_commits=["c1"], max_rounds=1)
+
+    result = await _run(env, script)
+
+    assert result.outcome_reason == "the review loop used its 1 fix rounds"
+
+
 async def test_a_pull_request_github_refuses_to_merge_ends_ready_with_the_reason(env):
     script = Script(verdicts=[CLEAN], auto_merge=True, merges=["blocked"])
 
@@ -726,3 +802,40 @@ async def test_the_first_round_is_never_asked_for_follow_ups(env):
     await _run(env, script, goal_id="g-1")
 
     assert len(script.follow_ups_asked) == 0, "the second round was clean, and the first has nothing before it"
+
+
+BUG = {"path": "app.py", "line": 3, "body": "Off by one.", "blocking": True}
+LATER = {"path": "app.py", "line": 9, "body": "One more case the rule misses.", "blocking": False}
+
+
+async def test_a_review_whose_findings_are_all_marked_follow_ups_merges_with_no_fix_run(env):
+    # Better beats perfect: the task behind PR #437 was held twelve rounds for one more case its rule missed.
+    only_later = {"verdict": "clean", "summary": "It does the task.", "findings": [LATER]}
+    script = Script(verdicts=[only_later], auto_merge=True)
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert _kinds(result) == ["standard", "review"], "no fix run for a follow-up"
+    assert [p.follow_ups for p in script.posted] == [[0]]
+    assert "raised only follow-ups" in result.outcome_reason
+
+
+async def test_a_fix_run_gets_the_blocking_findings_and_not_the_ones_marked_follow_ups(env):
+    mixed = {"verdict": "changes", "summary": "One bug.", "findings": [BUG, LATER]}
+    script = Script(verdicts=[mixed, CLEAN], fix_commits=["c1"])
+
+    result = await _run(env, script)
+
+    assert result.outcome == "clean"
+    fix_prompt = next(p for p in script.prompts if p.kind == "fix")
+    assert fix_prompt.findings == [BUG]
+    assert script.posted[0].follow_ups == [1]
+
+
+async def test_a_finding_with_no_mark_blocks_as_it_always_has(env):
+    script = Script(verdicts=[CHANGES, CLEAN], fix_commits=["c1"])
+
+    await _run(env, script)
+
+    assert script.posted[0].follow_ups == [] and [p.kind for p in script.prompts].count("fix") == 1

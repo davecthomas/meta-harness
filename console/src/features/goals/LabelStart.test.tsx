@@ -190,7 +190,7 @@ test("a draft from several labels reads each issue once and fills the form with 
   await screen.findByText(/bug, ux: 3 open issues for the draft/);
 
   fireEvent.click(screen.getByRole("button", { name: "Draft the goal" }));
-  expect(await screen.findByText(/A goal takes one label, so with several it holds these issues/)).toBeTruthy();
+  expect(await screen.findByText(/A goal takes one label, so with several labels it holds only these issues/)).toBeTruthy();
   expect(drafted).toEqual([{ labels: ["bug", "ux"], repos: ["o/a"], refs: ["github:o/a#1", "github:o/a#2", "github:o/a#3"] }]);
   expect((screen.getByRole("combobox", { name: /^Label/ }) as HTMLInputElement).value).toBe("");
   expect(await screen.findByText(/3 picked by hand/)).toBeTruthy();

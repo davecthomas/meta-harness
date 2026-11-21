@@ -435,11 +435,16 @@ test("submit_review records the verdict and ends the review run", async () => {
 		summary: "The greeting file is missing its trailing newline.",
 		findings: [{ path: "hello.txt", line: 1, body: "End the file with a newline." }],
 	};
-	const empty = { verdict: "changes", summary: "Needs work.", findings: [] };
+	// A finding marked as a follow-up does not block, so changes with only follow-ups is refused like changes with none.
+	const empty = {
+		verdict: "changes",
+		summary: "Needs work.",
+		findings: [{ path: "hello.txt", line: 1, body: "A comment would help.", blocking: false }],
+	};
 	const gateway = await startGateway((n) => ({
 		body: turn({
 			finish_reason: "tool_use",
-			// The first call breaks the rule that changes needs a finding, so the tool refuses it and pi tries again.
+			// The first call breaks the rule that changes needs a blocking finding, so the tool refuses it and pi tries again.
 			tool_calls: [{ id: `toolu_review_${n}`, name: "submit_review", input: n === 1 ? empty : review }],
 			token: `tok-review-${n}`,
 		}),
@@ -450,7 +455,9 @@ test("submit_review records the verdict and ends the review run", async () => {
 	const events = await eventsUntilFinished(server, "task-1:0");
 	const finished = events.at(-1)!;
 	assert.equal(finished.data.status, "FINISHED");
-	assert.deepEqual(finished.data.review, review);
+	// A finding with no mark blocks.
+	const recorded = { ...review, findings: review.findings.map((f) => ({ ...f, blocking: true })) };
+	assert.deepEqual(finished.data.review, recorded);
 	const submitted = events.filter((e) => e.type === "review_submitted");
 	assert.equal(submitted.length, 1);
 	assert.equal(submitted[0]!.data.verdict, "changes");
@@ -459,7 +466,7 @@ test("submit_review records the verdict and ends the review run", async () => {
 	// The accepted call ends the run: pi asks the gateway for no turn after it.
 	assert.equal(gateway.requests.length, 2);
 	const status = await api(server, "GET", "/status");
-	assert.deepEqual(status.json.review, review);
+	assert.deepEqual(status.json.review, recorded);
 	await server.stop();
 	await gateway.close();
 });

@@ -89,7 +89,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
             <Text size="sm" c="dimmed">
               {everyGoal
                 ? "Nothing starts until you approve the goal's plan."
-                : "A goal over existing issues runs them unplanned."}
+                : "A goal made from existing issues runs them without a plan."}
             </Text>
           </Stack>,
         ],

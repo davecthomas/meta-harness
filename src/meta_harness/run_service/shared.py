@@ -174,6 +174,9 @@ class PublishRequest:
     # Where summary came from: HarnessResult.answer_source. Only a summary marked recorded is handled as the run
     # service's fallback, whatever its words say.
     summary_source: str = ""
+    # The run's provenance (run_service/run_provenance.py), written into the description and the commit message.
+    # None for a run outside the Task API.
+    provenance: dict[str, Any] | None = None
     # The task's goal, whose provenance setting outranks the configuration's for the files the run created.
     goal_id: str = ""
 
@@ -279,6 +282,9 @@ class TaskSpec:
     # How many times the task was sent back: its workflows after the first say so in what they record.
     retries: int = 0
     task_type: str = ""
+    # Where the task came from, for each run's provenance: its tracker issue and the task that made it.
+    external_ref: str = ""
+    parent_task_id: str = ""
 
 
 @dataclass
@@ -468,6 +474,17 @@ class MergeRequest:
     # An operator asked for this merge. One the goal's auto_merge allows by itself is held when the pull request
     # changes a path only an operator merges (activities.OPERATOR_MERGE_PATHS).
     asked_for: bool = False
+
+
+@dataclass
+class BaseRequest:
+    """Bring the base's newest commits into the pull request's branch before its next review."""
+
+    task_id: str
+    repo: str
+    pr_url: str
+    base: str
+    head_sha: str
 
 
 @dataclass

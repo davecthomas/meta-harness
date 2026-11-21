@@ -237,10 +237,10 @@ export function steps(events: MhEvent[]): Step[] {
         queuedAgain(time, `p${e.position}`, `${p.action === "merge" ? "Merge asked" : "Retried"} by ${who}`, p.max_usd ? `with a spend limit of ${usd(p.max_usd)}` : "");
         break;
       case "task_driven":
-        queuedAgain(time, `p${e.position}`, `Sent back for its ${p.action} by the supervisor`, moneyText(String(p.why ?? "")));
+        queuedAgain(time, `p${e.position}`, `Sent back for its ${p.action} by the Task Shepherd`, moneyText(String(p.why ?? "")));
         break;
       case "task_recovered":
-        queuedAgain(time, `p${e.position}`, "Recovered by the supervisor", moneyText(String(p.why ?? "")));
+        queuedAgain(time, `p${e.position}`, "Recovered by the Task Shepherd", moneyText(String(p.why ?? "")));
         break;
       case "review_submitted": {
         const step = runs.get(runId);

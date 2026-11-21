@@ -611,8 +611,10 @@ def run_anyway(conn: psycopg.Connection, goal_id: str, ref: str) -> dict:
 
     Raises:
         NotFound: The goal does not hold the issue.
-        GoalError: The issue is not held, or is being split: its claim (split_into empty) is let go or recorded
-            when the split ends, and Run anyway is open to it again.
+        GoalError: The issue is not held, is being split, or was split. One being split has a claim
+            (split_into empty) that is let go when the split creates nothing, and Run anyway is open to it
+            again. One that was split is never run: its parts run in its place, and a task of its own beside
+            them does the same work twice.
     """
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
@@ -629,6 +631,12 @@ def run_anyway(conn: psycopg.Connection, goal_id: str, ref: str) -> dict:
             # claim_split holds the row's lock only while it claims, so this check is what keeps a split's
             # smaller issues and the original's task from both starting.
             raise GoalError(f"{ref} is being split: run it anyway once the split ends")
+        if row["split_into"]:
+            parts = ", ".join(row["split_into"])
+            raise GoalError(
+                f"{ref} was split into {parts}, which run in its place: running it too would do the same work "
+                "twice. It closes by itself once they are all done, so nothing is needed here"
+            )
         cur.execute("UPDATE planner.issue_link SET held_reason = NULL, run_anyway = true WHERE ref = %s", (ref,))
         return _link(row)
 

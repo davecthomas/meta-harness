@@ -105,6 +105,30 @@ REGISTRY: list[EventType] = [
             ["run_id", "kind", "template", "prompt"],
         ),
     ),
+    # Where a run came from, as the control plane knows it (run_service/run_provenance.py), before the run starts.
+    EventType(
+        "run_provenance",
+        1,
+        _object(
+            {
+                "task_id": {"type": "string"},
+                "run_id": {"type": "string"},
+                "attempt": {"type": "integer"},
+                "kind": {"type": "string", "enum": ["task", "review", "fix"]},
+                "candidate": {"type": "string"},
+                "template": {"type": "string"},
+                "tier": {"type": ["string", "null"]},
+                "follows": {"type": ["string", "null"]},
+                "workflow": {"type": "integer", "minimum": 1},
+                "goal_id": {"type": ["string", "null"]},
+                "issue": {"type": ["string", "null"]},
+                "parent_task_id": {"type": ["string", "null"]},
+                "task_type": {"type": ["string", "null"]},
+                "repo": {"type": ["string", "null"]},
+            },
+            ["task_id", "run_id", "attempt", "kind", "candidate", "template", "workflow"],
+        ),
+    ),
     EventType(
         "pull_request_opened",
         1,

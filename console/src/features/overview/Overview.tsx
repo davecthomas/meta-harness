@@ -9,6 +9,7 @@ import { ResumeBudget, budgetStops, budgetWords, spentOf } from "../goals/budget
 import { useInfinite } from "../../hooks";
 import { Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, TitleLink, when } from "../../components/ui";
 import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
+import { RetryAll, retryAllPlan } from "../tasks/Remedies";
 import { needsYouNote, useNeedsYou, type NeedsYouItem } from "./needsYou";
 import { GettingStarted } from "./GettingStarted";
 import { SupervisorHealth } from "./SupervisorHealth";
@@ -33,7 +34,7 @@ export function Overview() {
   // rest of the list follows, each item once.
   const broken = (items ?? []).filter((i) => i.task && ["failed", "review_unresolved"].includes(i.task.status) && !i.task.waiting_on);
   const failed = groupFailures(
-    broken.map(({ task }) => ({ key: task!.id, name: task!.title, taskId: task!.id, issueRef: task!.external_ref, status: task!.status, reason: task!.status_reason, max_usd: task!.max_usd })),
+    broken.map(({ task }) => ({ key: task!.id, name: task!.title, taskId: task!.id, issueRef: task!.external_ref, status: task!.status, reason: task!.status_reason, max_usd: task!.max_usd, complexity: task!.complexity, prUrl: task!.pr_url })),
   );
   const rest = (items ?? []).filter((i) => !broken.includes(i));
 
@@ -60,11 +61,12 @@ export function Overview() {
       {error && (
         <ErrorAlert
           error={`Could not read what needs you: ${error}`}
-          remedy={<Text size="xs">It tries again in 30 seconds. What shows below is as it was last read, so it may be out of date.</Text>}
+          remedy={<Text size="xs">It tries again in 30 seconds. Until then, what shows below may be out of date.</Text>}
         />
       )}
       {failed.length > 0 && (
         <Paper withBorder p="md" mb="md" data-testid="needs-you-failures" style={{ borderColor: "var(--mantine-color-red-6)" }}>
+          <Group justify="flex-end" mb="sm"><RetryAll plan={retryAllPlan(failed)} onChanged={() => setActed((n) => n + 1)} /></Group>
           <FailureGroups groups={failed} onChanged={() => setActed((n) => n + 1)} />
         </Paper>
       )}

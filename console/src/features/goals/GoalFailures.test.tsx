@@ -43,7 +43,7 @@ test("issues that failed the same way are one message: what happened, why, and w
   const alert = screen.getByRole("alert");
   expect(alert.textContent).toContain("4 issues need you");
   const grant = within(screen.getByTestId("failure-grant_spend_limit"));
-  expect(grant.getByText("The run could not start: the HTTP Gateway refused its spend limit (2 tasks)")).toBeTruthy();
+  expect(grant.getByText("The task's run could not start: the HTTP Gateway refused its spend limit (2 tasks)")).toBeTruthy();
   expect(grant.getByText(/asked for a \$1,000,000.00 spend limit/)).toBeTruthy();
   expect(grant.getByText(/Retry the task\./)).toBeTruthy();
   expect(grant.getByRole("link", { name: "Record prompts" }).getAttribute("href")).toBe("/tasks/t-1");

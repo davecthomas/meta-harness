@@ -91,6 +91,9 @@ class Facts:
     # review the fixes did not settle.
     stronger_left: bool = False
     fix_again_left: bool = False
+    # For an unresolved task: its last review came back clean, and only a conflict with its base kept it from
+    # merging (failures.clean_blocked).
+    clean_review: bool = False
     # For a task held at its own spend limit: whether the supervisor may raise it once, within twice the limit
     # and what its goal's budget has left.
     raise_left: bool = False
@@ -142,21 +145,21 @@ def _failed(facts: Facts) -> Decision:
             return Decision(
                 "operator",
                 "failed_long_ago",
-                "the task failed on the system's side, not its own, longer ago than the supervisor retries by itself",
+                "the task failed on the system's side, not its own, too long ago for the Task Shepherd to retry it by itself",
                 ask="Retry it if the work is still wanted: it should run now. Otherwise close its issue.",
             )
         if not facts.drives_left:
             return Decision(
                 "operator",
                 "failed_retries_used",
-                "the task failed on the system's side again after the supervisor retried it as often as it may",
+                "the task failed on the system's side again after the Task Shepherd retried it as often as it may",
                 ask="Something keeps failing under it: read its last runs and the logs it links, then retry it.",
             )
         if not facts.retry_due:
             return Decision(
                 "supervisor",
                 "retry_waiting",
-                "the task failed on the system's side, not its own; the supervisor retries it after a wait",
+                "the task failed on the system's side, not its own; the Task Shepherd retries it after a wait",
                 action="wait",
             )
         return Decision("supervisor", "retry_due", "the task failed on the system's side, not its own", action="retry")
@@ -328,9 +331,25 @@ def _parked(facts: Facts) -> Decision:
             return Decision(
                 "supervisor",
                 "retry_waiting",
-                "its review loop was stopped by a failure on the system's side; the supervisor sends it back after a wait",
+                "its review loop was stopped by a failure on the system's side; the Task Shepherd sends it back after a wait",
                 action="wait",
             )
+    if facts.status == "review_unresolved" and facts.clean_review:
+        # The review passed: what is left is the conflict, which a fresh set of fix rounds resolves first. A
+        # goal that merges by itself has it merged once a review is clean again; any other gets it back ready.
+        if facts.goal in SWEPT and facts.drives_left:
+            return Decision(
+                "supervisor",
+                "review_clean_conflict",
+                "its review came back clean, and only a conflict with its base kept it from merging",
+                action="merge" if facts.auto_merge else "review",
+            )
+        return Decision(
+            "operator",
+            "review_clean_conflict",
+            "its review came back clean, and only a conflict with its base kept it from merging",
+            ask="Press Merge on the task's page. The conflict is resolved first, and it merges once a review is clean.",
+        )
     if facts.status == "review_unresolved" and facts.goal in SWEPT and facts.fix_again_left and facts.drives_left:
         return Decision(
             "supervisor",
@@ -368,7 +387,7 @@ def _to_merge(facts: Facts) -> Decision:
         return Decision(
             "operator",
             "merge_blocked",
-            "its checks passed and the code host still refuses the merge: a rule on the branch wants something more",
+            "its checks passed and the code host still refuses the merge: a rule on the branch is not met yet",
             ask="Open the pull request: give the approval or lift the rule it names, then press Merge on the task's page.",
         )
     if how in ("checks_pending", "unknown"):
@@ -385,7 +404,7 @@ def _to_merge(facts: Facts) -> Decision:
                 ask="Open the pull request and see what holds its checks: rerun them, or merge it yourself.",
             )
         return Decision(
-            "supervisor", "merge_waiting", f"{waiting}; the supervisor looks again each pass", action="wait"
+            "supervisor", "merge_waiting", f"{waiting}; the Task Shepherd looks again each pass", action="wait"
         )
     what = {
         "clean": ("merge_due", "the code host would take its merge now", "merge"),
@@ -396,7 +415,7 @@ def _to_merge(facts: Facts) -> Decision:
         return Decision(
             "operator",
             "merge_tries_used",
-            f"{what[1]}, and the supervisor has already sent it back as often as it may",
+            f"{what[1]}, and the Task Shepherd has already sent it back as often as it may",
             ask="Read the task's last runs for why it keeps coming back, then merge it, retry it or fix it yourself.",
         )
     return Decision("supervisor", what[0], what[1], action=what[2])

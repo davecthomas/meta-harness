@@ -59,6 +59,6 @@ test("a refused save's reason shows on the setting it is about", () => {
 
   expect(screen.getByText(reason)).toBeTruthy();
   expect(screen.getByText(/max_usd must be an amount above 0/)).toBeTruthy();
-  expect(screen.getByText(/runs them unplanned/)).toBeTruthy();
+  expect(screen.getByText(/runs them without a plan/)).toBeTruthy();
   expect(reasonTarget("planning", DOC, "goals must be one of all, from_description")).toBe("goals");
 });

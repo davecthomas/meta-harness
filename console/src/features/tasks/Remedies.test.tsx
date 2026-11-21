@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import type { Task } from "../../api";
 import { theme } from "../../theme";
-import { Remedies } from "./Remedies";
+import { Remedies, RetryAll, retryAllPlan } from "./Remedies";
 import type { Diagnosis } from "./diagnosis";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -67,4 +67,33 @@ test("a single task, and a retry that does not raise limits, retry without askin
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(many[0].body).toEqual({ max_usd: 10 });
   expect(many[1].body).toEqual({ max_usd: 20 });
+});
+
+test("Retry all retries every retryable task across the groups, each at its own Retry's limit, after one confirm", async () => {
+  const LIMIT: Diagnosis = { kind: "limit", summary: "s", cause: "c", fix: "f", remedies: ["retry", "config"], detail: "" };
+  const NOT_RETRYABLE: Diagnosis = { kind: "refused", summary: "s", cause: "c", fix: "f", remedies: ["issue"], detail: "" };
+  const plan = retryAllPlan([
+    { diagnosis: SPEND_LIMIT, items: [{ taskId: "t-1", status: "failed", max_usd: "10.00" }] },
+    { diagnosis: LIMIT, items: [{ taskId: "t-2", status: "review_unresolved", max_usd: "5.00" }, { taskId: "t-3", status: "failed", waitingOn: "budget", max_usd: "5.00" }] },
+    { diagnosis: NOT_RETRYABLE, items: [{ taskId: null, status: null }] },
+  ]);
+  expect(plan).toEqual([{ id: "t-1", limit: 20 }, { id: "t-2", limit: 5 }]);
+
+  const asked: any[] = [];
+  vi.stubGlobal("fetch", (_url: string, init?: RequestInit) => {
+    asked.push(JSON.parse(String(init?.body ?? "{}")));
+    return Promise.resolve(new Response(JSON.stringify({ status: "queued" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+  render(<MantineProvider theme={theme}><RetryAll plan={plan} /></MantineProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "Retry all 2 tasks" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  expect(dialog.getByText("Each task runs again with the spend limit its own Retry gives it. Together they can spend at most $25.00.")).toBeTruthy();
+  expect(asked).toHaveLength(0);
+  fireEvent.click(dialog.getByRole("button", { name: "Retry all 2 tasks" }));
+  await waitFor(() => expect(asked).toEqual([{ max_usd: 20 }, { max_usd: 5 }]));
+});
+
+test("Retry all shows nothing for fewer than two tasks: each group's own Retry does that", () => {
+  render(<MantineProvider theme={theme}><RetryAll plan={[{ id: "t-1", limit: 10 }]} /></MantineProvider>);
+  expect(screen.queryByRole("button")).toBeNull();
 });

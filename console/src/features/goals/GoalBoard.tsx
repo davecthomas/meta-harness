@@ -129,7 +129,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
               </Text>
             )}
             <Text size="xs">
-              {(issue.split ?? []).length > 0 ? "Split makes those separate issues, which run in its place. " : ""}Run anyway runs it as one task: a larger pull request, and more likely to need fix rounds.
+              {(issue.split ?? []).length > 0 ? "Split makes those separate issues, which run in place of this one. " : ""}Run anyway runs it as one task: a larger pull request, and more likely to need fix rounds.
             </Text>
           </Stack>
         ) : held ? (

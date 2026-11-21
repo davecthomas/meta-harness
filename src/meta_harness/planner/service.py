@@ -44,6 +44,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from meta_harness import outbound
+from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
 from meta_harness import auth, db
 from meta_harness.costs import api as costs_api
@@ -587,6 +588,7 @@ def create_app(
     costs_api.check_settings()
     planning.check_settings()
     writing_rules.check_settings()
+    charter.check_settings()
     draft = drafter or drafting.draft_goal
 
     def registered(names: list[str]) -> list[str]:
@@ -1120,7 +1122,7 @@ def create_app(
             raise HTTPException(
                 status_code=422,
                 detail="a goal needs issues to take in: give it a label, or pick issues by ref. Where its "
-                "tracker has it, you can also turn on taking the issues assigned to the meta-harness",
+                "tracker supports it, you can also have the goal take the issues assigned to the meta-harness",
             )
         if why := parallel_reason(body.max_parallel):
             raise HTTPException(status_code=422, detail=why)

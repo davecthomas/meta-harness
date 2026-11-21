@@ -113,6 +113,28 @@ SCENARIOS = {
         "auto_merge": True,
         "follow_ups": [[0]],
     },
+    # After the base-before-review patch: the base conflicts before the first review, a fix run resolves it,
+    # and the review reads the resolved head.
+    "patched-base-before-review": {
+        "verdicts": [CLEAN],
+        "fix_commits": ["c1"],
+        "goal_id": "g-1",
+        "auto_merge": True,
+        "bases": ["conflict"],
+    },
+    # After the review-merge-bar patch: the reviewer marked its one finding as a follow-up, so it merges with
+    # no fix run.
+    "patched-review-merge-bar": {
+        "verdicts": [
+            {
+                "verdict": "clean",
+                "summary": "It does the task.",
+                "findings": [{"path": "app.py", "line": 9, "body": "One more case.", "blocking": False}],
+            }
+        ],
+        "goal_id": "g-1",
+        "auto_merge": True,
+    },
     # After the merge-base-health patch: the merge waits while the base's own checks run, then merges.
     "patched-merge-base-health": {
         "verdicts": [CLEAN],

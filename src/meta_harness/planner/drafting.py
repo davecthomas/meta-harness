@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from meta_harness import retrying
+from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
 from meta_harness.planner.tracker import Issue
 from meta_harness.run_service.paths import REPO_ROOT
@@ -167,7 +168,7 @@ async def _structured(
     body = {
         "engine": config["engine"],
         "model": config["model"],
-        "system_prompt": writing_rules.after(system_prompt),
+        "system_prompt": writing_rules.after(charter.after(system_prompt)),
         "prompt": prompt,
         "response_schema": schema,
         "max_response_tokens": int(config["max_response_tokens"]),

@@ -24,6 +24,6 @@ test("a task the supervisor is moving says what it found and how its tries went"
   expect(standingLine(moving)).toBe("It has no RunTask workflow.");
   render(<MantineProvider theme={theme}><Standing standing={moving} /></MantineProvider>);
   const shown = screen.getByTestId("standing").textContent ?? "";
-  expect(shown).toContain("The supervisor");
+  expect(shown).toContain("The Task Shepherd");
   expect(shown).toContain("It has acted 2 times. Its last try failed: the task service is down");
 });

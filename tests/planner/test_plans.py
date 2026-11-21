@@ -127,7 +127,7 @@ def test_a_split_names_drafts_that_replace_the_issue_and_nothing_waits_on_what_t
     ]
     reasons = plans.validate([draft("store", ("jira:VL-1",), repo="o/r")], ["o/r"], bad, ISSUES)
     assert "store: waits on jira:VL-1, which the plan splits: wait on the tasks that replace it" in reasons
-    assert "jira:VL-1: is split, so it names the new tasks that replace it" in reasons
+    assert "jira:VL-1: is split, so name the new tasks that replace it" in reasons
     assert "jira:VL-2: is replaced by nope, which is no draft of the plan" in reasons
     assert "jira:VL-3: its decision is 'merge', not one of keep, split, leave_out" in reasons
     left = [item("jira:VL-1", "leave_out"), item("jira:VL-2", depends_on=["jira:VL-1"]), item("jira:VL-3")]

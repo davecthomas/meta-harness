@@ -34,6 +34,8 @@ export interface NeedsYouItem {
 export const NEEDS_YOU_GOALS = ["active", "budget_exhausted", "stalled"];
 export const NEEDS_YOU_POLL_MS = 30_000;
 const MOST = 200;
+// How many of a stuck goal's waiting tasks its line names.
+const MOST_NAMED = 3;
 
 function goalItems(g: Goal): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
@@ -47,7 +49,12 @@ function goalItems(g: Goal): NeedsYouItem[] {
   // A goal with work left and none of it moving: everything it has left waits on the operator.
   if (g.standing?.state === "needs_you") {
     const reason = `${g.standing.reason.charAt(0).toUpperCase()}${g.standing.reason.slice(1)}`;
-    items.push({ ...base, key: `goal-waits-${g.id}`, action: "Unstick the goal", detail: `${reason}. Its page says what each one needs.` });
+    // Named, so the operator sees which tasks without opening the goal: three at most, then how many more.
+    const yours = g.standing.yours ?? [];
+    const named = yours.slice(0, MOST_NAMED).map((t) => t.title).join(", ");
+    const more = yours.length > MOST_NAMED ? ` and ${yours.length - MOST_NAMED} more` : "";
+    const waiting = named ? ` Waiting on you: ${named}${more}.` : "";
+    items.push({ ...base, key: `goal-waits-${g.id}`, action: "Unstick the goal", detail: `${reason}.${waiting} The goal goes on as soon as one of them is unstuck.` });
   }
   return items;
 }

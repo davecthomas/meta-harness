@@ -49,7 +49,7 @@ class RaiseLimit(Remedy):
     async def apply(self, ctx: Context) -> Outcome:
         to = raise_to(ctx.task, ctx.goal)
         if to is None:
-            raise ValueError("the hold no longer fits a raise the supervisor may make")
+            raise ValueError("the raise this hold needs is more than the Task Shepherd may make")
         was = budget_request.parse(ctx.task.get("status_reason"))["limit_usd"]
         await asyncio.to_thread(ctx.supervisor.tasks.budget, ctx.task["id"], "raise", str(to), "supervisor")
         return Outcome(

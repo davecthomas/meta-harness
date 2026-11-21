@@ -320,6 +320,18 @@ def test_a_retry_sends_an_ended_task_back_to_the_queue_to_resume_at_its_pull_req
     assert ("task_status_changed", {"from": "review_unresolved", "to": "queued", "reason": "ops retried it"}) in kinds
 
 
+def test_a_retry_may_ask_for_a_stronger_model_and_a_plain_retry_keeps_the_tier_the_task_has(api):
+    task = _ended(api, "review_unresolved")
+
+    stronger = api.post(f"/v1/tasks/{task['id']}/retry", json={"complexity": "high"}, headers=_as(CALLER_KEY))
+
+    assert stronger.status_code == 202
+    body = stronger.json()
+    assert (body["complexity"], body["status_reason"]) == ("high", "ops retried it with a stronger model")
+    unknown = api.post(f"/v1/tasks/{task['id']}/retry", json={"complexity": "huge"}, headers=_as(CALLER_KEY))
+    assert unknown.status_code == 422
+
+
 def test_a_failed_task_with_no_pull_request_retries_from_a_new_first_run_and_a_canceled_one_is_uncanceled(api):
     task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
     api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
@@ -784,7 +796,7 @@ def test_the_supervisor_drives_a_parked_task_a_bounded_number_of_times_with_its_
     assert (driven["status"], driven["resume"], driven["drives"]) == ("queued", "merge", 1)
     assert Decimal(driven["spent_carried_usd"]) == Decimal("2.50")
     assert driven["status_reason"] == (
-        "the code host would take its merge now, so the supervisor asked for its merge (try 1 of 3)"
+        "the code host would take its merge now, so the Task Shepherd asked for its merge (try 1 of 3)"
     )
     assert ("task_driven", "merge", 1) in [(e[0], e[1].get("action"), e[1].get("drives")) for e in events.events]
     park()
@@ -809,7 +821,7 @@ def test_the_supervisor_retries_a_failed_task_and_only_a_failed_one(api):
     retried = api.post(f"/v1/tasks/{task['id']}/drive", json=retry, headers=_as(SERVICE_KEY)).json()
 
     assert (retried["status"], retried["resume"], retried["drives"]) == ("queued", None, 1)
-    assert retried["status_reason"].endswith("so the supervisor retried it (try 1 of 3)")
+    assert retried["status_reason"].endswith("so the Task Shepherd retried it (try 1 of 3)")
     assert Decimal(retried["spent_carried_usd"]) == Decimal("1")
     assert retried["complexity"] is None
 
@@ -897,7 +909,7 @@ def test_an_ended_task_with_no_pull_request_is_made_over_from_what_its_issue_say
         "Make the button ask first.",
     )
     assert made["acceptance_checks"] == ["npm test"] and made["retries"] == task["retries"] + 1
-    assert "made it over from its issue as it is now" in made["status_reason"]
+    assert "remade it from its issue's current text" in made["status_reason"]
 
     # One with a pull request keeps it and resumes at its review: the workflow starts over only if it was closed.
     api.post(

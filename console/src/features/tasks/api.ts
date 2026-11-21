@@ -160,7 +160,9 @@ export const tasksApi = {
   taskSpend: (id: string) => call<TaskSpend>(`/v1/tasks/${id}/spend`),
   clearTask: (id: string) => call<Task>(`/v1/tasks/${id}/clear`, { method: "POST" }),
   // Sends an ended task back to the queue, with a spend limit for the retry's runs.
-  retryTask: (id: string, max_usd: number) => call<Task>(`/v1/tasks/${id}/retry`, { method: "POST", body: JSON.stringify({ max_usd }) }),
+  // stronger: its next runs on the complex tier, a stronger model.
+  retryTask: (id: string, max_usd: number, stronger = false) =>
+    call<Task>(`/v1/tasks/${id}/retry`, { method: "POST", body: JSON.stringify(stronger ? { max_usd, complexity: "high" } : { max_usd }) }),
   // Asks for the task's pull request to be merged through the merge queue.
   mergeTask: (id: string) => call<Task>(`/v1/tasks/${id}/merge`, { method: "POST" }),
   // An operator's answer to a task held for budget: raise (with a new limit, or none to look again) or end.

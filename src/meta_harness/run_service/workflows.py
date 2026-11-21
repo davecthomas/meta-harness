@@ -98,8 +98,10 @@ with workflow.unsafe.imports_passed_through():
         wait_checks,
         wait_merge_checks,
     )
+    from meta_harness.run_service.base_activities import bring_base
     from meta_harness.run_service.budget_activities import BudgetHold, budget_hold, goal_budget
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
+    from meta_harness.run_service import run_provenance
     from meta_harness.run_service.resume_activities import resume_state
     from meta_harness.money import usd
     from meta_harness import budget_request
@@ -107,6 +109,7 @@ with workflow.unsafe.imports_passed_through():
         FollowUpsRequest,
         Attempt,
         BaseHealthRequest,
+        BaseRequest,
         CommentRequest,
         DeliverRequest,
         OperatorMessage,
@@ -215,6 +218,9 @@ class RunTask:
         # JSON: {"keep": [the agent's findings they keep, from 1], "findings": [their own]}.
         self._review_claim = ""
         self._operator_verdict: str | None = None
+        # What the Task API task came from, and each of its runs' provenance by run id, built as the run starts.
+        self._origin: run_provenance.TaskOrigin | None = None
+        self._provenance: dict[str, dict] = {}
 
     @workflow.signal
     def operator_message(self, message: OperatorMessage) -> None:
@@ -298,6 +304,15 @@ class RunTask:
             task_type=spec.task_type,
         )
         self._task_type = spec.task_type
+        self._origin = run_provenance.TaskOrigin(
+            task_id=spec.task_id,
+            goal_id=spec.goal_id,
+            issue=spec.external_ref,
+            parent_task_id=spec.parent_task_id,
+            task_type=spec.task_type,
+            repo=spec.repo,
+            retries=spec.retries,
+        )
         self._goal_id = spec.goal_id or ""
         again = f" again (retry {spec.retries})" if spec.retries else ""
         await self._task_status("running", f"the meta-harness run service started its RunTask workflow{again}")
@@ -503,6 +518,8 @@ class RunTask:
                     route_result.thinking if route_result is not None and not prepared.pinned else None,
                     kind="task",
                     template=prepared.template,
+                    tier=tier,
+                    follows=attempts[-1].run_id if attempts else "",
                 )
                 spent += run_spent
                 attempts.append(
@@ -651,6 +668,7 @@ class RunTask:
                     route_result.thinking,
                     kind="task",
                     template=prepared.template,
+                    tier=route_result.tier,
                 )
                 for number, candidate in enumerate(picked, start=1)
             )
@@ -729,6 +747,7 @@ class RunTask:
                 spent_usd=str(spent),
                 task_id=self._task_id,
                 fix_round=fix_round,
+                provenance=self._provenance.get(harness.run_id),
                 goal_id=self._goal_id,
             ),
             start_to_close_timeout=PUBLISH_TIMEOUT,
@@ -804,7 +823,12 @@ class RunTask:
                     loop, conflict=conflict, standing=standing, asked_for=asked_for
                 )
         else:
-            outcome, reason = await self._review_loop(loop)
+            # The pull request is still at the commit its last review passed: that verdict stands, so its
+            # checks and the merge are all that is left, and no review is spent on a commit already passed.
+            passed = ""
+            if state.clean_head and state.clean_head == loop.head and workflow.patched("clean-review-stands"):
+                passed = state.clean
+            outcome, reason = await self._review_loop(loop, standing=passed)
         if outcome == "merged" and loop.merge_sha:
             outcome, reason = await self._after_merge(loop, reason)
         return result(outcome, reason, loop.published, loop.spent), attempts
@@ -839,12 +863,54 @@ class RunTask:
             follows = workflow.patched("review-follow-ups")
             # The round before's findings and summary, which the next review judges first.
             previous: dict = {}
+            # The clean verdict a conflict with the base kept from merging, while that is what the next fix is
+            # for: a loop out of rounds then says the review passed, so neither an operator nor the supervisor
+            # reads it as findings the fixes did not settle.
+            clean_blocked = ""
+            # The base comes into the branch before each review, so a clean review is of a commit that merges
+            # at once, and a conflict is resolved before a review is spent on a commit that could not merge.
+            # Conflict fixes are counted apart from the fix rounds for findings and failed checks, so a base
+            # that keeps moving does not use up the rounds the review's findings need.
+            base_first = workflow.patched("base-before-review")
+            resolves = 0
             if conflict:
-                fixes += 1
-                stopped = await self._fix(loop, loop.prompt_request("fix", conflict=True), fixes)
+                if base_first:
+                    resolves += 1
+                else:
+                    fixes += 1
+                stopped = await self._fix(loop, loop.prompt_request("fix", conflict=True), fixes + resolves)
                 if stopped:
                     return "review_unresolved", stopped
             while True:
+                if base_first and not standing:
+                    brought = await workflow.execute_activity(
+                        bring_base,
+                        BaseRequest(
+                            task_id=self._task_id,
+                            repo=loop.prepared.repo,
+                            pr_url=loop.published.pr_url,
+                            base=loop.published.base,
+                            head_sha=loop.head,
+                        ),
+                        start_to_close_timeout=CODE_HOST_TIMEOUT,
+                        retry_policy=CODE_HOST_RETRY,
+                    )
+                    if brought.state == "head_changed":
+                        log.info(
+                            "%s: %s came in before the review: %s",
+                            info.workflow_id,
+                            loop.published.base,
+                            brought.head_sha[:12],
+                        )
+                        loop.head = brought.head_sha
+                    elif brought.state == "conflict":
+                        if resolves >= policy.max_rounds:
+                            return "review_unresolved", _unresolved_conflict(clean_blocked, policy.max_rounds)
+                        resolves += 1
+                        stopped = await self._fix(loop, loop.prompt_request("fix", conflict=True), fixes + resolves)
+                        if stopped:
+                            return "review_unresolved", stopped
+                        continue
                 checks = await workflow.execute_activity(
                     wait_checks,
                     ChecksRequest(repo=loop.prepared.repo, head_sha=loop.head, task_id=self._task_id),
@@ -854,7 +920,7 @@ class RunTask:
                 )
                 log.info("%s: checks at %s: %s", info.workflow_id, loop.head[:12], checks.state)
                 if checks.state == "failed":
-                    standing = ""
+                    standing, clean_blocked = "", ""
                     fix = loop.prompt_request("fix", failed_checks=checks.failed)
                 elif standing:
                     clean, standing = f"{standing}, and its checks passed at {loop.head[:12]}", ""
@@ -866,6 +932,7 @@ class RunTask:
                     if merged.state != "conflict":
                         loop.merge_sha = merged.merge_sha if merged.state == "merged" else ""
                         return ("merged" if merged.state == "merged" else "clean"), merged.detail
+                    clean_blocked = clean
                     fix = loop.prompt_request("fix", conflict=True)
                 else:
                     if not policy.reviewers:
@@ -895,6 +962,11 @@ class RunTask:
                         )
                     if follows:
                         reviewed = loop.head
+                    # The reviewer's own sorting: a finding it marked as not blocking is a follow-up. The main
+                    # branch is better with the pull request than without it, so the finding does not hold it.
+                    marked = [n for n, f in enumerate(review.get("findings") or []) if f.get("blocking") is False]
+                    if marked and workflow.patched("review-merge-bar"):
+                        later = sorted({*later, *marked})
                     await workflow.execute_activity(
                         post_review,
                         PostReviewRequest(
@@ -918,8 +990,8 @@ class RunTask:
                         if not findings:
                             review = {**review, "verdict": "clean"}
                             clean = (
-                                f"review round {reviews} by {reviewer} raised only follow-ups, on code an earlier "
-                                f"round passed, at {loop.head[:12]}"
+                                f"review round {reviews} by {reviewer} raised only follow-ups, which do not hold "
+                                f"the merge, at {loop.head[:12]}"
                             )
                     all_dismissed = False
                     # An operator who took the review over decides the round: the fix run gets the agent's
@@ -946,18 +1018,30 @@ class RunTask:
                         if merged.state != "conflict":
                             loop.merge_sha = merged.merge_sha if merged.state == "merged" else ""
                             return ("merged" if merged.state == "merged" else "clean"), merged.detail
+                        clean_blocked = clean
                         fix = loop.prompt_request("fix", conflict=True)
                     else:
+                        clean_blocked = ""
                         previous = {**review, "findings": findings}
                         fix = loop.prompt_request(
                             "fix",
                             findings=findings,
                             summary=str(review.get("summary") or ""),
                         )
-                if fixes >= policy.max_rounds:
-                    return "review_unresolved", f"the review loop used its {policy.max_rounds} fix rounds"
-                fixes += 1
-                stopped = await self._fix(loop, fix, fixes)
+                if base_first and fix.conflict:
+                    if resolves >= policy.max_rounds:
+                        return "review_unresolved", _unresolved_conflict(clean_blocked, policy.max_rounds)
+                    resolves += 1
+                else:
+                    if fixes >= policy.max_rounds:
+                        if clean_blocked:
+                            return "review_unresolved", (
+                                f"{clean_blocked}, but the pull request conflicts with its base. No fix round was "
+                                f"left to resolve it: the loop used its {policy.max_rounds} fix rounds"
+                            )
+                        return "review_unresolved", f"the review loop used its {policy.max_rounds} fix rounds"
+                    fixes += 1
+                stopped = await self._fix(loop, fix, fixes + resolves)
                 if stopped:
                     return "review_unresolved", stopped
         except ActivityError as err:
@@ -1061,6 +1145,7 @@ class RunTask:
                         "This pull request fixes that. It closes no issue: the merged one closed it."
                     ),
                     task_id=self._task_id,
+                    provenance=self._provenance.get(harness.run_id),
                     goal_id=self._goal_id,
                 ),
                 start_to_close_timeout=PUBLISH_TIMEOUT,
@@ -1236,7 +1321,7 @@ class RunTask:
             how = "have failed" if health.state == "failed" else "are still running"
             if waited >= loop.merge_wait_minutes:
                 return (
-                    f"{what} {how} after {loop.merge_wait_minutes} minutes, so it was not merged onto them: "
+                    f"{what} {how} after {loop.merge_wait_minutes} minutes, so the pull request was not merged: "
                     "merge it once they pass"
                 )
             if not told and self._task_id:
@@ -1407,6 +1492,7 @@ class RunTask:
             merge_base=merge_base,
             kind=kind,
             template=loop_template(kind),
+            follows=loop.attempts[-1].run_id if loop.attempts else "",
         )
         loop.spent += run_spent
         loop.attempts.append(
@@ -1463,14 +1549,23 @@ class RunTask:
         merge_base: str = "",
         kind: str = "task",
         template: str = "",
+        tier: str | None = None,
+        follows: str = "",
     ) -> tuple[HarnessResult | None, str, str, Decimal]:
         """One run on one candidate. Returns the result, the decision, why, and what the run spent.
 
-        A Task API task's run first records its prompt as run_prompt, so an operator sees what the run was given.
+        A Task API task's run first records its prompt as run_prompt, so an operator sees what the run was given,
+        and its provenance as run_provenance: the task it came from and the run it follows (follows).
         """
+        made = None
+        if self._origin is not None:
+            made = run_provenance.build(self._origin, run_id, kind, candidate.label, template, tier, follows)
+            self._provenance[run_id] = made
         # Behind a patch: workflows started before it record no prompt, and replay as they ran.
         if self._task_id and workflow.patched("run-prompt"):
-            await self._record(record_prompt, RunPromptRecord(self._task_id, run_id, kind, template, prompt))
+            await self._record(
+                record_prompt, RunPromptRecord(self._task_id, run_id, kind, template, prompt, provenance=made)
+            )
         restarts = 0
         failed: ActivityError | None = None
         kind = ""
@@ -1547,6 +1642,15 @@ class RunTask:
         if request.ceiling and route_result.tiers.index(request.ceiling) <= index:
             return None
         return route_result.tiers[index + 1]
+
+
+def _unresolved_conflict(clean_blocked: str, tries: int) -> str:
+    """Why a loop ended on a conflict with the base that its conflict fixes did not resolve. It names the
+    clean verdict the conflict kept from merging, when there is one, in the words the supervisor reads."""
+    tried = f"{tries} conflict fix runs did not resolve it"
+    if clean_blocked:
+        return f"{clean_blocked}, but the pull request conflicts with its base, and {tried}"
+    return f"the pull request conflicts with its base, and {tried}"
 
 
 def _earlier_rounds(attempts: list[Attempt]) -> int:

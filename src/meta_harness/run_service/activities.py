@@ -54,7 +54,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
-from meta_harness import outbound
+from meta_harness import charter, outbound
 from meta_harness.outbound import rules as writing_rules
 from meta_harness.run_service import (
     code_host,
@@ -65,6 +65,7 @@ from meta_harness.run_service import (
     provenance_headers,
     routing,
     run_grants,
+    run_provenance,
     sandbox,
     summaries,
     writing,
@@ -156,7 +157,7 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
     if request.task_type == "plan":
         template = (PROMPTS_DIR / f"{PLAN_TEMPLATE}.txt").read_text(encoding="utf-8")
         prompt = Template(template).safe_substitute(
-            repo=repo, title=title, description=description, writing_rules=writing_rules.block()
+            repo=repo, title=title, description=description, writing_rules=_closing()
         )
         activity.logger.info("prepare: a planning task in %s", repo)
         return PreparedRun(
@@ -177,7 +178,7 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         description=description,
         checks=listed,
         paths=code_host.paths_rule(description, "task"),
-        writing_rules=writing_rules.block(),
+        writing_rules=_closing(),
     )
     activity.logger.info(
         "prepare: a repo task in %s%s, %d acceptance checks",
@@ -396,10 +397,7 @@ async def publish(request: PublishRequest) -> PublishResult:
         )
         return await asyncio.to_thread(provenance_headers.apply, workspace, created, context)
 
-    message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
-        f"\n\nCloses {request.ticket}" if request.ticket else ""
-    )
-    message = provenance.commit_message(message, provenance.Provenance(provenance.COMMIT, **_signed_fields(request)))
+    message = _commit_message(request)
     try:
         published = await code_host.publish(
             repo=request.repo,
@@ -447,6 +445,19 @@ async def publish(request: PublishRequest) -> PublishResult:
         # is the one this request gives, which every attempt shares, not a guess from the text's first words.
         posted = pr_summary.posted_round(description or "", heading, part)
         _record_summary(request, published.pr_url, posted or part)
+    if request.fix_round and request.provenance and not published.created:
+        # The description's Run section names the run that opened the pull request; each fix run pushed to it adds
+        # its own provenance under a heading named for the run, so a retry of the activity adds it once.
+        try:
+            await code_host.add_to_description(
+                request.repo,
+                published.pr_url,
+                _fix_provenance_heading(request),
+                await _sealed("\n".join(_run_lines(request))),
+                sandbox.task_dir_for(ref) / "pull-request.md",
+            )
+        except code_host.CodeHostError as err:
+            raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     print(
         f"[{request.run_id} publish] {', '.join(published.files)} on branch {published.branch} at "
         f"{published.commit[:12]}, pull request {'opened' if published.created else 'already open'}: {published.pr_url}",
@@ -506,8 +517,9 @@ def _record_provenance(request: PublishRequest, stamped: list[str]) -> None:
 
 
 def _signed_fields(request: PublishRequest) -> dict[str, Any]:
-    """What a publish's description and commit name: its task, run and model, and a fix run's round."""
+    """What a publish's description and commit name: its goal, task, run and model, and a fix run's round."""
     return {
+        "goal": (request.provenance or {}).get("goal_id") or "",
         "task": request.task_id,
         "run": request.run_id,
         "model": request.candidate,
@@ -546,6 +558,16 @@ async def _sealed(text: str, kind: str = outbound.BODY, signed: Any = None) -> o
     """A text composed here from parts that went through `_written` and the fixed lines around them, ready to
     post: redacted and cut to fit as a whole, and ending with its provenance when given."""
     return await outbound.prepare(text, outbound.Context(outbound.GITHUB, kind, outbound.FIXED, provenance=signed))
+
+
+def _commit_message(request: PublishRequest) -> str:
+    """The commit's message: the title, the run, the issue it closes, and the provenance as git trailers: the
+    run's issue from its record, then the version, goal, task, run, model and round."""
+    message = f"{request.title}\n\nRun {request.run_id} on {request.candidate}." + (
+        f"\n\nCloses {request.ticket}" if request.ticket else ""
+    )
+    signed = provenance.Provenance(provenance.COMMIT, **_signed_fields(request))
+    return provenance.commit_message(message, signed, *run_provenance.trailers(request.provenance))
 
 
 async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summary.Section:
@@ -613,9 +635,7 @@ def _pr_body(request: PublishRequest, summary: pr_summary.Section) -> str:
     lines += [
         "## Run",
         "",
-        f"- Run: `{request.run_id}`",
-        f"- Harness profile and model: `{request.candidate}`",
-        f"- Model spend for the task so far: ${request.spent_usd}",
+        *_run_lines(request),
         "",
         (
             "Opened by the meta-harness. pi worked in a clone of this repo inside a per-run sandbox that holds "
@@ -623,6 +643,21 @@ def _pr_body(request: PublishRequest, summary: pr_summary.Section) -> str:
         ),
     ]
     return "\n".join(lines)
+
+
+def _run_lines(request: PublishRequest) -> list[str]:
+    """The run's lines in the description: the run, its pair, the task's spend, and the run's provenance."""
+    return [
+        f"- Run: `{request.run_id}`",
+        f"- Harness profile and model: `{request.candidate}`",
+        f"- Model spend for the task so far: ${request.spent_usd}",
+        *run_provenance.pr_lines(request.provenance),
+    ]
+
+
+def _fix_provenance_heading(request: PublishRequest) -> str:
+    """The heading a fix run's provenance is added under in an open pull request's description, one per run."""
+    return f"Run for fix round {request.fix_round} ({request.run_id})"
 
 
 @activity.defn
@@ -1155,9 +1190,15 @@ async def base_health(request: BaseHealthRequest) -> BaseHealth:
     return BaseHealth(state="running" if running else "healthy", sha=sha, checks=running)
 
 
+def _closing() -> str:
+    """What closes every run prompt: the charter, which says what the run is for, then the writing rules."""
+    return "\n\n".join(part for part in (charter.block(), writing_rules.block()) if part)
+
+
 @activity.defn
 async def loop_prompt(request: LoopPromptRequest) -> str:
-    """A review or fix run's prompt, from prompts/review-v4.txt or prompts/fix-v2.txt. A review's shows the pull
+    """A review or fix run's prompt, from prompts/review-v5.txt or prompts/fix-v2.txt. It closes with the
+    charter (charter.py), so the reviewer and the fix are held to the same bar, then the writing rules. A review's shows the pull
     request's description as it stands, since the reviewer judges what it explains (why a file outside the
     task's paths changed) and has no other way to read it."""
     checks = (
@@ -1176,7 +1217,7 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
         "previous": _previous(request),
         "checks_rule": _checks_rule(request),
         "pr_description": await _pr_description(request) if request.kind == "review" else "",
-        "writing_rules": writing_rules.block(),
+        "writing_rules": _closing(),
     }
     name = loop_template(request.kind)
     template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
@@ -1313,8 +1354,8 @@ async def post_review(request: PostReviewRequest) -> str:
         + (
             [
                 "",
-                f"{len(follow)} of the findings are follow-ups, so they do not hold the merge. They are on code "
-                "an earlier round passed that no fix has touched since. Each is worth its own issue.",
+                f"{len(follow)} of the findings are follow-ups, so they do not hold the merge: the main branch is "
+                "better with this pull request than without it. Each is worth its own issue.",
             ]
             if follow
             else []

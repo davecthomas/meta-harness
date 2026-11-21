@@ -258,7 +258,7 @@ def create_app(
         raise RuntimeError("MH_GOOGLE_CLIENT_ID is set without MH_SESSION_KEY: sessions could not be signed")
     if client_id and not origin:
         raise RuntimeError(
-            "MH_GOOGLE_CLIENT_ID is set without MH_CONSOLE_ORIGIN: a change could not be told from another "
+            "MH_GOOGLE_CLIENT_ID is set without MH_CONSOLE_ORIGIN: the console could not tell its own changes from another "
             "site's. Set MH_CONSOLE_ORIGIN to the console's address, such as https://<console_site>.web.app"
         )
     verify = verify_google or (google_verifier(client_id) if client_id else None)
@@ -438,7 +438,9 @@ def create_app(
         if service_only(request.method, request.url.path):
             return private(
                 JSONResponse(
-                    {"detail": "only a control-plane service may make this call; the console's own actions do it"},
+                    {
+                        "detail": "only a control-plane service may make this call; do this from the console's own pages instead"
+                    },
                     status_code=403,
                 )
             )

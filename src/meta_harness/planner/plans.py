@@ -188,7 +188,7 @@ def validate(
             reasons.append(f"{ref}: its decision is {item['decision']!r}, not one of {', '.join(DECISIONS)}")
         if item["decision"] == SPLIT:
             if not item["replaced_by"]:
-                reasons.append(f"{ref}: is split, so it names the new tasks that replace it")
+                reasons.append(f"{ref}: is split, so name the new tasks that replace it")
             reasons += [
                 f"{ref}: is replaced by {d}, which is no draft of the plan"
                 for d in item["replaced_by"]

@@ -75,6 +75,115 @@ scheduler's goal budget.
 - Operators and programs control the meta-harness through one REST API, and
   the operator console reaches the meta-harness only through it.
 
+## Goal seeking
+
+The meta-harness exists to get a goal's work merged. These rules say how it
+pursues that, and every component is judged against them. They are the
+target; "Where this stands" below says what the code does today.
+
+### First principles
+
+1. **The goal is merged work that makes main better.** A task that has
+   stopped is a defect of the system, never an acceptable resting state.
+   Each stop has an owner and a next step.
+2. **Better, not perfect.** A pull request merges when main is better with
+   it than without it: it does the core of its task, its checks pass, it
+   breaks nothing that worked and opens no security hole. A finding that
+   does not fail that test is a follow-up: it is filed as an issue under
+   the goal and built by a later pull request. Quality comes from many
+   pull requests layered on each other, so no one pull request is held
+   until it is flawless.
+3. **Progress is never thrown away.** A clean review stands for the commit
+   it read. A conflict with the base is resolved before a review, so a
+   clean review can merge at once. A retry starts where the last try
+   stopped.
+4. **The obvious next step is taken without asking.** Resolving a
+   conflict, running a flaky check again, retrying after a failure of the
+   system, retrying with a stronger model, and merging what passed the
+   test in rule 2 need no person.
+5. **A step that failed the same way twice is not tried a third time.**
+   The next step is a different one: a stronger model, a narrower task, a
+   fresh start on the current base, or a merge with the leftover findings
+   filed as follow-ups.
+6. **A person is asked only for what a person alone can give:** a
+   judgment of value or risk, more money, an approval a branch rule
+   requires, or a credential. The ask says what happened in two lines and
+   offers actions ordered by expected outcome, best first. Each action is
+   a button that does the whole job and says what it may spend. Reading
+   something is never the action asked for.
+7. **Every decision is shown:** what was seen, what was chosen, why, and
+   what comes next if it fails. The rules are fixed and listed, so the
+   same facts give the same decision.
+8. **A person can always decide differently.** Every ranked action stays
+   available, a task can be taken over or paused, and a goal's settings
+   say how much is done without asking.
+9. **Spend limits are hard.** The pursuit of the goal works inside them.
+   Reaching one is an ask to a person, with raising it as a button.
+
+### The order of moves
+
+For a task that is not moving, the first move in this list that applies is
+the one taken, or the one recommended when it is a person's to take:
+
+1. Merge it: a review passed the commit and its checks passed.
+2. Clear what blocks the merge: a conflict with the base, a flaky check.
+3. Fix the findings that fail the test in rule 2.
+4. Try again with a stronger model, once.
+5. Merge with the leftover findings filed as follow-up issues, when the
+   review has passed before or the findings keep changing.
+6. Start over on the current base, or split the task.
+7. Ask a person, with the moves above that remain as ranked buttons.
+8. Close it, when other merged work already covers it.
+
+### Who speaks
+
+Two parts of the system talk to a person, each in the first person, each
+in one place, each with its own mark so a reader knows who is talking:
+
+| | Goal Planner | Task Shepherd |
+|---|---|---|
+| Job | Decides what work a goal needs: its tasks, their size, split and order | Gets each task to merged: watches every open task, acts, and asks when it must |
+| Speaks on | A goal's page | A task's page |
+| Voice | Friendly and casual, with little technical detail | Brief and factual: what it saw, what it did, what it needs |
+
+The Task Shepherd is the name people see for the supervisor, a name that
+read as "the boss". The code, its tables and its events keep `supervisor`.
+
+### One charter for every model
+
+The principles above are kept as one text, the charter
+(`config/charter.txt`, read by `src/meta_harness/charter.py`), given to
+every model that decides something. A task's own run, a review, a fix and a
+planning run close their prompt with it, before the writing rules. So do
+the control plane's own calls that decide: a goal's draft, a task's size, a
+split, a plan's suggested fix and a failure's diagnosis. A call that only
+writes, such as an update or a name, carries the writing rules alone. The
+worker and the planner check the charter at startup, and stop when it is
+missing or empty. The reviewer's prompt applies rule 2: a finding either
+blocks the merge or is a follow-up, and it says which (Review loop).
+
+### Where this stands
+
+Built: the supervisor's fixed rules and remedies, the record of every
+decision, the goal's `auto_merge`, operator takeover, hard spend limits.
+For rule 3: a conflict is resolved before a review, a commit that passed
+review is not reviewed again, and a conflict fix has its own limit, apart
+from the fix rounds for findings (Review loop). For rule 2: the reviewer
+marks each finding blocking or not, and one it marks as a follow-up does
+not hold the merge. The charter closes every deciding prompt.
+
+Not built yet, in the order planned:
+
+1. Follow-up findings are filed as issues under the goal (rule 2). Today
+   they are posted on the pull request, marked as follow-ups.
+2. The Task Shepherd's panel on a task's page: its name and mark, the
+   ranked actions worked out by the service from the pull request's real
+   state, in place of the failure message the console works out itself.
+   The Goal Planner's panel gets its mark.
+3. A step that failed the same way twice is not repeated (rule 5), and a
+   review after a conflict fix reads only what the fix changed.
+4. A per-goal setting for how much is done without asking (rule 8).
+
 ## Architecture
 
 ```mermaid
@@ -1008,7 +1117,7 @@ loop:
    for is never a finding, and one it forbids, or a missing one it requires,
    is. A
    review after the first is given the round before's findings and summary
-   (prompt `review-v4`): it judges first whether each is fixed, then the fix,
+   (prompt `review-v5`): it judges first whether each is fixed, then the fix,
    and raises a new finding only for a bug, a failing check or a part of the
    task left undone, so rounds converge. Its summary begins with how many of
    those findings are fixed, not fixed and new. Every review is shown the
@@ -1033,7 +1142,18 @@ loop:
    changed line, or that the round before raised too (the same file, within
    15 lines) still holds the merge, and so does every finding when the
    change cannot be read whole. A round whose findings are all follow-ups is
-   clean. A fix run's summary is added to the open pull request's
+   clean.
+   The reviewer also sorts its own findings (prompt `review-v5`, behind the
+   `review-merge-bar` patch). It judges the pull request by one test: is
+   the main branch better with it merged as it is than without it? A
+   finding blocks only when it fails that test. Any other is a follow-up:
+   `submit_review` takes `blocking: false` on it, and the loop treats it
+   like the follow-ups above, posted and counted apart and sent to no fix
+   run. A finding with no mark blocks. The tool refuses a `changes`
+   verdict with no blocking finding, and a `clean` one may list
+   follow-ups. So a rule of thumb in the code, which can always be given
+   one more case it misses, is raised once and does not hold the pull
+   request round after round. A fix run's summary is added to the open pull request's
    description as a `Fix round <n>` section, once, so what a fix run is asked
    to explain there (why it changed a file outside the task's paths) is
    where the next review reads it. A fix run that leaves no usable summary
@@ -1165,6 +1285,32 @@ back to the checks and a new review like any other. A merge asked for again, by 
 operator or the supervisor, that meets a conflict starts with this fix run,
 before any review (behind the `conflict-first` patch). Branch protection or
 any other refusal ends the task `ready` with GitHub's reason.
+
+A clean review is kept (behind the `base-before-review` and
+`clean-review-stands` patches). The task behind one pull request passed
+review four times and never merged: each review read a branch that already
+conflicted with its base, the conflict was found only at the merge, its fix
+run was reviewed in full again, and a retry reviewed the very commit a
+review had just passed. So three things hold now:
+
+- Before each review the loop brings the base into the branch
+  (`bring_base`, `run_service/base_activities.py`). A base that merges in
+  cleanly gives a new head, whose checks and review follow. One that does
+  not is a conflict fix run, before any review. A clean review is then of
+  a commit that holds the base, and merges at once unless the base moved
+  while it was read.
+- Conflict fix runs are counted apart from the fix rounds for findings
+  and failed checks, up to the task policy's `max_rounds` of each. So a
+  base that keeps moving cannot use up the rounds the findings need. A
+  loop its conflict fixes did not settle ends `review_unresolved` with
+  "the pull request conflicts with its base, and N conflict fix runs did
+  not resolve it", after the clean verdict when there was one.
+- A retried task whose pull request is still at the commit its last
+  review passed is not reviewed again. `resume_state` reads the last
+  `pull_request_reviewed` event, and when its verdict is clean at the
+  pull request's head, the loop starts with that verdict standing: the
+  checks run and it merges, or ends `ready` when its goal does not merge
+  by itself. When the event cannot be read, the pull request is reviewed.
 
 Nothing merges onto a broken base (#202). Before a merge, the workflow reads
 the checks on the base branch's newest commit (`base_health`). While one has
@@ -1369,7 +1515,7 @@ It is done three times. First in the prompt: every prompt whose answer a
 person reads ends with the same short block of writing rules
 (`src/meta_harness/outbound/rules.py`), so the text comes out clean and the
 rewrite below rarely runs. That is each run prompt above a summary, a review
-or a plan's issues (`repo-task-v2`, `fix-v2`, `review-v4`, `plan-v1`), and
+or a plan's issues (`repo-task-v2`, `fix-v2`, `review-v5`, `plan-v1`), and
 each model call the control plane makes itself through the HTTP Gateway's
 `/v1/structured`: a goal's updates, a plan's suggested fixes, a goal's draft
 and name, an issue's sizing, a split's parts, a task's name, a failure's
@@ -1481,6 +1627,41 @@ squash merge, where they follow the `Version:` line. The
 task page's details show the newest of each as a Provenance row. Nothing
 already posted is changed. A local repo's merge only moves its base, so it
 makes no commit and carries no trailers.
+
+### Run provenance
+
+Each run of a Task API task carries a record of where it came from, built
+by the RunTask workflow from what the control plane holds and never from the
+run's output (`src/meta_harness/run_service/run_provenance.py`): the task, its
+goal, its issue (`external_ref`), its parent task and type, the run's number,
+kind (`task`, `review`, `fix`), pair, template and route tier, the run it
+follows (the task's run before it, earlier workflows' runs included when the
+task resumes; none for the first run or for each of several attempts made at
+once), and its `workflow`, 1 for the task's first RunTask workflow and one
+more for each time it was sent back.
+
+- `record_prompt` appends it as `run_provenance` just before the run's
+  `run_prompt`, with a stable event id that includes the workflow, since a
+  task sent back with no pull request numbers its runs from 1 again. A record
+  whose run is not one of its task's runs, or whose earlier run is not an
+  earlier run of the same task, is logged as an error and not appended; the
+  run still starts.
+- The Publish activity writes it under the pull request description's Run
+  heading (task, goal, issue, parent task, the run it follows, and the
+  workflow when it is not the first). The commit message's trailers add
+  `Meta-Harness-Issue` before the commit's own provenance trailers (see
+  Provenance above), and the record's goal fills their `Meta-Harness-Goal`
+  and the description's provenance line. A fix run that pushes to the open pull request
+  adds its own run lines and provenance to the description under
+  `Run for fix round <n> (<run id>)`, once however often Publish is retried.
+- A task sent back may run its next workflow under its other id (`run-task-<id>`
+  or `<id>`): a run that follows one of the other id's runs still follows a run
+  of the same task, and its earlier run must still have a lower number.
+
+The record is built from the task the workflow loads and passed as activity
+input, so it changes no activity a workflow runs. A workflow already running
+when it deployed records it for its later runs, without the issue and parent
+task, which the task it loaded then did not carry.
 
 ### Sequences
 
@@ -2242,13 +2423,13 @@ walks every remedy `decide` can name and fails one with no module.
 |---|---|---|---|
 | `recover` | A task with no workflow behind it | Queues it again where its pull request stands, with what it spent carried over; cancels one asked to cancel | The Task API's recovery cap |
 | `end_at_pull_request` | A parked task whose pull request merged or closed, which no sweep covers | Closes or cancels it to match | — |
-| `merge` | A ready task of an auto-merge goal that the code host would merge, or that conflicts | Sends it back for its merge | The task's drives |
-| `review` | A task whose checks failed after its review | Sends it back through the review loop | The task's drives |
+| `merge` | A ready task of an auto-merge goal that the code host would merge, or that conflicts; or an unresolved one of such a goal whose review came back clean, kept from merging only by a conflict with its base (`review_clean_conflict`) | Sends it back for its merge: a conflict gets a fresh set of fix rounds first, and the merge waits for a clean review | The task's drives |
+| `review` | A task whose checks failed after its review; or, for a goal that does not merge by itself, an unresolved task whose review came back clean and only a conflict kept from merging | Sends it back through the review loop | The task's drives |
 | `retry` | A task that failed on the system's side | Runs it again after a wait that grows each try | The task's drives |
 | `cancel_for_goal` | An unstarted task of an ended goal | Cancels it | — |
 | `wait` | A pull request whose checks have not reported | Nothing this pass | — |
 | `retry_stronger` | A task that failed on its own account (it could not finish the work), whose last route was below the complex tier | Runs it again with `complexity: high`, so its route is the complex tier: a stronger model and the careful profile | The task policy's `remedies.retry_stronger` (1) |
-| `fix_again` | A review its fix rounds did not settle, on a swept goal | Sends it back through its review loop with `complexity: high`: a fresh set of fix rounds, on the complex tier | The task policy's `remedies.fix_again` (1) |
+| `fix_again` | A review its fix rounds did not settle, on a swept goal, when its last review was not clean | Sends it back through its review loop with `complexity: high`: a fresh set of fix rounds, on the complex tier | The task policy's `remedies.fix_again` (1) |
 | `auto_split` (planner) | An open issue of an active goal the sweep held as too large, that no one split, ran anyway or made a task of | After the sweep, drafts the parts (`splits.draft`) and splits it as the Split button would (`split_issue.py`). Keyed in the ledger by the issue's `ref`; a try that fails counts, so it stops at its limit and the issue keeps its Split and Run anyway | The task policy's `remedies.auto_split` (1) |
 | `rerun_checks` (run service) | A pull request's head commit whose checks ended with a failed GitHub Actions job (`wait_checks`) | Re-runs the failed jobs of each such workflow run (`POST .../actions/runs/{id}/rerun-failed-jobs`, the GitHub App's Actions write permission) and waits on; one that passes counts as passed, one that fails again goes to its fix run. Stateless: a workflow run already past its attempts is not re-run. Never on a merge commit, where a re-run could deploy an old commit | The task policy's `remedies.rerun_checks` (1), counted by the workflow run's own attempt |
 | `raise_limit` | A running task held at its own spend limit (`budget_request` for `task`), whose next run needs at most twice that limit, when its goal's budget has room for the raise | Raises the task's spend limit to what the run needs, as an operator's Raise would. A goal's budget is never raised by a remedy | The task policy's `remedies.raise_limit` (1) |
@@ -2368,7 +2549,7 @@ credential.
 | POST | `/v1/tasks/{id}/budget` | Task service | An operator's answer to a running task held for budget (`waiting_on: budget`): `{"action": "raise", "max_usd": ...}` saves the task's new spend limit (above the old one; left out, the task only looks at its budget again) and `{"action": "end"}` ends it. The scheduler hands the answer to the task's workflow. `GET /v1/tasks?waiting=true` lists the tasks waiting on an operator, each held for budget with its `budget_request`: what it asks for, as numbers | built |
 | GET | `/v1/tasks/{id}/spend` | Task service | Where the task's money went: each of its runs, oldest first, with its kind (the task's own run, review or fix), candidate, turns, model calls, input, cached-input and output tokens, cost, and how it ended, from its `attempt_finished` and `run_finished` events, and their totals in all and by kind against the task's `max_usd`. A run's input tokens are every token its model read: the HTTP Gateway's `input_tokens` plus the run's cache writes, which that count leaves out, so the cached share is of the whole prompt. The totals also give `writing_usd`, what the writing pass's rewrites of the task's posts cost (its `writing_checked` events), which no spend limit counts, and `all_usd`, the runs' cost plus that: the task's figure on the Costs page. The Task page's Spend tab | built |
 | GET | `/v1/goals/{id}/spend` | Planner | Where the goal's money went: each of its tasks with what its runs spent in all and by kind of run, and its runs and turns, most expensive first, and the goal's total and its split by kind against its budget. Opened from the Goal page's spend line | built |
-| POST | `/v1/tasks/{id}/retry` | Task service | Send a `review_unresolved`, `failed` or `canceled` task back to `queued`, with `max_usd` as its new spend limit when given; its `retries` counts up and `task_retried` is recorded. The scheduler starts a new RunTask workflow for it (the one case a task id runs a second workflow, after the first has ended). With an open pull request the workflow resumes at the review loop, on the pull request's head, with fix rounds and spend counted from nothing and its runs numbered after the earlier ones; a pull request that has merged ends the task `closed`; with none, or one closed unmerged, it makes a new first run | built |
+| POST | `/v1/tasks/{id}/retry` | Task service | Send a `review_unresolved`, `failed` or `canceled` task back to `queued`, with `max_usd` as its new spend limit when given, and with `complexity: "high"` its next runs on the complex tier, a stronger model; its `retries` counts up and `task_retried` is recorded. The scheduler starts a new RunTask workflow for it (the one case a task id runs a second workflow, after the first has ended). With an open pull request the workflow resumes at the review loop, on the pull request's head, with fix rounds and spend counted from nothing and its runs numbered after the earlier ones; a pull request that has merged ends the task `closed`; with none, or one closed unmerged, it makes a new first run | built |
 | POST | `/v1/tasks/{id}/merge` | Task service | Ask for a `ready` or `review_unresolved` task's pull request to be merged: back to `queued` with `resume: merge`, and its new workflow merges through the merge queue whatever the goal's `auto_merge` says, then waits for the merge commit's checks. A head that moved goes through checks, review and fixes first. A conflict goes first to the fix run that resolves it, then through checks and review. Either way the operator's request stands: once those come back clean it merges, whatever `auto_merge` says | built |
 | POST | `/v1/tasks/{id}/clear` | Task service | Take a `ready` or `review_unresolved` task off the list: `closed` when its pull request's merge is recorded, else `canceled`, with the reason naming the pull request and who cleared it. The pull request stays on GitHub | built |
 | POST | `/v1/tasks/{id}/status` | Task service | Set a task's status. Services only: the RunTask workflow and the planner | built |
@@ -2608,8 +2789,11 @@ After sizing:
   keep that reason and neither size nor split it again, and a second Split
   is refused (409). While a split is creating its issues, its claim
   (`split_into` empty) refuses Run anyway (409), so the original never
-  starts beside its smaller issues; once the split ends, Run anyway is open
-  again. Neither action takes an issue the goal removed (404) or one closed
+  starts beside its smaller issues; a split that created nothing lets the
+  claim go, and Run anyway is open again. An issue that was split is never
+  run anyway: the action is refused (409) and its card offers no button,
+  since a task of its own beside its parts does the same work twice. Two
+  originals were run that way on 2026-11-20, each beside all of its parts. Neither action takes an issue the goal removed (404) or one closed
   on GitHub since the last sweep (409): each reads the issue first, and
   records one it finds closed. A sweep that read the issue before a split began, and sized it
   small, looks at its link again under the row's lock just before it makes
@@ -3386,7 +3570,7 @@ Meta-harness services append through the event service client library:
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
 | Planner | Built: `goal_created`, `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume), `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line), `goal_drafted`, `goal_titled` with the model and its cost, `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created), `plan_requested` when a planning task starts (with the operator's note on a replan), `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is) and `plan_approved` with the issues created, `issue_sized` when an issue is sized before it becomes a task (its size, reasons, what it is missing and the suggested split, with the model and its cost), `issue_released` when an operator runs a held issue anyway and `issue_split` with the issues a held one was split into, `issue_joined` (with the issue's size and the spend limit it set, for a sized issue), `issue_refused`, `issue_closed`, `task_unblocked` and `goal_met` when a goal is met, on its own or by an operator. For a `ready` or `review_unresolved` task's pull request, which no workflow watches: `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`, on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason and the kind of hold, recorded when a task's reason is new or has changed. `kill_switch_changed` with the operator as actor |
-| Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v2` and `fix-v2`, or `repo-task-v1` and `fix-v1` before they asked for a marked summary, `review-v4` (`review-v3` before it showed the description), or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server. One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
+| Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch), which appends it at once rather than through the client outbox, with a stable event id, so it is stored, ahead of the run's own events, before `run_harness` starts: the run's `kind` (`task`, `review` or `fix`), its `template` (`repo-task-v2` and `fix-v2`, or `repo-task-v1` and `fix-v1` before they asked for a marked summary, `review-v5` (`review-v4` and `review-v3` before it), or `inline` for the caller's own text) and the filled-in `prompt` sent to the harness server, and just before it the run's `run_provenance` (Run provenance). One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
 | Meta-harness run service: RunTask Temporal workflow | Built: `pull_request_opened`, `pull_request_checks` for each head commit's checks, `pull_request_reviewed` for each review round (round, verdict, reviewer, reviewed head SHA, review URL; rounds are numbered over the task's life, so a resumed task's, or a merge fix's, follow the ones it had, behind the `resumed-rounds` patch), `writing_checked` for the writing pass on each pull request description, review and comment it posts (the planner records it for a plan's issues), `pull_request_summary` for the summary each pull request description and fix round holds (fix round, source `run`, `recorded` or `files`, heading, text), `pull_request_merged`, and `merge_checks` for the merge commit's checks (merge SHA, state, failed check names, fix round). The task service records `budget_hold` (the reason) when a running task starts waiting on an operator for budget, and `budget_decision` (`raise` with the new limit, or `end`) for the answer. A review run's findings are in its `review_submitted` harness event. Planned: `pull_request_closed` while the workflow watches the pull request, `review_started`, `task_taken_over`, `task_handed_back` and `takeover_closed` with the operator as actor, and `operator_review_claimed`, `operator_review_submitted` and `operator_review_released` with the operator as actor |
 | Pool manager | `lease_granted` (with `session_state`), `lease_released`, `session_saved`, `session_restored`, `sticky_handoff`, `sandbox_recycled`. The pool manager lease record names the per-run sandbox for each run. |
@@ -3487,6 +3671,16 @@ Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
+Help (`console/src/features/help`, at `/help`) is the last entry of the
+left pane and opens to its topics, in reading order: Why, First principles,
+The goal, Who is talking, How a stuck task gets moving, When it asks you and
+Spend limits. Each topic has its own address (`/help/<topic>`), and one that
+names no topic opens Help at its start. The text is fixed, in `topics.ts`,
+and follows Goal seeking above. It says only what the meta-harness does
+today: a rule that is not fully built is named as such on the page. The
+supervisor is the Task Shepherd wherever the console or a status reason
+names it to a person; the code, its routes and its events keep `supervisor`.
+
 The Costs page (`console/src/features/performance`, at `/costs`; it was
 named Performance, and `/performance` still leads to it) is what the
 meta-harness costs over time. Four figures head it for the chosen range: the
@@ -3569,7 +3763,22 @@ shown when asked for. A reason no rule knows says what was recorded and what
 to do next. Tasks that failed the same way are one message with one action
 (`FailureGroups.tsx`): "Retry all 6", not six copies of an error. This is
 what a goal's alert above its board shows, what the Overview's Needs you
-section shows above its table, and what a failed task's own alert shows. Each
+section shows above its table, and what a failed task's own alert shows. Where
+two or more failed tasks can be retried, the Overview offers one Retry all N
+tasks above them, after a confirm that says the most they can spend together.
+A message about one task also marks one way out as recommended, by fixed rules
+on the kind of failure and the task's tier (`nextSteps.ts`): for a review its
+fix rounds did not settle, or a run stopped at its turn limit, Retry with a
+stronger model, beside Retry with the same model. Once the task has run on the
+complex tier, the recommendation is the last review (read it, then merge or
+fix) or the profile's limit. An unsettled review also offers Merge as it is,
+after a confirm that says its findings stay unfixed. A review that came back
+clean and then met a conflict with its base, with no fix round left to
+resolve it, is no review problem: the loop records that ("came back clean …
+conflicts with its base"), a task page also reads it from the last
+`pull_request_reviewed` verdict for a task recorded before, and Merge is
+recommended, with no retry on a stronger model. The recommended action is
+always the first, filled button on the left. Each
 inbox item carries a line saying what to do; a pull request ready to merge
 links to the pull request itself. The Overview's numbers are links, each with
 a line saying what the number is made of: Needs you says how many failed, how
@@ -3644,7 +3853,9 @@ opens the Terminal on that run alone, with Show every run to bring the rest
 back. Each review round on the Reviews tab links to its own review run (Show
 review run) and, when it sent findings to a fix run, to that fix run.
 The Task page leads with its timeline. The task's facts (status and its
-reason, repo, issue, pull request, acceptance checks, turn and spend) are folded
+reason, repo, issue, pull request, acceptance checks, turn and spend, and
+each run's provenance from its `run_provenance`: its number and kind, the run
+it followed, its workflow, its pair, and the task that made this one) are folded
 behind one line that keeps the link to its goal, and open with Show details; a
 browser that leaves them open finds them open on the next task. The timeline's
 first figure, the time from the task's start, is set large and counted by the

@@ -15,12 +15,14 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from meta_harness import db
-from meta_harness.run_service import code_host, routing
+from meta_harness.run_service import code_host, events, routing
 from meta_harness.run_service.shared import Attempt, Candidate, PublishResult
 from meta_harness.run_service.task_activities import _task_api_error, _tasks
 from meta_harness.tasks.client import TaskApiError
 
 LOOP_TIERS = ("review", "fix")
+# Past any event's position: with it, a read returns the last events, newest last.
+LAST = 2**62
 
 
 @dataclass
@@ -32,6 +34,10 @@ class ResumeState:
     author: Candidate | None = None
     # The task's earlier runs, oldest first.
     attempts: list[Attempt] = field(default_factory=list)
+    # The commit the task's last review passed, and that verdict in words, or "" when its last review asked
+    # for changes or it has had none. A pull request still at that commit is not reviewed again.
+    clean_head: str = ""
+    clean: str = ""
 
 
 def _earlier_runs(task_id: str) -> list[Attempt]:
@@ -53,6 +59,23 @@ def _earlier_runs(task_id: str) -> list[Attempt]:
         )
         for row in rows
     ]
+
+
+def last_clean_review(task_id: str) -> tuple[str, str]:
+    """The commit the task's last review passed and that verdict in words, or ("", "") when its last review
+    asked for changes, it has had none, or the event service could not be read: the pull request is then
+    reviewed, which costs a review and loses nothing."""
+    try:
+        found = events.client().read(task_id=task_id, event_type="pull_request_reviewed", before_position=LAST, limit=1)
+    except Exception as err:  # noqa: BLE001 - unread is the same as none: the loop reviews
+        activity.logger.warning("resume_state: the last review of %s could not be read: %s", task_id, err)
+        return "", ""
+    last = (found.get("events") or [None])[-1]
+    payload = (last or {}).get("payload") or {}
+    head = str(payload.get("head_sha") or "")
+    if payload.get("verdict") != "clean" or not head:
+        return "", ""
+    return head, f"review round {payload.get('round')} by {payload.get('reviewer')} came back clean at {head[:12]}"
 
 
 def author_of(attempts: list[Attempt]) -> Candidate | None:
@@ -90,4 +113,12 @@ async def resume_state(task_id: str) -> ResumeState:
         pr_url=pr_url,
         created=False,
     )
-    return ResumeState(pr_state=state, published=published, author=author_of(attempts), attempts=attempts)
+    clean_head, clean = await asyncio.to_thread(last_clean_review, task_id)
+    return ResumeState(
+        pr_state=state,
+        published=published,
+        author=author_of(attempts),
+        attempts=attempts,
+        clean_head=clean_head,
+        clean=clean,
+    )
