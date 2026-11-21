@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Anchor, Button, Group, Text } from "@mantine/core";
-import { IconArrowBackUp } from "@tabler/icons-react";
+import { IconArrowBackUp, IconGitMerge } from "@tabler/icons-react";
 import { api, issueUrl, trackerTitle, type Task } from "../../api";
 import { ConfirmButton } from "../../components/ConfirmButton";
 import { usd } from "../../money";
 import type { Diagnosis } from "./diagnosis";
+import { nextSteps } from "./nextSteps";
 
 // The actions a diagnosis offers, where its message is shown: Retry for the tasks it covers (all of them at
 // once when several failed the same way), and links to the task, the issue and Configuration.
@@ -84,29 +85,37 @@ export function RetryAll({ plan, onChanged }: { plan: { id: string; limit: numbe
   );
 }
 
-export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, onChanged }: {
+export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, steps, onChanged }: {
   diagnosis: Diagnosis;
   // The tasks the diagnosis covers, which Retry sends back to the queue.
   tasks: Pick<Task, "id" | "max_usd">[];
   // False when the tasks cannot be retried from here (one held for budget is answered on its page).
   retry?: boolean;
   issueRef?: string;
+  // One task's facts, for its recommended way out (nextSteps.ts): a stronger model, a merge as it is, or the
+  // last review. Left out where the message covers several tasks.
+  steps?: { status: string | null; complexity?: string | null; pr_url?: string | null };
   onChanged?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [merged, setMerged] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(0);
   const more = diagnosis.remedies.includes("retry_more");
   const retries = mayRetry && (more || diagnosis.remedies.includes("retry")) && tasks.length > 0;
   const url = issueRef ? issueUrl(issueRef) : null;
 
-  async function retry() {
+  const single = steps && tasks.length === 1 ? nextSteps(diagnosis, steps) : null;
+  const recommended = single?.recommended ?? null;
+  const mark = (step: string) => (recommended === step ? " (recommended)" : "");
+
+  async function retry(stronger = false) {
     setBusy(true);
     setError(null);
     let retried = 0;
     try {
       for (const task of tasks) {
-        await api.retryTask(task.id, retryLimit(task, more));
+        await api.retryTask(task.id, retryLimit(task, more), stronger);
         retried += 1;
       }
     } catch (err) {
@@ -118,7 +127,23 @@ export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, o
     }
   }
 
-  const label = tasks.length > 1 ? `Retry all ${tasks.length}` : more ? `Retry with $${retryLimit(tasks[0] ?? {}, true).toFixed(2)}` : "Retry";
+  async function merge() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.mergeTask(tasks[0].id);
+      setMerged(true);
+    } catch (err) {
+      setError(`The merge was not asked for: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+      onChanged?.();
+    }
+  }
+
+  const plain = tasks.length > 1 ? `Retry all ${tasks.length}` : more ? `Retry with $${retryLimit(tasks[0] ?? {}, true).toFixed(2)}` : "Retry";
+  const label = single?.stronger ? "Retry with the same model" : plain;
+  const sent = done === tasks.length;
   const raisesManyLimits = more && tasks.length > 1;
   const total = raisesManyLimits ? tasks.reduce((sum, task) => sum + retryLimit(task, true), 0) : 0;
   return (
@@ -137,10 +162,32 @@ export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, o
           onConfirm={() => retry()}
         />
       )}
-      {retries && !raisesManyLimits && (
-        <Button size="compact-sm" variant="filled" loading={busy} disabled={done === tasks.length} leftSection={<IconArrowBackUp size={14} />} onClick={() => void retry()}>
-          {done === tasks.length ? "Sent back to the queue" : label}
+      {retries && single?.stronger && (
+        <Button size="compact-sm" variant={recommended === "stronger" ? "filled" : "default"} loading={busy} disabled={sent} leftSection={<IconArrowBackUp size={14} />} onClick={() => void retry(true)}>
+          {sent ? "Sent back to the queue" : `Retry with a stronger model${mark("stronger")}`}
         </Button>
+      )}
+      {retries && !raisesManyLimits && !(single?.stronger && sent) && (
+        <Button size="compact-sm" variant={recommended ? "default" : "filled"} loading={busy} disabled={sent} leftSection={<IconArrowBackUp size={14} />} onClick={() => void retry()}>
+          {sent ? "Sent back to the queue" : label}
+        </Button>
+      )}
+      {single?.merge && (
+        <ConfirmButton
+          size="compact-sm"
+          variant="default"
+          loading={busy}
+          disabled={merged || sent}
+          leftSection={<IconGitMerge size={14} />}
+          label={merged ? "Merge asked for" : "Merge as it is"}
+          title="Merge as it is?"
+          says="The last review's findings stay unfixed. If the pull request conflicts with main, a fix run resolves that first, and the merge waits for a clean review."
+          confirm="Merge as it is"
+          onConfirm={() => merge()}
+        />
+      )}
+      {single?.merge && steps?.pr_url && /^https?:/.test(steps.pr_url) && (
+        <Anchor href={steps.pr_url} target="_blank" size="sm" fw={recommended === "review" ? 600 : undefined}>Read the last review{mark("review")}</Anchor>
       )}
       {diagnosis.remedies.includes("task") && tasks.length === 1 && (
         <Anchor component={Link} to={`/tasks/${tasks[0].id}`} size="sm">Open the task</Anchor>
@@ -150,9 +197,10 @@ export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, o
       )}
       {diagnosis.remedies.includes("config") && (
         <Anchor component={Link} to={`/config?kind=${CONFIG_TAB[diagnosis.kind]?.[0] ?? "tiers"}`} size="sm">
-          Configuration, {CONFIG_TAB[diagnosis.kind]?.[1] ?? "Router tiers"}
+          Configuration, {CONFIG_TAB[diagnosis.kind]?.[1] ?? "Router tiers"}{mark("config")}
         </Anchor>
       )}
+      {retries && single && !sent && <Text size="xs" c="dimmed">Each retry can spend up to {usd(retryLimit(tasks[0], more))}.</Text>}
       {error && <Text size="xs" c="red">{error}</Text>}
     </Group>
   );

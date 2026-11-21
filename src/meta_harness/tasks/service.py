@@ -118,6 +118,9 @@ class VerdictIn(BaseModel):
 class RetryIn(BaseModel):
     # The task's new spend limit, for the runs of its next workflow. Left out: the limit it has.
     max_usd: Decimal | None = Field(default=None, gt=0)
+    # high: the task's next runs route at least to the complex tier, a stronger model, as the supervisor's
+    # retry_stronger and fix_again remedies do. Left out: the tier its runs had.
+    complexity: Literal["high"] | None = None
 
 
 class RecoverIn(BaseModel):
@@ -398,11 +401,11 @@ def create_app(
             )
         return {"message_id": queued["id"], "when": queued["deliver"]}
 
-    def requeue(task_id: str, action: str, max_usd: Decimal | None, who: Caller) -> dict:
+    def requeue(task_id: str, action: str, max_usd: Decimal | None, who: Caller, complexity: str | None = None) -> dict:
         try:
             with app.state.pool.connection() as conn:
                 visible(store.get(conn, task_id), who)
-                task, previous = store.requeue(conn, task_id, action, max_usd, who.actor)
+                task, previous = store.requeue(conn, task_id, action, max_usd, who.actor, complexity)
         except store.NotFound as err:
             raise HTTPException(status_code=404, detail="no such task") from err
         except store.TaskError as err:
@@ -416,9 +419,10 @@ def create_app(
     def retry(task_id: str, body: RetryIn | None = None, who: Caller = Depends(caller)) -> dict:
         """Send a review_unresolved, failed or canceled task back to the queue. With a pull request it resumes
         at the review loop (or closes, when the pull request has merged); without one it starts a new first run.
-        Its runs start from nothing spent, against max_usd when given."""
-        within_ceiling((body or RetryIn()).max_usd)
-        return requeue(task_id, "retry", (body or RetryIn()).max_usd, who)
+        Its runs start from nothing spent, against max_usd when given. complexity high: on a stronger model."""
+        body = body or RetryIn()
+        within_ceiling(body.max_usd)
+        return requeue(task_id, "retry", body.max_usd, who, body.complexity)
 
     @app.post("/v1/tasks/{task_id}/merge", status_code=202)
     def merge(task_id: str, who: Caller = Depends(caller)) -> dict:

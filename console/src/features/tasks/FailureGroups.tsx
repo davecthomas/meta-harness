@@ -19,6 +19,9 @@ export interface FailedItem {
   waitingOn?: string | null;
   refused?: string | null;
   max_usd?: string | null;
+  // For one task's recommended way out (nextSteps.ts).
+  complexity?: string | null;
+  prUrl?: string | null;
 }
 
 export interface FailureGroup {
@@ -65,6 +68,7 @@ function Failure({ group, onChanged }: { group: FailureGroup; onChanged?: () => 
           tasks={retryable.length ? retryable : single?.taskId ? [{ id: single.taskId, max_usd: single.max_usd }] : []}
           retry={retryable.length > 0}
           issueRef={single?.issueRef}
+          steps={single?.taskId ? { status: single.status, complexity: single.complexity, pr_url: single.prUrl } : undefined}
           onChanged={onChanged}
         />
         {diagnosis.detail && (
