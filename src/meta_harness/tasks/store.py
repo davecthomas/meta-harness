@@ -527,7 +527,7 @@ def drive(
         elif not row["pr_url"]:
             raise TaskError("the task has no pull request")
         if counted and row["drives"] >= MAX_DRIVES:
-            raise TaskError(f"the supervisor has already sent the task back {row['drives']} times")
+            raise TaskError(f"the Task Shepherd has already sent the task back {row['drives']} times")
         what = {
             "merge": "asked for its merge",
             "review": "sent it back through its review loop",
@@ -541,7 +541,7 @@ def drive(
             "complexity = coalesce(%s, complexity), "
             f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
             (
-                f"{why}, so the supervisor {what} "
+                f"{why}, so the Task Shepherd {what} "
                 + (f"(try {row['drives'] + 1} of {MAX_DRIVES})" if counted else "(not one of its tries)"),
                 resume,
                 1 if counted else 0,
@@ -581,7 +581,7 @@ def recover(conn: psycopg.Connection, task_id: str, why: str, spent_usd: Decimal
             )
         else:
             status, resume = "queued", ("review" if row["pr_url"] else None)
-            reason = f"{why}, so the supervisor sent it back to the queue (recovery {row['recoveries'] + 1})"
+            reason = f"{why}, so the Task Shepherd sent it back to the queue (recovery {row['recoveries'] + 1})"
         recovered = 1 if status == "queued" else 0
         cur.execute(
             "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, waiting_on = NULL, "
