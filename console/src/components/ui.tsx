@@ -57,7 +57,7 @@ export function ErrorAlert({ error, remedy }: { error: string | null; remedy?: R
           signedOut ? (
             <Group gap="xs">
               <Button size="compact-sm" variant="white" color="red" onClick={() => window.dispatchEvent(new Event(SIGNED_OUT))}>Sign in again</Button>
-              <Text size="xs">You come back to this page after.</Text>
+              <Text size="xs">After you sign in, you return to this page.</Text>
             </Group>
           ) : (
             <Group gap="xs">
@@ -68,7 +68,7 @@ export function ErrorAlert({ error, remedy }: { error: string | null; remedy?: R
                   has the warning that names it.
                 </Text>
               ) : (
-                <Text size="xs">If it fails again, ask an admin: the Logs page, which admins can open, has the warning that names it.</Text>
+                <Text size="xs">If it fails again, ask an admin to find its warning on the Logs page.</Text>
               )}
             </Group>
           )

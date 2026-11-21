@@ -897,7 +897,7 @@ def test_an_ended_task_with_no_pull_request_is_made_over_from_what_its_issue_say
         "Make the button ask first.",
     )
     assert made["acceptance_checks"] == ["npm test"] and made["retries"] == task["retries"] + 1
-    assert "made it over from its issue as it is now" in made["status_reason"]
+    assert "remade it from its issue's current text" in made["status_reason"]
 
     # One with a pull request keeps it and resumes at its review: the workflow starts over only if it was closed.
     api.post(

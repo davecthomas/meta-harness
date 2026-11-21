@@ -10,7 +10,7 @@ export function holdWords(held: Pick<TaskHold, "kind" | "reason" | "detail">): H
   const detail = held.detail ?? {};
   switch (held.kind) {
     case "repo_area":
-      return { line: "Another task is changing the same files. This one starts when it finishes.", short: "waits for a task on the same files", yours: false };
+      return { line: "Another task is changing the same files. This one starts when that task finishes.", short: "waits for a task on the same files", yours: false };
     case "goal_parallel":
       return { line: "Its goal already has as many tasks running as it allows. This one starts when one finishes.", short: "waits for a free slot", yours: false };
     case "system_parallel":

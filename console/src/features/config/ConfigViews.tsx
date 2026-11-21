@@ -208,7 +208,7 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
               <Text size="sm">
                 {(doc.remedies?.raise_limit ?? 1) === 0
                   ? "Off: a task at its spend limit waits for you"
-                  : `A task at its own spend limit is raised to what its next run needs, ${doc.remedies?.raise_limit ?? 1} time${(doc.remedies?.raise_limit ?? 1) === 1 ? "" : "s"}, before it waits for you. A raise goes up to twice the limit and stays within the goal's budget. A goal's budget is never raised for you.`}
+                  : `A task at its spend limit has the limit raised to what its next run needs, ${doc.remedies?.raise_limit ?? 1} time${(doc.remedies?.raise_limit ?? 1) === 1 ? "" : "s"}, before it waits for you. A raise goes up to twice the limit and stays within the goal's budget. A goal's budget is never raised for you.`}
               </Text>
             }
             changed={changed(s, ["remedies", "raise_limit"])}

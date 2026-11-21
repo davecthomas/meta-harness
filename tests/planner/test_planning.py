@@ -497,7 +497,7 @@ def test_the_plan_holds_a_decision_for_each_issue_the_new_tasks_the_summary_and_
         headers=OPERATOR,
     ).json()["plan"]
     assert edited["version"] == 2 and edited["summary"] == "Store, then the API."
-    assert f"{big}: is split, so it names the new tasks that replace it" in edited["invalid"]
+    assert f"{big}: is split, so name the new tasks that replace it" in edited["invalid"]
     assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 409
 
 

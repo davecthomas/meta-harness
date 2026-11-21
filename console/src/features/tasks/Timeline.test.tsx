@@ -48,7 +48,7 @@ test("a tool row opens to its arguments and output", () => {
 
 test("a hold of a kind the console knows reads as a sentence, with no paths or IDs", () => {
   const [item] = entries([ev("task_held", { reason: "repo area docs of o/r is held by t-1", kind: "repo_area" })]);
-  expect(item.kind === "status" && item.text).toBe("Waiting: Another task is changing the same files. This one starts when it finishes.");
+  expect(item.kind === "status" && item.text).toBe("Waiting: Another task is changing the same files. This one starts when that task finishes.");
 });
 
 test("the scheduler's hold and its admission show as items", () => {

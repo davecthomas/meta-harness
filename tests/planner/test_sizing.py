@@ -837,7 +837,7 @@ def test_an_outsiders_issue_waits_for_an_operator_and_its_task_carries_no_hidden
     assert swept["held"] == [ref] and _task(tasks, ref) is None
     assert sizer.calls == [], "an outsider's text is not sent to the sizer either"
     held = _shown(client, goal)[ref]["held_reason"]
-    assert held.startswith("opened by mallory, who has no write access") and "then Run anyway" in held
+    assert held.startswith("opened by mallory, who has no write access") and "then use Run anyway" in held
 
     ran = client.post(f"/v1/goals/{goal['id']}/issues/run-anyway", json={"ref": ref}, headers=OPERATOR)
     assert ran.status_code == 200, ran.text

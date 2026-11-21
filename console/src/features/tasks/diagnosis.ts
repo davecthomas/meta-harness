@@ -131,7 +131,7 @@ const RULES: Rule[] = [
     write: () => ({
       summary: "The sandbox or harness of the task's run stopped",
       cause: "The run ended on an infrastructure error (the sandbox, the harness server or a worker restart), not on the task's work.",
-      fix: "Retry the task. Its page links the warnings and errors logged for it if it fails again.",
+      fix: "Retry the task. If it fails again, its page links the warnings and errors logged for it.",
       remedies: ["retry", "task"],
     }),
   },
@@ -141,7 +141,7 @@ const RULES: Rule[] = [
     write: (m) => ({
       summary: `The review still asked for changes after ${m[1]} fix rounds`,
       cause: "The pull request is open, and the last review's findings are not fixed. The review loop stops there to cap what the task spends.",
-      fix: "Read the last review on the task's page. Then merge it as it is, retry for another set of rounds, or fix the findings on the branch yourself.",
+      fix: "Read the last review on the task's page. Then merge the pull request as it is, retry for another set of rounds, or fix the findings on the branch yourself.",
       remedies: ["task", "retry"],
     }),
   },

@@ -108,7 +108,7 @@ def candidate(engine: str, model: str) -> Candidate:
         raise CandidateError(f"{label} is malformed: write harness:<profile>/<engine>:<model>")
     known = profiles()
     if profile_name not in known:
-        raise CandidateError(f"{label} names harness profile {profile_name}, which the harness profiles lack")
+        raise CandidateError(f"{label} names harness profile {profile_name}, which is not among the harness profiles")
     profile = {"name": profile_name, **known[profile_name]}
     profile["image"] = profile.get("image") or DEFAULT_IMAGE
     return Candidate(label=label, profile_name=profile_name, engine=inner_engine, model=inner_model, profile=profile)

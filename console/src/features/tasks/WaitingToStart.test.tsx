@@ -47,7 +47,7 @@ test("a task waiting on another's files names that task by its title, never by I
   const notice = show({ ...QUEUED, pr_url: "https://github.com/o/r/pull/9", held: hold("repo_area", "repo area src/api/tasks.py of o/r is held by t-a", { holders: ["t-a"], paths: ["src/api/tasks.py"], held_paths: ["src/api"] }) });
   expect((await screen.findByRole("link", { name: "Profile image picker" })).getAttribute("href")).toBe("/tasks/t-a");
   expect(notice?.textContent).toContain("Waiting its turn");
-  expect(notice?.textContent).toContain("Another task is changing the same files. This one starts when it finishes.");
+  expect(notice?.textContent).toContain("Another task is changing the same files. This one starts when that task finishes.");
   expect(notice?.textContent).toContain("Nothing for you to do.");
   expect(notice?.textContent).not.toMatch(/src\/api|t-a|scheduler/);
 });
