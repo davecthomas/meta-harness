@@ -320,6 +320,18 @@ def test_a_retry_sends_an_ended_task_back_to_the_queue_to_resume_at_its_pull_req
     assert ("task_status_changed", {"from": "review_unresolved", "to": "queued", "reason": "ops retried it"}) in kinds
 
 
+def test_a_retry_may_ask_for_a_stronger_model_and_a_plain_retry_keeps_the_tier_the_task_has(api):
+    task = _ended(api, "review_unresolved")
+
+    stronger = api.post(f"/v1/tasks/{task['id']}/retry", json={"complexity": "high"}, headers=_as(CALLER_KEY))
+
+    assert stronger.status_code == 202
+    body = stronger.json()
+    assert (body["complexity"], body["status_reason"]) == ("high", "ops retried it with a stronger model")
+    unknown = api.post(f"/v1/tasks/{task['id']}/retry", json={"complexity": "huge"}, headers=_as(CALLER_KEY))
+    assert unknown.status_code == 422
+
+
 def test_a_failed_task_with_no_pull_request_retries_from_a_new_first_run_and_a_canceled_one_is_uncanceled(api):
     task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
     api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))

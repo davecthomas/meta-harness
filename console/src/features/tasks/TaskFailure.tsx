@@ -32,7 +32,7 @@ export function TaskFailure({ task, status, events, onChanged }: { task: Task; s
             <Text size="sm" fw={600}>{diagnosis.summary}</Text>
             <Text size="sm">{diagnosis.cause}</Text>
             <Text size="sm"><Text span fw={600}>What to do:</Text> {diagnosis.fix}</Text>
-            <Remedies diagnosis={{ ...diagnosis, remedies: diagnosis.remedies.filter((r) => r !== "task") }} tasks={[task]} issueRef={task.external_ref} onChanged={onChanged} />
+            <Remedies diagnosis={{ ...diagnosis, remedies: diagnosis.remedies.filter((r) => r !== "task") }} tasks={[task]} issueRef={task.external_ref} steps={{ status, complexity: task.complexity, pr_url: task.pr_url }} onChanged={onChanged} />
             {diagnosis.detail && <Text size="xs" c="dimmed" ff="monospace" style={{ wordBreak: "break-word" }}>{diagnosis.detail}</Text>}
           </>
         )}

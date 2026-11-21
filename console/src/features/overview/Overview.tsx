@@ -34,7 +34,7 @@ export function Overview() {
   // rest of the list follows, each item once.
   const broken = (items ?? []).filter((i) => i.task && ["failed", "review_unresolved"].includes(i.task.status) && !i.task.waiting_on);
   const failed = groupFailures(
-    broken.map(({ task }) => ({ key: task!.id, name: task!.title, taskId: task!.id, issueRef: task!.external_ref, status: task!.status, reason: task!.status_reason, max_usd: task!.max_usd })),
+    broken.map(({ task }) => ({ key: task!.id, name: task!.title, taskId: task!.id, issueRef: task!.external_ref, status: task!.status, reason: task!.status_reason, max_usd: task!.max_usd, complexity: task!.complexity, prUrl: task!.pr_url })),
   );
   const rest = (items ?? []).filter((i) => !broken.includes(i));
 

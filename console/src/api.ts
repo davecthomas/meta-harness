@@ -121,6 +121,8 @@ export interface Task {
   cancel_requested: boolean;
   goal_id: string | null;
   pr_url: string | null;
+  // high: its runs route at least to the complex tier, a stronger model. Null: the tier its issue gave it.
+  complexity?: string | null;
   acceptance_checks: string[];
   created_at: string;
   updated_at: string;
