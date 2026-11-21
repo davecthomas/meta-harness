@@ -31,7 +31,7 @@ def _open(state: str = "open") -> ResumeState:
     return ResumeState(pr_state=state, published=published, author=AUTHOR, attempts=list(EARLIER))
 
 
-async def _resume(env, script: Script, resume: str, state: ResumeState, goal_id: str = "", record: str = ""):  # noqa: F811
+async def _resume(env, script: Script, resume: str, state: ResumeState, goal_id: str = "", record: str = "", extra=()):  # noqa: F811
     statuses: list[TaskStatusRequest] = []
 
     @activity.defn(name="load_task")
@@ -64,7 +64,7 @@ async def _resume(env, script: Script, resume: str, state: ResumeState, goal_id:
 
     base = [*script.activities(), *_task_activities(True, goal_id)]
     kept = [a for a in base if _Definition.from_callable(a).name not in ("load_task", "set_task_status")]
-    activities = [*kept, load_task, resume_state, set_task_status]
+    activities = [*kept, load_task, resume_state, set_task_status, *extra]
     async with Worker(env.client, task_queue=QUEUE, workflows=[RunTask], activities=activities):
         handle = await env.client.start_workflow(
             RunTask.run, RunTaskInput(task="", repo="", task_id="t-1"), id=f"run-task-t-1-{resume}", task_queue=QUEUE
@@ -110,6 +110,25 @@ async def test_a_retried_task_whose_pull_request_was_closed_starts_a_new_first_r
     assert result.outcome == "clean"
     assert [r.prompt for r in script.runs][1:] == ["review"] and script.runs[0].prompt != "review"
     assert script.runs[0].run_id.endswith(":run-4")
+
+
+async def test_a_task_started_over_closes_its_pull_request_and_runs_fresh_from_the_base(env):  # noqa: F811
+    from meta_harness.run_service.restart_activities import RestartRequest
+
+    closed: list[RestartRequest] = []
+
+    @activity.defn(name="close_for_restart")
+    async def close_for_restart(request: RestartRequest) -> str:
+        closed.append(request)
+        return "closed the pull request, and deleted the branch mh/t-1"
+
+    script = Script(verdicts=[CLEAN])
+    result, _ = await _resume(env, script, "restart", _open(), extra=[close_for_restart])
+
+    assert [(c.pr_url, c.branch, c.task_id) for c in closed] == [(PR, "mh/t-1", "t-1")]
+    assert result.outcome == "clean"
+    assert script.runs[0].prompt != "review" and script.runs[0].run_id.endswith(":run-4"), "a new first run"
+    assert [r.prompt for r in script.runs][1:] == ["review"]
 
 
 async def test_a_merge_an_operator_asked_for_merges_whatever_the_goal_says_then_waits_on_its_checks(env):  # noqa: F811

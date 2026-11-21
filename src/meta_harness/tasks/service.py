@@ -411,9 +411,22 @@ def create_app(
         except store.TaskError as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
         emit_status(task, previous, who.actor)
+        if action == "restart":
+            restarted = {"max_usd": task["max_usd"], "retries": task["retries"], "pr_url": task.get("pr_url") or ""}
+            events.emit("task_restarted", restarted, task_id=task_id, actor=who.actor)
+            return task
         retried = {"action": action, "resume": task["resume"], "max_usd": task["max_usd"], "retries": task["retries"]}
         events.emit("task_retried", retried, task_id=task_id, actor=who.actor)
         return task
+
+    @app.post("/v1/tasks/{task_id}/restart", status_code=202)
+    def restart(task_id: str, body: RetryIn | None = None, who: Caller = Depends(caller)) -> dict:
+        """Start a task with a pull request over: back to the queue, where its workflow closes the pull request
+        with a comment, deletes its branch and runs the task fresh from the current base. From ready,
+        review_unresolved, failed or canceled. Its runs start from nothing spent, against max_usd when given."""
+        body = body or RetryIn()
+        within_ceiling(body.max_usd)
+        return requeue(task_id, "restart", body.max_usd, who, body.complexity)
 
     @app.post("/v1/tasks/{task_id}/retry", status_code=202)
     def retry(task_id: str, body: RetryIn | None = None, who: Caller = Depends(caller)) -> dict:

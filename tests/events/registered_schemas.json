@@ -1742,5 +1742,26 @@
       "findings"
     ],
     "additionalProperties": true
+  },
+  "task_restarted v1": {
+    "type": "object",
+    "properties": {
+      "max_usd": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "retries": {
+        "type": "integer"
+      },
+      "pr_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "retries"
+    ],
+    "additionalProperties": true
   }
 }

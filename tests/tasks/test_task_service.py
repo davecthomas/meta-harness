@@ -933,3 +933,20 @@ def test_an_ended_task_with_no_pull_request_is_made_over_from_what_its_issue_say
         "/v1/tasks", json=_task(external_ref=mine["external_ref"], title="Other words"), headers=_as(CALLER_KEY)
     ).json()
     assert (untouched["status"], untouched["title"]) == ("canceled", mine["title"])
+
+
+def test_a_task_with_a_pull_request_is_started_over_and_one_without_is_told_to_retry(api):
+    task = _ended(api, "review_unresolved")
+
+    restarted = api.post(f"/v1/tasks/{task['id']}/restart", json={"max_usd": "20"}, headers=_as(CALLER_KEY))
+
+    assert restarted.status_code == 202
+    body = restarted.json()
+    assert (body["status"], body["resume"], body["retries"]) == ("queued", "restart", 1)
+    assert body["status_reason"] == "ops started it over on the current base"
+
+    bare = api.post("/v1/tasks", json=_task(external_ref="github:o/r#901"), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{bare['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    api.post(f"/v1/tasks/{bare['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
+    refused = api.post(f"/v1/tasks/{bare['id']}/restart", headers=_as(CALLER_KEY))
+    assert refused.status_code == 409 and "retry it instead" in refused.json()["detail"]

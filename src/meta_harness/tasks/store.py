@@ -42,6 +42,9 @@ TERMINAL = {"closed", "failed", "canceled"}
 # The statuses an operator may retry a task from, and may ask for its pull request's merge from.
 RETRYABLE = ("review_unresolved", "failed", "canceled")
 MERGEABLE = ("ready", "review_unresolved")
+# A task with a pull request not worth finishing may be started over: its pull request is closed, and it runs
+# fresh from the current base.
+RESTARTABLE = ("ready", "review_unresolved", "failed", "canceled")
 COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
@@ -460,6 +463,8 @@ def requeue(
 ) -> tuple[dict, str]:
     """Sends a task whose workflow ended back to the queue, for a new RunTask workflow.
 
+    action restart: from ready, review_unresolved, failed or canceled, with a pull request; the workflow closes
+    the pull request, deletes its branch and starts a new first run from the current base.
     action retry: from review_unresolved, failed or canceled. A task with a pull request resumes at its review
     loop; one without starts with a new first run. action merge: from ready or review_unresolved, with a pull
     request; the workflow merges it and waits for the merge commit's checks. max_usd, when given, is the task's
@@ -468,18 +473,25 @@ def requeue(
     """
     if complexity is not None and complexity not in COMPLEXITIES:
         raise TaskError(f"complexity {complexity!r} is not one of {sorted(COMPLEXITIES)}")
-    allowed = RETRYABLE if action == "retry" else MERGEABLE
+    allowed = {"retry": RETRYABLE, "merge": MERGEABLE, "restart": RESTARTABLE}[action]
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT status, pr_url FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
         row = cur.fetchone()
         if row is None:
             raise NotFound(task_id)
         if row["status"] not in allowed:
-            raise TaskError(f"a {row['status']} task cannot be {'retried' if action == 'retry' else 'merged'}")
+            done = {"retry": "retried", "merge": "merged", "restart": "started over"}[action]
+            raise TaskError(f"a {row['status']} task cannot be {done}")
         if action == "merge" and not row["pr_url"]:
             raise TaskError("the task has no pull request to merge")
-        resume = "merge" if action == "merge" else ("review" if row["pr_url"] else None)
-        what = "asked for its pull request's merge" if action == "merge" else "retried it"
+        if action == "restart" and not row["pr_url"]:
+            raise TaskError("the task has no pull request to start over from: retry it instead")
+        resume = action if action in ("merge", "restart") else ("review" if row["pr_url"] else None)
+        what = {
+            "merge": "asked for its pull request's merge",
+            "restart": "started it over on the current base",
+            "retry": "retried it",
+        }[action]
         if complexity:
             what += " with a stronger model"
         cur.execute(

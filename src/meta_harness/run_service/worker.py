@@ -48,6 +48,7 @@ from meta_harness.run_service.base_activities import bring_base
 from meta_harness.run_service.budget_activities import budget_hold, goal_budget
 from meta_harness.run_service.prompt_activities import record_prompt
 from meta_harness.run_service.resume_activities import resume_state
+from meta_harness.run_service.restart_activities import close_for_restart
 from meta_harness.run_service.shared import TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE
 from meta_harness.run_service.task_activities import (
     load_task,
@@ -132,6 +133,7 @@ async def main() -> None:
             bring_base,
             post_comment,
             resume_state,
+            close_for_restart,
             deliver_message,
         ],
         # A cancel reaches an activity only in the reply to a heartbeat. The SDK holds

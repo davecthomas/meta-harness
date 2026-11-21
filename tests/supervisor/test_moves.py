@@ -25,7 +25,7 @@ def test_a_conflicting_pull_request_is_offered_resolve_and_merge_first_and_never
     decision = decide(STUCK)
 
     assert (decision.owner, decision.situation) == ("operator", "review_unresolved_conflict")
-    assert decision.moves == ("resolve_and_merge", "cancel")
+    assert decision.moves == ("resolve_and_merge", "start_over", "cancel")
     assert "conflicts with its base" in decision.reason and decision.ask.startswith("Resolve the conflict and merge")
     assert decision.saw == "4 of its 12 reviews passed, and the last left 2 findings open"
 
@@ -40,9 +40,9 @@ def test_the_supervisor_resolves_a_conflict_itself_while_it_has_tries():
 def test_an_unsettled_review_with_no_conflict_is_offered_a_stronger_model_first_while_one_has_not_tried():
     open_findings = dataclasses.replace(STUCK, mergeable="clean")
 
-    assert decide(open_findings).moves == ("retry", "merge_as_is", "cancel")
+    assert decide(open_findings).moves == ("retry", "merge_as_is", "start_over", "cancel")
     untried = decide(dataclasses.replace(open_findings, fix_again_left=True))
-    assert untried.moves == ("retry_stronger", "retry", "merge_as_is", "cancel")
+    assert untried.moves == ("retry_stronger", "retry", "merge_as_is", "start_over", "cancel")
 
 
 def test_a_review_that_passed_the_commit_the_pull_request_is_at_is_offered_its_merge():

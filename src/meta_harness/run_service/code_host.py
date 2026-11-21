@@ -667,6 +667,31 @@ async def comment_on_lines(
     return str(comment.get("html_url", ""))
 
 
+async def close_pull_request(
+    repo: str, number: int, body: str, branch: str, provenance: Provenance | None = None
+) -> str:
+    """Closes an open pull request with a comment saying why, and deletes its branch. Returns what was done.
+    One already closed gets no second comment, and a branch already gone is no error, so a repeat is harmless.
+    A merged pull request is left alone: its work is on the base."""
+    outbound.require(body, "a comment on a pull request", outbound.GITHUB)
+    pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
+    if pull.get("merged") or pull.get("merged_at"):
+        return "the pull request had merged, so it was left as it is"
+    did = []
+    if pull.get("state") == "open":
+        await comment(repo, number, body, provenance=provenance)
+        await _github(repo, REVIEW, "PATCH", f"/repos/{repo}/pulls/{number}", json={"state": "closed"})
+        did.append("closed the pull request")
+    try:
+        await _github(repo, WRITE_CODE, "DELETE", f"/repos/{repo}/git/refs/heads/{branch}")
+        did.append(f"deleted the branch {branch}")
+    except CodeHostError as err:
+        # 422 or 404: the branch is already gone.
+        if err.status not in (404, 422):
+            raise
+    return ", and ".join(did) or "the pull request was closed and its branch gone already"
+
+
 async def comment(repo: str, number: int, body: str, provenance: Provenance | None = None) -> str:
     """Posts a comment on the pull request's conversation, and returns its URL. With provenance, the comment
     ends with its provenance line."""
