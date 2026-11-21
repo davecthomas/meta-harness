@@ -76,7 +76,7 @@ test("the board shows a held issue's size and why it is held, and a gap on the c
   const held = within(attention).getByTestId("held-reason");
   expect(held.textContent).toContain("Not started: too large for one task");
   expect(within(held).getAllByRole("listitem").map((li) => li.textContent)).toEqual(expect.arrayContaining(["Edit titles", "Edit labels"]));
-  expect(held.textContent).toContain("Split makes those separate issues, which run in its place.");
+  expect(held.textContent).toContain("Split makes those separate issues, which run in place of this one.");
   expect(within(attention).getByRole("button", { name: "Run anyway" })).toBeTruthy();
   expect(within(attention).getByRole("button", { name: "Split" })).toBeTruthy();
   const queued = screen.getByTestId("column-queued");

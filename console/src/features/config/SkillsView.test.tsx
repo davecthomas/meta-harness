@@ -156,7 +156,7 @@ test("a repository, branch or tag, or path the list lacks is refused; an empty b
   expect(await screen.findByText("the default branch (main)")).toBeTruthy();
 
   fireEvent.keyDown(await pickFrom("Branch or tag", "nope"), { key: "Enter" });
-  expect(await screen.findByText(`${URL} has no branch or tag named nope: pick one from the list, or leave it empty for the usual`)).toBeTruthy();
+  expect(await screen.findByText(`${URL} has no branch or tag named nope: pick one from the list, or leave it empty for the default`)).toBeTruthy();
   await commit("Branch or tag", "");
 
   fireEvent.keyDown(await pickFrom("Path to the skill", "skills/plan"), { key: "Enter" });

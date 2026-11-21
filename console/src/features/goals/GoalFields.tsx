@@ -210,7 +210,7 @@ export function ParallelEdit({ goal, readOnly, save, system }: FieldProps & { sy
       input={({ value, onChange, invalid }) => (
         <NumberInput
           aria-label="Parallel tasks"
-          description={`${PARALLEL_HELP} It applies at the next admission pass.`}
+          description={`${PARALLEL_HELP} It applies the next time the goal starts tasks.`}
           placeholder={system ? `System setting: ${system}` : "System setting"}
           min={1}
           max={system ?? undefined}

@@ -1252,7 +1252,7 @@ class RunTask:
             how = "have failed" if health.state == "failed" else "are still running"
             if waited >= loop.merge_wait_minutes:
                 return (
-                    f"{what} {how} after {loop.merge_wait_minutes} minutes, so it was not merged onto them: "
+                    f"{what} {how} after {loop.merge_wait_minutes} minutes, so the pull request was not merged: "
                     "merge it once they pass"
                 )
             if not told and self._task_id:

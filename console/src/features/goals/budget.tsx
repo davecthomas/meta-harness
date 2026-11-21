@@ -188,7 +188,7 @@ export function ResumeBudget(props: {
               </Text>
               <NumberInput
                 label={`Raise the budget from ${usd(from)} to`}
-                description="What it has spent, plus what its issues not yet done are likely to cost. Change it if you like."
+                description="What it has spent, plus what its unfinished issues are likely to cost. Change it if you like."
                 prefix="$"
                 min={0}
                 decimalScale={2}

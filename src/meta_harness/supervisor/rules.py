@@ -142,7 +142,7 @@ def _failed(facts: Facts) -> Decision:
             return Decision(
                 "operator",
                 "failed_long_ago",
-                "the task failed on the system's side, not its own, longer ago than the supervisor retries by itself",
+                "the task failed on the system's side, not its own, too long ago for the supervisor to retry it by itself",
                 ask="Retry it if the work is still wanted: it should run now. Otherwise close its issue.",
             )
         if not facts.drives_left:
@@ -368,7 +368,7 @@ def _to_merge(facts: Facts) -> Decision:
         return Decision(
             "operator",
             "merge_blocked",
-            "its checks passed and the code host still refuses the merge: a rule on the branch wants something more",
+            "its checks passed and the code host still refuses the merge: a rule on the branch is not met yet",
             ask="Open the pull request: give the approval or lift the rule it names, then press Merge on the task's page.",
         )
     if how in ("checks_pending", "unknown"):

@@ -22,7 +22,7 @@ def reply_for(reason: str) -> str:
     """The comment that gives the reason, and what its reader can do."""
     return (
         f"The meta-harness has not started work on this issue: {reason.rstrip('.')}.\n\n"
-        "It reads the issue again every minute, so a change to the issue is picked up by itself. An operator "
+        "It reads the issue again every minute and picks up any change. An operator "
         "can also act on it from its goal's page in the meta-harness console."
     )
 

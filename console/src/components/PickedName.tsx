@@ -44,7 +44,7 @@ export function PickedName(props: PickedNameProps) {
         changed={props.changed}
         readOnly={props.readOnly}
         check={(draft: string) =>
-          listed && draft.trim() && !onList(known, draft) ? `${props.where} has no ${props.what} named ${draft.trim()}: pick one from the list, or leave it empty for the usual` : null
+          listed && draft.trim() && !onList(known, draft) ? `${props.where} has no ${props.what} named ${draft.trim()}: pick one from the list, or leave it empty for the default` : null
         }
         input={(draft) => (
           <Autocomplete

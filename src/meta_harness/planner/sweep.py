@@ -447,7 +447,7 @@ async def _take_in(
     if outside_author(issue) and not (existing or {}).get("run_anyway") and not (existing or {}).get("picked"):
         reason = (
             f"opened by {issue.author or 'someone'}, who has no write access to {issue.repo}: read the issue, "
-            "its raw text too, then Run anyway"
+            "including its raw text, then use Run anyway"
         )
         if not existing:
             await asyncio.to_thread(

@@ -238,7 +238,7 @@ def renew(conn: psycopg.Connection, task_id: str, task: NewTask, actor: str) -> 
             f"WHERE id = %s RETURNING {COLUMNS}",
             (
                 status,
-                f"{actor} made it over from its issue as it is now",
+                f"{actor} remade it from its issue's current text",
                 "review" if row["pr_url"] else None,
                 task.title,
                 task.description,

@@ -115,7 +115,9 @@ def locked_errors(skills: dict[str, Any]) -> list[str]:
     for name, skill in skills.items():
         source = skill.get("source") if isinstance(skill, dict) else None
         if name not in names and isinstance(source, dict) and source.get("locked"):
-            reasons.append(f"{name}: only a skill config/skills/{LOCKED_FILE} names is locked. Take locked out")
+            reasons.append(
+                f"{name}: only a skill named in config/skills/{LOCKED_FILE} can be locked. Remove locked from its source"
+            )
     return reasons
 
 
@@ -154,7 +156,7 @@ def skill_errors(name: str, skill: Any) -> list[str]:
         return [f"{name}: files must map each path to its text"]
     reasons = []
     if "SKILL.md" not in files:
-        reasons.append(f"{name}: a skill has a SKILL.md")
+        reasons.append(f"{name}: add a SKILL.md; every skill needs one")
     else:
         head = frontmatter(files["SKILL.md"])
         if head.get("name") != name:

@@ -133,8 +133,7 @@ def check_settings() -> None:
     names = config.get("names", [])
     if not isinstance(names, list) or not all(isinstance(name, str) and name.strip() for name in names):
         raise RuntimeError(
-            f"{CONFIG_PATH.name}: writing_pass.names must be a list of words, each a name here that the scanner "
-            "would otherwise count as a finding; use [] for none"
+            f"{CONFIG_PATH.name}: writing_pass.names must be a list of names the scanner should not count as findings; use [] for none"
         )
     tokens = config.get("max_response_tokens")
     if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:

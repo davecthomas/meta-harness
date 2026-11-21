@@ -34,7 +34,7 @@ test("someone who is not an admin is told who can read the logs, not sent to a p
       </MemoryRouter>
     </MantineProvider>,
   );
-  expect(screen.getByText(/ask an admin: the Logs page, which admins can open/)).toBeTruthy();
+  expect(screen.getByText(/ask an admin to find its warning on the Logs page/)).toBeTruthy();
   expect(screen.queryByRole("link")).toBeNull();
 });
 

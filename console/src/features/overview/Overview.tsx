@@ -61,7 +61,7 @@ export function Overview() {
       {error && (
         <ErrorAlert
           error={`Could not read what needs you: ${error}`}
-          remedy={<Text size="xs">It tries again in 30 seconds. What shows below is as it was last read, so it may be out of date.</Text>}
+          remedy={<Text size="xs">It tries again in 30 seconds. Until then, what shows below may be out of date.</Text>}
         />
       )}
       {failed.length > 0 && (

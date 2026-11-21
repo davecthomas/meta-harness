@@ -127,7 +127,7 @@ def _read(
         raise CloudCostError(f"BigQuery answered {response.status_code}: {response.text[:300]}")
     body = response.json()
     if not body.get("jobComplete", True):
-        raise CloudCostError("the billing query did not finish in time; the next harvest asks again")
+        raise CloudCostError("the billing query did not finish in time; the next read tries again")
     costs = []
     for row in body.get("rows") or []:
         day, service, usd = (cell.get("v") for cell in row["f"])

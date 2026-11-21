@@ -47,7 +47,7 @@ export function ReviewDialog(props: {
         {(props.reasons ?? []).length > 0 && (
           <Alert color="red" title="Not saved: this version would be refused" data-testid="review-refused">
             <List size="sm" spacing={4}>{props.reasons!.map((r) => <List.Item key={r}>{r}</List.Item>)}</List>
-            <Text size="sm" mt="xs">Go back to editing, fix what each names, and save again. Your changes are still here.</Text>
+            <Text size="sm" mt="xs">Go back to editing, fix each problem listed above, and save again. Your changes are still here.</Text>
           </Alert>
         )}
         <Text size="sm">What changes against version {props.version}, the active one:</Text>

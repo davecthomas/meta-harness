@@ -376,7 +376,7 @@ export function NewGoal() {
               <Group grow align="flex-start">
                 <NativeSelect
                   label="When the budget is reached"
-                  description="Stop: no more of its tasks start. Warn: it is recorded and shown, and the goal keeps going."
+                  description="Stop: no more of its tasks start. Warn: the overrun is recorded and shown, and the goal keeps going."
                   data={[{ value: "block", label: "Stop" }, { value: "warn", label: "Warn and keep going" }]}
                   value={budgetMode}
                   onChange={(e) => setBudgetMode(e.currentTarget.value as "block" | "warn")}
