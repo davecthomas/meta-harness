@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Checkbox, NumberInput, Stack, Text, TextInput, Textarea } from "@mantine/core";
+import { Badge, Checkbox, NumberInput, SegmentedControl, Stack, Text, TextInput, Textarea } from "@mantine/core";
 import { api, goalTitle, type Goal } from "../../api";
 import { goalSource } from "../trackers/refs";
 import { InlineEdit, InlineSwitch } from "./InlineEdit";
@@ -221,6 +221,41 @@ export function ParallelEdit({ goal, readOnly, save, system }: FieldProps & { sy
         />
       )}
     />
+  );
+}
+
+// How much the meta-harness does for the goal's tasks without asking: one choice of three, each saying what
+// it does. Full is what auto-merge on used to be.
+export const AUTONOMY: Record<"ask" | "standard" | "full", { label: string; says: string }> = {
+  ask: { label: "Ask me first", says: "The Task Shepherd asks before it retries, sends back or merges a task." },
+  standard: { label: "Take the clear steps", says: "It resolves conflicts and retries by itself. A reviewed pull request waits for you to merge." },
+  full: { label: "Also merge", says: "It also merges a pull request once its review is clean." },
+};
+
+export function AutonomyEdit({ goal, readOnly, save }: FieldProps) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const now = goal.autonomy ?? (goal.auto_merge ? "full" : "standard");
+  if (readOnly) return <Text size="sm">{AUTONOMY[now].label}: {AUTONOMY[now].says}</Text>;
+  return (
+    <Stack gap={4} data-testid="autonomy">
+      <SegmentedControl
+        size="xs"
+        aria-label="How much is done without asking"
+        disabled={busy}
+        value={now}
+        data={Object.entries(AUTONOMY).map(([value, { label }]) => ({ value, label }))}
+        onChange={(value) => {
+          setBusy(true);
+          setError(null);
+          void save({ autonomy: value as "ask" | "standard" | "full" })
+            .catch((err: unknown) => setError(`It was not saved: ${err instanceof Error ? err.message : String(err)}. Pick it again.`))
+            .finally(() => setBusy(false));
+        }}
+      />
+      <Text size="xs" c="dimmed">{AUTONOMY[now].says}</Text>
+      {error && <Text size="xs" c="red">{error}</Text>}
+    </Stack>
   );
 }
 

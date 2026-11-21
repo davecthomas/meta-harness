@@ -36,8 +36,12 @@ GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
     "status, created_at, updated_at, started_at, closed_at, title, max_parallel, plan_task_id, plan_approved_at, "
     "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to, strict_issues, tracker, "
-    "tracker_settings, planned, provenance"
+    "tracker_settings, planned, provenance, autonomy"
 )
+# How much is done for a goal's tasks without asking. ask: the Task Shepherd asks before each of its own
+# actions. standard: it takes the clear next steps itself, and a clean pull request waits for the operator.
+# full: the same, and a clean pull request merges by itself (auto_merge).
+AUTONOMY = ("ask", "standard", "full")
 # picked: an operator picked the issue for the goal by ref; false for one its label's sweep took in.
 LINK_COLUMNS = (
     "ref, goal_id, repo, task_id, state, depends_on, refused_reason, picked, first_seen_at, last_seen_at, title, "
@@ -207,9 +211,11 @@ def update(
     can tell a goal's first start, which sweeps at once, from a resume.
     """
     allowed = {"title", "statement", "label", "repos", "auto_merge", "priority", "max_usd", "max_parallel", "status"}
-    allowed |= {"budget_mode", "budget_overage_percent", "strict_issues", "provenance"}
+    allowed |= {"budget_mode", "budget_overage_percent", "strict_issues", "provenance", "autonomy"}
     if set(fields) - allowed:
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
+    if "autonomy" in fields and fields["autonomy"] not in AUTONOMY:
+        raise GoalError(f"autonomy {fields['autonomy']!r} is not one of {', '.join(AUTONOMY)}")
     _check_budget(fields.get("budget_mode"), fields.get("budget_overage_percent"))
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(f"SELECT {GOAL_COLUMNS} FROM planner.goal WHERE id = %s FOR UPDATE", (goal_id,))
@@ -218,6 +224,13 @@ def update(
             raise NotFound(goal_id)
         if only_if is not None and row["status"] != only_if:
             return _goal(row), {}
+        # autonomy and auto_merge say one thing between them: full is auto_merge on. Whichever is sent sets
+        # the other, so an older caller that only knows auto_merge still moves the goal between the levels.
+        row["autonomy"] = autonomy_of(row)
+        if "autonomy" in fields:
+            fields["auto_merge"] = fields["autonomy"] == "full"
+        elif "auto_merge" in fields:
+            fields["autonomy"] = "full" if fields["auto_merge"] else ("ask" if row["autonomy"] == "ask" else "standard")
         if "status" in fields and fields["status"] != row["status"]:
             if fields["status"] not in GOAL_MOVES.get(row["status"], set()):
                 raise GoalError(f"a {row['status']} goal cannot become {fields['status']}")
@@ -714,7 +727,13 @@ def set_link_state(conn: psycopg.Connection, ref: str, state: str) -> None:
         conn.execute("UPDATE planner.issue_link SET state = %s, last_seen_at = now() WHERE ref = %s", (state, ref))
 
 
+def autonomy_of(row: dict) -> str:
+    """The goal's autonomy: what it stores, or for a goal from before the setting, what its auto_merge says."""
+    return row.get("autonomy") or ("full" if row.get("auto_merge") else "standard")
+
+
 def _goal(row: dict) -> dict:
+    row["autonomy"] = autonomy_of(row)
     for key in ("created_at", "updated_at", "started_at", "closed_at", "plan_approved_at"):
         row[key] = row[key].isoformat() if row[key] else None
     row["latitude"] = float(row["latitude"])

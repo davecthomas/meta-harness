@@ -123,6 +123,9 @@ class GoalIn(BaseModel):
     refs: list[str] = Field(default_factory=list, max_length=500)
     modality: str = "fix"
     auto_merge: bool = False
+    # How much is done without asking: ask, standard or full (store.AUTONOMY). Left out: full when auto_merge
+    # is on, else standard.
+    autonomy: Literal["ask", "standard", "full"] | None = None
     max_usd: Decimal | None = Field(default=None, gt=0)
     # What the budget does when it is reached, and how far past it a block goal may go, in percent (budget.py).
     budget_mode: Literal["block", "warn"] = "block"
@@ -176,6 +179,8 @@ class GoalPatch(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=100)
     repos: list[str] | None = Field(default=None, min_length=1)
     auto_merge: bool | None = None
+    # How much is done without asking: ask, standard or full (store.AUTONOMY). full turns auto_merge on.
+    autonomy: Literal["ask", "standard", "full"] | None = None
     priority: int | None = None
     # Sent as null: the goal has no budget.
     max_usd: Decimal | None = Field(default=None, gt=0)
@@ -1145,7 +1150,9 @@ def create_app(
         bound_tracker(scheme, names, body.tracker_settings)
         pairs = checked_refs(body.refs, names, scheme, body.tracker_settings)
         fields = {
-            **body.model_dump(exclude={"refs"}),
+            **body.model_dump(exclude={"refs", "autonomy"}),
+            # full is auto_merge on, whichever of the two the caller sent.
+            "auto_merge": body.auto_merge if body.autonomy is None else body.autonomy == "full",
             "tracker": scheme,
             "tracker_settings": body.tracker_settings or None,
             # Planned before any task runs: a goal that plans its issues from its description always, and one
@@ -1155,6 +1162,8 @@ def create_app(
         try:
             with app.state.pool.connection() as conn:
                 goal = store.create(conn, who, store.NewGoal(**{**fields, "repos": names}))
+                if body.autonomy == "ask":
+                    goal, _ = store.update(conn, goal["id"], autonomy="ask")
                 held = store.add_refs(conn, goal["id"], pairs)
                 if planned and not goal["label"]:
                     goal, _ = store.update(conn, goal["id"], label=planning.goal_label(goal))

@@ -121,3 +121,25 @@ def test_a_run_out_of_turns_or_time_is_read_from_its_reason():
     assert failures.out_of_run("run 1 on harness:pi-careful/claude:opus ended for good: ended ERROR (max_turns): x")
     assert failures.out_of_run("ended ERROR (max_minutes)")
     assert not failures.out_of_run("ended ERROR (spend_limit)") and not failures.out_of_run(None)
+
+
+def test_a_goal_that_asks_first_is_offered_the_action_the_supervisor_would_take_as_its_first_button():
+    to_merge = Facts("ready", pull="open", goal="active", auto_merge=True, mergeable="clean")
+    assert decide(to_merge).action == "merge", "a standard goal's merge is the supervisor's"
+
+    asked = decide(dataclasses.replace(to_merge, autonomy="ask"))
+
+    assert (asked.owner, asked.action) == ("operator", "")
+    assert asked.moves[0] == "merge" and asked.moves[-1] == "cancel"
+    assert asked.ask == "I would merge its pull request. Its goal asks before I act, so the first button does it."
+    conflicting = decide(dataclasses.replace(to_merge, autonomy="ask", mergeable="conflict"))
+    assert conflicting.moves[0] == "resolve_and_merge"
+    stronger = Facts("failed", goal="active", failure="permanent", stronger_left=True, autonomy="ask")
+    assert decide(stronger).moves[0] == "retry_stronger" and decide(stronger).owner == "operator"
+
+
+def test_a_goal_that_asks_first_still_gets_its_housekeeping_done():
+    gone = Facts("running", workflow="none", goal="active", autonomy="ask")
+    assert decide(gone).action == "recover", "recovering a task with no workflow is no decision"
+    waiting = Facts("failed", goal="active", failure="transient", autonomy="ask")
+    assert decide(waiting).action == "wait"

@@ -18,7 +18,7 @@ import { ApprovedPlan, GoalPlan } from "./GoalPlan";
 import { OPEN_SETTINGS, PlannerUpdates, SHOW_ISSUES } from "./PlannerUpdates";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
-import { AutoMergeEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
+import { AUTONOMY, AutonomyEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { HeldActions, StrictIssuesEdit } from "./sizing";
 import { ProvenanceEdit, provenanceSummary, type ProvenanceGoal } from "./provenanceHeaders";
 import { useEventStream, useInfinite } from "../../hooks";
@@ -324,7 +324,7 @@ export function GoalPage() {
               goal.label ? `label ${goal.label}` : "no label",
               goal.repos.join(", "),
               goal.max_usd ? `budget ${usd(goal.max_usd)}` : "no budget",
-              goal.auto_merge ? "auto-merge on" : "auto-merge off",
+              AUTONOMY[goal.autonomy ?? (goal.auto_merge ? "full" : "standard")].label.toLowerCase(),
               ...provenanceSummary((goal as ProvenanceGoal).provenance),
             ].join(" · ")}
           </Text>
@@ -354,7 +354,7 @@ export function GoalPage() {
               ],
               ["Label", <LabelEdit {...editable} />],
               ["Repos", <ReposEdit {...editable} />],
-              ["Auto-merge", <AutoMergeEdit {...editable} />],
+              ["Without asking", <AutonomyEdit {...editable} />],
               // The amount, what happens when it is reached, and the allowed overage, in one row.
               ["Budget", <BudgetRow {...editable} />],
               ["Priority", <PriorityEdit {...editable} />],

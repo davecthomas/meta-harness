@@ -41,6 +41,8 @@ export interface Goal {
   plan_approved_at?: string | null;
   status: string;
   auto_merge: boolean;
+  // How much is done for the goal's tasks without asking. Absent from an older planner.
+  autonomy?: "ask" | "standard" | "full";
   max_usd: string | null;
   // What the budget does when it is reached: stop the goal (block) or only warn; and how far past it a block
   // goal may go, in percent.
