@@ -3408,8 +3408,10 @@ update. The model is given the facts and its last update, and told to say only
 what the facts say. The facts say whether the goal is done (`goal.done`) and
 how many of its issues are open (`goal.open_issues`). An update that calls the
 goal done while one is open is not posted (`written_true`). It is written once
-more, told what was wrong, and a second that says the same is
-dropped with a warning. An update once said "All tasks merged, goal done"
+more, told what was wrong. When the second says the same, the update is written
+from the facts alone, with no model (`from_facts`): how many issues are still
+open and where each stands. So the page always says where the goal is, and never
+shows the check as an error. An update once said "All tasks merged, goal done"
 above a board that said "1 issue needs you". Updates are rows of `planner.goal_update`, read with
 `GET /v1/goals/{id}/updates`; `POST` to the same path writes one now. Each is a
 `goal_update_written` event, whose cost is counted as planning. The planning

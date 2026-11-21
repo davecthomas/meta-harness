@@ -442,5 +442,35 @@ def test_an_update_that_wrongly_says_done_is_written_again_once_and_never_posted
     async def insists(found, before):
         return updates.Written(headline="All tasks merged, goal done.", body="The goal is complete.", model="m")
 
-    with pytest.raises(updates.UpdateError, match="was not posted"):
-        asyncio.run(updates.write(goal, tasks, events, insists, asked=True))
+    # Twice wrong: the update is written from the facts, never shown as an error.
+    plain = asyncio.run(updates.write(goal, tasks, events, insists, asked=True))
+    assert plain["headline"] == "1 issue still open."
+
+
+def test_an_update_from_the_facts_names_each_open_issue_and_where_it_stands():
+    found = {
+        "goal": {"open_issues": 1},
+        "issues": [
+            {
+                "ref": "jira:ABC-1",
+                "title": "Describe the change",
+                "state": "open",
+                "replaced_by": None,
+                "where_it_stands": "its pull request is open, and the meta-harness is running its checks",
+            },
+            {
+                "ref": "jira:ABC-2",
+                "title": "Done part",
+                "state": "closed",
+                "replaced_by": None,
+                "where_it_stands": "done: its issue is closed",
+            },
+        ],
+    }
+
+    plain = updates.from_facts(found, "claude:m", "0.01")
+
+    assert plain.headline == "1 issue still open."
+    assert plain.body == "Describe the change: its pull request is open, and the meta-harness is running its checks."
+    assert (plain.model, plain.usd_cost, plain.needs_you) == ("claude:m", "0.01", [])
+    updates.written_true(plain, found)
