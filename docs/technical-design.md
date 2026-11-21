@@ -88,7 +88,8 @@ judged against these rules.
    means it does the core of its task and its checks pass. It also breaks
    nothing that worked and opens no security hole. A finding that does not
    fail that test is a follow-up: it is posted on the pull request and does
-   not hold the merge. Quality comes from many pull requests layered on each
+   not hold the merge. Once the pull request merges, its follow-ups are filed
+   as one issue for a later pull request. Quality comes from many pull requests layered on each
    other.
 3. **Progress is kept.** A clean review stands for the commit it read. A
    conflict with the base is resolved before a review, so a clean review can
@@ -776,6 +777,15 @@ adding control. The loop:
    with no blocking finding, and a `clean` one may list follow-ups. A rule of
    thumb in the code can always be given one more case it misses. So a finding
    on one is raised once and does not hold the pull request round after round.
+   A comment on a merged pull request is easily forgotten. So once a task's
+   pull request has merged, the planner's sweep files the follow-ups its last
+   review left as one issue in the goal's tracker (`planner/follow_ups.py`).
+   The issue links the pull request and gives each finding with its file and
+   line. Its text goes through the writing pass. It has no goal label, so the
+   goal that made the pull request still finishes, and an operator takes the
+   issue into a later goal. Each closed issue is looked at once: its link
+   keeps the issue filed (`follow_ups_ref`), or '' when there was nothing to
+   file. The filing is a `follow_ups_filed` event on the task.
    A fix run's summary is added to the open pull request's description as a
    `Fix round <n>` section, once. So the next review reads there what a fix
    run is asked to explain: why it changed a file outside the task's paths. A

@@ -1715,5 +1715,32 @@
       "kept"
     ],
     "type": "object"
+  },
+  "follow_ups_filed v1": {
+    "type": "object",
+    "properties": {
+      "ref": {
+        "type": "string"
+      },
+      "from_ref": {
+        "type": "string"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "pr_url": {
+        "type": "string"
+      },
+      "findings": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "ref",
+      "from_ref",
+      "goal_id",
+      "findings"
+    ],
+    "additionalProperties": true
   }
 }

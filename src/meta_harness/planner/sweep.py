@@ -154,6 +154,8 @@ class SweepResult:
     replied: list[str] = field(default_factory=list)
     # Task ids of open issues whose task was canceled, sent back to the queue.
     retaken: list[str] = field(default_factory=list)
+    # Refs of the issues filed for merged pull requests' follow-up findings (follow_ups.py).
+    follow_ups: list[str] = field(default_factory=list)
     # Task ids ended because the parts their issue was split into did its work (covered.py).
     covered: list[str] = field(default_factory=list)
     met: bool = False

@@ -494,6 +494,21 @@ REGISTRY: list[EventType] = [
             ["ref", "goal_id", "issues"],
         ),
     ),
+    # The issue the planner filed for a merged pull request's follow-up findings (planner/follow_ups.py).
+    EventType(
+        "follow_ups_filed",
+        1,
+        _object(
+            {
+                "ref": {"type": "string"},
+                "from_ref": {"type": "string"},
+                "goal_id": {"type": "string"},
+                "pr_url": {"type": "string"},
+                "findings": {"type": "integer"},
+            },
+            ["ref", "from_ref", "goal_id", "findings"],
+        ),
+    ),
     EventType(
         "pull_request_commented",
         1,

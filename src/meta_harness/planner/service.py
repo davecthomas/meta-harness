@@ -57,6 +57,7 @@ from meta_harness.run_service.provenance import COMMENT, Provenance, payload
 from meta_harness.planner import (
     activity,
     auto_split,
+    follow_ups,
     budget_api,
     cost_facts,
     drafting,
@@ -274,6 +275,11 @@ def create_app(
     async def sweep_one(goal: dict) -> SweepResult:
         async with locks.setdefault(goal["id"], asyncio.Lock()):
             result = await sweep_goal(goal, tracker, tasks, events, host, size)
+            # A merged pull request's follow-up findings become one issue, for a later goal to take in.
+            try:
+                result.follow_ups = await follow_ups.file(goal, tracker, events, result.errors)
+            except Exception as err:  # noqa: BLE001 - logged; the next sweep looks again
+                log.error("goal %s: its follow-ups could not be filed: %s: %s", goal["id"], type(err).__name__, err)
             # An issue the sweep held for its size is split by the planner itself, within its tries; the next
             # sweep takes the parts in.
             try:
