@@ -48,7 +48,7 @@ export function Overview() {
         <Stat label="Needs you" value={count} link={count ? "See what to do" : undefined} alert={!!count}
           onClick={count ? () => needsYou.current?.scrollIntoView({ behavior: "smooth", block: "start" }) : undefined}
           note={needsYouNote(items)} />
-        <Stat label="Running" value={running.total} to="/tasks?view=tiles" link="Watch them"
+        <Stat label="Running" value={running.total} to={running.total ? "/tasks?view=tiles" : undefined} link={running.total ? "Watch them" : undefined}
           note={running.total === null ? "" : running.total ? "Tasks an agent is working on now." : "No agent is working. A task starts when a goal has an open issue and a free place."} />
         <Stat label="Queued or blocked" value={queued.total} to="/tasks?show=waiting" link="See why each waits"
           note={queued.total === null ? "" : queued.total ? "Tasks that have not started: each says what holds it." : "Nothing waits to start."} />

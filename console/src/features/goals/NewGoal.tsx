@@ -20,7 +20,8 @@ export function LabelIssues({ label, issues }: { label: string; issues: LabeledI
   if (!label.trim() || issues === null) return null;
   const free = issues.filter((i) => !i.held_by);
   const held = issues.length - free.length;
-  if (!issues.length) return <Text size="sm" c="dimmed">No open issue has this label in the goal's repos yet. The goal takes them in as they appear.</Text>;
+  // The label field already says no open issue has it; this says only what then happens.
+  if (!issues.length) return <Text size="sm" c="dimmed">The goal takes in issues with this label as they appear.</Text>;
   return (
     <Stack gap={4} data-testid="label-issues">
       <Text size="sm" fw={600}>
