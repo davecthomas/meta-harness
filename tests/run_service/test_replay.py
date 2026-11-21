@@ -113,6 +113,15 @@ SCENARIOS = {
         "auto_merge": True,
         "follow_ups": [[0]],
     },
+    # After the base-before-review patch: the base conflicts before the first review, a fix run resolves it,
+    # and the review reads the resolved head.
+    "patched-base-before-review": {
+        "verdicts": [CLEAN],
+        "fix_commits": ["c1"],
+        "goal_id": "g-1",
+        "auto_merge": True,
+        "bases": ["conflict"],
+    },
     # After the merge-base-health patch: the merge waits while the base's own checks run, then merges.
     "patched-merge-base-health": {
         "verdicts": [CLEAN],

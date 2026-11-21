@@ -160,21 +160,22 @@ either blocks the merge or is a follow-up, and it says which.
 
 Built: the supervisor's fixed rules and remedies, the record of every
 decision, the goal's `auto_merge`, operator takeover, hard spend limits.
+For rule 3: a conflict is resolved before a review, a commit that passed
+review is not reviewed again, and a conflict fix has its own limit, apart
+from the fix rounds for findings (Review loop).
 
 Not built yet, in the order planned:
 
-1. A conflict is resolved before a review, and a commit that passed review
-   is not reviewed again (rule 3).
-2. The reviewer sorts findings into blocking and follow-up, and follow-ups
+1. The reviewer sorts findings into blocking and follow-up, and follow-ups
    are filed as issues (rule 2).
-3. The charter, in every deciding prompt.
-4. The Task Shepherd's panel on a task's page: its name and mark, the
+2. The charter, in every deciding prompt.
+3. The Task Shepherd's panel on a task's page: its name and mark, the
    ranked actions worked out by the service from the pull request's real
    state, in place of the failure message the console works out itself.
    The Goal Planner's panel gets its mark.
-5. A step that failed the same way twice is not repeated (rule 5), and a
-   conflict fix has its own limit, apart from the fix rounds for findings.
-6. A per-goal setting for how much is done without asking (rule 8).
+4. A step that failed the same way twice is not repeated (rule 5), and a
+   review after a conflict fix reads only what the fix changed.
+5. A per-goal setting for how much is done without asking (rule 8).
 
 ## Architecture
 
@@ -1258,6 +1259,32 @@ back to the checks and a new review like any other. A merge asked for again, by 
 operator or the supervisor, that meets a conflict starts with this fix run,
 before any review (behind the `conflict-first` patch). Branch protection or
 any other refusal ends the task `ready` with GitHub's reason.
+
+A clean review is kept (behind the `base-before-review` and
+`clean-review-stands` patches). The task behind one pull request passed
+review four times and never merged: each review read a branch that already
+conflicted with its base, the conflict was found only at the merge, its fix
+run was reviewed in full again, and a retry reviewed the very commit a
+review had just passed. So three things hold now:
+
+- Before each review the loop brings the base into the branch
+  (`bring_base`, `run_service/base_activities.py`). A base that merges in
+  cleanly gives a new head, whose checks and review follow. One that does
+  not is a conflict fix run, before any review. A clean review is then of
+  a commit that holds the base, and merges at once unless the base moved
+  while it was read.
+- Conflict fix runs are counted apart from the fix rounds for findings
+  and failed checks, up to the task policy's `max_rounds` of each. So a
+  base that keeps moving cannot use up the rounds the findings need. A
+  loop its conflict fixes did not settle ends `review_unresolved` with
+  "the pull request conflicts with its base, and N conflict fix runs did
+  not resolve it", after the clean verdict when there was one.
+- A retried task whose pull request is still at the commit its last
+  review passed is not reviewed again. `resume_state` reads the last
+  `pull_request_reviewed` event, and when its verdict is clean at the
+  pull request's head, the loop starts with that verdict standing: the
+  checks run and it merges, or ends `ready` when its goal does not merge
+  by itself. When the event cannot be read, the pull request is reviewed.
 
 Nothing merges onto a broken base (#202). Before a merge, the workflow reads
 the checks on the base branch's newest commit (`base_health`). While one has

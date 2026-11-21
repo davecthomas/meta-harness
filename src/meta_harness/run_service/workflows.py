@@ -98,6 +98,7 @@ with workflow.unsafe.imports_passed_through():
         wait_checks,
         wait_merge_checks,
     )
+    from meta_harness.run_service.base_activities import bring_base
     from meta_harness.run_service.budget_activities import BudgetHold, budget_hold, goal_budget
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
     from meta_harness.run_service import run_provenance
@@ -108,6 +109,7 @@ with workflow.unsafe.imports_passed_through():
         FollowUpsRequest,
         Attempt,
         BaseHealthRequest,
+        BaseRequest,
         CommentRequest,
         DeliverRequest,
         OperatorMessage,
@@ -820,7 +822,12 @@ class RunTask:
                     loop, conflict=conflict, standing=standing, asked_for=asked_for
                 )
         else:
-            outcome, reason = await self._review_loop(loop)
+            # The pull request is still at the commit its last review passed: that verdict stands, so its
+            # checks and the merge are all that is left, and no review is spent on a commit already passed.
+            passed = ""
+            if state.clean_head and state.clean_head == loop.head and workflow.patched("clean-review-stands"):
+                passed = state.clean
+            outcome, reason = await self._review_loop(loop, standing=passed)
         if outcome == "merged" and loop.merge_sha:
             outcome, reason = await self._after_merge(loop, reason)
         return result(outcome, reason, loop.published, loop.spent), attempts
@@ -859,12 +866,50 @@ class RunTask:
             # for: a loop out of rounds then says the review passed, so neither an operator nor the supervisor
             # reads it as findings the fixes did not settle.
             clean_blocked = ""
+            # The base comes into the branch before each review, so a clean review is of a commit that merges
+            # at once, and a conflict is resolved before a review is spent on a commit that could not merge.
+            # Conflict fixes are counted apart from the fix rounds for findings and failed checks, so a base
+            # that keeps moving does not use up the rounds the review's findings need.
+            base_first = workflow.patched("base-before-review")
+            resolves = 0
             if conflict:
-                fixes += 1
-                stopped = await self._fix(loop, loop.prompt_request("fix", conflict=True), fixes)
+                if base_first:
+                    resolves += 1
+                else:
+                    fixes += 1
+                stopped = await self._fix(loop, loop.prompt_request("fix", conflict=True), fixes + resolves)
                 if stopped:
                     return "review_unresolved", stopped
             while True:
+                if base_first and not standing:
+                    brought = await workflow.execute_activity(
+                        bring_base,
+                        BaseRequest(
+                            task_id=self._task_id,
+                            repo=loop.prepared.repo,
+                            pr_url=loop.published.pr_url,
+                            base=loop.published.base,
+                            head_sha=loop.head,
+                        ),
+                        start_to_close_timeout=CODE_HOST_TIMEOUT,
+                        retry_policy=CODE_HOST_RETRY,
+                    )
+                    if brought.state == "head_changed":
+                        log.info(
+                            "%s: %s came in before the review: %s",
+                            info.workflow_id,
+                            loop.published.base,
+                            brought.head_sha[:12],
+                        )
+                        loop.head = brought.head_sha
+                    elif brought.state == "conflict":
+                        if resolves >= policy.max_rounds:
+                            return "review_unresolved", _unresolved_conflict(clean_blocked, policy.max_rounds)
+                        resolves += 1
+                        stopped = await self._fix(loop, loop.prompt_request("fix", conflict=True), fixes + resolves)
+                        if stopped:
+                            return "review_unresolved", stopped
+                        continue
                 checks = await workflow.execute_activity(
                     wait_checks,
                     ChecksRequest(repo=loop.prepared.repo, head_sha=loop.head, task_id=self._task_id),
@@ -977,15 +1022,20 @@ class RunTask:
                             findings=findings,
                             summary=str(review.get("summary") or ""),
                         )
-                if fixes >= policy.max_rounds:
-                    if clean_blocked:
-                        return "review_unresolved", (
-                            f"{clean_blocked}, but the pull request conflicts with its base. No fix round was left "
-                            f"to resolve it: the loop used its {policy.max_rounds} fix rounds"
-                        )
-                    return "review_unresolved", f"the review loop used its {policy.max_rounds} fix rounds"
-                fixes += 1
-                stopped = await self._fix(loop, fix, fixes)
+                if base_first and fix.conflict:
+                    if resolves >= policy.max_rounds:
+                        return "review_unresolved", _unresolved_conflict(clean_blocked, policy.max_rounds)
+                    resolves += 1
+                else:
+                    if fixes >= policy.max_rounds:
+                        if clean_blocked:
+                            return "review_unresolved", (
+                                f"{clean_blocked}, but the pull request conflicts with its base. No fix round was "
+                                f"left to resolve it: the loop used its {policy.max_rounds} fix rounds"
+                            )
+                        return "review_unresolved", f"the review loop used its {policy.max_rounds} fix rounds"
+                    fixes += 1
+                stopped = await self._fix(loop, fix, fixes + resolves)
                 if stopped:
                     return "review_unresolved", stopped
         except ActivityError as err:
@@ -1585,6 +1635,15 @@ class RunTask:
         if request.ceiling and route_result.tiers.index(request.ceiling) <= index:
             return None
         return route_result.tiers[index + 1]
+
+
+def _unresolved_conflict(clean_blocked: str, tries: int) -> str:
+    """Why a loop ended on a conflict with the base that its conflict fixes did not resolve. It names the
+    clean verdict the conflict kept from merging, when there is one, in the words the supervisor reads."""
+    tried = f"{tries} conflict fix runs did not resolve it"
+    if clean_blocked:
+        return f"{clean_blocked}, but the pull request conflicts with its base, and {tried}"
+    return f"the pull request conflicts with its base, and {tried}"
 
 
 def _earlier_rounds(attempts: list[Attempt]) -> int:

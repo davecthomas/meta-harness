@@ -43,6 +43,7 @@ from meta_harness.run_service.activities import (
     wait_checks,
     wait_merge_checks,
 )
+from meta_harness.run_service.base_activities import bring_base
 from meta_harness.run_service.budget_activities import budget_hold, goal_budget
 from meta_harness.run_service.prompt_activities import record_prompt
 from meta_harness.run_service.resume_activities import resume_state
@@ -122,6 +123,7 @@ async def main() -> None:
             goal_budget,
             budget_hold,
             base_health,
+            bring_base,
             post_comment,
             resume_state,
             deliver_message,

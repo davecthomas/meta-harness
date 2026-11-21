@@ -187,6 +187,41 @@ async def test_a_merge_an_operator_asked_for_still_merges_after_a_new_commit_is_
     assert result.outcome == "merged", result.outcome_reason
 
 
+def _passed(head: str) -> ResumeState:
+    state = _open()
+    state.clean_head, state.clean = head, f"review round 2 by harness:pi-review/openai:sol came back clean at {head}"
+    return state
+
+
+async def test_a_retried_task_still_at_the_commit_its_last_review_passed_is_not_reviewed_again(env):  # noqa: F811
+    # The task behind PR #437: a retry reviewed the commit a review had just passed, and got findings.
+    script = Script(auto_merge=True)
+
+    result, statuses = await _resume(env, script, "review", _passed("c5"), goal_id="g-1")
+
+    assert result.outcome == "merged" and not script.runs, "no review: the commit had passed one"
+    assert script.waited_on == ["c5"] and [m.head_sha for m in script.merge_requests] == ["c5"]
+    assert "review round 2" in result.outcome_reason
+
+
+async def test_a_retried_task_whose_head_moved_past_its_clean_review_is_reviewed(env):  # noqa: F811
+    script = Script(verdicts=[CLEAN], auto_merge=True)
+
+    result, _ = await _resume(env, script, "review", _passed("c4"), goal_id="g-1")
+
+    assert result.outcome == "merged" and [r.prompt for r in script.runs] == ["review"]
+
+
+@pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
+async def test_record_the_clean_review_stands_history(env):  # noqa: F811
+    # After the clean-review-stands patch: a retried task at the commit its last review passed merges unreviewed.
+    if (HISTORIES / "patched-clean-review-stands.json").exists():
+        pytest.skip("recorded already: an old history is what a deploy finds running, so it stays as it is")
+    await _resume(
+        env, Script(auto_merge=True), "review", _passed("c5"), goal_id="g-1", record="patched-clean-review-stands"
+    )
+
+
 @pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
 async def test_record_the_merge_asked_stands_history(env):  # noqa: F811
     # After the merge-asked-stands patch: a merge asked for on a goal with auto_merge off merges once the base is in.

@@ -741,6 +741,16 @@ async def merge_pull_request(
     return "blocked", "", head_sha, f"{refused} (mergeable_state {pull.get('mergeable_state')})"
 
 
+async def bring_base_in(
+    repo: str, number: int, base: str, head_sha: str, provenance: Provenance | None = None
+) -> tuple[str, str, str, str]:
+    """Brings the base's newest commits into the pull request's branch, before a review reads it. Returns
+    (state, "", head, detail): current when the branch already holds them, head_changed with the new head, or
+    conflict when the base does not merge in cleanly."""
+    brought = await _bring_base_in(repo, number, base, head_sha, provenance)
+    return brought if brought is not None else ("current", "", head_sha, "")
+
+
 async def _bring_base_in(
     repo: str, number: int, base: str, head_sha: str, provenance: Provenance | None = None
 ) -> tuple[str, str, str, str] | None:
