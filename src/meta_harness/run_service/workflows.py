@@ -855,6 +855,10 @@ class RunTask:
             follows = workflow.patched("review-follow-ups")
             # The round before's findings and summary, which the next review judges first.
             previous: dict = {}
+            # The clean verdict a conflict with the base kept from merging, while that is what the next fix is
+            # for: a loop out of rounds then says the review passed, so neither an operator nor the supervisor
+            # reads it as findings the fixes did not settle.
+            clean_blocked = ""
             if conflict:
                 fixes += 1
                 stopped = await self._fix(loop, loop.prompt_request("fix", conflict=True), fixes)
@@ -870,7 +874,7 @@ class RunTask:
                 )
                 log.info("%s: checks at %s: %s", info.workflow_id, loop.head[:12], checks.state)
                 if checks.state == "failed":
-                    standing = ""
+                    standing, clean_blocked = "", ""
                     fix = loop.prompt_request("fix", failed_checks=checks.failed)
                 elif standing:
                     clean, standing = f"{standing}, and its checks passed at {loop.head[:12]}", ""
@@ -882,6 +886,7 @@ class RunTask:
                     if merged.state != "conflict":
                         loop.merge_sha = merged.merge_sha if merged.state == "merged" else ""
                         return ("merged" if merged.state == "merged" else "clean"), merged.detail
+                    clean_blocked = clean
                     fix = loop.prompt_request("fix", conflict=True)
                 else:
                     if not policy.reviewers:
@@ -962,8 +967,10 @@ class RunTask:
                         if merged.state != "conflict":
                             loop.merge_sha = merged.merge_sha if merged.state == "merged" else ""
                             return ("merged" if merged.state == "merged" else "clean"), merged.detail
+                        clean_blocked = clean
                         fix = loop.prompt_request("fix", conflict=True)
                     else:
+                        clean_blocked = ""
                         previous = {**review, "findings": findings}
                         fix = loop.prompt_request(
                             "fix",
@@ -971,6 +978,11 @@ class RunTask:
                             summary=str(review.get("summary") or ""),
                         )
                 if fixes >= policy.max_rounds:
+                    if clean_blocked:
+                        return "review_unresolved", (
+                            f"{clean_blocked}, but the pull request conflicts with its base. No fix round was left "
+                            f"to resolve it: the loop used its {policy.max_rounds} fix rounds"
+                        )
                     return "review_unresolved", f"the review loop used its {policy.max_rounds} fix rounds"
                 fixes += 1
                 stopped = await self._fix(loop, fix, fixes)

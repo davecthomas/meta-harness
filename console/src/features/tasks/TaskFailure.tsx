@@ -3,7 +3,7 @@ import { IconAlertTriangle } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import type { MhEvent, Task } from "../../api";
 import { useAdmin } from "../../components/Role";
-import { diagnose } from "./diagnosis";
+import { cleanButConflicting, diagnose } from "./diagnosis";
 import { Remedies } from "./Remedies";
 
 const TITLES: Record<string, string> = {
@@ -23,9 +23,14 @@ export function TaskFailure({ task, status, events, onChanged }: { task: Task; s
   const title = TITLES[status];
   if (!title) return null;
   const runs = unfinished(events);
-  const diagnosis = diagnose({ status, reason: task.status_reason });
+  const found = diagnose({ status, reason: task.status_reason });
+  // The last review's verdict, from the task's events: clean means the review passed and something after it,
+  // a conflict with the base, kept the pull request from merging.
+  const lastReview = [...events].reverse().find((e) => e.event_type === "pull_request_reviewed");
+  const diagnosis = found && status === "review_unresolved" && found.kind === "fix_rounds" && lastReview?.payload.verdict === "clean" ? cleanButConflicting(found) : found;
+  const heading = diagnosis?.kind === "clean_conflict" ? "The review is clean, and the merge waits on a conflict" : title;
   return (
-    <Alert color={status === "failed" ? "red" : "orange"} title={title} icon={<IconAlertTriangle size={18} />} mb="md" role="alert">
+    <Alert color={status === "failed" ? "red" : "orange"} title={heading} icon={<IconAlertTriangle size={18} />} mb="md" role="alert">
       <Stack gap="xs">
         {diagnosis && (
           <>

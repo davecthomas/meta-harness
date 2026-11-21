@@ -146,62 +146,87 @@ export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, s
   const sent = done === tasks.length;
   const raisesManyLimits = more && tasks.length > 1;
   const total = raisesManyLimits ? tasks.reduce((sum, task) => sum + retryLimit(task, true), 0) : 0;
+  const fill = (step: string) => (recommended === step ? "filled" : "default");
+  const clean = diagnosis.kind === "clean_conflict";
+  const reviewUrl = single?.merge && steps?.pr_url && /^https?:/.test(steps.pr_url) ? steps.pr_url : null;
+  // The ways out, each under the step it is, so the recommended one comes first: the first button on the left
+  // is the one to press.
+  const offered: { step: string; node: React.ReactNode }[] = [];
+  if (retries && raisesManyLimits) {
+    offered.push({ step: "retry", node: (
+      <ConfirmButton
+        key="many"
+        size="compact-sm"
+        variant="filled"
+        loading={busy}
+        disabled={sent}
+        leftSection={<IconArrowBackUp size={14} />}
+        label={sent ? "Sent back to the queue" : label}
+        title="Retry with higher spend limits?"
+        says={`Retry ${tasks.length} tasks with spend limits that add up to ${usd(total)}, double what they had.`}
+        confirm={label}
+        onConfirm={() => retry()}
+      />
+    ) });
+  }
+  if (single?.merge) {
+    offered.push({ step: "merge", node: (
+      <ConfirmButton
+        key="merge"
+        size="compact-sm"
+        variant={fill("merge")}
+        loading={busy}
+        disabled={merged || sent}
+        leftSection={<IconGitMerge size={14} />}
+        label={merged ? "Merge asked for" : clean ? `Merge${mark("merge")}` : `Merge as it is${mark("merge")}`}
+        title={clean ? "Merge the pull request?" : "Merge as it is?"}
+        says={clean
+          ? "The review passed. A fix run resolves the conflict with the base first, then its checks and a review run, and it merges once that review is clean."
+          : "The last review's findings stay unfixed. If the pull request conflicts with its base, a fix run resolves that first, and the merge waits for a clean review."}
+        confirm={clean ? "Merge" : "Merge as it is"}
+        onConfirm={() => merge()}
+      />
+    ) });
+  }
+  if (retries && single?.stronger) {
+    offered.push({ step: "stronger", node: (
+      <Button key="stronger" size="compact-sm" variant={fill("stronger")} loading={busy} disabled={sent} leftSection={<IconArrowBackUp size={14} />} onClick={() => void retry(true)}>
+        {sent ? "Sent back to the queue" : `Retry with a stronger model${mark("stronger")}`}
+      </Button>
+    ) });
+  }
+  if (retries && !raisesManyLimits && !(single?.stronger && sent)) {
+    offered.push({ step: "retry", node: (
+      <Button key="retry" size="compact-sm" variant={recommended ? "default" : "filled"} loading={busy} disabled={sent} leftSection={<IconArrowBackUp size={14} />} onClick={() => void retry()}>
+        {sent ? "Sent back to the queue" : label}
+      </Button>
+    ) });
+  }
+  if (reviewUrl) {
+    offered.push({ step: "review", node: recommended === "review"
+      ? <Button key="review" component="a" href={reviewUrl} target="_blank" size="compact-sm" variant="filled">Read the last review (recommended)</Button>
+      : <Anchor key="review" href={reviewUrl} target="_blank" size="sm">Read the last review</Anchor> });
+  }
+  if (diagnosis.remedies.includes("config")) {
+    const to = `/config?kind=${CONFIG_TAB[diagnosis.kind]?.[0] ?? "tiers"}`;
+    const name = `Configuration, ${CONFIG_TAB[diagnosis.kind]?.[1] ?? "Router tiers"}`;
+    offered.push({ step: "config", node: recommended === "config"
+      ? <Button key="config" component={Link} to={to} size="compact-sm" variant="filled">{name} (recommended)</Button>
+      : <Anchor key="config" component={Link} to={to} size="sm">{name}</Anchor> });
+  }
+  const ordered = [...offered.filter((o) => o.step === recommended), ...offered.filter((o) => o.step !== recommended)];
   return (
     <Group gap="sm" onClick={(e) => e.stopPropagation()}>
-      {retries && raisesManyLimits && (
-        <ConfirmButton
-          size="compact-sm"
-          variant="filled"
-          loading={busy}
-          disabled={done === tasks.length}
-          leftSection={<IconArrowBackUp size={14} />}
-          label={done === tasks.length ? "Sent back to the queue" : label}
-          title="Retry with higher spend limits?"
-          says={`Retry ${tasks.length} tasks with spend limits that add up to ${usd(total)}, double what they had.`}
-          confirm={label}
-          onConfirm={() => retry()}
-        />
-      )}
-      {retries && single?.stronger && (
-        <Button size="compact-sm" variant={recommended === "stronger" ? "filled" : "default"} loading={busy} disabled={sent} leftSection={<IconArrowBackUp size={14} />} onClick={() => void retry(true)}>
-          {sent ? "Sent back to the queue" : `Retry with a stronger model${mark("stronger")}`}
-        </Button>
-      )}
-      {retries && !raisesManyLimits && !(single?.stronger && sent) && (
-        <Button size="compact-sm" variant={recommended ? "default" : "filled"} loading={busy} disabled={sent} leftSection={<IconArrowBackUp size={14} />} onClick={() => void retry()}>
-          {sent ? "Sent back to the queue" : label}
-        </Button>
-      )}
-      {single?.merge && (
-        <ConfirmButton
-          size="compact-sm"
-          variant="default"
-          loading={busy}
-          disabled={merged || sent}
-          leftSection={<IconGitMerge size={14} />}
-          label={merged ? "Merge asked for" : "Merge as it is"}
-          title="Merge as it is?"
-          says="The last review's findings stay unfixed. If the pull request conflicts with main, a fix run resolves that first, and the merge waits for a clean review."
-          confirm="Merge as it is"
-          onConfirm={() => merge()}
-        />
-      )}
-      {single?.merge && steps?.pr_url && /^https?:/.test(steps.pr_url) && (
-        <Anchor href={steps.pr_url} target="_blank" size="sm" fw={recommended === "review" ? 600 : undefined}>Read the last review{mark("review")}</Anchor>
-      )}
+      {ordered.map((o) => o.node)}
       {diagnosis.remedies.includes("task") && tasks.length === 1 && (
         <Anchor component={Link} to={`/tasks/${tasks[0].id}`} size="sm">Open the task</Anchor>
       )}
       {diagnosis.remedies.includes("issue") && url && (
         <Anchor href={url} target="_blank" size="sm">Edit the issue in {trackerTitle(issueRef ? issueRef.split(":")[0] : "github")}</Anchor>
       )}
-      {diagnosis.remedies.includes("config") && (
-        <Anchor component={Link} to={`/config?kind=${CONFIG_TAB[diagnosis.kind]?.[0] ?? "tiers"}`} size="sm">
-          Configuration, {CONFIG_TAB[diagnosis.kind]?.[1] ?? "Router tiers"}{mark("config")}
-        </Anchor>
-      )}
       {retries && single && !sent && <Text size="xs" c="dimmed">Each retry can spend up to {usd(retryLimit(tasks[0], more))}.</Text>}
       {error && <Text size="xs" c="red">{error}</Text>}
     </Group>
   );
 }
+
