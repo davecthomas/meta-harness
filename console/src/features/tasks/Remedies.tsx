@@ -27,6 +27,63 @@ export function retryLimit(task: Pick<Task, "max_usd">, more: boolean): number {
   return more ? limit * 2 : limit;
 }
 
+// Every task the groups can retry from here, each with the spend limit its own Retry would give it. What the
+// Overview's Retry all sends: the one fix that needs no reading first. A link to Configuration or a task
+// stays a link.
+export function retryAllPlan(groups: { diagnosis: Diagnosis; items: { taskId?: string | null; status: string | null; waitingOn?: string | null; max_usd?: string | null }[] }[]): { id: string; limit: number }[] {
+  return groups.flatMap(({ diagnosis, items }) => {
+    const more = diagnosis.remedies.includes("retry_more");
+    if (!more && !diagnosis.remedies.includes("retry")) return [];
+    return items.flatMap((i) => (i.taskId && i.status && ["failed", "review_unresolved"].includes(i.status) && !i.waitingOn
+      ? [{ id: i.taskId, limit: retryLimit({ max_usd: i.max_usd ?? null }, more) }]
+      : []));
+  });
+}
+
+// One button for every retry the groups offer, with a dialog that says how many tasks and the most they can spend.
+export function RetryAll({ plan, onChanged }: { plan: { id: string; limit: number }[]; onChanged?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  if (plan.length < 2) return null;
+  const total = plan.reduce((sum, p) => sum + p.limit, 0);
+  async function go() {
+    setBusy(true);
+    setError(null);
+    let retried = 0;
+    try {
+      for (const p of plan) {
+        await api.retryTask(p.id, p.limit);
+        retried += 1;
+      }
+      setDone(true);
+    } catch (err) {
+      setError(`${retried} of ${plan.length} retried, then: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+      onChanged?.();
+    }
+  }
+  const label = `Retry all ${plan.length} tasks`;
+  return (
+    <Group gap="sm">
+      <ConfirmButton
+        size="compact-sm"
+        variant="filled"
+        loading={busy}
+        disabled={done}
+        leftSection={<IconArrowBackUp size={14} />}
+        label={done ? "Sent back to the queue" : label}
+        title={`${label}?`}
+        says={`Each task runs again with the spend limit its own Retry gives it. Together they can spend at most ${usd(total)}.`}
+        confirm={label}
+        onConfirm={() => go()}
+      />
+      {error && <Text size="xs" c="red">{error}</Text>}
+    </Group>
+  );
+}
+
 export function Remedies({ diagnosis, tasks, retry: mayRetry = true, issueRef, onChanged }: {
   diagnosis: Diagnosis;
   // The tasks the diagnosis covers, which Retry sends back to the queue.
