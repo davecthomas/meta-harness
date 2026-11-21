@@ -3608,7 +3608,13 @@ fix rounds did not settle, or a run stopped at its turn limit, Retry with a
 stronger model, beside Retry with the same model. Once the task has run on the
 complex tier, the recommendation is the last review (read it, then merge or
 fix) or the profile's limit. An unsettled review also offers Merge as it is,
-after a confirm that says its findings stay unfixed. Each
+after a confirm that says its findings stay unfixed. A review that came back
+clean and then met a conflict with its base, with no fix round left to
+resolve it, is no review problem: the loop records that ("came back clean …
+conflicts with its base"), a task page also reads it from the last
+`pull_request_reviewed` verdict for a task recorded before, and Merge is
+recommended, with no retry on a stronger model. The recommended action is
+always the first, filled button on the left. Each
 inbox item carries a line saying what to do; a pull request ready to merge
 links to the pull request itself. The Overview's numbers are links, each with
 a line saying what the number is made of: Needs you says how many failed, how

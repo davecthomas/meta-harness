@@ -53,6 +53,19 @@ interface Rule {
   write: (match: RegExpMatchArray, detail: string) => Omit<Diagnosis, "kind" | "detail">;
 }
 
+const CLEAN_CONFLICT = {
+  summary: "The review is clean, but the pull request conflicts with its base branch",
+  cause: "Resolving the conflict takes a fix round, and the review loop had used all of them. The review itself passed.",
+  fix: "Merge it. The conflict is resolved first, then its checks and a review run, and it merges once that review is clean.",
+  remedies: ["task", "retry"] as Remedy[],
+};
+
+// A task whose last review was clean and still ended unresolved: only a conflict with its base keeps a clean
+// review from merging. Task records written before the workflow said so carry "used its N fix rounds".
+export function cleanButConflicting(diagnosis: Diagnosis): Diagnosis {
+  return { ...diagnosis, kind: "clean_conflict", ...CLEAN_CONFLICT };
+}
+
 // Checked in order: the first that matches the recorded reason wins.
 const RULES: Rule[] = [
   {
@@ -134,6 +147,13 @@ const RULES: Rule[] = [
       fix: "Retry the task. If it fails again, its page links the warnings and errors logged for it.",
       remedies: ["retry", "task"],
     }),
+  },
+  {
+    // The review passed, and the merge found the pull request conflicting with its base, with no fix round
+    // left to resolve it: what is left is the conflict, not the review.
+    kind: "clean_conflict",
+    test: /came back clean.*conflicts with its base/,
+    write: () => CLEAN_CONFLICT,
   },
   {
     kind: "fix_rounds",

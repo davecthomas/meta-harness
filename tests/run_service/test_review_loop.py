@@ -655,6 +655,27 @@ async def test_a_conflict_goes_to_a_fix_run_that_resolves_the_merge_then_merges(
     assert [m.head_sha for m in script.merge_requests] == ["c0", "c1"]
 
 
+async def test_a_clean_review_a_conflict_keeps_from_merging_with_no_round_left_says_the_review_passed(env):
+    # PR #437's task: its review came back clean, the merge met a conflict with the base, and the loop had no
+    # fix round left. The reason said only that the rounds were used, so the operator and the supervisor read
+    # it as findings the fixes did not settle.
+    script = Script(verdicts=[CHANGES, CLEAN], auto_merge=True, merges=["conflict"], fix_commits=["c1"], max_rounds=1)
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "review_unresolved"
+    assert "came back clean" in result.outcome_reason
+    assert "conflicts with its base" in result.outcome_reason and "used its 1 fix rounds" in result.outcome_reason
+
+
+async def test_the_loop_out_of_rounds_on_findings_still_says_so(env):
+    script = Script(verdicts=[CHANGES, CHANGES], fix_commits=["c1"], max_rounds=1)
+
+    result = await _run(env, script)
+
+    assert result.outcome_reason == "the review loop used its 1 fix rounds"
+
+
 async def test_a_pull_request_github_refuses_to_merge_ends_ready_with_the_reason(env):
     script = Script(verdicts=[CLEAN], auto_merge=True, merges=["blocked"])
 
