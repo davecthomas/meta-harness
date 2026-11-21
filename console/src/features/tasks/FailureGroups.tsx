@@ -48,16 +48,17 @@ function Failure({ group, onChanged }: { group: FailureGroup; onChanged?: () => 
   const single = items.length === 1 ? items[0] : null;
   return (
     <Stack gap={4} data-testid={`failure-${diagnosis.kind.split(":")[0]}`}>
-      <Text size="sm" fw={600}>
+      {/* What failed comes first, so the lines under it are about something the reader can name. */}
+      <Group gap="xs" style={{ rowGap: 2 }}>
+        {items.map((i) => (i.taskId
+          ? <Anchor key={i.key} component={Link} to={`/tasks/${i.taskId}`} size="sm" fw={600}>{i.name}</Anchor>
+          : <Text key={i.key} span size="sm" fw={600}>{i.name}</Text>))}
+      </Group>
+      <Text size="sm">
         {diagnosis.summary}{items.length > 1 && ` (${items.length} tasks)`}
       </Text>
       <Text size="sm">{diagnosis.cause}</Text>
       <Text size="sm"><Text span fw={600}>What to do:</Text> {diagnosis.fix}</Text>
-      <Group gap="xs" style={{ rowGap: 2 }}>
-        {items.map((i) => (i.taskId
-          ? <Anchor key={i.key} component={Link} to={`/tasks/${i.taskId}`} size="sm">{i.name}</Anchor>
-          : <Text key={i.key} span size="sm">{i.name}</Text>))}
-      </Group>
       <Group gap="sm">
         <Remedies
           diagnosis={diagnosis}
