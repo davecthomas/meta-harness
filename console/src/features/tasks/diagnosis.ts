@@ -59,7 +59,7 @@ const RULES: Rule[] = [
     kind: "grant_spend_limit",
     test: /refused the run grant \(422\).*spend_limit_usd.*'input': '([0-9.]+)'/s,
     write: (m) => ({
-      summary: "The run could not start: the HTTP Gateway refused its spend limit",
+      summary: "The task's run could not start: the HTTP Gateway refused its spend limit",
       cause: `The run asked for a ${usdText(m[1])} spend limit, and the HTTP Gateway grants at most $999,999.99. Under the track budget policy the meta-harness sent one dollar too many; that is fixed in the control plane. No model was called and nothing was spent.`,
       fix: "Retry the task. If it fails the same way, the deployed control plane is older than the fix: check the last deploy.",
       remedies: ["retry"],
@@ -69,7 +69,7 @@ const RULES: Rule[] = [
     kind: "grant_refused",
     test: /refused the run grant \((\d+)\)/,
     write: (m) => ({
-      summary: "The run could not start: the HTTP Gateway refused its run grant",
+      summary: "The task's run could not start: the HTTP Gateway refused its run grant",
       cause: `The HTTP Gateway answered ${m[1]} when the run asked for its grant, so no model was called. The recorded error says which field it refused.`,
       fix: "Check the tier's engine and model against what the HTTP Gateway serves, then retry the task.",
       remedies: ["retry", "config"],
@@ -79,7 +79,7 @@ const RULES: Rule[] = [
     kind: "config",
     test: /HarnessConfigError/,
     write: (_, detail) => ({
-      summary: "The run could not start: a setting is wrong",
+      summary: "The task's run could not start: a setting is wrong",
       cause: `The run service refused to start the run: ${detail.slice(0, 200)}`,
       fix: "Fix the setting the error names (a harness profile, a tier or the worker's environment), then retry the task.",
       remedies: ["config", "retry"],
@@ -99,7 +99,7 @@ const RULES: Rule[] = [
     kind: "no_change",
     test: /pi changed nothing/,
     write: () => ({
-      summary: "The run finished without changing any file",
+      summary: "The task's run finished without changing any file",
       cause: "The agent ended its run and left the repo as it found it, so there is no pull request. Usually the work is already done, or the issue does not say what to change.",
       fix: "Read the run's last turn on the task's page. Close the issue if it is done; otherwise say in the issue what to change, then retry.",
       remedies: ["task", "issue", "retry"],
@@ -109,7 +109,7 @@ const RULES: Rule[] = [
     kind: "limit",
     test: /\((turn_limit|time_limit|max_turns|max_minutes|timeout)\)|TimeoutError|timed out/i,
     write: () => ({
-      summary: "The run hit its turn or time limit before finishing",
+      summary: "The task's run stopped at its turn or time limit before it finished",
       cause: "The harness profile's limit ended the run mid-work. Nothing was published from it.",
       fix: "Retry the task. If it stops again, the issue is too large for one run: split it, or raise the profile's max_turns or max_minutes.",
       remedies: ["retry", "config"],
@@ -129,7 +129,7 @@ const RULES: Rule[] = [
     kind: "infrastructure",
     test: /harness_error|server_shutdown|sandbox|worker|container/i,
     write: () => ({
-      summary: "The run's sandbox or harness stopped",
+      summary: "The sandbox or harness of the task's run stopped",
       cause: "The run ended on an infrastructure error (the sandbox, the harness server or a worker restart), not on the task's work.",
       fix: "Retry the task. Its page links the warnings and errors logged for it if it fails again.",
       remedies: ["retry", "task"],
@@ -140,7 +140,7 @@ const RULES: Rule[] = [
     test: /used its (\d+) fix rounds/,
     write: (m) => ({
       summary: `The review still asked for changes after ${m[1]} fix rounds`,
-      cause: "The pull request is open, and the last review's findings are not fixed. The review loop stops there rather than spend more.",
+      cause: "The pull request is open, and the last review's findings are not fixed. The review loop stops there to cap what the task spends.",
       fix: "Read the last review on the task's page. Then merge it as it is, retry for another set of rounds, or fix the findings on the branch yourself.",
       remedies: ["task", "retry"],
     }),

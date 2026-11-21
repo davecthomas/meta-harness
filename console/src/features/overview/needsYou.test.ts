@@ -76,3 +76,12 @@ test("a task held for budget is named by the amount it asks for when the service
   expect(own.detail).toContain("grant the $2.00 in one click, set another limit, or end it");
   expect(goals.action).toBe("Raise the goal's budget");
 });
+
+test("a stuck goal's line names the tasks that wait, three at most, with no pointer to another page", () => {
+  const yours = ["Save drafts", "Export CSV", "Sort the list", "Fix the footer"].map((title, n) => ({ task_id: `t-${n}`, title, reason: "", ask: "", since: "" }));
+  const goal = { id: "g-9", status: "active", title: "Stuck", statement: "x", standing: { state: "needs_you", reason: "nothing in it is moving: 4 tasks wait on you", ask: "", yours, moving: 0 } } as unknown as Goal;
+  const [item] = needsYouItems([], [goal]);
+  expect(item.detail).toBe(
+    "Nothing in it is moving: 4 tasks wait on you. Waiting on you: Save drafts, Export CSV, Sort the list and 1 more. The goal goes on as soon as one of them is unstuck.",
+  );
+});
