@@ -75,6 +75,107 @@ scheduler's goal budget.
 - Operators and programs control the meta-harness through one REST API, and
   the operator console reaches the meta-harness only through it.
 
+## Goal seeking
+
+The meta-harness exists to get a goal's work merged. These rules say how it
+pursues that, and every component is judged against them. They are the
+target; "Where this stands" below says what the code does today.
+
+### First principles
+
+1. **The goal is merged work that makes main better.** A task that has
+   stopped is a defect of the system, never an acceptable resting state.
+   Each stop has an owner and a next step.
+2. **Better, not perfect.** A pull request merges when main is better with
+   it than without it: it does the core of its task, its checks pass, it
+   breaks nothing that worked and opens no security hole. A finding that
+   does not fail that test is a follow-up: it is filed as an issue under
+   the goal and built by a later pull request. Quality comes from many
+   pull requests layered on each other, so no one pull request is held
+   until it is flawless.
+3. **Progress is never thrown away.** A clean review stands for the commit
+   it read. A conflict with the base is resolved before a review, so a
+   clean review can merge at once. A retry starts where the last try
+   stopped.
+4. **The obvious next step is taken without asking.** Resolving a
+   conflict, running a flaky check again, retrying after a failure of the
+   system, retrying with a stronger model, and merging what passed the
+   test in rule 2 need no person.
+5. **A step that failed the same way twice is not tried a third time.**
+   The next step is a different one: a stronger model, a narrower task, a
+   fresh start on the current base, or a merge with the leftover findings
+   filed as follow-ups.
+6. **A person is asked only for what a person alone can give:** a
+   judgment of value or risk, more money, an approval a branch rule
+   requires, or a credential. The ask says what happened in two lines and
+   offers actions ordered by expected outcome, best first. Each action is
+   a button that does the whole job and says what it may spend. Reading
+   something is never the action asked for.
+7. **Every decision is shown:** what was seen, what was chosen, why, and
+   what comes next if it fails. The rules are fixed and listed, so the
+   same facts give the same decision.
+8. **A person can always decide differently.** Every ranked action stays
+   available, a task can be taken over or paused, and a goal's settings
+   say how much is done without asking.
+9. **Spend limits are hard.** The pursuit of the goal works inside them.
+   Reaching one is an ask to a person, with raising it as a button.
+
+### The order of moves
+
+For a task that is not moving, the first move in this list that applies is
+the one taken, or the one recommended when it is a person's to take:
+
+1. Merge it: a review passed the commit and its checks passed.
+2. Clear what blocks the merge: a conflict with the base, a flaky check.
+3. Fix the findings that fail the test in rule 2.
+4. Try again with a stronger model, once.
+5. Merge with the leftover findings filed as follow-up issues, when the
+   review has passed before or the findings keep changing.
+6. Start over on the current base, or split the task.
+7. Ask a person, with the moves above that remain as ranked buttons.
+8. Close it, when other merged work already covers it.
+
+### Who speaks
+
+Two parts of the system talk to a person, each in the first person, each
+in one place, each with its own mark so a reader knows who is talking:
+
+| | Goal Planner | Task Shepherd |
+|---|---|---|
+| Job | Decides what work a goal needs: its tasks, their size, split and order | Gets each task to merged: watches every open task, acts, and asks when it must |
+| Speaks on | A goal's page | A task's page |
+| Voice | Friendly and casual, with little technical detail | Brief and factual: what it saw, what it did, what it needs |
+
+The Task Shepherd is the name people see for the supervisor, a name that
+read as "the boss". The code, its tables and its events keep `supervisor`.
+
+### One charter for every model
+
+The principles above are kept as one text, the charter, given to every
+model that decides something: the planner, the reviewer, the fix run and
+the failure diagnosis. The reviewer's prompt applies rule 2: a finding
+either blocks the merge or is a follow-up, and it says which.
+
+### Where this stands
+
+Built: the supervisor's fixed rules and remedies, the record of every
+decision, the goal's `auto_merge`, operator takeover, hard spend limits.
+
+Not built yet, in the order planned:
+
+1. A conflict is resolved before a review, and a commit that passed review
+   is not reviewed again (rule 3).
+2. The reviewer sorts findings into blocking and follow-up, and follow-ups
+   are filed as issues (rule 2).
+3. The charter, in every deciding prompt.
+4. The Task Shepherd's panel on a task's page: its name and mark, the
+   ranked actions worked out by the service from the pull request's real
+   state, in place of the failure message the console works out itself.
+   The Goal Planner's panel gets its mark.
+5. A step that failed the same way twice is not repeated (rule 5), and a
+   conflict fix has its own limit, apart from the fix rounds for findings.
+6. A per-goal setting for how much is done without asking (rule 8).
+
 ## Architecture
 
 ```mermaid
