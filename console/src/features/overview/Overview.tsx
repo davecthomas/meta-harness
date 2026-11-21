@@ -9,6 +9,7 @@ import { ResumeBudget, budgetStops, budgetWords, spentOf } from "../goals/budget
 import { useInfinite } from "../../hooks";
 import { Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, TitleLink, when } from "../../components/ui";
 import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
+import { RetryAll, retryAllPlan } from "../tasks/Remedies";
 import { needsYouNote, useNeedsYou, type NeedsYouItem } from "./needsYou";
 import { GettingStarted } from "./GettingStarted";
 import { SupervisorHealth } from "./SupervisorHealth";
@@ -65,6 +66,7 @@ export function Overview() {
       )}
       {failed.length > 0 && (
         <Paper withBorder p="md" mb="md" data-testid="needs-you-failures" style={{ borderColor: "var(--mantine-color-red-6)" }}>
+          <Group justify="flex-end" mb="sm"><RetryAll plan={retryAllPlan(failed)} onChanged={() => setActed((n) => n + 1)} /></Group>
           <FailureGroups groups={failed} onChanged={() => setActed((n) => n + 1)} />
         </Paper>
       )}
