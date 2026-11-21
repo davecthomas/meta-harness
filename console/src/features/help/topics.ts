@@ -42,7 +42,7 @@ export const TOPICS: Topic[] = [
           "Spend limits are hard. Reaching one stops the work and asks you.",
         ],
       },
-      { kind: "note", text: "Two rules are not fully built yet. For rule 2, a review can still hold a pull request for a small finding. For rule 5, a failing step can repeat up to three times." },
+      { kind: "note", text: "Rule 5 is not fully built yet: a failing step can repeat up to three times." },
     ],
   },
   {

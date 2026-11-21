@@ -21,6 +21,7 @@ import httpx
 
 from meta_harness import outbound
 from meta_harness import retrying
+from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 from meta_harness.run_service.provenance import COMMENT, Provenance
@@ -203,7 +204,7 @@ async def draft(
     body = {
         "engine": engine,
         "model": name,
-        "system_prompt": writing_rules.after(DRAFT_PROMPT),
+        "system_prompt": writing_rules.after(charter.after(DRAFT_PROMPT)),
         "prompt": f"--- issue ---\n{json.dumps(shown, indent=1)}\n--- end of issue ---",
         "response_schema": DRAFT_SCHEMA,
         "max_response_tokens": 4000,

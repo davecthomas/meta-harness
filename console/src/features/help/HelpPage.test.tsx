@@ -35,7 +35,7 @@ test("a topic shows its text, and the pane lists every topic in order with this 
 
   expect(screen.getByRole("heading", { name: "First principles" })).toBeTruthy();
   expect(screen.getAllByRole("listitem")).toHaveLength(9);
-  expect(screen.getByText(/Two rules are not fully built yet/)).toBeTruthy();
+  expect(screen.getByText(/Rule 5 is not fully built yet/)).toBeTruthy();
   const listed = screen.getAllByRole("link").filter((a) => a.getAttribute("href")?.startsWith("/help/") && !/^(Back|Next):/.test(a.textContent ?? ""));
   expect(listed.map((a) => a.textContent)).toEqual(TOPICS.map((t) => t.title));
   expect(listed[1].getAttribute("data-active")).toBe("true");

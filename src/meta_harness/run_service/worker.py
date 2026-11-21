@@ -21,6 +21,7 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
 from meta_harness.run_service import events, provenance_headers, routing
 from meta_harness import logs
@@ -89,6 +90,11 @@ async def main() -> None:
         writing_rules.check_settings()
     except RuntimeError as err:
         print(f"[worker] the writing pass's settings are not usable: {err}", flush=True)
+        sys.exit(1)
+    try:
+        charter.check_settings()
+    except RuntimeError as err:
+        print(f"[worker] the charter is not usable: {err}", flush=True)
         sys.exit(1)
     try:
         provenance_headers.check_settings()

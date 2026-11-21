@@ -802,3 +802,40 @@ async def test_the_first_round_is_never_asked_for_follow_ups(env):
     await _run(env, script, goal_id="g-1")
 
     assert len(script.follow_ups_asked) == 0, "the second round was clean, and the first has nothing before it"
+
+
+BUG = {"path": "app.py", "line": 3, "body": "Off by one.", "blocking": True}
+LATER = {"path": "app.py", "line": 9, "body": "One more case the rule misses.", "blocking": False}
+
+
+async def test_a_review_whose_findings_are_all_marked_follow_ups_merges_with_no_fix_run(env):
+    # Better beats perfect: the task behind PR #437 was held twelve rounds for one more case its rule missed.
+    only_later = {"verdict": "clean", "summary": "It does the task.", "findings": [LATER]}
+    script = Script(verdicts=[only_later], auto_merge=True)
+
+    result = await _run(env, script, goal_id="g-1")
+
+    assert result.outcome == "merged"
+    assert _kinds(result) == ["standard", "review"], "no fix run for a follow-up"
+    assert [p.follow_ups for p in script.posted] == [[0]]
+    assert "raised only follow-ups" in result.outcome_reason
+
+
+async def test_a_fix_run_gets_the_blocking_findings_and_not_the_ones_marked_follow_ups(env):
+    mixed = {"verdict": "changes", "summary": "One bug.", "findings": [BUG, LATER]}
+    script = Script(verdicts=[mixed, CLEAN], fix_commits=["c1"])
+
+    result = await _run(env, script)
+
+    assert result.outcome == "clean"
+    fix_prompt = next(p for p in script.prompts if p.kind == "fix")
+    assert fix_prompt.findings == [BUG]
+    assert script.posted[0].follow_ups == [1]
+
+
+async def test_a_finding_with_no_mark_blocks_as_it_always_has(env):
+    script = Script(verdicts=[CHANGES, CLEAN], fix_commits=["c1"])
+
+    await _run(env, script)
+
+    assert script.posted[0].follow_ups == [] and [p.kind for p in script.prompts].count("fix") == 1

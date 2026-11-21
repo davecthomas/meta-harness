@@ -42,6 +42,7 @@ from typing import Any, Awaitable, Callable
 import httpx
 
 from meta_harness import retrying
+from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
 from meta_harness.planner.tracker import Issue
 from meta_harness.run_service.paths import REPO_ROOT
@@ -204,7 +205,7 @@ async def size_issue(issue: Issue, transport: httpx.AsyncBaseTransport | None = 
     body = {
         "engine": config["engine"],
         "model": config["model"],
-        "system_prompt": writing_rules.after(SYSTEM_PROMPT),
+        "system_prompt": writing_rules.after(charter.after(SYSTEM_PROMPT)),
         "prompt": size_prompt(issue, int(config["body_chars"])),
         "response_schema": SIZE_SCHEMA,
         "max_response_tokens": int(config["max_response_tokens"]),
