@@ -17,7 +17,7 @@ agent reads your repos and turns the goal into dependency-ordered tasks. A route
 sends each task to the model and agent harness that fit its difficulty. Agents
 work in parallel in isolated sandboxes, a second model reviews every pull
 request, fix runs settle what the review finds, and the result merges. You make
-the decisions only you can make, and nothing else.
+the decisions only you can make.
 
 It builds itself: Meta-Harness planned, wrote, reviewed and merged most changes
 to this repository, from goals set in its own console.
@@ -45,13 +45,13 @@ to this repository, from goals set in its own console.
 
 Most of the time a code change takes is waiting. A pull request conflicts with
 main and sits. A check fails for a reason unrelated to the change. A review asks
-for one more fix, then another. Meta-Harness exists to remove those stops, and
-it follows nine rules to do it:
+for one more fix, then another. Meta-Harness removes those stops, by these
+rules:
 
 1. **The goal is merged work that makes main better.** A task that has stopped
    is a fault in the system, and each stop has an owner and a next step.
-2. **Better beats perfect.** A pull request merges when main is better with it
-   than without it. Quality comes from many pull requests built on each other.
+2. **A pull request merges when main is better with it than without it.**
+   Quality comes from many pull requests built on each other.
 3. **Progress is kept.** A review that passed a commit stands for that commit,
    and a retry starts where the last try stopped.
 4. **It takes the clear next step without asking.** That covers resolving a
@@ -61,11 +61,12 @@ it follows nine rules to do it:
 6. **It asks you only for what a person alone can give:** a call on value or
    risk, more money, an approval or a credential.
 7. **It shows every decision:** what it saw, what it chose and why.
-8. **You can always decide differently.** Every action stays open to you.
+8. **You can always decide differently.** The recommended move is one of
+   several you can take.
 9. **Spend limits are hard.** Reaching one stops the work and asks you.
 
-Two parts of the system talk to you. The **Goal Planner** decides what work a
-goal needs. The **Task Shepherd** gets each task to merged: it watches every
+The **Goal Planner** and the **Task Shepherd** talk to you. The Goal Planner
+decides what work a goal needs. The **Task Shepherd** gets each task to merged: it watches every
 open task, acts when one stops, and asks you when it must, with the actions you
 can take ordered best first.
 
@@ -108,7 +109,7 @@ missed. Meta-Harness does each of those steps itself.
   profile on Claude Opus or GPT-6. A candidate that fails hands the task to the
   next, and a tier that runs out escalates.
 - **The reviewer is never the author.** Review runs on a different model from the
-  one that wrote the change, so one model's blind spots don't pass their own review.
+  one that wrote the change, so no model reviews its own mistakes.
 - **Attempts can race.** Run a task on several candidates at once and pick the best
   result.
 - **Cost per finished task.** Failed runs count too, so you can compare models
@@ -127,7 +128,7 @@ missed. Meta-Harness does each of those steps itself.
 - **A full record.** Every decision, by a service, a model or a person, is an event
   you can trace.
 
-### Your attention only where it counts
+### What it asks of you
 
 The planner reports in a few plain sentences, in the tone and detail you set. Each
 thing it needs from you comes with the button that does it: approve the plan,
@@ -139,7 +140,7 @@ merge, try another fix, split an issue or run it whole, raise the budget.
   pull request links back to them.
 - **Parallel work:** tasks that touch the same files take turns, so parallel work doesn't collide. Tasks
   wait on the issues they depend on.
-- **Supervision:** a supervisor checks every open task each minute, records who has it, and moves tasks
+- **The Task Shepherd:** checks every open task each minute, records who has it, and moves tasks
   that no one does.
 - **Merging:** goals that allow it merge on a clean review, and the rest wait for your approval.
 - **Costs:** model and cloud costs roll up by goal, task, repo, model and outcome.
@@ -333,7 +334,7 @@ repository. [`deploy/README.md`](deploy/README.md) covers setting up a new proje
   in the gateway, and outbound traffic passes an egress proxy.
 - **Every decision is an audit record**, whether a service, a model or an operator made it.
 - **Sign-in** is Google identity, checked against an operator list, with admin and operator roles.
-- **Spend limits are hard caps**, never advisory.
+- **Spend limits are hard caps.**
 
 Report a vulnerability privately through
 [GitHub security advisories](https://github.com/davecthomas/meta-harness/security/advisories/new).

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { NavLink as RouterLink, Route, Routes, useLocation } from "react-router-dom";
 import {
   ActionIcon,
@@ -39,7 +39,21 @@ import { NewVersion } from "./components/NewVersion";
 // The navigation's entries, from the features, in order; admin entries only for an admin. The Admin section's
 // entries go in one menu at the bottom of the pane.
 // Entries with a history (Goals, Tasks) come after the plain links, so their long lists don't push the links down.
-function navItems(admin: boolean, section: "Operate" | "Admin") {
+// New goal, which sits just above Goals in the pane.
+const NEW_GOAL = (
+  <NavLink
+    component={RouterLink}
+    to="/goals/new"
+    label="New goal"
+    leftSection={<IconPlus size={18} stroke={1.6} />}
+    variant="filled"
+    active
+    mb={4}
+    style={{ borderRadius: "var(--mantine-radius-md)" }}
+  />
+);
+
+function navItems(admin: boolean, section: "Operate" | "Admin" | "Help") {
   const items = FEATURES.flatMap((f) => f.nav).filter((n) => (admin || !n.admin) && n.section === section);
   return [...items.filter((n) => !n.history), ...items.filter((n) => n.history)];
 }
@@ -171,44 +185,48 @@ export function App() {
 
       <AppShell.Navbar p="sm">
         <AppShell.Section grow component={ScrollArea}>
-          {navItems(admin, "Operate").map((item) =>
-            item.history && who && !refused ? (
-              <TreeItem
-                key={item.to}
-                label={item.label}
-                to={item.to}
-                active={location.pathname === item.to}
-                leftSection={<item.icon size={18} stroke={1.6} />}
-                opened={!shut[item.to]}
-                onToggle={() => setShut({ ...shut, [item.to]: !shut[item.to] })}
-                bold
-              >
-                <item.history />
-              </TreeItem>
-            ) : (
-              <NavLink
-                key={item.to}
-                component={RouterLink}
-                to={item.to}
-                label={item.label}
-                leftSection={<item.icon size={18} stroke={1.6} />}
-                active={isActive(location.pathname, item.to)}
-                variant="light"
-                style={{ borderRadius: "var(--mantine-radius-md)" }}
-              />
-            ),
-          )}
+          {navItems(admin, "Operate").map((item) => (
+            <Fragment key={item.to}>
+              {item.to === "/goals" && NEW_GOAL}
+              {item.history && who && !refused ? (
+                <TreeItem
+                  label={item.label}
+                  to={item.to}
+                  active={location.pathname === item.to}
+                  leftSection={<item.icon size={18} stroke={1.6} />}
+                  opened={!shut[item.to]}
+                  onToggle={() => setShut({ ...shut, [item.to]: !shut[item.to] })}
+                  bold
+                >
+                  <item.history />
+                </TreeItem>
+              ) : (
+                <NavLink
+                  component={RouterLink}
+                  to={item.to}
+                  label={item.label}
+                  leftSection={<item.icon size={18} stroke={1.6} />}
+                  active={isActive(location.pathname, item.to)}
+                  variant="light"
+                  style={{ borderRadius: "var(--mantine-radius-md)" }}
+                />
+              )}
+            </Fragment>
+          ))}
         </AppShell.Section>
         <AppShell.Section pt="xs">
-          <NavLink
-            component={RouterLink}
-            to="/goals/new"
-            label="New goal"
-            leftSection={<IconPlus size={18} stroke={1.6} />}
-            variant="filled"
-            active
-            style={{ borderRadius: "var(--mantine-radius-md)" }}
-          />
+          {navItems(admin, "Help").map((item) => (
+            <NavLink
+              key={item.to}
+              component={RouterLink}
+              to={item.to}
+              label={item.label}
+              leftSection={<item.icon size={18} stroke={1.6} />}
+              active={isActive(location.pathname, item.to)}
+              variant="light"
+              style={{ borderRadius: "var(--mantine-radius-md)" }}
+            />
+          ))}
           <AdminMenu items={navItems(admin, "Admin")} />
         </AppShell.Section>
       </AppShell.Navbar>

@@ -137,7 +137,7 @@ the one taken, or the one recommended when it is a person's to take:
 
 ### Who speaks
 
-Two parts of the system talk to a person, each in the first person, each
+The Goal Planner and the Task Shepherd talk to a person, each in the first person, each
 in one place, each with its own mark so a reader knows who is talking:
 
 | | Goal Planner | Task Shepherd |
@@ -3711,12 +3711,15 @@ Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
-Help (`console/src/features/help`, at `/help`) is the last entry of the
-left pane and opens to its topics, in reading order: Why, First principles,
-The goal, Who is talking, How a stuck task gets moving, When it asks you and
-Spend limits. Each topic has its own address (`/help/<topic>`), and one that
-names no topic opens Help at its start. The text is fixed, in `topics.ts`,
-and follows Goal seeking above. It says only what the meta-harness does
+Help (`console/src/features/help`, at `/help`) sits at the foot of the left
+pane, above the Admin menu: one page, with every section in reading order
+and a line of links to each at its top. The sections are Why, First
+principles, The goal, Who is talking, How a stuck task gets moving and
+Spend limits. A section can be linked to (`/help#spend-limits`), and an
+address from when each had a page of its own (`/help/<section>`) opens the
+page there. New goal is the entry just above Goals. The text is fixed, in
+`topics.ts`, and follows Goal seeking above. It says only what the
+meta-harness does
 today: a rule that is not fully built is named as such on the page. The
 supervisor is the Task Shepherd wherever the console or a status reason
 names it to a person; the code, its routes and its events keep `supervisor`.

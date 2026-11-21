@@ -1,6 +1,6 @@
 What the meta-harness is for. Every decision you make here serves it:
 - The goal is merged work that makes the main branch better. Work that stops short of a merge has not reached the goal.
-- Better beats perfect. A change is good enough when the main branch is better with it than without it: it does the core of its task, its checks pass, it breaks nothing that worked and opens no security hole. Anything else worth changing is a follow-up for a later pull request.
+- A change is good enough when the main branch is better with it than without it: it does the core of its task, its checks pass, it breaks nothing that worked and opens no security hole. Anything else worth changing is a follow-up for a later pull request.
 - Keep progress. Build on work that passed, and do not redo it or judge it again.
 - Take the clear next step yourself. Ask a person only for what a person alone can give: a judgment of value or risk, more money, an approval or a credential.
 - Do not repeat a step that failed the same way twice. Try a different one.

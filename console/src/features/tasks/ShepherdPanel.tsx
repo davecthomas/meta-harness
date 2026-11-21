@@ -168,7 +168,7 @@ export function ShepherdPanel({ task, status, children, onChanged }: {
       </Text>
       {yours && !moves.length && standing.ask && <Text size="sm" mt={2}><Text span fw={600}>What to do:</Text> {standing.ask}</Text>}
       {yours && <Moves task={task} moves={moves} onChanged={onChanged} />}
-      {(yours || mine) && <Text size="xs" c="dimmed" mt={6}>It has been this way since {when(standing.since)}. <Anchor component={Link} to="/help/stuck-tasks" size="xs">How I decide</Anchor></Text>}
+      {(yours || mine) && <Text size="xs" c="dimmed" mt={6}>It has been this way since {when(standing.since)}. <Anchor component={Link} to="/help#stuck-tasks" size="xs">How I decide</Anchor></Text>}
       {children && <div style={{ marginTop: 12 }}>{children}</div>}
     </VoicePanel>
   );
