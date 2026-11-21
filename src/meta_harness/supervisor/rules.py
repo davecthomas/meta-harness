@@ -18,7 +18,9 @@ all of them to prove it. A new status or sub-state with no rule fails that test,
 from being left with no one again.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from meta_harness.supervisor import moves
 
 OWNERS = ("workflow", "scheduler", "planner", "supervisor", "operator")
 # The task statuses the supervisor looks at: every one but closed, which is the only end with nothing left.
@@ -97,6 +99,11 @@ class Facts:
     # For a task held at its own spend limit: whether the supervisor may raise it once, within twice the limit
     # and what its goal's budget has left.
     raise_left: bool = False
+    # For a task parked at its pull request: how many reviews it has had, how many of them passed, and how
+    # many findings the last one left open (its pull_request_reviewed events).
+    reviews: int = 0
+    clean_reviews: int = 0
+    findings_open: int = 0
 
 
 @dataclass(frozen=True)
@@ -109,10 +116,21 @@ class Decision:
     ask: str = ""
     # For the supervisor: what it does. Empty otherwise.
     action: str = ""
+    # For an operator: the moves offered, best first (moves.MOVES). Empty where the page holds the control.
+    moves: tuple[str, ...] = ()
+    # For a task parked at its pull request: what its reviews came to (moves.account).
+    saw: str = ""
 
 
 def decide(facts: Facts) -> Decision:
-    """Who has the task, and what the supervisor does when it is the supervisor."""
+    """Who has the task, what the supervisor does when it is the supervisor, and what an operator is offered
+    when it is an operator's."""
+    decision = _decide(facts)
+    offered = moves.ranked(decision.situation, facts) if decision.owner == "operator" else ()
+    return replace(decision, moves=offered, saw=moves.account(facts))
+
+
+def _decide(facts: Facts) -> Decision:
     status = facts.status
     if status in ("running", "taken_over"):
         return _running(facts)
@@ -337,18 +355,25 @@ def _parked(facts: Facts) -> Decision:
     if facts.status == "review_unresolved" and facts.clean_review:
         # The review passed: what is left is the conflict, which a fresh set of fix rounds resolves first. A
         # goal that merges by itself has it merged once a review is clean again; any other gets it back ready.
+        passed = (
+            "its review came back clean, and only a conflict with its base kept it from merging"
+            if facts.mergeable in ("conflict", "unknown")
+            else "its last review passed the commit its pull request is at, and it has not merged"
+        )
         if facts.goal in SWEPT and facts.drives_left:
             return Decision(
                 "supervisor",
                 "review_clean_conflict",
-                "its review came back clean, and only a conflict with its base kept it from merging",
+                passed,
                 action="merge" if facts.auto_merge else "review",
             )
         return Decision(
             "operator",
             "review_clean_conflict",
-            "its review came back clean, and only a conflict with its base kept it from merging",
-            ask="Press Merge on the task's page. The conflict is resolved first, and it merges once a review is clean.",
+            passed,
+            ask="Resolve the conflict and merge: a fix run resolves it, and it merges once a review is clean."
+            if facts.mergeable in ("conflict", "unknown")
+            else "Merge it: its review is clean.",
         )
     if facts.status == "review_unresolved" and facts.goal in SWEPT and facts.fix_again_left and facts.drives_left:
         return Decision(
@@ -357,12 +382,28 @@ def _parked(facts: Facts) -> Decision:
             "its review loop ended with findings its fixes did not settle, and a stronger model has not tried them",
             action="fix_again",
         )
+    if facts.status == "review_unresolved" and facts.mergeable == "conflict":
+        # Resolving a conflict needs no person: the review loop brings the base in and resolves it before it
+        # reviews. Said apart for an operator, since nothing else on the task's page shows the conflict.
+        if facts.goal in SWEPT and facts.drives_left:
+            return Decision(
+                "supervisor",
+                "review_unresolved_conflict",
+                "its review loop ended without a clean review, and its pull request conflicts with its base",
+                action="review",
+            )
+        return Decision(
+            "operator",
+            "review_unresolved_conflict",
+            "its review loop ended without a clean review, and its pull request conflicts with its base",
+            ask="Resolve the conflict and merge: a fix run resolves it, and it merges once a review is clean.",
+        )
     if facts.status == "review_unresolved":
         return Decision(
             "operator",
             "review_unresolved",
             "its review loop ended without a clean review, and its pull request is open",
-            ask="Read the last review, then merge it as it is, retry the review loop, or fix it on the branch.",
+            ask="Retry it, with a stronger model when one has not tried, or merge it as it is.",
         )
     if facts.auto_merge and facts.goal in SWEPT:
         return _to_merge(facts)

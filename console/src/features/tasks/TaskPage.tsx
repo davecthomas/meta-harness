@@ -13,8 +13,8 @@ import { WaitingToStart } from "./WaitingToStart";
 import { ReviewBanner } from "./reviewing";
 import { OperatorReview } from "./OperatorReview";
 import { TaskActions } from "./TaskActions";
-import { TaskFailure } from "./TaskFailure";
-import { Standing } from "./Standing";
+import { ShepherdPanel } from "./ShepherdPanel";
+import { TaskFailure, TITLES } from "./TaskFailure";
 import { NowLine, TaskPath, waitsForChecks } from "./TaskPath";
 import { steps } from "./path";
 import { STEP_EVENTS } from "./path";
@@ -312,7 +312,9 @@ export function TaskPage() {
       <OperatorReview task={{ ...task, status }} rounds={rounds ?? []} onChanged={setTask} />
       <BudgetHold task={{ ...task, status }} onAnswered={setTask} />
       <WaitingToStart task={{ ...task, status }} onChanged={() => void api.task(taskId).then(setTask, () => undefined)} />
-      <TaskFailure task={task} status={status} events={events} onChanged={() => void api.task(taskId).then(setTask, () => undefined)} />
+      <ShepherdPanel task={task} status={status} onChanged={() => void api.task(taskId).then(setTask, () => undefined)}>
+        {TITLES[status] && <TaskFailure task={task} status={status} events={events} onChanged={() => void api.task(taskId).then(setTask, () => undefined)} />}
+      </ShepherdPanel>
       {/* The task's facts, folded away: the timeline below is what the page is for. The fold's own line keeps
           the way back to the goal. Whoever opens it finds it open on the next task too. */}
       <Paper withBorder p="sm" mb="md" data-testid="task-details">
@@ -341,7 +343,6 @@ export function TaskPage() {
                 {task.cancel_requested && status === "running" && " (cancel requested)"}
               </Text>
             )],
-            ...(task.standing && status !== "closed" ? [["Who has it", <Standing standing={task.standing} />] as [string, React.ReactNode]] : []),
             ["Repo", <Code>{task.repo}</Code>],
             ["Issue", <IssueLink issueRef={task.external_ref} />],
             ...(task.goal_id ? [["Goal", <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm" ff={goalName ? undefined : "monospace"}>{goalName ?? task.goal_id}</Anchor>] as [string, React.ReactNode]] : []),

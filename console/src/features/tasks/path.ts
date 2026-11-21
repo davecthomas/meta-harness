@@ -77,6 +77,9 @@ const PARKED: Record<string, string> = {
 };
 const ENDS: Record<string, [string, Tone]> = { closed: ["Closed", "ok"], failed: ["Failed", "bad"], canceled: ["Canceled", "plain"] };
 const RUN_TITLES: Record<string, string> = { task: "Task run", fix: "Fix run", review: "Review" };
+// How a conflict fix's prompt begins what it asks for (the run service's `_requested`), and what its step is called.
+export const CONFLICT_FIX = /The branch conflicts with origin\//;
+export const CONFLICT_FIX_TITLE = "Resolving the merge conflict";
 
 // "harness:pi-careful/claude:claude-opus-5-5" as "pi-careful · claude-opus-5-5".
 export function candidateName(candidate: string): string {
@@ -275,7 +278,11 @@ export function steps(events: MhEvent[]): Step[] {
         note(`Cancel asked${e.actor ? ` by ${actorName(e.actor)}` : ""}${p.reason ? `: ${p.reason}` : ""}`);
         break;
       case "run_prompt":
-        if (runId) run(runId, time, String(p.kind ?? "task"));
+        if (runId) {
+          const step = run(runId, time, String(p.kind ?? "task"));
+          // A fix run asked to resolve a conflict with the base changes none of the work, and says so.
+          if (p.kind === "fix" && CONFLICT_FIX.test(String(p.prompt ?? ""))) step.title = CONFLICT_FIX_TITLE;
+        }
         break;
       case "run_finished": {
         if (!runId) break;
