@@ -152,8 +152,10 @@ export function HeldActions(props: { goalId: string; label: string | null; issue
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!props.issue.held_reason || props.issue.task_id || props.readOnly) return null;
-  // Already split: the issue waits to be closed, so only Run anyway is left.
+  // Already split: its parts run in its place and it closes when they are done. It offers nothing, since a
+  // task of its own beside its parts would do the same work twice.
   const split = Boolean(props.issue.split_into?.length) || props.issue.held_reason.startsWith("split into");
+  if (split) return null;
 
   async function runAnyway() {
     setRunning(true);
