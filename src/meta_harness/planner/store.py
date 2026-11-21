@@ -20,7 +20,8 @@ PLANNED_MODALITIES = {"feature"}
 GOAL_STATUSES = {"planning", "active", "paused", "met", "stalled", "budget_exhausted", "canceled"}
 GOAL_MOVES = {
     # A feature goal plans first: its planning task drafts issues, and an operator approves the plan.
-    "planning": {"active", "canceled"},
+    # A goal whose first plan has nothing to plan over (no open issue yet) goes back to not started (paused).
+    "planning": {"active", "canceled", "paused"},
     # A planned goal that is under way may be planned again: its running tasks go on, and nothing new starts
     # until the new plan is approved.
     "active": {"paused", "met", "stalled", "budget_exhausted", "canceled", "planning"},

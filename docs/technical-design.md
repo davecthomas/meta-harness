@@ -2713,7 +2713,11 @@ A `feature` or `new-system` goal starts in `planning`. For every active goal the
    issues, and a `feature` or `new-system` goal gets a planning task for its
    next step.
 
-`planning` becomes `active` when its plan is approved. An operator moves
+`planning` becomes `active` when its plan is approved. A goal that plans over
+issues that exist, and has no open issue yet when it first starts, starts no
+planning task: a planning run would spend on nothing. It goes back to
+`paused`, not started, and Start answers 409 with what to do: label an issue
+or pick issues, then start it again. An operator moves
 `active` to `paused` and back. `active` becomes `met` when its criteria pass
 or an operator completes it. A `paused` or `stalled` goal can be completed
 too. It becomes `stalled` when every open issue is blocked by a failed issue
