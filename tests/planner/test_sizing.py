@@ -495,11 +495,12 @@ def test_split_creates_the_suggested_issues_with_the_goals_label_and_their_paths
     _sweep(client, goal)
     assert _shown(client, goal)[ref]["held_reason"] == reason
 
-    # Run anyway is still open to it.
+    # It is never run anyway: its parts run in its place, and a task of its own would do their work twice.
     ran = client.post(f"/v1/goals/{goal['id']}/issues/run-anyway", json={"ref": ref}, headers=OPERATOR)
-    assert ran.status_code == 200, ran.text
+    assert ran.status_code == 409, ran.text
+    assert "which run in its place" in ran.json()["detail"] and "nothing is needed here" in ran.json()["detail"]
     _sweep(client, goal)
-    assert _task(tasks, ref) is not None
+    assert _task(tasks, ref) is None
 
 
 def test_a_split_github_refused_partway_is_recorded_with_its_events(world):

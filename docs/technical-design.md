@@ -2635,8 +2635,11 @@ After sizing:
   keep that reason and neither size nor split it again, and a second Split
   is refused (409). While a split is creating its issues, its claim
   (`split_into` empty) refuses Run anyway (409), so the original never
-  starts beside its smaller issues; once the split ends, Run anyway is open
-  again. Neither action takes an issue the goal removed (404) or one closed
+  starts beside its smaller issues; a split that created nothing lets the
+  claim go, and Run anyway is open again. An issue that was split is never
+  run anyway: the action is refused (409) and its card offers no button,
+  since a task of its own beside its parts does the same work twice. Two
+  originals were run that way on 2026-11-20, each beside all of its parts. Neither action takes an issue the goal removed (404) or one closed
   on GitHub since the last sweep (409): each reads the issue first, and
   records one it finds closed. A sweep that read the issue before a split began, and sized it
   small, looks at its link again under the row's lock just before it makes
