@@ -231,6 +231,7 @@ class Supervisor:
                     else {}
                 ),
                 raise_left=task.get("waiting_on") == "budget" and await asyncio.to_thread(self._may_raise, task, goal),
+                clean_review=status == "review_unresolved" and failures.clean_blocked(task.get("status_reason")),
             ),
             pull,
         )

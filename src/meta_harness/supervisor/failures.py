@@ -66,6 +66,17 @@ _PERMANENT = re.compile(
 )
 
 
+# A review loop that ended with its review clean and only a conflict with its base in the way, which the
+# workflow records as "review round N ... came back clean ..., but the pull request conflicts with its base".
+_CLEAN_BLOCKED = re.compile(r"came back clean.*conflicts with its base", re.IGNORECASE | re.DOTALL)
+
+
+def clean_blocked(reason: str | None) -> bool:
+    """Whether an unresolved review loop ended clean, kept from merging only by a conflict with its base:
+    nothing in the review is left to fix, so a stronger model has nothing to try."""
+    return bool(_CLEAN_BLOCKED.search(reason or ""))
+
+
 # A run the worker's own restart interrupted: a deploy restarts the worker on every merge.
 _RESTART = re.compile(r"WorkerShutdown|worker shutdown", re.IGNORECASE)
 

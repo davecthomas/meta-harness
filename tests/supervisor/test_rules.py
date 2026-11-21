@@ -44,9 +44,17 @@ def _every() -> list[Facts]:
         if facts.status in ("failed", "review_unresolved"):
             failed += [
                 dataclasses.replace(
-                    facts, failure=kind, retry_due=due, failed_long_ago=old, stronger_left=strong, fix_again_left=again
+                    facts,
+                    failure=kind,
+                    retry_due=due,
+                    failed_long_ago=old,
+                    stronger_left=strong,
+                    fix_again_left=again,
+                    clean_review=clean and facts.status == "review_unresolved",
                 )
-                for kind, due, old, strong, again in itertools.product(FAILURES, flags, flags, flags, flags)
+                for kind, due, old, strong, again, clean in itertools.product(
+                    FAILURES, flags, flags, flags, flags, flags
+                )
             ]
     # Where its dependencies stand is read only for a blocked task.
     blocked = [
@@ -256,6 +264,28 @@ def test_a_review_its_fixes_did_not_settle_gets_one_more_set_of_fix_rounds_befor
     assert decide(dataclasses.replace(stuck, fix_again_left=True)).action == "fix_again"
     assert decide(stuck).situation == "review_unresolved"
     assert decide(dataclasses.replace(stuck, fix_again_left=True, drives_left=False)).owner == "operator"
+
+
+def test_a_clean_review_a_conflict_kept_from_merging_goes_back_for_the_conflict_not_to_a_stronger_model():
+    clean = Facts(
+        "review_unresolved", pull="open", goal="active", failure="permanent", fix_again_left=True, clean_review=True
+    )
+    assert decide(clean).situation == "review_clean_conflict"
+    assert decide(clean).action == "review", "a goal that does not merge by itself gets it back ready"
+    assert decide(dataclasses.replace(clean, auto_merge=True)).action == "merge"
+    spent = decide(dataclasses.replace(clean, drives_left=False))
+    assert spent.owner == "operator" and spent.ask.startswith("Press Merge")
+
+
+def test_the_reason_a_clean_review_blocked_by_a_conflict_leaves_is_read_as_one():
+    from meta_harness.supervisor import failures
+
+    reason = (
+        "review round 11 by r came back clean at 06daae279d3d, but the pull request conflicts with its base. "
+        "No fix round was left to resolve it: the loop used its 3 fix rounds"
+    )
+    assert failures.clean_blocked(reason) and failures.kind(reason) == "permanent"
+    assert not failures.clean_blocked("the review loop used its 3 fix rounds")
 
 
 def test_a_task_held_at_its_own_spend_limit_is_raised_once_within_bounds_then_its_operators():
