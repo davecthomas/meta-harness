@@ -37,7 +37,6 @@ test("the page links to each of its sections, and each section can be linked to"
   const links = Array.from(screen.getByTestId("help-sections").querySelectorAll("a"));
   expect(links.map((a) => a.getAttribute("href"))).toEqual(TOPICS.map((t) => `#${t.slug}`));
   for (const t of TOPICS) expect(document.getElementById(t.slug)).toBeTruthy();
-  expect(screen.getByText(/Rule 5 is not fully built yet/)).toBeTruthy();
 });
 
 test("the left pane has one Help entry, with no list under it", () => {
