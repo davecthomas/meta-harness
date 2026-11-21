@@ -121,3 +121,12 @@ test("a box's hover adds what the box does not show: a review's summary and find
   expect(run).toContain("✓ List the refs");
   expect(run).not.toContain("$3.50");
 });
+
+test("a title with a word longer than its box, such as an email address, breaks inside the box", () => {
+  show({ events: [...EVENTS, ev("task_retried", 20, { max_usd: "20.00" }), { ...ev("task_status_changed", 20, { from: "failed", to: "queued", reason: "a.very.long.name@a-long-company-name.example retried it" }), actor: "a.very.long.name@a-long-company-name.example" }] });
+
+  for (const title of screen.getAllByTestId("step-title")) {
+    expect(title.style.overflowWrap).toBe("anywhere");
+    expect(title.style.minWidth).toBe("0");
+  }
+});

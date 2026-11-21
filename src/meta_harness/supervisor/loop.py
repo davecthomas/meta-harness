@@ -202,9 +202,16 @@ class Supervisor:
             pull_state, pull = await self._pull(task)
         auto_merge = bool(goal and goal.get("auto_merge"))
         how = "unknown"
-        # Only a task the supervisor may merge has its pull request's mergeability read.
-        if status == "ready" and pull_state == "open" and auto_merge and goal["status"] in SWEPT:
+        # A task the supervisor may merge has its pull request's mergeability read, and so does an unresolved
+        # review's: a conflict there is resolved, or said to the operator who has it.
+        may_merge = status == "ready" and auto_merge and goal["status"] in SWEPT
+        if pull_state == "open" and (may_merge or status == "review_unresolved"):
             how = await self._how_mergeable(task, pull)
+        seen = Reviews()
+        if pull_state == "open":
+            seen = await asyncio.to_thread(reviews_seen, self.events, task["id"])
+        # The last review passed the commit the pull request is at, whatever the workflow's reason says.
+        passed_head = bool(seen.clean_head) and pull is not None and seen.clean_head == pull.head_sha
         return (
             Facts(
                 status=status,
@@ -231,7 +238,11 @@ class Supervisor:
                     else {}
                 ),
                 raise_left=task.get("waiting_on") == "budget" and await asyncio.to_thread(self._may_raise, task, goal),
-                clean_review=status == "review_unresolved" and failures.clean_blocked(task.get("status_reason")),
+                clean_review=status == "review_unresolved"
+                and (failures.clean_blocked(task.get("status_reason")) or passed_head),
+                reviews=seen.rounds,
+                clean_reviews=seen.clean,
+                findings_open=seen.findings_open,
             ),
             pull,
         )
@@ -435,6 +446,38 @@ def dependency(task: dict, by_id: dict[str, dict], before: dict[str, standing.St
             if ended and was and was.owner == "operator":
                 return "stuck", name
     return ("unheld", unheld) if unheld else ("open", "")
+
+
+@dataclass(frozen=True)
+class Reviews:
+    """What a task's reviews came to, from its pull_request_reviewed events."""
+
+    rounds: int = 0
+    clean: int = 0
+    # The findings the last review left open, and the commit it passed when it was clean.
+    findings_open: int = 0
+    clean_head: str = ""
+
+
+def reviews_seen(events: Events, task_id: str) -> Reviews:
+    """The task's reviews so far. An event service that cannot be read gives none, and the rules then decide
+    as they did before a review was read."""
+    try:
+        found = events.read(0, 500, task_id=task_id, event_type="pull_request_reviewed").get("events") or []
+    except Exception as err:  # noqa: BLE001 - unread is the same as none
+        log.warning("task %s: its reviews could not be read: %s", task_id, err)
+        return Reviews()
+    verdicts = [e.get("payload") or {} for e in found]
+    if not verdicts:
+        return Reviews()
+    last = verdicts[-1]
+    clean = last.get("verdict") == "clean"
+    return Reviews(
+        rounds=len(verdicts),
+        clean=sum(1 for v in verdicts if v.get("verdict") == "clean"),
+        findings_open=0 if clean else int(last.get("findings") or 0),
+        clean_head=str(last.get("head_sha") or "") if clean else "",
+    )
 
 
 def last_tier(events: Events, task_id: str) -> str:

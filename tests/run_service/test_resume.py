@@ -147,6 +147,20 @@ async def test_a_merge_asked_for_that_conflicts_resolves_the_conflict_before_any
     assert script.waited_on == ["c0"] and [m.head_sha for m in script.merge_requests] == ["c5", "c0"]
 
 
+async def test_a_task_says_it_is_resolving_a_conflict_while_that_fix_run_runs_and_when_it_is_resolved(env):  # noqa: F811
+    # An operator who pressed Merge saw a fix run start, with nothing to say it only resolved the conflict.
+    script = Script(verdicts=[CLEAN], auto_merge=True, merges=["conflict", "merged"])
+
+    _, statuses = await _resume(env, script, "merge", _open(), goal_id="g-1")
+
+    said = [s.reason for s in statuses if s.status == "running"]
+    assert "resolving its pull request's conflict with main" in said
+    assert "its conflict with main is resolved, and its checks and a review come next" in said
+    assert said.index("resolving its pull request's conflict with main") < said.index(
+        "its conflict with main is resolved, and its checks and a review come next"
+    )
+
+
 async def test_a_resumed_task_numbers_its_review_rounds_after_the_ones_it_had(env):  # noqa: F811
     # #288: a resumed workflow numbered its rounds from 1 again, and the task's round 1 event, review file and
     # pull request title were the earlier round 1's. EARLIER holds one finished review run.

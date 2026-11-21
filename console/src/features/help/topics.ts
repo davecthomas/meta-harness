@@ -58,7 +58,7 @@ export const TOPICS: Topic[] = [
     slug: "who-is-talking",
     title: "Who is talking",
     blocks: [
-      { kind: "text", text: "Two parts of the meta-harness talk to you." },
+      { kind: "text", text: "Two parts of the meta-harness talk to you. Each has its own mark and color, shown beside what it says." },
       {
         kind: "terms",
         items: [
@@ -90,8 +90,9 @@ export const TOPICS: Topic[] = [
     slug: "when-it-asks-you",
     title: "When it asks you",
     blocks: [
-      { kind: "text", text: "An ask says what happened in a line or two. Under it are the actions you can take. The first button is the recommended one." },
-      { kind: "text", text: "Each button does the whole job. Retry runs the task again. Merge resolves a conflict first when there is one, then merges once a review is clean." },
+      { kind: "text", text: "The Task Shepherd's panel is at the top of a task's page. An ask there says what happened in a line or two. Under it are the moves you can take, ordered by which is most likely to get the task merged. The first button is the recommended one." },
+      { kind: "text", text: "Each button does the whole job. Resolve the conflict and merge starts a fix run for the conflict, then merges once a review is clean. Retry with a stronger model runs the review loop again on a stronger model." },
+      { kind: "text", text: "The order comes from how the pull request stands now. That is whether it conflicts with main, what its last review found, and whether a stronger model has tried." },
     ],
   },
   {

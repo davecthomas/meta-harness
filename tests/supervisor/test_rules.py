@@ -274,7 +274,7 @@ def test_a_clean_review_a_conflict_kept_from_merging_goes_back_for_the_conflict_
     assert decide(clean).action == "review", "a goal that does not merge by itself gets it back ready"
     assert decide(dataclasses.replace(clean, auto_merge=True)).action == "merge"
     spent = decide(dataclasses.replace(clean, drives_left=False))
-    assert spent.owner == "operator" and spent.ask.startswith("Press Merge")
+    assert spent.owner == "operator" and spent.ask.startswith("Resolve the conflict and merge")
 
 
 def test_the_reason_a_clean_review_blocked_by_a_conflict_leaves_is_read_as_one():

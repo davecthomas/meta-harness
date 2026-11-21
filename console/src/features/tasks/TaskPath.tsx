@@ -77,18 +77,19 @@ function StepCard({ step, now, picked, onPick, checks }: { step: Step; now: numb
           <Stack gap={2}>
             <Group gap={6} wrap="nowrap" align="flex-start">
               <Icon size={15} color={`var(--mantine-color-${color}-6)`} style={{ flexShrink: 0, marginTop: 2 }} />
-              <Text size="sm" fw={600} lh={1.25} style={{ flex: 1 }}>{step.title}</Text>
+              {/* A title can hold a word longer than the box, such as an email address: it breaks inside the box. */}
+              <Text size="sm" fw={600} lh={1.25} style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }} data-testid="step-title">{step.title}</Text>
               {step.now && <Badge size="xs" color="blue" variant="filled" style={{ flexShrink: 0 }}>Now</Badge>}
               {step.chosen && <Badge size="xs" color="teal" variant="light" style={{ flexShrink: 0 }}>Chosen</Badge>}
             </Group>
-            {step.detail && <Text size="xs" c={step.tone === "bad" ? "red" : "dimmed"} lineClamp={2}>{step.detail}</Text>}
+            {step.detail && <Text size="xs" c={step.tone === "bad" ? "red" : "dimmed"} lineClamp={2} style={{ overflowWrap: "anywhere" }}>{step.detail}</Text>}
             {step.candidate && <Text size="xs" c="dimmed" truncate>{candidateName(step.candidate)}</Text>}
             {numbers(step, now) && <Text size="xs" ff="monospace">{numbers(step, now)}</Text>}
             {waitsForChecks(step) && checks && <Text size="xs" data-testid="step-checks">{checksLine(checks, now)}</Text>}
             {step.notes.map((n, i) => (
               <Group key={i} gap={4} wrap="nowrap" align="flex-start">
                 <IconNote size={12} style={{ flexShrink: 0, marginTop: 3 }} />
-                <Text size="xs" lineClamp={2}>{n}</Text>
+                <Text size="xs" lineClamp={2} style={{ minWidth: 0, overflowWrap: "anywhere" }}>{n}</Text>
               </Group>
             ))}
           </Stack>

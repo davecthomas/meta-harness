@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Anchor, Button, Collapse, Group, List, Paper, Stack, Text, ThemeIcon, Timeline } from "@mantine/core";
-import { IconCheck, IconCompass, IconRefresh } from "@tabler/icons-react";
+import { Alert, Anchor, Button, Collapse, Group, List, Paper, Stack, Text, Timeline } from "@mantine/core";
+import { IconCheck, IconRefresh } from "@tabler/icons-react";
 import { ConfirmButton } from "../../components/ConfirmButton";
+import { VoiceMark } from "../../components/Voice";
 import { api } from "../../api";
 import { issueUrl } from "../trackers/refs";
 import { when } from "../../components/ui";
@@ -202,10 +203,10 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
     <Paper withBorder p="lg" mb="md" radius="md" data-testid="planner-updates" style={{ borderLeft: "5px solid var(--mantine-color-indigo-6)" }}>
       <Group justify="space-between" align="flex-start" wrap="nowrap" mb={latest ? "xs" : 0}>
         <Group gap="sm" wrap="nowrap" align="flex-start">
-          <ThemeIcon size={38} radius="xl" variant="light" color="indigo" mt={2}><IconCompass size={22} /></ThemeIcon>
+          <VoiceMark who="planner" size={38} />
           <Stack gap={2}>
             <Text size="xs" tt="uppercase" fw={700} c="indigo" style={{ letterSpacing: 0.4 }}>
-              From your planner{latest ? ` · ${since(latest.created_at)}` : ""}
+              Goal Planner{latest ? ` · ${since(latest.created_at)}` : ""}
             </Text>
             {latest ? (
               <Text size="xl" fw={650} lh={1.3} data-testid="planner-headline">{latest.headline}</Text>

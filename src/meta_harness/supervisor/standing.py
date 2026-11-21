@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import psycopg
+from psycopg.types.json import Jsonb
 from psycopg.rows import dict_row
 
 from meta_harness.supervisor.rules import Decision
@@ -42,16 +43,25 @@ def save(conn: psycopg.Connection, task_id: str, decision: Decision) -> bool:
     """Save where a pass found the task. A task still in the situation it was in keeps when it entered it and
     what the supervisor did there; one in a new situation starts again. Returns whether the situation is new."""
     row = conn.execute(
-        "INSERT INTO supervisor.standing (task_id, owner, situation, reason, ask) VALUES (%s, %s, %s, %s, %s) "
+        "INSERT INTO supervisor.standing (task_id, owner, situation, reason, ask, moves, saw) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s) "
         "ON CONFLICT (task_id) DO UPDATE SET owner = EXCLUDED.owner, reason = EXCLUDED.reason, ask = EXCLUDED.ask, "
-        "checked_at = now(), "
+        "moves = EXCLUDED.moves, saw = EXCLUDED.saw, checked_at = now(), "
         "since = CASE WHEN standing.situation = EXCLUDED.situation THEN standing.since ELSE now() END, "
         "attempts = CASE WHEN standing.situation = EXCLUDED.situation THEN standing.attempts ELSE 0 END, "
         "acted_at = CASE WHEN standing.situation = EXCLUDED.situation THEN standing.acted_at ELSE NULL END, "
         "last_error = CASE WHEN standing.situation = EXCLUDED.situation THEN standing.last_error ELSE NULL END, "
         "situation = EXCLUDED.situation "
         "RETURNING since = checked_at",
-        (task_id, decision.owner, decision.situation, decision.reason, decision.ask or None),
+        (
+            task_id,
+            decision.owner,
+            decision.situation,
+            decision.reason,
+            decision.ask or None,
+            Jsonb(list(decision.moves)) if decision.moves else None,
+            decision.saw or None,
+        ),
     ).fetchone()
     return bool(row[0])
 
@@ -77,7 +87,8 @@ def for_tasks(conn: psycopg.Connection, task_ids: list[str]) -> dict[str, dict]:
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                "SELECT task_id, owner, situation, reason, ask, since, checked_at, attempts, last_error "
+                "SELECT task_id, owner, situation, reason, ask, since, checked_at, attempts, last_error, "
+                "coalesce(moves, '[]'::jsonb) AS moves, coalesce(saw, '') AS saw "
                 "FROM supervisor.standing WHERE task_id = ANY(%s)",
                 (task_ids,),
             )
@@ -86,7 +97,10 @@ def for_tasks(conn: psycopg.Connection, task_ids: list[str]) -> dict[str, dict]:
         return {}
     return {
         row["task_id"]: {
-            **{key: row[key] for key in ("owner", "situation", "reason", "ask", "attempts", "last_error")},
+            **{
+                key: row[key]
+                for key in ("owner", "situation", "reason", "ask", "attempts", "last_error", "moves", "saw")
+            },
             "since": row["since"].isoformat(),
             "checked_at": row["checked_at"].isoformat(),
         }

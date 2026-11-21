@@ -26,6 +26,7 @@ to this repository, from goals set in its own console.
 
 ## Contents
 
+- [First principles](#first-principles)
 - [What makes it different](#what-makes-it-different)
 - [Features](#features)
 - [How a goal becomes merged code](#how-a-goal-becomes-merged-code)
@@ -39,6 +40,38 @@ to this repository, from goals set in its own console.
 - [Versioning and releases](#versioning-and-releases)
 - [Contributing](#contributing)
 - [License](#license)
+
+## First principles
+
+Most of the time a code change takes is waiting. A pull request conflicts with
+main and sits. A check fails for a reason unrelated to the change. A review asks
+for one more fix, then another. Meta-Harness exists to remove those stops, and
+it follows nine rules to do it:
+
+1. **The goal is merged work that makes main better.** A task that has stopped
+   is a fault in the system, and each stop has an owner and a next step.
+2. **Better beats perfect.** A pull request merges when main is better with it
+   than without it. Quality comes from many pull requests built on each other.
+3. **Progress is kept.** A review that passed a commit stands for that commit,
+   and a retry starts where the last try stopped.
+4. **It takes the clear next step without asking.** That covers resolving a
+   conflict, running a flaky check again and retrying after an outage.
+5. **It does not try a step a third time** after the step failed the same way
+   twice. It takes a different step.
+6. **It asks you only for what a person alone can give:** a call on value or
+   risk, more money, an approval or a credential.
+7. **It shows every decision:** what it saw, what it chose and why.
+8. **You can always decide differently.** Every action stays open to you.
+9. **Spend limits are hard.** Reaching one stops the work and asks you.
+
+Two parts of the system talk to you. The **Goal Planner** decides what work a
+goal needs. The **Task Shepherd** gets each task to merged: it watches every
+open task, acts when one stops, and asks you when it must, with the actions you
+can take ordered best first.
+
+Rule 5 is not fully built yet: a failing step can repeat up to three times.
+The design's [Goal seeking](docs/technical-design.md#goal-seeking) section has
+the full rules, the order of moves for a stuck task, and what is built.
 
 ## What makes it different
 
