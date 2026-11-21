@@ -45,7 +45,7 @@ function show(admin: boolean) {
 }
 
 test("while the switch is off an admin sees Stop everything, which asks first and then stops, and the banner shows", async () => {
-  const posted = fakeSwitch({});
+  const posted = fakeSwitch({ running: 2 });
   show(true);
 
   fireEvent.click(await screen.findByRole("button", { name: "Stop everything" }));
@@ -60,6 +60,22 @@ test("while the switch is off an admin sees Stop everything, which asks first an
   expect(screen.getByTestId("kill-switch-banner").textContent).toContain("runaway spend");
   expect(posted).toEqual([{ engaged: true, reason: "runaway spend" }]);
   expect(screen.getByRole("button", { name: "Lift kill switch" })).toBeTruthy();
+});
+
+test("with nothing running there is nothing to stop, so Stop everything is not shown", async () => {
+  fakeSwitch({ running: 0 });
+  show(true);
+
+  await screen.findByText((_, el) => el?.tagName === "BODY");
+  await new Promise((r) => setTimeout(r, 0));
+  expect(screen.queryByRole("button", { name: "Stop everything" })).toBeNull();
+});
+
+test("while the switch is on, Lift kill switch is shown whatever is running", async () => {
+  fakeSwitch({ engaged: true, running: 0, reason: "runaway spend" });
+  show(true);
+
+  expect(await screen.findByRole("button", { name: "Lift kill switch" })).toBeTruthy();
 });
 
 test("an admin lifts the switch from the banner", async () => {

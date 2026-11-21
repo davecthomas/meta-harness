@@ -358,6 +358,7 @@ async def test_a_drain_admits_nothing_and_stops_nothing(repo):
         set_draining(False, "deploy", "the VM booted")
     assert started == [] and canceled == [] and queued not in result.started
     assert (await admission.pass_once()).started == [queued]
+    assert kill_switch()["running"] == 1, "the admitted task holds its area, so one task runs"
 
 
 def test_the_kill_switch_api_takes_a_mode(repo):

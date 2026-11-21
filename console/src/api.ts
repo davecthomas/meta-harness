@@ -206,6 +206,8 @@ export interface KillSwitch {
   changed_by: string;
   reason: string | null;
   changed_at: string;
+  // How many tasks run now. Absent from an older scheduler.
+  running?: number;
 }
 
 // The calls every feature shares; each feature's own calls are in features/<feature>/api.ts.

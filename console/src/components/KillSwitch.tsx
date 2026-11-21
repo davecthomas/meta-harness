@@ -115,6 +115,9 @@ export function KillSwitchButton() {
   const { state } = useKillSwitch();
   const [change, setChange] = useState<Change | null>(null);
   if (!state) return null;
+  // Stop everything is offered only while a task runs: with nothing running there is nothing to stop. An older
+  // scheduler that does not say how many run keeps the button.
+  if (!state.engaged && state.running === 0) return null;
   return (
     <>
       {state.engaged ? (
