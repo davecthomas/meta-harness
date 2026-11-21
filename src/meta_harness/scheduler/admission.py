@@ -312,16 +312,22 @@ def kill_switch_state() -> tuple[bool, bool]:
 
 
 def kill_switch() -> dict:
+    """The switch, and how many tasks run now: every admitted task holds at least one area lock row, so the
+    console offers Stop everything only while there is something to stop."""
     with db.connect(autocommit=True) as conn:
         row = conn.execute(
             "SELECT engaged, changed_by, reason, changed_at, draining FROM scheduler.kill_switch WHERE id = 1"
         ).fetchone()
+        running = conn.execute(
+            "SELECT count(DISTINCT task_id) FROM scheduler.repo_area_lock WHERE expires_at > now()"
+        ).fetchone()[0]
     return {
         "engaged": row[0],
         "changed_by": row[1],
         "reason": row[2],
         "changed_at": row[3].isoformat(),
         "draining": row[4],
+        "running": int(running),
     }
 
 

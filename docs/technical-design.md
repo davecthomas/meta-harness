@@ -4265,8 +4265,10 @@ the entry is highlighted while an admin page shows
 (`console/src/components/AdminMenu.tsx`).
 
 The kill switch is on every page (`console/src/components/KillSwitch.tsx`).
-An admin has a Stop everything button in the header; it asks first, with an
-optional reason that is recorded. While the switch is on, a red banner over
+An admin has a Stop everything button in the header while a task runs; with
+nothing running there is nothing to stop, so it is not shown. `GET
+/v1/kill-switch` says how many tasks run (`running`: the tasks that hold an
+area lock). The button asks first, with an optional reason that is recorded. While the switch is on, a red banner over
 every page says nothing runs, who turned it on, when and why. The header
 button and the banner lift it, after asking. While a deploy drains, a yellow
 banner says so. An admin may end the drain by hand, and is told to do so only
