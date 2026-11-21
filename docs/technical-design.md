@@ -2868,6 +2868,16 @@ After sizing:
   the task's `max_usd` is the issue's own `Spend limit: $N` line, else the
   task policy's `max_usd_by_size` for its size.
 
+A split issue that was also run as one (Run anyway, before the two shut each
+other out) kept a task of its own beside its parts. When that task failed
+and every part merged, nothing ended it: the goal's page asked the operator
+to retry it, which would have written the parts' merged work again. So the
+sweep ends it (`planner/covered.py`): a failed task with no pull request,
+whose issue's parts are all closed, is closed with the reason, and its
+issue goes back to being replaced by its parts, which closes it on the
+tracker and lets the goal be met. A `failed` task may become `closed` for
+this alone. A task that is running, or has a pull request, ends by itself.
+
 A sizing call that fails, or a gateway the planner has no address or key for,
 leaves an issue never sized waiting, with no task: the failure is the sweep's
 error, and the next sweep sizes it again before it makes the task, so a large
@@ -3367,7 +3377,12 @@ reduces them to a digest; an update is written, with one small model call
 through the HTTP Gateway, only when the digest differs from the last update's,
 so a goal that stands still costs nothing. A goal that closes gets one last
 update. The model is given the facts and its last update, and told to say only
-what the facts say. Updates are rows of `planner.goal_update`, read with
+what the facts say. The facts say whether the goal is done (`goal.done`) and
+how many of its issues are open (`goal.open_issues`), and an update that
+calls the goal done while one is open is not posted (`written_true`): it is
+written once more, told what was wrong, and a second that says the same is
+dropped with a warning. An update once said "All tasks merged, goal done"
+above a board that said "1 issue needs you". Updates are rows of `planner.goal_update`, read with
 `GET /v1/goals/{id}/updates`; `POST` to the same path writes one now. Each is a
 `goal_update_written` event, whose cost is counted as planning. The planning
 configuration's `updates` turns them off, names the model (goal drafting's when
