@@ -91,6 +91,9 @@ class Facts:
     # review the fixes did not settle.
     stronger_left: bool = False
     fix_again_left: bool = False
+    # For an unresolved task: its last review came back clean, and only a conflict with its base kept it from
+    # merging (failures.clean_blocked).
+    clean_review: bool = False
     # For a task held at its own spend limit: whether the supervisor may raise it once, within twice the limit
     # and what its goal's budget has left.
     raise_left: bool = False
@@ -331,6 +334,22 @@ def _parked(facts: Facts) -> Decision:
                 "its review loop was stopped by a failure on the system's side; the supervisor sends it back after a wait",
                 action="wait",
             )
+    if facts.status == "review_unresolved" and facts.clean_review:
+        # The review passed: what is left is the conflict, which a fresh set of fix rounds resolves first. A
+        # goal that merges by itself has it merged once a review is clean again; any other gets it back ready.
+        if facts.goal in SWEPT and facts.drives_left:
+            return Decision(
+                "supervisor",
+                "review_clean_conflict",
+                "its review came back clean, and only a conflict with its base kept it from merging",
+                action="merge" if facts.auto_merge else "review",
+            )
+        return Decision(
+            "operator",
+            "review_clean_conflict",
+            "its review came back clean, and only a conflict with its base kept it from merging",
+            ask="Press Merge on the task's page. The conflict is resolved first, and it merges once a review is clean.",
+        )
     if facts.status == "review_unresolved" and facts.goal in SWEPT and facts.fix_again_left and facts.drives_left:
         return Decision(
             "supervisor",
