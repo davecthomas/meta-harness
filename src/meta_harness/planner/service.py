@@ -350,17 +350,24 @@ def create_app(
             if i.state == "open" and i.ref not in under_way and holders.get(i.ref, goal["id"]) == goal["id"]
         ]
 
-    async def plan_one(goal: dict, who: str) -> None:
+    async def plan_one(goal: dict, who: str) -> bool:
         """Start a planning goal's planning task, over the issues the goal already has. A failure is logged:
-        Replan on its page starts it again."""
+        Replan on its page starts it again. A goal that plans over issues that exist, and has none open yet, is
+        not planned: a planning run would spend on nothing. It goes back to not started, and False comes back."""
         try:
-            await planning.start(goal, tasks, events, who, issues=await issues_to_plan(goal))
+            issues = await issues_to_plan(goal)
+            if not issues and goal["modality"] not in store.PLANNED_MODALITIES and not goal.get("plan_approved_at"):
+                await asyncio.to_thread(move_with, goal["id"], who, "paused", {"planning"})
+                log.info("goal %s: no open issue to plan over yet, so no planning task started", goal["id"])
+                return False
+            await planning.start(goal, tasks, events, who, issues=issues)
         except (planning.PlanError, TrackerError) as err:
             log.error(
                 "goal %s: its planning task could not start: %s. Replan on the goal's page starts it again",
                 goal["id"],
                 err,
             )
+        return True
 
     async def suggest(goal: dict) -> None:
         """A planning goal's suggested fix: started for its latest plan when that has gaps a change to the plan
@@ -1485,7 +1492,16 @@ def create_app(
             and not current["plan_approved_at"]
         ):
             goal, _ = await asyncio.to_thread(move_with, goal_id, who, "planning", {"paused"})
-            await plan_one(goal, who)
+            if not await plan_one(goal, who):
+                where = (
+                    f"Label an open issue `{goal['label']}` in its repos, or pick issues"
+                    if goal["label"]
+                    else "Pick issues"
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"the goal has no open issue to plan yet. {where} with Add issues, then start it again",
+                )
             return await asyncio.to_thread(load, goal_id)
         goal, changed = await asyncio.to_thread(
             move_with, goal_id, who, "active", {"active", "paused", "stalled", "budget_exhausted"}

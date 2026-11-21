@@ -657,3 +657,24 @@ def test_a_goal_that_was_never_planned_or_has_ended_cannot_be_planned_again(untr
     client.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
     ended = client.post(f"/v1/goals/{goal['id']}/replan", headers=OPERATOR)
     assert ended.status_code == 409 and "it is canceled" in ended.json()["detail"]
+
+
+def test_a_goal_with_no_open_issue_to_plan_over_starts_no_planning_run_and_says_what_to_do(world, monkeypatch):
+    # Starting a goal whose label no issue had yet ran a planning task over nothing, and spent on it.
+    from meta_harness.planner import planning
+
+    monkeypatch.setattr(planning, "plans_every_goal", lambda: True)
+    client, _, _, tasks = world
+    body = {"statement": "Tidy the logs", "repos": [REPO], "label": "nothing-has-this", "start": False}
+    goal = client.post("/v1/goals", json=body, headers=OPERATOR).json()
+
+    started = client.post(f"/v1/goals/{goal['id']}/resume", headers=OPERATOR)
+
+    assert started.status_code == 409
+    assert "no open issue to plan yet" in started.json()["detail"]
+    assert "`nothing-has-this`" in started.json()["detail"] and "Add issues" in started.json()["detail"]
+    assert not tasks.tasks, "no planning task"
+    assert client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "paused"
+
+    saved_and_planned = client.post("/v1/goals", json={**body, "start": True}, headers=OPERATOR).json()
+    assert saved_and_planned["status"] == "paused" and not tasks.tasks
