@@ -4408,7 +4408,7 @@ Overview. A person's Settings page does not repeat the deployment's trackers.
 | Pool | Per-run sandboxes by image and state, warm targets versus actual, lease latency, health failures | |
 | Spend and performance | Cost by goal, modality, repo, model, harness profile and routing tier. Cost per merged pull request and time to merge, by modality. Dollar-hours per completed task over time. Cache hit rate | |
 | Configuration | The active routing tiers, harness profiles, modalities, task policy and repo registry, their version history, and the harness analyzer's pending proposals | Edit any value in place, staged and saved as one reviewed version; roll back a version, approve or reject a proposal |
-| Audit | Every recorded decision, by a meta-harness component, ai-api-unified or an operator, filtered by who made it | Export a time range |
+| Audit | Two lists, newest first. Changes by people: configuration, the kill switch and user access, with who made each. Decisions: what the meta-harness decided about its work, from its events. That is each task's routing (tier, method and first model), how each run ended on which model, each review's verdict, each merge, and what the Task Shepherd or the Goal Planner did to unstick a task. Each decision links to its task, and a kind can be picked alone | Pick a kind of decision |
 
 A task's runs, fallbacks and retries included, run one after another. The
 Tasks view lists them in order with the task's review and fix runs under them.

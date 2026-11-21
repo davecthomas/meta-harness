@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Anchor, Code, Paper, SimpleGrid, Stack, Table, Text } from "@mantine/core";
+import { Anchor, Code, Paper, SimpleGrid, Stack, Table, Tabs, Text } from "@mantine/core";
+import { Decisions } from "./Decisions";
 import { api, type MhEvent } from "../../api";
 import { DataTable, Empty, ErrorAlert, Facts, PageHeader, when } from "../../components/ui";
 
@@ -32,6 +33,7 @@ export function DeploysPage() {
 const AUDITED = ["config_changed", "kill_switch_changed", "user_invited", "user_role_changed", "user_deprovisioned"];
 
 export function AuditPage() {
+  const [view, setView] = useState("changes");
   const [events, setEvents] = useState<MhEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -39,7 +41,15 @@ export function AuditPage() {
   }, []);
   return (
     <>
-      <PageHeader title="Audit" description="Configuration changes and kill switch changes, newest first, with who made them." />
+      <PageHeader title="Audit" description="What people changed, and every decision the meta-harness made about its work, newest first." />
+      <Tabs value={view} onChange={(v) => setView(v ?? "changes")} mb="md">
+        <Tabs.List>
+          <Tabs.Tab value="changes">Changes by people</Tabs.Tab>
+          <Tabs.Tab value="decisions">Decisions</Tabs.Tab>
+        </Tabs.List>
+      </Tabs>
+      {view === "decisions" ? <Decisions /> : (
+      <>
       <ErrorAlert error={error} />
       {events && events.length === 0 && <Empty>No change has been made yet. A change to the configuration, the kill switch or a user's access is recorded here, with who made it.</Empty>}
       {events && events.length > 0 && (
@@ -52,6 +62,8 @@ export function AuditPage() {
             </Table.Tr>
           ))}
         </DataTable>
+      )}
+      </>
       )}
     </>
   );
