@@ -471,6 +471,17 @@ class MergeRequest:
 
 
 @dataclass
+class BaseRequest:
+    """Bring the base's newest commits into the pull request's branch before its next review."""
+
+    task_id: str
+    repo: str
+    pr_url: str
+    base: str
+    head_sha: str
+
+
+@dataclass
 class MergeResult:
     """merged, head_changed (a commit landed after the review), conflict, or blocked (GitHub refused)."""
 
