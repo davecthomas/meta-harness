@@ -111,6 +111,19 @@ CLAIMS_DONE = re.compile(
 )
 
 
+def from_facts(found: dict[str, Any], model: str = "", usd_cost: str = "0") -> "Written":
+    """An update written from the facts alone, with no model: how many issues are left and where each stands.
+    Used when the model's update twice says the goal is done while issues are open, so the operator still reads
+    where the goal is, and never an error about the model."""
+    left = [i for i in found.get("issues") or [] if i.get("state") != "closed" and not i.get("replaced_by")]
+    if not left:
+        left = [i for i in found.get("issues") or [] if i.get("state") != "closed"]
+    count = int((found.get("goal") or {}).get("open_issues") or len(left))
+    headline = f"{count} issue{'s' if count != 1 else ''} still open."
+    body = " ".join(f"{i.get('title') or i['ref']}: {str(i.get('where_it_stands') or '').rstrip('.')}." for i in left)
+    return Written(headline=headline, body=body or headline, model=model, usd_cost=usd_cost)
+
+
 def written_true(written: "Written", found: dict[str, Any]) -> None:
     """Raises UpdateError for an update that calls its goal done while the facts say issues are open. The
     update is then not posted, and the next one is written from the facts as they stand."""
@@ -557,7 +570,12 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
         log.warning("goal %s: %s", goal["id"], err)
         corrected = {**found, "correction": "Your last draft said the goal was done. It is not: say what is left."}
         written = await (writer or write_update)(corrected, before)
-        written_true(written, found)
+        try:
+            written_true(written, found)
+        except UpdateError as again:
+            # Twice wrong: the update is written from the facts alone, so the page still says where the goal is.
+            log.warning("goal %s: %s. The update is written from the facts instead", goal["id"], again)
+            written = from_facts(found, written.model, written.usd_cost)
     if not written.headline or not written.body:
         raise UpdateError("the model wrote an empty update")
     written.needs_you = actionable(written.needs_you, goal, links, tasks_of_goal, suggestion)
