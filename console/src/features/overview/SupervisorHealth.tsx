@@ -14,12 +14,12 @@ import { errorText, ReadFailed } from "../../components/ReadFailed";
 export function supervisorTrouble(state: SupervisorState, now = Date.now()): string[] {
   const trouble: string[] = [];
   const pass = state.last_pass;
-  if (state.every_seconds === 0) return ["The supervisor is turned off (MH_SUPERVISOR_SECONDS is 0): nothing checks that tasks are still moving."];
-  if (pass?.error) trouble.push(`The supervisor's last pass failed: ${pass.error}`);
+  if (state.every_seconds === 0) return ["The Task Shepherd is turned off (MH_SUPERVISOR_SECONDS is 0): nothing checks that tasks are still moving."];
+  if (pass?.error) trouble.push(`The Task Shepherd's last pass failed: ${pass.error}`);
   const at = pass?.at ? Date.parse(pass.at) : NaN;
   const late = Math.max(300, state.every_seconds * 5) * 1000;
-  if (!pass || Number.isNaN(at)) trouble.push("The supervisor has not finished a pass yet.");
-  else if (now - at > late) trouble.push(`The supervisor last finished a pass ${Math.round((now - at) / 60000)} minutes ago. It should run every ${state.every_seconds} seconds.`);
+  if (!pass || Number.isNaN(at)) trouble.push("The Task Shepherd has not finished a pass yet.");
+  else if (now - at > late) trouble.push(`The Task Shepherd last finished a pass ${Math.round((now - at) / 60000)} minutes ago. It should run every ${state.every_seconds} seconds.`);
   for (const error of pass?.errors ?? []) trouble.push(`It could not look at a task: ${error}`);
   return trouble;
 }
@@ -41,7 +41,7 @@ export function SupervisorHealth() {
     return () => clearInterval(timer);
   }, []);
   // The supervisor is what finds the tasks that need someone: when it cannot be read, the list may be missing some.
-  if (failed) return <ReadFailed what="how the supervisor is doing, so the list below may be missing something" error={failed} retries="It tries again within a minute." />;
+  if (failed) return <ReadFailed what="how the Task Shepherd is doing, so the list below may be missing something" error={failed} retries="It tries again within a minute." />;
   if (!state) return null;
   const trouble = supervisorTrouble(state);
   const sweeps = Object.entries(state.sweeps_failing ?? {});

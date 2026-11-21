@@ -9,7 +9,7 @@ const OWNERS: Record<TaskStanding["owner"], { label: string; color: string }> = 
   workflow: { label: "Its workflow", color: "blue" },
   scheduler: { label: "The scheduler", color: "gray" },
   planner: { label: "Its goal's sweep", color: "gray" },
-  supervisor: { label: "The supervisor", color: "yellow" },
+  supervisor: { label: "The Task Shepherd", color: "yellow" },
   operator: { label: "You", color: "red" },
 };
 

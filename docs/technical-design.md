@@ -3645,6 +3645,16 @@ Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
+Help (`console/src/features/help`, at `/help`) is the last entry of the
+left pane and opens to its topics, in reading order: Why, First principles,
+The goal, Who is talking, How a stuck task gets moving, When it asks you and
+Spend limits. Each topic has its own address (`/help/<topic>`), and one that
+names no topic opens Help at its start. The text is fixed, in `topics.ts`,
+and follows Goal seeking above. It says only what the meta-harness does
+today: a rule that is not fully built is named as such on the page. The
+supervisor is the Task Shepherd wherever the console or a status reason
+names it to a person; the code, its routes and its events keep `supervisor`.
+
 The Costs page (`console/src/features/performance`, at `/costs`; it was
 named Performance, and `/performance` still leads to it) is what the
 meta-harness costs over time. Four figures head it for the chosen range: the
