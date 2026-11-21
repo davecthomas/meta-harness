@@ -55,7 +55,9 @@ def ranked(situation: str, facts: "Facts") -> tuple[str, ...]:
         return ("open_pull_request",)
     if situation == "goal_not_active" or (situation == "failed" and facts.failure == "transient"):
         return ("open_goal",)
-    if situation in ("failed_long_ago", "failed_retries_used"):
+    if situation in ("failed_long_ago", "failed_retries_used") or (
+        situation == "failed" and facts.failure != "transient"
+    ):
         return ("retry", "cancel")
     return ()
 
