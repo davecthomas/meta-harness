@@ -308,7 +308,7 @@ async def test_a_pull_request_description_keeps_the_meta_harness_lines_around_th
 
     body = activities._pr_body(request, await activities._summary_section(request, ["app.py"]))
 
-    assert "## Summary from the run" in body
+    assert "## What this change does" in body
     assert "Closes owner/repo#9" in body and "`run-task-t-1:run-1`" in body and "$0.40" in body
     assert PLAIN.strip() in body and "rich tapestry" not in body
     [(_, payload, fields)] = passed

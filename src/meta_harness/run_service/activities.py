@@ -100,7 +100,7 @@ from meta_harness.run_service.shared import (
 )
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-REPO_TEMPLATE = "repo-task-v1"
+REPO_TEMPLATE = "repo-task-v2"
 # A goal's planning task: the planner wrote what it asks; this wraps it with where the run is and what it may do.
 PLAN_TEMPLATE = "plan-v1"
 
@@ -355,6 +355,7 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         usd=usage["usd"],
         files_changed=progress["files_changed"],
         answer=answer,
+        answer_source=source,
         spend_limit_usd=request.spend_limit_usd,
         grant_spent_usd=grant_spent,
         error=data.get("error"),
@@ -440,8 +441,10 @@ async def publish(request: PublishRequest) -> PublishResult:
         except code_host.CodeHostError as err:
             raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
         # A retry adds nothing when an earlier attempt added the round's section, and its writing pass may have
-        # rewritten the summary differently, so what is recorded is the section the description holds.
-        _record_summary(request, published.pr_url, pr_summary.posted_round(description or "", heading) or part)
+        # rewritten the summary differently, so what is recorded is the section the description holds. Its source
+        # is the one this request gives, which every attempt shares, not a guess from the text's first words.
+        posted = pr_summary.posted_round(description or "", heading, part)
+        _record_summary(request, published.pr_url, posted or part)
     if request.fix_round and request.provenance and not published.created:
         # The description's Run section names the run that opened the pull request; each fix run pushed to it adds
         # its own provenance under a heading named for the run, so a retry of the activity adds it once.
@@ -569,7 +572,7 @@ def _commit_message(request: PublishRequest) -> str:
 
 async def _summary_section(request: PublishRequest, files: list[str]) -> pr_summary.Section:
     """The run's summary for its pull request after the writing pass, or the fallback, which skips the pass."""
-    part = pr_summary.section(request.summary, files)
+    part = pr_summary.section(request.summary, files, request.summary_source)
     if not part.from_run:
         return part
     [text] = await _written("pull_request", [part.text], request.task_id, run_id=request.run_id)
@@ -1194,7 +1197,7 @@ def _closing() -> str:
 
 @activity.defn
 async def loop_prompt(request: LoopPromptRequest) -> str:
-    """A review or fix run's prompt, from prompts/review-v5.txt or prompts/fix-v1.txt. It closes with the
+    """A review or fix run's prompt, from prompts/review-v5.txt or prompts/fix-v2.txt. It closes with the
     charter (charter.py), so the reviewer and the fix are held to the same bar, then the writing rules. A review's shows the pull
     request's description as it stands, since the reviewer judges what it explains (why a file outside the
     task's paths changed) and has no other way to read it."""
