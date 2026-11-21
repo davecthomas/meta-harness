@@ -168,6 +168,19 @@ REGISTRY: list[EventType] = [
             ["action", "retries"],
         ),
     ),
+    # An operator started a task over: its pull request is closed and it runs fresh from the current base.
+    EventType(
+        "task_restarted",
+        1,
+        _object(
+            {
+                "max_usd": {"type": ["string", "null"]},
+                "retries": {"type": "integer"},
+                "pr_url": {"type": "string"},
+            },
+            ["retries"],
+        ),
+    ),
     # A review held for an operator before its fix run, a finding they dismissed, and their word to go on
     # An operator took a task's review over, gave it back, or gave their verdict
     EventType("operator_review_claimed", 1, _object({}, [])),

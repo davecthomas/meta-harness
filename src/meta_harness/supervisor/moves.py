@@ -28,6 +28,10 @@ MOVES = {
     "merge_as_is": "Merge the pull request with the last review's findings unfixed.",
     "open_pull_request": "Open the pull request on the code host, for an approval or a rule only a person lifts.",
     "open_goal": "Open the task's goal, to resume it or approve its plan.",
+    "start_over": (
+        "Close the pull request, delete its branch, and run the task fresh from the current base, with a new "
+        "pull request."
+    ),
     "cancel": "Cancel the task. Its pull request stays open on the code host.",
 }
 
@@ -40,17 +44,17 @@ def ranked(situation: str, facts: "Facts") -> tuple[str, ...]:
         return ("resolve_and_merge" if facts.mergeable in ("conflict", "unknown") else "merge", "cancel")
     if situation == "review_unresolved_conflict":
         stronger = ("retry_stronger",) if facts.fix_again_left else ()
-        return ("resolve_and_merge", *stronger, "cancel")
+        return ("resolve_and_merge", *stronger, "start_over", "cancel")
     if situation == "review_unresolved":
         if facts.fix_again_left:
-            return ("retry_stronger", "retry", "merge_as_is", "cancel")
-        return ("retry", "merge_as_is", "cancel")
+            return ("retry_stronger", "retry", "merge_as_is", "start_over", "cancel")
+        return ("retry", "merge_as_is", "start_over", "cancel")
     if situation == "ready":
         return ("merge",)
     if situation in ("merge_blocked", "merge_wait_stale"):
         return ("open_pull_request", "merge")
     if situation == "merge_tries_used":
-        return ("resolve_and_merge", "cancel") if conflict else ("merge", "retry", "cancel")
+        return ("resolve_and_merge", "start_over", "cancel") if conflict else ("merge", "retry", "cancel")
     if situation == "canceled_with_pull_request":
         return ("open_pull_request",)
     if situation == "goal_not_active" or (situation == "failed" and facts.failure == "transient"):

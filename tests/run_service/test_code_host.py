@@ -299,3 +299,43 @@ async def test_a_pull_request_s_description_is_read_from_github_or_from_a_local_
     assert await code_host.description(str(tmp_path), f"file://{record}", record) == ""
     record.write_text("# Fix\n\nbody\n", encoding="utf-8")
     assert await code_host.description(str(tmp_path), f"file://{record}", record) == "# Fix\n\nbody\n"
+
+
+async def test_a_pull_request_is_closed_with_a_comment_and_its_branch_deleted_once(monkeypatch):
+    from meta_harness import outbound
+
+    said = await outbound.prepare(
+        "Closed: started over.", outbound.Context(outbound.GITHUB, outbound.COMMENT, outbound.FIXED)
+    )
+    state = {"state": "open"}
+    asked = []
+
+    async def github(repo, permissions, method, path, **kwargs):
+        asked.append((method, path))
+        if method == "GET":
+            return dict(state)
+        if method == "DELETE" and state.get("gone"):
+            raise code_host.CodeHostError("Reference does not exist", status=422)
+        return {"html_url": "https://github.com/o/r/pull/7#c"}
+
+    monkeypatch.setattr(code_host, "_github", github)
+
+    did = await code_host.close_pull_request("o/r", 7, said, "mh/t-1")
+
+    assert did == "closed the pull request, and deleted the branch mh/t-1"
+    assert asked == [
+        ("GET", "/repos/o/r/pulls/7"),
+        ("POST", "/repos/o/r/issues/7/comments"),
+        ("PATCH", "/repos/o/r/pulls/7"),
+        ("DELETE", "/repos/o/r/git/refs/heads/mh/t-1"),
+    ]
+    # A repeat finds it closed and the branch gone: no second comment, and no error.
+    state.update(state="closed", gone=True)
+    asked.clear()
+    assert "gone already" in await code_host.close_pull_request("o/r", 7, said, "mh/t-1")
+    assert [m for m, _ in asked] == ["GET", "DELETE"]
+    # A merged pull request is left alone.
+    state.update(merged=True)
+    asked.clear()
+    assert "had merged" in await code_host.close_pull_request("o/r", 7, said, "mh/t-1")
+    assert [m for m, _ in asked] == ["GET"]

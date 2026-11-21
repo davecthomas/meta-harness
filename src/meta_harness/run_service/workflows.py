@@ -103,6 +103,7 @@ with workflow.unsafe.imports_passed_through():
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
     from meta_harness.run_service import run_provenance
     from meta_harness.run_service.resume_activities import resume_state
+    from meta_harness.run_service.restart_activities import RestartRequest, close_for_restart
     from meta_harness.money import usd
     from meta_harness import budget_request
     from meta_harness.run_service.shared import (
@@ -791,6 +792,22 @@ class RunTask:
         if state.pr_state == "merged":
             merged = f"its pull request {state.published.pr_url} had merged"
             return result("merged", merged, state.published, Decimal(0)), attempts
+        if request.resume == "restart":
+            # An operator started the task over: its pull request is closed and its branch deleted, and a new
+            # first run starts from the current base. A new resume value, so no earlier history reaches here.
+            if state.pr_state == "open" and state.published is not None:
+                await workflow.execute_activity(
+                    close_for_restart,
+                    RestartRequest(
+                        task_id=self._task_id,
+                        repo=prepared.repo,
+                        pr_url=state.published.pr_url,
+                        branch=state.published.branch,
+                    ),
+                    start_to_close_timeout=CODE_HOST_TIMEOUT,
+                    retry_policy=CODE_HOST_RETRY,
+                )
+            return None, attempts
         if state.pr_state != "open" or state.published is None or state.author is None:
             return None, attempts
         loop = _Loop(request, prepared, state.author, state.published, limit, Decimal(0), attempts, None)

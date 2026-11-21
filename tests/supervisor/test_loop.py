@@ -452,6 +452,6 @@ def test_the_moves_and_the_account_are_saved_with_a_tasks_standing_and_served():
         served = standing.for_tasks(conn, ["t-moves", "t-working"])
         conn.execute("DELETE FROM supervisor.standing WHERE task_id IN ('t-moves', 't-working')")
 
-    assert served["t-moves"]["moves"] == ["resolve_and_merge", "cancel"]
+    assert served["t-moves"]["moves"] == ["resolve_and_merge", "start_over", "cancel"]
     assert served["t-moves"]["saw"].startswith("4 of its 12 reviews passed")
     assert (served["t-working"]["moves"], served["t-working"]["saw"]) == ([], "")

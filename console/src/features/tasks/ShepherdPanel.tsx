@@ -60,6 +60,15 @@ function movesFor(task: Task): Record<string, Move> {
       asks: { title: "Merge as it is?", says: "The last review's findings stay unfixed, and the pull request merges once its checks pass." },
       run: (t) => api.mergeTask(t.id),
     },
+    start_over: {
+      label: "Start over on main",
+      icon: <IconArrowBackUp size={14} />,
+      asks: {
+        title: "Start over on main?",
+        says: `The pull request is closed and its branch deleted. The task then runs fresh from the current base and opens a new pull request. It can spend up to ${limit}.`,
+      },
+      run: (t) => api.restartTask(t.id, retryLimit(t, false)),
+    },
     cancel: {
       label: "Cancel the task",
       icon: <IconX size={14} />,
