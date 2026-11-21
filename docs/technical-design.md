@@ -137,7 +137,7 @@ the one taken, or the one recommended when it is a person's to take:
 
 ### Who speaks
 
-Two parts of the system talk to a person, each in the first person, each
+The Goal Planner and the Task Shepherd talk to a person, each in the first person, each
 in one place, each with its own mark so a reader knows who is talking:
 
 | | Goal Planner | Task Shepherd |
@@ -170,19 +170,17 @@ For rule 3: a conflict is resolved before a review, a commit that passed
 review is not reviewed again, and a conflict fix has its own limit, apart
 from the fix rounds for findings (Review loop). For rule 2: the reviewer
 marks each finding blocking or not, and one it marks as a follow-up does
-not hold the merge. The charter closes every deciding prompt.
+not hold the merge. The charter closes every deciding prompt. For rules 6
+and 7: the Task Shepherd's panel on a task's page, with the moves ranked
+from how the pull request stands (The supervisor, Ranked moves).
 
 Not built yet, in the order planned:
 
 1. Follow-up findings are filed as issues under the goal (rule 2). Today
    they are posted on the pull request, marked as follow-ups.
-2. The Task Shepherd's panel on a task's page: its name and mark, the
-   ranked actions worked out by the service from the pull request's real
-   state, in place of the failure message the console works out itself.
-   The Goal Planner's panel gets its mark.
-3. A step that failed the same way twice is not repeated (rule 5), and a
+2. A step that failed the same way twice is not repeated (rule 5), and a
    review after a conflict fix reads only what the fix changed.
-4. A per-goal setting for how much is done without asking (rule 8).
+3. A per-goal setting for how much is done without asking (rule 8).
 
 ## Architecture
 
@@ -2440,6 +2438,56 @@ also one of the task's drives, so the Task API's own cap holds too. Once its
 tries are used, the task's situation is the operator's again, with the ask it
 had before. The console's Task policy view edits both settings.
 
+#### Ranked moves
+
+When a task is an operator's, the supervisor also says what the operator
+can do, best first (`supervisor/moves.py`), from the same facts its rules
+decide on. The ask used to be a sentence, and the console worked out its
+own buttons from the task's failure message: a pull request that
+conflicted with its base was offered "Read the last review". Reading is
+never a move. Each move is something a button does in full:
+
+| Move | What its button does |
+|---|---|
+| `merge` | Merges the pull request: its review is clean |
+| `resolve_and_merge` | A fix run resolves the conflict with the base, its checks and a review run, and it merges once the review is clean |
+| `retry_stronger` | The review loop again, with a stronger model writing the fixes |
+| `retry` | Back through the review loop, or a new run when there is no pull request |
+| `merge_as_is` | Merges with the last review's findings unfixed. Never offered for a pull request that conflicts |
+| `open_pull_request` | Opens the pull request, for an approval or a rule only a person lifts |
+| `open_goal` | Opens the goal, to resume it or approve its plan |
+| `cancel` | Ends the task. Its pull request stays open |
+
+The order follows Goal seeking's order of moves. An unresolved review
+whose pull request conflicts: `resolve_and_merge`, then `retry_stronger`
+while a stronger model has not tried, then `cancel`. One that does not
+conflict: `retry_stronger` while one has not tried, `retry`,
+`merge_as_is`, `cancel`. A review that passed the commit the pull request
+is at: `merge`, or `resolve_and_merge` when it conflicts. A situation
+whose control is on the page already (a budget hold, a review hold) and a
+failed task, whose message offers its own ways out, have no ranked moves.
+
+The facts are read, not inferred from a status reason. For a parked task
+with an open pull request the supervisor reads how it stands for a merge,
+now for an unresolved review too, and the task's `pull_request_reviewed`
+events: how many reviews it had, how many passed, what the last left open,
+and whether the last passed the commit the pull request is at. The
+standing keeps the moves (`moves`) and that account (`saw`, such as "4 of
+its 12 reviews passed, and the last left 2 findings open"), and the Task
+API serves both. An unresolved review whose pull request conflicts is the
+supervisor's own while it has tries (`review_unresolved_conflict`,
+`review`): the loop brings the base in and resolves the conflict before it
+reviews. Out of tries, it is an operator's, with the conflict said.
+
+A fix run that resolves a conflict changes none of the work, and says so
+wherever a person looks. While it runs the task's status reason is
+"resolving its pull request's conflict with main", and once it finishes
+"its conflict with main is resolved, and its checks and a review come
+next" (behind the `conflict-status` patch). The task's timeline names the
+step "Resolving the merge conflict", read from the run's recorded prompt,
+where any other fix run is "Fix run". The Task Shepherd's panel shows the
+status reason for a task its workflow has.
+
 Every try is one record in the ledger (`supervisor/ledger.py`): a
 `supervisor.remedy` row and a `remedy_applied` event, with the same fields.
 `situation`, `remedy`, `try`, `of` and `outcome` (`started`, `done` or
@@ -2827,6 +2875,16 @@ After sizing:
   `medium`, large `high`, which also sets the router's `complex` floor), and
   the task's `max_usd` is the issue's own `Spend limit: $N` line, else the
   task policy's `max_usd_by_size` for its size.
+
+A split issue that was also run as one (Run anyway, before the two shut each
+other out) kept a task of its own beside its parts. When that task failed
+and every part merged, nothing ended it: the goal's page asked the operator
+to retry it, which would have written the parts' merged work again. So the
+sweep ends it (`planner/covered.py`): a failed task with no pull request,
+whose issue's parts are all closed, is closed with the reason, and its
+issue goes back to being replaced by its parts, which closes it on the
+tracker and lets the goal be met. A `failed` task may become `closed` for
+this alone. A task that is running, or has a pull request, ends by itself.
 
 A sizing call that fails, or a gateway the planner has no address or key for,
 leaves an issue never sized waiting, with no task: the failure is the sweep's
@@ -3327,7 +3385,12 @@ reduces them to a digest; an update is written, with one small model call
 through the HTTP Gateway, only when the digest differs from the last update's,
 so a goal that stands still costs nothing. A goal that closes gets one last
 update. The model is given the facts and its last update, and told to say only
-what the facts say. Updates are rows of `planner.goal_update`, read with
+what the facts say. The facts say whether the goal is done (`goal.done`) and
+how many of its issues are open (`goal.open_issues`), and an update that
+calls the goal done while one is open is not posted (`written_true`): it is
+written once more, told what was wrong, and a second that says the same is
+dropped with a warning. An update once said "All tasks merged, goal done"
+above a board that said "1 issue needs you". Updates are rows of `planner.goal_update`, read with
 `GET /v1/goals/{id}/updates`; `POST` to the same path writes one now. Each is a
 `goal_update_written` event, whose cost is counted as planning. The planning
 configuration's `updates` turns them off, names the model (goal drafting's when
@@ -3671,12 +3734,15 @@ Every view drills down to the next, and every list filters by goal, modality,
 repo, time, harness profile, model, routing tier, task type and state.
 Built today: the Overview, Goals and New goal, the Goal page, Tasks with
 its terminal tiles, the Task page with its live run, and Configuration.
-Help (`console/src/features/help`, at `/help`) is the last entry of the
-left pane and opens to its topics, in reading order: Why, First principles,
-The goal, Who is talking, How a stuck task gets moving, When it asks you and
-Spend limits. Each topic has its own address (`/help/<topic>`), and one that
-names no topic opens Help at its start. The text is fixed, in `topics.ts`,
-and follows Goal seeking above. It says only what the meta-harness does
+Help (`console/src/features/help`, at `/help`) sits at the foot of the left
+pane, above the Admin menu: one page, with every section in reading order
+and a line of links to each at its top. The sections are Why, First
+principles, The goal, Who is talking, How a stuck task gets moving and
+Spend limits. A section can be linked to (`/help#spend-limits`), and an
+address from when each had a page of its own (`/help/<section>`) opens the
+page there. New goal is the entry just above Goals. The text is fixed, in
+`topics.ts`, and follows Goal seeking above. It says only what the
+meta-harness does
 today: a rule that is not fully built is named as such on the page. The
 supervisor is the Task Shepherd wherever the console or a status reason
 names it to a person; the code, its routes and its events keep `supervisor`.
@@ -3766,7 +3832,20 @@ what a goal's alert above its board shows, what the Overview's Needs you
 section shows above its table, and what a failed task's own alert shows. Where
 two or more failed tasks can be retried, the Overview offers one Retry all N
 tasks above them, after a confirm that says the most they can spend together.
-A message about one task also marks one way out as recommended, by fixed rules
+A task's page opens with the Task Shepherd's panel (`ShepherdPanel.tsx`):
+its mark and name, a first line that says who has the task ("I need you on
+this one", "I have this one", or that nothing is the reader's to do), the
+standing's reason, its account of the reviews, and for a task that waits on
+a person the supervisor's ranked moves as buttons, the first filled and
+marked "(recommended)" (The supervisor, Ranked moves). A move that spends
+or cannot be undone asks first, in a dialog that says what will run. The
+failure's own message sits inside the panel, and offers no buttons of its
+own when the panel offers moves. A standing with no ranked moves shows its
+ask as a sentence. The Goal Planner's panel on a goal's page carries its
+mark the same way, and Needs you on the Overview the Task Shepherd's
+(`components/Voice.tsx`: a flag at the end of a route, and a crook).
+
+For a failed task, where no moves are ranked, a message about one task marks one way out as recommended, by fixed rules
 on the kind of failure and the task's tier (`nextSteps.ts`): for a review its
 fix rounds did not settle, or a run stopped at its turn limit, Retry with a
 stronger model, beside Retry with the same model. Once the task has run on the

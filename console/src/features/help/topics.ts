@@ -1,5 +1,5 @@
-// What Help says, topic by topic, in reading order: why the meta-harness exists, the rules it follows and what
-// a goal is come first. The rules are the design's (docs/technical-design.md, Goal seeking); a topic says only
+// What Help says, section by section, in reading order on its one page: why the meta-harness exists, the rules
+// it follows and what a goal is come first. The rules are the design's (docs/technical-design.md, Goal seeking); a topic says only
 // what the meta-harness does today, and a rule not fully built is named as such.
 
 export type Block =
@@ -27,18 +27,17 @@ export const TOPICS: Topic[] = [
     slug: "first-principles",
     title: "First principles",
     blocks: [
-      { kind: "text", text: "The meta-harness follows nine rules. Every part of it has to follow them." },
       {
         kind: "steps",
         items: [
           "The goal is merged work that makes main better. A task that has stopped is a fault in the system, and each stop has an owner and a next step.",
-          "Better beats perfect. A pull request merges when main is better with it than without it. Quality comes from many pull requests built on each other.",
+          "A pull request merges when main is better with it than without it. Quality comes from many pull requests built on each other.",
           "Progress is kept. A review that passed a commit stands for that commit, and a retry starts where the last try stopped.",
           "It takes the clear next step without asking. That covers resolving a conflict, running a flaky check again and retrying after an outage.",
           "It does not try a step a third time after the step failed the same way twice. It takes a different step.",
           "It asks you only for what a person alone can give: a call on value or risk, more money, an approval or a credential.",
           "It shows every decision: what it saw, what it chose and why.",
-          "You can always decide differently. Every action stays open to you.",
+          "You can always decide differently. The recommended move is one of several you can take.",
           "Spend limits are hard. Reaching one stops the work and asks you.",
         ],
       },
@@ -51,14 +50,14 @@ export const TOPICS: Topic[] = [
     blocks: [
       { kind: "text", text: "A goal is what you want done, in your words, with the repos it touches and a budget. \"Add CSV export to the reports page\" is a goal." },
       { kind: "text", text: "The Goal Planner turns a goal into tasks. Each task is one change, small enough to review, and each ends as a merged pull request. The goal is met when its tasks have merged." },
-      { kind: "text", text: "Everything the meta-harness does serves that end. When a task stops, it asks what would get the task merged." },
+      { kind: "text", text: "When a task stops, the meta-harness asks what would get the task merged." },
     ],
   },
   {
     slug: "who-is-talking",
     title: "Who is talking",
     blocks: [
-      { kind: "text", text: "Two parts of the meta-harness talk to you." },
+      { kind: "text", text: "The Goal Planner and the Task Shepherd talk to you. Each has its own mark and color, shown beside what it says." },
       {
         kind: "terms",
         items: [
@@ -80,18 +79,13 @@ export const TOPICS: Topic[] = [
           "Clear what blocks the merge, such as a conflict with main.",
           "Fix what the review found.",
           "Try again with a stronger model, once.",
-          "Ask you, with the moves that remain as buttons.",
+          "Ask you.",
         ],
       },
-      { kind: "text", text: "It tries a task at most three times by itself. After that the task is yours, and its page says what the Task Shepherd tried." },
-    ],
-  },
-  {
-    slug: "when-it-asks-you",
-    title: "When it asks you",
-    blocks: [
-      { kind: "text", text: "An ask says what happened in a line or two. Under it are the actions you can take. The first button is the recommended one." },
-      { kind: "text", text: "Each button does the whole job. Retry runs the task again. Merge resolves a conflict first when there is one, then merges once a review is clean." },
+      { kind: "text", text: "It tries a task at most three times by itself. After that the task is yours." },
+      { kind: "text", text: "Its panel at the top of the task's page then says what happened and what it tried. Under that are the moves that remain, as buttons. The first button is the recommended one." },
+      { kind: "text", text: "Each button does the whole job. Resolve the conflict and merge starts a fix run for the conflict, then merges once a review is clean." },
+      { kind: "text", text: "The order depends on whether the pull request conflicts with main, what its last review found, and whether a stronger model has tried." },
     ],
   },
   {
@@ -104,6 +98,3 @@ export const TOPICS: Topic[] = [
   },
 ];
 
-export function topic(slug: string | undefined): Topic | undefined {
-  return TOPICS.find((t) => t.slug === slug);
-}

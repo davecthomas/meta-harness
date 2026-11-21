@@ -1432,9 +1432,18 @@ class RunTask:
         fix.round_no = round_no
         prompt = await self._loop_prompt(fix)
         merge_base = loop.published.base if fix.conflict else ""
+        # A fix run that resolves a conflict changes none of the work, and a person watching must be able to
+        # tell: the task says so while it runs, and says when the conflict is resolved.
+        said = bool(fix.conflict and self._task_id) and workflow.patched("conflict-status")
+        if said:
+            resolving = f"resolving its pull request's conflict with {loop.published.base}"
+            await self._task_status("running", resolving, loop.published.pr_url)
         harness, detail = await self._loop_run(
             loop, prompt, loop.author, "fix", thinking=loop.thinking, merge_base=merge_base
         )
+        if said and harness is not None and harness.status == "FINISHED":
+            resolved = f"its conflict with {loop.published.base} is resolved, and its checks and a review come next"
+            await self._task_status("running", resolved, loop.published.pr_url)
         if harness is None or harness.status != "FINISHED":
             return f"fix round {round_no} on {loop.author.label} did not finish: {detail}"
         republished = await self._publish(loop.prepared, harness, loop.author, loop.spent, fix_round=round_no)

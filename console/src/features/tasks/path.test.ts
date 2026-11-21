@@ -228,3 +228,14 @@ test("a task made blocked waits as Blocked, is Queued once what it waited on is 
   expect(path.filter((s) => s.column === 0).map((s) => s.title)).toEqual(["Blocked", "Queued", "Sent back for its retry by the Task Shepherd"]);
   expect(path.at(-1)!.notes).toContain("Unstuck: ran it again on the complex tier, with a stronger model (try 1 of 1). Next: if it fails again, I will ask you what to do");
 });
+
+test("a fix run asked to resolve a conflict is named for that, and any other fix run stays a fix run", () => {
+  const asks = "--- requested ---\nThe branch conflicts with origin/main. The meta-harness has merged origin/main into it in /workspace";
+  const path = steps([
+    ev("run_prompt", { kind: "fix", run_id: "t:run-8", prompt: asks }, 0, { run_id: "t:run-8" }),
+    ev("attempt_finished", { tier: "fix", decision: "finished", candidate: "harness:pi/a:b" }, 60, { run_id: "t:run-8" }),
+    ev("run_prompt", { kind: "fix", run_id: "t:run-9", prompt: "--- requested ---\nFindings:\n- app.py line 3: Off by one." }, 5, { run_id: "t:run-9" }),
+  ]);
+
+  expect(path.map((s) => s.title)).toEqual(["Resolving the merge conflict", "Fix run"]);
+});

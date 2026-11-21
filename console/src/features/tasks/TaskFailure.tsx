@@ -6,7 +6,7 @@ import { useAdmin } from "../../components/Role";
 import { cleanButConflicting, diagnose } from "./diagnosis";
 import { Remedies } from "./Remedies";
 
-const TITLES: Record<string, string> = {
+export const TITLES: Record<string, string> = {
   failed: "This task failed",
   review_unresolved: "The review loop ended without a clean review",
 };
@@ -23,6 +23,9 @@ export function TaskFailure({ task, status, events, onChanged }: { task: Task; s
   const title = TITLES[status];
   if (!title) return null;
   const runs = unfinished(events);
+  // The Task Shepherd's panel, which this sits in, offers the moves when the supervisor ranked any: the ways
+  // out are then said once, there.
+  const offered = task.standing?.owner === "operator" && (task.standing.moves ?? []).length > 0;
   const found = diagnose({ status, reason: task.status_reason });
   // The last review's verdict, from the task's events: clean means the review passed and something after it,
   // a conflict with the base, kept the pull request from merging.
@@ -30,14 +33,14 @@ export function TaskFailure({ task, status, events, onChanged }: { task: Task; s
   const diagnosis = found && status === "review_unresolved" && found.kind === "fix_rounds" && lastReview?.payload.verdict === "clean" ? cleanButConflicting(found) : found;
   const heading = diagnosis?.kind === "clean_conflict" ? "The review is clean, and the merge waits on a conflict" : title;
   return (
-    <Alert color={status === "failed" ? "red" : "orange"} title={heading} icon={<IconAlertTriangle size={18} />} mb="md" role="alert">
+    <Alert color={status === "failed" ? "red" : "orange"} title={heading} icon={<IconAlertTriangle size={18} />} role="alert">
       <Stack gap="xs">
         {diagnosis && (
           <>
             <Text size="sm" fw={600}>{diagnosis.summary}</Text>
             <Text size="sm">{diagnosis.cause}</Text>
-            <Text size="sm"><Text span fw={600}>What to do:</Text> {diagnosis.fix}</Text>
-            <Remedies diagnosis={{ ...diagnosis, remedies: diagnosis.remedies.filter((r) => r !== "task") }} tasks={[task]} issueRef={task.external_ref} steps={{ status, complexity: task.complexity, pr_url: task.pr_url }} onChanged={onChanged} />
+            {!offered && <Text size="sm"><Text span fw={600}>What to do:</Text> {diagnosis.fix}</Text>}
+            {!offered && <Remedies diagnosis={{ ...diagnosis, remedies: diagnosis.remedies.filter((r) => r !== "task") }} tasks={[task]} issueRef={task.external_ref} steps={{ status, complexity: task.complexity, pr_url: task.pr_url }} onChanged={onChanged} />}
             {diagnosis.detail && <Text size="xs" c="dimmed" ff="monospace" style={{ wordBreak: "break-word" }}>{diagnosis.detail}</Text>}
           </>
         )}

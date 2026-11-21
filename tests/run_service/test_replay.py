@@ -122,6 +122,15 @@ SCENARIOS = {
         "auto_merge": True,
         "bases": ["conflict"],
     },
+    # After the conflict-status patch: the task says it is resolving a conflict while that fix run runs, and
+    # says when it is resolved.
+    "patched-conflict-status": {
+        "verdicts": [CLEAN],
+        "fix_commits": ["c1"],
+        "goal_id": "g-1",
+        "auto_merge": True,
+        "bases": ["conflict"],
+    },
     # After the review-merge-bar patch: the reviewer marked its one finding as a follow-up, so it merges with
     # no fix run.
     "patched-review-merge-bar": {

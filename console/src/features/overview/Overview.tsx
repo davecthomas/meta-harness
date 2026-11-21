@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { TaskName } from "../../components/TaskName";
 import { Link } from "react-router-dom";
 import { Badge, Button, Card, Group, Paper, SimpleGrid, Stack, Text } from "@mantine/core";
+import { VoiceMark } from "../../components/Voice";
 import { api, type MhEvent } from "../../api";
 import { PullRequestsRow } from "./PullRequestsRow";
 import { ReviewsInProgress } from "../tasks/reviewing";
@@ -56,7 +57,7 @@ export function Overview() {
       </SimpleGrid>
 
       <div ref={needsYou} />
-      <SectionTitle>Needs you</SectionTitle>
+      <SectionTitle><Group gap="xs" wrap="nowrap"><VoiceMark who="shepherd" size={24} />Needs you</Group></SectionTitle>
       <SupervisorHealth />
       {error && (
         <ErrorAlert

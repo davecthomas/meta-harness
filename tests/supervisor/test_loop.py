@@ -4,6 +4,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import dataclasses
+
 import pytest
 
 from meta_harness import db, migrations
@@ -436,3 +438,20 @@ async def test_a_retry_after_the_workers_own_restart_is_not_one_of_the_tasks_tri
     assert result.driven == [used_up["id"]] and tasks.uncounted == [used_up["id"]]
     assert used_up["drives"] == 3, "a deploy's restart costs the task none of its tries"
     assert _standing(outage["id"])["situation"] == "failed_retries_used"
+
+
+def test_the_moves_and_the_account_are_saved_with_a_tasks_standing_and_served():
+    from meta_harness.supervisor import standing
+    from meta_harness.supervisor.rules import Facts, decide
+
+    stuck = Facts("review_unresolved", pull="open", goal="active", mergeable="conflict", drives_left=False)
+    stuck = dataclasses.replace(stuck, reviews=12, clean_reviews=4, findings_open=2)
+    with db.connect(autocommit=True) as conn:
+        standing.save(conn, "t-moves", decide(stuck))
+        standing.save(conn, "t-working", decide(Facts("running", workflow="running")))
+        served = standing.for_tasks(conn, ["t-moves", "t-working"])
+        conn.execute("DELETE FROM supervisor.standing WHERE task_id IN ('t-moves', 't-working')")
+
+    assert served["t-moves"]["moves"] == ["resolve_and_merge", "cancel"]
+    assert served["t-moves"]["saw"].startswith("4 of its 12 reviews passed")
+    assert (served["t-working"]["moves"], served["t-working"]["saw"]) == ([], "")

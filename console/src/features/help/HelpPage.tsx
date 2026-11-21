@@ -1,10 +1,12 @@
-import { Alert, Anchor, Group, List, Stack, Text } from "@mantine/core";
+import { useEffect } from "react";
+import { Alert, Anchor, Group, List, Stack, Text, Title } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Navigate, useLocation, useParams } from "react-router-dom";
 import { PageHeader } from "../../components/ui";
-import { TOPICS, topic, type Block } from "./topics";
+import { TOPICS, type Block } from "./topics";
 
-// One Help topic: its text, and the topics before and after it. /help opens the first, Why.
+// Help is one page: every section in reading order, with a line of links to each at the top. A link to a
+// section (/help#spend-limits) opens the page there.
 
 function Shown({ block }: { block: Block }) {
   if (block.kind === "steps") {
@@ -30,21 +32,28 @@ function Shown({ block }: { block: Block }) {
 }
 
 export function HelpPage() {
-  const { slug } = useParams();
-  const shown = slug ? topic(slug) : TOPICS[0];
-  // An address that names no topic, such as an old link, opens Help at its start.
-  if (!shown) return <Navigate to="/help" replace />;
-  const at = TOPICS.indexOf(shown);
-  const before = TOPICS[at - 1];
-  const after = TOPICS[at + 1];
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView?.();
+  }, [hash]);
   return (
-    <Stack maw={720}>
-      <PageHeader title={shown.title} />
-      {shown.blocks.map((block, n) => <Shown key={n} block={block} />)}
-      <Group justify="space-between" mt="md">
-        {before ? <Anchor component={Link} to={`/help/${before.slug}`}>Back: {before.title}</Anchor> : <span />}
-        {after && <Anchor component={Link} to={`/help/${after.slug}`}>Next: {after.title}</Anchor>}
+    <Stack maw={720} gap="lg">
+      <PageHeader title="Help" />
+      <Group gap="md" data-testid="help-sections">
+        {TOPICS.map((t) => <Anchor key={t.slug} href={`#${t.slug}`} size="sm">{t.title}</Anchor>)}
       </Group>
+      {TOPICS.map((t) => (
+        <Stack key={t.slug} gap="sm" component="section" id={t.slug} style={{ scrollMarginTop: 72 }}>
+          <Title order={3}>{t.title}</Title>
+          {t.blocks.map((block, n) => <Shown key={n} block={block} />)}
+        </Stack>
+      ))}
     </Stack>
   );
+}
+
+// An address from when each section had a page of its own opens the one page at that section.
+export function OldTopic() {
+  const { slug } = useParams();
+  return <Navigate to={TOPICS.some((t) => t.slug === slug) ? `/help#${slug}` : "/help"} replace />;
 }
