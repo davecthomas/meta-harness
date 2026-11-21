@@ -678,3 +678,30 @@ def test_a_goal_with_no_open_issue_to_plan_over_starts_no_planning_run_and_says_
 
     saved_and_planned = client.post("/v1/goals", json={**body, "start": True}, headers=OPERATOR).json()
     assert saved_and_planned["status"] == "paused" and not tasks.tasks
+
+
+def test_autonomy_and_auto_merge_say_one_thing_between_them(world):
+    client = world[0]
+    made = client.post(
+        "/v1/goals", json={"statement": "Tidy", "repos": [REPO], "label": "x", "start": False}, headers=OPERATOR
+    )
+    goal = made.json()
+    assert (goal["autonomy"], goal["auto_merge"]) == ("standard", False)
+
+    full = client.patch(f"/v1/goals/{goal['id']}", json={"autonomy": "full"}, headers=OPERATOR).json()
+    assert (full["autonomy"], full["auto_merge"]) == ("full", True)
+    ask = client.patch(f"/v1/goals/{goal['id']}", json={"autonomy": "ask"}, headers=OPERATOR).json()
+    assert (ask["autonomy"], ask["auto_merge"]) == ("ask", False)
+    # An older caller that only knows auto_merge still moves the goal between the levels.
+    on = client.patch(f"/v1/goals/{goal['id']}", json={"auto_merge": True}, headers=OPERATOR).json()
+    assert on["autonomy"] == "full"
+    off = client.patch(f"/v1/goals/{goal['id']}", json={"auto_merge": False}, headers=OPERATOR).json()
+    assert off["autonomy"] == "standard"
+    assert client.patch(f"/v1/goals/{goal['id']}", json={"autonomy": "wild"}, headers=OPERATOR).status_code == 422
+
+    asked = client.post(
+        "/v1/goals",
+        json={"statement": "Tidy 2", "repos": [REPO], "label": "y", "start": False, "autonomy": "ask"},
+        headers=OPERATOR,
+    ).json()
+    assert (asked["autonomy"], asked["auto_merge"]) == ("ask", False)

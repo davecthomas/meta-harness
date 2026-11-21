@@ -59,6 +59,18 @@ RUNNABLE = ("none", "active", "budget_exhausted")
 MERGEABLE = ("clean", "conflict", "checks_failed", "checks_pending", "blocked", "unknown")
 
 
+# The supervisor's actions a goal on `ask` is asked about first: what the action does, in words, and the
+# offered action that does it. Housekeeping (recover, a wait, ending a task whose pull request ended) is done
+# either way: nothing in it is a decision.
+ASKED_FIRST = {
+    "merge": ("merge its pull request", "merge"),
+    "review": ("send it back through its review", "retry"),
+    "retry": ("retry it", "retry"),
+    "retry_stronger": ("retry it with a stronger model", "retry_stronger"),
+    "fix_again": ("give its review one more set of fix rounds on a stronger model", "retry_stronger"),
+}
+
+
 @dataclass(frozen=True)
 class Facts:
     """Where a task stands, from the task service, Temporal, the code host and the planner."""
@@ -104,6 +116,9 @@ class Facts:
     reviews: int = 0
     clean_reviews: int = 0
     findings_open: int = 0
+    # How much the task's goal lets the supervisor do without asking: ask, standard or full (the planner's
+    # store.AUTONOMY). A task of no goal is standard.
+    autonomy: str = "standard"
     # For a failed task of a goal: its run stopped at its turn or time limit on the strongest tier, and the
     # planner may still split its issue (the task policy's `remedies.auto_split` tries).
     split_left: bool = False
@@ -129,6 +144,22 @@ def decide(facts: Facts) -> Decision:
     """Who has the task, what the supervisor does when it is the supervisor, and what an operator is offered
     when it is an operator's."""
     decision = _decide(facts)
+    if facts.autonomy == "ask" and decision.owner == "supervisor" and decision.action in ASKED_FIRST:
+        # The goal asks before each of the supervisor's own actions: the action it would take is offered to
+        # the operator as the first button, with the others that apply.
+        does, first = ASKED_FIRST[decision.action]
+        if first == "merge" and facts.mergeable == "conflict":
+            first = "resolve_and_merge"
+        offered = (first, *(m for m in moves.ranked(decision.situation, facts) if m != first), "cancel")
+        ask = f"I would {does}. Its goal asks before I act, so the first button does it."
+        return replace(
+            decision,
+            owner="operator",
+            action="",
+            ask=ask,
+            moves=tuple(dict.fromkeys(offered)),
+            saw=moves.account(facts),
+        )
     offered = moves.ranked(decision.situation, facts) if decision.owner == "operator" else ()
     return replace(decision, moves=offered, saw=moves.account(facts))
 

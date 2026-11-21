@@ -222,6 +222,7 @@ class Supervisor:
                 cancel_requested=bool(task.get("cancel_requested")),
                 admitted=admitted,
                 auto_merge=auto_merge,
+                autonomy=str((goal or {}).get("autonomy") or "standard"),
                 mergeable=how,
                 # A retry after the worker's own restart is not one of the task's tries, so it always has one.
                 drives_left=int(task.get("drives") or 0) < MAX_DRIVES

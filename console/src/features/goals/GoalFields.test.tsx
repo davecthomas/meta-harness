@@ -142,7 +142,7 @@ test("a label its sweep's issues came from is kept, and one with a picked issue 
   const patched = renderGoal(goal("active", { issues: [swept] }));
 
   // A goal with issues folds its settings into one line; they open to be edited.
-  expect((await screen.findByTestId("goal-settings-summary")).textContent).toBe("Settings · label mh:fix · o/r · budget $10.00 · auto-merge off");
+  expect((await screen.findByTestId("goal-settings-summary")).textContent).toBe("Settings · label mh:fix · o/r · budget $10.00 · take the clear steps");
   expect(screen.queryByRole("button", { name: "Edit label" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Show and edit settings" }));
   fireEvent.click(await screen.findByRole("button", { name: "Edit label" }));
@@ -162,14 +162,15 @@ test("a label its sweep's issues came from is kept, and one with a picked issue 
   await waitFor(() => expect(picked).toEqual([{ label: null }]));
 });
 
-test("auto-merge is a switch that saves when flipped", async () => {
+test("how much is done without asking is one choice of three, saved when picked, each saying what it does", async () => {
   const patched = renderGoal(goal());
 
-  fireEvent.click(await screen.findByRole("switch", { name: "Auto-merge" }));
-
-  await waitFor(() => expect(patched).toEqual([{ auto_merge: true }]));
-  expect(await screen.findByText("On")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /Turn (on|off)/ })).toBeNull();
+  const choice = await screen.findByTestId("autonomy");
+  expect(choice.textContent).toContain("It resolves conflicts and retries by itself. A reviewed pull request waits for you to merge.");
+  fireEvent.click(screen.getByRole("radio", { name: "Ask me first" }));
+  await waitFor(() => expect(patched).toEqual([{ autonomy: "ask" }]));
+  fireEvent.click(screen.getByRole("radio", { name: "Also merge" }));
+  await waitFor(() => expect(patched).toEqual([{ autonomy: "ask" }, { autonomy: "full" }]));
 });
 
 test.each(["met", "canceled"])("a %s goal shows its fields read-only", async (status) => {
@@ -178,5 +179,6 @@ test.each(["met", "canceled"])("a %s goal shows its fields read-only", async (st
   expect(await screen.findByRole("button", { name: "Reopen goal" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: /^Edit / })).toBeNull();
   expect(screen.queryByRole("switch")).toBeNull();
-  expect(screen.getByText("Off: pull requests wait for you")).toBeTruthy();
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(screen.getByText(/^Take the clear steps: It resolves conflicts and retries by itself/)).toBeTruthy();
 });
