@@ -122,6 +122,19 @@ SCENARIOS = {
         "auto_merge": True,
         "bases": ["conflict"],
     },
+    # After the review-merge-bar patch: the reviewer marked its one finding as a follow-up, so it merges with
+    # no fix run.
+    "patched-review-merge-bar": {
+        "verdicts": [
+            {
+                "verdict": "clean",
+                "summary": "It does the task.",
+                "findings": [{"path": "app.py", "line": 9, "body": "One more case.", "blocking": False}],
+            }
+        ],
+        "goal_id": "g-1",
+        "auto_merge": True,
+    },
     # After the merge-base-health patch: the merge waits while the base's own checks run, then merges.
     "patched-merge-base-health": {
         "verdicts": [CLEAN],

@@ -44,6 +44,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from meta_harness import outbound
+from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
 from meta_harness import auth, db
 from meta_harness.costs import api as costs_api
@@ -587,6 +588,7 @@ def create_app(
     costs_api.check_settings()
     planning.check_settings()
     writing_rules.check_settings()
+    charter.check_settings()
     draft = drafter or drafting.draft_goal
 
     def registered(names: list[str]) -> list[str]:

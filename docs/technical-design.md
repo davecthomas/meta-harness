@@ -151,10 +151,16 @@ read as "the boss". The code, its tables and its events keep `supervisor`.
 
 ### One charter for every model
 
-The principles above are kept as one text, the charter, given to every
-model that decides something: the planner, the reviewer, the fix run and
-the failure diagnosis. The reviewer's prompt applies rule 2: a finding
-either blocks the merge or is a follow-up, and it says which.
+The principles above are kept as one text, the charter
+(`config/charter.txt`, read by `src/meta_harness/charter.py`), given to
+every model that decides something. A task's own run, a review, a fix and a
+planning run close their prompt with it, before the writing rules. So do
+the control plane's own calls that decide: a goal's draft, a task's size, a
+split, a plan's suggested fix and a failure's diagnosis. A call that only
+writes, such as an update or a name, carries the writing rules alone. The
+worker and the planner check the charter at startup, and stop when it is
+missing or empty. The reviewer's prompt applies rule 2: a finding either
+blocks the merge or is a follow-up, and it says which (Review loop).
 
 ### Where this stands
 
@@ -162,20 +168,21 @@ Built: the supervisor's fixed rules and remedies, the record of every
 decision, the goal's `auto_merge`, operator takeover, hard spend limits.
 For rule 3: a conflict is resolved before a review, a commit that passed
 review is not reviewed again, and a conflict fix has its own limit, apart
-from the fix rounds for findings (Review loop).
+from the fix rounds for findings (Review loop). For rule 2: the reviewer
+marks each finding blocking or not, and one it marks as a follow-up does
+not hold the merge. The charter closes every deciding prompt.
 
 Not built yet, in the order planned:
 
-1. The reviewer sorts findings into blocking and follow-up, and follow-ups
-   are filed as issues (rule 2).
-2. The charter, in every deciding prompt.
-3. The Task Shepherd's panel on a task's page: its name and mark, the
+1. Follow-up findings are filed as issues under the goal (rule 2). Today
+   they are posted on the pull request, marked as follow-ups.
+2. The Task Shepherd's panel on a task's page: its name and mark, the
    ranked actions worked out by the service from the pull request's real
    state, in place of the failure message the console works out itself.
    The Goal Planner's panel gets its mark.
-4. A step that failed the same way twice is not repeated (rule 5), and a
+3. A step that failed the same way twice is not repeated (rule 5), and a
    review after a conflict fix reads only what the fix changed.
-5. A per-goal setting for how much is done without asking (rule 8).
+4. A per-goal setting for how much is done without asking (rule 8).
 
 ## Architecture
 
@@ -1102,7 +1109,7 @@ loop:
    for is never a finding, and one it forbids, or a missing one it requires,
    is. A
    review after the first is given the round before's findings and summary
-   (prompt `review-v4`): it judges first whether each is fixed, then the fix,
+   (prompt `review-v5`): it judges first whether each is fixed, then the fix,
    and raises a new finding only for a bug, a failing check or a part of the
    task left undone, so rounds converge. Its summary begins with how many of
    those findings are fixed, not fixed and new. Every review is shown the
@@ -1127,7 +1134,18 @@ loop:
    changed line, or that the round before raised too (the same file, within
    15 lines) still holds the merge, and so does every finding when the
    change cannot be read whole. A round whose findings are all follow-ups is
-   clean. A fix run's summary is added to the open pull request's
+   clean.
+   The reviewer also sorts its own findings (prompt `review-v5`, behind the
+   `review-merge-bar` patch). It judges the pull request by one test: is
+   the main branch better with it merged as it is than without it? A
+   finding blocks only when it fails that test. Any other is a follow-up:
+   `submit_review` takes `blocking: false` on it, and the loop treats it
+   like the follow-ups above, posted and counted apart and sent to no fix
+   run. A finding with no mark blocks. The tool refuses a `changes`
+   verdict with no blocking finding, and a `clean` one may list
+   follow-ups. So a rule of thumb in the code, which can always be given
+   one more case it misses, is raised once and does not hold the pull
+   request round after round. A fix run's summary is added to the open pull request's
    description as a `Fix round <n>` section, once, so what a fix run is asked
    to explain there (why it changed a file outside the task's paths) is
    where the next review reads it. A fix run that leaves no usable summary
@@ -1489,7 +1507,7 @@ It is done three times. First in the prompt: every prompt whose answer a
 person reads ends with the same short block of writing rules
 (`src/meta_harness/outbound/rules.py`), so the text comes out clean and the
 rewrite below rarely runs. That is each run prompt above a summary, a review
-or a plan's issues (`repo-task-v1`, `fix-v1`, `review-v4`, `plan-v1`), and
+or a plan's issues (`repo-task-v1`, `fix-v1`, `review-v5`, `plan-v1`), and
 each model call the control plane makes itself through the HTTP Gateway's
 `/v1/structured`: a goal's updates, a plan's suggested fixes, a goal's draft
 and name, an issue's sizing, a split's parts, a task's name, a failure's

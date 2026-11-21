@@ -54,7 +54,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from meta_harness.events.types import HARNESS_EVENT_TYPES
-from meta_harness import outbound
+from meta_harness import charter, outbound
 from meta_harness.outbound import rules as writing_rules
 from meta_harness.run_service import (
     code_host,
@@ -157,7 +157,7 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
     if request.task_type == "plan":
         template = (PROMPTS_DIR / f"{PLAN_TEMPLATE}.txt").read_text(encoding="utf-8")
         prompt = Template(template).safe_substitute(
-            repo=repo, title=title, description=description, writing_rules=writing_rules.block()
+            repo=repo, title=title, description=description, writing_rules=_closing()
         )
         activity.logger.info("prepare: a planning task in %s", repo)
         return PreparedRun(
@@ -178,7 +178,7 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         description=description,
         checks=listed,
         paths=code_host.paths_rule(description, "task"),
-        writing_rules=writing_rules.block(),
+        writing_rules=_closing(),
     )
     activity.logger.info(
         "prepare: a repo task in %s%s, %d acceptance checks",
@@ -1187,9 +1187,15 @@ async def base_health(request: BaseHealthRequest) -> BaseHealth:
     return BaseHealth(state="running" if running else "healthy", sha=sha, checks=running)
 
 
+def _closing() -> str:
+    """What closes every run prompt: the charter, which says what the run is for, then the writing rules."""
+    return "\n\n".join(part for part in (charter.block(), writing_rules.block()) if part)
+
+
 @activity.defn
 async def loop_prompt(request: LoopPromptRequest) -> str:
-    """A review or fix run's prompt, from prompts/review-v4.txt or prompts/fix-v1.txt. A review's shows the pull
+    """A review or fix run's prompt, from prompts/review-v5.txt or prompts/fix-v1.txt. It closes with the
+    charter (charter.py), so the reviewer and the fix are held to the same bar, then the writing rules. A review's shows the pull
     request's description as it stands, since the reviewer judges what it explains (why a file outside the
     task's paths changed) and has no other way to read it."""
     checks = (
@@ -1208,7 +1214,7 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
         "previous": _previous(request),
         "checks_rule": _checks_rule(request),
         "pr_description": await _pr_description(request) if request.kind == "review" else "",
-        "writing_rules": writing_rules.block(),
+        "writing_rules": _closing(),
     }
     name = loop_template(request.kind)
     template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
@@ -1345,8 +1351,8 @@ async def post_review(request: PostReviewRequest) -> str:
         + (
             [
                 "",
-                f"{len(follow)} of the findings are follow-ups, so they do not hold the merge. They are on code "
-                "an earlier round passed that no fix has touched since. Each is worth its own issue.",
+                f"{len(follow)} of the findings are follow-ups, so they do not hold the merge: the main branch is "
+                "better with this pull request than without it. Each is worth its own issue.",
             ]
             if follow
             else []

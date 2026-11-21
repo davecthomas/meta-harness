@@ -961,6 +961,11 @@ class RunTask:
                         )
                     if follows:
                         reviewed = loop.head
+                    # The reviewer's own sorting: a finding it marked as not blocking is a follow-up. The main
+                    # branch is better with the pull request than without it, so the finding does not hold it.
+                    marked = [n for n, f in enumerate(review.get("findings") or []) if f.get("blocking") is False]
+                    if marked and workflow.patched("review-merge-bar"):
+                        later = sorted({*later, *marked})
                     await workflow.execute_activity(
                         post_review,
                         PostReviewRequest(
@@ -984,8 +989,8 @@ class RunTask:
                         if not findings:
                             review = {**review, "verdict": "clean"}
                             clean = (
-                                f"review round {reviews} by {reviewer} raised only follow-ups, on code an earlier "
-                                f"round passed, at {loop.head[:12]}"
+                                f"review round {reviews} by {reviewer} raised only follow-ups, which do not hold "
+                                f"the merge, at {loop.head[:12]}"
                             )
                     all_dismissed = False
                     # An operator who took the review over decides the round: the fix run gets the agent's
