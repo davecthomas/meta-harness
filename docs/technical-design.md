@@ -4034,13 +4034,15 @@ record. The step the task is in now is ringed and marked Now, and a step still
 going counts its time up. A line above the picture sums the path. It gives how
 long from start to now or to its end, how much of that was waiting, its runs,
 review rounds and cost. Hovering a step gives everything known about it.
-Picking a step opens it under the picture. A run opens as its turns one by
-one, with Open its terminal. Each turn has its message and its model calls
-with model, tokens and cost. It also has its tool calls, opening to their
-arguments and output, and the files it changed. The run also shows the prompt
-it was given, from its `run_prompt` event. A review opens as its round on the
-Reviews tab, and the checks and the pull request open on the code host. A
-`?run=` link with `tab=timeline` opens with that run's step picked. The
+Clicking a step opens where its details are (`opens` in `TaskPath.tsx`). A
+run opens its terminal, a review its round on the Reviews tab, checks the
+Checks tab, and a pull request or its merge the Changes tab. A wait has
+nowhere else to go, so it opens under the picture with its notes. A `?run=`
+link with `tab=timeline` opens with that run's step picked under the
+picture: its turns one by one, each with its message, its model calls with
+model, tokens and cost, its tool calls opening to their arguments and
+output, and the files it changed. The picked run also shows the prompt it
+was given, from its `run_prompt` event. The
 picture keeps its width and scrolls sideways on a narrow window. The page
 reads every step event of the task as it opens, besides its newest events. So
 the path is whole however long the task has run. It reads a picked run's own

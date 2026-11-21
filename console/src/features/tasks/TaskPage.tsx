@@ -408,6 +408,7 @@ export function TaskPage() {
           pick={onlyRun}
           onOpenRun={(run) => setParams({ tab: "terminal", run })}
           onOpenReviews={(round) => setParams(round !== undefined ? { tab: "reviews", round: String(round) } : { tab: "reviews" })}
+          onOpenTab={(tab) => setParams({ tab })}
           onPickRun={(run) => void api.runEvents(run).then((found) => setEvents((current) => merge(current, found)), () => undefined)}
         />
       ) : (

@@ -152,7 +152,16 @@ export function NowLine({ events, checks, compact }: { events: MhEvent[]; checks
 // back to an earlier stage (a review's findings to a fix run, a retry, a merge the supervisor asked for
 // again) it starts a new row, so a loop shows as a return, not as a longer line.
 // usd: what the task's runs have spent, as its Spend tab counts it; the path's own sum of its steps without it.
-export function TaskPath(props: { events: MhEvent[]; checks?: PullChecks | null; usd?: number; pick?: string | null; onOpenRun: (runId: string) => void; onOpenReviews: (round?: number) => void; onPickRun?: (runId: string) => void }) {
+// Where a box's click goes: the tab that holds its details, or null for a box that opens below the path.
+export function opens(step: Step): "reviews" | "terminal" | "checks" | "changes" | null {
+  if (step.kind === "review" && step.round !== undefined) return "reviews";
+  if (step.runId) return "terminal";
+  if (step.kind === "checks" || step.kind === "merge_checks") return "checks";
+  if (step.kind === "pull_request" || step.kind === "merged") return "changes";
+  return null;
+}
+
+export function TaskPath(props: { events: MhEvent[]; checks?: PullChecks | null; usd?: number; pick?: string | null; onOpenRun: (runId: string) => void; onOpenReviews: (round?: number) => void; onPickRun?: (runId: string) => void; onOpenTab?: (tab: "checks" | "changes") => void }) {
   const path = steps(props.events);
   // A link that names a run opens on that run's step.
   const [picked, setPicked] = useState<string | null>(props.pick ?? null);
@@ -205,9 +214,13 @@ export function TaskPath(props: { events: MhEvent[]; checks?: PullChecks | null;
                             checks={props.checks}
                             picked={picked === s.key}
                             onPick={() => {
-                              // A review's box opens its round in Reviews, where its findings are dismissed or
-                              // taken over; any other box opens below the path.
-                              if (s.kind === "review" && s.round !== undefined) return props.onOpenReviews(s.round);
+                              // A box opens where its details are: a review its round in Reviews, a run its
+                              // terminal, checks the Checks tab, a pull request its changes. A wait, which has
+                              // nowhere else to go, opens below the path.
+                              const target = opens(s);
+                              if (target === "reviews") return props.onOpenReviews(s.round);
+                              if (target === "terminal") return props.onOpenRun(s.runId!);
+                              if (target && props.onOpenTab) return props.onOpenTab(target);
                               setPicked(picked === s.key ? null : s.key);
                               if (s.runId && picked !== s.key) props.onPickRun?.(s.runId);
                             }}
