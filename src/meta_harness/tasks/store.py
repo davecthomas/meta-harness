@@ -33,7 +33,8 @@ TRANSITIONS: dict[str, set[str]] = {
     "ready": {"closed", "canceled", "queued"},
     "review_unresolved": {"closed", "canceled", "queued"},
     "closed": set(),
-    "failed": {"queued"},
+    # closed: a failed task whose work other merged work covers (the planner's covered.py).
+    "failed": {"queued", "closed"},
     "canceled": {"queued"},
 }
 # Statuses a task does not leave by itself, and a cancel has nothing to stop in.

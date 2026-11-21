@@ -90,6 +90,7 @@ from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import (
     budget_api,
     cost_facts,
+    covered,
     repos,
     sizing,
     splits,
@@ -153,6 +154,8 @@ class SweepResult:
     replied: list[str] = field(default_factory=list)
     # Task ids of open issues whose task was canceled, sent back to the queue.
     retaken: list[str] = field(default_factory=list)
+    # Task ids ended because the parts their issue was split into did its work (covered.py).
+    covered: list[str] = field(default_factory=list)
     met: bool = False
 
 
@@ -202,6 +205,8 @@ async def sweep_goal(
     result.replied = await tracker_replies.write(goal, tracker, result.errors)
     # Before the goal is looked at for being met: for a tracker that is told, done is what closes an issue.
     result.told = await tracker_progress.write(goal, goal_tracker(tracker, goal), tasks, result.errors)
+    # A split issue's own failed task ends when its parts did its work, and the issue is its parts' again.
+    result.covered = await covered.end_covered(await asyncio.to_thread(_links, goal["id"]), tasks, result.errors)
     # A split issue whose parts are all done is closed, with a comment: it needs nothing from anyone.
     replaced = await splits.close_done(tracker, await asyncio.to_thread(_links, goal["id"]))
     if result.told or replaced:

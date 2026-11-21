@@ -400,3 +400,47 @@ def test_what_was_unstuck_since_the_last_update_is_a_fact_told_not_asked():
         "something unstuck is news: the next update says it"
     )
     assert "unstick" in updates.SYSTEM_PROMPT and "not something to do" in updates.SYSTEM_PROMPT
+
+
+def test_an_update_may_say_a_goal_is_done_only_when_none_of_its_issues_is_open():
+    done = updates.Written(headline="All tasks merged, goal done.", body="The goal is complete.")
+    left = updates.Written(headline="One task left.", body="The last one failed and waits on you.")
+
+    updates.written_true(done, {"goal": {"open_issues": 0}})
+    updates.written_true(left, {"goal": {"open_issues": 1}})
+    with pytest.raises(updates.UpdateError, match="1 of its issues is open"):
+        updates.written_true(done, {"goal": {"open_issues": 1}})
+    for claim in ("The goal is complete.", "All seven replacement tasks are now in.", "All issues are done."):
+        with pytest.raises(updates.UpdateError):
+            updates.written_true(updates.Written(headline="News", body=claim), {"goal": {"open_issues": 2}})
+
+
+def test_an_update_that_wrongly_says_done_is_written_again_once_and_never_posted_as_it_was(world, at_once, monkeypatch):
+    client, events, tasks, _ = world
+    goal = _feature(client)
+    real = updates.facts
+
+    def one_open(*args, **more):
+        found = real(*args, **more)
+        found["goal"]["open_issues"] = 1
+        return found
+
+    monkeypatch.setattr(updates, "facts", one_open)
+    seen = []
+
+    async def corrects(found, before):
+        seen.append(found)
+        if "correction" in found:
+            return updates.Written(headline="One task left.", body="It failed and waits on you.", model="m")
+        return updates.Written(headline="All tasks merged, goal done.", body="The goal is complete.", model="m")
+
+    saved = _write(goal, tasks, events, corrects)
+
+    assert saved["headline"] == "One task left." and len(seen) == 2
+    assert "said the goal was done" in seen[1]["correction"] or "is not" in seen[1]["correction"]
+
+    async def insists(found, before):
+        return updates.Written(headline="All tasks merged, goal done.", body="The goal is complete.", model="m")
+
+    with pytest.raises(updates.UpdateError, match="was not posted"):
+        asyncio.run(updates.write(goal, tasks, events, insists, asked=True))
