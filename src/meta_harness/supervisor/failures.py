@@ -71,6 +71,16 @@ _PERMANENT = re.compile(
 _CLEAN_BLOCKED = re.compile(r"came back clean.*conflicts with its base", re.IGNORECASE | re.DOTALL)
 
 
+# A run that stopped at its harness profile's turn or time limit before it finished: the work was larger than one
+# run, which a stronger model does not change once the strongest has tried.
+_OUT_OF_RUN = re.compile(r"\((?:max_turns|turn_limit|max_minutes|time_limit)\)", re.IGNORECASE)
+
+
+def out_of_run(reason: str | None) -> bool:
+    """Whether the task's run stopped at its turn or time limit before it finished."""
+    return bool(_OUT_OF_RUN.search(reason or ""))
+
+
 def clean_blocked(reason: str | None) -> bool:
     """Whether an unresolved review loop ended clean, kept from merging only by a conflict with its base:
     nothing in the review is left to fix, so a stronger model has nothing to try."""

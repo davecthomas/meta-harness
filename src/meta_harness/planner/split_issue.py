@@ -28,9 +28,16 @@ class SplitRefused(Exception):
 
 
 async def split_issue(
-    goal: dict, link: dict, parts: list[tuple[str, str]], tracker: Any, events: Any, who: str
+    goal: dict,
+    link: dict,
+    parts: list[tuple[str, str]],
+    tracker: Any,
+    events: Any,
+    who: str,
+    failed_task: str | None = None,
 ) -> list[str]:
-    """Create the parts (title, body) the held issue `link` splits into. Returns their refs."""
+    """Create the parts (title, body) the held issue `link` splits into. Returns their refs. With failed_task,
+    `link` is an issue whose task (that id) failed for being too large for one run."""
     ref, goal_id = link["ref"], goal["id"]
     short = [f"{title}: needs {' and '.join(lack)}" for title, body in parts if (lack := splits.lacking(body))]
     if short:
@@ -41,7 +48,7 @@ async def split_issue(
 
     def claim() -> bool:
         with db.connect(autocommit=True) as conn:
-            return store.claim_split(conn, goal_id, ref)
+            return store.claim_split(conn, goal_id, ref, failed_task)
 
     def record(created: list[str]) -> list[str]:
         with db.connect(autocommit=True) as conn:

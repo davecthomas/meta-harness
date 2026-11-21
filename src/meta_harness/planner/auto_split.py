@@ -18,7 +18,9 @@ from meta_harness.planner import splits, store
 from meta_harness.planner.split_issue import SplitRefused, split_issue
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.run_service import routing
-from meta_harness.supervisor import ledger
+from meta_harness.supervisor import failures, ledger
+from meta_harness.supervisor.loop import last_tier
+from meta_harness.tasks.client import TaskApiError
 from meta_harness.trackers.base import TrackerError
 from meta_harness import db
 
@@ -41,24 +43,56 @@ def _held_large(goal_id: str) -> list[dict]:
     ]
 
 
-async def run(goal: dict, tracker: Any, events: Any) -> list[str]:
-    """Split each issue of the active goal held for its size. Returns the refs split."""
+def _too_large_for_a_run(goal_id: str, tasks: Any, events: Any) -> list[tuple[dict, str]]:
+    """Each open issue of the goal whose task failed at its run's turn or time limit on the strongest tier,
+    with no pull request, and that no one has split: the work is larger than one run. With the task's id."""
+    with db.connect(autocommit=True) as conn:
+        links = {link["task_id"]: link for link in store.links(conn, goal_id) if link.get("task_id")}
+    found = []
+    for task in tasks.list(["failed"], goal_id, 200):
+        link = links.get(task["id"])
+        if (
+            link
+            and link["state"] == "open"
+            and link.get("split_into") is None
+            and not link.get("dropped")
+            and not task.get("pr_url")
+            and failures.out_of_run(task.get("status_reason"))
+            and (task.get("complexity") == "high" or last_tier(events, task["id"]) == "complex")
+        ):
+            found.append((link, task["id"]))
+    return found
+
+
+async def run(goal: dict, tracker: Any, events: Any, tasks: Any = None) -> list[str]:
+    """Split each issue of the active goal held for its size, and each whose task failed for being too large
+    for one run, whose task is then closed. Returns the refs split."""
     if goal["status"] != "active":
         return []
     most = remedy_tries(routing.task_policy(), REMEDY)
     done = []
-    for link in await asyncio.to_thread(_held_large, goal["id"]):
+    candidates: list[tuple[dict, str | None]] = [
+        (link, None) for link in await asyncio.to_thread(_held_large, goal["id"])
+    ]
+    if tasks is not None:
+        try:
+            candidates += await asyncio.to_thread(_too_large_for_a_run, goal["id"], tasks, events)
+        except TaskApiError as err:
+            log.warning("goal %s: could not read its failed tasks to split them: %s", goal["id"], err)
+    for link, failed_task in candidates:
         tried = await asyncio.to_thread(ledger.tries_for_issue, link["ref"], REMEDY)
         if tried >= most:
             continue
         record = {
             "ref": link["ref"],
             "goal_id": goal["id"],
-            "situation": "held_large",
+            "situation": "held_large" if failed_task is None else "failed_too_large",
             "remedy": REMEDY,
             "try": tried + 1,
             "of": most,
-            "because": "the issue is too large for one pull request",
+            "because": "the issue is too large for one pull request"
+            if failed_task is None
+            else "its task ran out of turns or time on the strongest model, so the issue is too large for one run",
         }
         try:
             issue = await goal_tracker(tracker, goal).read(link["ref"])
@@ -70,7 +104,7 @@ async def run(goal: dict, tracker: Any, events: Any) -> list[str]:
                 tags={"goal_id": goal["id"]},
             )
             created = await split_issue(
-                goal, link, [(d["title"], d["body"]) for d in drafts], tracker, events, "planner"
+                goal, link, [(d["title"], d["body"]) for d in drafts], tracker, events, "planner", failed_task
             )
         except (splits.SplitError, SplitRefused, TrackerError) as err:
             log.warning(
@@ -90,6 +124,14 @@ async def run(goal: dict, tracker: Any, events: Any) -> list[str]:
             )
             continue
         names = ", ".join(splits.short(r) for r in created)
+        if failed_task and created:
+            reason = f"its issue was split into {names}, which run in its place"
+            try:
+                await asyncio.to_thread(tasks.set_status, failed_task, "closed", reason)
+            except TaskApiError as err:
+                log.warning(
+                    "goal %s: split %s, and could not close its task %s: %s", goal["id"], link["ref"], failed_task, err
+                )
         await _record(
             events,
             {

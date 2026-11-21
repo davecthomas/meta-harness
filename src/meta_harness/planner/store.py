@@ -581,15 +581,16 @@ def bind_task(
         return True
 
 
-def claim_split(conn: psycopg.Connection, goal_id: str, ref: str) -> bool:
+def claim_split(conn: psycopg.Connection, goal_id: str, ref: str, failed_task: str | None = None) -> bool:
     """Claim a held issue for one split, so two answers never both create its smaller issues. Returns False
-    when it was split already, or is being split."""
+    when it was split already, or is being split. With failed_task, the issue is the one whose task (that id)
+    failed for being too large for one run, rather than one held before it became a task."""
+    held = "held_reason IS NOT NULL AND task_id IS NULL" if failed_task is None else "task_id = %s"
     with conn.transaction():
         claimed = conn.execute(
-            "UPDATE planner.issue_link SET split_into = '{}' "
-            "WHERE ref = %s AND goal_id = %s AND split_into IS NULL AND held_reason IS NOT NULL AND task_id IS NULL "
-            "AND NOT dropped AND state = 'open'",
-            (ref, goal_id),
+            f"UPDATE planner.issue_link SET split_into = '{{}}' "
+            f"WHERE ref = %s AND goal_id = %s AND split_into IS NULL AND {held} AND NOT dropped AND state = 'open'",
+            (ref, goal_id) if failed_task is None else (ref, goal_id, failed_task),
         )
         return claimed.rowcount == 1
 

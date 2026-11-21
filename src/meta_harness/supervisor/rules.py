@@ -104,6 +104,9 @@ class Facts:
     reviews: int = 0
     clean_reviews: int = 0
     findings_open: int = 0
+    # For a failed task of a goal: its run stopped at its turn or time limit on the strongest tier, and the
+    # planner may still split its issue (the task policy's `remedies.auto_split` tries).
+    split_left: bool = False
 
 
 @dataclass(frozen=True)
@@ -181,6 +184,13 @@ def _failed(facts: Facts) -> Decision:
                 action="wait",
             )
         return Decision("supervisor", "retry_due", "the task failed on the system's side, not its own", action="retry")
+    if facts.failure == "permanent" and facts.goal in SWEPT and facts.split_left and not facts.stronger_left:
+        return Decision(
+            "planner",
+            "failed_too_large",
+            "its run ran out of turns or time on the strongest model. The Goal Planner splits its issue into "
+            "smaller ones, which run in its place",
+        )
     if facts.failure == "permanent" and facts.goal in RUNNABLE and facts.stronger_left and not facts.failed_long_ago:
         return Decision(
             "supervisor",
@@ -194,7 +204,7 @@ def _failed(facts: Facts) -> Decision:
         "the task failed, and another try would fail the same way"
         if facts.failure == "permanent"
         else f"the task failed on the system's side, and its goal is {facts.goal}, so a retry would not start",
-        ask="Read why it failed on its page, then retry it, or close its issue if the work is no longer wanted."
+        ask="Retry it, or cancel it if the work is no longer wanted."
         if facts.failure == "permanent"
         else "Resume the goal, then retry the task.",
     )

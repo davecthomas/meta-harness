@@ -99,3 +99,25 @@ def test_a_tasks_reviews_are_counted_from_its_events_and_an_unread_event_service
     assert reviews_seen(Events([changes, clean]), "t-1") == Reviews(rounds=2, clean=1, clean_head="06da")
     assert reviews_seen(Events([]), "t-1") == Reviews()
     assert reviews_seen(Events(RuntimeError("unreachable")), "t-1") == Reviews()
+
+
+def test_a_task_out_of_turns_on_the_strongest_model_is_the_planners_to_split_while_it_may():
+    too_large = Facts("failed", goal="active", failure="permanent", split_left=True)
+
+    decision = decide(too_large)
+
+    assert (decision.owner, decision.situation) == ("planner", "failed_too_large")
+    assert "Goal Planner splits its issue" in decision.reason and decision.moves == ()
+    spent = decide(dataclasses.replace(too_large, split_left=False))
+    assert (spent.owner, spent.moves) == ("operator", ("retry", "cancel"))
+    assert spent.ask == "Retry it, or cancel it if the work is no longer wanted."
+    # A stronger model not yet tried comes first: the split is for when the strongest has run out.
+    assert decide(dataclasses.replace(too_large, stronger_left=True)).action == "retry_stronger"
+
+
+def test_a_run_out_of_turns_or_time_is_read_from_its_reason():
+    from meta_harness.supervisor import failures
+
+    assert failures.out_of_run("run 1 on harness:pi-careful/claude:opus ended for good: ended ERROR (max_turns): x")
+    assert failures.out_of_run("ended ERROR (max_minutes)")
+    assert not failures.out_of_run("ended ERROR (spend_limit)") and not failures.out_of_run(None)

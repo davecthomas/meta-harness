@@ -304,7 +304,17 @@ class Supervisor:
             task["id"], "retry_stronger"
         ) < remedy_tries(policy, "retry_stronger")
         again = ledger.tries(task["id"], "fix_again") < remedy_tries(policy, "fix_again")
-        return {"stronger_left": stronger, "fix_again_left": again}
+        # A run that ran out of turns or time on the strongest tier is the planner's to split, within its tries.
+        ref = task.get("external_ref") or ""
+        split = (
+            task["status"] == "failed"
+            and not stronger
+            and not task.get("pr_url")
+            and bool(ref)
+            and failures.out_of_run(task.get("status_reason"))
+            and ledger.tries_for_issue(ref, "auto_split") < remedy_tries(policy, "auto_split")
+        )
+        return {"stronger_left": stronger, "fix_again_left": again, "split_left": split}
 
     async def _pull(self, task: dict) -> tuple[str, Any]:
         """The task's pull request's state on the code host, read at most once every PULL_SECONDS."""

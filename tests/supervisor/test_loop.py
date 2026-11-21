@@ -296,7 +296,7 @@ async def test_a_closed_task_is_forgotten_and_a_failed_one_names_what_an_operato
 
     assert _standing(done["id"]) is None
     found = _standing(failed["id"])
-    assert found["owner"] == "operator" and "retry it" in found["ask"]
+    assert found["owner"] == "operator" and "Retry it" in found["ask"]
 
 
 def _auto_merge_goal() -> str:

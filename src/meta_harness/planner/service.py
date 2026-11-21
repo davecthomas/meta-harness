@@ -277,7 +277,7 @@ def create_app(
             # An issue the sweep held for its size is split by the planner itself, within its tries; the next
             # sweep takes the parts in.
             try:
-                result.split = await auto_split.run(goal, tracker, events)
+                result.split = await auto_split.run(goal, tracker, events, tasks)
             except Exception as err:  # noqa: BLE001 - logged; the held issue keeps its Split and Run anyway
                 log.error(
                     "goal %s: the planner could not split its held issues: %s: %s", goal["id"], type(err).__name__, err
