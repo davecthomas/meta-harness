@@ -33,15 +33,14 @@ export const TOPICS: Topic[] = [
           "The goal is merged work that makes main better. A task that has stopped is a fault in the system, and each stop has an owner and a next step.",
           "A pull request merges when main is better with it than without it. Quality comes from many pull requests built on each other.",
           "Progress is kept. A review that passed a commit stands for that commit, and a retry starts where the last try stopped.",
-          "It takes the clear next step without asking. That covers resolving a conflict, running a flaky check again and retrying after an outage.",
-          "It does not try a step a third time after the step failed the same way twice. It takes a different step.",
-          "It asks you only for what a person alone can give: a call on value or risk, more money, an approval or a credential.",
-          "It shows every decision: what it saw, what it chose and why.",
-          "You can always decide differently. The recommended move is one of several you can take.",
-          "Spend limits are hard. Reaching one stops the work and asks you.",
+          "It takes the clear next step without asking. That includes resolving a conflict and rerunning a flaky check.",
+          "It does not repeat a failing step without limit. It sends a task back at most three times, and changes the step where it can.",
+          "It asks you only for a decision or a permission that is yours to give.",
+          "It shows every decision, with what it saw and why it chose.",
+          "You can always decide differently. The recommended action is one of several you can take.",
+          "A spend limit you set is never passed. Reaching one stops the work and asks you.",
         ],
       },
-      { kind: "note", text: "Rule 5 is not fully built yet: a failing step can repeat up to three times." },
     ],
   },
   {
@@ -71,7 +70,7 @@ export const TOPICS: Topic[] = [
     slug: "stuck-tasks",
     title: "How a stuck task gets moving",
     blocks: [
-      { kind: "text", text: "For a task that has stopped, the Task Shepherd takes the first move in this list that applies:" },
+      { kind: "text", text: "For a task that has stopped, the Task Shepherd takes the first action in this list that applies:" },
       {
         kind: "steps",
         items: [
@@ -83,7 +82,7 @@ export const TOPICS: Topic[] = [
         ],
       },
       { kind: "text", text: "It tries a task at most three times by itself. After that the task is yours." },
-      { kind: "text", text: "Its panel at the top of the task's page then says what happened and what it tried. Under that are the moves that remain, as buttons. The first button is the recommended one." },
+      { kind: "text", text: "Its panel at the top of the task's page then says what happened and what it tried. Under that are the actions that remain, as buttons. The first button is the recommended one." },
       { kind: "text", text: "Each button does the whole job. Resolve the conflict and merge starts a fix run for the conflict, then merges once a review is clean." },
       { kind: "text", text: "The order depends on whether the pull request conflicts with main, what its last review found, and whether a stronger model has tried." },
     ],
@@ -92,7 +91,7 @@ export const TOPICS: Topic[] = [
     slug: "spend-limits",
     title: "Spend limits",
     blocks: [
-      { kind: "text", text: "Every task and every goal has a spend limit in dollars. The meta-harness never goes past one by itself." },
+      { kind: "text", text: "You can set a spend limit on a task and a budget on a goal. Both are optional. The meta-harness never goes past one that is set." },
       { kind: "text", text: "A task that reaches its limit stops and asks you. You can raise the limit from its page and the task continues." },
     ],
   },

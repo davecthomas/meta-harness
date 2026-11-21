@@ -12,15 +12,17 @@ export const VOICES: Record<Speaker, { name: string; color: string }> = {
   shepherd: { name: "Task Shepherd", color: "teal" },
 };
 
-// The Goal Planner's mark: a flag at the end of a route, since it plans the way to a goal.
+// The Goal Planner's mark: a target with an arrow in it, since it aims the work at a goal. The owner picked
+// it from six, and it is the console's own icon, drawn inside the mark's badge.
 function PlannerGlyph() {
   return (
-    <>
-      <path d="M7 27 C10 19, 15 23, 17 15" strokeDasharray="1.5 3.5" />
-      <circle cx="7" cy="27" r="1.6" fill="currentColor" stroke="none" />
-      <path d="M17 15 V5" />
-      <path d="M17 5 L27 8.5 L17 12 Z" fill="currentColor" />
-    </>
+    <g transform="translate(5 5)" strokeWidth={1.9}>
+      <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+      <path d="M12 7a5 5 0 1 0 5 5" />
+      <path d="M13 3.055a9 9 0 1 0 7.941 7.945" />
+      <path d="M15 6v3h3l3 -3h-3v-3l-3 3" />
+      <path d="M15 9l-3 3" />
+    </g>
   );
 }
 
