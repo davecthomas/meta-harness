@@ -1,12 +1,11 @@
 import { IconHelpCircle } from "@tabler/icons-react";
-import { HelpPage } from "./HelpPage";
-import { HelpTopics } from "./HelpTopics";
+import { HelpPage, OldTopic } from "./HelpPage";
 import type { Feature } from "../types";
 
 export const feature: Feature = {
   routes: [
     { path: "/help", element: <HelpPage /> },
-    { path: "/help/:slug", element: <HelpPage /> },
+    { path: "/help/:slug", element: <OldTopic /> },
   ],
-  nav: [{ section: "Operate", label: "Help", to: "/help", icon: IconHelpCircle, history: HelpTopics }],
+  nav: [{ section: "Help", label: "Help", to: "/help", icon: IconHelpCircle }],
 };

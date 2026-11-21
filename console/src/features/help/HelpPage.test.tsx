@@ -1,53 +1,56 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { expect, test } from "vitest";
 import { theme } from "../../theme";
 import { feature } from "./index";
-import { HelpTopics } from "./HelpTopics";
 import { TOPICS } from "./topics";
+
+function Where() {
+  const { pathname, hash } = useLocation();
+  return <span data-testid="where">{pathname}{hash}</span>;
+}
 
 function show(path: string) {
   render(
     <MantineProvider theme={theme}>
       <MemoryRouter initialEntries={[path]}>
-        <HelpTopics />
+        <Where />
         <Routes>{feature.routes.map((r) => <Route key={r.path} path={r.path} element={r.element} />)}</Routes>
       </MemoryRouter>
     </MantineProvider>,
   );
 }
 
-test("Help starts with Why, then First principles, then The goal", () => {
-  expect(TOPICS.slice(0, 3).map((t) => t.title)).toEqual(["Why", "First principles", "The goal"]);
-});
-
-test("Help opens at Why, with the way on to the next topic", () => {
+test("Help is one page that starts with Why, then First principles, then The goal", () => {
   show("/help");
 
-  expect(screen.getByRole("heading", { name: "Why" })).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Next: First principles" }).getAttribute("href")).toBe("/help/first-principles");
-  expect(screen.queryByText(/^Back:/)).toBeNull();
+  const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+  expect(titles).toEqual(TOPICS.map((t) => t.title));
+  expect(titles.slice(0, 3)).toEqual(["Why", "First principles", "The goal"]);
+  expect(titles).not.toContain("When it asks you");
 });
 
-test("a topic shows its text, and the pane lists every topic in order with this one marked", () => {
-  show("/help/first-principles");
+test("the page links to each of its sections, and each section can be linked to", () => {
+  show("/help");
 
-  expect(screen.getByRole("heading", { name: "First principles" })).toBeTruthy();
-  expect(screen.getAllByRole("listitem")).toHaveLength(9);
+  const links = Array.from(screen.getByTestId("help-sections").querySelectorAll("a"));
+  expect(links.map((a) => a.getAttribute("href"))).toEqual(TOPICS.map((t) => `#${t.slug}`));
+  for (const t of TOPICS) expect(document.getElementById(t.slug)).toBeTruthy();
   expect(screen.getByText(/Rule 5 is not fully built yet/)).toBeTruthy();
-  const listed = screen.getAllByRole("link").filter((a) => a.getAttribute("href")?.startsWith("/help/") && !/^(Back|Next):/.test(a.textContent ?? ""));
-  expect(listed.map((a) => a.textContent)).toEqual(TOPICS.map((t) => t.title));
-  expect(listed[1].getAttribute("data-active")).toBe("true");
 });
 
-test("an address that names no topic opens Help at its start", () => {
+test("the left pane has one Help entry, with no list under it", () => {
+  expect(feature.nav).toHaveLength(1);
+  expect(feature.nav[0].history).toBeUndefined();
+});
+
+test("an address from when a section had its own page opens the one page at that section", () => {
+  show("/help/spend-limits");
+  expect(screen.getByTestId("where").textContent).toBe("/help#spend-limits");
+});
+
+test("an address that names no section opens Help at its start", () => {
   show("/help/no-such-topic");
-
-  expect(screen.getByRole("heading", { name: "Why" })).toBeTruthy();
-});
-
-test("every topic has an address of its own and something to say", () => {
-  expect(new Set(TOPICS.map((t) => t.slug)).size).toBe(TOPICS.length);
-  for (const t of TOPICS) expect(t.blocks.length).toBeGreaterThan(0);
+  expect(screen.getByTestId("where").textContent).toBe("/help");
 });

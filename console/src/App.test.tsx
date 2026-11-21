@@ -35,6 +35,11 @@ test("the shell signs in, shows the navigation, and opens the page for the path"
     expect(screen.getAllByRole("link", { name }).length).toBeGreaterThan(0);
   }
   expect(within(screen.getByRole("main")).getByText(/No open goal yet\./)).toBeTruthy();
+  // New goal sits just above Goals, and Help at the foot of the pane, after every page's entry.
+  const pane = Array.from(document.querySelectorAll("nav a")).map((a) => a.textContent);
+  expect(pane.indexOf("New goal")).toBe(pane.indexOf("Goals") - 1);
+  expect(pane.indexOf("Help")).toBeGreaterThan(pane.indexOf("Tasks"));
+  expect(pane.filter((name) => name === "Help")).toHaveLength(1);
 });
 
 test("an identity outside the access list sees why, and no page", async () => {
