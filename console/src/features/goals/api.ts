@@ -170,6 +170,29 @@ export interface GoalIssues {
   issues: IssueProgress[];
 }
 
+// What a goal proposal is made from: the statement, and what is known about the goal. With goal_id, what is
+// left out is read from that goal.
+export interface EnrichRequest {
+  statement: string;
+  goal_id?: string;
+  title?: string;
+  repos?: string[];
+  tracker?: string;
+  project?: string;
+  label?: string;
+  issues?: { ref: string; title?: string; body?: string }[];
+}
+
+// A more detailed statement a model proposes, what it added and why, and questions only the operator can answer.
+export interface GoalProposal {
+  goal_id: string | null;
+  statement: string;
+  added: { what: string; why: string }[];
+  questions: string[];
+  model: string;
+  usd_cost: string;
+}
+
 // The goals feature's calls; src/api.ts spreads them into `api`.
 export const goalsApi = {
   goals: async (statuses: string[], offset: number, limit: number): Promise<Page<Goal>> => {
@@ -205,6 +228,10 @@ export const goalsApi = {
     call<GoalDraft>("/v1/goals/draft", { method: "POST", body: JSON.stringify(body) }),
   goalAction: (id: string, action: "pause" | "resume" | "cancel" | "complete" | "reopen" | "sweep") =>
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
+  // A proposed statement for a goal, saved nowhere; and saving the one the operator accepted on a goal.
+  enrichGoal: (body: EnrichRequest) => call<GoalProposal>("/v1/goals/enrich", { method: "POST", body: JSON.stringify(body) }),
+  acceptEnrichment: (id: string, statement: string) =>
+    call<Goal>(`/v1/goals/${id}/enrich/accept`, { method: "POST", body: JSON.stringify({ statement }) }),
   patchGoal: (id: string, fields: Record<string, unknown>) =>
     call<Goal>(`/v1/goals/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
   // Raise the budget of a goal over it or stopped by it: by addUsd, or by an amount the planner works out.
