@@ -6,11 +6,14 @@ import { SectionTitle, when } from "../../components/ui";
 import type { PullRequestCell, PullRequests } from "./api";
 import { errorText, ReadFailed } from "../../components/ReadFailed";
 
-// What each pull request state means, and its color: the two that need an operator are the strongest.
+// What each pull request state means, and its color: the two that need an operator are the strongest. Blocked
+// and waiting count the pull requests whose tasks the Task Shepherd says the operator has, as Needs you does.
 export const PR_STATES = [
   { key: "blocked", label: "Blocked", color: "var(--mantine-color-red-6)" },
   { key: "waiting", label: "Waiting", color: "var(--mantine-color-orange-5)" },
   { key: "in_review", label: "In review", color: "var(--mantine-color-blue-5)" },
+  // Open on the code host with its task over: nobody is asked to act on it, so it is not counted as waiting.
+  { key: "left_open", label: "Left open", color: "var(--mantine-color-gray-7)" },
   { key: "merged", label: "Merged", color: "var(--mantine-color-teal-3)" },
   { key: "closed", label: "Closed", color: "var(--mantine-color-gray-5)" },
 ] as const;
@@ -62,6 +65,7 @@ export function PullRequestsRow() {
       <SectionTitle>Pull requests</SectionTitle>
       <Text size="sm" c="dimmed" mb="xs">
         {count("blocked")} blocked · {count("waiting")} waiting for you
+        {count("left_open") > 0 && ` · ${count("left_open")} left open after its task ended`}
         {found.left_out > 0 && ` · ${found.left_out} older left out`}
       </Text>
       <Paper p="sm" mb="lg" withBorder>

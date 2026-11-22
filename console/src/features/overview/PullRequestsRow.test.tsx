@@ -51,3 +51,9 @@ test("with no pull request the row is not shown", async () => {
   await vi.waitFor(() => expect(asked.length).toBe(1));
   expect(screen.queryByText("Pull requests")).toBeNull();
 });
+
+test("a pull request left open by an ended task is counted apart, and not as waiting", async () => {
+  renderRow({ days: 91, total: 2, left_out: 0, prs: [pr("t-1", "left_open", "r-1"), pr("t-2", "waiting", null)] });
+  expect((await screen.findByTestId("cell-t-1")).getAttribute("data-state")).toBe("left_open");
+  expect(screen.getByText("0 blocked · 1 waiting for you · 1 left open after its task ended")).toBeTruthy();
+});

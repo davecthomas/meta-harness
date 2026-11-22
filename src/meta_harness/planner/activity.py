@@ -40,22 +40,32 @@ def _events(reader: EventReader, task_ids: list[str]) -> dict[str, list[dict]]:
 
 
 def pr_state(task: dict, events: list[dict]) -> str:
-    """What a task's pull request is waiting on now: in_review, waiting, blocked, merged or closed.
+    """What a task's pull request is waiting on now: in_review, waiting, blocked, left_open, merged or closed.
 
     Merged or closed is what the pull request's end events say, not the task's status alone: an operator can
     cancel a task and leave its pull request open, to merge or close by hand, and the sweep records that end
-    when it comes (sweep.py). Till then the pull request is open, with no workflow on it: waiting on an
-    operator, as a ready one is."""
+    when it comes (sweep.py).
+
+    Waiting and blocked mean waiting on the operator, so they follow who the Task Shepherd says has the task
+    (the task's `standing`), as the console's Needs you does: the two then count the same pull requests. A
+    task the Shepherd or a planner has is in review, whatever its status. One that is over, with nothing left
+    to do and its pull request still open, is left open: nobody is asked to act on it. A task the Shepherd
+    has not looked at yet is judged by its status."""
     kinds = {e["event_type"] for e in events}
     if "pull_request_merged" in kinds or task["status"] == "closed":
         return "merged"
     if "pull_request_closed" in kinds:
         return "closed"
-    if task["status"] in ("ready", "canceled"):
-        return "waiting"
-    if task["status"] in ("review_unresolved", "failed"):
-        return "blocked"
-    return "in_review"
+    by_status = {"ready": "waiting", "canceled": "waiting", "review_unresolved": "blocked", "failed": "blocked"}
+    state = by_status.get(task["status"])
+    if state is None:
+        return "in_review"
+    standing = task.get("standing")
+    if standing and standing.get("over"):
+        return "left_open"
+    if standing and standing.get("owner") != "operator":
+        return "in_review"
+    return state
 
 
 def activity(tasks: list[dict], reader: EventReader, days: int, now: datetime | None = None) -> dict[str, Any]:
