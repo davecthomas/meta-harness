@@ -2803,14 +2803,14 @@ classifier's `openai-decisions` there, and `engine` `none` turns sizing off.
 The call reads the issue's title and body as data. It answers the issue's
 `size` (`small`, `medium` or `large`), its `reasons` and what it is `missing`
 (`acceptance_checks`, `paths`, `testable_outcome`). For a large one it also
-answers the titles of the issues it would `split` into. Whether checks or
-paths are missing is the planner's own reading: no `## Acceptance checks` or
-no `Paths:` line. Only `testable_outcome` is the model's call. When the model
-names `acceptance_checks` or `paths` that the planner reads in the issue, the
-sizing keeps them as `doubts` with the model's optional `missing_reason`. The
-card shows "Its checks may not prove the fix" or "Its paths may not cover the
-change" with that reason. A doubt holds no issue, on a strict goal too; a
-sizing stored before doubts has none. The answer is stored on the issue link (`size`, `sizing`) and
+answers the titles of the issues it would `split` into. Whether acceptance
+checks or paths are missing is the planner's own reading: no
+`## Acceptance checks` or no `Paths:` line. A testable outcome is the model's
+call. When the model calls checks or paths missing that the planner reads in
+the issue, the sizing records a doubt (`doubts`) with the model's
+`missing_reason`. The card shows it as "Its checks may not prove the fix" or
+"Its paths may not cover the change", with the reason. A doubt holds no
+issue, on a strict goal either. The answer is stored on the issue link (`size`, `sizing`) and
 recorded as `issue_sized` with the model and its cost.
 
 An issue opened by someone with no write access to the repo is held before it
@@ -3112,6 +3112,7 @@ tracker, through one adapter interface:
 | `ensure_label(repo, label)` | Make sure an issue created for the repo can have the label |
 | `create_issue(repo, title, body, labels)` | Create an issue, for an approved plan's draft or a split. Returns it with its `ref` |
 | `comment(ref, text)` | Add a comment to the issue. Returns the comment's address |
+| `add_section(ref, heading, text)` | Add a section to the end of the issue's description and keep what it said. The heading and the text come from `outbound.prepare` |
 | `mark(ref)` | Put the meta-harness's label on the issue. The adapter calls it itself before every write |
 | `set_status(ref, status)` | Move the issue to `todo`, `in_progress`, `in_review` or `done`, as far as the tracker has such a state. Returns whether it changed |
 | `link_pull_request(ref, pr_url, title)` | Record the pull request on the issue, where the tracker does not find it by itself |

@@ -84,16 +84,22 @@ test("the board shows a held issue's size and why it is held, and a gap on the c
   expect(within(queued).queryByRole("button", { name: "Run anyway" })).toBeNull();
 });
 
-test("the card shows the model's doubt about checks the issue has, with its reason, and no gap", () => {
-  const doubted = issue(3, { size: "small", missing: [], doubts: ["acceptance_checks"], doubt_reason: "They test the parser, not the card." });
+test("the card shows the model's doubt about the checks and paths an issue has, with its reason", () => {
+  const doubted = issue(3, {
+    size: "small",
+    missing: [],
+    doubts: [
+      { part: "acceptance_checks", reason: "make test does not reach the parser." },
+      { part: "paths", reason: "" },
+    ],
+  });
   renderIn(<GoalBoard issues={[doubted]} tasks={{}} spend={{}} />);
 
   const queued = screen.getByTestId("column-queued");
-  expect(within(queued).getByTestId("issue-doubt").textContent).toBe("Its checks may not prove the fix. They test the parser, not the card.");
+  const lines = within(queued).getByTestId("issue-doubts").children;
+  expect([...lines].map((l) => l.textContent)).toEqual(["Its checks may not prove the fix: make test does not reach the parser", "Its paths may not cover the change"]);
   expect(within(queued).queryByTestId("issue-gap")).toBeNull();
-  expect(doubtText(["acceptance_checks", "paths"], "")).toBe("Its checks may not prove the fix, and its paths may not cover the change.");
-  expect(doubtText(["paths"], "only docs are named")).toBe("Its paths may not cover the change. Only docs are named.");
-  expect(doubtText(undefined)).toBeNull();
+  expect(doubtText({ part: "paths", reason: "it skips docs" })).toBe("Its paths may not cover the change: it skips docs");
 });
 
 test("Run anyway asks the planner to make the held issue a task", async () => {
