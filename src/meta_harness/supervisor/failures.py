@@ -60,6 +60,9 @@ _PERMANENT = re.compile(
             r"pi changed nothing",
             r"fix rounds",
             r"keep ending without finishing",
+            # The code host refuses a workflow file pushed by the App, every time.
+            r"may not change a workflow file",
+            r"without `workflows` permission",
         ]
     ),
     re.IGNORECASE,

@@ -112,6 +112,8 @@ PR_WATCHED_STATUSES = ["ready", "review_unresolved"]
 PR_WATCH_LIMIT = 1000
 # The goals no sweep covers, which a follow-up looks at instead, and how often.
 FOLLOWED_UP_STATUSES = ["met", "canceled", "paused", "stalled"]
+# Where a repo's workflow files are: a change to one is pushed by a person, never by the meta-harness's App.
+WORKFLOW_FILES = ".github/workflows/"
 FOLLOW_UP_SECONDS = 3600.0
 
 log = logging.getLogger("meta_harness.planner")
@@ -456,6 +458,23 @@ async def _take_in(
         reason = (
             f"opened by {issue.author or 'someone'}, who has no write access to {issue.repo}: read the issue, "
             "including its raw text, then use Run anyway"
+        )
+        if not existing:
+            await asyncio.to_thread(
+                _save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, None, title, labels
+            )
+        if reason != (existing or {}).get("held_reason"):
+            await asyncio.to_thread(_hold, issue.ref, reason)
+        result.held.append(issue.ref)
+        return
+    # An issue that changes a workflow file is a person's: the code host refuses a push of one from the
+    # meta-harness's App, on purpose, so the task would run to the end and fail at the push. No answer lifts
+    # this hold, since none makes the push go through.
+    if workflow_files := [p for p in issue.paths if p.strip().removeprefix("./").startswith(WORKFLOW_FILES)]:
+        reason = (
+            f"it changes {', '.join(workflow_files[:3])}, and the meta-harness may not change a workflow file: "
+            "the code host refuses that push from its App. A person makes this change. Remove the issue from "
+            "the goal, or take the workflow file out of its Paths if the rest stands without it"
         )
         if not existing:
             await asyncio.to_thread(

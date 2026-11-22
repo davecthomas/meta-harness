@@ -894,7 +894,12 @@ identity, whose answer the deploy job checks is a version before using it, and
 on the VM as `mh`, not root. A workflow runs with the repo's secrets, and a deploy
 applies its Terraform as the project's owner and its scripts as root on the
 VM. The task ends `ready`, naming the paths, and an operator's Merge takes it
-through. Only an operator's does: the task records who sent it back
+through. A workflow file is further off still: the code host refuses a push
+of one from the meta-harness's App, which is never given that permission. So
+an issue whose `Paths:` name a file under `.github/workflows/` is held when
+the sweep takes it in, as a person's change, and no answer lifts that hold.
+A run that changes one anyway ends its task at the push with the same words,
+as a failure the supervisor never retries. Only an operator's does: the task records who sent it back
 (`resume_by`), the workflow tells the merge activity, and a merge the
 supervisor asks for is held like any other. Merges are one at a time per repo. The run service's merge activity
 holds the repo's merge lock, a Postgres advisory lock, from checking the
