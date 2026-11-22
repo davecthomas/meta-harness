@@ -114,6 +114,8 @@ export MH_TASK_API_KEYS=${MH_TASK_API_KEYS:-local:local-task-key}
 export MH_SERVICE_KEYS=${MH_SERVICE_KEYS:-local-service:local-service-key}
 export MH_TASK_API_KEY=${MH_TASK_API_KEY:-local-task-key}
 export MH_SERVICE_KEY=${MH_SERVICE_KEY:-local-service-key}
+# Every repo these steps use is a local bare repo under RUNS_DIR, so the Task API takes a path there.
+export MH_LOCAL_REPO_ROOTS=${MH_LOCAL_REPO_ROOTS:-$RUNS_DIR}
 # The planner's repo registry for the planned-goal step: one local bare repo, which that step makes.
 # It is set before the planner starts, and the planner looks at its goals often, so the step does not
 # wait a minute for each move.

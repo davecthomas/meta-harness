@@ -410,6 +410,23 @@ REGISTRY: list[EventType] = [
             ["digest", "headline", "model", "usd_cost", "written_at"],
         ),
     ),
+    # The planner answered the operator's question about the work from the Overview's facts (planner/overview.py):
+    # the question, the answer, the one model call and what it cost.
+    EventType(
+        "overview_question_answered",
+        1,
+        _object(
+            {
+                "question": {"type": "string"},
+                "answer": {"type": "string"},
+                "in_record": {"type": "boolean"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+                "answered_at": {"type": "string"},
+            },
+            ["question", "answer", "model", "usd_cost", "answered_at"],
+        ),
+    ),
     EventType(
         "goal_drafted",
         1,
