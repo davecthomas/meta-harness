@@ -15,6 +15,7 @@ import meta_harness
 from meta_harness.events import types
 from meta_harness.run_service import activities, code_host, pr_summary, prompt_activities, provenance, run_provenance
 from meta_harness.run_service.prompt_activities import RunPromptRecord
+from meta_harness.run_service.resume_activities import ResumeState
 from meta_harness.run_service.shared import PublishRequest, RunTaskInput, TaskSpec
 from meta_harness.run_service.workflows import RunTask
 
@@ -402,9 +403,15 @@ async def test_every_run_of_a_task_carries_its_tasks_origin_and_the_run_before_i
     async def record_prompt(record: RunPromptRecord) -> None:
         records.append(record)
 
+    @activity.defn(name="resume_state")
+    async def resume_state(task_id: str) -> ResumeState:
+        # A task sent back reads its earlier runs, to number its new ones after them. This one's left none.
+        return ResumeState()
+
     replaced = ("load_task", "record_prompt")
     kept = [a for a in [*script.activities(), *tasks] if _Definition.from_callable(a).name not in replaced]
-    async with Worker(env.client, task_queue=QUEUE, workflows=[RunTask], activities=[*kept, load_task, record_prompt]):
+    ours = [*kept, load_task, record_prompt, resume_state]
+    async with Worker(env.client, task_queue=QUEUE, workflows=[RunTask], activities=ours):
         result = await env.client.execute_workflow(
             RunTask.run, RunTaskInput(task_id="t-prov"), id="run-task-t-prov", task_queue=QUEUE
         )

@@ -80,6 +80,8 @@ class RunTaskInput:
     resume: str = ""
     # Who sent the task back with that resume: "operator", "supervisor", or "" for neither.
     resume_by: str = ""
+    # How many times the task has been sent back to the queue. Above 0, its runs are numbered after the earlier ones.
+    retries: int = 0
     # The Task API task's type. plan: a goal's planning task, whose run drafts issues and changes no file.
     task_type: str = ""
 

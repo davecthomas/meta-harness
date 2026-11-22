@@ -303,6 +303,7 @@ class RunTask:
             attempts=spec.attempts,
             resume=spec.resume,
             resume_by=spec.resume_by,
+            retries=spec.retries,
             task_type=spec.task_type,
         )
         self._task_type = spec.task_type
@@ -485,6 +486,15 @@ class RunTask:
             resumed, attempts = await self._resume(request, prepared, limit)
             if resumed is not None:
                 return resumed
+        elif request.retries > 0 and self._task_id and workflow.patched("retried-runs-number-on"):
+            # A task sent back with no pull request starts over, and its runs are numbered after the earlier
+            # ones too. Numbered from 1 again, each run found the directory, the clone and the record of the
+            # failed run with its number: it worked in that run's leftovers, and a review run read an old
+            # tree, not the pull request.
+            state = await workflow.execute_activity(
+                resume_state, self._task_id, start_to_close_timeout=CODE_HOST_TIMEOUT, retry_policy=CODE_HOST_RETRY
+            )
+            attempts = list(state.attempts)
         route_result: RouteResult | None = None
         floor = request.floor
         # Behind a patch: only a task asked for several attempts takes this path, and only after the patch.

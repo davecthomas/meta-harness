@@ -51,6 +51,24 @@ async def test_clone_keeps_the_git_directory_outside_the_workspace(origin: Path,
     assert git_dir not in workspace.parents and workspace not in git_dir.parents
 
 
+async def test_a_clone_an_earlier_attempt_never_finished_is_made_again(origin: Path, run_dir: Path):
+    """A worker restart can stop a clone between its steps. What it leaves has files missing, or is still on
+    the default branch when the run is a review of a pull request's: a later attempt must not work in it."""
+    _git("branch", "mh/t-1", cwd=origin)
+    workspace, git_dir = run_dir / "workspace", run_dir / "git"
+    await code_host.clone(str(origin), workspace, git_dir)
+    # As the attempt left it: cloned, on main, a file not yet written, and no mark that it finished.
+    (git_dir / code_host.CLONE_DONE).unlink()
+    (workspace / "hello.txt").unlink()
+    (workspace / "half-written.tmp").write_text("x")
+
+    branch = await code_host.clone(str(origin), workspace, git_dir, branch="mh/t-1")
+
+    assert branch == "mh/t-1", "the pull request's branch, not the default one the unfinished clone was on"
+    assert (workspace / "hello.txt").read_text() == "hello\n" and not (workspace / "half-written.tmp").exists()
+    assert (git_dir / code_host.CLONE_DONE).is_file()
+
+
 async def test_a_local_repo_the_deployment_does_not_list_is_never_cloned_or_pushed_to(
     origin: Path, run_dir: Path, tmp_path: Path, monkeypatch
 ):
