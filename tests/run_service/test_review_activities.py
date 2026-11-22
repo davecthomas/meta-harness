@@ -561,3 +561,50 @@ async def test_a_check_that_fails_again_or_was_re_run_already_or_is_not_actions_
 def test_a_check_runs_actions_run_is_read_from_its_details_link():
     assert code_host._actions_run("https://github.com/o/r/actions/runs/123456/job/789") == 123456
     assert code_host._actions_run("https://ci.example.com/build/4") is None
+
+
+async def test_a_queued_workflow_holds_the_wait_though_every_check_listed_has_passed(monkeypatch):
+    """One workflow's jobs have passed while another workflow is still queued, with no check run yet: the checks
+    listed at that moment are not all the commit will have, so the head is not called passed."""
+    done = [CheckRun("lint", "completed", "success", "")]
+    both = [CheckRun("lint", "completed", "success", ""), CheckRun("tests", "completed", "failure", "1 failed")]
+    calls = _checks_seq(monkeypatch, [done, done, both])
+    queued = [1, 1, 0]
+
+    async def pending_suites(repo, sha):
+        return queued.pop(0) if len(queued) > 1 else queued[0]
+
+    monkeypatch.setattr(code_host, "pending_suites", pending_suites)
+
+    result = await ActivityEnvironment().run(activities.wait_checks, ChecksRequest(repo="owner/repo", head_sha="abc"))
+
+    assert result.state == "failed" and [f.name for f in result.failed] == ["tests"]
+    assert len(calls) == 3, "it waited for the queued workflow's jobs"
+
+
+async def test_no_checks_is_not_said_while_a_workflow_is_queued_and_the_wait_is_bounded(monkeypatch):
+    calls = _checks_seq(monkeypatch, [[]])
+
+    async def always_queued(repo, sha):
+        return 1
+
+    monkeypatch.setattr(code_host, "pending_suites", always_queued)
+
+    result = await ActivityEnvironment().run(activities.wait_checks, ChecksRequest(repo="owner/repo", head_sha="abc"))
+
+    assert result.state == "none", "a workflow that never starts does not hold the task forever"
+    assert len(calls) == activities.SUITES_WAIT_SECONDS // activities.CHECKS_POLL_SECONDS + 1
+    assert activities.SUITES_WAIT_SECONDS > activities.NO_CHECKS_SECONDS
+
+
+async def test_check_suites_that_cannot_be_read_leave_the_listed_checks_deciding(monkeypatch):
+    _checks_seq(monkeypatch, [[CheckRun("lint", "completed", "success", "")]])
+
+    async def unreadable(repo, sha):
+        raise code_host.CodeHostError("GitHub answered 403", retryable=False, status=403)
+
+    monkeypatch.setattr(code_host, "pending_suites", unreadable)
+
+    result = await ActivityEnvironment().run(activities.wait_checks, ChecksRequest(repo="owner/repo", head_sha="abc"))
+
+    assert result.state == "passed"

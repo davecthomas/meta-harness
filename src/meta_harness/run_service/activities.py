@@ -47,6 +47,7 @@ import re
 from dataclasses import replace
 from pathlib import Path
 from string import Template
+from collections.abc import Awaitable
 from typing import Any
 
 import httpx
@@ -246,6 +247,27 @@ async def route(request: RouteRequest) -> RouteResult:
     )
 
 
+# How often a run says it is alive while it clones the repo and starts its sandbox, before it has events to follow.
+# Well inside the activity's heartbeat timeout, so a slow clone is not taken for a dead worker and started twice.
+SETUP_HEARTBEAT_SECONDS = 3.0
+
+
+async def _beating(progress: dict[str, Any], work: Awaitable[Any]) -> Any:
+    """Awaits work, heartbeating meanwhile. The clone and the sandbox start can each take longer than the
+    activity's heartbeat timeout, and a second attempt started over a live first one removes its clone."""
+
+    async def beat() -> None:
+        while True:
+            await asyncio.sleep(SETUP_HEARTBEAT_SECONDS)
+            activity.heartbeat(progress)
+
+    beating = asyncio.create_task(beat())
+    try:
+        return await work
+    finally:
+        beating.cancel()
+
+
 @activity.defn
 async def run_harness(request: HarnessRequest) -> HarnessResult:
     """Starts or re-attaches to the run on the harness server and follows it to the end."""
@@ -272,17 +294,23 @@ async def run_harness(request: HarnessRequest) -> HarnessResult:
         signed = provenance.Provenance(
             provenance.COMMIT, task=request.task_id, run=run_id, model=request.candidate.label
         )
-        await _clone(
-            tag,
-            request.repo,
-            sandbox.workspace_for(ref, run_id),
-            sandbox.git_dir_for(ref, run_id),
-            request.branch,
-            request.merge_base,
-            provenance.commit_message(f"Merge origin/{request.merge_base}", signed) if request.merge_base else "",
+        await _beating(
+            progress,
+            _clone(
+                tag,
+                request.repo,
+                sandbox.workspace_for(ref, run_id),
+                sandbox.git_dir_for(ref, run_id),
+                request.branch,
+                request.merge_base,
+                provenance.commit_message(f"Merge origin/{request.merge_base}", signed) if request.merge_base else "",
+            ),
         )
     profile = request.candidate.profile
-    box = await _lease(tag, run_id, ref, image, sandbox.Resources.from_profile(profile), sandbox.services_for(profile))
+    box = await _beating(
+        progress,
+        _lease(tag, run_id, ref, image, sandbox.Resources.from_profile(profile), sandbox.services_for(profile)),
+    )
     try:
         grant_key = await _issue_grant(tag, request, info.workflow_id)
         async with harness_client.client(box) as client:
@@ -921,6 +949,8 @@ def _answer_after(current: str | None, data: dict[str, Any]) -> str | None:
 CHECKS_POLL_SECONDS = 30
 # A commit with no checks at all after this long belongs to a repo that runs none.
 NO_CHECKS_SECONDS = 300
+# How long a wait goes on for a queued workflow's jobs to show before it takes the checks listed as all there are.
+SUITES_WAIT_SECONDS = 900
 # A check run that ends with one of these did not fail.
 PASSING_CONCLUSIONS = code_host.PASSING_CONCLUSIONS
 # How long a wait looks for a re-run's jobs to appear before it takes the old failures as the result.
@@ -982,6 +1012,16 @@ async def _rerun_flaky(request: ChecksRequest, runs: list[code_host.CheckRun]) -
     return rerun
 
 
+async def _suites_pending(request: ChecksRequest) -> bool:
+    """Whether a workflow on the head commit has yet to start its jobs. A read that fails counts as none
+    pending: the check runs listed decide, as they did before this was read."""
+    try:
+        return await code_host.pending_suites(request.repo, request.head_sha) > 0
+    except code_host.CodeHostError as err:
+        activity.logger.warning("wait_checks: could not read the check suites of %s: %s", request.head_sha[:7], err)
+        return False
+
+
 @activity.defn
 async def wait_checks(request: ChecksRequest) -> ChecksResult:
     """Waits until every check on the head commit has completed, and says how they ended."""
@@ -1010,6 +1050,13 @@ async def wait_checks(request: ChecksRequest) -> ChecksResult:
                 continue
         if rerun_at is not None and not restarted and not pending and waited - rerun_at < RERUN_SHOWS_SECONDS:
             # The re-run's jobs have not appeared yet: the old failures are still the newest the host shows.
+            activity.heartbeat(waited)
+            await asyncio.sleep(CHECKS_POLL_SECONDS)
+            waited += CHECKS_POLL_SECONDS
+            continue
+        settled = (runs and not pending) or (not runs and waited >= NO_CHECKS_SECONDS)
+        if settled and waited < SUITES_WAIT_SECONDS and await _suites_pending(request):
+            # A workflow is queued and none of its jobs is a check yet: what is listed is not all there will be.
             activity.heartbeat(waited)
             await asyncio.sleep(CHECKS_POLL_SECONDS)
             waited += CHECKS_POLL_SECONDS
