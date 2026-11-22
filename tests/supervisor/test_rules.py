@@ -159,8 +159,32 @@ def test_a_ready_task_of_a_goal_that_merges_by_itself_is_seen_through_its_merge(
     assert blocked.owner == "operator" and "approval" in blocked.ask
 
 
+def test_a_ready_task_held_for_an_operator_is_never_sent_to_merge_by_the_supervisor():
+    """Its pull request changes files that run with the control plane's authority: only a person merges it."""
+    for how in ("clean", "conflict", "checks_failed", "checks_pending"):
+        held = decide(_ready(how, held_for_operator=True))
+        assert (held.owner, held.situation, held.action) == ("operator", "merge_held", "")
+        assert "Merge on the task's page" in held.ask
+    from meta_harness.supervisor import moves
+
+    assert moves.ranked("merge_held", _ready("clean", held_for_operator=True)) == ("open_pull_request", "merge")
+
+
+def test_a_clean_pull_request_is_merged_whatever_the_tries_and_once_per_commit():
+    merged = decide(_ready("clean", drives_left=False, head="95e21b3cb083aaaa"))
+    assert (merged.owner, merged.action, merged.situation) == ("supervisor", "merge", "merge_due")
+    assert merged.reason.endswith("at 95e21b3cb083"), "the commit is in the reason, so the ledger knows it was asked"
+    refused = decide(_ready("clean", head="95e21b3cb083aaaa", merge_refused_at_head=True))
+    assert (refused.owner, refused.situation) == ("operator", "merge_refused")
+    from meta_harness.supervisor import failures, moves
+
+    assert moves.ranked("merge_refused", _ready("clean")) == ("open_pull_request", "merge")
+    assert failures.merge_waits_on_checks('405: {"message":"Required status check \\"zero-cost\\" is in progress."}')
+    assert not failures.merge_waits_on_checks("405: At least 1 approving review is required")
+
+
 def test_the_supervisors_own_tries_are_bounded_and_then_an_operator_is_asked():
-    for how in ("clean", "conflict", "checks_failed"):
+    for how in ("conflict", "checks_failed"):
         spent = decide(_ready(how, drives_left=False))
         assert spent.owner == "operator" and spent.situation == "merge_tries_used"
         assert "as often as it may" in spent.reason

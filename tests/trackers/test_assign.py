@@ -375,3 +375,79 @@ def test_every_tracker_asks_a_goal_for_an_optional_assignee_picked_from_its_peop
     for spec in [*registry.SUPPORTED.values(), registry.OWN]:
         [assignee] = [s for s in spec.goal_settings if s.name == "assignee"]
         assert (assignee.kind, assignee.required) == ("choice", False), spec.scheme
+
+
+# What a refusal tells the operator to do, whichever tracker refuses.
+WHAT_TO_DO = "Choose one of those for the goal's assignee, or add the person to the tracker."
+
+
+async def test_every_adapters_refusal_says_what_to_do(key_file):
+    hub, _ = github(key_file, {("GET", "/repos/o/r/issues/7"): GITHUB_ISSUE})
+    site, _ = jira({("GET", "/rest/api/2/user/assignable/search"): jira_assignable})
+    own = OwnTracker(connect=People())
+
+    for tracker, ref in [(hub, "github:o/r#7"), (site, "jira:VL-7"), (own, OWN_REF)]:
+        with pytest.raises(TrackerError) as refused:
+            await tracker.assign(ref, "stranger")
+        assert str(refused.value).startswith(f"{ref} was not assigned: 'stranger' is not one of ")
+        assert str(refused.value).endswith(WHAT_TO_DO), tracker.scheme
+
+
+async def test_github_lists_the_people_of_one_repo(key_file):
+    tracker, _ = github(key_file, {("GET", "/repos/o/r/assignees"): [{"login": "zed"}, {"login": "Octocat"}]})
+
+    assert await tracker.people("o/r") == [
+        {"value": "Octocat", "label": "Octocat"},
+        {"value": "zed", "label": "zed"},
+    ]
+    with pytest.raises(TrackerError, match="is not a repo's owner/name") as refused:
+        await tracker.people("not a repo")
+    assert not refused.value.retryable
+
+
+async def test_jira_lists_the_people_of_the_bound_goals_project_and_none_without_one():
+    tracker, service = jira({("GET", "/rest/api/2/user/assignable/search"): [ALICE, BOB, GONE]})
+
+    bound = tracker.bound(Source(repos=("o/r", "o/s"), settings={"project": "VL"}))
+    people = [
+        {"value": "acc-alice", "label": "Alice Ng (alice@example.com)"},
+        {"value": "acc-bob", "label": "Bob Ray"},
+    ]
+    assert await bound.people("o/r") == people == await bound.people("o/s")
+    assert {query["project"] for _, _, query, _ in service.asked} == {"VL"}
+    asked = len(service.asked)
+    assert await tracker.people("o/r") == []
+    assert await tracker.bound(Source(repos=("o/r",), settings={})).people("o/r") == []
+    assert len(service.asked) == asked, "no project, nothing asked"
+
+
+async def test_the_own_tracker_lists_its_console_users_for_any_repo():
+    own = OwnTracker(connect=People())
+
+    users = [
+        {"value": "ana@example.com", "label": "ana@example.com"},
+        {"value": "ben@example.com", "label": "ben@example.com"},
+    ]
+    assert await own.people("o/r") == users == await own.people("x/y")
+
+
+@pytest.mark.parametrize(
+    ("scheme", "good", "bad"),
+    [
+        ("github", ["octocat", "a-b-c"], ["not a login", "-x", " octocat", "a" * 40]),
+        ("jira", ["acc-alice", "557058:f58131cb-b67d", "Alice Ng"], [" acc-alice", "two\nlines", "x" * 256]),
+        ("mh", ["ana@example.com"], ["ana", "ana@example", "a b@example.com"]),
+    ],
+)
+def test_every_tracker_checks_a_goals_assignee_when_it_is_saved(scheme, good, bad):
+    spec = registry.spec(scheme)
+    base = {"project": "VL"} if scheme == "jira" else {}
+    site = {"projects": {"VL": {}}}
+
+    assert spec.check_goal(base, site) == [], "the assignee is optional"
+    assert spec.check_goal({**base, "assignee": ""}, site) == []
+    for value in good:
+        assert spec.check_goal({**base, "assignee": value}, site) == [], value
+    for value in bad:
+        [why] = spec.check_goal({**base, "assignee": value}, site)
+        assert why.startswith("assignee is ") and why.endswith("choose one from the list, or leave it empty"), value

@@ -31,7 +31,16 @@ def _open(state: str = "open") -> ResumeState:
     return ResumeState(pr_state=state, published=published, author=AUTHOR, attempts=list(EARLIER))
 
 
-async def _resume(env, script: Script, resume: str, state: ResumeState, goal_id: str = "", record: str = "", extra=()):  # noqa: F811
+async def _resume(
+    env,  # noqa: F811
+    script: Script,
+    resume: str,
+    state: ResumeState,
+    goal_id: str = "",
+    record: str = "",
+    extra=(),
+    resume_by: str = "",
+):
     statuses: list[TaskStatusRequest] = []
 
     @activity.defn(name="load_task")
@@ -50,6 +59,7 @@ async def _resume(env, script: Script, resume: str, state: ResumeState, goal_id:
             closes="owner/repo#1",
             goal_id=goal_id,
             resume=resume,
+            resume_by=resume_by,
             retries=1,
         )
 
@@ -140,6 +150,17 @@ async def test_a_merge_an_operator_asked_for_merges_whatever_the_goal_says_then_
     assert not script.goals_asked, "the goal's auto_merge is not asked"
     assert [m.head_sha for m in script.merge_requests] == ["c5"]
     assert len(script.merge_checked) == 1 and statuses[-1].status == "closed"
+
+
+async def test_only_an_operators_merge_is_sent_as_one_so_the_supervisors_never_lifts_the_operator_hold(env):  # noqa: F811
+    """merge_pr holds a pull request that changes .github/ or deploy/ unless an operator asked: the workflow
+    says who did, from the task, and the supervisor's merge of an auto-merge goal's task is not an operator's."""
+    for who, operator in (("operator", True), ("supervisor", False), ("", False)):
+        script = Script(auto_merge=True)
+
+        await _resume(env, script, "merge", _open(), goal_id="g-1", resume_by=who)
+
+        assert [(m.asked_for, m.by_operator) for m in script.merge_requests] == [(True, operator)], who
 
 
 async def test_a_merge_asked_for_on_a_head_that_moved_goes_through_checks_and_review_first(env):  # noqa: F811

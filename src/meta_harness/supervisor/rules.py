@@ -85,10 +85,17 @@ class Facts:
     admitted: bool = False
     # Whether the task's goal merges clean pull requests itself.
     auto_merge: bool = False
+    # Whether the task's merge is held for an operator: its pull request changes a path that runs with the
+    # control plane's own authority once merged, which no review merges alone.
+    held_for_operator: bool = False
     # For a parked task with an open pull request: how the pull request stands for a merge.
     mergeable: str = "unknown"
     # Whether the supervisor may still send the task back by itself: it has not used up its tries.
     drives_left: bool = True
+    # For a parked task with an open pull request: the commit it is at, and whether the supervisor has already
+    # asked for the merge at that commit and been refused for something other than a check still running.
+    head: str = ""
+    merge_refused_at_head: bool = False
     # Whether the task has waited in its situation longer than a wait of the supervisor's may last.
     stale: bool = False
     # For a failed or unresolved task: whether what it failed on was the system's or its own.
@@ -446,6 +453,14 @@ def _parked(facts: Facts) -> Decision:
             "its review loop ended without a clean review, and its pull request is open",
             ask="Retry it, with a stronger model when one has not tried, or merge it as it is.",
         )
+    if facts.held_for_operator:
+        return Decision(
+            "operator",
+            "merge_held",
+            "its review is clean, and its pull request changes files that run with the control plane's own "
+            "authority once merged, which only a person merges",
+            ask="Read the change on the pull request, then press Merge on the task's page.",
+        )
     if facts.auto_merge and facts.goal in SWEPT:
         return _to_merge(facts)
     return Decision(
@@ -488,8 +503,21 @@ def _to_merge(facts: Facts) -> Decision:
         return Decision(
             "supervisor", "merge_waiting", f"{waiting}; the Task Shepherd looks again each pass", action="wait"
         )
+    if how == "clean":
+        # Asking for a merge the code host would take spends nothing and is none of the task's tries: its tries
+        # are for work that failed, and on a busy base they are soon used up by the base moving under it. So it
+        # is asked for whatever the count says, once per commit: refused at this commit already, it is a
+        # person's.
+        at = f" at {facts.head[:12]}" if facts.head else ""
+        if facts.merge_refused_at_head:
+            return Decision(
+                "operator",
+                "merge_refused",
+                f"the code host says it would take its merge{at}, and refused it when the Task Shepherd asked",
+                ask="Open the pull request to see what it still wants, then press Merge on the task's page.",
+            )
+        return Decision("supervisor", "merge_due", f"the code host would take its merge now{at}", action="merge")
     what = {
-        "clean": ("merge_due", "the code host would take its merge now", "merge"),
         "conflict": ("merge_conflict", "its pull request conflicts with its base", "merge"),
         "checks_failed": ("merge_checks_failed", "its pull request's checks failed after its review", "review"),
     }[how]

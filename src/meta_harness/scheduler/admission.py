@@ -107,6 +107,7 @@ class Admission:
         self._running_goal: dict[str, str | None] = {}
         # Tasks whose pull request is open: their locks block no one (see _release_and_renew).
         self._published: set[str] = set()
+        # Tasks whose workflow was sent a cancel that has not taken effect yet (see _stop_running).
         self._canceling: set[str] = set()
 
     async def pass_once(self) -> AdmissionResult:
@@ -208,9 +209,12 @@ class Admission:
         if self.cancel is None:
             return
         running = await asyncio.to_thread(self.tasks.list, ["running", "queued"], None, 1000)
-        for task in running:
-            stop = engaged and task["status"] == "running" or task.get("cancel_requested")
-            if not stop or task["id"] in self._canceling:
+        to_stop = [t for t in running if engaged and t["status"] == "running" or t.get("cancel_requested")]
+        # A cancel is sent once per stop, not once per task: a task that was stopped, then retried under the
+        # same id, is stopped again when asked. It leaves this set once it no longer needs stopping.
+        self._canceling &= {t["id"] for t in to_stop}
+        for task in to_stop:
+            if task["id"] in self._canceling:
                 continue
             try:
                 await self.cancel(task["id"])

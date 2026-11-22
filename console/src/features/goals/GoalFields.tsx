@@ -259,6 +259,87 @@ export function AutonomyEdit({ goal, readOnly, save }: FieldProps) {
   );
 }
 
+// Who the goal's issues are assigned to: its tracker setting `assignee`, picked on the New goal form from the
+// tracker's people and fixed then. The person is named as the tracker lists them, and one the tracker no longer
+// lists is marked, since its issues then stay unassigned.
+export function AssigneeField({ goal }: { goal: FieldProps["goal"] }) {
+  const scheme = goal.tracker ?? "github";
+  const named = (goal.tracker_settings?.assignee ?? "").trim();
+  const project = (goal.tracker_settings?.project ?? "").trim();
+  const repos = goal.repos.join(",");
+  const [people, setPeople] = useState<{ value: string; label: string }[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    setPeople(null);
+    setError(null);
+    if (!named) return;
+    api.trackerChoices(scheme, "assignee", { ...(project ? { project } : {}), ...(repos ? { repos } : {}) }).then(
+      (found) => !stale && setPeople(found),
+      (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [scheme, named, project, repos]);
+  if (!named) {
+    return <Text size="sm">None named: each issue goes to the goal's owner, when the tracker knows their email.</Text>;
+  }
+  const found = people?.find((p) => p.value === named);
+  return (
+    <Stack gap={0} data-testid="goal-assignee">
+      <Text size="sm">{found ? found.label : named}</Text>
+      {error && <Text size="xs" c="orange">The tracker's people could not be read, so this is the saved id: {error}</Text>}
+      {people !== null && !found && (
+        <Text size="xs" c="orange">
+          {named} is not one of the people the tracker can assign now, so the goal's issues stay unassigned. Add them to the tracker, or start a new goal that names another assignee.
+        </Text>
+      )}
+      <Text size="sm" c="dimmed">Fixed when the goal was created.</Text>
+    </Stack>
+  );
+}
+
+// The issue a Jira goal's plan's issues are created under: its tracker setting `parent`, picked on the New goal
+// form from the project's open epics and fixed then. It is named as the tracker lists it. One the tracker no
+// longer lists is marked, since Jira may refuse it: each issue is then created without it, and the goal says so.
+export function ParentField({ goal }: { goal: FieldProps["goal"] }) {
+  const scheme = goal.tracker ?? "github";
+  const named = (goal.tracker_settings?.parent ?? "").trim();
+  const project = (goal.tracker_settings?.project ?? "").trim();
+  const [epics, setEpics] = useState<{ value: string; label: string }[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    setEpics(null);
+    setError(null);
+    if (!named || !project) return;
+    api.trackerChoices(scheme, "parent", { project }).then(
+      (found) => !stale && setEpics(found),
+      (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [scheme, named, project]);
+  if (!named) {
+    return <Text size="sm">None: the issues its plan creates have no parent.</Text>;
+  }
+  const found = epics?.find((e) => e.value === named);
+  return (
+    <Stack gap={0} data-testid="goal-parent">
+      <Text size="sm">{found ? found.label : named.replace(/^jira:/, "")}</Text>
+      {error && <Text size="xs" c="orange">The project's epics could not be read, so this is the saved parent: {error}</Text>}
+      {epics !== null && !found && (
+        <Text size="xs" c="orange">
+          {named} is not one of the project's open epics now, so Jira may refuse it. Each issue it refuses is created without a parent, and the goal says which. Reopen the epic, or set each issue's parent in Jira.
+        </Text>
+      )}
+      <Text size="sm" c="dimmed">The issues its plan creates go under it. Fixed when the goal was created.</Text>
+    </Stack>
+  );
+}
+
 export function AutoMergeEdit({ goal, readOnly, save }: FieldProps) {
   return (
     <InlineSwitch

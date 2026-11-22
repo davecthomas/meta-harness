@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from meta_harness import db
 from meta_harness.config import kinds
 from meta_harness.costs import model_source
-from meta_harness.planner import overview, planning
+from meta_harness.planner import overview, planning, updates
 from meta_harness.planner.service import create_app
 from meta_harness.run_service import writing
 
@@ -178,6 +178,72 @@ def test_past_max_usd_no_model_call_is_made_and_the_last_report_is_returned(worl
     assert writer.calls == 1 and kept["report"]["headline"] == "Report 1" and kept["note"]
 
 
+def test_a_report_is_built_from_the_goals_recorded_updates(world, monkeypatch):
+    client, events, tasks, gateway = world
+    goal = _feature(client, statement="Add exports")
+    gateway.goal_ids = [goal["id"]]
+    _only(monkeypatch, gateway.goal_ids)
+    updates._save(goal["id"], "d1", updates.Written(headline="The plan is half drafted.", body="Two of four parts."))
+    plan_task = next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])
+    events.emit("task_status_changed", {"from": "queued", "to": "running"}, task_id=plan_task["id"])
+
+    written = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
+
+    assert written["written"] is True
+    [given] = _given(gateway.calls[0])["goals"]
+    assert given["goal_id"] == goal["id"]
+    assert given["latest_update"]["headline"] == "The plan is half drafted.", "the planner's recorded update"
+    assert given["changes_since_last_report"] == [
+        {"task": overview._name(plan_task), "what": "task_status_changed", "from": "queued", "to": "running"}
+    ], "what its tasks recorded"
+    [moving] = written["report"]["moving"]
+    assert (moving["goal_id"], moving["goal"]) == (goal["id"], given["title"]), "each point names its goal"
+
+
+def test_a_goal_change_makes_the_sweep_write_a_new_report(world, monkeypatch):
+    client, events, tasks, _ = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+    _settings(monkeypatch, min_seconds=1)
+    writer = Writer()
+    looked = datetime.now(UTC) - timedelta(hours=1)
+    kept = overview.Overview(events, tasks, writer)
+
+    assert asyncio.run(kept.refresh()) is None and writer.calls == 0, "none before the operator first looks"
+    asyncio.run(kept.report(looked))
+    assert writer.calls == 1
+    kept.latest["written_at"] = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    assert asyncio.run(kept.refresh())["written"] is False and writer.calls == 1, "nothing changed"
+
+    # The goal moves: its planning task ends.
+    next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])["status"] = "closed"
+    refreshed = asyncio.run(kept.refresh())
+
+    assert refreshed["written"] is True and writer.calls == 2, "the change writes a new report unasked"
+    assert refreshed["report"]["headline"] == "Report 2"
+    assert refreshed["report"]["since"] == looked.isoformat(), "what finished counts from the operator's last look"
+    assert asyncio.run(kept.refresh()) is None, "the next is at least min_seconds later"
+    assert [e[1]["headline"] for e in events.events if e[0] == overview.EVENT] == ["Report 1", "Report 2"]
+
+
+def test_past_max_usd_the_sweep_makes_no_model_call(world, monkeypatch):
+    client, events, tasks, _ = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+    _settings(monkeypatch, max_usd="0.50", min_seconds=1)
+    writer = Writer()
+    kept = overview.Overview(events, tasks, writer)
+    asyncio.run(kept.report(datetime.now(UTC) - timedelta(hours=1)))
+
+    next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])["status"] = "closed"
+    kept.latest["written_at"] = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    limited = asyncio.run(kept.refresh())
+
+    assert writer.calls == 1, "past the day's limit no model is called"
+    assert limited["written"] is False and limited["report"]["headline"] == "Report 1"
+    assert "$0.50 limit" in limited["note"]
+
+
 @pytest.fixture
 def no_costs():
     with db.connect(autocommit=True) as conn:
@@ -250,6 +316,67 @@ def test_a_question_is_answered_from_the_facts_and_the_named_goals_events(world,
         assert model_source.harvest(conn, Log(), lambda _: None, lambda _: None) == 1
         rows = conn.execute("SELECT item, goal_id, operator, usd FROM costs.daily_cost").fetchall()
     assert rows == [("planning", "", "dave", Decimal("0.0030"))]
+
+
+def test_a_question_is_answered_from_the_goals_planner_updates(world, monkeypatch):
+    client, _, _, gateway = world
+    goal = _feature(client, statement="Add exports")
+    _only(monkeypatch, [goal["id"]])
+    updates._save(goal["id"], "d1", updates.Written(headline="The plan is half drafted.", body="Two of four parts."))
+
+    answered = client.post("/v1/overview/ask", json={"question": "What is moving?"}, headers=OPERATOR)
+
+    assert answered.status_code == 200, answered.text
+    [given] = _given(gateway.calls[0])["overview"]["goals"]
+    assert given["goal_id"] == goal["id"]
+    assert given["latest_update"]["headline"] == "The plan is half drafted.", "the planner's recorded update"
+    assert answered.json()["goals_named"] == [], "the question names no goal"
+
+
+def test_an_answer_the_record_does_not_hold_says_so(world, monkeypatch):
+    client, _, _, gateway = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+
+    def unknown(request: httpx.Request) -> httpx.Response:
+        gateway.calls.append(json.loads(request.content))
+        data = {"answer": "", "in_record": True}
+        return httpx.Response(200, json={"data": data, "finish_reason": "complete", "usd_cost": "0.0010"})
+
+    client.app.state.overview.asker = functools.partial(
+        overview.answer_question, transport=httpx.MockTransport(unknown)
+    )
+    body = client.post("/v1/overview/ask", json={"question": "Who wrote the spec?"}, headers=OPERATOR).json()
+
+    assert (body["answer"], body["in_record"]) == (overview.NOT_IN_RECORD, False), "an empty answer is no answer"
+    assert body["usd_cost"] == "0.0010" and len(gateway.calls) == 1, "the call is still counted"
+
+
+@pytest.mark.parametrize(
+    ("failing", "tries"),
+    [
+        (httpx.Response(503, text="overloaded"), 5),
+        (httpx.Response(200, json={"data": None, "finish_reason": "max_tokens", "usd_cost": "0"}), 1),
+    ],
+    ids=["unavailable after its retries", "did not finish"],
+)
+def test_a_model_failure_answers_an_error_and_records_no_answer(world, monkeypatch, failing, tries):
+    client, events, _, _ = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+    calls = []
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return failing
+
+    client.app.state.overview.asker = functools.partial(overview.answer_question, transport=httpx.MockTransport(fail))
+    failed = client.post("/v1/overview/ask", json={"question": "What is moving?"}, headers=OPERATOR)
+
+    assert failed.status_code == 502 and failed.json()["detail"].startswith("the question could not be answered")
+    assert len(calls) == tries, "a transient failure is retried before it is reported"
+    assert not [e for e in events.stored.values() if e["event_type"] == overview.ASKED], "no answer is recorded"
+    assert client.app.state.overview.spent_today() == Decimal(0)
 
 
 def test_nothing_in_the_record_is_said_without_a_model_call(world, monkeypatch):

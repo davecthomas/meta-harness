@@ -887,11 +887,16 @@ The merge (#86) reads the goal's `auto_merge` from the planner when it is due,
 so a change made while the task runs applies. It squash-merges with `sha` set
 to the reviewed head commit. A commit that landed after the review goes back
 to the checks and a new review. A pull request that changes a file under
-`.github/` or `deploy/` is never merged on a review alone, whatever
-`auto_merge` says. A workflow runs with the repo's secrets, and a deploy
+`.github/` or `deploy/`, or `src/meta_harness/versioning.py`, is never merged
+on a review alone, whatever `auto_merge` says. The deploy runs that one file
+of `src/` to name the version: in a job of its own with no Google Cloud
+identity, whose answer the deploy job checks is a version before using it, and
+on the VM as `mh`, not root. A workflow runs with the repo's secrets, and a deploy
 applies its Terraform as the project's owner and its scripts as root on the
 VM. The task ends `ready`, naming the paths, and an operator's Merge takes it
-through. Merges are one at a time per repo. The run service's merge activity
+through. Only an operator's does: the task records who sent it back
+(`resume_by`), the workflow tells the merge activity, and a merge the
+supervisor asks for is held like any other. Merges are one at a time per repo. The run service's merge activity
 holds the repo's merge lock, a Postgres advisory lock, from checking the
 branch to merging it. A branch that lacks the base's newest commits, because
 another task's pull request merged while it was reviewed, is not merged. The
@@ -2305,7 +2310,15 @@ sees the merge through. The pull request stands `clean`, `conflict`,
 `checks_failed`, `checks_pending`, `blocked` or `unknown`, read from its
 `mergeable` and `mergeable_state` and its head commit's checks. `blocked` with
 the checks passed means a rule on the branch wants what only a person gives,
-an approval or an exception. That task is an operator's. The supervisor sends
+an approval or an exception. That task is an operator's. A pull request that
+stands `clean` is merged whatever the task's tries say: asking the code host
+for a merge it would take spends nothing, so that send-back is none of the
+task's tries, which on a busy base were soon used up by the base moving under
+it. It is asked once per head commit, or again after a wait when the refusal
+was only a required check still running; refused at the same commit for
+anything else, the task is an operator's (`merge_refused`). So is one whose
+merge is held because its pull request changes `.github/` or `deploy/`
+(`merge_held`): the supervisor never asks for that merge. The supervisor sends
 one task back at most three times between an operator's retries (`drives`).
 After that the task is an operator's, and its standing says the tries are used
 up.
@@ -2636,7 +2649,7 @@ credential.
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or remove one from it, with or without a task. A ref another goal holds is refused, naming that goal. Removing an issue cancels its task when the task has not ended, and answers `{dropped, task_canceled}`. A task with a pull request open is refused (409) unless `force=true`, which cancels the task and leaves the pull request open. The goal keeps the ref marked `dropped`, so its label never sweeps the issue back in. Adding it back by ref clears the mark, and another goal may take it meanwhile | built |
 | POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps. That happens at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold or removed. 409 for one not held or closed, or for a met or canceled goal. The route reads the issue from GitHub first and records it closed, and answers 502 when it cannot be read. Records `issue_released` | built |
 | POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label. A goal with no label holds them by ref. Each body must have acceptance checks and a `Paths:` line (422 names each part and what it lacks), and gets a `Split from` line. The original gets a comment naming its parts and closes once they are done. A refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps. One split already is refused (409), as is a closed one. One the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
-| POST | `/v1/goals/{id}/issues/fix-draft`, `/fix-accept` | Planner | Fix with AI for an issue the goal holds (`ref`). fix-draft: one model call drafts each part its sizing marks missing or doubted, as `drafts` (`part`, `heading`, `doubted`, `reason`, `text`). Nothing is written. Records `issue_fix_drafted`. fix-accept: `parts` (`part`, `text`) are added to the issue's description as sections, the issue is labeled and sized again (`issue_sized`). 409 while the issue's task has not ended, for a heading the description has already, or for a draft of an issue with nothing marked. 422 for an empty part. 502 when the issue cannot be read or the model call fails | built |
+| POST | `/v1/goals/{id}/issues/fix-draft`, `/fix-accept` | Planner | Fix with AI for an issue the goal holds (`ref`). fix-draft: one model call drafts each part its sizing marks missing or doubted, as `drafts` (`part`, `heading`, `doubted`, `reason`, `text`), with `kept` false. Nothing is written. Records `issue_fix_drafted`. When a draft was kept while the issue's task ran, and the task has ended, it answers that draft with `kept` true and no model call; `fresh: true` asks the model anyway. fix-accept: `parts` (`part`, `text`) are added to the issue's description as sections, the issue is labeled and sized again (`issue_sized`), and a kept draft is cleared. 409 while the issue's task has not ended: the issue is left as it is, and fix-accept keeps the edited parts for the next run. 409 also for a heading the description has already, or for a draft of an issue with nothing marked. 422 for an empty part. 502 when the issue cannot be read or the model call fails | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row. Each has its state (in review, waiting, blocked, merged, closed), when it was opened and reached that state, its fix rounds and latest run. It is merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting. The answer holds the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/overview/report` | Planner | The planner's latest Overview report on all running goals (`planner/overview.py`), null before the first. With `since`, an ISO 8601 time when the operator last looked, it first writes a new one when the goals' facts changed, unless the last is under `overview.min_seconds` old or the day's reports reached `overview.max_usd`. The answer's `written` says whether it wrote one, `note` why an older one is shown, and `error` why a new one could not be written | built |
 | POST | `/v1/overview/ask` | Planner | Answers `question`, the operator's question about the work, from the facts the Overview report is written from and the events of any goal or issue it names (`planner/overview.py`). `since` is optional, as for the report. Returns the `answer`, `in_record` (false when the record does not hold the answer), the goals and issues it read, its `model` and `usd_cost`. 429 with when it resets once the day's reports and answers reached `overview.max_usd` | built |
@@ -2920,9 +2933,14 @@ After sizing:
   labeled as the meta-harness's and sized again, recorded as `issue_sized`.
   An active goal is swept at once, so a strict goal's held issue can run. A
   heading the description has already is refused (409) before anything is
-  written. Both routes refuse (409) an issue whose task has not ended
-  (`closed`, `failed` or `canceled`): its run read the issue already. A model
-  call that fails after its retries answers 502, and nothing changes.
+  written. Both routes leave an issue whose task has not ended (`closed`,
+  `failed` or `canceled`) as it is, and answer 409 saying so: its run read
+  the issue already. A fix-accept refused this way keeps the operator's parts
+  on the issue's link (`issue_link.fix_kept`, `planner/issue_fix.py`). Once
+  the task ends, fix-draft answers the kept draft with no model call, for the
+  next run; `fresh: true` drafts anew. An accept that writes the issue clears
+  it. A model call that fails after its retries answers 502, and nothing
+  changes.
 - The size is stored on the task as its `complexity` (small `low`, medium
   `medium`, large `high`, which also sets the router's `complex` floor). The
   task's `max_usd` is the issue's own `Spend limit: $N` line, else the
@@ -3349,13 +3367,18 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
   `issue_parent_refused` names the issue, the parent and what to do, as for
   a split (its `from_ref` is the issue the plan split, empty for a new task).
   The New goal form lists the parents of the chosen project, and asks for none
-  before a project is chosen.
+  before a project is chosen. The goal page shows a Jira goal's parent by the
+  name the list gives it, and marks one that is no longer an open epic of the
+  project, since Jira may then refuse it. A GitHub goal or one in the own
+  tracker has no parent setting, and its plan's issues are created as before.
+  `tests/planner/test_plan_parent.py` proves the approval against a mock Jira.
 
 #### Who an issue is assigned to
 
 Status: built (VL-14260). The planner assigns the issues it creates and
-starts (`planner/assignees.py`). `create_issue` does not take an assignee
-yet, so an issue is assigned by a second call right after it is created.
+starts (`planner/assignees.py`) with each tracker's `assign` call.
+`create_issue` does not take an assignee yet, so an issue is assigned by a
+second call right after it is created.
 
 **Who.** `assignees.person_for` works it out, the first of these that
 applies:
@@ -3364,8 +3387,10 @@ applies:
    applies only to an issue there. A task a plan keeps in the meta-harness
    goes to the owner.
 2. The goal's owner (`goal.created_by`), when the tracker knows a person with
-   that email: the one person `choices("assignee")` lists with it, as the id
-   or as a label ending in `(email)`. On the own tracker the email is the id.
+   that email: the one person `people(repo)` lists with it for the issue's
+   own repo, as the id or as a label ending in `(email)`. A tracker without
+   `people` is asked for `choices("assignee")`. On the own tracker the email
+   is the id.
 3. Nobody. The issue is left unassigned and the planner logs why.
 
 The answer is kept for ten minutes for each goal, tracker and repo, so the
@@ -3411,12 +3436,17 @@ on the first issue, with the action that opens it.
 
 **New `Tracker` calls** (`trackers/base.py`, each adapter implementing them,
 `WithOwn` and `Trackers` routing them):
-- Built: `choices("assignee", scope)` lists the people the tracker can
-  assign, each as an id (`value`) and a name (`label`). GitHub takes the
-  scope's `repos` (comma-separated) and lists the logins every one of them
-  can assign. Jira takes `project` and lists account ids, with the display
-  name and the email where Jira shows it. The own tracker lists the console
-  users who may sign in, by email. It serves the console's pick.
+- Built: `people(repo)` lists the people the repo's issues can be assigned
+  to for the bound goal, each as an id (`value`) and a name (`label`).
+  GitHub lists the repo's assignable logins. Jira lists the account ids of
+  the bound goal's project, with the display name and the email where Jira
+  shows it, and none when no project is bound. The own tracker lists the
+  console users who may sign in, by email, for any repo. The planner
+  matches the goal's owner among them.
+- Built: `choices("assignee", scope)` offers those people for the goal
+  setting. GitHub takes the scope's `repos` (comma-separated) and lists the
+  logins every one of them can assign. Jira takes `project`. It serves the
+  console's pick.
 - Built: `assign(ref, person)` sets the issue's assignee. It returns whether
   it changed anything, and changes nothing on an issue that has an assignee.
   A person the tracker cannot assign is a `TrackerError` that is not
@@ -3431,9 +3461,16 @@ in its `SPEC` `goal_settings`, read from `GET
 /v1/trackers/{scheme}/choices/assignee`, which calls the adapter's
 `choices`. The New goal form shows it as a pick from that list, empty by
 default, and never as free text. It passes the goal's project and repos as
-the scope, and waits for a project on a tracker that asks for one. A goal's tracker settings are fixed when it is created, so so is
-this one. The goal's page shows, among what needs the operator, each person
-the tracker refused to assign (see "On the goal's page" above).
+the scope, and waits for a project on a tracker that asks for one. When the
+goal is saved, each tracker's `check_goal` checks the setting's form
+(`base.check_assignee`): empty, or one line in the tracker's own form. That
+is a GitHub login, any Jira account id or display name, or an email on the
+own tracker. Whether the tracker knows the person is for `assign` to say. A
+goal's tracker settings are fixed when it is created, so so is this one. The
+goal's page shows the person named as the tracker lists them
+(`AssigneeField`), marks one the tracker no longer lists, and says when none
+is named. It shows, among what needs the operator, each person the tracker
+refused to assign (see "On the goal's page" above).
 
 An issue is one task, by its ref, so what the task was made from can fall
 behind the issue. A task that ended canceled or failed is made over when a
@@ -3666,7 +3703,12 @@ and the words go through the writing pass. A digest of the facts decides when
 to write: each goal's status, where each task is, what waits on the operator
 and its budget state. `GET /v1/overview/report` returns the latest report.
 With `since`, when the operator last looked, it first writes a new one when
-the digest differs from the last report's. Nothing writes a report unasked.
+the digest differs from the last report's. Each planner sweep does the same
+for the operator's last look (`Overview.refresh`), so a goal that changes gets
+a new report before the operator comes back. The sweep writes none before the
+operator first opens the Overview, and it reads nothing while the last report
+is under `overview.min_seconds` old. A failure is logged once for each new
+reason, and the next sweep tries again.
 The planning configuration's `overview` names the model (goal drafting's when
 left out), `max_response_tokens`, `min_seconds` between two reports, and
 `max_usd`, what reports and answers together may cost in a UTC day. It is checked at startup and
@@ -4099,14 +4141,18 @@ days, and back to the first of the previous month. A bill is restated, and
 Google fills a new export from the previous month. The billing account's
 standard usage cost export writes to the platform stack's `billing_export`
 dataset (turned on 2026-11-11), which the VM's service account may read and
-query. `MH_BILLING_EXPORT_TABLE` names the dataset, and the harvest finds the
-export's table in it, so the billing account's id is named nowhere in the
-repo. It reads the detailed usage cost export's table
-(`gcp_billing_export_resource_v1_*`) when there is one, else the standard
-export's (`gcp_billing_export_v1_*`). Until Google has created the table,
-within a day of the export being turned on, the page says the last read failed
-and why. The harvest logs a warning for the missing table once, then at most
-once an hour, and at once again after a read has succeeded. Temporal runs on the
+query. Either export works, standard or detailed usage cost.
+`MH_BILLING_EXPORT_TABLE` names the dataset, and the harvest finds the
+export's table in it. It takes the standard export's
+`gcp_billing_export_v1_<account>` when the dataset has one, else the detailed
+export's `gcp_billing_export_resource_v1_<account>`. So the billing account's
+id is named nowhere in the repo. The query reads only columns both tables
+have. Until Google has created the table, within a day of the export being
+turned on, the page says the last read failed and why. The error names both
+table prefixes and the export to turn on in Billing, Billing export. Every
+failed read is recorded for the page. The planner logs a cloud failure as a
+warning the first time, then at most once an hour while the same error
+repeats. A different error, or a read that succeeds, resets that. Temporal runs on the
 VM, so its cost is inside Compute Engine's. A source is a module with a
 `harvest` function. The edge names the caller's role to the services
 (`X-MH-Role`), and the cost API decides by it who sees what.
@@ -4501,7 +4547,14 @@ pull request with its checks. It also has its issue's size (its reasons on
 hover) and what the issue is missing. A held card says why, with the suggested
 split, and offers Run anyway and Split. Split's dialog lists the suggested
 issues as drafts to edit and create, each with the goal's label and a `Paths:`
-line (`console/src/features/goals/sizing.tsx`). A Graph view lays the
+line (`console/src/features/goals/sizing.tsx`). A card whose issue the sizing
+marks missing something or doubted offers Fix with AI, and so does its row in
+the goal's issue picker (`console/src/features/goals/FixIssue.tsx`). It calls
+fix-draft and shows each drafted part beside what the issue has for it, to
+edit. Accept sends the edited parts to fix-accept once, and the card shows the
+new sizing. Discard sends nothing. A 409 while the task runs shows its message
+and keeps the draft, to accept once the task ends. A failed call says so on
+the card, and nothing changes. A Graph view lays the
 same issues out by dependency, colored by column, and a Table view lists
 them. Issues done and spend against budget head the section, and the page
 reloads them as the goal's tasks record events. Past the budget the spend line

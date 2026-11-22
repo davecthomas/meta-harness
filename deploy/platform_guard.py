@@ -5,7 +5,7 @@ no person reading the plan. This reads the plan (`terraform show -json`) on
 stdin and exits 1, naming each resource, when the plan deletes or replaces:
 
 - anything that holds state or that everything else stands on: the data
-  disk, the network, the service accounts, the sign-in from GitHub Actions,
+  disk and its snapshot schedule, the network, the service accounts, the sign-in from GitHub Actions,
   a secret, the image repository, the console's site, an enabled API;
 - a grant the deploy account needs to deploy at all: its sign-in from GitHub
   Actions, and its access to the Terraform state. Without them the next
@@ -21,6 +21,9 @@ import sys
 # Resource types a deploy never deletes or replaces.
 PROTECTED_TYPES = {
     "google_compute_disk",
+    # The data disk's daily snapshots: without the schedule or its attachment there is no backup.
+    "google_compute_resource_policy",
+    "google_compute_disk_resource_policy_attachment",
     "google_compute_network",
     "google_compute_subnetwork",
     "google_compute_router",

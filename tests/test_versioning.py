@@ -97,8 +97,10 @@ def test_a_task_merge_is_a_feature_a_fix_or_nothing_by_its_type():
 def test_the_deploy_gives_the_version_to_the_edge_and_the_vm():
     deploy = (ROOT / ".github/workflows/deploy.yml").read_text()
     assert "fetch-depth: 0" in deploy and "python3 src/meta_harness/versioning.py" in deploy
-    assert '--build-arg "MH_VERSION=$version"' in deploy
+    assert '--build-arg "MH_VERSION=$MH_VERSION"' in deploy
     assert "MH_VERSION=$MH_VERSION" in (ROOT / "deploy/edge.Dockerfile").read_text()
-    assert 'echo "MH_VERSION=$(python3 "$MH/src/meta_harness/versioning.py"' in (ROOT / "deploy/vm/boot.sh").read_text()
+    boot = (ROOT / "deploy/vm/boot.sh").read_text()
+    assert 'version=$(sudo -u mh python3 "$MH/src/meta_harness/versioning.py"' in boot
+    assert 'echo "MH_VERSION=$version"' in boot
     ci = (ROOT / ".github/workflows/control-plane.yml").read_text()
     assert 'versioning.py --check "origin/${{ github.base_ref }}"' in ci

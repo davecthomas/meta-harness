@@ -9,17 +9,22 @@ import type { ReportItem, WorkAnswer, WorkReportAnswer } from "./api";
 const VISIT_KEY = "mh:overview:last-visit";
 // How often the open page asks for a newer report.
 export const POLL_MS = 60_000;
+// On a first visit, with no mark stored, the report covers the last day. The server writes a new report only
+// when it is sent a since, so a first visit sends one too.
+export const FIRST_LOOK_MS = 24 * 60 * 60 * 1000;
 
 // When the operator last opened the Overview, and the mark for this visit. The first is what the report is
 // asked for; the second is stored for the next visit.
-function markVisit(): string | null {
+function markVisit(): string {
+  const now = new Date();
+  let before: string | null = null;
   try {
-    const before = window.localStorage.getItem(VISIT_KEY);
-    window.localStorage.setItem(VISIT_KEY, new Date().toISOString());
-    return before && !Number.isNaN(Date.parse(before)) ? before : null;
+    before = window.localStorage.getItem(VISIT_KEY);
+    window.localStorage.setItem(VISIT_KEY, now.toISOString());
   } catch {
-    return null;
+    before = null;
   }
+  return before && !Number.isNaN(Date.parse(before)) ? before : new Date(now.getTime() - FIRST_LOOK_MS).toISOString();
 }
 
 function errorMessage(err: unknown): string {
@@ -41,7 +46,7 @@ function Items({ title, items }: { title: string; items: ReportItem[] }) {
 // The planner's latest report on all goals, with a box to ask about the work.
 export function WorkReport() {
   // Read once: a return after time away sends the time of the last visit, whatever the polls after it do.
-  const since = useRef<string | null | undefined>(undefined);
+  const since = useRef<string | undefined>(undefined);
   if (since.current === undefined) since.current = markVisit();
 
   const [found, setFound] = useState<WorkReportAnswer | null>(null);
