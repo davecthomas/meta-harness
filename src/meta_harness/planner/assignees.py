@@ -71,6 +71,20 @@ def _match(choices: list[dict[str, str]], email: str) -> str:
     return found.pop() if len(found) == 1 else ""
 
 
+async def _people(goal: dict, tracker: Any, repo: str) -> list[dict[str, str]]:
+    """The people the issue's own repo can assign (`people(repo)`), so a goal with several repos assigns each
+    issue from its repo's list. A tracker without that call is asked for the goal setting's `choices`.
+
+    Raises:
+        AttributeError: The tracker lists no people.
+    """
+    if hasattr(tracker, "people"):
+        return await tracker.people(repo) or []
+    settings = goal.get("tracker_settings") or {}
+    scope = {"repos": ",".join(goal.get("repos") or []), "repo": repo, "project": str(settings.get("project") or "")}
+    return await tracker.choices(ASSIGNEE, scope) or []
+
+
 async def _owner(goal: dict, tracker: Any, scheme: str, repo: str) -> Who:
     owner = str(goal.get("created_by") or "").strip()
     if "@" not in owner:
@@ -78,13 +92,11 @@ async def _owner(goal: dict, tracker: Any, scheme: str, repo: str) -> Who:
     if scheme == OWN:
         # The own tracker's people are console users by email: the owner is one, or assign says not.
         return Who(owner, "owner")
-    settings = goal.get("tracker_settings") or {}
-    scope = {"repos": ",".join(goal.get("repos") or []), "repo": repo, "project": str(settings.get("project") or "")}
     try:
-        choices = await tracker.choices(ASSIGNEE, scope)
+        people = await _people(goal, tracker, repo)
     except AttributeError:
         return Who("", why="the tracker lists no people to match the goal's owner against")
-    person = _match(choices or [], owner)
+    person = _match(people, owner)
     if not person:
         return Who("", why=f"no one the tracker can assign has the goal's owner's email, {owner}")
     return Who(person, "owner")
