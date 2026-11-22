@@ -318,6 +318,67 @@ def test_a_question_is_answered_from_the_facts_and_the_named_goals_events(world,
     assert rows == [("planning", "", "dave", Decimal("0.0030"))]
 
 
+def test_a_question_is_answered_from_the_goals_planner_updates(world, monkeypatch):
+    client, _, _, gateway = world
+    goal = _feature(client, statement="Add exports")
+    _only(monkeypatch, [goal["id"]])
+    updates._save(goal["id"], "d1", updates.Written(headline="The plan is half drafted.", body="Two of four parts."))
+
+    answered = client.post("/v1/overview/ask", json={"question": "What is moving?"}, headers=OPERATOR)
+
+    assert answered.status_code == 200, answered.text
+    [given] = _given(gateway.calls[0])["overview"]["goals"]
+    assert given["goal_id"] == goal["id"]
+    assert given["latest_update"]["headline"] == "The plan is half drafted.", "the planner's recorded update"
+    assert answered.json()["goals_named"] == [], "the question names no goal"
+
+
+def test_an_answer_the_record_does_not_hold_says_so(world, monkeypatch):
+    client, _, _, gateway = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+
+    def unknown(request: httpx.Request) -> httpx.Response:
+        gateway.calls.append(json.loads(request.content))
+        data = {"answer": "", "in_record": True}
+        return httpx.Response(200, json={"data": data, "finish_reason": "complete", "usd_cost": "0.0010"})
+
+    client.app.state.overview.asker = functools.partial(
+        overview.answer_question, transport=httpx.MockTransport(unknown)
+    )
+    body = client.post("/v1/overview/ask", json={"question": "Who wrote the spec?"}, headers=OPERATOR).json()
+
+    assert (body["answer"], body["in_record"]) == (overview.NOT_IN_RECORD, False), "an empty answer is no answer"
+    assert body["usd_cost"] == "0.0010" and len(gateway.calls) == 1, "the call is still counted"
+
+
+@pytest.mark.parametrize(
+    ("failing", "tries"),
+    [
+        (httpx.Response(503, text="overloaded"), 5),
+        (httpx.Response(200, json={"data": None, "finish_reason": "max_tokens", "usd_cost": "0"}), 1),
+    ],
+    ids=["unavailable after its retries", "did not finish"],
+)
+def test_a_model_failure_answers_an_error_and_records_no_answer(world, monkeypatch, failing, tries):
+    client, events, _, _ = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+    calls = []
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return failing
+
+    client.app.state.overview.asker = functools.partial(overview.answer_question, transport=httpx.MockTransport(fail))
+    failed = client.post("/v1/overview/ask", json={"question": "What is moving?"}, headers=OPERATOR)
+
+    assert failed.status_code == 502 and failed.json()["detail"].startswith("the question could not be answered")
+    assert len(calls) == tries, "a transient failure is retried before it is reported"
+    assert not [e for e in events.stored.values() if e["event_type"] == overview.ASKED], "no answer is recorded"
+    assert client.app.state.overview.spent_today() == Decimal(0)
+
+
 def test_nothing_in_the_record_is_said_without_a_model_call(world, monkeypatch):
     client, _, _, gateway = world
     _only(monkeypatch, [])
