@@ -85,6 +85,48 @@ async def test_a_local_repo_the_deployment_does_not_list_is_never_cloned_or_push
     assert not (tmp_path / "w2").exists()
 
 
+async def test_a_push_the_code_host_refuses_for_a_workflow_file_ends_the_task_saying_who_makes_the_change(
+    origin: Path, run_dir: Path, monkeypatch
+):
+    from meta_harness.supervisor import failures
+
+    workspace, git_dir = run_dir / "workspace", run_dir / "git"
+    await code_host.clone(str(origin), workspace, git_dir)
+    (workspace / ".github" / "workflows").mkdir(parents=True)
+    (workspace / ".github" / "workflows" / "deploy.yml").write_text("on: push\n")
+    real = code_host._git
+
+    async def refusing(git_dir, workspace, *args, env=None):
+        if args and args[0] == "push":
+            raise code_host.CodeHostError(
+                "git push failed: ! [remote rejected] mh/task -> mh/task (refusing to allow a GitHub App to create "
+                "or update workflow `.github/workflows/deploy.yml` without `workflows` permission)"
+            )
+        return await real(git_dir, workspace, *args, env=env)
+
+    monkeypatch.setattr(code_host, "_git", refusing)
+
+    with pytest.raises(code_host.CodeHostError) as refused:
+        await code_host.publish(
+            repo=str(origin),
+            workspace=workspace,
+            git_dir=git_dir,
+            branch="mh/task",
+            title="t",
+            body="b",
+            commit_message="m",
+            pr_record=run_dir / "pull-request.md",
+        )
+
+    said = str(refused.value)
+    assert not refused.value.retryable
+    assert said.startswith(
+        "the run changed .github/workflows/deploy.yml, and the meta-harness may not change a workflow"
+    )
+    assert "A person makes this change. Cancel the task" in said
+    assert failures.kind(f"CodeHostError: {said}") == failures.PERMANENT, "the Task Shepherd never retries it"
+
+
 async def test_clone_again_finds_the_earlier_clone(origin: Path, run_dir: Path):
     workspace, git_dir = run_dir / "workspace", run_dir / "git"
     await code_host.clone(str(origin), workspace, git_dir)

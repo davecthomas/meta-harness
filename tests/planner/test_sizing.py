@@ -914,6 +914,38 @@ def test_a_canceled_task_whose_issue_was_closed_is_not_retaken(world):
     assert _sweep(client, goal)["retaken"] == []
 
 
+def test_an_issue_that_changes_a_workflow_file_is_held_for_a_person_and_no_answer_runs_it(world):
+    """On 2026-11-22 two tasks ran to the end and failed at the push: the code host refuses a workflow file
+    pushed by the meta-harness's App, on purpose. So the issue is held before any run, and says who does it."""
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    body = f"Stop cancelling main's checks.\n\nPaths: .github/workflows/deploy.yml, tests/test_deploy.py\n\n{CHECKS}"
+    ref = tracker.add(REPO, _number(), body=body, labels=[goal["label"]])
+    tracker.issues[ref].author_association = "OWNER"
+
+    swept = _sweep(client, goal)
+
+    assert swept["held"] == [ref] and _task(tasks, ref) is None and sizer.calls == []
+    held = _shown(client, goal)[ref]["held_reason"]
+    assert held.startswith(
+        "it changes .github/workflows/deploy.yml, and the meta-harness may not change a workflow file"
+    )
+    assert "A person makes this change" in held and "Remove the issue from the goal" in held
+
+    # Run anyway does not lift it: nothing an operator answers makes the push go through.
+    client.post(f"/v1/goals/{goal['id']}/issues/run-anyway", json={"ref": ref}, headers=OPERATOR)
+    _sweep(client, goal)
+    assert _task(tasks, ref) is None
+    assert "may not change a workflow file" in (_shown(client, goal)[ref]["held_reason"] or "")
+
+    # An issue beside the workflows directory runs as before.
+    near = f"Tidy the issue template.\n\nPaths: .github/ISSUE_TEMPLATE/bug.md\n\n{CHECKS}"
+    other = tracker.add(REPO, _number(), body=near, labels=[goal["label"]])
+    tracker.issues[other].author_association = "OWNER"
+    _sweep(client, goal)
+    assert _task(tasks, other) is not None
+
+
 def test_an_outsiders_issue_waits_for_an_operator_and_its_task_carries_no_hidden_text(world):
     """Anyone may open an issue, and its text becomes an agent's instructions: one from someone with no write
     access is not sized or run until an operator runs it anyway, and HTML comments, which GitHub hides from

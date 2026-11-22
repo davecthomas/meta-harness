@@ -105,6 +105,11 @@ def apps() -> GitHubApps:
     return GitHubApps()
 
 
+# What the code host answers a push that changes a workflow file, from an App without the workflows permission,
+# which the meta-harness's App is never given.
+WORKFLOW_PUSH_REFUSED = "without `workflows` permission"
+
+
 def is_local(repo: str) -> bool:
     return local_repos.is_local(repo)
 
@@ -343,7 +348,18 @@ async def publish(
     commit = await _git(git_dir, workspace, "rev-parse", "HEAD")
     refuse_unlisted_local(repo)
     env = None if is_local(repo) else git_auth_env(await _token(repo, WRITE_CODE))
-    await _git(git_dir, workspace, "push", "--quiet", "--force-with-lease", "origin", f"{branch}:{branch}", env=env)
+    try:
+        await _git(git_dir, workspace, "push", "--quiet", "--force-with-lease", "origin", f"{branch}:{branch}", env=env)
+    except CodeHostError as err:
+        if WORKFLOW_PUSH_REFUSED not in str(err):
+            raise
+        changed = ", ".join(f for f in files if f.startswith(".github/workflows/")) or "a workflow file"
+        raise CodeHostError(
+            f"the run changed {changed}, and the meta-harness may not change a workflow file: the code host "
+            "refuses that push from its App. A person makes this change. Cancel the task, and take the "
+            "workflow file out of the issue's Paths if the rest stands without it",
+            retryable=False,
+        ) from err
     if is_local(repo):
         existing_record = pr_record.read_text(encoding="utf-8") if pr_record.exists() else ""
         # The record is this branch's pull request only when its head names this branch. A merge-check fix
