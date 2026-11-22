@@ -389,3 +389,27 @@ def test_the_slow_checks_skip_only_on_an_explicit_skip_and_never_on_main():
     assert 'slow=run\n          if [ "$EVENT" = pull_request ]; then' in workflow
     deploy = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
     assert "sandbox runs this repo's checks" in deploy and "zero-cost end-to-end check" in deploy
+
+
+def test_the_job_with_the_deploy_identity_runs_no_file_from_src():
+    """A task's pull request can change src/, and merges on a review. The deploy job signs in to Google Cloud
+    as the deploy account, so the version is worked out in a job with no identity and checked before use."""
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    version_job, deploy_job = (
+        deploy.split("\n  deploy:\n")[0].split("\n  version:\n")[1],
+        deploy.split("\n  deploy:\n")[1],
+    )
+    assert "python3 src/" not in deploy_job and "uv run" not in deploy_job
+    assert "needs: version" in deploy_job
+    assert "MH_VERSION: ${{ needs.version.outputs.version }}" in deploy_job
+    assert '[[ "$MH_VERSION" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in deploy_job, "the whole answer is checked before use"
+    assert "needs.version.outputs" not in deploy_job.split("steps:", 1)[1], "never written into a script"
+    assert "contents: read" in version_job and "id-token" not in version_job
+    assert 'TF_VAR_operators: ""' in version_job, "the workflow's secrets do not reach the version job"
+    assert "persist-credentials: false" in version_job
+
+
+def test_the_boot_script_does_not_run_the_version_file_as_root():
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    assert 'sudo -u mh python3 "$MH/src/meta_harness/versioning.py"' in boot
+    assert 'echo "MH_VERSION=$(' not in boot, "what the file prints is checked before it is written to the environment"

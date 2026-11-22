@@ -393,6 +393,16 @@ async def test_merge_pr_holds_a_change_to_ci_or_deploy_files_for_an_operator(mon
     assert (await ActivityEnvironment().run(activities.merge_pr, request)).state == "merged" and merges == [7]
 
 
+async def test_a_change_to_the_file_the_deploy_runs_to_name_the_version_is_held_too():
+    assert activities.OPERATOR_MERGE_PATHS == (".github/", "deploy/", "src/meta_harness/versioning.py")
+    held = [
+        p
+        for p in ("src/meta_harness/versioning.py", "src/meta_harness/money.py")
+        if p.startswith(activities.OPERATOR_MERGE_PATHS)
+    ]
+    assert held == ["src/meta_harness/versioning.py"]
+
+
 async def test_merge_pr_says_when_the_base_came_in_without_changing_the_diff(monkeypatch):
     async def merge_pull_request(repo, number, head_sha, base, kind="", provenance=None):
         return "head_changed", "", "new", "brought in 2 new commits from main"
