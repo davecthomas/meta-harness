@@ -195,7 +195,7 @@ export function SpecField({ value, onChange, repos = [], tracker, project, asksP
         {/* Folded to one line until asked for, like the label helper beside it: the form below stays in view. */}
         <UnstyledButton onClick={() => setOpened((now) => !now)} aria-expanded={shown} aria-label="Plan a goal from a spec or an epic">
           <Group gap="sm" wrap="nowrap" align="flex-start">
-            {shown ? <IconChevronDown size={18} /> : <IconChevronRight size={18} />}
+            {shown ? <IconChevronDown size={18} style={{ flexShrink: 0, marginTop: 4 }} /> : <IconChevronRight size={18} style={{ flexShrink: 0, marginTop: 4 }} />}
             <div>
               <Title order={4}>Plan a goal from a spec or an epic</Title>
               <Text size="sm" c="dimmed">

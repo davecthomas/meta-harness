@@ -250,7 +250,7 @@ export function GoalPage() {
         description={
           <Stack gap={6}>
             <DescriptionField {...editable} />
-            {/* While the goal can still change: Accept saves the edited proposal as its description. */}
+            {/* While the goal can still change: the rewritten description is saved as the goal's at once. */}
             {open && (
               <ImproveGoal
                 statement={goal.statement}
@@ -337,7 +337,7 @@ export function GoalPage() {
       <Narrative title="Narrative" path={`/v1/goals/${goal.id}/narrative`} watch={`${goal.status}:${Object.values(tasks).map((t) => t.status).join(",")}`} />
       <Paper withBorder p="sm" mb="md" data-testid="goal-settings">
         <Group justify="space-between" wrap="nowrap" gap="md">
-          <Text size="sm" c="dimmed" lineClamp={1} data-testid="goal-settings-summary">
+          <Text size="sm" c="dimmed" lineClamp={1} data-testid="goal-settings-summary" style={{ flex: 1, minWidth: 0 }}>
             <Text span fw={600} c="var(--mantine-color-text)">Settings</Text>
             {" · "}{[
               goal.label ? `label ${goal.label}` : "no label",
@@ -347,7 +347,7 @@ export function GoalPage() {
               ...provenanceSummary((goal as ProvenanceGoal).provenance),
             ].join(" · ")}
           </Text>
-          <Button size="compact-sm" variant="subtle" onClick={() => setSettingsOpen(!showSettings)} aria-expanded={showSettings} aria-controls="goal-settings-body">
+          <Button size="compact-sm" variant="subtle" style={{ flexShrink: 0 }} onClick={() => setSettingsOpen(!showSettings)} aria-expanded={showSettings} aria-controls="goal-settings-body">
             {showSettings ? "Hide settings" : "Show and edit settings"}
           </Button>
         </Group>

@@ -351,7 +351,13 @@ export function NewGoal() {
             />
             <Textarea
               label="Description"
-              description="What the goal is. The planner reads it."
+              description={
+                where === "spec"
+                  ? "Ask for anything. The planner will use this and the loaded spec."
+                  : plans || untracked
+                    ? "Ask for anything. The planner will plan the work from this."
+                    : "Ask for anything. The planner will use this and the goal's issues."
+              }
               required
               autosize
               minRows={3}
@@ -359,7 +365,7 @@ export function NewGoal() {
               onChange={(e) => setStatement(e.currentTarget.value)}
             />
             {specDraft.element}
-            {/* Accept fills the field above; the goal is saved only by the buttons below. */}
+            {/* The new text fills the field above; the goal is saved only by the buttons below. */}
             <ImproveGoal
               statement={statement}
               context={{
@@ -390,12 +396,14 @@ export function NewGoal() {
               <Text size="sm" fw={500} mb={4}>Where its issues come from</Text>
               <SegmentedControl
                 aria-label="Where its issues come from"
+                fullWidth
                 value={where}
                 onChange={chooseWhere}
                 data={[
                   { value: "fix", label: "Issues that exist" },
-                  { value: "spec", label: "Plan them from the spec" },
-                  { value: "feature", label: "Plan them from the description" },
+                  // Short, so all three fit the column: the heading above says what they answer.
+                  { value: "spec", label: "The spec" },
+                  { value: "feature", label: "The description" },
                 ]}
               />
               <Text size="sm" c="dimmed" mt={4} data-testid="where-note">

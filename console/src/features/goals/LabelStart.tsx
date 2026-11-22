@@ -109,8 +109,9 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
     <Paper maw={720} mb="lg">
       <Stack gap="md">
         <UnstyledButton onClick={() => setOpened((now) => !now)} aria-expanded={opened} aria-label="Draft a goal from issue labels">
-          <Group gap="xs" wrap="nowrap">
-            {opened ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
+          <Group gap="sm" wrap="nowrap" align="flex-start">
+            {/* Never squeezed by the text beside it: the same size as the spec panel's, on the heading's line. */}
+            {opened ? <IconChevronDown size={18} style={{ flexShrink: 0, marginTop: 4 }} /> : <IconChevronRight size={18} style={{ flexShrink: 0, marginTop: 4 }} />}
             <div>
               <Title order={4}>Draft a goal from issue labels</Title>
               <Text size="sm" c="dimmed">
