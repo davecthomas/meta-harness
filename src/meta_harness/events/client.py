@@ -61,6 +61,25 @@ def new_event(event_type: str, source: str, payload: dict[str, Any] | None = Non
     }
 
 
+SERVICE_KEY_SETTING = "MH_SERVICE_KEY"
+# The keys the services accept. Set, they refuse a call that carries none.
+SERVICE_KEYS_SETTING = "MH_SERVICE_KEYS"
+# Answers that say try again: a timeout, and too many requests.
+RETRIED_STATUSES = (408, 429)
+
+
+def check_service_key() -> None:
+    """Raises RuntimeError when the services take keys and this one has none to send. A service that records
+    events calls it at startup: without the key every event is refused, and that is a bad setting to stop on,
+    by name. A local stack that sets no service keys at all takes calls without one, and is left alone."""
+    if os.environ.get(SERVICE_KEYS_SETTING, "").strip() and not os.environ.get(SERVICE_KEY_SETTING, "").strip():
+        raise RuntimeError(
+            f"{SERVICE_KEY_SETTING} is not set while {SERVICE_KEYS_SETTING} is, so the event service would refuse "
+            f"every event this service records. Set {SERVICE_KEY_SETTING} to one of the keys in "
+            f"{SERVICE_KEYS_SETTING} and start the service again"
+        )
+
+
 class EventClient:
     def __init__(self, base_url: str | None = None, source: str = "unknown", timeout: float = 10.0) -> None:
         self.base_url = (base_url or events_url()).rstrip("/")
@@ -164,11 +183,28 @@ class EventClient:
             for event in batch:
                 self._send([event])
             return
-        if response.status_code >= 500:
+        if response.status_code >= 500 or response.status_code in RETRIED_STATUSES:
             raise httpx.HTTPStatusError(
                 f"event service {response.status_code}", request=response.request, response=response
             )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            # A refusal that sending again cannot change. Retried, this batch would hold every later event back
+            # until the outbox filled and dropped them, with a log that says the service is unreachable.
+            self.rejected += len(batch)
+            remedy = (
+                f"set {SERVICE_KEY_SETTING} in this service's environment to a key the event service accepts, then restart it"
+                if response.status_code in (401, 403)
+                else "read the event service's log for why it refuses them"
+            )
+            log.error(
+                "event service refused %d events with %d and they are dropped (%s): %s. To fix: %s",
+                len(batch),
+                response.status_code,
+                ", ".join(sorted({event["event_type"] for event in batch})),
+                response.text[:300],
+                remedy,
+            )
+            return
 
     # Consumers
 

@@ -722,10 +722,21 @@ def decide_budget(conn: psycopg.Connection, task_id: str, action: str, max_usd: 
 
 
 def pending_messages(conn: psycopg.Connection, limit: int = 100) -> list[dict]:
-    """Messages not yet handed to their task's workflow, oldest first."""
-    with conn.cursor(row_factory=dict_row) as cur:
+    """Messages not yet handed to their task's workflow, oldest first.
+
+    A message is written for the run its task was on. One whose task is no longer running, or has changed
+    status since the message was written, is dropped first and never handed over: a task's workflow keeps its
+    id when the task is retried, so an old "stop" or budget answer would reach a run it was not meant for. And
+    messages that can never be delivered would fill the page and hold newer ones back."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            "SELECT id, task_id, body, deliver FROM tasks.task_message WHERE delivered_at IS NULL ORDER BY id LIMIT %s",
+            "UPDATE tasks.task_message m SET dropped_at = now() FROM tasks.task t "
+            "WHERE m.delivered_at IS NULL AND m.dropped_at IS NULL AND t.id = m.task_id "
+            "AND (t.status <> 'running' OR m.created_at < t.status_changed_at)"
+        )
+        cur.execute(
+            "SELECT id, task_id, body, deliver FROM tasks.task_message "
+            "WHERE delivered_at IS NULL AND dropped_at IS NULL ORDER BY id LIMIT %s",
             (limit,),
         )
         return [dict(row) for row in cur.fetchall()]

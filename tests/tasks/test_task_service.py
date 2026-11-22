@@ -1017,3 +1017,34 @@ def test_a_task_with_a_pull_request_is_started_over_and_one_without_is_told_to_r
     api.post(f"/v1/tasks/{bare['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
     refused = api.post(f"/v1/tasks/{bare['id']}/restart", headers=_as(CALLER_KEY))
     assert refused.status_code == 409 and "retry it instead" in refused.json()["detail"]
+
+
+def test_a_message_for_a_run_that_ended_is_dropped_and_never_reaches_a_later_run(api, events):
+    """A task's workflow keeps its id when the task is retried, so a "stop" written for a run that then ended
+    would be handed to the next run of the same task."""
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    assert (
+        api.post(f"/v1/tasks/{task['id']}/messages", json={"when": "stop"}, headers=_as(CALLER_KEY)).status_code == 202
+    )
+
+    def pending() -> list[dict]:
+        found = api.get("/v1/messages/pending", headers=_as(SERVICE_KEY)).json()["messages"]
+        return [m for m in found if m["task_id"] == task["id"]]
+
+    # The run ends before the message is handed over, and the task is started again.
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "failed"}, headers=_as(SERVICE_KEY))
+    assert pending() == [], "a task that is not running has no run to hand it to"
+    with db.connect(autocommit=True) as conn:
+        conn.execute("UPDATE tasks.task SET status = 'running', status_changed_at = now() WHERE id = %s", (task["id"],))
+        dropped = conn.execute(
+            "SELECT dropped_at IS NOT NULL, delivered_at FROM tasks.task_message WHERE task_id = %s", (task["id"],)
+        ).fetchone()
+    assert dropped == (True, None), "dropped, and not marked as delivered"
+    assert pending() == [], "the later run never gets it"
+
+    # A message written for the run that is on now is handed over as before.
+    assert (
+        api.post(f"/v1/tasks/{task['id']}/messages", json={"text": "Now."}, headers=_as(CALLER_KEY)).status_code == 202
+    )
+    assert [m["body"] for m in pending()] == ["Now."]

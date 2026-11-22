@@ -2740,7 +2740,7 @@ credential.
 | POST | `/v1/pulls/{task_id}/comments` | Meta-harness run service, served from the planner process | A review comment on lines of the pull request's head commit, posted as the GitHub App with the operator named in its text. It is recorded as `pull_request_commented` with the operator as actor | built |
 | POST | `/v1/tasks/{id}/attempts` | Task service | Run a task that has not started as 2 to 4 attempts at once | built |
 | GET | `/v1/pulls/{task_id}/attempts` | Meta-harness run service, served from the planner process | A task's attempts side by side: candidate, how each ended, cost, and the changes in each one's workspace. Also whether the task waits for a pick | built |
-| POST | `/v1/tasks/{id}/messages` | Task service | An operator's message to a running task (`when`: `next_turn`, `after_stop`), or `stop` after the current turn, recorded as `operator_message`. The scheduler hands each to the task's RunTask workflow as an `operator_message` signal. The workflow's `deliver_message` activity gives it to the harness server of the run in progress (behind the `operator-messages` patch) | built |
+| POST | `/v1/tasks/{id}/messages` | Task service | An operator's message to a running task (`when`: `next_turn`, `after_stop`), or `stop` after the current turn, recorded as `operator_message`. The scheduler hands each to the task's RunTask workflow as an `operator_message` signal. A message is for the run its task was on: one whose task is no longer running, or has changed status since it was written, is dropped (`dropped_at`) and never handed over, since a retried task's workflow keeps its id and an old `stop` would reach the new run. The workflow's `deliver_message` activity gives it to the harness server of the run in progress (behind the `operator-messages` patch) | built |
 | GET | `/v1/tasks/{id}/reviews` | Task service | The task's review rounds, oldest first. Each has its verdict, reviewer, reviewed commit, summary, findings and review URL, from the `review_submitted`, `pull_request_reviewed` and `finding_dismissed` events. Findings are numbered from 1, each with who dismissed it and why when an operator did. Each round also says what came next, read from the events before the next round. That is its own fix run, the merge, another review when the head changed before it could merge, waiting, or the loop's end. The Task page's Reviews tab | built |
 | POST | `/v1/tasks/{id}/reviews/{round}/findings/{n}/dismiss`, `/v1/tasks/{id}/reviews/{round}/proceed` | Task service | An operator's word on a review its task holds for them (`waiting_on: review`): dismiss finding `n` (from 1) with a `reason`, or end the wait now. 409 unless the task holds a review. The scheduler hands each to the task's workflow | built |
 | POST | `/v1/tasks/{id}/budget` | Task service | An operator's answer to a running task held for budget (`waiting_on: budget`). `{"action": "raise", "max_usd": ...}` saves the task's new spend limit, which must be above the old one. With `max_usd` left out, the task only looks at its budget again. `{"action": "end"}` ends it. The scheduler hands the answer to the task's workflow. `GET /v1/tasks?waiting=true` lists the tasks waiting on an operator, each held for budget with its `budget_request`: what it asks for, as numbers | built |
@@ -4176,7 +4176,12 @@ turn of a run reaches the event service.
 
 The client library buffers events in its own outbox and retries, which is safe
 because `append` is idempotent on `event_id`. So an event service outage never
-blocks a run.
+blocks a run. It retries what can change: an outage, a 5xx, a timeout or too
+many requests. A refusal that sending again cannot change, such as 401 for a
+wrong service key, drops the batch with an error that names the status and
+what to do, so later events are not held behind it. A service that records
+events stops at startup, naming `MH_SERVICE_KEY`, when the services take keys
+(`MH_SERVICE_KEYS`) and it has none to send.
 
 After an event service append commits, the event service sends a commit
 notification, Postgres `NOTIFY`, with the run id and the new highest
