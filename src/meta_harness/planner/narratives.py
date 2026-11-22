@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from decimal import Decimal, InvalidOperation
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -221,48 +222,70 @@ async def write(system: str, prompt: str, transport: httpx.AsyncBaseTransport | 
 
 
 class Narratives:
-    """Serves each narrative from storage, and writes one only when its facts have changed."""
+    """Serves each narrative from storage, and writes one, in the background, only when its facts have changed.
+
+    A narrative takes a model call and the writing pass, which together can outlast what a browser, or the
+    proxy in front of the edge, waits for an answer. So a read never waits for one: it answers at once with
+    what is stored and `writing: true`, the write goes on by itself, and the page reads again until it is there.
+    """
 
     def __init__(self, tasks: Any, events: Any, writer: Writer | None = None) -> None:
         self.tasks, self.events, self.writer = tasks, events, writer or write
-        # One write at a time for each narrative: two readers of one page share the one call.
-        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # The write under way for each narrative: two readers of one page share the one call.
+        self._writing: dict[tuple[str, str], asyncio.Task] = {}
+        # Why the last write of a narrative failed, with the facts it was for: told to the next read, once.
+        self._failed: dict[tuple[str, str], tuple[str, str]] = {}
+
+    async def _write(self, key: tuple[str, str], digest: str, system: str, prompt: str) -> None:
+        """Writes and stores one narrative. A failure is kept for the next read to say."""
+        scope, name = key
+        started = time.monotonic()
+        try:
+            text, model, cost = await self.writer(system, prompt)
+            await asyncio.to_thread(_save, scope, name, digest, text, model, cost)
+            self.events.emit(
+                "narrative_written",
+                {"scope": scope, "persona": name, "digest": digest, "model": model, "usd_cost": cost},
+                actor="planner",
+                tags={"goal_id": scope} if scope != OVERVIEW else {},
+                event_id=stable_event_id("narrative_written", scope, name, digest),
+            )
+            log.info("the narrative of %s for %s was written in %.0f s", scope, name, time.monotonic() - started)
+        except Exception as err:  # noqa: BLE001 - nobody awaits this task, so whatever fails is said to the next read
+            log.warning("the narrative of %s for %s could not be written: %s", scope, name, err)
+            self._failed[key] = (digest, f"it could not be written just now ({err}); open this again in a minute")
 
     async def _fresh(self, scope: str, name: str, digest: str, system: str, prompt: str, label: str) -> dict[str, Any]:
-        """The stored narrative when it was written from these facts, else a new one. One that cannot be
-        written now is served as stored, marked older than the facts, with why."""
-        async with self._locks.setdefault((scope, name), asyncio.Lock()):
-            kept = await asyncio.to_thread(stored, scope, name)
-            shown = {"scope": scope, "persona": name, "label": label}
-            if kept and kept["digest"] == digest:
-                return shown | kept | {"stale": False, "why": ""}
-            config = settings()
-            why = ""
-            if not config["enabled"]:
-                why = "narratives are turned off in the planning configuration (Configuration, Planning)"
-            elif await asyncio.to_thread(_spent_today) >= Decimal(str(config["max_usd"])):
-                why = (
-                    f"narratives have cost their ${Decimal(str(config['max_usd'])):.2f} for today: raise "
-                    "narratives.max_usd in the planning configuration, or read this again tomorrow"
-                )
-            else:
-                try:
-                    text, model, cost = await self.writer(system, prompt)
-                    saved = await asyncio.to_thread(_save, scope, name, digest, text, model, cost)
-                    self.events.emit(
-                        "narrative_written",
-                        {"scope": scope, "persona": name, "digest": digest, "model": model, "usd_cost": cost},
-                        actor="planner",
-                        tags={"goal_id": scope} if scope != OVERVIEW else {},
-                        event_id=stable_event_id("narrative_written", scope, name, digest),
-                    )
-                    return shown | saved | {"stale": False, "why": ""}
-                except (overview.OverviewError, NarrativeError, outbound.Blocked) as err:
-                    log.warning("the narrative of %s for %s could not be written: %s", scope, name, err)
-                    why = f"it could not be written just now ({err}); open this again in a minute"
-            if kept:
-                return shown | kept | {"stale": True, "why": why}
-            raise NarrativeError(why)
+        """The stored narrative when it was written from these facts. Else what is stored, marked `writing`,
+        with a new one started in the background. One that cannot be written is served as stored, marked older
+        than the facts, with why."""
+        key = (scope, name)
+        kept = await asyncio.to_thread(stored, scope, name)
+        shown = {"scope": scope, "persona": name, "label": label, "writing": False}
+        if kept and kept["digest"] == digest:
+            self._failed.pop(key, None)
+            return shown | kept | {"stale": False, "why": ""}
+        config = settings()
+        why = ""
+        if not config["enabled"]:
+            why = "narratives are turned off in the planning configuration (Configuration, Planning)"
+        elif await asyncio.to_thread(_spent_today) >= Decimal(str(config["max_usd"])):
+            why = (
+                f"narratives have cost their ${Decimal(str(config['max_usd'])):.2f} for today: raise "
+                "narratives.max_usd in the planning configuration, or read this again tomorrow"
+            )
+        elif (failed := self._failed.get(key)) and failed[0] == digest:
+            # Said once: the read after this one tries again.
+            why = self._failed.pop(key)[1]
+        else:
+            under_way = self._writing.get(key)
+            if under_way is None or under_way.done():
+                self._writing[key] = asyncio.create_task(self._write(key, digest, system, prompt))
+            none_yet = {"digest": "", "text": "", "model": "", "written_at": None}
+            return shown | (kept or none_yet) | {"stale": bool(kept), "why": "", "writing": True}
+        if kept:
+            return shown | kept | {"stale": True, "why": why}
+        raise NarrativeError(why)
 
     async def for_goal(self, goal: dict, name: str) -> dict[str, Any]:
         persona = _persona(name)
@@ -278,7 +301,7 @@ class Narratives:
         if not goals:
             return {
                 "scope": OVERVIEW, "persona": name, "label": persona["label"], "text": "", "written_at": None,
-                "stale": False, "why": "", "goals": 0,
+                "stale": False, "why": "", "goals": 0, "writing": False,
             }  # fmt: skip
         each = []
         for goal in goals:
@@ -288,6 +311,16 @@ class Narratives:
                 log.warning("goal %s has no narrative for the Overview's summary: %s", goal["id"], err)
         if not each:
             raise NarrativeError("no running goal has a narrative yet, and none could be written just now")
+        if any(n["writing"] for _, n in each):
+            # A goal's own narrative is being written: the summary over them waits for it, and is not written
+            # from one that is about to change.
+            kept = await asyncio.to_thread(stored, OVERVIEW, name)
+            none_yet = {"digest": "", "text": "", "model": "", "written_at": None}
+            return (
+                {"scope": OVERVIEW, "persona": name, "label": persona["label"], "goals": len(each)}
+                | (kept or none_yet)
+                | {"stale": bool(kept), "why": "", "writing": True}
+            )
         digest = _key(name, persona["reader"], *sorted(f"{g['id']}:{n['digest']}" for g, n in each))
         told = [{"goal": g.get("title") or g["statement"][:80], "narrative": n["text"]} for g, n in each]
         system = f"{OVERVIEW_PROMPT} The reader: {persona['reader']}"

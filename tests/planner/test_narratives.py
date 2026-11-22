@@ -1,5 +1,7 @@
 """Narrative summaries: one stored for each goal and reader, written again only when the goal changes."""
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -54,8 +56,19 @@ def world(monkeypatch):
         yield client, events, tasks, writer
 
 
+def _settled(client, path: str, persona: str):
+    """The read once nothing is being written: a narrative is written in the background, and a page reads
+    again until it is there."""
+    for _ in range(200):
+        answer = client.get(path, params={"persona": persona}, headers=OPERATOR)
+        if answer.status_code != 200 or not answer.json()["writing"]:
+            return answer
+        time.sleep(0.01)
+    raise AssertionError("the narrative was still being written")
+
+
 def _read(client, goal_id: str, persona: str):
-    return client.get(f"/v1/goals/{goal_id}/narrative", params={"persona": persona}, headers=OPERATOR)
+    return _settled(client, f"/v1/goals/{goal_id}/narrative", persona)
 
 
 def test_a_goals_narrative_is_written_once_for_each_reader_and_read_from_storage_after(world):
@@ -137,19 +150,19 @@ def test_the_overviews_summary_is_written_from_the_goals_narratives_and_kept_unt
         )
     first, second = _goal(client, _label()), _goal(client, _label())
 
-    summary = client.get("/v1/overview/narrative", params={"persona": "product"}, headers=OPERATOR).json()
+    summary = _settled(client, "/v1/overview/narrative", "product").json()
 
     assert summary["goals"] == 2 and len(writer.calls) == 3, "each goal's narrative, then the one across them"
     system, prompt = writer.calls[-1]
     assert "one summary across several goals" in system and "The reader: A product manager." in system
     assert "A narrative for product, number 1." in prompt and "A narrative for product, number 2." in prompt
-    again = client.get("/v1/overview/narrative", params={"persona": "product"}, headers=OPERATOR).json()
+    again = _settled(client, "/v1/overview/narrative", "product").json()
     assert again["text"] == summary["text"] and len(writer.calls) == 3, "nothing changed, so nothing is written"
 
     # A goal that leaves the running set changes what the summary covers, so it is written again, once.
     with db.connect(autocommit=True) as conn:
         conn.execute("UPDATE planner.goal SET status = 'paused' WHERE id = %s", (second["id"],))
-    fewer = client.get("/v1/overview/narrative", params={"persona": "product"}, headers=OPERATOR).json()
+    fewer = _settled(client, "/v1/overview/narrative", "product").json()
     assert fewer["goals"] == 1 and len(writer.calls) == 4
     assert first["id"] != second["id"]
 
@@ -170,3 +183,21 @@ def test_a_configuration_that_names_no_reader_still_has_the_two_that_ship(monkey
         planning, "settings", lambda: {**real(), "narratives": {"personas": {"exec": PERSONAS["product"]}}}
     )
     assert [p["id"] for p in narratives.personas()] == ["exec"], "one that names its own gets only those"
+
+
+def test_a_read_never_waits_for_the_model_and_says_a_narrative_is_being_written(world):
+    client, _, _, writer = world
+    goal = _goal(client, _label())
+
+    first = client.get(f"/v1/goals/{goal['id']}/narrative", params={"persona": "product"}, headers=OPERATOR)
+
+    assert first.status_code == 200 and first.json()["writing"] is True and first.json()["text"] == ""
+    done = _read(client, goal["id"], "product").json()
+    assert done["writing"] is False and done["text"] == "A narrative for product, number 1." and len(writer.calls) == 1
+
+    # When the goal changes, the one stored is served, marked older, while the new one is written.
+    with db.connect(autocommit=True) as conn:
+        conn.execute("UPDATE planner.goal SET status = 'paused' WHERE id = %s", (goal["id"],))
+    during = client.get(f"/v1/goals/{goal['id']}/narrative", params={"persona": "product"}, headers=OPERATOR).json()
+    assert (during["writing"], during["stale"], during["text"]) == (True, True, done["text"])
+    assert _read(client, goal["id"], "product").json()["text"] == "A narrative for product, number 2."

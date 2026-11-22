@@ -71,3 +71,23 @@ test("with no narrative stored and none written, the reason and what to do are s
   fireEvent.click(screen.getByRole("button", { name: "Narrative" }));
   expect((await screen.findByRole("alert")).textContent).toContain("open this again in a minute");
 });
+
+test("a narrative being written says so, and appears by itself when it is done", async () => {
+  let asked = 0;
+  vi.stubGlobal("fetch", (url: string) => {
+    const body = url === "/v1/overview/personas" ? PERSONAS : asked++ === 0 ? read("product", "", { writing: true, written_at: null }) : read("product", "Users can now export their data.", { writing: false });
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <Narrative title="Narrative" path="/v1/goals/g-1/narrative" />
+    </MantineProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Narrative" }));
+
+  expect((await screen.findByTestId("narrative-writing")).textContent).toContain("Writing it now");
+  expect(screen.queryByText(/No goal is running/)).toBeNull();
+  // The page asks again by itself.
+  expect((await screen.findByTestId("narrative-text", {}, { timeout: 5000 })).textContent).toBe("Users can now export their data.");
+  expect(screen.queryByTestId("narrative-writing")).toBeNull();
+});

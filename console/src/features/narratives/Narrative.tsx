@@ -14,11 +14,15 @@ export interface NarrativeRead {
   // Older than what it is about: it could not be written again just now, and `why` says so.
   stale: boolean;
   why: string;
+  // A new one is being written in the background: the page reads again until it is there.
+  writing?: boolean;
   goals?: number;
 }
 interface Persona { id: string; label: string }
 
 const CHOSEN = "mh:narrative-persona";
+// How often the page asks again while a narrative is being written.
+export const AGAIN_MS = 2500;
 function remembered(): string {
   try {
     return localStorage.getItem(CHOSEN) ?? "";
@@ -60,23 +64,33 @@ export function Narrative({ title, path, watch }: {
   useEffect(() => {
     if (!opened || !persona) return;
     let current = true;
+    let again: ReturnType<typeof setTimeout> | undefined;
     setLoading(true);
     setError(null);
     setCopied(null);
-    call<NarrativeRead>(`${path}?persona=${encodeURIComponent(persona)}`).then(
-      (found) => {
-        if (!current) return;
-        setRead(found);
-        setLoading(false);
-      },
-      (err) => {
-        if (!current) return;
-        setRead(null);
-        setError(err instanceof Error ? err.message : String(err));
-        setLoading(false);
-      },
-    );
-    return () => { current = false; };
+    setRead(null);
+    // A narrative is written in the background, which can take a minute: the read answers at once, and the
+    // page asks again until the new one is there.
+    const look = () =>
+      call<NarrativeRead>(`${path}?persona=${encodeURIComponent(persona)}`).then(
+        (found) => {
+          if (!current) return;
+          setRead(found);
+          setLoading(false);
+          if (found.writing) again = setTimeout(look, AGAIN_MS);
+        },
+        (err) => {
+          if (!current) return;
+          setRead(null);
+          setError(err instanceof Error ? err.message : String(err));
+          setLoading(false);
+        },
+      );
+    void look();
+    return () => {
+      current = false;
+      clearTimeout(again);
+    };
   }, [opened, persona, path, watch]);
 
   function choose(next: string) {
@@ -125,7 +139,15 @@ export function Narrative({ title, path, watch }: {
           {personas && personas.length === 0 && (
             <Text size="sm">No reader is set up. An admin adds them under Configuration, Planning (narratives.personas).</Text>
           )}
-          {loading && <Group gap="xs"><Loader size="xs" /><Text size="sm" c="dimmed">Reading the narrative. One that is out of date is written again first.</Text></Group>}
+          {loading && <Group gap="xs"><Loader size="xs" /><Text size="sm" c="dimmed">Reading the narrative.</Text></Group>}
+          {!loading && read?.writing && (
+            <Group gap="xs" data-testid="narrative-writing" role="status">
+              <Loader size="xs" />
+              <Text size="sm" c="dimmed">
+                {read.text ? "The goal has changed, so a new one is being written. This is the one before it." : "Writing it now. That takes up to a minute, and it appears here when it is done."}
+              </Text>
+            </Group>
+          )}
           {error && <Text size="sm" c="red" role="alert">{error}</Text>}
           {!loading && read && read.text && (
             <>
@@ -136,13 +158,13 @@ export function Narrative({ title, path, watch }: {
                 </Button>
                 <Text size="xs" c="dimmed">
                   {read.written_at ? `Written ${when(read.written_at)}.` : ""}
-                  {read.stale ? ` It is older than what it describes: ${read.why}.` : " It is written again only when something changes."}
+                  {read.writing ? "" : read.stale ? ` It is older than what it describes: ${read.why}.` : " It is written again only when something changes."}
                 </Text>
               </Group>
               {copied === "no" && <Text size="xs" c="orange">This browser would not copy it. Select the text above and copy it by hand.</Text>}
             </>
           )}
-          {!loading && read && !read.text && <Text size="sm" c="dimmed">No goal is running, so there is nothing to summarize.</Text>}
+          {!loading && read && !read.text && !read.writing && <Text size="sm" c="dimmed">No goal is running, so there is nothing to summarize.</Text>}
         </Stack>
       )}
     </Paper>
