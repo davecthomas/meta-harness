@@ -18,6 +18,7 @@ from meta_harness import outbound
 from meta_harness import db
 from meta_harness.planner import assignees, store
 from meta_harness.run_service.provenance import COMMENT, Provenance
+from meta_harness.run_service.shared import ALREADY_DONE, ALREADY_DONE_REASON
 from meta_harness.trackers.base import DONE, IN_PROGRESS, IN_REVIEW, Tracker, TrackerError
 
 log = logging.getLogger("meta_harness.planner.tracker_progress")
@@ -45,6 +46,10 @@ class Told:
     key: str
     status: str | None
     comment: str
+    # The comment holds a model's words (what a check of the base branch found), so it gets the writing pass.
+    generated: bool = False
+    # Told to every tracker, not only one that is told a task's progress: nothing else would close the issue.
+    every_tracker: bool = False
 
 
 def told_for(task: dict, before: str | None = None) -> Told | None:
@@ -66,6 +71,11 @@ def told_for(task: dict, before: str | None = None) -> Told | None:
     if status in ("ready", "review_unresolved") and pr_url:
         waits = "it is ready to merge" if status == "ready" else "its review left findings for a person to settle"
         return Told(f"in_review:{status}:{pr_url}", IN_REVIEW, f"A pull request is open, and {waits}: {pr_url}")
+    if status == "closed" and why.startswith(ALREADY_DONE_REASON):
+        # The run changed nothing because the base branch has the work: no pull request will close the issue.
+        found = why.removeprefix(ALREADY_DONE_REASON).strip().rstrip(".")
+        said = f"Already done: {found}. No change was needed, so the task opened no pull request."
+        return Told(ALREADY_DONE, DONE, said, generated=True, every_tracker=True)
     if status == "closed":
         return Told("done", DONE, f"Done: the pull request merged. {pr_url}".strip())
     if status == "failed":
@@ -80,21 +90,19 @@ async def write(goal: dict, tracker: Tracker, tasks, errors: list[str], events=N
     written to; a write that fails is added to errors and is tried again next sweep. With events, an issue
     whose task has started and that has no assignee is assigned first, on every tracker (assignees.py)."""
     progress = bool(getattr(tracker, "writes_progress", False))
-    if not progress and events is None:
-        return []
     links = [link for link in await asyncio.to_thread(_links, goal["id"]) if link["task_id"]]
-    if not links or not (progress or assignees.pending(links)):
+    # An issue still open whose task may have closed as already done: told on any tracker.
+    unsettled = [link for link in links if link.get("state") == "open" and link.get("progress") != ALREADY_DONE]
+    if not links or not (progress or unsettled or assignees.pending(links)):
         return []
     by_id = {task["id"]: task for task in await asyncio.to_thread(tasks.list, TASK_STATUSES, goal["id"], TASKS_READ)}
     if events is not None:
         await assignees.assign_started(goal, tracker, links, by_id, events)
-    if not progress:
-        return []
     written = []
     for link in links:
         task = by_id.get(link["task_id"])
         told = told_for(task, link.get("progress")) if task else None
-        if told is None or told.key == link.get("progress"):
+        if told is None or told.key == link.get("progress") or not (progress or told.every_tracker):
             continue
         try:
             if told.status:
@@ -105,7 +113,11 @@ async def write(goal: dict, tracker: Tracker, tasks, errors: list[str], events=N
             await tracker.comment(
                 link["ref"],
                 await outbound.for_tracker(
-                    told.comment, link["ref"], outbound.COMMENT, outbound.FIXED, provenance=signed
+                    told.comment,
+                    link["ref"],
+                    outbound.COMMENT,
+                    outbound.GENERATED if told.generated else outbound.FIXED,
+                    provenance=signed,
                 ),
             )
         except TrackerError as err:

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 import pytest
 from temporalio import activity
+from temporalio.client import WorkflowFailureError
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
@@ -90,6 +91,8 @@ class Script:
     merge_checks: list[str] = field(default_factory=list)
     # A fix run after a merge changes no file, so its publish opens no pull request.
     fix_changes_nothing: bool = False
+    # The task's own run changes no file, so there is no pull request at all.
+    run_changes_nothing: bool = False
     # How long a merge waits for the base's own checks (0: it does not look), and how they stand each time it
     # looks: healthy, running or failed. None left: healthy.
     merge_wait_minutes: int = 0
@@ -153,7 +156,7 @@ class Script:
                 # What a run activity ends with when its worker shuts down under it.
                 raise ApplicationError("Worker is shutting down", type="WorkerShutdown", non_retryable=True)
             review = None
-            if request.prompt == "review":
+            if request.prompt in ("review", "already_done"):
                 review = self.verdicts.pop(0)
             return HarnessResult(
                 attempt=1,
@@ -182,7 +185,7 @@ class Script:
             self.publish_requests.append(request)
             commit = "c0" if self.publishes == 0 else (self.fix_commits.pop(0) if self.fix_commits else "c-new")
             self.publishes += 1
-            if self.fix_changes_nothing and self.publishes > 1:
+            if (self.fix_changes_nothing and self.publishes > 1) or self.run_changes_nothing:
                 return PublishResult(
                     branch=request.branch or BRANCH, base="main", commit="", files=[], pr_url="", created=False
                 )
@@ -839,3 +842,45 @@ async def test_a_finding_with_no_mark_blocks_as_it_always_has(env):
     await _run(env, script)
 
     assert script.posted[0].follow_ups == [] and [p.kind for p in script.prompts].count("fix") == 1
+
+
+ALREADY = {"verdict": "clean", "summary": "app.py already has the fix, from pull request #5.", "findings": []}
+
+
+async def test_a_run_that_changes_nothing_is_closed_as_already_done_when_another_model_finds_the_work_on_the_base(env):
+    script = Script(run_changes_nothing=True, verdicts=[ALREADY])
+
+    result = await _run(env, script)
+
+    assert result.outcome == "already_done"
+    assert result.outcome_reason == (
+        "the work is already on the base branch: app.py already has the fix, from pull request #5."
+    )
+    assert _kinds(result) == ["standard", "review"] and result.published is None
+    # The check is told what the run said, and reads the base branch itself, not the run's empty branch.
+    [asked] = script.prompts
+    assert (asked.kind, asked.answer) == ("already_done", "done")
+    assert script.runs[1].branch == "" and script.policy_asked_for == ["claude:sonnet"], "another model checks"
+
+
+async def test_a_run_that_changes_nothing_still_fails_when_the_base_does_not_have_the_work(env):
+    script = Script(run_changes_nothing=True, verdicts=[CHANGES])
+
+    with pytest.raises(WorkflowFailureError) as failed:
+        await _run(env, script)
+
+    said = str(failed.value.cause)
+    assert "pi changed nothing in owner/repo" in said, "so it is handled as every such failure is"
+    assert "the base branch does not have the work yet: Off by one." in said
+
+
+async def test_a_run_that_changes_nothing_fails_as_before_with_no_other_model_to_ask_or_no_review(env):
+    alone = Script(run_changes_nothing=True, reviewers=[])
+    with pytest.raises(WorkflowFailureError) as failed:
+        await _run(env, alone)
+    assert str(failed.value.cause).endswith("pi changed nothing in owner/repo") and len(alone.runs) == 1
+
+    unreviewed = Script(run_changes_nothing=True, verdicts=[ALREADY])
+    with pytest.raises(WorkflowFailureError):
+        await _run(env, unreviewed, review=False)
+    assert len(unreviewed.runs) == 1, "a task that asked for no review gets no check either"

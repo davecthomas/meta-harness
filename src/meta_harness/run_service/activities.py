@@ -1217,6 +1217,9 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
         "previous": _previous(request),
         "checks_rule": _checks_rule(request),
         "pr_description": await _pr_description(request) if request.kind == "review" else "",
+        # A line of the answer that reads as the block's end would close it early: the answer is a model's words.
+        "answer": request.answer.replace("--- end of the run's answer ---", "")[:ANSWER_CHARS].strip()
+        or "(the run said nothing)",
         "writing_rules": _closing(),
     }
     name = loop_template(request.kind)
@@ -1224,6 +1227,8 @@ async def loop_prompt(request: LoopPromptRequest) -> str:
     return Template(template).safe_substitute(values).strip()
 
 
+# How much of the answer of a run that changed nothing its check is shown.
+ANSWER_CHARS = 6000
 # How much of a pull request's description a review prompt shows.
 PR_DESCRIPTION_CHARS = 8000
 
