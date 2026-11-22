@@ -304,7 +304,7 @@ def test_the_hold_says_when_money_is_held_for_runs_under_way_and_is_still_read_b
     from meta_harness import budget_request
 
     why = budget_request.goal_why("g-1", "5", "20", "0", 2, "15")
-    assert why.endswith("leaves $0.00 for each of its 2 running tasks while $15.00 is held for runs under way")
+    assert why.endswith("leaves $0.00 for each of its 2 running tasks. $15.00 is held for runs under way")
     asked = budget_request.parse(budget_request.hold_reason("run 2", "3", why))
     assert (asked["for"], asked["goal_id"], asked["running"]) == ("goal", "g-1", 2)
     plain = budget_request.goal_why("g-1", "5", "20", "7.5", 2)
