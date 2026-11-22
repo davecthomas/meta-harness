@@ -158,3 +158,15 @@ def test_the_planning_configurations_narratives_are_checked():
     assert narratives.check({"narratives": {"personas": PERSONAS}}) == []
     bad = narratives.check({"narratives": {"model": "nocolon", "max_usd": "0", "personas": {"x": {"label": "X"}}}})
     assert len(bad) == 3 and "narratives.personas.x must have a label" in bad[2]
+
+
+def test_a_configuration_that_names_no_reader_still_has_the_two_that_ship(monkeypatch):
+    real = planning.settings
+    # As a deployment whose configuration was stored before narratives existed.
+    monkeypatch.setattr(planning, "settings", lambda: {k: v for k, v in real().items() if k != "narratives"})
+
+    assert narratives.personas() == [{"id": "product", "label": "Product"}, {"id": "developer", "label": "Developer"}]
+    monkeypatch.setattr(
+        planning, "settings", lambda: {**real(), "narratives": {"personas": {"exec": PERSONAS["product"]}}}
+    )
+    assert [p["id"] for p in narratives.personas()] == ["exec"], "one that names its own gets only those"

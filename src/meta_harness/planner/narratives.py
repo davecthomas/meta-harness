@@ -42,6 +42,25 @@ log = logging.getLogger("meta_harness.planner")
 OVERVIEW = "overview"
 # What the planning configuration's `narratives` is when it leaves a setting out.
 DEFAULTS: dict[str, Any] = {"enabled": True, "model": "", "max_response_tokens": 900, "max_usd": "1.00", "personas": {}}
+# The readers of a deployment whose configuration names none. A deployment that keeps its configuration in the
+# database was seeded before narratives existed, so its document has no `narratives` at all: without these it
+# would have no reader to offer. One that names its own gets only those.
+READERS: dict[str, dict[str, str]] = {
+    "product": {
+        "label": "Product",
+        "reader": (
+            "A product manager. They care about what users will get, what has shipped, what is at risk and "
+            "what is waiting on a decision. Leave out code, file names and pull request numbers."
+        ),
+    },
+    "developer": {
+        "label": "Developer",
+        "reader": (
+            "A developer picking the work up. They care about what changed in the code and where. Say which "
+            "pull requests merged or are open, what is blocked and why, and what is left to build."
+        ),
+    },
+}
 SCHEMA = {
     "type": "object",
     "properties": {"narrative": {"type": "string", "description": "The narrative, as plain paragraphs."}},
@@ -71,6 +90,8 @@ def settings() -> dict[str, Any]:
     """The planning configuration's `narratives`, with what it leaves out. With no model of its own, they are
     written by the model that drafts and names goals."""
     config = {**DEFAULTS, **(planning.settings().get("narratives") or {})}
+    if not config.get("personas"):
+        config["personas"] = READERS
     if not config.get("model"):
         drafter = drafting.settings()
         config["model"] = f"{drafter['engine']}:{drafter['model']}"
