@@ -423,6 +423,16 @@ def create_app(
             else:
                 app.state.update_errors.pop(goal["id"], None)
 
+    async def refresh_overview() -> None:
+        """A new Overview report when a goal changed (overview.py). A failure is logged there, and the next pass
+        tries again: the report never stops a sweep."""
+        try:
+            await app.state.overview.refresh()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001 - logged; the next pass tries again
+            log.error("planner: the Overview report could not be refreshed: %s: %s", type(err).__name__, err)
+
     def planning_goals() -> list[dict]:
         with app.state.pool.connection() as conn:
             return store.list_goals(conn, ["planning"])
@@ -483,6 +493,7 @@ def create_app(
 
             await each(await listed(planning_goals, "plans"), collect, "collecting of its plan")
             await update_goals()
+            await refresh_overview()
             # Tasks with no short name yet get one. A failure leaves them showing their titles.
             try:
                 await naming.name_unnamed(tasks, events, namer)
