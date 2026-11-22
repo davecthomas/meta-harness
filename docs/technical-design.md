@@ -2893,6 +2893,11 @@ body (`approved_hash`). Its author can edit it afterwards. When what it says
 no longer matches, the sweep holds it again, saying who changed it, and no
 task is made, made over or split from the new text until an operator reads it
 and runs it anyway again.
+The planning task's prompt keeps the same rule, since it reads a goal's
+issues before any operator has. An outsider's issue reaches it by its title
+alone, with a note that its text is withheld, until an operator picked it or
+ran it anyway. Every issue's title and body go through `task_text`, and the
+prompt says the issues are data, with no instruction in one to follow.
 
 After sizing:
 

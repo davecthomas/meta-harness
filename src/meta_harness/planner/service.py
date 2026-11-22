@@ -34,6 +34,7 @@ their end (sweep.follow_up_goal), and so are the canceled tasks of no goal
 """
 
 import asyncio
+import dataclasses
 import logging
 import json
 import os
@@ -97,8 +98,9 @@ from meta_harness.planner.sweep import (
     sweep_goal,
     swept_goals,
     goal_tracker,
+    still_as_read,
 )
-from meta_harness.planner.tracker import Tracker, TrackerError, parse_ref
+from meta_harness.planner.tracker import Tracker, TrackerError, outside_author, parse_ref
 from meta_harness.trackers import registry as tracker_registry
 from meta_harness.trackers.base import Source
 from meta_harness.supervisor import ledger
@@ -364,8 +366,15 @@ def create_app(
         # One whose task is already under way is not the plan's to decide: a goal planned again plans the rest.
         # Nor is one removed from the goal, by an operator or by a plan before this one.
         under_way = removed | {link["ref"] for link in links if link["task_id"] or link.get("split_into") is not None}
+        # An outsider's issue an operator has read: picked by ref, or run anyway.
+        approved = {link["ref"]: link for link in links if link.get("picked") or link.get("run_anyway")}
+        # And it still says what it said then: one its author changed since waits to be read again.
+        read = {ref for ref, link in approved.items() if ref in found and await still_as_read(found[ref], link)}
         return [
-            i
+            # Anyone may open an issue, and the planning agent reads these as its instructions' material. So an
+            # issue from someone with no write access reaches it by its title alone until an operator has read it,
+            # as it reaches no task before then.
+            i if i.ref in read or not outside_author(i) else dataclasses.replace(i, body=planning.WITHHELD)
             for i in found.values()
             if i.state == "open" and i.ref not in under_way and holders.get(i.ref, goal["id"]) == goal["id"]
         ]
