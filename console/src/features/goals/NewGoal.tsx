@@ -79,8 +79,9 @@ export function NewGoal() {
   }
   function chooseSettings(next: Record<string, string>) {
     setTrackerSettings(next);
-    // A switch changes which issues come in by themselves, not where issues are: the picked ones stay.
-    const places = asked.filter((s) => s.kind !== "switch");
+    // A switch changes which issues come in by themselves, and the assignee who gets them. Neither changes
+    // where the issues are, so the picked ones stay.
+    const places = asked.filter((s) => s.kind !== "switch" && s.name !== "assignee");
     if (places.some((s) => (next[s.name] ?? "") !== (trackerSettings[s.name] ?? ""))) setRefs([]);
   }
   const asked = trackers.find((t) => t.scheme === tracker)?.goal_settings ?? [];
@@ -288,7 +289,7 @@ export function NewGoal() {
                 {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
               </Stack>
             </Checkbox.Group>
-            <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} />
+            <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} repos={chosen} />
             {untracked ? (
               <Text size="sm" data-testid="untracked-note">
                 With no issue tracker, a planning task reads the repos and writes the goal's tasks from its description. You review, edit

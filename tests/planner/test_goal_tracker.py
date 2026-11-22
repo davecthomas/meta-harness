@@ -239,9 +239,8 @@ def test_the_trackers_are_listed_as_their_adapters_describe_them_and_issue_lists
     label = f"mh:{uuid.uuid4().hex[:8]}"
     jira.add_key("VL-77", [label])
     github.add(REPO, 78, labels=[label])
-    assert [s["name"] for s in by["jira"]["goal_settings"]] == ["project", "assigned"] and by["github"][
-        "goal_settings"
-    ] == []
+    assert [s["name"] for s in by["jira"]["goal_settings"]] == ["project", "assigned", "assignee"]
+    assert [s["name"] for s in by["github"]["goal_settings"]] == ["assignee"]
     asking = {"label": label, "settings": '{"project": "VL"}'}
     default = client.get(f"/v1/repos/{REPO}/issues", params=asking, headers=OPERATOR).json()
     assert [i["ref"] for i in default["issues"]] == ["jira:VL-77"], "the default tracker's, when none is named"
