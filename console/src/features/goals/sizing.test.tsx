@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { Goal, IssueProgress } from "../../api";
 import { theme } from "../../theme";
 import { GoalBoard, columnOf } from "./GoalBoard";
-import { HeldActions, StrictIssuesEdit, gapText, splitDrafts } from "./sizing";
+import { HeldActions, StrictIssuesEdit, doubtText, gapText, splitDrafts } from "./sizing";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -82,6 +82,24 @@ test("the board shows a held issue's size and why it is held, and a gap on the c
   const queued = screen.getByTestId("column-queued");
   expect(within(queued).getByTestId("issue-gap").textContent).toBe("Missing a testable outcome");
   expect(within(queued).queryByRole("button", { name: "Run anyway" })).toBeNull();
+});
+
+test("the card shows the model's doubt about the checks and paths an issue has, with its reason", () => {
+  const doubted = issue(3, {
+    size: "small",
+    missing: [],
+    doubts: [
+      { part: "acceptance_checks", reason: "make test does not reach the parser." },
+      { part: "paths", reason: "" },
+    ],
+  });
+  renderIn(<GoalBoard issues={[doubted]} tasks={{}} spend={{}} />);
+
+  const queued = screen.getByTestId("column-queued");
+  const lines = within(queued).getByTestId("issue-doubts").children;
+  expect([...lines].map((l) => l.textContent)).toEqual(["Its checks may not prove the fix: make test does not reach the parser", "Its paths may not cover the change"]);
+  expect(within(queued).queryByTestId("issue-gap")).toBeNull();
+  expect(doubtText({ part: "paths", reason: "it skips docs" })).toBe("Its paths may not cover the change: it skips docs");
 });
 
 test("Run anyway asks the planner to make the held issue a task", async () => {

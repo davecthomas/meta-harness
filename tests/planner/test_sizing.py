@@ -11,7 +11,7 @@ from meta_harness import db
 from fastapi.testclient import TestClient
 
 from meta_harness.config import kinds
-from meta_harness.planner import sizing, splits
+from meta_harness.planner import progress, sizing, splits
 from meta_harness.planner.service import create_app
 from meta_harness.planner.sizing import size_issue  # as it is, before conftest.py turns it off with no gateway
 from meta_harness.planner.tracker import Issue
@@ -50,6 +50,47 @@ def test_the_answer_adds_what_the_planner_sees_missing_and_drops_what_it_does_no
     assert (sized.model, sized.usd_cost) == ("openai-decisions:m", "0.0004")
     with pytest.raises(sizing.SizingError, match="huge"):
         sizing.parse({**data, "size": "huge"}, _issue(), "m", "0")
+
+
+def test_checks_the_issue_has_that_the_model_calls_missing_are_a_doubt_with_its_reason():
+    data = {
+        "size": "small",
+        "reasons": [],
+        "missing": ["acceptance_checks", "paths"],
+        "missing_reason": " The checks  run the old parser only. ",
+        "split": [],
+    }
+    issue = _issue(f"Fix it.\n\nPaths: src\n\n{CHECKS}", paths=("src",), checks=("make test",))
+
+    sized = sizing.parse(data, issue, "m", "0")
+
+    assert sized.missing == [], "the planner reads the checks and paths in the issue"
+    assert sized.doubts == [
+        {"part": "acceptance_checks", "reason": "The checks run the old parser only."},
+        {"part": "paths", "reason": "The checks run the old parser only."},
+    ]
+    assert sized.record(issue)["doubts"] == sized.doubts, "the issue link keeps the doubts"
+    assert sizing.hold_reason("small", sized.record(issue), strict=True) is None, "a doubt holds nothing"
+    # A testable outcome stays the model's call, and an answer with no reason still parses.
+    outcome = sizing.parse({**data, "missing": ["testable_outcome"], "missing_reason": None}, issue, "m", "0")
+    assert (outcome.missing, outcome.doubts) == (["testable_outcome"], [])
+
+
+def test_an_issue_with_no_checks_section_is_missing_them_whatever_the_model_says():
+    issue = _issue("Fix it.\n\nPaths: src", paths=("src",))
+    for said in ([], ["acceptance_checks"], ["paths"]):
+        data = {"size": "small", "reasons": [], "missing": said, "missing_reason": "none listed", "split": []}
+        sized = sizing.parse(data, issue, "m", "0")
+        assert sized.missing == ["acceptance_checks"], said
+        assert [d["part"] for d in sized.doubts] == (["paths"] if "paths" in said else []), said
+    assert "missing acceptance checks" in sizing.hold_reason("small", sized.record(issue), strict=True)
+
+
+def test_a_sizing_stored_before_doubts_still_reads():
+    stored = {"size": "small", "reasons": ["one file"], "missing": ["paths"], "split": [], "model": "m"}
+    view = progress._sizing_view({"size": "small", "sizing": stored})
+    assert (view["missing"], view["doubts"], view["size_reasons"]) == (["paths"], [], ["one file"])
+    assert "missing a Paths: line" in sizing.hold_reason("small", stored, strict=True)
 
 
 def test_a_large_issue_is_held_with_its_split_and_a_gap_holds_only_a_strict_goals_issue():
@@ -259,6 +300,26 @@ def test_an_issue_with_a_gap_runs_with_the_gap_shown_and_its_size_sets_the_spend
     assert _task(tasks, own)["max_usd"] == "1.50", "the issue's own limit comes first"
     assert _shown(client, goal)[gap]["missing"] == ["paths"]
     assert _shown(client, goal)[own]["missing"] == []
+
+
+def test_a_strict_goal_runs_an_issue_the_model_doubts_and_its_card_shows_the_doubt(world):
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client, strict_issues=True)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    reason = "make test does not cover the parser"
+    sizer.answers[ref] = {
+        "size": "small",
+        "reasons": [],
+        "missing": ["acceptance_checks"],
+        "missing_reason": reason,
+        "split": [],
+    }
+
+    _sweep(client, goal)
+
+    card = _shown(client, goal)[ref]
+    assert card["missing"] == [] and card["held_reason"] is None and _task(tasks, ref) is not None
+    assert card["doubts"] == [{"part": "acceptance_checks", "reason": reason}]
 
 
 def test_a_strict_goal_holds_an_issue_with_a_gap_until_the_issue_is_edited_or_the_goal_relents(world):
