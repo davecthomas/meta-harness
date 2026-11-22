@@ -248,6 +248,33 @@ def test_a_task_held_for_budget_is_read_with_what_it_asks_for_and_any_other_task
     assert api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["budget_request"] is None
 
 
+def test_a_task_with_spend_carried_asks_for_a_raise_of_its_whole_limit_and_its_workflow_gets_the_rest(api):
+    """The hold's sentence counts from what the task had left when its workflow started. Read alone, it asked
+    for a limit below the one the task had, which the Task API refused, so nobody could raise it."""
+    from meta_harness import budget_request, db
+
+    task = _held(api)
+    with db.connect(autocommit=True) as conn:
+        conn.execute("UPDATE tasks.task SET spent_carried_usd = 6.15 WHERE id = %s", (task["id"],))
+    reason = budget_request.hold_reason("fix run 14", "1.14", budget_request.task_why("0.71", "3.85"))
+    held = {"status": "running", "reason": reason, "waiting_on": "budget"}
+    api.post(f"/v1/tasks/{task['id']}/status", json=held, headers=_as(SERVICE_KEY))
+
+    asked = api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["budget_request"]
+    assert (asked["limit_usd"], asked["add_usd"], asked["to_usd"]) == ("10.00", "1", "11.00")
+    assert asked["over_ceiling"] is False and Decimal(asked["ceiling_usd"]) >= Decimal("11")
+
+    raise_it = {"action": "raise", "max_usd": asked["to_usd"]}
+    assert api.post(f"/v1/tasks/{task['id']}/budget", json=raise_it, headers=_as(CALLER_KEY)).status_code == 202
+    with db.connect(autocommit=True) as conn:
+        sent = conn.execute(
+            "SELECT body FROM tasks.task_message WHERE task_id = %s ORDER BY id DESC LIMIT 1", (task["id"],)
+        ).fetchone()[0]
+    assert sent.startswith("raise:") and Decimal(sent.partition(":")[2]) == Decimal("4.85"), (
+        "the workflow counts only its own runs, so its limit is the new one less what the earlier runs spent"
+    )
+
+
 def test_raising_a_held_tasks_limit_saves_it_and_queues_the_answer_for_its_workflow(api, events):
     task = _held(api)
 

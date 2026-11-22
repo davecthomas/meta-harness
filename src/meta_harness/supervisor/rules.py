@@ -47,6 +47,7 @@ ACTIONS = (
     "fix_again",
     "raise_limit",
     "start_over",
+    "end_hold",
 )
 # Where the issues a blocked task waits on stand. open: each is being worked, or will be. stuck: one's task
 # failed, was canceled or ended unresolved, and waits on an operator. unheld: one is in no goal, so nothing
@@ -122,6 +123,9 @@ class Facts:
     # For a task held at its own spend limit: whether the supervisor may raise it once, within twice the limit
     # and what its goal's budget has left.
     raise_left: bool = False
+    # For a task held at its own spend limit: its next run needs more than one task may spend, so no raise
+    # can lift the hold.
+    over_ceiling: bool = False
     # For a task parked at its pull request: how many reviews it has had, how many of them passed, and how
     # many findings the last one left open (its pull_request_reviewed events).
     reviews: int = 0
@@ -271,6 +275,23 @@ def _running(facts: Facts) -> Decision:
             "budget_hold_raise",
             "the task reached its own spend limit, and a raise within twice that limit and its goal's budget covers its next run",
             action="raise_limit",
+        )
+    if facts.waiting_on == "budget" and facts.over_ceiling and facts.goal in SWEPT and facts.autonomy != "ask":
+        # The ceiling is a hard cap, so nothing lifts this hold. Waiting out its day only holds a running
+        # place and every task behind this one.
+        return Decision(
+            "supervisor",
+            "budget_hold_ceiling",
+            "its next run needs more than one task may spend, so no raise can lift its hold",
+            action="end_hold",
+        )
+    if facts.waiting_on == "budget" and facts.over_ceiling:
+        return Decision(
+            "operator",
+            "budget_hold_ceiling",
+            "its workflow is held: its next run needs more than one task may spend, so its limit cannot be raised",
+            ask="End the task: it ends with its pull request open, to retry or start over. Or raise the task "
+            "policy's most for one task first.",
         )
     if facts.waiting_on == "budget":
         return Decision(

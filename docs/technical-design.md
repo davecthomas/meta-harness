@@ -2321,6 +2321,17 @@ merge is held because its pull request changes `.github/` or `deploy/`
 (`merge_held`): the supervisor never asks for that merge. The supervisor sends
 one task back at most three times between an operator's retries (`drives`).
 
+A task held for budget is raised by the supervisor once when the raise is
+small (`remedies/raise_limit.py`). The raise is worked out from the task's
+whole spend limit, not from the hold's sentence, which counts from what the
+task had left when its workflow started; the workflow is sent the new limit
+less what the task's earlier runs spent. When the next run needs more than
+the task policy lets one task spend, no raise is asked for: that ceiling is a
+hard cap. The supervisor ends the hold (`remedies/end_hold.py`), so the task
+does not wait out a day in a running place with other tasks blocked behind it,
+and the task goes on from where it ends. A goal that asks first leaves that
+to the operator, whose panel says the limit cannot be raised and why.
+
 A task parked at a pull request that is going nowhere has one more step the
 supervisor takes by itself: it is started over on the current base
 (`remedies/start_over.py`). Its pull request is closed, its branch deleted,

@@ -105,6 +105,9 @@ export interface BudgetRequest {
   limit_usd?: string;
   add_usd?: string;
   to_usd?: string;
+  // The most one task may spend (the task policy's), and whether to_usd is past it: then no raise can be made.
+  ceiling_usd?: string;
+  over_ceiling?: boolean;
   goal_id?: string;
   share_usd?: string;
   running?: number;

@@ -695,7 +695,10 @@ def decide_budget(conn: psycopg.Connection, task_id: str, action: str, max_usd: 
     """An operator's answer to a task held for budget: raise (with a new spend limit for the task, or none when
     its goal's budget was raised) or end. Queues it for the task's workflow. Returns the task."""
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("SELECT status, waiting_on, max_usd FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
+        cur.execute(
+            "SELECT status, waiting_on, max_usd, spent_carried_usd FROM tasks.task WHERE id = %s FOR UPDATE",
+            (task_id,),
+        )
         row = cur.fetchone()
         if row is None:
             raise NotFound(task_id)
@@ -706,7 +709,10 @@ def decide_budget(conn: psycopg.Connection, task_id: str, action: str, max_usd: 
             if row["max_usd"] is not None and max_usd <= row["max_usd"]:
                 raise TaskError(f"the new limit must be above the task's {usd(row['max_usd'])}")
             cur.execute("UPDATE tasks.task SET max_usd = %s, updated_at = now() WHERE id = %s", (max_usd, task_id))
-            body = f"raise:{max_usd}"
+            # The workflow counts only what its own runs spent, against a limit that had the earlier runs'
+            # spend taken off when it started. Its new limit has the same taken off, so the task as a whole
+            # stops at max_usd and not at max_usd more.
+            body = f"raise:{max_usd - (row['spent_carried_usd'] or 0)}"
         cur.execute(
             "INSERT INTO tasks.task_message (task_id, body, deliver, actor) VALUES (%s, %s, 'budget', %s)",
             (task_id, body, actor),
