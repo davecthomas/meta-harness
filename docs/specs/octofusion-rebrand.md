@@ -2,7 +2,7 @@
 
 ## Why
 
-The product has a name and a mark now: Octofusion AI, "The Open Meta-Harness for Coding at Scale", with an octopus as its symbol. The console still calls itself Meta-harness and shows a stock hexagon icon. This spec puts the new name and artwork on every place a person first meets the console: the browser tab, the sign-in screen, the header and a new footer.
+The product has a name and a mark now: Octofusion AI, "The Open Meta-Harness for Coding at Scale", with an octopus as its symbol. The console still calls itself Meta-harness and shows a stock hexagon icon. This spec puts the new name and artwork on every place a person first meets the console: the browser tab, the sign-in screen, the header and a new footer. It retires the old name from the console, and gives the console addresses that carry the new one.
 
 ## What we have
 
@@ -23,7 +23,15 @@ The artwork also came with bitmap icons and a 10-second video. Neither is used. 
 
 The console calls itself Octofusion AI wherever it names itself: the browser tab's title, the sign-in screen, the header, the footer, the web app manifest and the Help page's introduction.
 
-The tagline is "The Open Meta-Harness for Coding at Scale". Text that uses "the meta-harness" as a common noun for what the product is stays as it is.
+The tagline is "The Open Meta-Harness for Coding at Scale". It is the only place the console says "meta-harness".
+
+Everywhere else the words are retired from what a person reads in the console. About 34 of the console's source files use them today, mostly as "the meta-harness": "issues assigned to the meta-harness", "the meta-harness wrote this summary". Each becomes Octofusion, or the sentence is reworded so it needs no name. This covers:
+
+- the console's own text: labels, help, tooltips, empty states and messages;
+- text a service sends for the console to show, such as a tracker's description, a setting's help and an error's message with its remedy;
+- the Help pages' topics.
+
+A test reads the console's strings and the strings the services send it, and fails on "meta-harness" in any spelling outside the tagline. A link to the repository keeps the repository's address, which is not text a person reads as the product's name.
 
 ### The artwork the console ships
 
@@ -86,10 +94,32 @@ After that the arms keep a slow sway of a few degrees for as long as the screen 
 - It moves only `transform` and `opacity`, so the browser can draw it without layout work, and it adds no runtime dependency.
 - The artwork, the animation and its code add under 150 KB to what the sign-in screen loads, before compression.
 
+### Web addresses
+
+The console is served by a Firebase Hosting site, and a site's name is its address: `https://<site>.web.app`. A Firebase project can hold several sites, so the console gets two more beside the one it has:
+
+- `octofusion-ai.web.app`, the address people are given;
+- `octofusion.web.app`, which redirects to the first, path and query kept.
+
+The address the console has today redirects to `octofusion-ai.web.app` the same way, so old links and bookmarks keep working. One address serves the console and the others redirect because a browser keeps a sign-in session for one address only: three live copies would mean three separate sign-ins.
+
+Both names answered "Site Not Found" on 2026-11-22, which is what a free name answers. Firebase confirms a name only when the site is created, and names are unique across all of Firebase. If either is taken, the platform change stops and says so; nothing else in this spec waits on it.
+
+What changes, in two releases so that nobody is locked out between them:
+
+1. The platform stack creates the two sites, and the release stack serves the console at `octofusion-ai.web.app` as well as at the address it has today. The edge takes requests that change something only from the console's own address, `MH_CONSOLE_ORIGIN`. That setting becomes a list, and holds both addresses for now.
+2. Google sign-in accepts a page only from an address its web client lists. A person adds `https://octofusion-ai.web.app` to the client's authorized JavaScript origins in the Google Cloud console, and signs in there to prove it. `deploy/README.md` gains that step.
+3. A second release turns the old address and `octofusion.web.app` into redirects, takes the old address out of `MH_CONSOLE_ORIGIN`, and moves the links the control plane writes to the console, in pull requests and issues, to the new address.
+
+The site the deployment has today is kept as a site throughout: the platform guard refuses a plan that deletes or replaces it.
+
+The site names are settings in `deploy/environment.json`, as the first one is, and the deploy checks them at startup.
+
 ## Out of scope
 
-- The repository's name, the Python package, the services' names, the `MH_` settings and the console's address.
-- Text the control plane writes to pull requests, issues and file headers, which says "the meta-harness".
+- The repository's name, the Python package, the services' names and the `MH_` settings.
+- Text the control plane writes outside the console: pull request and issue text, commit messages and file headers, which say "the meta-harness". A later spec renames those, since they are read on GitHub and in Jira under the old name today.
+- A custom domain. The addresses are Firebase's own.
 - The design document and the README, beyond naming the product where they describe the console's header, footer and sign-in screen.
 - The console's color theme. Its primary color stays as it is.
 - A landing page, and any use of the video.
@@ -97,6 +127,8 @@ After that the arms keep a slow sway of a few degrees for as long as the screen 
 ## How we will know it works
 
 - A browser tab on the deployed console shows the whole octopus and the title Octofusion AI.
+- No page of the console says "meta-harness" outside the tagline.
+- `octofusion-ai.web.app` serves the console and signs a person in. `octofusion.web.app` and the old address land on it with their path kept.
 - The sign-in screen plays the splash once, and the Google button works while it plays.
 - With reduced motion on, the sign-in screen has no animation.
 - The header shows the lockup in both themes, and the symbol alone at phone width.
@@ -109,5 +141,7 @@ After that the arms keep a slow sway of a few degrees for as long as the screen 
 - The artwork is not redrawn or recolored. The outer outline stays, and no arm takes a color of its own.
 - Whatever draws SVG to pixels is a development dependency of the console, added with its lock file by the tool.
 - A dependency or build change in `console/` runs the slow checks, and must keep them passing.
+- An infrastructure change is a pull request that the deploy applies. It deletes and replaces nothing the platform guard protects.
+- A new Google Cloud role the deploy needs goes into the platform stack in a pull request before the one that uses it.
 - Text the console shows keeps the writing rules, and the test that reads the console's strings must pass.
 - A change to a documented behavior, such as where the version is shown, updates `docs/technical-design.md` in the same pull request.
