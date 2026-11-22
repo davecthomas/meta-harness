@@ -4,6 +4,7 @@ The planner's API runs against Postgres with fakes for the tracker, the Task API
 model, no GitHub and no run is called: the planning task's drafts are events the test records.
 """
 
+import asyncio
 import contextlib
 import json
 import uuid
@@ -272,6 +273,65 @@ def test_an_approval_github_interrupts_carries_on_without_making_an_issue_twice(
     again = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
     assert again.status_code == 200
     assert [i.title for i in tracker.created] == ["Build store", "Build api"], "store was not created twice"
+
+
+def test_a_second_approval_while_one_runs_is_refused_and_creates_nothing_more(world):
+    """On 2026-11-22 a plan of 16 new tasks became 48 issues: the approval outlasted the browser's wait, the
+    operator pressed Approve twice more, and each press created every issue again. Most of the goal's work
+    was then built and merged two or three times."""
+    import threading
+    import time
+
+    client, events, tracker, tasks = world
+    goal = _feature(client)
+    _planned(client, events, tasks, goal, [draft("store"), draft("api", ("store",)), draft("ui", ("api",))])
+    create = tracker.create_issue
+    started, go_on = threading.Event(), threading.Event()
+
+    async def slow(*args, **kwargs):
+        started.set()
+        while not go_on.is_set():
+            await asyncio.sleep(0.01)
+        return await create(*args, **kwargs)
+
+    tracker.create_issue = slow
+    answers: list = []
+    first = threading.Thread(
+        target=lambda: answers.append(client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR))
+    )
+    first.start()
+    assert started.wait(10), "the first approval is writing to the tracker"
+
+    during = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    again = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+
+    assert during["approving"] is True, "the plan says an approval is running"
+    assert again.status_code == 409 and "being approved already" in again.json()["detail"]
+    assert "Nothing more is needed" in again.json()["detail"], "the refusal says what to do: nothing"
+    go_on.set()
+    first.join(20)
+    time.sleep(0)
+    assert answers[0].status_code == 200
+    assert [i.title for i in tracker.created] == ["Build store", "Build api", "Build ui"], "each exactly once"
+    after = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    assert (after["approving"], after["approve_error"], after["status"]) == (False, None, "active")
+
+
+def test_an_approval_that_stops_lets_its_claim_go_and_keeps_why_for_the_page(world):
+    client, events, tracker, tasks = world
+    goal = _feature(client)
+    _planned(client, events, tasks, goal, [draft("store"), draft("api", ("store",))])
+    tracker.refuse_at = 2
+
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 502
+
+    stopped = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    assert stopped["approving"] is False
+    assert "the issue tracker refused after creating 1 of 2 issues" in stopped["approve_error"]
+    assert len(stopped["plan"]["created"]) == 1, "the page can say 1 of 2 were created"
+    # Approving again is not refused by a claim left behind, and carries on.
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+    assert client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()["approve_error"] is None
 
 
 def test_a_feature_goal_saved_without_starting_plans_when_it_is_first_resumed(world):

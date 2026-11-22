@@ -74,6 +74,10 @@ export interface GoalPlan {
   // The planning task still drafting, if one is.
   planning_task_id: string | null;
   approved_at: string | null;
+  // An approval is creating the plan's tasks now (plan.created grows as each exists), and why the last one
+  // stopped when it did not finish.
+  approving?: boolean;
+  approve_error?: string | null;
   // The label the plan's issues carry.
   label: string;
   plan: {

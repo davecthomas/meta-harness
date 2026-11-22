@@ -345,6 +345,40 @@ def plan_issues(conn: psycopg.Connection, goal_id: str) -> list[dict[str, Any]]:
     return list(row[0] or []) if row else []
 
 
+# How long an approval's claim stands with nothing heard from it. An approval that long is taken for dead (the
+# planner restarted under it), so the plan can be approved again; what it created is on the plan, and is not
+# made twice.
+APPROVAL_CLAIM_MINUTES = 15
+
+
+def claim_approval(conn: psycopg.Connection, goal_id: str) -> bool:
+    """Claim the goal's plan for one approval, so two never both create its issues. False while another
+    approval holds the claim."""
+    with conn.transaction():
+        claimed = conn.execute(
+            "UPDATE planner.goal SET approving_at = now(), approve_error = NULL WHERE id = %s AND status = 'planning' "
+            "AND (approving_at IS NULL OR approving_at < now() - make_interval(mins => %s))",
+            (goal_id, APPROVAL_CLAIM_MINUTES),
+        )
+        return claimed.rowcount == 1
+
+
+def end_approval(conn: psycopg.Connection, goal_id: str, error: str | None = None) -> None:
+    """Let the approval's claim go, keeping why it stopped when it did not finish."""
+    with conn.transaction():
+        conn.execute("UPDATE planner.goal SET approving_at = NULL, approve_error = %s WHERE id = %s", (error, goal_id))
+
+
+def approval(conn: psycopg.Connection, goal_id: str) -> dict:
+    """Whether an approval of the goal's plan is running now, and why the last one stopped, if it did."""
+    row = conn.execute(
+        "SELECT approving_at IS NOT NULL AND approving_at >= now() - make_interval(mins => %s), approve_error "
+        "FROM planner.goal WHERE id = %s",
+        (APPROVAL_CLAIM_MINUTES, goal_id),
+    ).fetchone()
+    return {"approving": bool(row and row[0]), "approve_error": row[1] if row else None}
+
+
 def set_approved(conn: psycopg.Connection, goal_id: str) -> None:
     with conn.transaction():
         conn.execute(

@@ -120,6 +120,84 @@ test("Approve says what it will create, creates the issues and tells the page", 
   expect(asked.at(-1)).toMatchObject({ url: "/v1/goals/g-1/approve", method: "POST", body: { track: true } });
 });
 
+test("asked to approve while the planner is still planning, the page says so and offers nothing to press", async () => {
+  const { asked } = show({ ...planned(), plan: null, planning_task_id: "t-plan" });
+  await screen.findByText("The planner is working on the plan");
+
+  window.dispatchEvent(new CustomEvent("mh:approve-plan"));
+
+  const told = await screen.findByTestId("approve-not-yet");
+  expect(told.textContent).toContain("I'm still writing this plan");
+  expect(screen.queryByText(/Approving this plan runs nothing/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Approve and start" })).toBeNull();
+  expect(asked.filter((a) => a.url.endsWith("/approve"))).toEqual([]);
+});
+
+test("an approval shows its tasks being created, and an answer that never comes is not an error", async () => {
+  // The approval outlasts the browser's wait: the first answer is a gateway timeout, a second press would be
+  // told one is running, and the plan read meanwhile says how many tasks exist.
+  const approved: number[] = [];
+  const asks: string[] = [];
+  let created: Record<string, string> = {};
+  let status = "planning";
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    asks.push(`${method} ${url}`);
+    if (url.endsWith("/approve")) return Promise.resolve(new Response(JSON.stringify({ detail: "upstream timed out" }), { status: 504, headers: { "Content-Type": "application/json" } }));
+    const plan = planned({ created }, { status, approving: status === "planning" && asks.some((a) => a.endsWith("/approve")) });
+    return Promise.resolve(new Response(JSON.stringify(plan), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <GoalPlan goal={GOAL} onApproved={() => approved.push(1)} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Approve the plan" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Approve and start" }));
+
+  const progress = await screen.findByTestId("approve-progress");
+  expect(progress.textContent).toContain("Creating its tasks: 0 of 3 so far.");
+  expect(progress.textContent).toContain("there is nothing more to press");
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Approve and start" })).toBeNull());
+  expect(screen.queryByTestId("approve-error")).toBeNull();
+
+  created = { store: "o/a#1", api: "o/a#2" };
+  await waitFor(() => expect(screen.getByTestId("approve-progress").textContent).toContain("2 of 3 so far"), { timeout: 5000 });
+  expect(asks.filter((a) => a.endsWith("/approve")).length).toBe(1);
+
+  status = "active";
+  await waitFor(() => expect(approved).toEqual([1]), { timeout: 5000 });
+  await waitFor(() => expect(screen.queryByTestId("approve-progress")).toBeNull());
+}, 15000);
+
+test("an approval that stops says why in the dialog, with what approving again does", async () => {
+  let failed = false;
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url.endsWith("/approve")) {
+      failed = true;
+      return Promise.resolve(new Response(JSON.stringify({ detail: "the issue tracker refused after creating 1 of 3 issues: 403" }), { status: 502, headers: { "Content-Type": "application/json" } }));
+    }
+    const plan = planned({ created: failed ? { store: "o/a#1" } : {} }, { approving: false, approve_error: failed ? "the issue tracker refused after creating 1 of 3 issues: 403" : null });
+    return Promise.resolve(new Response(JSON.stringify(plan), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <GoalPlan goal={GOAL} onApproved={() => undefined} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Approve the plan" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Approve and start" }));
+
+  const error = await screen.findByTestId("approve-error", undefined, { timeout: 5000 });
+  expect(error.textContent).toContain("the issue tracker refused after creating 1 of 3 issues: 403");
+  expect(error.textContent).toContain("Approve again to carry on: a task already created is not made twice.");
+  expect(screen.getByRole("button", { name: "Approve and start" })).toBeTruthy();
+}, 15000);
+
 test("Replan takes a note and starts a new planning task", async () => {
   const { asked } = show(planned());
   fireEvent.click(await screen.findByRole("button", { name: "Plan again" }));
