@@ -26,7 +26,7 @@ The name sweep touches most of the console's files, so it comes last: every othe
 
 ### The name
 
-The console calls itself Octofusion AI wherever it names itself: the browser tab's title, the sign-in screen's heading, the header, the footer, the web app manifest and the Help page's introduction.
+The console calls itself Octofusion AI wherever it names itself: the browser tab's title, the header, the footer, the web app manifest and the Help page's introduction. The sign-in screen already does: the splash there shows the name and the tagline, and is left as it is.
 
 The tagline is "The Open Meta-Harness for Coding at Scale". It is the only place the console says "meta-harness".
 
@@ -92,7 +92,7 @@ The footer is one quiet line on a wide screen and stacks on a phone.
 - No page of the console says "meta-harness" outside the tagline.
 - The header shows the lockup in both themes, and the symbol alone at phone width.
 - Every page ends with the footer, and the version reads there.
-- The console's tests cover the header, the footer, the sign-in screen's name, and that every icon `index.html` and the manifest name is a file the build ships.
+- The console's tests cover the header, the footer, and that every icon `index.html` and the manifest name is a file the build ships.
 - The script that builds the artwork runs in the sandbox's checks and reports no change.
 
 ## Constraints

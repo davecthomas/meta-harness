@@ -4232,7 +4232,15 @@ names who may (see REST API). The operator console owns no store and calls
 only the REST API, as the signed-in operator. A session lasts 12 hours. When
 one ends while a page is open, the first request the edge answers
 `not signed in` takes the operator to the sign-in screen. The screen says the
-session ended, and signing in returns them to the page they were on. Every
+session ended, and signing in returns them to the page they were on. The
+sign-in screen and the Help page open on the splash (`console/src/brand/`,
+specified in `docs/specs/octofusion-splash.md`): the octopus's arms flail and
+settle, the name comes out of them and the tagline rolls out under it. It is
+drawn from the symbol's own SVG paths, whose points are moved along each
+arm's centerline on every frame, with no video and no library. It plays in
+full once in a browser session on each screen, starts settled after that,
+holds still under the system's reduced-motion setting, and never delays
+sign-in: the sign-in card is there from the first paint. Every
 error the console shows says what to do about it. Where the page knows a
 remedy, it gives that one. Otherwise it says to reload to try again and points
 to the Logs page for the warning that names the error. For a lost session it
