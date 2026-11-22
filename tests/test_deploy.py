@@ -413,3 +413,18 @@ def test_the_boot_script_does_not_run_the_version_file_as_root():
     boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
     assert 'sudo -u mh python3 "$MH/src/meta_harness/versioning.py"' in boot
     assert 'echo "MH_VERSION=$(' not in boot, "what the file prints is checked before it is written to the environment"
+
+
+def test_the_vm_runs_the_gateway_at_a_commit_this_repo_names_never_at_a_branch():
+    """The gateway starts with the provider keys, and nothing here checks its code: it runs at the commit an
+    operator-merged file names."""
+    import re
+
+    ref = (ROOT / "deploy" / "vm" / "gateway.ref").read_text().strip()
+    assert re.fullmatch(r"[0-9a-f]{40}", ref)
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    assert "GW_REF=$(tr -d '[:space:]' <\"$MH/deploy/vm/gateway.ref\")" in boot
+    assert '[[ "$GW_REF" =~ ^[0-9a-f]{40}$ ]]' in boot
+    assert 'checkout "$GW" https://github.com/davecthomas/ai-api-unified-http.git "$GW_REF"' in boot
+    fetched = [line for line in boot.splitlines() if line.startswith("checkout ") and "ai-api-unified-http" in line]
+    assert fetched == ['checkout "$GW" https://github.com/davecthomas/ai-api-unified-http.git "$GW_REF"']
