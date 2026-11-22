@@ -210,6 +210,19 @@ def test_a_pull_request_going_nowhere_is_started_over_on_the_current_base_once_b
     assert decide(dataclasses.replace(conflicted, goal="paused")).action != "start_over"
 
 
+def test_a_hold_no_raise_can_lift_is_ended_not_waited_out():
+    held = Facts("running", workflow="running", goal="active", waiting_on="budget", over_ceiling=True)
+    ended = decide(held)
+    assert (ended.owner, ended.action, ended.situation) == ("supervisor", "end_hold", "budget_hold_ceiling")
+    # A goal that asks first, or one not being worked, leaves it to the operator, who is told why and what to do.
+    for other in (dataclasses.replace(held, autonomy="ask"), dataclasses.replace(held, goal="paused")):
+        asked = decide(other)
+        assert (asked.owner, asked.situation) == ("operator", "budget_hold_ceiling")
+        assert "End the task" in asked.ask and "cannot be raised" in asked.reason
+    # A raise that can be made still comes first.
+    assert decide(dataclasses.replace(held, over_ceiling=False, raise_left=True)).action == "raise_limit"
+
+
 def test_the_supervisors_own_tries_are_bounded_and_then_an_operator_is_asked():
     for how in ("conflict", "checks_failed"):
         spent = decide(_ready(how, drives_left=False))

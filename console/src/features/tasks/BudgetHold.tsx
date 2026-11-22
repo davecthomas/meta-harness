@@ -108,6 +108,18 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
               <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void answer("end")}>End the task</Button>
             </Group>
           </Stack>
+        ) : asked?.over_ceiling ? (
+          // The run needs more than one task may spend, so a raise would be refused: say so, with what can be done.
+          <Stack gap="sm" data-testid="over-ceiling">
+            <Text size="sm">
+              Its limit would have to be ${Number(asked.to_usd).toFixed(2)}, more than the ${Number(asked.ceiling_usd).toFixed(2)} one task may spend, so it cannot be raised.
+              Ended, it stops with its pull request open, to retry or start over.
+            </Text>
+            <Group gap="sm" align="center">
+              <Button variant="light" color="red" loading={busy} onClick={() => void answer("end")}>End the task</Button>
+              <Anchor component={Link} to="/config?kind=task_policy" size="sm">Change what one task may spend</Anchor>
+            </Group>
+          </Stack>
         ) : (
           <Group gap="sm" align="flex-end">
             {asked && (

@@ -118,6 +118,26 @@ def test_a_spend_limit_is_raised_only_for_the_task_within_twice_it_and_the_goals
     assert raise_to(goal_hold, None) is None, "a goal's budget is never raised by a remedy"
 
 
+def test_a_raise_is_worked_out_from_the_tasks_whole_limit_and_never_past_what_one_task_may_spend(monkeypatch):
+    """On 2026-11-22 a task with $8.00, of which earlier runs had spent $6.15, held for ten hours. Its hold
+    read '$0.71 left of its $1.85 spend limit', so the raise asked for was to $2.85, below the $8.00 the task
+    already had: the Task API refused it every pass."""
+    from meta_harness import budget_request
+    from meta_harness.config import store as config_store
+    from meta_harness.supervisor.remedies.raise_limit import asked, over_ceiling, raise_to
+
+    reason = budget_request.hold_reason("fix run 14", "1.14", budget_request.task_why("0.71", "1.85"))
+    task = {"status_reason": reason, "max_usd": "8.0000", "spent_carried_usd": "6.1452"}
+
+    monkeypatch.setattr(config_store, "task_spend_ceiling", lambda: Decimal("20"))
+    assert asked(task) == (Decimal("8.0000"), Decimal("9.0000")), "a dollar more than the task's whole limit"
+    assert raise_to(task, None) == Decimal("9.0000") and not over_ceiling(task)
+
+    # At the most one task may spend, no raise is asked for at all.
+    monkeypatch.setattr(config_store, "task_spend_ceiling", lambda: Decimal("8"))
+    assert over_ceiling(task) and raise_to(task, None) is None
+
+
 async def test_a_task_held_at_its_own_limit_is_raised_once_and_then_asks():
     from meta_harness import budget_request
     from meta_harness.supervisor.loop import Supervisor

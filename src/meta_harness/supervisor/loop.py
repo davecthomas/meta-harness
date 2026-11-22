@@ -41,7 +41,7 @@ from meta_harness.run_service.code_host import CodeHostError
 from meta_harness.supervisor import diagnose, failures, ledger, pulls, remedies, standing
 from meta_harness.supervisor.remedies import registry
 from meta_harness.supervisor.remedies.drive import UNCOUNTED_SITUATIONS
-from meta_harness.supervisor.remedies.raise_limit import raise_to
+from meta_harness.supervisor.remedies.raise_limit import over_ceiling, raise_to
 from meta_harness.config.kinds import remedy_tries
 from meta_harness.run_service import routing
 from meta_harness.supervisor.rules import OPEN_STATUSES, SWEPT, Decision, Facts, decide
@@ -248,6 +248,7 @@ class Supervisor:
                 and pull_state == "open"
                 and await asyncio.to_thread(_start_over_left, task),
                 raise_left=task.get("waiting_on") == "budget" and await asyncio.to_thread(self._may_raise, task, goal),
+                over_ceiling=task.get("waiting_on") == "budget" and await asyncio.to_thread(over_ceiling, task),
                 clean_review=status == "review_unresolved"
                 and (failures.clean_blocked(task.get("status_reason")) or passed_head),
                 reviews=seen.rounds,
