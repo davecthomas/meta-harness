@@ -210,3 +210,37 @@ def test_a_checked_text_is_refused_where_it_was_not_prepared_for(no_pass):
 def test_a_text_for_a_tracker_always_names_its_kind_and_who_wrote_it():
     with pytest.raises(TypeError):
         asyncio.run(outbound.for_tracker("A comment.", "github:o/r#1"))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A backtick with no partner on its line: a code span added after it would pair with it.
+        "see ` the tick @victim",
+        # A span that runs over a line break, which the stage does not read as code.
+        "run `multi\nline @victim span` now",
+        # After a full stop, which GitHub reads as a mention all the same.
+        "thanks.@victim",
+    ],
+)
+def test_a_mention_beside_a_stray_backtick_is_still_made_inert(no_pass, text):
+    """Wrapping the mention in backticks beside a stray one closed the stray one's span and left the name
+    outside it, live: an outsider's issue could steer a model's text into notifying a stranger."""
+    made = str(_prepare(text, source=outbound.GENERATED))
+
+    # No "@victim" is left for GitHub to read, outside a code span or in one that a stray backtick could break.
+    assert "@victim" not in made.replace("`@victim`", "") or "`" not in text
+    if "`" in text:
+        assert "@\u200bvictim" in made, "a zero-width space pairs with nothing"
+        [did] = [o for o in made.__class__ and _prepare(text, source=outbound.GENERATED).report if o.stage == "inert"]
+        assert did.note == "1 mention made inert"
+    else:
+        assert "`@victim`" in made
+
+
+def test_the_gh_form_of_a_closing_reference_is_made_inert(no_pass):
+    made = _prepare("This fixes GH-12 and resolves http://www.github.com/acme/app/issues/9.", source=outbound.GENERATED)
+    assert "fixes `GH-12`" in made and "resolves `http://www.github.com/acme/app/issues/9`" in made
+
+    stray = _prepare("A ` tick. This fixes #12.", source=outbound.GENERATED)
+    assert "fixes #\u200b12" in stray, "GitHub reads no issue number after a zero-width space"

@@ -283,6 +283,8 @@ async def refresh_states(goal: dict, tracker: Tracker, events: Events, result: S
     return errors
 
 
+# Why a task ended when a person closed its pull request: a task with this reason is not taken up again.
+PULL_REQUEST_CLOSED_REASON = "its pull request was closed without merging"
 # Why a task ended when its goal was canceled: each task's task_status_changed carries it.
 GOAL_CANCELED_REASON = "its goal was canceled"
 # A task in one of these has a pull request open that canceling its goal leaves for the operator.
@@ -542,6 +544,9 @@ async def _take_in_one(
     # on later, or assigned later) waits as a proposed addition, for an operator to add it or plan again. One the
     # plan settled, one an operator picked by ref, and one run anyway have all been looked at.
     covered = any((existing or {}).get(key) for key in ("planned_at", "picked", "run_anyway"))
+    if not covered and goal.get("planned") and goal.get("plan_approved_at"):
+        # A part of an issue the plan covered, made by splitting it, is that issue's work and no addition.
+        covered = await asyncio.to_thread(_split_part, goal["id"], issue.ref)
     if goal.get("planned") and goal.get("plan_approved_at") and not covered:
         reason = (
             "it joined the goal after its plan was approved, so the plan does not cover it. Add it to the plan "
@@ -666,6 +671,10 @@ async def _retake(task_id: str, goal: dict, issue: Issue, tasks: TaskClient, res
         task = await asyncio.to_thread(tasks.get, task_id)
         if task["status"] != "canceled":
             return
+        if task.get("status_reason") == PULL_REQUEST_CLOSED_REASON:
+            # A person closed its pull request without merging: that is a no to this work, not a task to run
+            # again with a fresh spend limit. Retry on its page takes it up when they mean it to.
+            return
         repo = issue.repo or task["repo"]
         registered = repos.get(repo)
         await asyncio.to_thread(
@@ -707,7 +716,7 @@ async def _size(
         size
         and (existing or {}).get("held_reason")
         and not (existing or {}).get("run_anyway")
-        and (recorded or {}).get("updated_at") != issue.updated_at
+        and _edited_since(recorded or {}, issue)
     )
     if sizer is None or (size and not edited):
         return size, recorded
@@ -724,7 +733,11 @@ async def _size(
         return None
     if sized is None:
         return size, recorded
-    record = {**sized.record(issue), "updated_at": issue.updated_at}
+    record = {
+        **sized.record(issue),
+        "updated_at": issue.updated_at,
+        "text_hash": copies.text_hash(issue.title, issue.body),
+    }
     saved = await asyncio.to_thread(
         _save_sizing, issue.ref, goal["id"], issue.repo, issue.depends_on, sized.size, record, title, labels
     )
@@ -958,7 +971,7 @@ async def _record_end(
     if pull.state == "merged":
         status, reason = "closed", "its pull request merged"
     else:
-        status, reason = "canceled", "its pull request was closed without merging"
+        status, reason = "canceled", PULL_REQUEST_CLOSED_REASON
     _emit_end(goal, task, pull, events)
     await asyncio.to_thread(_save_end, task["id"], pull.state)
     await asyncio.to_thread(tasks.set_status, task["id"], status, reason)
@@ -998,6 +1011,20 @@ async def _is_open(ref: str, tracker: Tracker) -> bool:
     except (TrackerError, ValueError):
         # An issue the app cannot read still blocks, so a typo never lets work run early.
         return True
+
+
+def _edited_since(recorded: dict, issue: Issue) -> bool:
+    """Whether the issue's own words changed since it was sized. By a hash of its title and body, not by when
+    it was last updated: a comment moves that time, and the planner's own comment on a held issue would send
+    it back to be sized, again and again. A record from before the hash was kept is judged by the time."""
+    if recorded.get("text_hash"):
+        return recorded["text_hash"] != copies.text_hash(issue.title, issue.body)
+    return recorded.get("updated_at") != issue.updated_at
+
+
+def _split_part(goal_id: str, ref: str) -> bool:
+    with db.connect(autocommit=True) as conn:
+        return store.split_part(conn, goal_id, ref)
 
 
 def _link(ref: str) -> dict | None:

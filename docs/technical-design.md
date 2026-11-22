@@ -1197,7 +1197,7 @@ would let a model's text skip the writing pass unnoticed.
 |---|---|---|
 | `redact` | Credentials become `[redacted]`: tokens, keys and passwords, never personal data (see Credential redaction). First, so no later stage or model sees one | Every text, and only when the task policy's `credential_redaction` is `true`. It is off by default |
 | `deslop` | The writing pass: scan, one rewrite when there are findings, kept only when clean and whole | Text a model wrote (`source: generated`), never a title, an operator's own words (`person`) or the fixed strings in this code (`fixed`) |
-| `inert` | Puts each `@mention` in a code span, and each issue a model's text says it closes (`fixes #12`). The text then notifies no one and closes nothing. Code is left as it is, and so is the `Closes` line this code adds | A text for GitHub that a model wrote or this code composed; closing references only in a model's text; never an operator's own words |
+| `inert` | Puts each `@mention` in a code span, and each issue a model's text says it closes (`fixes #12`, `GH-12`, or its URL). The text then notifies no one and closes nothing. Prose that holds a stray backtick, one with no partner on its line or a span over several lines, gets a zero-width space in each mention and reference instead, since a code span added beside a stray backtick would pair with it and leave the name live. Code is left as it is, and so is the `Closes` line this code adds | A text for GitHub that a model wrote or this code composed; closing references only in a model's text; never an operator's own words |
 | `fit` | Cuts the text to what its destination takes (GitHub 64,000 characters, Jira 31,000, a title 250), and says that it was cut | Every text |
 | `stamp` | The provenance line, last, so nothing rewrites or cuts it | A text given a provenance, never a title |
 
@@ -1218,16 +1218,18 @@ stage is a class placed in `STAGES`, and its place there sets when it runs.
 
 The `redact` stage is off unless the task policy says
 `credential_redaction: true`, a switch on the Task policy page. A policy that
-cannot be read keeps the switch as it was last read. On, the stage replaces
-credentials (`outbound/credentials.py`):
+cannot be read keeps the switch as it was last read, and one that has never
+been read counts as on. On, the stage replaces credentials
+(`outbound/credentials.py`), and a redaction that fails stops the post:
 
 - By shape: a private key block, a user name and password inside a URL, a
   Slack webhook URL, a `Basic` or `Bearer` authorization header, a JSON Web
   Token, and the tokens of GitHub, Anthropic, OpenAI, AWS, Google, Slack,
   Atlassian, npm and PyPI.
 - By value: this service's own secrets. They are the environment variables
-  whose names end in `KEY`, `TOKEN`, `SECRET` or `PASSWORD`, and the password
-  in any variable that is a URL. A value under 12 characters, or one that is a
+  whose names end in `KEY`, `TOKEN`, `SECRET` or `PASSWORD`, or their plurals,
+  and the password in any variable that is a URL. A variable that holds
+  several, such as `MH_SERVICE_KEYS`, has each of its keys redacted. A value under 12 characters, or one that is a
   file's path, is left alone.
 
 It does not look for personal data: a name, an email address, a phone number
@@ -3060,7 +3062,9 @@ After sizing:
   card says one or the other.
 - A held issue edited since it was sized is sized again on the next sweep. So
   adding what it lacked, or cutting it down, lets it go. A split one is
-  not.
+  not. Edited means its title or body changed, by a hash kept with the
+  sizing: a comment moves an issue's update time and changes neither, so the
+  planner's own comment on a held issue sizes nothing.
 - Fix with AI fills in what the sizing marks missing or doubted
   (`planner/fix_issue.py`). `POST /v1/goals/{id}/issues/fix-draft` makes one
   model call, on the model `config/planner.json`'s `issue_fixing` names. It
@@ -3627,6 +3631,10 @@ workflow goes on with one still open and starts a new first run
 when it was closed unmerged. A task still running, waiting or done is left
 as it is. The sweep does this for an open issue whose task was canceled
 (`_retake`). That task goes back to work from what the issue says today.
+A task canceled because a person closed its pull request without merging is
+not taken up again: that was a no to the work, and Retry on its page takes it
+up when it is meant. A part an issue was split into is its plan's own work:
+a planned goal does not hold it as having joined after the plan.
 An issue held by a goal that has ended (met or canceled) is
 released for a new goal with its label to take
 (`planner.store.release_from_ended_goal`). An open goal's issue stays its.

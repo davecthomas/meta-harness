@@ -653,6 +653,14 @@ def record_split(conn: psycopg.Connection, ref: str, created: list[str], reason:
             conn.execute("UPDATE planner.issue_link SET split_into = NULL WHERE ref = %s", (ref,))
 
 
+def split_part(conn: psycopg.Connection, goal_id: str, ref: str) -> bool:
+    """Whether the issue is a part one of the goal's issues was split into."""
+    found = conn.execute(
+        "SELECT 1 FROM planner.issue_link WHERE goal_id = %s AND %s = ANY(split_into) LIMIT 1", (goal_id, ref)
+    ).fetchone()
+    return found is not None
+
+
 def run_anyway(conn: psycopg.Connection, goal_id: str, ref: str) -> dict:
     """Let a held issue become a task whatever its size and gaps. Returns the link as it was.
 

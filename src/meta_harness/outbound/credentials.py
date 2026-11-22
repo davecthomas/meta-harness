@@ -53,25 +53,31 @@ SHAPES: tuple[tuple[str, str], ...] = (
 )
 _COMPILED = tuple((name, re.compile(pattern)) for name, pattern in SHAPES)
 # An environment variable that holds a secret, by its name's ending.
-SECRET_NAME = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)$", re.IGNORECASE)
+SECRET_NAME = re.compile(r"(?:KEYS?|TOKENS?|SECRETS?|PASSWORD|PASSWD)$", re.IGNORECASE)
+# One that holds several, such as MH_SERVICE_KEYS: `label:key` pairs in a list. Each part is a secret by itself.
+SEVERAL = re.compile(r"(?:KEYS|TOKENS|SECRETS)$", re.IGNORECASE)
+PARTS = re.compile(r"[\s,;:=\"'\[\]{}]+")
 URL_PASSWORD = re.compile(r"://[^\s/:@]+:([^\s/@]+)@")
 # The shortest value redacted by value: a shorter one is a word that ordinary text may hold.
 MIN_OWN_CHARS = 12
 
-# The switch as it was last read, for when the task policy cannot be read. Off until it has been read once.
-_last = False
+# The switch as it was last read, for when the task policy cannot be read. None until it has been read once.
+_last: bool | None = None
 
 
 def enabled() -> bool:
     """Whether credentials are redacted: only when the task policy says `credential_redaction: true`. A
     policy that cannot be read answers what the last read said, so a failed read neither turns redaction on
-    for a deployment that left it off nor lets a credential out of one that turned it on."""
+    for a deployment that left it off nor lets a credential out of one that turned it on. A policy that has
+    never been read says nothing either way, and then credentials are redacted: a redaction nobody asked for
+    hides a string, and the other mistake posts a secret."""
     global _last  # noqa: PLW0603 - one remembered switch per process
     try:
         _last = config_store.current_document("task_policy").get(SETTING) is True
     except Exception as err:  # noqa: BLE001 - an unreadable policy must not fail a post
-        log.warning("the task policy could not be read (%s): %s stays %s", err, SETTING, "on" if _last else "off")
-    return _last
+        state = "on, since it has never been read" if _last is None else "on" if _last else "off"
+        log.warning("the task policy could not be read (%s): %s is %s", err, SETTING, state)
+    return _last is not False
 
 
 def own_values() -> list[str]:
@@ -82,6 +88,8 @@ def own_values() -> list[str]:
         found.update(URL_PASSWORD.findall(value))
         if SECRET_NAME.search(name) and not value.startswith(("/", "~", ".")):
             found.add(value.strip())
+            if SEVERAL.search(name):
+                found.update(PARTS.split(value))
     return sorted((value for value in found if len(value) >= MIN_OWN_CHARS), key=len, reverse=True)
 
 
