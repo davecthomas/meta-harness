@@ -4,6 +4,7 @@
     PUT  /v1/goals/{id}/plan      save edited drafts as the next version
     POST /v1/goals/{id}/replan    start a new planning task, with a note
     POST /v1/goals/{id}/approve   create the plan's issues and make the goal active
+    POST /v1/goals/enrich, /v1/goals/{id}/enrich/accept   a richer statement, and saving it (enrich.py)
 
 Registered by the planner service's create_app, which hands over what the routes share with the rest.
 """
@@ -15,7 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from meta_harness import db
-from meta_harness.planner import planning, plans, store, suggestions
+from meta_harness.planner import enrich, planning, plans, store, suggestions
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.trackers.base import TrackerError
 from meta_harness.trackers.own import SCHEME as OWN
@@ -68,6 +69,7 @@ def register(
     """Adds the plan routes. activate(goal_id, who) makes a planning goal active and sweeps it. issues_of(goal)
     reads the issues the goal has that no task has started on, for its planning task to plan over.
     plan_again(goal_id, who) sends a planned goal that is under way back to planning."""
+    enrich.register(app, operator, load, events)
 
     def planning_goal(goal_id: str) -> dict:
         goal = load(goal_id)
