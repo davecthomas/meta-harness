@@ -3339,33 +3339,53 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
 
 #### Who an issue is assigned to
 
-Status: partly built. The `Tracker` calls and the goal setting below are
-built. Nothing calls `assign` yet, so the meta-harness still sets no
-assignee when it creates or starts an issue (VL-14260). Its issues show in no
-one's "assigned to me" list.
+Status: built (VL-14260). The planner assigns the issues it creates and
+starts (`planner/assignees.py`). `create_issue` does not take an assignee
+yet, so an issue is assigned by a second call right after it is created.
 
-**Who.** For each issue, the first of these that applies:
+**Who.** `assignees.person_for` works it out, the first of these that
+applies:
 1. The person named in the goal's tracker settings (`assignee`), picked from
-   the tracker's people.
+   the tracker's people. It names a person of the goal's own tracker, so it
+   applies only to an issue there. A task a plan keeps in the meta-harness
+   goes to the owner.
 2. The goal's owner (`goal.created_by`), when the tracker knows a person with
-   that email.
-3. Nobody. The goal's page says that its issues have no assignee and why.
+   that email: the one person `choices("assignee")` lists with it, as the id
+   or as a label ending in `(email)`. On the own tracker the email is the id.
+3. Nobody. The issue is left unassigned and the planner logs why.
+
+The answer is kept for ten minutes for each goal, tracker and repo, so the
+tracker's people are listed once for many issues.
 
 **When.**
-- An issue created from a plan (approve) or a split is assigned in the call
-  that creates it, so it never exists without its assignee.
+- An issue created from a plan (approve, `planning.py`) or a split
+  (`split_issue.py`) is assigned right after it is created and noted.
 - An issue a goal takes in with no assignee (by label, by pick or by
-  `list_assigned`) is assigned when its task starts.
+  `list_assigned`) is assigned when its task starts: the sweep's
+  `tracker_progress.write` looks at each issue whose task is running, taken
+  over, ready or waiting on its review, on every tracker. It reads the
+  issue's assignee first and leaves one that has an assignee as it is. Each
+  issue is looked at once while the planner runs.
 - An issue that already has an assignee keeps it. The meta-harness never
   replaces or adds to a person's assignment.
 
-**A person the tracker does not know.** The setting names someone the tracker
-cannot assign, or an owner's email matches no one. The issue is still
-created, or its task still starts. The goal's page and an event
-(`assignee_unresolved`) say who could not be assigned and what to do: fix the
-setting, or add the person to the tracker. A transient failure of the lookup
-or the assign call is retried first, as for any tracker call. After the
-retries it is reported the same way and never stops the task.
+**A person the tracker does not know.** The setting, or the owner the
+tracker matched, names someone the tracker refuses (`assign` raises a
+`TrackerError`). The issue is still created, or its task still starts. An
+`issue_not_assigned` event names the goal, the issue, the person, the
+tracker's reason and what to do (`todo`): add the person to the tracker, or
+start a new goal that names another assignee. It is recorded once for an
+issue and person. A transient failure of the lookup or the assign call is
+retried first, as for any tracker call. After the retries it is reported the
+same way, never stops the task, and is tried again when the issue's task
+starts. An owner whose email matches no one gets no event: on GitHub, which
+shows few emails, that is the usual case.
+
+**On the goal's page.** A goal's update (`updates.py`) reads the
+`issue_not_assigned` events of its open issues. They are a fact the update is
+written from (`not_assigned`), they change its digest, so a new one is
+written, and each person not assigned is one item of what needs the operator,
+on the first issue, with the action that opens it.
 
 **Per tracker.** The people are:
 
@@ -3398,8 +3418,8 @@ in its `SPEC` `goal_settings`, read from `GET
 `choices`. The New goal form shows it as a pick from that list, empty by
 default, and never as free text. It passes the goal's project and repos as
 the scope, and waits for a project on a tracker that asks for one. A goal's tracker settings are fixed when it is created, so so is
-this one. The goal's page shows who is assigned and, for an owner not found
-or a person not assignable, why nobody is.
+this one. The goal's page shows, among what needs the operator, each person
+the tracker refused to assign (see "On the goal's page" above).
 
 An issue is one task, by its ref, so what the task was made from can fall
 behind the issue. A task that ended canceled or failed is made over when a
@@ -3415,11 +3435,12 @@ An issue held by a goal that has ended (met or canceled) is
 released for a new goal with its label to take
 (`planner.store.release_from_ended_goal`). An open goal's issue stays its.
 
-**Who an issue is assigned to** (proposed, awaiting the owner's approval; no
-code yet). The meta-harness sets no assignee today, so its issues are in no
-one's "assigned to me" list (VL-14260). The rule below is the choice the
-owner is asked to approve, or to replace with another, before the code tasks
-start.
+**Who an issue is assigned to** (the proposal as it was put to the owner;
+what is built is in "Who an issue is assigned to" under the trackers, which
+wins where the two differ). The meta-harness set no assignee then, so its
+issues were in no one's "assigned to me" list (VL-14260). The rule below is
+the choice the owner was asked to approve, or to replace with another, before
+the code tasks started.
 
 *Who.* The first of these that gives a person:
 1. The person named in the goal's tracker settings (`assignee`), picked from
@@ -3908,7 +3929,7 @@ Meta-harness services append through the event service client library:
 | Producer | Events |
 |---|---|
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
-| Planner | Built: `goal_created`. `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume). `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line). `goal_drafted`. `goal_titled` with the model and its cost. `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created). `plan_requested` when a planning task starts (with the operator's note on a replan). `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is). `plan_approved` with the issues created. `issue_sized` when an issue is sized before it becomes a task (its size, reasons, what it is missing and the suggested split). It also has the model and its cost. `issue_released` when an operator runs a held issue anyway. `issue_split` with the issues a held one was split into. `issue_parent_refused` for a split's part created without its original's parent, which the tracker refused (the part, the parent, the original and what to do). `issue_joined` (with the issue's size and the spend limit it set, for a sized issue). `issue_refused`, `issue_closed` and `task_unblocked`. `goal_met` when a goal is met, on its own or by an operator. No workflow watches a `ready` or `review_unresolved` task's pull request. For it the planner records `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`. Each is on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
+| Planner | Built: `goal_created`. `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume). `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line). `goal_drafted`. `goal_titled` with the model and its cost. `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created). `plan_requested` when a planning task starts (with the operator's note on a replan). `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is). `plan_approved` with the issues created. `issue_sized` when an issue is sized before it becomes a task (its size, reasons, what it is missing and the suggested split). It also has the model and its cost. `issue_released` when an operator runs a held issue anyway. `issue_split` with the issues a held one was split into. `issue_parent_refused` for a split's part created without its original's parent, which the tracker refused (the part, the parent, the original and what to do). `issue_not_assigned` when the tracker would not assign an issue to the goal's person (the issue, the person, why and what to do). `issue_joined` (with the issue's size and the spend limit it set, for a sized issue). `issue_refused`, `issue_closed` and `task_unblocked`. `goal_met` when a goal is met, on its own or by an operator. No workflow watches a `ready` or `review_unresolved` task's pull request. For it the planner records `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`. Each is on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason and the kind of hold, recorded when a task's reason is new or has changed. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch). The activity appends it at once, with a stable event id, without the client outbox. So it is stored before `run_harness` starts, ahead of the run's own events. It holds the run's `kind` (`task`, `review` or `fix`) and its `template`: `repo-task-v2` and `fix-v2`, or `repo-task-v1` and `fix-v1` before they asked for a marked summary. A review's is `review-v5`, or `review-v4` and `review-v3` before it. A caller's own text is `inline`. It also holds the filled-in `prompt` sent to the harness server. Just before it comes the run's `run_provenance` (Run provenance). One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |
