@@ -4033,8 +4033,12 @@ standard usage cost export writes to the platform stack's `billing_export`
 dataset (turned on 2026-11-11), which the VM's service account may read and
 query. `MH_BILLING_EXPORT_TABLE` names the dataset, and the harvest finds the
 export's table in it, so the billing account's id is named nowhere in the
-repo. Until Google has created the table, within a day of the export being
-turned on, the page says the last read failed and why. Temporal runs on the
+repo. It reads the detailed usage cost export's table
+(`gcp_billing_export_resource_v1_*`) when there is one, else the standard
+export's (`gcp_billing_export_v1_*`). Until Google has created the table,
+within a day of the export being turned on, the page says the last read failed
+and why. The harvest logs a warning for the missing table once, then at most
+once an hour, and at once again after a read has succeeded. Temporal runs on the
 VM, so its cost is inside Compute Engine's. A source is a module with a
 `harvest` function. The edge names the caller's role to the services
 (`X-MH-Role`), and the cost API decides by it who sees what.

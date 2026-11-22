@@ -22,6 +22,7 @@ does, until the cost service has a process of its own.
 import asyncio
 import logging
 import os
+import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Callable
 
@@ -34,6 +35,9 @@ log = logging.getLogger("meta_harness.costs")
 HARVEST_SETTING = "MH_COSTS_HARVEST_SECONDS"
 DEFAULT_HARVEST_SECONDS = 300.0
 MAX_DAYS = 400
+# While the billing export has no table yet, each harvest fails the same way: it is warned of once, then at
+# most once in this many seconds. Every failure is still recorded, so the page shows the last one and why.
+MISSING_TABLE_WARN_SECONDS = 3600.0
 TOP_TASKS = 10
 # Below this, what was spent in the span before is too little for a percentage change to mean anything: from
 # a cent to $100 is not a "1,000,000% rise", it is new spending.
@@ -73,8 +77,19 @@ def check_settings() -> None:
         raise RuntimeError(str(err)) from err
 
 
-def harvest_all(events: Any, tasks: Any, goal: Callable[[str], dict | None]) -> dict[str, Any]:
-    """Harvest every source once. A source that fails is recorded with why, and the others still run."""
+def harvest_all(
+    events: Any,
+    tasks: Any,
+    goal: Callable[[str], dict | None],
+    warned: dict[str, float] | None = None,
+    now: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    """Harvest every source once. A source that fails is recorded with why, and the others still run.
+
+    warned holds, across harvests, when each source last warned of a missing export table, by now's clock. A
+    missing table is warned of again only MISSING_TABLE_WARN_SECONDS later, or at once after a read succeeds.
+    """
+    warned = {} if warned is None else warned
     found: dict[str, Any] = {}
     cache: dict[str, dict | None] = {}
 
@@ -93,8 +108,18 @@ def harvest_all(events: Any, tasks: Any, goal: Callable[[str], dict | None]) -> 
         ):
             try:
                 found[source] = run()
+                warned.pop(source, None)
             except Exception as err:  # noqa: BLE001 - one source's failure is its own
-                log.warning("could not harvest %s costs: %s", source, err)
+                if isinstance(err, cloud_source.NoExportTable):
+                    at = now()
+                    last = warned.get(source)
+                    if last is None or at - last >= MISSING_TABLE_WARN_SECONDS:
+                        warned[source] = at
+                        log.warning("could not harvest %s costs: %s", source, err)
+                    else:
+                        log.debug("could not harvest %s costs: %s", source, err)
+                else:
+                    log.warning("could not harvest %s costs: %s", source, err)
                 store.failed(conn, source, str(err))
                 found[source] = f"failed: {err}"
     return found
@@ -154,8 +179,10 @@ def register(
     """Adds the cost routes. admin answers whether the caller is one. facts gives each task's issue labels and
     pull request outcome, {task id: {"labels": [...], "outcome": ...}}. Returns the harvest loop to start."""
 
+    warned: dict[str, float] = {}
+
     def harvest_now() -> dict[str, Any]:
-        return harvest_all(events, tasks, goal)
+        return harvest_all(events, tasks, goal, warned)
 
     async def harvest_forever() -> None:
         every = harvest_seconds()
