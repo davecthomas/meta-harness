@@ -12,6 +12,7 @@ import { Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, TitleLi
 import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
 import { RetryAll, retryAllPlan } from "../tasks/Remedies";
 import { needsYouNote, useNeedsYou, type NeedsYouItem } from "./needsYou";
+import { WorkReport } from "./WorkReport";
 import { GettingStarted } from "./GettingStarted";
 import { SupervisorHealth } from "./SupervisorHealth";
 import { errorText, ReadFailed } from "../../components/ReadFailed";
@@ -43,6 +44,7 @@ export function Overview() {
     <>
       <PageHeader title="Overview" description="What needs you, what is running, and what waits to start." />
 
+      <WorkReport />
       <GettingStarted />
       <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} mb="lg">
         <Stat label="Needs you" value={count} link={count ? "See what to do" : undefined} alert={!!count}
