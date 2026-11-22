@@ -122,6 +122,33 @@ async def test_a_retried_task_whose_pull_request_was_closed_starts_a_new_first_r
     assert script.runs[0].run_id.endswith(":run-4")
 
 
+async def test_a_task_retried_with_no_pull_request_numbers_its_runs_after_the_earlier_ones(env):  # noqa: F811
+    """Numbered from 1 again, each run found the directory, the clone and the record of the failed run with
+    its number, and a review run read that old tree, not the pull request."""
+    script = Script(verdicts=[CLEAN])
+    failed = ResumeState(attempts=list(EARLIER))
+
+    result, _ = await _resume(env, script, "", failed)
+
+    assert result.outcome == "clean"
+    assert [r.run_id.rsplit(":", 1)[-1] for r in script.runs] == ["run-4", "run-5"], "a first run, then its review"
+    assert script.runs[0].prompt != "review" and script.runs[1].prompt == "review"
+
+
+@pytest.mark.skipif(not os.environ.get("MH_RECORD_HISTORIES"), reason="records histories only when asked")
+async def test_record_the_retried_runs_number_on_history(env):  # noqa: F811
+    # After the retried-runs-number-on patch: a task retried with no pull request reads its earlier runs first.
+    if (HISTORIES / "patched-retried-runs-number-on.json").exists():
+        pytest.skip("recorded already: an old history is what a deploy finds running, so it stays as it is")
+    await _resume(
+        env,
+        Script(verdicts=[CLEAN]),
+        "",
+        ResumeState(attempts=list(EARLIER)),
+        record="patched-retried-runs-number-on",
+    )
+
+
 async def test_a_task_started_over_closes_its_pull_request_and_runs_fresh_from_the_base(env):  # noqa: F811
     from meta_harness.run_service.restart_activities import RestartRequest
 

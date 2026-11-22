@@ -32,6 +32,7 @@ pull request says `Closes owner/name#number`.
 import asyncio
 import os
 import re
+import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -108,6 +109,10 @@ def apps() -> GitHubApps:
 # What the code host answers a push that changes a workflow file, from an App without the workflows permission,
 # which the meta-harness's App is never given.
 WORKFLOW_PUSH_REFUSED = "without `workflows` permission"
+
+# Written into a clone's git directory once the clone, its checkout and its merge are done. The sandbox mounts
+# that directory read-only, so only the host writes it.
+CLONE_DONE = "mh-clone-done"
 
 
 def is_local(repo: str) -> bool:
@@ -249,7 +254,13 @@ async def clone(
     """
     refuse_unlisted_local(repo)
     if git_dir.is_dir():
-        return await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
+        if (git_dir / CLONE_DONE).is_file():
+            # A retry of the run's activity: the clone an earlier attempt made, with whatever pi changed in it.
+            return await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
+        # That attempt stopped before the clone, its checkout or its merge was finished: a work tree with
+        # files missing, or still on the default branch when the run is for a pull request's. Nothing in it
+        # is pi's yet, so it is made again.
+        await asyncio.to_thread(_remove_clone, workspace, git_dir)
     workspace.parent.mkdir(parents=True, exist_ok=True)
     git_dir.parent.mkdir(parents=True, exist_ok=True)
     clone_args = ["clone", "--quiet", "--separate-git-dir", str(git_dir)]
@@ -281,7 +292,9 @@ async def clone(
             check=False,
             cwd=workspace,
         )
-    return await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
+    current = await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
+    (git_dir / CLONE_DONE).write_text("")
+    return current
 
 
 async def publish(
@@ -1013,6 +1026,12 @@ def refuse_nested_repos(workspace: Path) -> None:
                 "the workspace.",
                 retryable=False,
             )
+
+
+def _remove_clone(workspace: Path, git_dir: Path) -> None:
+    """Removes an unfinished clone's two directories, so the clone can be made again."""
+    for directory in (workspace, git_dir):
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 async def _run(*args: str, check: bool = True, env: dict[str, str] | None = None, cwd: Path | None = None) -> str:
