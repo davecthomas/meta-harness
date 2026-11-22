@@ -87,6 +87,15 @@ def test_only_a_service_names_a_task(api):
     task = _create(api)
     assert api.post(f"/v1/tasks/{task['id']}/name", json={"name": "Mine"}, headers=CALLER).status_code == 403
     assert api.get("/v1/tasks/unnamed", headers=CALLER).status_code == 403
+    # The edge forwards a browser's request with its own service key and the signed-in user's role. No service
+    # names a role, so a request that carries one is a browser's, whatever key it comes with.
+    for role in ("admin", "user"):
+        browser = {**SERVICE, "X-MH-Role": role}
+        assert api.post(f"/v1/tasks/{task['id']}/name", json={"name": "Mine"}, headers=browser).status_code == 403
+        assert api.get("/v1/tasks/unnamed", headers=browser).status_code == 403
+        assert (
+            api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=browser).status_code == 403
+        )
 
 
 def test_the_unnamed_list_holds_tasks_with_no_name_and_the_names_their_goals_have(api):

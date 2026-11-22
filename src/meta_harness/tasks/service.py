@@ -220,8 +220,13 @@ def create_app(
             return Caller(label, service=False, actor=label)
         raise HTTPException(status_code=401, detail="unknown API key")
 
-    def service_only(who: Caller = Depends(caller)) -> Caller:
-        if not who.service:
+    def service_only(
+        who: Caller = Depends(caller), role: str | None = Header(default=None, alias="X-MH-Role")
+    ) -> Caller:
+        """A control-plane service acting for itself. The edge also holds a service key, and names the signed-in
+        user's role on everything it forwards (X-MH-Role), which no service does: a request that carries a role
+        came from a browser, and is refused here whether or not the edge's own list of such calls has it."""
+        if not who.service or role is not None:
             raise HTTPException(status_code=403, detail="only a control-plane service may do this")
         return who
 

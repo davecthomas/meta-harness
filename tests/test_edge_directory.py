@@ -63,23 +63,40 @@ def test_the_planners_users_decide_once_there_are_some():
     assert ("POST", "/v1/admin/users/seed") not in planner.calls
 
 
-def test_a_planner_that_cannot_be_reached_leaves_the_last_list_deciding():
+def test_an_edge_that_has_never_read_the_users_lets_nobody_in_and_asks_again_at_once():
+    """A fresh edge with the planner down does not know who was deprovisioned or who is an admin. The first
+    access list still names a user who has since been removed, so it decides nothing."""
     planner = Planner(down=True)
-    directory = _directory(planner, admins=("dave@example.com",))
-    assert directory.allowed("dave@example.com") and directory.is_admin("dave@example.com")
-    assert not directory.allowed("pat@example.com")
+    directory = _directory(planner, operators=("gone@example.com",), admins=(), refresh=3600.0)
+    directory.read_at = 0.0
 
+    assert not directory.ready()
+    assert not directory.allowed("gone@example.com") and not directory.is_admin("gone@example.com")
+
+    # The planner is back with its own users: the next request is decided by them, with no wait.
     planner.down = False
-    planner.users = [{"email": "pat@example.com", "role": "user", "status": "active"}]
+    planner.users = [{"email": "dave@example.com", "role": "admin", "status": "active"}]
+    directory.read_at -= 2
+    assert directory.ready() and directory.is_admin("dave@example.com")
+    assert not directory.allowed("gone@example.com")
+
+
+def test_a_planner_that_cannot_be_reached_leaves_the_last_list_deciding():
+    planner = Planner([{"email": "pat@example.com", "role": "user", "status": "active"}])
+    directory = _directory(planner, admins=("dave@example.com",))
     assert directory.allowed("pat@example.com")
+
     planner.down = True
-    assert directory.allowed("pat@example.com"), "the users last read go on deciding"
+    assert directory.ready() and directory.allowed("pat@example.com"), "the users last read go on deciding"
+    assert not directory.allowed("dave@example.com"), "and not the first access list"
 
 
 def test_a_sign_in_the_planner_could_not_be_told_of_is_told_once_it_can_be_reached():
     """A sign-in during a deploy, with the planner down, would otherwise show as Never for the session's days."""
-    planner = Planner(down=True)
+    planner = Planner([{"email": "dave@example.com", "role": "admin", "status": "active"}])
     directory = _directory(planner)
+    assert directory.allowed("dave@example.com")
+    planner.down = True
     directory.signed_in("dave@example.com")
     assert directory.allowed("dave@example.com")
 
@@ -91,6 +108,32 @@ def test_a_sign_in_the_planner_could_not_be_told_of_is_told_once_it_can_be_reach
     planner.calls.clear()
     directory.allowed("dave@example.com")
     assert ("POST", "/v1/admin/users/dave@example.com/signed-in") not in planner.calls, "told only once"
+
+
+def test_the_edge_answers_503_with_retry_after_until_it_has_read_the_users(tmp_path):
+    planner = Planner(down=True)
+    forwarded: list[httpx.Request] = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        forwarded.append(request)
+        return httpx.Response(200, json={})
+
+    app = create_app(
+        dist=tmp_path, identity="gone@example.com", operators=set(), service_key="key",
+        transport=httpx.MockTransport(upstream), directory=_directory(planner, operators=("gone@example.com",)),
+    )  # fmt: skip
+    client = TestClient(app)
+
+    refused = client.get("/v1/goals")
+
+    assert refused.status_code == 503 and refused.headers["Retry-After"] == "2"
+    assert "could not be read yet" in refused.json()["detail"] and "Try again" in refused.json()["detail"]
+    assert client.get("/v1/me").status_code == 503
+    assert forwarded == [], "nothing is forwarded, with any role, on a guess"
+
+    planner.down = False
+    planner.users = [{"email": "dave@example.com", "role": "admin", "status": "active"}]
+    assert client.get("/v1/goals").status_code == 403, "the removed user is refused once the users are read"
 
 
 def test_a_deprovisioned_users_next_request_is_refused_and_a_regular_user_opens_no_admin_path(tmp_path):
@@ -151,8 +194,9 @@ def test_a_path_with_dot_segments_or_a_service_only_call_is_refused_before_it_is
     # An admin's browser holds no service key either.
     for client in (pat, dave):
         assert client.post("/v1/events", json={"type": "attempt_finished"}).status_code == 403
-        for call in ("status", "recover", "drive"):
+        for call in ("status", "recover", "drive", "name"):
             assert client.post(f"/v1/tasks/t-1/{call}", json={}).status_code == 403
+        assert client.get("/v1/tasks/unnamed").status_code == 403
     assert forwarded == []
 
     assert pat.get("/v1/events").status_code == 200

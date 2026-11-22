@@ -135,7 +135,9 @@ def admin_only(method: str, path: str) -> bool:
 # Calls only a control-plane service makes. The edge forwards with its service key, so it refuses these from a
 # browser: appending events (which would forge the audit record and a goal's counted spend), and setting a
 # task's status, recovery or drive.
-SERVICE_ONLY_TASK_CALLS = ("status", "recover", "drive")
+SERVICE_ONLY_TASK_CALLS = ("status", "recover", "drive", "name")
+# How soon a console is told to ask again while the edge has not yet read who may use it.
+NOT_READY_RETRY_SECONDS = 2
 
 
 def canonical(path: str) -> bool:
@@ -153,6 +155,9 @@ def service_only(method: str, path: str) -> bool:
     # Submitting a task names its repo, which the run service clones and pushes to. Only the planner does it.
     if path == "/v1/tasks":
         return method in WRITE_METHODS
+    # The tasks still to be named, which only the planner's naming reads.
+    if path == "/v1/tasks/unnamed":
+        return True
     parts = path.split("/")
     return len(parts) == 5 and parts[1:3] == ["v1", "tasks"] and parts[4] in SERVICE_ONLY_TASK_CALLS
 
@@ -292,9 +297,25 @@ def create_app(
             who = local_identity
             if not who:
                 return "", JSONResponse({"detail": "nobody is signed in: set MH_CONSOLE_DEV_IDENTITY"}, status_code=401)
+        if not users.ready():
+            return who, not_ready()
         if not users.allowed(who):
             return who, private(JSONResponse({"detail": f"{who} is not on the console's access list"}, 403))
         return who, None
+
+    def not_ready() -> Response:
+        """The edge has not read the console's users yet, as on a fresh instance while the planner restarts.
+        It lets nobody in on a guess: the answer says to try again, and the console does."""
+        return private(
+            JSONResponse(
+                {
+                    "detail": "the console's users could not be read yet, so nobody is let in for now. "
+                    "Try again in a few seconds; if it lasts, the planner is down: see Admin, Logs"
+                },
+                status_code=503,
+                headers={"Retry-After": str(NOT_READY_RETRY_SECONDS)},
+            )
+        )
 
     def private(response: Response) -> Response:
         # Firebase Hosting caches what a response lets it; nothing signed-in may be cached.
@@ -329,6 +350,8 @@ def create_app(
             who = verify(credential)
         except SignInError as err:
             return private(JSONResponse({"detail": f"Google sign-in failed: {err}"}, status_code=401))
+        if not users.ready():
+            return not_ready()
         if not users.allowed(who):
             return private(JSONResponse({"detail": f"{who} is not on the console's access list"}, status_code=403))
         users.signed_in(who)
