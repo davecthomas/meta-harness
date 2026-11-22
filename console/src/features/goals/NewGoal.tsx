@@ -133,8 +133,11 @@ export function NewGoal() {
   useEffect(() => {
     api.repos().then(
       (r) => {
-        setRepos(r.map((x) => x.name));
+        const names = r.map((x) => x.name);
+        setRepos(names);
         setReposRead(true);
+        // A single registered repo is the only choice there is, so it starts chosen.
+        if (names.length === 1) setChosen((now) => (now.length ? now : names));
       },
       (err) => setError(String(err.message ?? err)),
     );
