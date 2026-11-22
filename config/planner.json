@@ -13,6 +13,13 @@
     "max_response_tokens": 800,
     "body_chars": 8000
   },
+  "issue_fixing": {
+    "engine": "claude",
+    "model": "claude-haiku-4-5",
+    "max_response_tokens": 1500,
+    "body_chars": 8000,
+    "max_paths": 60
+  },
   "writing_pass": {
     "skill": "no-ai-slop2",
     "scanner": "no-ai-slop-scan.py",

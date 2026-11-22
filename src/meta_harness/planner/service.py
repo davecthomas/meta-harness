@@ -1590,7 +1590,7 @@ def create_app(
 
     plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again)
     budget_api.register(app, operator, load, change_with, events, tasks)
-    sizing_api.register(app, operator, load, events, tracker, sweep_one)
+    sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks, size)
     users.register(app, operator, events)
     app.state.overview = overview.Overview(events, tasks, overview_writer)
     overview.register(app, operator, app.state.overview)

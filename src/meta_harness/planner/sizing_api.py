@@ -3,6 +3,7 @@
     POST /v1/goals/{id}/issues/run-anyway   {ref}: make the held issue a task whatever its size and gaps
     POST /v1/goals/{id}/issues/split-drafts {ref}: the parts a model drafts for the held issue, to edit
     POST /v1/goals/{id}/issues/split        {ref, issues: [{title, body}]}: create the smaller issues
+    POST /v1/goals/{id}/issues/fix-draft, /fix-accept: draft and write what an issue lacks (fix_issue.py)
 
 A split creates each issue in the held issue's repo with the goal's label, so
 the goal's next sweep takes them in; a goal with no label holds them by ref
@@ -30,7 +31,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import db
 from meta_harness.trackers.base import TrackerError
-from meta_harness.planner import splits, store
+from meta_harness.planner import fix_issue, sizing, splits, store
 from meta_harness.planner.split_issue import SplitRefused, split_issue
 from meta_harness.planner.sweep import goal_tracker
 
@@ -58,8 +59,12 @@ def register(
     events: Any,
     tracker: Any,
     swept: Callable[[dict], Any],
+    tasks: Any = None,
+    sizer: sizing.Sizer | None = None,
 ) -> None:
-    """Adds the held-issue routes. swept(goal) sweeps an active goal at once, so its answer takes effect now."""
+    """Adds the held-issue routes, and the Fix with AI routes beside them. swept(goal) sweeps an active goal at
+    once, so its answer takes effect now. tasks reads an issue's task; sizer sizes an issue as the sweep does."""
+    fix_issue.register(app, operator, load, events, tracker, tasks, sizer, swept)
 
     def held(goal_id: str, ref: str) -> tuple[dict, dict]:
         """The open goal and its held link for ref. 404 when the goal does not hold it, 409 when it is not held."""

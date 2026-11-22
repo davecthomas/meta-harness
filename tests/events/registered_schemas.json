@@ -1794,5 +1794,59 @@
       "retries"
     ],
     "additionalProperties": true
+  },
+  "issue_fix_drafted v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "parts": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "ref": {
+        "type": "string"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "ref",
+      "parts",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
+  "issue_fix_accepted v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "parts": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "ref",
+      "parts"
+    ],
+    "type": "object"
   }
 }
