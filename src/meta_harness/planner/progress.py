@@ -133,6 +133,9 @@ def _sizing_view(link: dict) -> dict[str, Any]:
         "size_reasons": list(sizing.get("reasons") or []),
         # What the issue lacks: acceptance_checks, paths, testable_outcome.
         "missing": list(sizing.get("missing") or []),
+        # The model's doubts about checks or paths the issue has, each {part, reason}: shown, never held on.
+        # Empty for a sizing stored before doubts were recorded.
+        "doubts": list(sizing.get("doubts") or []),
         # The titles of the smaller issues a large one splits into, and the issue's paths and checks for them.
         "split": list(sizing.get("split") or []),
         "paths": list(sizing.get("paths") or []),

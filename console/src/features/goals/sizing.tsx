@@ -1,12 +1,13 @@
 // Issue sizing on the goal page: an issue's size and gaps on its card, the actions on one the planner held
 // (Run anyway, Split), and the goal's strict switch. The planner sizes each issue before it becomes a task
 // (src/meta_harness/planner/sizing.py): a large one is held to split, and one missing something runs with
-// the gap shown, unless the goal is strict.
+// the gap shown, unless the goal is strict. A doubt, the model's word that the checks or paths an issue has
+// fall short, is shown with its reason and holds nothing.
 
 import { useEffect, useState } from "react";
 import { Alert, Badge, Button, Group, Loader, Modal, Stack, Text, TextInput, Textarea, Tooltip } from "@mantine/core";
 import { IconPlayerPlay, IconPlus, IconScissors, IconTrash } from "@tabler/icons-react";
-import { api, type Goal, type IssueGap, type IssueProgress, type IssueSize, type SplitDraft } from "../../api";
+import { api, type Goal, type IssueDoubt, type IssueGap, type IssueProgress, type IssueSize, type SplitDraft } from "../../api";
 import { InlineSwitch } from "./InlineEdit";
 import { SIGNED_ISSUES } from "./provenance";
 
@@ -14,6 +15,10 @@ const GAP_WORDS: Record<IssueGap, string> = {
   acceptance_checks: "acceptance checks",
   paths: "a Paths: line",
   testable_outcome: "a testable outcome",
+};
+const DOUBT_WORDS: Record<IssueDoubt["part"], string> = {
+  acceptance_checks: "Its checks may not prove the fix",
+  paths: "Its paths may not cover the change",
 };
 const SIZE_COLORS: Record<IssueSize, string> = { small: "teal", medium: "blue", large: "orange" };
 // A body names its paths on a line such as "Paths: console/src, docs", as the planner reads it.
@@ -27,6 +32,24 @@ export function gapText(missing: IssueGap[] | undefined): string | null {
   if (!words.length) return null;
   const list = words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : words[0];
   return `Missing ${list}`;
+}
+
+// A doubt in words, with the model's reason: "Its checks may not prove the fix: they test the old path".
+export function doubtText(doubt: IssueDoubt): string {
+  const words = DOUBT_WORDS[doubt.part] ?? doubt.part;
+  const reason = (doubt.reason ?? "").trim().replace(/\.$/, "");
+  return reason ? `${words}: ${reason}` : words;
+}
+
+// The sizing's doubts on an issue's card, one line each.
+export function SizingDoubts({ issue }: { issue: IssueProgress }) {
+  const doubts = issue.doubts ?? [];
+  if (!doubts.length) return null;
+  return (
+    <Stack gap={2} data-testid="issue-doubts">
+      {doubts.map((d) => <Text key={d.part} size="xs" c="dimmed">{doubtText(d)}</Text>)}
+    </Stack>
+  );
 }
 
 export function SizeBadge({ issue }: { issue: IssueProgress }) {
