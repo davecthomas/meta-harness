@@ -13,7 +13,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 from psycopg.rows import dict_row
 
-from meta_harness.supervisor.rules import Decision
+from meta_harness.supervisor.rules import Decision, over
 
 
 @dataclass
@@ -103,6 +103,8 @@ def for_tasks(conn: psycopg.Connection, task_ids: list[str]) -> dict[str, dict]:
             },
             "since": row["since"].isoformat(),
             "checked_at": row["checked_at"].isoformat(),
+            # Nobody has the task and nothing more is done for it: said as that, not as someone's.
+            "over": over(row["owner"], row["situation"]),
         }
         for row in rows
     }

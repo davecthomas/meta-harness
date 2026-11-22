@@ -51,6 +51,18 @@ test("a task that waits on a person says so under the Task Shepherd's mark, with
   expect(panel.textContent).toContain("4 of its 12 reviews passed, and the last left 2 findings open.");
 });
 
+test("a task nobody has is said to be over, not to be the Goal Planner's", () => {
+  // A canceled goal's task: its record names the planner, and "the Goal Planner has it" would be false.
+  show({ owner: "planner", situation: "canceled", reason: "the task and its goal were canceled, and its pull request stays open on the code host", over: true }, "canceled");
+  expect(screen.getByText("Nothing for you to do: this task is over.")).toBeTruthy();
+  expect(screen.queryByText(/Goal Planner has it/)).toBeNull();
+});
+
+test("a task the Goal Planner's sweep will move still says the Goal Planner has it", () => {
+  show({ owner: "planner", situation: "blocked", reason: "it waits on o/r#7, which is being worked on" }, "blocked");
+  expect(screen.getByText("Nothing for you to do: the Goal Planner has it.")).toBeTruthy();
+});
+
 test("the moves are buttons in the supervisor's order, the first one filled and marked as recommended", () => {
   show({});
 

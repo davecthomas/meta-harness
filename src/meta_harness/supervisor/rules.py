@@ -23,6 +23,17 @@ from dataclasses import dataclass, replace
 from meta_harness.supervisor import moves
 
 OWNERS = ("workflow", "scheduler", "planner", "supervisor", "operator")
+# Situations in which nothing is left to do for a task, and nobody has it: it was canceled, or its goal was and
+# the task ended or is parked. Their decisions are recorded under the planner, whose sweep closes what is left
+# of a goal, and a reader is told the task is over, not that the planner has work on it.
+OVER = ("canceled", "failed_goal_ended", "goal_ended")
+
+
+def over(owner: str, situation: str) -> bool:
+    """Whether a task's standing says it is over: nobody has it, and nothing more is done for it."""
+    return owner == "planner" and situation in OVER
+
+
 # The task statuses the supervisor looks at: every one but closed, which is the only end with nothing left.
 OPEN_STATUSES = ("queued", "blocked", "running", "taken_over", "ready", "review_unresolved", "failed", "canceled")
 # What a workflow is, as the supervisor reads it from Temporal. unknown: Temporal could not be asked.

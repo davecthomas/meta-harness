@@ -181,6 +181,8 @@ export interface TaskStanding {
   checked_at: string;
   attempts: number;
   last_error: string | null;
+  // The task is over: nobody has it and nothing more is done for it, whatever owner its record names.
+  over?: boolean;
   // For an operator: the moves offered, best first (the supervisor's moves.py). Absent on an older record.
   moves?: string[];
   // What the task's reviews came to, in a sentence; empty when it has had none.
