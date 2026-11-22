@@ -213,7 +213,7 @@ test("a goal that plans its issues from the description needs no label and is cr
   fireEvent.change(await screen.findByLabelText(/Description/), { target: { value: "Let users export their data" } });
   await screen.findByRole("checkbox", { name: "o/a", checked: true });
   fireEvent.click(screen.getByText("Plan them from the description"));
-  expect(screen.getByText(/A planning task reads the repos and drafts the issues/)).toBeTruthy();
+  expect(screen.getByTestId("where-note").textContent).toContain("splits the description into issues");
   fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
 
   await waitFor(() => expect(created).toHaveLength(1));
@@ -346,4 +346,136 @@ test("with several registered repositories none starts chosen", async () => {
   showWithRepos(["o/a", "o/b"]);
   expect(await screen.findByRole("checkbox", { name: "o/a", checked: false })).toBeTruthy();
   expect(screen.getByRole("checkbox", { name: "o/b", checked: false })).toBeTruthy();
+});
+
+// The New goal form over one repo, with a model that drafts a goal from a spec: `drafts` answers each call.
+function showSpecGoal(created: Record<string, unknown>[], drafts: (() => Promise<Response>)[], asked: Record<string, unknown>[] = []) {
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
+    if (url === "/v1/goals/draft-from-spec") {
+      asked.push(JSON.parse(String(init?.body)));
+      return (drafts.length > 1 ? drafts.shift()! : drafts[0])();
+    }
+    if (url === "/v1/goals" && init?.method === "POST") {
+      created.push(JSON.parse(String(init.body)));
+      return respond({ id: "g-1" }, 201);
+    }
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/new"]}>
+        <Routes>
+          <Route path="/goals/new" element={<NewGoal />} />
+          <Route path="/goals/:goalId" element={<p>Goal page</p>} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+}
+
+const drafted = () => respond({ title: "Data export", statement: "Users can export their data as CSV.", spec: "exports-prd.md" });
+
+async function uploadSpec() {
+  fireEvent.click(screen.getByRole("radio", { name: "Upload a file" }));
+  const file = new File(["# Exports\n\n- An export button.\n"], "exports-prd.md", { type: "text/markdown" });
+  fireEvent.change(screen.getByTestId("spec-field").querySelector("input[type=file]")!, { target: { files: [file] } });
+  await screen.findByTestId("spec-loaded");
+}
+
+const where = (name: string) => screen.getByRole("radio", { name }) as HTMLInputElement;
+
+test("a loaded spec chooses planning from the spec, and writes the title and description", async () => {
+  const created: Record<string, unknown>[] = [];
+  const asked: Record<string, unknown>[] = [];
+  showSpecGoal(created, [drafted], asked);
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  expect(where("Issues that exist").checked).toBe(true);
+
+  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
+  await uploadSpec();
+
+  expect(where("Plan them from the spec").checked).toBe(true);
+  await screen.findByTestId("spec-draft-filled");
+  expect((screen.getByLabelText(/^Title/) as HTMLInputElement).value).toBe("Data export");
+  expect((screen.getByLabelText(/^Description/) as HTMLTextAreaElement).value).toBe("Users can export their data as CSV.");
+  expect(asked[0]).toMatchObject({ spec: { name: "exports-prd.md" }, repos: ["o/a"] });
+  // Where the split into tasks is decided, said before the button is pressed.
+  expect(screen.getByTestId("where-note").textContent).toContain("A planning task reads exports-prd.md and the repos, and splits the work into issues");
+  expect(screen.getByTestId("plan-note").textContent).toContain("Its split into tasks opens on the goal's page");
+
+  fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
+  expect(await screen.findByText("Goal page")).toBeTruthy();
+  expect(created[0]).toMatchObject({ title: "Data export", statement: "Users can export their data as CSV.", modality: "feature", start: true });
+});
+
+test("a description the operator wrote is kept, with the spec's on offer", async () => {
+  showSpecGoal([], [drafted]);
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: "My own words" } });
+  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
+  await uploadSpec();
+
+  const kept = await screen.findByTestId("spec-draft-kept");
+  expect((screen.getByLabelText(/^Description/) as HTMLTextAreaElement).value).toBe("My own words");
+  expect((screen.getByLabelText(/^Title/) as HTMLInputElement).value).toBe("Data export");
+
+  fireEvent.click(within(kept).getByRole("button", { name: /Use the one written from exports-prd.md/ }));
+  expect((screen.getByLabelText(/^Description/) as HTMLTextAreaElement).value).toBe("Users can export their data as CSV.");
+});
+
+test("a draft that fails says why and tries again, and the goal can still be written by hand", async () => {
+  showSpecGoal([], [() => respond({ detail: "could not draft the goal from exports-prd.md: busy. Try again, or write them yourself" }, 422), drafted]);
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
+  await uploadSpec();
+
+  const failed = await screen.findByTestId("spec-draft-failed");
+  expect(failed.textContent).toContain("could not draft the goal from exports-prd.md: busy");
+  fireEvent.click(within(failed).getByRole("button", { name: "Try again" }));
+  await screen.findByTestId("spec-draft-filled");
+  expect((screen.getByLabelText(/^Title/) as HTMLInputElement).value).toBe("Data export");
+});
+
+test("removing the spec takes back what it wrote and returns to issues that exist", async () => {
+  showSpecGoal([], [drafted]);
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
+  await uploadSpec();
+  await screen.findByTestId("spec-draft-filled");
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+  await waitFor(() => expect((screen.getByLabelText(/^Description/) as HTMLTextAreaElement).value).toBe(""));
+  expect((screen.getByLabelText(/^Title/) as HTMLInputElement).value).toBe("");
+  expect(where("Issues that exist").checked).toBe(true);
+});
+
+test("planning from the spec with none chosen opens the spec's choices, and is not saved without one", async () => {
+  const created: Record<string, unknown>[] = [];
+  showSpecGoal(created, [drafted]);
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: "Let users export their data" } });
+
+  fireEvent.click(screen.getByText("Plan them from the spec"));
+
+  expect(screen.getByRole("radio", { name: "A file in the repo" })).toBeTruthy();
+  expect(screen.getByTestId("where-note").textContent).toContain("Choose the spec above");
+  fireEvent.click(screen.getByRole("button", { name: /^Save and/ }));
+  expect((await screen.findByTestId("goal-not-saved")).textContent).toContain("Choose the spec");
+  expect(created).toEqual([]);
+});
+
+test("another answer to where the issues come from lets go of the spec", async () => {
+  showSpecGoal([], [drafted]);
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
+  await uploadSpec();
+
+  fireEvent.click(screen.getByText("Issues that exist"));
+
+  expect(screen.queryByTestId("spec-loaded")).toBeNull();
+  expect(where("Issues that exist").checked).toBe(true);
+  expect(screen.getByTestId("existing-issues")).toBeTruthy();
 });
