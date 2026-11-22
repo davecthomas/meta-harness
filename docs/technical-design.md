@@ -3854,8 +3854,20 @@ The edge forwards with its own service key, so it decides what a browser may
 ask before it forwards (`src/meta_harness/edge/app.py`). It refuses a path
 with an empty, `.` or `..` part (400). The role checks read the path as sent,
 and the HTTP client collapses dot segments when it forwards. It refuses the
-calls only a control-plane service makes (403): appending an event, and
-setting a task's status, recovery or drive.
+calls only a control-plane service makes (403): appending an event,
+submitting a task, and setting a task's status, recovery or drive.
+
+A task names its repo, and the run service clones that repo and pushes to it
+on its own host. A repo is `owner/name` on the code host, or the path of a
+local bare repo, which the tests, the zero-cost check and the deploy's smoke
+task use. A push to a local repo runs that repo's hooks on the host, outside
+any sandbox, so a path is taken only when the deployment vouches for it
+(`src/meta_harness/local_repos.py`): the smoke repo, `MH_SMOKE_REPO`, or a
+repo under a directory in `MH_LOCAL_REPO_ROOTS`, with symlinks followed
+first. Production lists no directory, so no task can name a repo an earlier
+run's agent built in its workspace. The Task API refuses any other path when
+the task is submitted (422), and the run service refuses it again before the
+clone and before the push. Both check the two settings at startup.
 
 The services hold the same rules themselves, so the edge is not the only
 check. The event service takes a control-plane service key on every route but

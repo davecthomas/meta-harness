@@ -78,3 +78,10 @@ def unchecked_text(monkeypatch):
     from meta_harness import outbound
 
     monkeypatch.setattr(outbound, "require", lambda text, what, destination, title=False: None)
+
+
+@pytest.fixture(autouse=True)
+def local_repos_under_tmp(monkeypatch, tmp_path_factory):
+    """The bare repos tests make sit under pytest's temporary directory, so that is the one place a task may
+    name a local repo (meta_harness.local_repos)."""
+    monkeypatch.setenv("MH_LOCAL_REPO_ROOTS", str(tmp_path_factory.getbasetemp()))

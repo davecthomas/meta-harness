@@ -22,6 +22,8 @@ cd "$(dirname "$0")"
 
 STACK_DIR=stack
 RUNS_DIR=${RUNS_DIR:-$PWD/runs}
+# The local bare repos these runs use are made under RUNS_DIR, so the worker and the Task API take them.
+export MH_LOCAL_REPO_ROOTS=${MH_LOCAL_REPO_ROOTS:-$RUNS_DIR}
 # The meta-harness project at the repo root holds the run service code and its virtual environment.
 ROOT=$(cd ../.. && pwd)
 PY="$ROOT/.venv/bin/python"
