@@ -1949,6 +1949,17 @@ model:
   compaction summary request never runs. The compaction summary keeps the task
   spec and acceptance checks verbatim.
 
+What happens to a run's context as it fills, as built: the harness server
+tells pi that every model has a context window of 200,000 tokens and answers
+of 8,192 (`images/harness-pi/server/harness.ts`), whatever the model's real
+limits are. pi compacts with its own defaults: it starts when 16,384 tokens
+are left and keeps the most recent 20,000 as they are. The run's own model
+writes the summary, and nothing fixes what the summary must hold, so the
+task's text, its acceptance checks and the agent's plan survive only when
+that model keeps them. The run records each compaction as a `compacted`
+event with its reason. What a run should do in its place is specified in
+`docs/specs/context-compaction.md`.
+
 ### pi sessions
 
 A pi session is one conversation with pi, named by `harness_session_id`. Today
