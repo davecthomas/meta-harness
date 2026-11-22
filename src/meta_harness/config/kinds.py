@@ -245,7 +245,14 @@ def check_size_limits(limits: Any, ceiling: Decimal | None = None) -> list[str]:
 
 # The supervisor's remedies whose tries the task policy sets (supervisor/remedies), and their tries when it
 # sets none. 0 turns a remedy off.
-REMEDY_TRIES = {"retry_stronger": 1, "fix_again": 1, "raise_limit": 1, "auto_split": 1, "rerun_checks": 1}
+REMEDY_TRIES = {
+    "retry_stronger": 1,
+    "fix_again": 1,
+    "raise_limit": 1,
+    "auto_split": 1,
+    "rerun_checks": 1,
+    "start_over": 1,
+}
 
 
 def remedy_tries(document: dict[str, Any], name: str) -> int:

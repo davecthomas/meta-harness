@@ -6,6 +6,7 @@ from meta_harness.supervisor.remedies.drive import Merge, Retry, Review
 from meta_harness.supervisor.remedies.end_at_pull_request import EndAtPullRequest
 from meta_harness.supervisor.remedies.raise_limit import RaiseLimit
 from meta_harness.supervisor.remedies.recover import Recover
+from meta_harness.supervisor.remedies.start_over import StartOver
 from meta_harness.supervisor.remedies.stronger import FixAgain, RetryStronger
 from meta_harness.supervisor.remedies.wait import Wait
 
@@ -22,6 +23,7 @@ REMEDIES: dict[str, Remedy] = {
         RetryStronger(),
         FixAgain(),
         RaiseLimit(),
+        StartOver(),
     )
 }
 

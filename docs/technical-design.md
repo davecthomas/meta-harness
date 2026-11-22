@@ -2320,8 +2320,20 @@ anything else, the task is an operator's (`merge_refused`). So is one whose
 merge is held because its pull request changes `.github/` or `deploy/`
 (`merge_held`): the supervisor never asks for that merge. The supervisor sends
 one task back at most three times between an operator's retries (`drives`).
-After that the task is an operator's, and its standing says the tries are used
-up.
+
+A task parked at a pull request that is going nowhere has one more step the
+supervisor takes by itself: it is started over on the current base
+(`remedies/start_over.py`). Its pull request is closed, its branch deleted,
+and it runs fresh from the base as it is now, as after an operator's Start
+over. That covers a pull request that conflicts with its base when the fix
+runs sent to resolve it did not, and a review that never came clean once its
+fix rounds and its stronger model were used. The fresh run meets the task's
+spend limit anew, so this happens once per task (the task policy's
+`remedies.start_over`, counted in the ledger). So a goal's tasks keep up with
+a base that other work is merging into, without a person pressing Retry on
+each. A goal that asks first is offered the start-over as its first button.
+Only after it is the task an operator's, and its standing says what was
+tried.
 
 A task fails because the work could not be done, or because the system failed
 while the work was fine (`supervisor/failures.py`). The work could not be

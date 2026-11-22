@@ -519,7 +519,8 @@ def drive(
     workflow ended with its pull request open, which the supervisor found it can move on.
 
     action merge: its next workflow merges the pull request, and resolves a conflict with its base first.
-    action review: its pull request goes back through checks, review and fixes. action retry: a `failed`
+    action restart: its pull request is closed and its branch deleted, and it runs fresh from the current base,
+    its tries counted from nothing, as after an operator's Start over. action review: its pull request goes back through checks, review and fixes. action retry: a `failed`
     task whose failure was the system's runs again. Any way the workflow
     counts spent_usd, what the task's runs spent so far, against its spend limit: unlike an operator's retry,
     a drive never gives a task its limit again. Refused once the task has been driven MAX_DRIVES times.
@@ -527,8 +528,8 @@ def drive(
     deploy causes; the spend it carries still bounds it. complexity: set on the task, so its next runs route
     to a stronger tier (high: complex). Returns (task, previous status).
     """
-    if action not in ("merge", "review", "retry"):
-        raise TaskError(f"a drive is merge, review or retry, not {action!r}")
+    if action not in ("merge", "review", "retry", "restart"):
+        raise TaskError(f"a drive is merge, review, retry or restart, not {action!r}")
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT status, pr_url, drives FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
         row = cur.fetchone()
@@ -541,25 +542,36 @@ def drive(
             raise TaskError(f"a {row['status']} task is not waiting with a pull request open")
         elif not row["pr_url"]:
             raise TaskError("the task has no pull request")
-        if counted and row["drives"] >= MAX_DRIVES:
+        # A start-over is a new attempt at the task, as an operator's is: its tries are counted from nothing.
+        restart = action == "restart"
+        if counted and not restart and row["drives"] >= MAX_DRIVES:
             raise TaskError(f"the Task Shepherd has already sent the task back {row['drives']} times")
         what = {
             "merge": "asked for its merge",
             "review": "sent it back through its review loop",
             "retry": "retried it",
+            "restart": "started it over on the current base",
         }[action]
         # A retried task resumes at its pull request when it has one, and starts over when it has none.
         resume = action if action != "retry" else ("review" if row["pr_url"] else None)
         cur.execute(
             "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, resume_by = 'supervisor', "
             "retries = retries + 1, "
-            "drives = drives + %s, cancel_requested = false, waiting_on = NULL, spent_carried_usd = %s, "
+            "drives = CASE WHEN %s THEN 0 ELSE drives + %s END, cancel_requested = false, waiting_on = NULL, "
+            "spent_carried_usd = %s, "
             "complexity = coalesce(%s, complexity), "
             f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
             (
                 f"{why}, so the Task Shepherd {what} "
-                + (f"(try {row['drives'] + 1} of {MAX_DRIVES})" if counted else "(not one of its tries)"),
+                + (
+                    "(once)"
+                    if restart
+                    else f"(try {row['drives'] + 1} of {MAX_DRIVES})"
+                    if counted
+                    else "(not one of its tries)"
+                ),
                 resume,
+                restart,
                 1 if counted else 0,
                 spent_usd,
                 complexity,

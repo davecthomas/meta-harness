@@ -813,6 +813,28 @@ def test_the_supervisor_drives_a_parked_task_a_bounded_number_of_times_with_its_
     assert merged["drives"] == 0 and Decimal(merged["spent_carried_usd"]) == 0
 
 
+def test_the_supervisor_starts_a_parked_task_over_with_its_tries_and_spend_counted_from_nothing(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    parked = {"status": "review_unresolved", "pr_url": "https://github.com/o/r/pull/9"}
+    api.post(f"/v1/tasks/{task['id']}/status", json=parked, headers=_as(SERVICE_KEY))
+    for _ in range(3):
+        again = {"action": "review", "why": "its pull request conflicts with its base", "spent_usd": "6"}
+        assert api.post(f"/v1/tasks/{task['id']}/drive", json=again, headers=_as(SERVICE_KEY)).status_code == 202
+        api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+        api.post(f"/v1/tasks/{task['id']}/status", json=parked, headers=_as(SERVICE_KEY))
+
+    over = {"action": "restart", "why": "the fix runs did not resolve its conflict", "spent_usd": "0", "counted": False}
+    started = api.post(f"/v1/tasks/{task['id']}/drive", json=over, headers=_as(SERVICE_KEY))
+
+    assert started.status_code == 202, "its three tries being used does not stop a start-over"
+    body = started.json()
+    assert (body["status"], body["resume"], body["resume_by"], body["drives"]) == ("queued", "restart", "supervisor", 0)
+    assert Decimal(body["spent_carried_usd"]) == 0
+    assert body["status_reason"].endswith("so the Task Shepherd started it over on the current base (once)")
+    assert ("task_driven", "restart") in [(e[0], e[1].get("action")) for e in events.events]
+
+
 def test_the_supervisor_retries_a_failed_task_and_only_a_failed_one(api):
     task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
     retry = {"action": "retry", "why": "the task failed on the system's side, not its own", "spent_usd": "1"}
