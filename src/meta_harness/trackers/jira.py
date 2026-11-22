@@ -46,6 +46,7 @@ from meta_harness import outbound
 from meta_harness import retrying
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 from meta_harness.trackers.base import (
+    ASSIGNEE,
     DONE,
     IN_PROGRESS,
     IN_REVIEW,
@@ -57,8 +58,10 @@ from meta_harness.trackers.base import (
     Source,
     Supported,
     TrackerError,
+    assignee_setting,
     check_section,
     configured_label,
+    unknown_person,
     with_section,
 )
 
@@ -521,6 +524,60 @@ class JiraTracker:
         await self.mark(ref)
         await self._call("POST", f"/issue/{key}/remotelink", json=link)
 
+    async def assignee(self, ref: str) -> str:
+        """The account id of the issue's assignee; "" when it has none."""
+        key = parse_ref(ref)
+        fields = (await self._call("GET", f"/issue/{key}", params={"fields": "assignee"})).get("fields") or {}
+        return str((fields.get("assignee") or {}).get("accountId") or "")
+
+    async def assign(self, ref: str, person: str) -> bool:
+        """Makes the person the assignee of an issue that has none. person is an account id, or a display name
+        that names one person. It is matched among the people Jira says the issue can be assigned to, so one it cannot assign
+        is refused before anything is written."""
+        key = parse_ref(ref)
+        wanted = person.strip()
+        match = [p for p in await self._assignable(key, accountId=wanted) if p["accountId"] == wanted] if wanted else []
+        if wanted and not match:
+            named = await self._assignable(key, query=wanted)
+            match = [p for p in named if str(p.get("displayName") or "").strip().lower() == wanted.lower()]
+        if len(match) != 1:
+            raise unknown_person(ref, person, f"the people {key} can be assigned to in Jira")
+        account = match[0]["accountId"]
+        if await self.assignee(ref):
+            return False
+        await self.mark(ref)
+        await self._call("PUT", f"/issue/{key}/assignee", json={"accountId": account})
+        return True
+
+    async def _assignable(self, key: str, **ask: str) -> list[dict[str, Any]]:
+        """The active people the issue can be assigned to that match the ask (accountId, or query: a part of a
+        name or an email). Empty when Jira refuses the ask as malformed (400), as it does an unknown id."""
+        try:
+            found = await self._call(
+                "GET", "/user/assignable/search", params={"issueKey": key, **ask, "maxResults": PAGE}
+            )
+        except TrackerError as err:
+            if err.status == 400:
+                return []
+            raise
+        return [p for p in found or [] if p.get("accountId") and p.get("active", True)]
+
+    async def _people(self, project: str) -> list[dict[str, str]]:
+        """Every active person the project's issues can be assigned to, by account id, named as Jira shows them."""
+        people: dict[str, str] = {}
+        start = 0
+        while True:
+            ask = {"project": project, "startAt": start, "maxResults": PAGE}
+            page = await self._call("GET", "/user/assignable/search", params=ask) or []
+            for p in page:
+                if p.get("accountId") and p.get("active", True):
+                    name = str(p.get("displayName") or p["accountId"])
+                    people[p["accountId"]] = f"{name} ({p['emailAddress']})" if p.get("emailAddress") else name
+            start += len(page)
+            if len(page) < PAGE:
+                ordered = sorted(people.items(), key=lambda item: item[1].lower())
+                return [{"value": account, "label": label} for account, label in ordered]
+
     async def choices(self, setting: str, scope: dict[str, str] | None = None) -> list[dict[str, str]]:
         """What the console offers for a setting, so a name is picked and not typed.
 
@@ -530,8 +587,12 @@ class JiraTracker:
         - `issue_type` and `statuses`, with scope's `project`: that project's own issue types (but the sub-task
           ones, which need a parent) and the status names of its workflows. A workflow belongs to a project, so
           another project's statuses move none of its issues, and they are not offered. Empty with no project.
+        - `assignee`, with scope's `project`: the people that project's issues can be assigned to, by account
+          id. Empty with no project.
         """
         project = str((scope or {}).get("project") or "").strip().upper()
+        if setting == ASSIGNEE:
+            return await self._people(project) if PROJECT.match(project) else []
         if setting in ("statuses", "issue_type"):
             if not PROJECT.match(project):
                 return []
@@ -721,6 +782,7 @@ SPEC = Supported(
             help="On: the goal also takes every open issue of the project assigned, in Jira, to the account "
             "the meta-harness signs in as, whatever its labels. Assigning an issue there hands it over.",
         ),
+        assignee_setting("the people the goal's project's issues can be assigned to"),
     ],
     check_goal=check_goal,
     goal_defaults=goal_defaults,
