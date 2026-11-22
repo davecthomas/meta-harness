@@ -25,7 +25,16 @@ from psycopg.rows import dict_row
 from meta_harness import outbound
 from meta_harness import db
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
-from meta_harness.trackers.base import DONE, STATUSES, Issue, Source, Supported, TrackerError
+from meta_harness.trackers.base import (
+    DONE,
+    STATUSES,
+    Issue,
+    Source,
+    Supported,
+    TrackerError,
+    check_section,
+    with_section,
+)
 
 SCHEME = "mh"
 REF = re.compile(r"^mh:(?P<id>i-[0-9a-f]{12})$")
@@ -154,6 +163,26 @@ class OwnTracker:
         query = "UPDATE planner.own_issue SET pr_url = %s, updated_at = now() WHERE id = %s RETURNING id"
         if not await asyncio.to_thread(self._all, query, (pr_url, parse_ref(ref))):
             await self.read(ref)
+
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds `## <heading>` and the text at the end of the issue's body. The body is written only if it is
+        still the one read, so a section added at the same time is not lost."""
+        outbound.require(heading, "a section's heading", outbound.OWN, title=True)
+        outbound.require(text, "a section of an issue's description", outbound.OWN)
+        try:
+            row = await asyncio.to_thread(self._one, ref)
+        except ValueError as err:
+            raise TrackerError(str(err), retryable=False) from err
+        body = row["body"] or ""
+        check_section(ref, body, heading)
+        await self.mark(ref)
+        query = (
+            "UPDATE planner.own_issue SET body = %s, updated_at = now() "
+            "WHERE id = %s AND coalesce(body, '') = %s RETURNING id"
+        )
+        written = with_section(body, f"## {heading.strip()}", text)
+        if not await asyncio.to_thread(self._all, query, (written, row["id"], body)):
+            raise TrackerError(f"{ref}'s description changed while the section was being added: try again")
 
     def url(self, ref: str) -> str | None:
         """No page outside the console shows the issue."""

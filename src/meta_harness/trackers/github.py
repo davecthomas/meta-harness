@@ -11,7 +11,18 @@ from meta_harness.github_app import GitHubAppError, GitHubApps
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 from collections.abc import Callable
 
-from meta_harness.trackers.base import DONE, TODO, Issue, Marked, Source, Supported, TrackerError, configured_label
+from meta_harness.trackers.base import (
+    DONE,
+    TODO,
+    Issue,
+    Marked,
+    Source,
+    Supported,
+    TrackerError,
+    check_section,
+    configured_label,
+    with_section,
+)
 
 SCHEME = "github"
 READ_ISSUES = {"issues": "read"}
@@ -168,6 +179,18 @@ class GitHubTracker:
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Nothing to do: GitHub links a pull request to the issue its description's `Closes` line names."""
+
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Reads the issue's body, adds `## <heading>` and the text at its end, and writes the body back."""
+        outbound.require(heading, "a section's heading", outbound.GITHUB, title=True)
+        outbound.require(text, "a section of an issue's description", outbound.GITHUB)
+        repo, number = parse_ref(ref)
+        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
+        body = now.get("body") or ""
+        check_section(ref, body, heading)
+        await self.mark(ref)
+        written = with_section(body, f"## {heading.strip()}", text)
+        await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json={"body": written})
 
     def bound(self, source: Source) -> "GitHubTracker":
         """A repo's issues are the repo's own: a goal's repos are all GitHub needs, and each call names one."""
