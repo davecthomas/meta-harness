@@ -1,10 +1,11 @@
 """Cloud cost, harvested from the Google Cloud billing export in BigQuery.
 
 Google Cloud writes the project's bill to a BigQuery table once the billing account's export is turned on
-(Billing, Billing export, Detailed or Standard usage cost). MH_BILLING_EXPORT_TABLE names the dataset the export
-writes to, `<project>.<dataset>`, and the harvest finds the export's table in it: the detailed export's
-`gcp_billing_export_resource_v1_<billing account>` when there is one, else the standard export's
-`gcp_billing_export_v1_<billing account>`. So the billing account's id is named nowhere in the repo. It may name the table itself,
+(Billing, Billing export, Standard usage cost or Detailed usage cost). Either export works. MH_BILLING_EXPORT_TABLE
+names the dataset the export writes to, `<project>.<dataset>`, and the harvest finds the export's table in it:
+the standard export's `gcp_billing_export_v1_<billing account>` when the dataset has one, else the detailed
+export's `gcp_billing_export_resource_v1_<billing account>`. So the billing account's id is named nowhere in the
+repo. The query reads only columns both tables have. It may name the table itself,
 `<project>.<dataset>.<table>`. With it unset there is no cloud cost to read, and the cost API says so.
 
 The service asks BigQuery for each day's cost by billed service (Compute Engine, Cloud Run, Cloud Logging and
@@ -31,9 +32,10 @@ from meta_harness.costs.store import Cost
 SOURCE = "cloud"
 SETTING = "MH_BILLING_EXPORT_TABLE"
 TABLE = re.compile(r"^[A-Za-z0-9_\-]+\.[A-Za-z0-9_]+(\.[A-Za-z0-9_\-]+)?$")
-# The export tables' names before the billing account's id, the one preferred first: the detailed usage cost
-# export's, then the standard one's. Both have the columns the harvest reads.
-EXPORT_PREFIXES = ("gcp_billing_export_resource_v1_", "gcp_billing_export_v1_")
+# The standard usage cost export's table, and the detailed export's: the first one the dataset has is read.
+EXPORT_PREFIX = "gcp_billing_export_v1_"
+DETAILED_EXPORT_PREFIX = "gcp_billing_export_resource_v1_"
+EXPORT_PREFIXES = (EXPORT_PREFIX, DETAILED_EXPORT_PREFIX)
 # How far back a harvest reads again: Google restates a day's cost for a while after it. A harvest also reads
 # from the first of the previous month, which is how far back Google fills a newly turned-on export.
 DAYS = 35
@@ -102,7 +104,7 @@ def _token(http: httpx.Client) -> str:
 
 
 def _export_table(http: httpx.Client, headers: dict, dataset: str) -> str:
-    """The export's table in the dataset: the detailed usage cost export's when there is one, else the standard's.
+    """The standard usage cost export's table in the dataset, else the detailed export's.
 
     Raises:
         NoExportTable: The dataset holds neither.
@@ -117,7 +119,9 @@ def _export_table(http: httpx.Client, headers: dict, dataset: str) -> str:
         if found:
             return f"{dataset}.{found[0]}"
     raise NoExportTable(
-        f"{dataset} has no billing export table yet: Google creates it within a day of the export being turned on"
+        f"{dataset} has no billing export table yet: no {EXPORT_PREFIX}<account> or {DETAILED_EXPORT_PREFIX}<account>. "
+        "Turn on Standard usage cost or Detailed usage cost to this dataset in Billing, Billing export; "
+        "Google creates the table within a day"
     )
 
 
