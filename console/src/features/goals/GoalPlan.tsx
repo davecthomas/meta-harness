@@ -3,6 +3,7 @@ import { Alert, Anchor, Badge, Button, Card, Code, Group, List, Loader, Modal, S
 import { IconCheck, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanDraft, type PlanItem } from "../../api";
+import { ApiError } from "../../client";
 import { OWN, goalSource, refLabel, trackerTitle } from "../trackers/refs";
 import { SIGNED_ISSUES } from "./provenance";
 import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview";
@@ -12,6 +13,8 @@ import { ErrorAlert, SectionTitle, when } from "../../components/ui";
 
 const CHECKS = /^##\s+acceptance checks\s*$/im;
 const REFRESH_MS = 5000;
+// While an approval creates the plan's tasks, how often the count is read again.
+const APPROVING_MS = 2000;
 
 // The drafts with each one after the drafts it depends on, otherwise as given. A cycle is left as it stands:
 // the planner names it among the plan's reasons.
@@ -223,6 +226,8 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // An approval this page started, or found running: its tasks are being created, and the count is watched.
+  const [watching, setWatching] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -244,8 +249,44 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
     return () => clearInterval(timer);
   }, [drafting, load]);
 
+  // An approval writes each new task to the tracker, which can outlast the browser's wait for an answer. So
+  // the page does not wait on the answer: it reads the plan again every two seconds, shows how many tasks
+  // exist so far, and ends when the goal has started or the approval says why it stopped.
+  const approving = watching || !!shown?.approving;
+  useEffect(() => {
+    if (!approving) return;
+    const timer = setInterval(() => void load(), APPROVING_MS);
+    return () => clearInterval(timer);
+  }, [approving, load]);
+  useEffect(() => {
+    if (!watching || !shown) return;
+    if (shown.status !== "planning") {
+      setWatching(false);
+      setAsking(null);
+      onApproved();
+    } else if (!shown.approving && shown.approve_error) {
+      setWatching(false);
+      setError(`${shown.approve_error}. Approve again to go on: a task already created is not made twice.`);
+    }
+  }, [watching, shown, onApproved]);
+
   const plan = shown?.plan ?? null;
   const drafts = useMemo(() => inOrder(edited ?? plan?.drafts ?? []), [edited, plan]);
+
+  async function approve(tracked: boolean) {
+    setError(null);
+    setWatching(true);
+    try {
+      setShown(await api.approvePlan(goal.id, tracked));
+    } catch (err) {
+      // No answer in time, or one saying an approval is already running: the approval goes on, and the count
+      // on this page is how it is followed. Any other refusal is the answer, and is shown here.
+      const running = !(err instanceof ApiError) || err.status >= 500 || /being approved already/.test(err.detail);
+      if (running) return void load();
+      setWatching(false);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function run(action: () => Promise<Plan>, after?: () => void): Promise<boolean> {
     setBusy(true);
@@ -415,7 +456,36 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
           }}
         />
       )}
-      <Modal opened={asking === "approve"} onClose={() => setAsking(null)} title="Approve the plan" size="lg">
+      <Modal opened={asking === "approve" && !approving && !canApprove} onClose={() => setAsking(null)} title={drafting ? "Still planning" : "Not ready to approve"}>
+        <Stack gap="md" data-testid="approve-not-yet">
+          <Text size="sm">
+            {drafting
+              ? "I'm still writing this plan. It takes a few minutes, and this page shows it as soon as it is ready. Nothing to approve yet."
+              : dirty
+                ? "You have changes to this plan that are not saved. Save them as its next version, then approve."
+                : plan
+                  ? `This plan can't be approved yet: ${plan.invalid.join("; ")}.`
+                  : "There is no plan to approve yet."}
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setAsking(null)}>Close</Button>
+          </Group>
+        </Stack>
+      </Modal>
+      <Modal opened={approving && asking !== "replan"} onClose={() => setAsking(null)} withCloseButton={false} closeOnClickOutside={false} title="Starting the goal" size="lg">
+        <Stack gap="md" data-testid="approve-progress" role="status">
+          <Group gap="sm">
+            <Loader size="sm" />
+            <Text size="sm">
+              {plan && plan.drafts.length > 0
+                ? `Creating its tasks: ${Object.keys(plan.created ?? {}).length} of ${plan.drafts.length} so far.`
+                : "Starting its tasks."}
+            </Text>
+          </Group>
+          <Text size="sm" c="dimmed">Each task is written and checked before it is created, so this can take a few minutes. It keeps going if you leave this page, and there is nothing more to press.</Text>
+        </Stack>
+      </Modal>
+      <Modal opened={asking === "approve" && !approving && canApprove} onClose={() => setAsking(null)} title="Approve the plan" size="lg">
         <Stack gap="md">
           <Text size="sm" data-testid="approve-says">
             {planSentence(base, items)} Then the goal starts: each task runs to a pull request, in the order shown.
@@ -436,9 +506,10 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
           {base.length > 0 && untracked && (
             <Text size="sm" c="dimmed">This goal has no issue tracker: its tasks are kept in the meta-harness only.</Text>
           )}
+          {error && <Alert color="red" title="The plan was not approved" role="alert" data-testid="approve-error"><Text size="sm">{error}</Text></Alert>}
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setAsking(null)}>Not yet</Button>
-            <Button color="teal" loading={busy} onClick={() => void run(() => api.approvePlan(goal.id, untracked ? false : track), onApproved)}>Approve and start</Button>
+            <Button color="teal" onClick={() => void approve(untracked ? false : track)}>Approve and start</Button>
           </Group>
         </Stack>
       </Modal>

@@ -80,9 +80,13 @@ def register(
     def shown(goal: dict) -> dict:
         with db.connect(autocommit=True) as conn:
             plan = plans.latest(conn, goal["id"])
+            approval = plans.approval(conn, goal["id"])
         return {
             "goal_id": goal["id"],
             "status": goal["status"],
+            # An approval is writing the plan's new tasks to the tracker now: `plan.created` grows as each
+            # exists. And why the last approval stopped, when it did not finish.
+            **approval,
             # The planning task still drafting, if one is: its page shows the run.
             "planning_task_id": goal.get("plan_task_id"),
             "approved_at": goal.get("plan_approved_at"),
@@ -177,18 +181,46 @@ def register(
         kept = getattr(writer, "own", None)
         # In the tracker when asked, or when the goal's tracker is the only one there is to write to.
         tracked = getattr(writer, "scheme", "") != OWN and (track or kept is None)
+
+        def claim() -> bool:
+            with db.connect(autocommit=True) as conn:
+                return plans.claim_approval(conn, goal_id)
+
+        def end(error: str | None = None) -> None:
+            with db.connect(autocommit=True) as conn:
+                plans.end_approval(conn, goal_id, error)
+
+        # One approval at a time. It writes each new task to the tracker, which outlasts a browser's wait, and
+        # an operator who saw no answer pressed again: each press created every issue once more.
+        if not await asyncio.to_thread(claim):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "this plan is being approved already: its tasks are being created now, and the goal's page "
+                    "shows each as it appears. Nothing more is needed"
+                ),
+            )
         try:
             await planning.approve(
                 goal, writer if tracked or kept is None else kept, events, who, tracked, originals=writer
             )
+
+            def approved() -> None:
+                with db.connect(autocommit=True) as conn:
+                    plans.set_approved(conn, goal_id)
+
+            await asyncio.to_thread(approved)
+            await activate(goal_id, who)
         except planning.PlanError as err:
+            await asyncio.to_thread(end, str(err))
             code = 502 if str(err).startswith(planning.REFUSED) else 409
             raise HTTPException(status_code=code, detail=str(err)) from err
-
-        def approved() -> None:
-            with db.connect(autocommit=True) as conn:
-                plans.set_approved(conn, goal_id)
-
-        await asyncio.to_thread(approved)
-        await activate(goal_id, who)
+        except BaseException as err:
+            # Whatever stopped it, the claim is let go and the reason kept: the operator whose request timed
+            # out reads it on the goal's page, and approving again carries on from the tasks already created.
+            await asyncio.shield(
+                asyncio.to_thread(end, f"the approval stopped before it finished: {err or type(err).__name__}")
+            )
+            raise
+        await asyncio.to_thread(end)
         return await asyncio.to_thread(shown, load(goal_id))
