@@ -159,6 +159,17 @@ def test_a_ready_task_of_a_goal_that_merges_by_itself_is_seen_through_its_merge(
     assert blocked.owner == "operator" and "approval" in blocked.ask
 
 
+def test_a_ready_task_held_for_an_operator_is_never_sent_to_merge_by_the_supervisor():
+    """Its pull request changes files that run with the control plane's authority: only a person merges it."""
+    for how in ("clean", "conflict", "checks_failed", "checks_pending"):
+        held = decide(_ready(how, held_for_operator=True))
+        assert (held.owner, held.situation, held.action) == ("operator", "merge_held", "")
+        assert "Merge on the task's page" in held.ask
+    from meta_harness.supervisor import moves
+
+    assert moves.ranked("merge_held", _ready("clean", held_for_operator=True)) == ("open_pull_request", "merge")
+
+
 def test_the_supervisors_own_tries_are_bounded_and_then_an_operator_is_asked():
     for how in ("clean", "conflict", "checks_failed"):
         spent = decide(_ready(how, drives_left=False))

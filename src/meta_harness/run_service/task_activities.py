@@ -101,6 +101,7 @@ async def load_task(task_id: str) -> TaskSpec:
         goal_id=task.get("goal_id") or "",
         attempts=int(task.get("attempts") or 1),
         resume=task.get("resume") or "",
+        resume_by=task.get("resume_by") or "",
         retries=int(task.get("retries") or 0),
         task_type=task.get("task_type") or "",
         external_ref=task.get("external_ref") or "",

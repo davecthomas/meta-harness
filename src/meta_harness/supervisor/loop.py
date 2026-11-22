@@ -36,6 +36,7 @@ from typing import Any, Protocol
 from meta_harness import db
 from meta_harness.planner import cost_facts, store as goal_store
 from meta_harness.run_service import code_host
+from meta_harness.run_service.activities import HELD_FOR_OPERATOR
 from meta_harness.run_service.code_host import CodeHostError
 from meta_harness.supervisor import diagnose, failures, ledger, pulls, remedies, standing
 from meta_harness.supervisor.remedies import registry
@@ -220,6 +221,7 @@ class Supervisor:
                 goal=goal["status"] if goal else "none",
                 waiting_on=task.get("waiting_on") or "",
                 cancel_requested=bool(task.get("cancel_requested")),
+                held_for_operator=HELD_FOR_OPERATOR in str(task.get("status_reason") or ""),
                 admitted=admitted,
                 auto_merge=auto_merge,
                 autonomy=str((goal or {}).get("autonomy") or "standard"),

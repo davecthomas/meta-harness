@@ -356,6 +356,7 @@ def test_only_an_ended_task_is_retried_and_only_one_with_a_pull_request_is_merge
     merge = api.post(f"/v1/tasks/{ready['id']}/merge", headers=_as(CALLER_KEY))
     assert merge.status_code == 202
     assert (merge.json()["status"], merge.json()["resume"]) == ("queued", "merge")
+    assert merge.json()["resume_by"] == "operator"
     assert merge.json()["status_reason"] == "ops asked for its pull request's merge"
 
 
@@ -794,6 +795,7 @@ def test_the_supervisor_drives_a_parked_task_a_bounded_number_of_times_with_its_
     driven = drive().json()
 
     assert (driven["status"], driven["resume"], driven["drives"]) == ("queued", "merge", 1)
+    assert driven["resume_by"] == "supervisor", "a merge the supervisor asks for is never taken for an operator's"
     assert Decimal(driven["spent_carried_usd"]) == Decimal("2.50")
     assert driven["status_reason"] == (
         "the code host would take its merge now, so the Task Shepherd asked for its merge (try 1 of 3)"

@@ -1482,7 +1482,8 @@ async def goal_auto_merge(goal_id: str) -> bool:
 
 # Paths whose changes run with the control plane's own authority once merged: CI workflows run with the repo's
 # secrets, and a deploy applies its Terraform as the project's owner and its scripts as root on the VM. A pull
-# request that changes one is never merged on a model's review alone: an operator asks for the merge.
+# request that changes one is never merged on a model's review alone: an operator asks for the merge. The
+# supervisor's merge of an auto-merge goal's ready task does not count as one.
 OPERATOR_MERGE_PATHS = (".github/", "deploy/")
 HELD_FOR_OPERATOR = "held for an operator"
 
@@ -1541,7 +1542,7 @@ async def merge_pr(request: MergeRequest) -> MergeResult:
                 state, sha, head, detail = await code_host.merge_local(request.repo, request.base, request.head_sha)
             else:
                 repo, number = code_host.pr_number(request.pr_url)
-                if not request.asked_for and (held := await operator_merge_paths(repo, number)):
+                if not request.by_operator and (held := await operator_merge_paths(repo, number)):
                     shown = ", ".join(held[:5]) + (f" and {len(held) - 5} more" if len(held) > 5 else "")
                     return MergeResult(
                         state="blocked",

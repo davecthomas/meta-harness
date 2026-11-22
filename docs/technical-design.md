@@ -891,7 +891,9 @@ to the checks and a new review. A pull request that changes a file under
 `auto_merge` says. A workflow runs with the repo's secrets, and a deploy
 applies its Terraform as the project's owner and its scripts as root on the
 VM. The task ends `ready`, naming the paths, and an operator's Merge takes it
-through. Merges are one at a time per repo. The run service's merge activity
+through. Only an operator's does: the task records who sent it back
+(`resume_by`), the workflow tells the merge activity, and a merge the
+supervisor asks for is held like any other. Merges are one at a time per repo. The run service's merge activity
 holds the repo's merge lock, a Postgres advisory lock, from checking the
 branch to merging it. A branch that lacks the base's newest commits, because
 another task's pull request merged while it was reviewed, is not merged. The
@@ -2305,7 +2307,9 @@ sees the merge through. The pull request stands `clean`, `conflict`,
 `checks_failed`, `checks_pending`, `blocked` or `unknown`, read from its
 `mergeable` and `mergeable_state` and its head commit's checks. `blocked` with
 the checks passed means a rule on the branch wants what only a person gives,
-an approval or an exception. That task is an operator's. The supervisor sends
+an approval or an exception. That task is an operator's. So is one whose
+merge is held because its pull request changes `.github/` or `deploy/`
+(`merge_held`): the supervisor never asks for that merge. The supervisor sends
 one task back at most three times between an operator's retries (`drives`).
 After that the task is an operator's, and its standing says the tries are used
 up.

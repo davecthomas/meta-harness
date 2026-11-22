@@ -85,6 +85,9 @@ class Facts:
     admitted: bool = False
     # Whether the task's goal merges clean pull requests itself.
     auto_merge: bool = False
+    # Whether the task's merge is held for an operator: its pull request changes a path that runs with the
+    # control plane's own authority once merged, which no review merges alone.
+    held_for_operator: bool = False
     # For a parked task with an open pull request: how the pull request stands for a merge.
     mergeable: str = "unknown"
     # Whether the supervisor may still send the task back by itself: it has not used up its tries.
@@ -445,6 +448,14 @@ def _parked(facts: Facts) -> Decision:
             "review_unresolved",
             "its review loop ended without a clean review, and its pull request is open",
             ask="Retry it, with a stronger model when one has not tried, or merge it as it is.",
+        )
+    if facts.held_for_operator:
+        return Decision(
+            "operator",
+            "merge_held",
+            "its review is clean, and its pull request changes files that run with the control plane's own "
+            "authority once merged, which only a person merges",
+            ask="Read the change on the pull request, then press Merge on the task's page.",
         )
     if facts.auto_merge and facts.goal in SWEPT:
         return _to_merge(facts)

@@ -385,7 +385,11 @@ async def test_merge_pr_holds_a_change_to_ci_or_deploy_files_for_an_operator(mon
     assert held.detail.startswith("held for an operator: it changes .github/workflows/deploy.yml, deploy/vm/boot.sh")
     assert "use Merge on the task's page" in held.detail
 
+    # The supervisor's merge of an auto-merge goal's task is asked for, and is still not an operator's.
     request.asked_for = True
+    assert (await ActivityEnvironment().run(activities.merge_pr, request)).state == "blocked" and merges == []
+
+    request.by_operator = True
     assert (await ActivityEnvironment().run(activities.merge_pr, request)).state == "merged" and merges == [7]
 
 
