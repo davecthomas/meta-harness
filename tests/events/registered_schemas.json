@@ -608,6 +608,34 @@
     ],
     "type": "object"
   },
+  "issue_parent_refused v1": {
+    "additionalProperties": true,
+    "properties": {
+      "action": {
+        "type": "string"
+      },
+      "from_ref": {
+        "type": "string"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "parent": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ref",
+      "parent",
+      "from_ref",
+      "goal_id",
+      "action"
+    ],
+    "type": "object"
+  },
   "kill_switch_changed v1": {
     "additionalProperties": true,
     "properties": {

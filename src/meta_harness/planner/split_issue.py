@@ -2,7 +2,9 @@
 planner's own (auto_split.py).
 
 Each part must be a complete issue (splits.lacking), gets the goal's label and a `Split from` line, and is
-created in the held issue's repo. The split is claimed first, so it happens once, and what was created is
+created in the held issue's repo, under the held issue's parent when it has one (a Jira epic, say). A parent the
+tracker refuses is left off the part and recorded as an `issue_parent_refused` event, which says to set it by
+hand; the split goes on. The split is claimed first, so it happens once, and what was created is
 recorded as the split even when the tracker refuses partway, so nothing is created twice. The original gets a
 comment naming its parts (splits.announce).
 """
@@ -78,6 +80,8 @@ async def split_issue(
         # Each part says it came from the goal, and who split it: an operator, or the planner itself.
         signed = provenance.Provenance(provenance.ISSUE, goal=goal_id, by=who)
         where = getattr(writer, "scheme", "") or ref
+        # Each part goes where the original is in the tracker's hierarchy: under its parent, if it has one.
+        parent = getattr(await writer.read(ref), "parent", None)
         for title, body in parts:
             # The part's own words go through the writing pass; its Split from line and provenance are added
             # after, and the whole goes out as composed.
@@ -88,8 +92,11 @@ async def split_issue(
                 splits.with_origin(str(checked), ref), where, outbound.BODY, outbound.FIXED, provenance=signed
             )
             name = await outbound.for_tracker(title.strip(), where, outbound.TITLE, outbound.GENERATED)
-            made = await writer.create_issue(repo, name, text, [label] if label else [])
+            under = {"parent": parent} if parent else {}
+            made = await writer.create_issue(repo, name, text, [label] if label else [], **under)
             created.append(made.ref)
+            if parent and made.parent != parent:
+                parent_refused(events, goal_id, ref, made.ref, parent)
             # A person the tracker refuses is reported, and the part stays as created.
             await assignees.assign_new(goal, writer, made.ref, repo, events, who)
     except TrackerError as err:
@@ -103,3 +110,21 @@ async def split_issue(
     audit(created, await asyncio.to_thread(record, created))
     await splits.announce(writer, ref, created, goal_id=goal_id, by=who)
     return created
+
+
+def parent_refused(events: Any, goal_id: str, original: str, part: str, parent: str) -> None:
+    """Records that a split's part was created without its original's parent, which the tracker refused, and
+    what a person does about it."""
+    events.emit(
+        "issue_parent_refused",
+        {
+            "ref": part,
+            "parent": parent,
+            "from_ref": original,
+            "goal_id": goal_id,
+            "action": f"The tracker refused {parent} as the parent of {part}, split from {original}, so {part} was "
+            f"created without a parent. Set its parent to {parent} in the tracker, or move it where it belongs.",
+        },
+        actor="planner",
+        tags={"goal_id": goal_id},
+    )

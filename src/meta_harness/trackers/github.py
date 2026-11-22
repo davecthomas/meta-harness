@@ -153,8 +153,11 @@ class GitHubTracker:
             if err.status != 422:
                 raise
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
-        """Creates one issue. Only the planner calls it, and only for a plan an operator approved."""
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue:
+        """Creates one issue. Only the planner calls it, and only for a plan an operator approved. A GitHub
+        issue has no parent here, so parent is ignored."""
         outbound.require(title, "an issue's title", outbound.GITHUB, title=True)
         outbound.require(body, "an issue's body", outbound.GITHUB)
         carried = list(dict.fromkeys([*labels, self.label()]))
