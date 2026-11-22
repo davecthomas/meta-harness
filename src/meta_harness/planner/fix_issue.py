@@ -19,8 +19,10 @@ under `More acceptance checks` or `More paths`, as the issue has the first headi
 through `outbound.prepare` as a person's words, with the goal and operator as its provenance. The issue is
 then labeled as the meta-harness's and sized again, so its card shows what it lacks now.
 
-An issue whose task has not ended is refused (409) by both routes: its run read the issue already, so a change
-would not reach it. A draft the model cannot give answers 502, and nothing changes.
+An issue whose task has not ended is left as it is (409) by both routes: its run read the issue already, so a
+change would not reach it. An accept refused so keeps the operator's draft on the issue's link (issue_fix.py),
+and once the task ends fix-draft offers that draft again with no model call, for the next run. An accept that
+writes the issue clears it. A draft the model cannot give answers 502, and nothing changes.
 
 Environment: GATEWAY_URL and GATEWAY_API_KEY, the HTTP Gateway the meta-harness calls.
 """
@@ -38,7 +40,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import charter, db, outbound, retrying
 from meta_harness.outbound import rules as writing_rules
-from meta_harness.planner import repos, sizing, store
+from meta_harness.planner import issue_fix, repos, sizing, store
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.planner.tracker import Issue, acceptance_checks, issue_paths
 from meta_harness.run_service.provenance import ISSUE, Provenance
@@ -243,6 +245,8 @@ def known_paths(goal_id: str, repo: str, ref: str) -> list[str]:
 
 class FixDraftIn(BaseModel):
     ref: str = Field(min_length=1, max_length=300)
+    # True: draft again with the model, past a draft kept while the issue's task ran.
+    fresh: bool = False
 
 
 class FixPartIn(BaseModel):
@@ -281,25 +285,24 @@ def register(
             raise HTTPException(status_code=409, detail=f"{ref} is {link['state']}: only an open issue is changed")
         return goal, link
 
-    async def not_running(link: dict) -> None:
-        """Refuse (409) an issue whose task has not ended: its run read the issue already."""
+    async def running(link: dict) -> str | None:
+        """Why the issue is left as it is when its task has not ended (its run read the issue already), else
+        None. 502 when the task cannot be read."""
         task_id = link.get("task_id")
         if not task_id:
-            return
+            return None
         try:
             task = await asyncio.to_thread(tasks.get, task_id)
         except TaskApiError as err:
             if err.status == 404:
-                return
+                return None
             raise HTTPException(status_code=502, detail=f"could not read task {task_id}: {err}") from err
-        if task.get("status") not in TASK_ENDED:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"{link['ref']}'s task {task_id} is {task.get('status')}, and its run has the issue's text "
-                    "already. The change can be accepted once the task ends"
-                ),
-            )
+        if task.get("status") in TASK_ENDED:
+            return None
+        return (
+            f"{link['ref']}'s task {task_id} is {task.get('status')}, and its run has the issue's text already, "
+            "so the issue is left as it is"
+        )
 
     async def open_issue(goal: dict, ref: str) -> Issue:
         """The issue as the tracker has it now. 502 when it cannot be read, 409 when it is closed."""
@@ -319,8 +322,27 @@ def register(
         parts = marked_parts(link.get("sizing"))
         if not parts:
             raise HTTPException(status_code=409, detail=f"{body.ref}'s sizing marks nothing missing or doubted")
-        await not_running(link)
+        kept = await asyncio.to_thread(issue_fix.kept, goal_id, body.ref)
+        if why := await running(link):
+            later = "Its kept draft is offered once the task ends" if kept else "Fix with AI once the task ends"
+            raise HTTPException(status_code=409, detail=f"{why}. {later}")
         issue = await open_issue(goal, body.ref)
+        if kept and not body.fresh:
+            return {
+                "ref": body.ref,
+                "kept": True,
+                "drafts": [
+                    {
+                        "part": given["part"],
+                        "heading": heading_for(given["part"], issue),
+                        "doubted": bool(parts.get(given["part"])),
+                        "reason": parts.get(given["part"], ""),
+                        "text": given["text"],
+                    }
+                    for given in kept["parts"]
+                    if given.get("part") in HEADINGS
+                ],
+            }
         paths = await asyncio.to_thread(known_paths, goal_id, issue.repo or link["repo"], body.ref)
         registered = repos.get(issue.repo or link["repo"])
         try:
@@ -335,6 +357,7 @@ def register(
         )
         return {
             "ref": body.ref,
+            "kept": False,
             "drafts": [
                 {
                     "part": part,
@@ -351,9 +374,23 @@ def register(
     async def fix_accept(goal_id: str, body: FixAcceptIn, who: str = Depends(operator)) -> dict:
         """Write each part the operator accepted to the issue, label it as the meta-harness's and size it again."""
         goal, link = await asyncio.to_thread(held_link, goal_id, body.ref)
-        await not_running(link)
         if len({p.part for p in body.parts}) != len(body.parts):
             raise HTTPException(status_code=422, detail="each part may be given once")
+        try:
+            for given in body.parts:
+                section_text(given.part, given.text)
+        except ValueError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
+        if why := await running(link):
+            parts = [{"part": p.part, "text": p.text} for p in body.parts]
+            await asyncio.to_thread(issue_fix.keep, goal_id, body.ref, parts, who)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{why}. The draft is kept: Fix with AI offers it again once the task ends, and it can be "
+                    "accepted once the task ends"
+                ),
+            )
         issue = await open_issue(goal, body.ref)
         sections: list[tuple[str, str]] = []
         try:
@@ -381,6 +418,7 @@ def register(
             raise HTTPException(
                 status_code=502, detail=f"the tracker refused the change: {err}{written(added)}"
             ) from err
+        await asyncio.to_thread(issue_fix.clear, goal_id, body.ref)
         sized, error = await size_again(goal, link, body.ref)
         if goal["status"] == "active":
             asyncio.create_task(swept(goal))
