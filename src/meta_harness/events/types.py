@@ -560,6 +560,21 @@ REGISTRY: list[EventType] = [
             ["ref", "goal_id", "issues"],
         ),
     ),
+    # A split's part created without its original's parent, which the tracker refused (planner/split_issue.py).
+    EventType(
+        "issue_parent_refused",
+        1,
+        _object(
+            {
+                "ref": {"type": "string"},
+                "parent": {"type": "string"},
+                "from_ref": {"type": "string"},
+                "goal_id": {"type": "string"},
+                "action": {"type": "string"},
+            },
+            ["ref", "parent", "from_ref", "goal_id", "action"],
+        ),
+    ),
     # The issue the planner filed for a merged pull request's follow-up findings (planner/follow_ups.py).
     EventType(
         "follow_ups_filed",
@@ -610,6 +625,22 @@ REGISTRY: list[EventType] = [
         "issue_added",
         1,
         _object({"ref": {"type": "string"}, "goal_id": {"type": "string"}}, ["ref", "goal_id"]),
+    ),
+    # The planner could not assign a goal's issue to the person the goal names, or its owner
+    # (planner/assignees.py): the issue, the person, why, and what the operator can do.
+    EventType(
+        "issue_not_assigned",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "ref": {"type": "string"},
+                "person": {"type": "string"},
+                "reason": {"type": "string"},
+                "todo": {"type": "string"},
+            },
+            ["goal_id", "ref", "person", "reason", "todo"],
+        ),
     ),
     # A feature goal's plan: a planning task asked for, a plan version saved, and the plan approved
     EventType(
@@ -678,6 +709,22 @@ REGISTRY: list[EventType] = [
                 "goal_id": {"type": "string"},
                 "ref": {"type": "string"},
                 "parts": {"type": "integer"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "ref", "parts", "model", "usd_cost"],
+        ),
+    ),
+    # A model drafted what a goal's issue lacks, the parts its sizing marked, for an operator to edit and accept
+    # (planner/fix_issue.py): one model call. parts names those drafted.
+    EventType(
+        "issue_fix_drafted",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "ref": {"type": "string"},
+                "parts": {"type": "array", "items": {"type": "string"}},
                 "model": {"type": "string"},
                 "usd_cost": {"type": "string"},
             },

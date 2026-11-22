@@ -5,6 +5,7 @@ An issue's ref is `github:<owner>/<repo>#<number>`. Every call goes through the 
 """
 
 import re
+from typing import Any
 
 from meta_harness import outbound
 from meta_harness.github_app import GitHubAppError, GitHubApps
@@ -21,6 +22,7 @@ from meta_harness.trackers.base import (
     Supported,
     TrackerError,
     assignee_setting,
+    check_assignee,
     check_section,
     configured_label,
     unknown_person,
@@ -88,6 +90,12 @@ def _issue(repo: str, data: dict) -> Issue:
     )
 
 
+def check_goal(settings: dict[str, Any], site: dict[str, Any] | None = None) -> list[str]:
+    """Why a goal's GitHub settings cannot be used; empty when they can. Its one setting, `assignee`, is a
+    login when it is set."""
+    return check_assignee(settings, lambda value: bool(LOGIN.match(value)), "a GitHub login, such as octocat")
+
+
 class GitHubTracker:
     scheme = SCHEME
     # A pull request's `Closes` line links it to its issue and closes the issue on merge: nothing to tell.
@@ -153,8 +161,11 @@ class GitHubTracker:
             if err.status != 422:
                 raise
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
-        """Creates one issue. Only the planner calls it, and only for a plan an operator approved."""
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue:
+        """Creates one issue. Only the planner calls it, and only for a plan an operator approved. A GitHub
+        issue has no parent here, so parent is ignored."""
         outbound.require(title, "an issue's title", outbound.GITHUB, title=True)
         outbound.require(body, "an issue's body", outbound.GITHUB)
         carried = list(dict.fromkeys([*labels, self.label()]))
@@ -248,6 +259,13 @@ class GitHubTracker:
                 return found
             page += 1
 
+    async def people(self, repo: str) -> list[dict[str, str]]:
+        """The logins the repo's issues can be assigned to, each named by itself."""
+        if not REPO.match(repo):
+            raise TrackerError(f"{repo!r} is not a repo's owner/name, such as octo/api", retryable=False)
+        logins = await self._assignable_users(repo)
+        return [{"value": login, "label": login} for login in sorted(logins.values(), key=str.lower)]
+
     async def choices(self, setting: str, scope: dict[str, str] | None = None) -> list[dict[str, str]]:
         """What the console offers for a setting, so a name is picked and not typed.
 
@@ -259,13 +277,15 @@ class GitHubTracker:
             return []
         given = f"{(scope or {}).get('repos', '')},{(scope or {}).get('repo', '')}"
         repos = list(dict.fromkeys(name.strip() for name in given.split(",") if name.strip()))
-        common: dict[str, str] | None = None
+        common: list[dict[str, str]] | None = None
         for repo in repos:
-            if not REPO.match(repo):
-                raise TrackerError(f"{repo!r} is not a repo's owner/name, such as octo/api", retryable=False)
-            logins = await self._assignable_users(repo)
-            common = logins if common is None else {key: login for key, login in common.items() if key in logins}
-        return [{"value": login, "label": login} for login in sorted((common or {}).values(), key=str.lower)]
+            found = await self.people(repo)
+            if common is None:
+                common = found
+            else:
+                logins = {person["value"].lower() for person in found}
+                common = [person for person in common if person["value"].lower() in logins]
+        return common or []
 
     def bound(self, source: Source) -> "GitHubTracker":
         """A repo's issues are the repo's own: a goal's repos are all GitHub needs, and each call names one."""
@@ -285,4 +305,5 @@ SPEC = Supported(
     "Each repo's issues are its own GitHub issues, read and written through the repo owner's GitHub App.",
     build=GitHubTracker,
     goal_settings=[assignee_setting("the people who can be assigned issues in all the goal's repos, by login")],
+    check_goal=check_goal,
 )

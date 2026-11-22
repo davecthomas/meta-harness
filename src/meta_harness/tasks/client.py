@@ -48,9 +48,22 @@ class TaskClient:
     def get(self, task_id: str) -> dict:
         return self._call("GET", f"/v1/tasks/{task_id}")
 
-    def retry(self, task_id: str, max_usd: str | None = None, actor: str | None = None) -> dict:
-        """Send a review_unresolved, failed or canceled task back to the queue, against max_usd when given."""
-        return self._call("POST", f"/v1/tasks/{task_id}/retry", actor=actor, json={"max_usd": max_usd})
+    def retry(
+        self, task_id: str, max_usd: str | None = None, actor: str | None = None, complexity: str | None = None
+    ) -> dict:
+        """Send a review_unresolved, failed or canceled task back to the queue, against max_usd when given.
+        complexity high: its next runs are on a stronger model."""
+        body = {"max_usd": max_usd} | ({"complexity": complexity} if complexity else {})
+        return self._call("POST", f"/v1/tasks/{task_id}/retry", actor=actor, json=body)
+
+    def merge(self, task_id: str, actor: str | None = None) -> dict:
+        """Ask for a ready or review_unresolved task's pull request to be merged, as an operator's Merge does."""
+        return self._call("POST", f"/v1/tasks/{task_id}/merge", actor=actor)
+
+    def restart(self, task_id: str, max_usd: str | None = None, actor: str | None = None) -> dict:
+        """Start a task with a pull request over: the pull request is closed and the task runs fresh from the
+        current base, as an operator's Start over does."""
+        return self._call("POST", f"/v1/tasks/{task_id}/restart", actor=actor, json={"max_usd": max_usd})
 
     def find(self, external_ref: str) -> dict:
         return self._call("GET", "/v1/tasks", params={"external_ref": external_ref})

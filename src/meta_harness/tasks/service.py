@@ -132,7 +132,8 @@ class RecoverIn(BaseModel):
 
 class DriveIn(BaseModel):
     # merge: ask for the pull request's merge. review: send it back through checks, review and fixes.
-    action: Literal["merge", "review", "retry"]
+    # restart: close the pull request and run the task fresh from the current base.
+    action: Literal["merge", "review", "retry", "restart"]
     # What the supervisor found, which the task's reason carries.
     why: str = Field(min_length=1, max_length=500)
     spent_usd: Decimal = Field(default=Decimal(0), ge=0)
@@ -157,7 +158,23 @@ def requested(task: dict) -> dict | None:
     """What a task held for budget asks for, as numbers (budget_request.parse); None for any other task."""
     if task.get("status") != "running" or task.get("waiting_on") != "budget":
         return None
-    return budget_request.parse(task.get("status_reason"))
+    request = budget_request.parse(task.get("status_reason"))
+    if request and request.get("for") == "task" and task.get("max_usd") is not None:
+        # The hold's sentence counts from what the task had left when its workflow started. The limit to
+        # raise is the task's whole one, which is more by what its earlier runs spent: a raise worked out
+        # from the sentence alone came out below the limit the task already had, and was refused.
+        from meta_harness.config import store as config_store
+
+        limit = Decimal(str(task["max_usd"]))
+        to = limit + Decimal(request["add_usd"])
+        ceiling = config_store.task_spend_ceiling()
+        request |= {
+            "limit_usd": f"{limit:.2f}",
+            "to_usd": f"{to:.2f}",
+            "ceiling_usd": f"{ceiling:.2f}",
+            "over_ceiling": to > ceiling,
+        }
+    return request
 
 
 def create_app(

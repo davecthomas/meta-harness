@@ -57,6 +57,21 @@ async def test_an_issue_the_github_adapter_creates_or_closes_carries_the_meta_ha
     assert [call[2] for call in apps.calls[-2:]] == ["/repos/o/r/issues/8/labels", "/repos/o/r/issues/8"]
 
 
+async def test_the_github_adapter_creates_the_same_issue_when_given_a_parent():
+    """The GitHub adapter sets no parent, so an issue given one is created as it always was."""
+    plain, under = Apps({("POST", "/repos/o/r/issues"): ISSUE}), Apps({("POST", "/repos/o/r/issues"): ISSUE})
+
+    made = await GitHubTracker(plain).create_issue("o/r", "Fix it", "Body.", ["mh"])
+    with_parent = await GitHubTracker(under).create_issue("o/r", "Fix it", "Body.", ["mh"], parent="github:o/r#1")
+
+    assert under.calls == plain.calls, "the parent changes nothing GitHub is asked"
+    assert with_parent == made and with_parent.parent is None
+
+    # The router passes the parent on, and the GitHub adapter still ignores it.
+    routed = Trackers([GitHubTracker(Apps({("POST", "/repos/o/r/issues"): ISSUE}))], default=lambda: "github")
+    assert await routed.create_issue("o/r", "Fix it", "Body.", ["mh"], parent="github:o/r#1") == made
+
+
 def test_the_label_is_the_deployments_or_the_usual_one_and_a_label_no_tracker_could_hold_is_refused():
     assert registry.check({"default": "github", "trackers": {"github": {}}}, None) == []
     assert registry.check({"default": "github", "trackers": {"github": {}}, "label": "team-bot"}, None) == []
@@ -202,6 +217,7 @@ def test_the_registry_is_each_adapters_own_description_and_checks_a_configuratio
         ("project", "choice", True),
         ("assigned", "switch", False),
         ("assignee", "choice", False),
+        ("parent", "choice", False),
     ]
     assert jira.takes_assigned({"assigned": "yes"}) and not jira.takes_assigned({})
     assert not registry.SUPPORTED["github"].takes_assigned({"assigned": "yes"})

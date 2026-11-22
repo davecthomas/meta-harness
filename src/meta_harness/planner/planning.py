@@ -7,7 +7,9 @@ calls create_issue once per issue; each call is an issue_drafted event. When the
 become the goal's plan, version 1. An operator edits it (each save a new version), asks for a new plan with a
 note (a new planning task), or approves it. On approval the planner creates the issues on the code host, in
 dependency order, with the goal's label, and the goal becomes active: its sweep takes the issues in as it
-takes any labeled issue.
+takes any labeled issue. A goal whose tracker settings name a `parent` (a Jira epic) has each issue created
+under it in its own tracker. A parent the tracker refuses is left off and recorded as an
+`issue_parent_refused` event that says what to do, and the approval goes on.
 
 Only the control plane writes to the code host: the planning run proposes, and this module creates.
 """
@@ -22,7 +24,7 @@ from meta_harness.config import kinds as config_kinds
 from meta_harness.config import store as config_store
 from meta_harness.planner import voice
 from meta_harness.trackers.base import TrackerError
-from meta_harness.planner import plans, splits, store
+from meta_harness.planner import assignees, plans, splits, store
 from meta_harness.planner.drafting import PLANNER_CONFIG_PATH
 from meta_harness.planner.tracker import Issue, ref_for
 from meta_harness.run_service import provenance, writing
@@ -53,7 +55,9 @@ class Events(Protocol):
 class IssueWriter(Protocol):
     async def ensure_label(self, repo: str, label: str) -> None: ...
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue: ...
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue: ...
 
 
 # Which goals are planned before their tasks run: every goal, or only one that plans its issues from its
@@ -360,6 +364,25 @@ def edit(
     return plan
 
 
+def parent_refused(events: Events, goal_id: str, ref: str, parent: str, from_ref: str = "") -> None:
+    """Records that a plan's issue was created without the goal's parent, which the tracker refused, and what a
+    person does about it. from_ref: the issue the plan split into this one, "" for a new task."""
+    events.emit(
+        "issue_parent_refused",
+        {
+            "ref": ref,
+            "parent": parent,
+            "from_ref": from_ref,
+            "goal_id": goal_id,
+            "action": f"The tracker refused {parent}, the goal's parent, as the parent of {ref}, an issue of the "
+            f"goal's plan, so {ref} was created without a parent. Set its parent to {parent} in the tracker, and "
+            "check the goal's parent setting names an epic of its project.",
+        },
+        actor="planner",
+        tags={"goal_id": goal_id},
+    )
+
+
 def issue_body(draft: dict[str, Any], created: dict[str, str]) -> str:
     """A draft's body as its issue's: with a Depends on: line naming the issues its dependencies became."""
     names = []
@@ -405,6 +428,9 @@ async def approve(
     if plan["invalid"]:
         raise PlanError(f"the plan cannot be approved: {'; '.join(plan['invalid'])}")
     label = goal["label"] or goal_label(goal)
+    # The issue the goal's tracker settings name to hold its plan's issues; only the goal's own tracker has it.
+    parent = str((goal.get("tracker_settings") or {}).get("parent") or "").strip() if tracked else ""
+    under = {"parent": parent} if parent else {}
     created: dict[str, str] = dict(plan["created"])
     # Each new task that takes the place of an issue the plan split, and that issue: its body says where it came from.
     origin = {
@@ -437,9 +463,11 @@ async def approve(
             signed = provenance.Provenance(provenance.ISSUE, goal=goal["id"], task=plan.get("task_id") or "", by=who)
             text = await outbound.for_tracker(text, where, outbound.BODY, outbound.FIXED, provenance=signed)
             title = await outbound.for_tracker(draft["title"], where, outbound.TITLE, outbound.GENERATED)
-            issue = await writer.create_issue(draft["repo"], title, text, labels)
+            issue = await writer.create_issue(draft["repo"], title, text, labels, **under)
             ref = issue.ref or ref_for(draft["repo"], issue.number)
             created[draft["draft_id"]] = ref
+            if parent and getattr(issue, "parent", None) != parent:
+                parent_refused(events, goal["id"], ref, parent, origin.get(draft["draft_id"], ""))
 
             # What it waits on, as refs: the plan's word, kept beside the Depends on: line in its text, which a
             # tracker reads only for its own kind of issue.
@@ -460,6 +488,8 @@ async def approve(
                 actor=who,
                 tags={"goal_id": goal["id"]},
             )
+            # Assigned once it is noted, so a person the tracker refuses never costs the issue: it is reported.
+            await assignees.assign_new(goal, writer, ref, draft["repo"], events)
     except TrackerError as err:
         made = f" after creating {len(created)} of {len(plan['drafts'])} issues" if created else ""
         raise PlanError(f"{REFUSED}{made}: {err}. Approve again to carry on") from err

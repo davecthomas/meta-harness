@@ -11,6 +11,8 @@
     POST       /v1/goals/enrich               a more detailed statement a model proposes; saves nothing (enrich.py)
     POST       /v1/goals/{id}/enrich/accept   save the statement the operator edited from a proposal (enrich.py)
     POST       /v1/goals/{id}/issues/run-anyway, /split   answer an issue the sweep held (sizing_api.py)
+    GET, POST  /v1/goals/{id}/unstick         take each stuck task's recommended step, or say what it would do (unstick_api.py)
+    POST       /v1/goals/{id}/issues/fix-draft, /fix-accept  draft and write what an issue lacks (fix_issue.py)
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
     GET, POST  /v1/admin/users                the console's users: invite, set a role, deprovision (users.py)
     GET        /v1/costs                      costs over time, by source, goal, model and more (costs/api.py)
@@ -66,6 +68,7 @@ from meta_harness.planner import (
     cost_facts,
     drafting,
     enrich,
+    fix_issue,
     goal_costs,
     merge_checks,
     naming,
@@ -81,6 +84,7 @@ from meta_harness.planner import (
     updates,
     sizing_api,
     store,
+    unstick_api,
     users,
 )
 from meta_harness.planner.sweep import (
@@ -425,6 +429,16 @@ def create_app(
             else:
                 app.state.update_errors.pop(goal["id"], None)
 
+    async def refresh_overview() -> None:
+        """A new Overview report when a goal changed (overview.py). A failure is logged there, and the next pass
+        tries again: the report never stops a sweep."""
+        try:
+            await app.state.overview.refresh()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001 - logged; the next pass tries again
+            log.error("planner: the Overview report could not be refreshed: %s: %s", type(err).__name__, err)
+
     def planning_goals() -> list[dict]:
         with app.state.pool.connection() as conn:
             return store.list_goals(conn, ["planning"])
@@ -485,6 +499,7 @@ def create_app(
 
             await each(await listed(planning_goals, "plans"), collect, "collecting of its plan")
             await update_goals()
+            await refresh_overview()
             # Tasks with no short name yet get one. A failure leaves them showing their titles.
             try:
                 await naming.name_unnamed(tasks, events, namer)
@@ -613,6 +628,7 @@ def create_app(
     drafting.check_settings()
     enrich.check_settings()
     sizing.check_settings()
+    fix_issue.check_settings()
     costs_api.check_settings()
     planning.check_settings()
     overview.check_settings()
@@ -1597,7 +1613,8 @@ def create_app(
 
     plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again)
     budget_api.register(app, operator, load, change_with, events, tasks)
-    sizing_api.register(app, operator, load, events, tracker, sweep_one)
+    sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size)
+    unstick_api.register(app, operator, load, tasks)
     enrich.register(app, operator, load, events, registered, open_issues, bound_tracker, enricher)
     users.register(app, operator, events)
     app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)

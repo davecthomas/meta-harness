@@ -248,6 +248,33 @@ def test_a_task_held_for_budget_is_read_with_what_it_asks_for_and_any_other_task
     assert api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["budget_request"] is None
 
 
+def test_a_task_with_spend_carried_asks_for_a_raise_of_its_whole_limit_and_its_workflow_gets_the_rest(api):
+    """The hold's sentence counts from what the task had left when its workflow started. Read alone, it asked
+    for a limit below the one the task had, which the Task API refused, so nobody could raise it."""
+    from meta_harness import budget_request, db
+
+    task = _held(api)
+    with db.connect(autocommit=True) as conn:
+        conn.execute("UPDATE tasks.task SET spent_carried_usd = 6.15 WHERE id = %s", (task["id"],))
+    reason = budget_request.hold_reason("fix run 14", "1.14", budget_request.task_why("0.71", "3.85"))
+    held = {"status": "running", "reason": reason, "waiting_on": "budget"}
+    api.post(f"/v1/tasks/{task['id']}/status", json=held, headers=_as(SERVICE_KEY))
+
+    asked = api.get(f"/v1/tasks/{task['id']}", headers=_as(CALLER_KEY)).json()["budget_request"]
+    assert (asked["limit_usd"], asked["add_usd"], asked["to_usd"]) == ("10.00", "1", "11.00")
+    assert asked["over_ceiling"] is False and Decimal(asked["ceiling_usd"]) >= Decimal("11")
+
+    raise_it = {"action": "raise", "max_usd": asked["to_usd"]}
+    assert api.post(f"/v1/tasks/{task['id']}/budget", json=raise_it, headers=_as(CALLER_KEY)).status_code == 202
+    with db.connect(autocommit=True) as conn:
+        sent = conn.execute(
+            "SELECT body FROM tasks.task_message WHERE task_id = %s ORDER BY id DESC LIMIT 1", (task["id"],)
+        ).fetchone()[0]
+    assert sent.startswith("raise:") and Decimal(sent.partition(":")[2]) == Decimal("4.85"), (
+        "the workflow counts only its own runs, so its limit is the new one less what the earlier runs spent"
+    )
+
+
 def test_raising_a_held_tasks_limit_saves_it_and_queues_the_answer_for_its_workflow(api, events):
     task = _held(api)
 
@@ -356,6 +383,7 @@ def test_only_an_ended_task_is_retried_and_only_one_with_a_pull_request_is_merge
     merge = api.post(f"/v1/tasks/{ready['id']}/merge", headers=_as(CALLER_KEY))
     assert merge.status_code == 202
     assert (merge.json()["status"], merge.json()["resume"]) == ("queued", "merge")
+    assert merge.json()["resume_by"] == "operator"
     assert merge.json()["status_reason"] == "ops asked for its pull request's merge"
 
 
@@ -794,6 +822,7 @@ def test_the_supervisor_drives_a_parked_task_a_bounded_number_of_times_with_its_
     driven = drive().json()
 
     assert (driven["status"], driven["resume"], driven["drives"]) == ("queued", "merge", 1)
+    assert driven["resume_by"] == "supervisor", "a merge the supervisor asks for is never taken for an operator's"
     assert Decimal(driven["spent_carried_usd"]) == Decimal("2.50")
     assert driven["status_reason"] == (
         "the code host would take its merge now, so the Task Shepherd asked for its merge (try 1 of 3)"
@@ -809,6 +838,28 @@ def test_the_supervisor_drives_a_parked_task_a_bounded_number_of_times_with_its_
     # An operator's own action starts the count again, and from nothing spent.
     merged = api.post(f"/v1/tasks/{task['id']}/merge", headers=_as(CALLER_KEY)).json()
     assert merged["drives"] == 0 and Decimal(merged["spent_carried_usd"]) == 0
+
+
+def test_the_supervisor_starts_a_parked_task_over_with_its_tries_and_spend_counted_from_nothing(api, events):
+    task = api.post("/v1/tasks", json=_task(), headers=_as(CALLER_KEY)).json()
+    api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+    parked = {"status": "review_unresolved", "pr_url": "https://github.com/o/r/pull/9"}
+    api.post(f"/v1/tasks/{task['id']}/status", json=parked, headers=_as(SERVICE_KEY))
+    for _ in range(3):
+        again = {"action": "review", "why": "its pull request conflicts with its base", "spent_usd": "6"}
+        assert api.post(f"/v1/tasks/{task['id']}/drive", json=again, headers=_as(SERVICE_KEY)).status_code == 202
+        api.post(f"/v1/tasks/{task['id']}/status", json={"status": "running"}, headers=_as(SERVICE_KEY))
+        api.post(f"/v1/tasks/{task['id']}/status", json=parked, headers=_as(SERVICE_KEY))
+
+    over = {"action": "restart", "why": "the fix runs did not resolve its conflict", "spent_usd": "0", "counted": False}
+    started = api.post(f"/v1/tasks/{task['id']}/drive", json=over, headers=_as(SERVICE_KEY))
+
+    assert started.status_code == 202, "its three tries being used does not stop a start-over"
+    body = started.json()
+    assert (body["status"], body["resume"], body["resume_by"], body["drives"]) == ("queued", "restart", "supervisor", 0)
+    assert Decimal(body["spent_carried_usd"]) == 0
+    assert body["status_reason"].endswith("so the Task Shepherd started it over on the current base (once)")
+    assert ("task_driven", "restart") in [(e[0], e[1].get("action")) for e in events.events]
 
 
 def test_the_supervisor_retries_a_failed_task_and_only_a_failed_one(api):

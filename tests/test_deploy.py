@@ -389,3 +389,121 @@ def test_the_slow_checks_skip_only_on_an_explicit_skip_and_never_on_main():
     assert 'slow=run\n          if [ "$EVENT" = pull_request ]; then' in workflow
     deploy = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
     assert "sandbox runs this repo's checks" in deploy and "zero-cost end-to-end check" in deploy
+
+
+def test_the_job_with_the_deploy_identity_runs_no_file_from_src():
+    """A task's pull request can change src/, and merges on a review. The deploy job signs in to Google Cloud
+    as the deploy account, so the version is worked out in a job with no identity and checked before use."""
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    version_job, deploy_job = (
+        deploy.split("\n  deploy:\n")[0].split("\n  version:\n")[1],
+        deploy.split("\n  deploy:\n")[1],
+    )
+    assert "python3 src/" not in deploy_job and "uv run" not in deploy_job
+    assert "needs: version" in deploy_job
+    assert "MH_VERSION: ${{ needs.version.outputs.version }}" in deploy_job
+    assert '[[ "$MH_VERSION" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in deploy_job, "the whole answer is checked before use"
+    assert "needs.version.outputs" not in deploy_job.split("steps:", 1)[1], "never written into a script"
+    assert "contents: read" in version_job and "id-token" not in version_job
+    assert 'TF_VAR_operators: ""' in version_job, "the workflow's secrets do not reach the version job"
+    assert "persist-credentials: false" in version_job
+
+
+def test_the_boot_script_does_not_run_the_version_file_as_root():
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    assert 'sudo -u mh python3 "$MH/src/meta_harness/versioning.py"' in boot
+    assert 'echo "MH_VERSION=$(' not in boot, "what the file prints is checked before it is written to the environment"
+
+
+def test_the_vm_runs_the_gateway_at_a_commit_this_repo_names_never_at_a_branch():
+    """The gateway starts with the provider keys, and nothing here checks its code: it runs at the commit an
+    operator-merged file names."""
+    import re
+
+    ref = (ROOT / "deploy" / "vm" / "gateway.ref").read_text().strip()
+    assert re.fullmatch(r"[0-9a-f]{40}", ref)
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    assert "GW_REF=$(tr -d '[:space:]' <\"$MH/deploy/vm/gateway.ref\")" in boot
+    assert '[[ "$GW_REF" =~ ^[0-9a-f]{40}$ ]]' in boot
+    assert 'checkout "$GW" https://github.com/davecthomas/ai-api-unified-http.git "$GW_REF"' in boot
+    fetched = [line for line in boot.splitlines() if line.startswith("checkout ") and "ai-api-unified-http" in line]
+    assert fetched == ['checkout "$GW" https://github.com/davecthomas/ai-api-unified-http.git "$GW_REF"']
+
+
+def _secret_functions(tmp_path, gcloud: str) -> str:
+    """A script holding boot.sh's secret functions, with a stand-in gcloud and no waits between tries."""
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    functions = boot[boot.index("SECRET_WAITS=(") : boot.index("umask 077")]
+    stub = tmp_path / "bin" / "gcloud"
+    stub.parent.mkdir()
+    stub.write_text("#!/bin/bash\n" + gcloud)
+    stub.chmod(0o755)
+    return (
+        f'set -eEuo pipefail\nPATH="{stub.parent}:$PATH"\nPROJECT=p\nlog() {{ echo "[boot] $*"; }}\n'
+        + functions
+        + "SECRET_WAITS=(0 0 0 0 0)\n"
+    )
+
+
+def _bash(script: str):
+    import subprocess
+
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+
+
+def test_a_secret_read_that_fails_at_first_is_tried_again_before_the_boot_gives_up(tmp_path):
+    count = tmp_path / "count"
+    flaky = f'n=$(cat {count} 2>/dev/null || echo 0); echo $((n + 1)) >{count}; [ "$n" -ge 2 ] || {{ echo "UNAVAILABLE" >&2; exit 1; }}; echo sk-value'
+    ran = _bash(_secret_functions(tmp_path, flaky) + 'key=$(secret ANTHROPIC_API_KEY)\necho "KEY=$key"\n')
+
+    assert ran.returncode == 0 and ran.stdout == "KEY=sk-value\n"
+    assert ran.stderr.count("reading the secret ANTHROPIC_API_KEY failed") == 2 and "try 2 of 5" in ran.stderr
+
+
+def test_a_secret_that_stays_unreadable_or_is_empty_stops_the_boot_naming_it_and_writes_no_key(tmp_path):
+    for gcloud in ('echo "PERMISSION_DENIED" >&2; exit 1', "exit 0"):
+        ran = _bash(_secret_functions(tmp_path, gcloud) + 'key=$(secret OPENAI_API_KEY)\necho "OPENAI_API_KEY=$key"\n')
+
+        assert ran.returncode != 0 and "OPENAI_API_KEY=" not in ran.stdout, "no empty key is written"
+        assert "the secret OPENAI_API_KEY could not be read or is empty" in ran.stderr
+        assert "gcloud secrets versions add OPENAI_API_KEY" in ran.stderr, "the message says what to do"
+        (tmp_path / "bin" / "gcloud").unlink()
+        (tmp_path / "bin").rmdir()
+
+
+def test_an_optional_secret_is_nothing_when_missing_and_stops_the_boot_when_it_exists_but_cannot_be_read(tmp_path):
+    missing = _bash(
+        _secret_functions(tmp_path, 'echo "ERROR: NOT_FOUND: Secret not found or has no versions" >&2; exit 1')
+        + 'email=$(optional_secret MH_JIRA_EMAIL)\necho "email=[$email]"\n'
+    )
+    assert missing.returncode == 0 and missing.stdout == "email=[]\n" and missing.stderr == ""
+
+    (tmp_path / "bin" / "gcloud").unlink()
+    (tmp_path / "bin").rmdir()
+    outage = _bash(
+        _secret_functions(tmp_path, 'echo "UNAVAILABLE" >&2; exit 1')
+        + 'email=$(optional_secret MH_JIRA_EMAIL)\necho "email=[$email]"\n'
+    )
+    assert outage.returncode != 0 and "email=" not in outage.stdout
+    assert "the optional secret MH_JIRA_EMAIL exists but could not be read" in outage.stderr
+
+
+def test_the_boot_script_reads_no_secret_where_a_failure_would_go_unnoticed():
+    """echo "NAME=$(secret NAME)" and a read in a loop's word list both succeed whatever the read did."""
+    import re
+
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    code = [line for line in boot.splitlines() if not line.lstrip().startswith("#")]
+    assert not [line for line in code if re.search(r"echo .*\$\((optional_)?secret ", line)]
+    assert not [line for line in code if re.search(r"for .* in .*\$\((optional_)?secret ", line)]
+    assert not [line for line in code if re.search(r"^\s*(optional_)?secret \S+ *[>|]", line)]
+
+
+def test_a_newer_merge_never_cancels_the_checks_the_deploy_of_an_earlier_one_waits_for():
+    """Two merges minutes apart: the first commit's checks were cancelled by the second, its deploy read the
+    cancelled check as failed, stopped, and opened a 'deploy blocked' issue. On main each commit's checks are
+    a concurrency group of their own; a pull request's still replace one another."""
+    for name in ("control-plane.yml", "e2e.yml"):
+        workflow = (WORKFLOWS / name).read_text()
+        assert "-${{ github.event_name == 'pull_request' && github.ref || github.sha }}" in workflow, name
+        assert "-${{ github.ref }}\n" not in workflow, name

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { WaitLine } from "../tasks/WaitLine";
 import { Anchor, Badge, Group, Paper, Progress, SimpleGrid, Stack, Text, Tooltip } from "@mantine/core";
 import { useNavigate } from "react-router-dom";
@@ -10,6 +10,8 @@ import { NowLine } from "../tasks/TaskPath";
 import { moneyText } from "../../money";
 import { SizeBadge, SizingDoubts, gapText } from "./sizing";
 import { SummarySource } from "./SummarySource";
+import { FixIssue, withSizing } from "./FixIssue";
+import type { SizingRecord } from "./api";
 
 // The board's columns, in order, each with its color in the board and the graph.
 export const COLUMNS = [
@@ -65,7 +67,15 @@ function shortRef(ref: string): string {
 }
 
 // events: the steps the issue's task has recorded, for what it is doing now.
-function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; actions?: ReactNode; events?: MhEvent[] }) {
+// fix: Fix with AI on a card the sizing marks, for the goal named; onFixed gets the sizing an accept recorded.
+function IssueCard(props: {
+  issue: IssueProgress;
+  task?: Task;
+  usd?: number;
+  actions?: ReactNode;
+  events?: MhEvent[];
+  fix?: { goalId: string; onFixed: (sizing: SizingRecord | null) => void };
+}) {
   const navigate = useNavigate();
   const { issue, task } = props;
   const url = issueUrl(issue.ref);
@@ -137,6 +147,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
         ) : null}
         {gap && <Text size="xs" c="yellow.8" data-testid="issue-gap">{gap}</Text>}
         <SizingDoubts issue={issue} />
+        {props.fix && <FixIssue goalId={props.fix.goalId} issue={issue} onAccepted={props.fix.onFixed} />}
         {props.actions}
         {/* Why a queued task has not started, from the scheduler. */}
         {task?.status === "queued" && task.held && <Text size="xs" lineClamp={3}>{moneyText(task.held.reason)}</Text>}
@@ -188,8 +199,16 @@ export function GoalBoard(props: {
   actions?: (issue: IssueProgress) => ReactNode;
   // Each running task's recorded steps, by task id, for the line that says what it is doing now.
   steps?: Record<string, MhEvent[]>;
+  // The goal, for Fix with AI on each card its sizing marks; left out, the cards offer none.
+  goalId?: string;
+  // Called once Fix with AI changed an issue, to read the goal's issues again.
+  onFixed?: () => void;
 }) {
   const { column } = layout(props.issues);
+  // The sizing an accepted fix recorded, by ref: shown on its card until the goal's issues are read again.
+  const [fixed, setFixed] = useState<Record<string, SizingRecord>>({});
+  useEffect(() => setFixed({}), [props.issues]);
+  const goalId = props.goalId;
   return (
     <SimpleGrid cols={{ base: 1, sm: 3, lg: 5 }} spacing="sm" mb="lg">
       {COLUMNS.map((c) => {
@@ -203,11 +222,22 @@ export function GoalBoard(props: {
             {cards.map((i) => (
               <IssueCard
                 key={i.ref}
-                issue={i}
+                issue={fixed[i.ref] ? withSizing(i, fixed[i.ref]) : i}
                 task={i.task_id ? props.tasks[i.task_id] : undefined}
                 usd={i.task_id ? props.spend[i.task_id] : undefined}
                 events={i.task_id ? props.steps?.[i.task_id] : undefined}
                 actions={props.actions?.(i)}
+                fix={
+                  goalId
+                    ? {
+                        goalId,
+                        onFixed: (sizing) => {
+                          if (sizing) setFixed((all) => ({ ...all, [i.ref]: sizing }));
+                          props.onFixed?.();
+                        },
+                      }
+                    : undefined
+                }
               />
             ))}
           </Stack>

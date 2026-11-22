@@ -329,21 +329,84 @@ async def test_ready_tasks_of_an_auto_merge_goal_are_merged_fixed_or_waited_on_b
 
     result = await supervisor.pass_once()
 
-    assert sorted(result.driven) == sorted([clean["id"], conflict["id"], failing["id"]])
+    assert sorted(result.driven) == sorted([clean["id"], conflict["id"], failing["id"], tried["id"]])
     assert {(task_id, action) for task_id, action, _, _ in tasks.driven} == {
         (clean["id"], "merge"),
         (conflict["id"], "merge"),
         (failing["id"], "review"),
+        (tried["id"], "merge"),
     }
+    # Asking for a merge the code host would take is none of a task's tries, used up or not.
+    assert sorted(tasks.uncounted) == sorted([clean["id"], tried["id"]])
+    assert (clean["drives"], tried["drives"]) == (0, 3)
     assert [spent for task_id, _, _, spent in tasks.driven if task_id == clean["id"]] == ["4.00"], (
         "its spend is carried"
     )
     waiting = _standing(pending["id"])
     assert (waiting["owner"], waiting["situation"]) == ("supervisor", "merge_waiting")
     assert pending["status"] == "ready" and waiting["attempts"] == 0, "a wait is not an attempt"
-    used = _standing(tried["id"])
-    assert used["owner"] == "operator" and used["situation"] == "merge_tries_used"
     assert _standing(by_hand["id"])["owner"] == "operator", "its goal does not merge by itself"
+
+
+async def test_a_pull_request_the_code_host_would_take_is_merged_once_per_commit_whatever_the_tries(world):
+    """On 2026-11-22 a pull request sat clean for nine hours with its task's tries used up: each try had brought
+    the base in and asked for the merge while the new head's required check was still running."""
+    supervisor, tasks, _, _, host = world
+    goal_id, url = _auto_merge_goal(), f"https://github.com/{REPO}/pull"
+    task = tasks.add("ready", pr_url=f"{url}/31", goal_id=goal_id, drives=3)
+    host.pulls = {31: "open"}
+    host.raw = {31: {"mergeable": True, "mergeable_state": "clean"}}
+    host.checks = {31: [CheckRun("ci", "completed", "success", "")]}
+
+    await supervisor.pass_once()
+    assert [(t, a) for t, a, _, _ in tasks.driven] == [(task["id"], "merge")] and tasks.uncounted == [task["id"]]
+
+    # The code host refused it only because a required check had not finished: it is asked again.
+    waiting = 'GitHub would not merge it: 405: {"message":"Required status check \\"e2e\\" is in progress."}'
+    task.update(status="ready", status_reason=f"review round 1 came back clean; {waiting}")
+    supervisor.forget_reads(task["id"])
+    # The same standing is acted on again only after a wait, which is what keeps this from looping.
+    await supervisor.pass_once(datetime.now(UTC) + timedelta(hours=2))
+    assert len(tasks.driven) == 2 and task["drives"] == 3
+
+    # Refused at the same commit for anything else, it is a person's, and the standing says what happened.
+    task.update(status="ready", status_reason="review round 1 came back clean; GitHub would not merge it: 405")
+    supervisor.forget_reads(task["id"])
+    await supervisor.pass_once(datetime.now(UTC) + timedelta(hours=8))
+    assert len(tasks.driven) == 2
+    refused = _standing(task["id"])
+    assert (refused["owner"], refused["situation"]) == ("operator", "merge_refused")
+    assert "refused it when the Task Shepherd asked" in refused["reason"]
+
+
+async def test_an_unresolved_task_behind_a_conflict_is_started_over_once_then_is_an_operators(world):
+    supervisor, tasks, _, _, host = world
+    task = tasks.add(
+        "review_unresolved",
+        pr_url=f"https://github.com/{REPO}/pull/41",
+        goal_id=_auto_merge_goal(),
+        drives=3,
+        status_reason="fix round 1 changed nothing",
+    )
+    host.pulls, host.raw = {41: "open"}, {41: {"mergeable": False, "mergeable_state": "dirty"}}
+
+    await supervisor.pass_once()
+
+    assert [(t, a, spent) for t, a, _, spent in tasks.driven] == [(task["id"], "restart", "0")]
+    assert tasks.uncounted == [task["id"]], "a start-over is none of the tries the task had"
+    with db.connect(autocommit=True) as conn:
+        row = conn.execute(
+            "SELECT remedy, did, next FROM supervisor.remedy WHERE task_id = %s", (task["id"],)
+        ).fetchone()
+    assert row[0] == "start_over" and "started it over on the current base" in row[1] and "I will ask you" in row[2]
+
+    # The fresh run did not come clean either, and conflicts again: that was the one start-over.
+    task.update(status="review_unresolved", drives=3)
+    supervisor.forget_reads(task["id"])
+    await supervisor.pass_once(datetime.now(UTC) + timedelta(hours=8))
+    assert len(tasks.driven) == 1
+    stuck = _standing(task["id"])
+    assert (stuck["owner"], stuck["situation"]) == ("operator", "review_unresolved_conflict")
 
 
 async def test_checks_that_never_report_are_an_operators_after_a_day(world):

@@ -4,16 +4,22 @@ The planner's API runs against Postgres with fakes for the tracker, the Task API
 model, no GitHub and no run is called: the planning task's drafts are events the test records.
 """
 
+import contextlib
+import json
 import uuid
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from meta_harness import outbound
 from meta_harness.trackers import TrackerError
+from meta_harness.planner import split_issue
 from meta_harness.planner.service import create_app
 from meta_harness.planner.tracker import Issue
 from meta_harness.run_service import provenance
+from meta_harness.trackers import Source
+from meta_harness.trackers.jira import JiraTracker, Site
 
 from .test_planner import OPERATOR, Events, FakeTasks, FakeTracker, _no_title, migrated, registry  # noqa: F401
 
@@ -30,17 +36,25 @@ class WritingTracker(FakeTracker):
         self.next = 1_000_000 + uuid.uuid4().int % 10**15
         # Refuse the nth create_issue call (from 1) once, as GitHub would.
         self.refuse_at: int | None = None
+        # The parent each create_issue call named, None for none; refuse_parent: create without it, as Jira does
+        # a parent it will not take.
+        self.parents: list[str | None] = []
+        self.refuse_parent = False
 
     async def ensure_label(self, repo, label):
         self.labels.append((repo, label))
 
-    async def create_issue(self, repo, title, body, labels):
+    async def create_issue(self, repo, title, body, labels, parent=None):
         if self.refuse_at == len(self.created) + 1:
             self.refuse_at = None
             raise TrackerError("403 Resource not accessible by integration", retryable=False, status=403)
+        self.parents.append(parent)
         self.next += 1
         ref = f"github:{repo}#{self.next}"
-        issue = Issue(ref=ref, repo=repo, number=self.next, title=title, body=body, labels=list(labels), state="open")
+        kept = None if self.refuse_parent else parent
+        issue = Issue(
+            ref=ref, repo=repo, number=self.next, title=title, body=body, labels=list(labels), state="open", parent=kept
+        )
         self.issues[ref] = issue
         self.created.append(issue)
         return issue
@@ -192,6 +206,55 @@ def test_approving_creates_the_issues_in_order_with_the_goals_label_and_starts_t
     assert "plan_approved" in events.types()
     # The plan is settled: it is read, not changed.
     assert client.put(f"/v1/goals/{goal['id']}/plan", json={"drafts": []}, headers=OPERATOR).status_code == 409
+
+
+# The goal's parent: the issue its plan's issues are created under, such as a Jira epic.
+PARENT = "github:davecthomas/meta-harness#900"
+
+
+def test_a_plans_issues_are_created_under_the_goals_parent(world):
+    client, events, tracker, tasks = world
+    goal = _feature(client, tracker_settings={"parent": PARENT})
+    _planned(client, events, tasks, goal, [draft("api", ("store",)), draft("store")])
+
+    approved = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+
+    assert approved.status_code == 200, approved.text
+    assert tracker.parents == [PARENT, PARENT]
+    assert [i.parent for i in tracker.created] == [PARENT, PARENT]
+    assert "issue_parent_refused" not in events.types()
+
+
+def test_a_goal_that_names_no_parent_creates_its_plans_issues_with_none(world):
+    client, events, tracker, tasks = world
+    goal = _feature(client)
+    _planned(client, events, tasks, goal, [draft("store")])
+
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+
+    assert tracker.parents == [None] and tracker.created[0].parent is None
+    assert "issue_parent_refused" not in events.types()
+
+
+def test_a_parent_the_tracker_refuses_leaves_the_issue_created_and_records_what_to_do(world):
+    client, events, tracker, tasks = world
+    tracker.refuse_parent = True
+    goal = _feature(client, tracker_settings={"parent": PARENT})
+    _planned(client, events, tasks, goal, [draft("store")])
+
+    approved = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+
+    assert approved.status_code == 200, approved.text
+    [issue] = tracker.created
+    [refused] = [p for t, p in events.events if t == "issue_parent_refused"]
+    assert (refused["ref"], refused["parent"], refused["from_ref"], refused["goal_id"]) == (
+        issue.ref,
+        PARENT,
+        "",
+        goal["id"],
+    )
+    assert f"Set its parent to {PARENT} in the tracker" in refused["action"]
+    assert client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "active"
 
 
 def test_an_approval_github_interrupts_carries_on_without_making_an_issue_twice(world):
@@ -705,3 +768,86 @@ def test_autonomy_and_auto_merge_say_one_thing_between_them(world):
         headers=OPERATOR,
     ).json()
     assert (asked["autonomy"], asked["auto_merge"]) == ("ask", False)
+
+
+# A split of a Jira issue: each part goes under the original's parent, against Jira's REST API as it answers.
+
+JIRA_SITE = "https://example.atlassian.net"
+SPLIT_GOAL = {"id": "g-split-parent", "label": "meta-harness:goal-split"}
+SPLIT_LINK = {"ref": "jira:VL-1", "repo": REPO, "split_into": None}
+SPLIT_PARTS = [(t, "Split from VL-1.\n\nPaths: console\n\n## Acceptance checks\n\n- make test") for t in ("One", "Two")]
+
+
+class MockJira:
+    """Jira as the adapter calls it: the original VL-1 under the epic VL-100, and each issue created after it.
+    refuse_parent: answer a create that names a parent as Jira does a parent it will not take."""
+
+    def __init__(self, refuse_parent: bool = False) -> None:
+        self.refuse_parent = refuse_parent
+        self.created: list[dict] = []
+        self.issues = {"VL-1": self._issue("VL-1", {"key": "VL-100"})}
+
+    @staticmethod
+    def _issue(key: str, parent: dict | None) -> dict:
+        fields = {"summary": key, "description": "", "labels": [], "status": {"statusCategory": {"key": "new"}}}
+        return {"key": key, "fields": {**fields, **({"parent": parent} if parent else {})}}
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/rest/api/2")
+        if request.method == "POST" and path == "/issue":
+            fields = json.loads(request.content)["fields"]
+            self.created.append(fields)
+            if self.refuse_parent and "parent" in fields:
+                return httpx.Response(400, json={"errorMessages": [], "errors": {"parent": "Could not find issue"}})
+            key = f"VL-{len(self.issues) + 1}"
+            self.issues[key] = self._issue(key, fields.get("parent"))
+            return httpx.Response(201, json={"key": key})
+        if request.method == "GET" and path.startswith("/issue/") and path.count("/") == 2:
+            return httpx.Response(200, json=self.issues[path.rsplit("/", 1)[1]])
+        return httpx.Response(200, json={})
+
+
+@pytest.fixture
+def jira_split(monkeypatch):
+    """split_issue against the mock Jira, with the split's claim and record kept in memory."""
+    recorded: list[list[str]] = []
+    monkeypatch.setattr(split_issue.db, "connect", lambda **kw: contextlib.nullcontext(None))
+    monkeypatch.setattr(split_issue.store, "claim_split", lambda conn, goal_id, ref, failed_task=None: True)
+    monkeypatch.setattr(split_issue.store, "record_split", lambda conn, ref, created, reason: recorded.append(created))
+
+    async def split(jira: MockJira) -> tuple[list[str], Events]:
+        site = Site(site=JIRA_SITE)
+        adapter = JiraTracker("bot@example.com", "t", site=lambda: site, transport=httpx.MockTransport(jira))
+        events = Events()
+        bound = adapter.bound(Source(repos=(REPO,), settings={"project": "VL"}))
+        made = await split_issue.split_issue(SPLIT_GOAL, SPLIT_LINK, SPLIT_PARTS, bound, events, "dave")
+        assert recorded == [made]
+        return made, events
+
+    return split
+
+
+async def test_a_split_part_of_a_jira_issue_is_created_under_the_originals_parent(jira_split):
+    jira = MockJira()
+
+    made, events = await jira_split(jira)
+
+    assert made == ["jira:VL-2", "jira:VL-3"]
+    assert [f["parent"] for f in jira.created] == [{"key": "VL-100"}, {"key": "VL-100"}]
+    assert "issue_parent_refused" not in events.types()
+
+
+async def test_a_parent_jira_refuses_leaves_the_part_created_without_it_and_records_what_to_do(jira_split):
+    jira = MockJira(refuse_parent=True)
+
+    made, events = await jira_split(jira)
+
+    assert made == ["jira:VL-2", "jira:VL-3"], "the split goes on"
+    assert ["parent" in f for f in jira.created] == [True, False, True, False], "each is tried under it once"
+    refused = [p for t, p in events.events if t == "issue_parent_refused"]
+    assert [(p["ref"], p["parent"], p["from_ref"]) for p in refused] == [
+        ("jira:VL-2", "jira:VL-100", "jira:VL-1"),
+        ("jira:VL-3", "jira:VL-100", "jira:VL-1"),
+    ]
+    assert "Set its parent to jira:VL-100 in the tracker" in refused[0]["action"]
+    assert [p["issues"] for t, p in events.events if t == "issue_split"] == [made]

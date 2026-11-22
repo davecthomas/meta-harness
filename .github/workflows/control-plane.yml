@@ -7,8 +7,12 @@ on:
   push:
     branches: [main]
 
+# A newer push to a pull request replaces its running checks. On main each commit's checks are a group of
+# their own, so they always run to the end: the deploy of a commit waits for them, and a run cancelled by
+# the next merge read as a failed check, which stopped that deploy and opened an issue for a failure that
+# never happened. (Queued in one group, a third merge would cancel the second's waiting run too.)
 concurrency:
-  group: control-plane-${{ github.ref }}
+  group: control-plane-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 permissions:

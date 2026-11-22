@@ -69,6 +69,9 @@ class Issue:
     # COLLABORATOR, CONTRIBUTOR, NONE and so on). Empty when the tracker does not say.
     author: str = ""
     author_association: str = ""
+    # The ref of the issue this one sits under in the tracker (Jira: its parent, such as an epic). None when it
+    # has none or the tracker has no such thing.
+    parent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,8 +118,12 @@ class Tracker(Protocol):
         """Makes sure an issue created for the repo can carry the label."""
         ...
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
-        """Creates one issue for the repo, carrying the labels."""
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue:
+        """Creates one issue for the repo, carrying the labels. parent is the ref of an issue to create it under,
+        for a tracker that has parents (Jira); one that has none ignores it. A parent the tracker refuses is
+        left off, and the issue is created without one: the returned Issue's `parent` says what was set."""
         ...
 
     async def comment(self, ref: str, body: str) -> str:
@@ -154,6 +161,17 @@ class Tracker(Protocol):
     async def assignee(self, ref: str) -> str:
         """Who the issue is assigned to, as the id `assign` takes and `choices("assignee")` lists (GitHub: a
         login; Jira: an account id; the own tracker: a console user's email). "" when no one is."""
+        ...
+
+    async def people(self, repo: str) -> list[dict[str, str]]:
+        """The people the repo's issues can be assigned to, for the bound goal: each as the id `assign` takes
+        (`value`) and a name a person reads (`label`), sorted by name (GitHub: the repo's assignable logins;
+        Jira: the bound goal's project's assignable accounts, empty when no project is bound; the own tracker:
+        the console's users by email). `choices("assignee")` offers these for the goal setting.
+
+        Raises:
+            TrackerError: The tracker could not list them, or repo is not owner/name.
+        """
         ...
 
     async def assign(self, ref: str, person: str) -> bool:
@@ -262,6 +280,18 @@ def assignee_setting(people: str) -> Setting:
         kind="choice",
         help=f"Who the goal's issues are assigned to: one of {people}. Empty: no one is named.",
     )
+
+
+def check_assignee(settings: dict[str, Any], fits: Callable[[str], bool], form: str) -> list[str]:
+    """Why a goal's `assignee` setting cannot be used, for `Supported.check_goal`; empty when it can. It is
+    optional, and else a string in the tracker's own form: fits says whether a value has that form, and form
+    describes it. Whether the tracker knows the person is for `assign` to say, since only a call can tell."""
+    value = settings.get(ASSIGNEE, "")
+    if value == "":
+        return []
+    if isinstance(value, str) and value == value.strip() and "\n" not in value and len(value) <= 255 and fits(value):
+        return []
+    return [f"assignee is {form}, not {value!r}: choose one from the list, or leave it empty"]
 
 
 def unknown_person(ref: str, person: str, where: str) -> TrackerError:

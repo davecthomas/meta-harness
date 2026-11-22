@@ -84,23 +84,72 @@ log "code at $REF ($MODE)"
 for dir in "$MH" "$GW"; do
   git config --system --get-all safe.directory 2>/dev/null | grep -qx "$dir" || git config --system --add safe.directory "$dir"
 done
-for pair in "$MH https://github.com/davecthomas/meta-harness.git $REF" "$GW https://github.com/davecthomas/ai-api-unified-http.git main"; do
-  read -r dir url ref <<<"$pair"
-  if [ -d "$dir/.git" ]; then
-    git -C "$dir" fetch -q origin "$ref"
-    git -C "$dir" checkout -q -f FETCH_HEAD
-  else
-    git clone -q "$url" "$dir"
-    git -C "$dir" fetch -q origin "$ref"
-    git -C "$dir" checkout -q -f FETCH_HEAD
-  fi
+# checkout DIR URL REF: the repo at that ref, cloned first when it is not there.
+checkout() {
+  local dir=$1 url=$2 ref=$3
+  [ -d "$dir/.git" ] || git clone -q "$url" "$dir"
+  git -C "$dir" fetch -q origin "$ref"
+  git -C "$dir" checkout -q -f FETCH_HEAD
   chown -R mh:mh "$dir"
-done
+}
+checkout "$MH" https://github.com/davecthomas/meta-harness.git "$REF"
+# The HTTP Gateway runs with the provider keys, and none of this repo's checks covers its code. So the VM runs
+# the one commit of it this checkout names (deploy/vm/gateway.ref, which only an operator's merge changes),
+# never whatever its main holds today.
+GW_REF=$(tr -d '[:space:]' <"$MH/deploy/vm/gateway.ref")
+if ! [[ "$GW_REF" =~ ^[0-9a-f]{40}$ ]]; then
+  log "deploy/vm/gateway.ref must hold the gateway's full commit SHA, 40 hex characters, and holds '$GW_REF'. Put the commit to run there (git ls-remote https://github.com/davecthomas/ai-api-unified-http.git main shows the newest) and deploy again."
+  # A failing command, not exit: that is what rolls an update back.
+  false
+fi
+checkout "$GW" https://github.com/davecthomas/ai-api-unified-http.git "$GW_REF"
+log "the HTTP Gateway at $GW_REF"
 
 log "secrets from Secret Manager into $ETC/env"
-secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT"; }
-# A secret a deployment may leave without a value: nothing, and no failure, when it has none.
-optional_secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT" 2>/dev/null || true; }
+# read_secret NAME: the secret's value on stdout. A read that fails is tried again, five times over about a
+# minute, before it counts as failed: Secret Manager and the metadata server both have brief outages. Returns
+# 2, with nothing more tried, when the secret or its version does not exist.
+SECRET_WAITS=(2 4 8 16 32)
+read_secret() {
+  local name=$1 try value err
+  err=$(mktemp)
+  for try in 0 1 2 3 4; do
+    if value=$(gcloud secrets versions access latest --secret="$name" --project="$PROJECT" 2>"$err"); then
+      rm -f "$err"
+      printf '%s' "$value"
+      return 0
+    fi
+    if grep -q "NOT_FOUND" "$err"; then
+      rm -f "$err"
+      return 2
+    fi
+    log "reading the secret $name failed (try $((try + 1)) of 5): $(tr '\n' ' ' <"$err" | cut -c1-200)" >&2
+    [ "$try" -lt 4 ] && sleep "${SECRET_WAITS[$try]}"
+  done
+  rm -f "$err"
+  return 1
+}
+# secret NAME: a secret the deployment cannot run without. A missing, unreadable or empty one stops the boot,
+# and rolls an update back, saying which: a service started with an empty key fails later and less clearly.
+secret() {
+  local value
+  if ! value=$(read_secret "$1") || [ -z "$value" ]; then
+    log "the secret $1 could not be read or is empty. Give it a value (gcloud secrets versions add $1 --data-file=- --project=$PROJECT), check that the VM's service account may read it, and deploy again." >&2
+    return 1
+  fi
+  printf '%s' "$value"
+}
+# optional_secret NAME: a secret a deployment may leave without a value. Nothing when it does not exist; a
+# read that fails for any other reason stops the boot, so an outage never turns a feature off quietly.
+optional_secret() {
+  local value code=0
+  value=$(read_secret "$1") || code=$?
+  if [ "$code" -eq 1 ]; then
+    log "the optional secret $1 exists but could not be read. Check the VM's service account may read it, and deploy again." >&2
+    return 1
+  fi
+  printf '%s' "$value"
+}
 umask 077
 {
   pw=$(secret MH_POSTGRES_PASSWORD)
@@ -113,9 +162,12 @@ umask 077
   # Which GitHub App serves which repo owner is this deployment's data, from the MH_GITHUB_APPS secret:
   # owner=app_id pairs, comma-separated. Each owner's key is the secret MH_GITHUB_APP_KEY_<owner>.
   apps=
-  for pair in $(secret MH_GITHUB_APPS | tr ',' ' '); do
+  # Read into a variable first: a failed read inside the loop's word list would go unnoticed.
+  github_apps=$(secret MH_GITHUB_APPS)
+  for pair in ${github_apps//,/ }; do
     owner=${pair%%=*}
-    secret "MH_GITHUB_APP_KEY_$owner" >"$ETC/github-app-$owner.pem.new"
+    app_key=$(secret "MH_GITHUB_APP_KEY_$owner")
+    printf '%s\n' "$app_key" >"$ETC/github-app-$owner.pem.new"
     apps="$apps${apps:+,}$pair:$ETC/github-app-$owner.pem"
   done
   echo "MH_GITHUB_APPS=$apps"
@@ -129,13 +181,22 @@ umask 077
   fi
   # The most per-run sandboxes the VM holds: the ceiling on the task policy's max_parallel.
   # The commit's version, worked out from main's history (versioning.py), for every service.
-  echo "MH_VERSION=$(python3 "$MH/src/meta_harness/versioning.py" 2>/dev/null || cat "$MH/VERSION")"
+  # versioning.py is a file a task's pull request can change, so it runs as mh, not as root, and what it
+  # prints is used only when it is a version: anything else would be written into the services' environment.
+  version=$(sudo -u mh python3 "$MH/src/meta_harness/versioning.py" 2>/dev/null || true)
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || version=$(head -n 1 "$MH/VERSION" | tr -cd '0-9.')
+  echo "MH_VERSION=$version"
   echo "MH_MAX_SANDBOXES=8"
   # Every run gets a Postgres beside its sandbox, for its task's tests, unless its harness profile says otherwise.
   echo "MH_SANDBOX_SERVICES=postgres"
-  echo "ANTHROPIC_API_KEY=$(secret ANTHROPIC_API_KEY)"
-  echo "OPENAI_API_KEY=$(secret OPENAI_API_KEY)"
-  echo "GOOGLE_GEMINI_API_KEY=$(secret GOOGLE_GEMINI_API_KEY)"
+  # Each into a variable first: echo "NAME=$(secret NAME)" succeeds whatever the read did, and wrote an
+  # empty key that only the smoke task found, after the window in which an update rolls back.
+  anthropic_key=$(secret ANTHROPIC_API_KEY)
+  openai_key=$(secret OPENAI_API_KEY)
+  gemini_key=$(secret GOOGLE_GEMINI_API_KEY)
+  echo "ANTHROPIC_API_KEY=$anthropic_key"
+  echo "OPENAI_API_KEY=$openai_key"
+  echo "GOOGLE_GEMINI_API_KEY=$gemini_key"
   echo "HTTP_API_KEYS=meta-harness:$gateway_key"
   echo "GATEWAY_API_KEY=$gateway_key"
   echo "GATEWAY_URL=http://127.0.0.1:8080"
@@ -152,7 +213,8 @@ umask 077
   # billing_export); the cost service finds the export's table in it.
   echo "MH_BILLING_EXPORT_TABLE=$PROJECT.billing_export"
 } >"$ETC/env.new"
-secret MH_REPOS_CONFIG >"$ETC/repos.json.new"
+repos_config=$(secret MH_REPOS_CONFIG)
+printf '%s\n' "$repos_config" >"$ETC/repos.json.new"
 mv "$ETC/env.new" "$ETC/env"
 mv "$ETC/repos.json.new" "$ETC/repos.json"
 for new in "$ETC"/github-app-*.pem.new; do mv "$new" "${new%.new}"; done

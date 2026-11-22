@@ -11,7 +11,9 @@ finished. The model is told to say only what the facts say, and its words go thr
 
 `digest` reduces the facts to what matters, so a report is written only when something that matters changed
 in some goal. `GET /v1/overview/report` returns the latest; with `since`, when the operator last looked, it
-writes a new one first when the facts changed. Nothing writes a report while no one asks for one.
+writes a new one first when the facts changed. Once the operator has opened the Overview, the planner's sweep
+runs `Overview.refresh` too, so a goal that changes gets a new report before the operator next looks. No
+report is written before the operator first opens the Overview.
 
 `POST /v1/overview/ask` answers the operator's question about the work from the same record: the facts
 `gather` reads, plus the events of any goal or issue the question names. One model call answers from them
@@ -649,6 +651,8 @@ class Overview:
         self.spent: dict[str, Decimal] = {}
         self.loaded = False
         self.lock = asyncio.Lock()
+        # Why the last report could not be written, so a failure the sweep meets each pass is logged once.
+        self.failed: str | None = None
 
     def load(self) -> None:
         """Reads the latest report and each day's spend from the event log, once.
@@ -692,62 +696,94 @@ class Overview:
             await asyncio.to_thread(self.load)
             if since is None:
                 return self.view()
-            config = settings()
+            return await self._write(since)
+
+    async def refresh(self) -> dict[str, Any] | None:
+        """The sweep's turn: a new report when something that matters changed in a goal since the last, for the
+        operator's next look. It keeps the last report's since, so what finished gathers until the operator
+        looks. None, with nothing read, before the operator first opened the Overview or while the last report
+        is under min_seconds old. Past max_usd the last report stays and no model is called, as for a request.
+
+        Raises:
+            OverviewError: The event log could not be read for the latest report.
+        """
+        async with self.lock:
+            await asyncio.to_thread(self.load)
             before = self.latest
-            try:
-                found, position = await asyncio.to_thread(gather, self.tasks, self.events, before, since)
-            except Exception as err:  # noqa: BLE001 - said in the answer; the last report stands
-                log.error("planner: the Overview's facts could not be read: %s: %s", type(err).__name__, err)
-                return self.view(error=f"the goals' facts could not be read: {type(err).__name__}: {err}")
-            state = digest(found)
-            if before and before.get("digest") == state:
-                return self.view()
-            written_at = _when(before.get("written_at")) if before else None
-            if written_at and (datetime.now(UTC) - written_at).total_seconds() < float(config["min_seconds"]):
-                return self.view(note=f"This report was written at {before['written_at']}. The next one comes soon.")
-            limit = Decimal(str(config["max_usd"]))
-            if self.spent_today() >= limit:
-                when = (before or {}).get("written_at") or "no time yet"
-                return self.view(
-                    note=f"Today's reports have spent ${self.spent_today()} of their ${limit} limit, so no new one "
-                    f"is written until tomorrow (UTC). This report was written at {when}."
-                )
-            try:
-                if found["goals"] or found["finished_since_operator_looked"]:
-                    written = await self.writer(found, before)
-                else:
-                    # No goal runs and nothing finished: there is nothing for a model to say.
-                    written = Written(headline="No goals are running.")
-                if not written.headline:
-                    raise OverviewError("the model wrote an empty report")
-            except OverviewError as err:
-                log.error("planner: the Overview report could not be written: %s", err)
-                return self.view(error=str(err))
-            passed = await _checked(written)
-            titles = {g["goal_id"]: g["title"] for g in found["goals"]}
-            report = {
-                "digest": state,
-                "headline": written.headline,
-                "moving": _named(written.moving, titles),
-                "not_moving": _named(written.not_moving, titles),
-                "needs_you": _named(written.needs_you, titles),
-                "spend": written.spend,
-                "finished": written.finished,
-                "finished_items": found["finished_since_operator_looked"],
-                "goals": len(found["goals"]) + found["goals_not_shown"],
-                "since": since.isoformat(),
-                "position": position,
-                "model": written.model,
-                "usd_cost": written.usd_cost,
-                "written_at": datetime.now(UTC).isoformat(),
-            }
-            # Only a pass that found something is recorded, as on an update's event.
-            if passed and (passed["findings"] or passed["reasons"]):
-                report["writing"] = passed
-            self.events.emit(EVENT, report, actor="planner")
-            self.latest = report
-            self.spent[_today()] = self.spent_today() + _cost(report)
-            return self.view(written=True)
+            since = _when((before or {}).get("since"))
+            if before is None or since is None:
+                return None
+            written_at = _when(before.get("written_at"))
+            if written_at and (datetime.now(UTC) - written_at).total_seconds() < float(settings()["min_seconds"]):
+                return None
+            return await self._write(since)
+
+    def _failed(self, said: str) -> None:
+        """Logs why a report could not be written, once for each new reason."""
+        if said != self.failed:
+            log.error("planner: %s", said)
+        self.failed = said
+
+    async def _write(self, since: datetime) -> dict[str, Any]:
+        """A new report, when the facts changed since the last and min_seconds and max_usd allow one. Called
+        with the lock held and the event log loaded."""
+        config = settings()
+        before = self.latest
+        try:
+            found, position = await asyncio.to_thread(gather, self.tasks, self.events, before, since)
+        except Exception as err:  # noqa: BLE001 - said in the answer; the last report stands
+            self._failed(f"the Overview's facts could not be read: {type(err).__name__}: {err}")
+            return self.view(error=f"the goals' facts could not be read: {type(err).__name__}: {err}")
+        state = digest(found)
+        if before and before.get("digest") == state:
+            return self.view()
+        written_at = _when(before.get("written_at")) if before else None
+        if written_at and (datetime.now(UTC) - written_at).total_seconds() < float(config["min_seconds"]):
+            return self.view(note=f"This report was written at {before['written_at']}. The next one comes soon.")
+        limit = Decimal(str(config["max_usd"]))
+        if self.spent_today() >= limit:
+            when = (before or {}).get("written_at") or "no time yet"
+            return self.view(
+                note=f"Today's reports have spent ${self.spent_today()} of their ${limit} limit, so no new one "
+                f"is written until tomorrow (UTC). This report was written at {when}."
+            )
+        try:
+            if found["goals"] or found["finished_since_operator_looked"]:
+                written = await self.writer(found, before)
+            else:
+                # No goal runs and nothing finished: there is nothing for a model to say.
+                written = Written(headline="No goals are running.")
+            if not written.headline:
+                raise OverviewError("the model wrote an empty report")
+        except OverviewError as err:
+            self._failed(f"the Overview report could not be written: {err}")
+            return self.view(error=str(err))
+        self.failed = None
+        passed = await _checked(written)
+        titles = {g["goal_id"]: g["title"] for g in found["goals"]}
+        report = {
+            "digest": state,
+            "headline": written.headline,
+            "moving": _named(written.moving, titles),
+            "not_moving": _named(written.not_moving, titles),
+            "needs_you": _named(written.needs_you, titles),
+            "spend": written.spend,
+            "finished": written.finished,
+            "finished_items": found["finished_since_operator_looked"],
+            "goals": len(found["goals"]) + found["goals_not_shown"],
+            "since": since.isoformat(),
+            "position": position,
+            "model": written.model,
+            "usd_cost": written.usd_cost,
+            "written_at": datetime.now(UTC).isoformat(),
+        }
+        # Only a pass that found something is recorded, as on an update's event.
+        if passed and (passed["findings"] or passed["reasons"]):
+            report["writing"] = passed
+        self.events.emit(EVENT, report, actor="planner")
+        self.latest = report
+        self.spent[_today()] = self.spent_today() + _cost(report)
+        return self.view(written=True)
 
     async def ask(self, question: str, who: str, since: datetime | None = None) -> dict[str, Any]:
         """The answer to the operator's question, from the facts a report is written from and the events of what

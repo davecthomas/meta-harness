@@ -476,6 +476,37 @@
     ],
     "type": "object"
   },
+  "issue_fix_drafted v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "parts": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "ref": {
+        "type": "string"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "ref",
+      "parts",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
   "issue_joined v1": {
     "additionalProperties": true,
     "properties": {
@@ -492,6 +523,34 @@
     "required": [
       "ref",
       "goal_id"
+    ],
+    "type": "object"
+  },
+  "issue_not_assigned v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "person": {
+        "type": "string"
+      },
+      "reason": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      },
+      "todo": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "ref",
+      "person",
+      "reason",
+      "todo"
     ],
     "type": "object"
   },
@@ -615,6 +674,34 @@
       "ref",
       "goal_id",
       "issues"
+    ],
+    "type": "object"
+  },
+  "issue_parent_refused v1": {
+    "additionalProperties": true,
+    "properties": {
+      "action": {
+        "type": "string"
+      },
+      "from_ref": {
+        "type": "string"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "parent": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ref",
+      "parent",
+      "from_ref",
+      "goal_id",
+      "action"
     ],
     "type": "object"
   },

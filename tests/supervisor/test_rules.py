@@ -159,8 +159,72 @@ def test_a_ready_task_of_a_goal_that_merges_by_itself_is_seen_through_its_merge(
     assert blocked.owner == "operator" and "approval" in blocked.ask
 
 
+def test_a_ready_task_held_for_an_operator_is_never_sent_to_merge_by_the_supervisor():
+    """Its pull request changes files that run with the control plane's authority: only a person merges it."""
+    for how in ("clean", "conflict", "checks_failed", "checks_pending"):
+        held = decide(_ready(how, held_for_operator=True))
+        assert (held.owner, held.situation, held.action) == ("operator", "merge_held", "")
+        assert "Merge on the task's page" in held.ask
+    from meta_harness.supervisor import moves
+
+    assert moves.ranked("merge_held", _ready("clean", held_for_operator=True)) == ("open_pull_request", "merge")
+
+
+def test_a_clean_pull_request_is_merged_whatever_the_tries_and_once_per_commit():
+    merged = decide(_ready("clean", drives_left=False, head="95e21b3cb083aaaa"))
+    assert (merged.owner, merged.action, merged.situation) == ("supervisor", "merge", "merge_due")
+    assert merged.reason.endswith("at 95e21b3cb083"), "the commit is in the reason, so the ledger knows it was asked"
+    refused = decide(_ready("clean", head="95e21b3cb083aaaa", merge_refused_at_head=True))
+    assert (refused.owner, refused.situation) == ("operator", "merge_refused")
+    from meta_harness.supervisor import failures, moves
+
+    assert moves.ranked("merge_refused", _ready("clean")) == ("open_pull_request", "merge")
+    assert failures.merge_waits_on_checks('405: {"message":"Required status check \\"zero-cost\\" is in progress."}')
+    assert not failures.merge_waits_on_checks("405: At least 1 approving review is required")
+
+
+def test_a_pull_request_going_nowhere_is_started_over_on_the_current_base_once_before_anyone_is_asked():
+    """On 2026-11-22 three tasks sat unresolved behind conflicts their fix runs had not resolved, their tries
+    used up, and six more waited on them: each needed a person to press Start over."""
+    conflicted = Facts(
+        "review_unresolved", pull="open", goal="active", mergeable="conflict", drives_left=False, start_over_left=True
+    )
+    over = decide(conflicted)
+    assert (over.owner, over.action, over.situation) == ("supervisor", "start_over", "review_unresolved_conflict")
+    assert "started over on the current base" in over.reason
+    # A review that never came clean, with its fix rounds and its stronger model used: the same last step.
+    spent = Facts("review_unresolved", pull="open", goal="active", mergeable="clean", start_over_left=True)
+    assert decide(spent).action == "start_over"
+    # A ready task whose conflict the fix runs did not resolve.
+    assert decide(_ready("conflict", drives_left=False, start_over_left=True)).action == "start_over"
+
+    # Once is all: after it, the task is an operator's, as before.
+    assert decide(dataclasses.replace(conflicted, start_over_left=False)).owner == "operator"
+    assert decide(_ready("conflict", drives_left=False)).situation == "merge_tries_used"
+    # Tries it still has come first: a start-over is the last step, not the first.
+    assert decide(dataclasses.replace(conflicted, drives_left=True)).action == "review"
+    # A goal that asks first is offered it as the first button.
+    asked = decide(dataclasses.replace(conflicted, autonomy="ask"))
+    assert asked.owner == "operator" and asked.moves[0] == "start_over" and "start it over" in asked.ask
+    # Not for a goal that is not being worked.
+    assert decide(dataclasses.replace(conflicted, goal="paused")).action != "start_over"
+
+
+def test_a_hold_no_raise_can_lift_is_ended_not_waited_out():
+    held = Facts("running", workflow="running", goal="active", waiting_on="budget", over_ceiling=True)
+    ended = decide(held)
+    assert (ended.owner, ended.action, ended.situation) == ("supervisor", "end_hold", "budget_hold_ceiling")
+    # A goal that asks first, or one not being worked, leaves it to the operator, who is told why and what to do.
+    for other in (dataclasses.replace(held, autonomy="ask"), dataclasses.replace(held, goal="paused")):
+        asked = decide(other)
+        assert (asked.owner, asked.situation) == ("operator", "budget_hold_ceiling")
+        assert "End the task" in asked.ask and "cannot be raised" in asked.reason
+    # A raise that can be made still comes first.
+    assert decide(dataclasses.replace(held, over_ceiling=False, raise_left=True)).action == "raise_limit"
+
+
 def test_the_supervisors_own_tries_are_bounded_and_then_an_operator_is_asked():
-    for how in ("clean", "conflict", "checks_failed"):
+    for how in ("conflict", "checks_failed"):
         spent = decide(_ready(how, drives_left=False))
         assert spent.owner == "operator" and spent.situation == "merge_tries_used"
         assert "as often as it may" in spent.reason

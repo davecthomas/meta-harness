@@ -34,6 +34,7 @@ from meta_harness.trackers.base import (
     Supported,
     TrackerError,
     assignee_setting,
+    check_assignee,
     check_section,
     unknown_person,
     with_section,
@@ -83,6 +84,16 @@ def _issue(row: dict[str, Any]) -> Issue:
     )
 
 
+# An email address as the console keeps a user's: something, an @, and a domain with a dot.
+EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def check_goal(settings: dict[str, Any], site: dict[str, Any] | None = None) -> list[str]:
+    """Why a goal's settings for the own tracker cannot be used; empty when they can. Its one setting,
+    `assignee`, is a console user's email when it is set."""
+    return check_assignee(settings, lambda value: bool(EMAIL.match(value)), "a console user's email")
+
+
 class OwnTracker:
     scheme = SCHEME
     # A task's progress is recorded on its issue here, and its merge closes it: nothing else would.
@@ -127,7 +138,10 @@ class OwnTracker:
     async def ensure_label(self, repo: str, label: str) -> None:
         return None
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue:
+        """Keeps one issue in the meta-harness. Its issues have no parent, so parent is ignored."""
         outbound.require(title, "an issue's title", outbound.OWN, title=True)
         outbound.require(body, "an issue's body", outbound.OWN)
         issue_id = f"i-{secrets.token_hex(6)}"
@@ -217,12 +231,16 @@ class OwnTracker:
         await self.read(ref)
         return False
 
+    async def people(self, repo: str) -> list[dict[str, str]]:
+        """The console's users who may sign in, by email: any of them can be assigned an issue of any repo."""
+        query = "SELECT email FROM planner.console_user WHERE status <> 'deprovisioned' ORDER BY email"
+        return [{"value": row["email"], "label": row["email"]} for row in await asyncio.to_thread(self._all, query, ())]
+
     async def choices(self, setting: str, scope: dict[str, str] | None = None) -> list[dict[str, str]]:
         """What the console offers for a setting: for `assignee`, the console's users who may sign in, by email."""
         if setting != ASSIGNEE:
             return []
-        query = "SELECT email FROM planner.console_user WHERE status <> 'deprovisioned' ORDER BY email"
-        return [{"value": row["email"], "label": row["email"]} for row in await asyncio.to_thread(self._all, query, ())]
+        return await self.people(str((scope or {}).get("repo") or ""))
 
     def url(self, ref: str) -> str | None:
         """No page outside the console shows the issue."""
@@ -248,4 +266,5 @@ SPEC = Supported(
     build=OwnTracker,
     writes_progress=True,
     goal_settings=[assignee_setting("the console's users, by email")],
+    check_goal=check_goal,
 )

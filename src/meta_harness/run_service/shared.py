@@ -78,6 +78,8 @@ class RunTaskInput:
     attempts: int = 1
     # Where a task an operator sent back to the queue picks up: review, merge, or "" for a first run.
     resume: str = ""
+    # Who sent the task back with that resume: "operator", "supervisor", or "" for neither.
+    resume_by: str = ""
     # The Task API task's type. plan: a goal's planning task, whose run drafts issues and changes no file.
     task_type: str = ""
 
@@ -279,6 +281,8 @@ class TaskSpec:
     # Set when an operator sent the task back to the queue: review (its open pull request goes back through
     # the review loop) or merge (the operator asked for the merge). Empty: a first run.
     resume: str = ""
+    # Who sent the task back with that resume: "operator", "supervisor", or "" for neither.
+    resume_by: str = ""
     # How many times the task was sent back: its workflows after the first say so in what they record.
     retries: int = 0
     task_type: str = ""
@@ -471,9 +475,12 @@ class MergeRequest:
     # What kind of change the merge is, for a version worked out from history: fix, feature, none, or "" to
     # leave the merge commit's message as the code host writes it.
     kind: str = ""
-    # An operator asked for this merge. One the goal's auto_merge allows by itself is held when the pull request
-    # changes a path only an operator merges (activities.OPERATOR_MERGE_PATHS).
+    # The merge was asked for, by an operator or by the supervisor seeing an auto-merge goal's merge through:
+    # the goal's auto_merge is not asked again.
     asked_for: bool = False
+    # An operator asked for it. Only that lifts the hold on a pull request that changes a path only an operator
+    # merges (activities.OPERATOR_MERGE_PATHS): the supervisor's merge never does.
+    by_operator: bool = False
 
 
 @dataclass

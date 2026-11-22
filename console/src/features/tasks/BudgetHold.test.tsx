@@ -248,3 +248,14 @@ test("raising the goal's budget from the task's page says what was sent in place
   expect((await screen.findByRole("status")).textContent).toBe("The goal's budget raised to $20.00. The task continues at its next step.");
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+test("a run that needs more than one task may spend offers no raise: it says why, with End and the task policy", () => {
+  const asks = { for: "task", add_usd: "1", to_usd: "9.00", limit_usd: "8.00", ceiling_usd: "8.00", over_ceiling: true };
+  show({ ...HELD, max_usd: "8.00", budget_request: asks } as Task);
+
+  expect(screen.getByTestId("over-ceiling").textContent).toContain("would have to be $9.00, more than the $8.00 one task may spend");
+  expect(screen.queryByTestId("grant-request")).toBeNull();
+  expect(screen.queryByText("Raise the limit and carry on")).toBeNull();
+  expect(screen.getByText("End the task")).toBeTruthy();
+  expect(screen.getByText("Change what one task may spend").getAttribute("href")).toBe("/config?kind=task_policy");
+});

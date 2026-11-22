@@ -153,6 +153,36 @@ export interface IssueDoubt {
   reason: string;
 }
 
+// One part of an issue that Fix with AI drafted: the heading it goes under, whether the sizing doubted it (and
+// why) or found it missing, and the text the model proposes.
+export interface FixDraft {
+  part: IssueGap;
+  heading: string;
+  doubted: boolean;
+  reason: string;
+  text: string;
+}
+
+// An issue's sizing as the planner records it after a fix: what its card shows.
+export interface SizingRecord {
+  size: IssueSize;
+  reasons?: string[];
+  missing?: IssueGap[];
+  doubts?: IssueDoubt[];
+  split?: string[];
+  paths?: string[];
+  checks?: string[];
+}
+
+// What fix-accept wrote: the headings added, and the issue's new sizing, or why it could not be sized again.
+export interface FixAccepted {
+  goal_id: string;
+  ref: string;
+  added: string[];
+  sizing: SizingRecord | null;
+  sizing_error: string | null;
+}
+
 // One issue a held issue splits into, as the operator edited it before it is created.
 export interface SplitDraft {
   title: string;
@@ -170,7 +200,37 @@ export interface GoalIssues {
   issues: IssueProgress[];
 }
 
+// What a goal proposal is made from: the statement, and what is known about the goal. With goal_id, what is
+// left out is read from that goal.
+export interface EnrichRequest {
+  statement: string;
+  goal_id?: string;
+  title?: string;
+  repos?: string[];
+  tracker?: string;
+  project?: string;
+  label?: string;
+  issues?: { ref: string; title?: string; body?: string }[];
+}
+
+// A more detailed statement a model proposes, what it added and why, and questions only the operator can answer.
+export interface GoalProposal {
+  goal_id: string | null;
+  statement: string;
+  added: { what: string; why: string }[];
+  questions: string[];
+  model: string;
+  usd_cost: string;
+}
+
 // The goals feature's calls; src/api.ts spreads them into `api`.
+// One of a goal's stuck tasks, and the step the Task Shepherd recommends for it (planner/unstick_api.py).
+export interface UnstickMove { task_id: string; name: string; step: string; does: string }
+// A stuck task the action leaves for a person, or could not move, with why.
+export interface UnstickLeft { task_id: string; name: string; why: string }
+export interface UnstickPlan { moves: UnstickMove[]; left: UnstickLeft[] }
+export interface UnstickResult { done: UnstickMove[]; failed: (UnstickMove & { why: string })[]; left: UnstickLeft[] }
+
 export const goalsApi = {
   goals: async (statuses: string[], offset: number, limit: number): Promise<Page<Goal>> => {
     const r = await call<{ goals: Goal[]; total: number }>(
@@ -205,6 +265,10 @@ export const goalsApi = {
     call<GoalDraft>("/v1/goals/draft", { method: "POST", body: JSON.stringify(body) }),
   goalAction: (id: string, action: "pause" | "resume" | "cancel" | "complete" | "reopen" | "sweep") =>
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
+  // A proposed statement for a goal, saved nowhere; and saving the one the operator accepted on a goal.
+  enrichGoal: (body: EnrichRequest) => call<GoalProposal>("/v1/goals/enrich", { method: "POST", body: JSON.stringify(body) }),
+  acceptEnrichment: (id: string, statement: string) =>
+    call<Goal>(`/v1/goals/${id}/enrich/accept`, { method: "POST", body: JSON.stringify({ statement }) }),
   patchGoal: (id: string, fields: Record<string, unknown>) =>
     call<Goal>(`/v1/goals/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
   // Raise the budget of a goal over it or stopped by it: by addUsd, or by an amount the planner works out.
@@ -220,6 +284,9 @@ export const goalsApi = {
   askForGoalUpdate: (id: string) => call<{ update: PlannerUpdate | null }>(`/v1/goals/${id}/updates`, { method: "POST" }),
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
   goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
+  // What getting the goal's stuck tasks moving would do, and doing it: each takes its recommended step.
+  unstickPlan: (id: string) => call<UnstickPlan>(`/v1/goals/${id}/unstick`),
+  unstick: (id: string) => call<UnstickResult>(`/v1/goals/${id}/unstick`, { method: "POST" }),
   // items: the decisions on the goal's issues; left out, those of the version before stay.
   savePlan: (id: string, drafts: PlanDraft[], items?: PlanItem[]) =>
     call<GoalPlan>(`/v1/goals/${id}/plan`, { method: "PUT", body: JSON.stringify(items ? { drafts, items } : { drafts }) }),
@@ -244,6 +311,16 @@ export const goalsApi = {
       method: "POST",
       body: JSON.stringify({ ref, issues }),
     }),
+  // Fix with AI: a draft of each part an issue's sizing marks, written nowhere; and the operator's edited parts,
+  // written to the issue, which is then sized again.
+  // kept: the draft is one an accept kept while the issue's task ran; fresh asks the model past it.
+  fixDraft: (id: string, ref: string, fresh = false) =>
+    call<{ ref: string; kept?: boolean; drafts: FixDraft[] }>(`/v1/goals/${id}/issues/fix-draft`, {
+      method: "POST",
+      body: JSON.stringify(fresh ? { ref, fresh } : { ref }),
+    }),
+  fixAccept: (id: string, ref: string, parts: { part: IssueGap; text: string }[]) =>
+    call<FixAccepted>(`/v1/goals/${id}/issues/fix-accept`, { method: "POST", body: JSON.stringify({ ref, parts }) }),
   // Each of a goal's issues with its task's status and its pull request's state and checks.
   goalIssues: (id: string) => call<{ issues: IssueProgress[] }>(`/v1/goals/${id}/issues`).then((r) => r.issues),
   // The same, with the goal's status and when its issues' states were read from GitHub.

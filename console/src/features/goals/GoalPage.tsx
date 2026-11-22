@@ -1,3 +1,4 @@
+import { UnstickGoal } from "./Unstick";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Collapse, Group, Loader, Paper, SegmentedControl, Stack, Table, Text } from "@mantine/core";
@@ -8,6 +9,7 @@ import { api, trackerTitle, goalStatus, goalTitle, type Goal, type IssueLink as 
 import { goalSource } from "../trackers/refs";
 import { issueSourceLabel } from "./issueSource";
 import { CancelGoal } from "./CancelGoal";
+import { ImproveGoal } from "./ImproveGoal";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { NoSuchRecord, isNotFound } from "../../components/NoSuchRecord";
 import { GoalStanding } from "./GoalStanding";
@@ -18,7 +20,7 @@ import { ApprovedPlan, GoalPlan } from "./GoalPlan";
 import { OPEN_SETTINGS, PlannerUpdates, SHOW_ISSUES } from "./PlannerUpdates";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
-import { AUTONOMY, AutonomyEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
+import { AUTONOMY, AssigneeField, AutonomyEdit, DescriptionField, LabelEdit, ParallelEdit, ParentField, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { HeldActions, StrictIssuesEdit } from "./sizing";
 import { ProvenanceEdit, provenanceSummary, type ProvenanceGoal } from "./provenanceHeaders";
 import { useEventStream, useInfinite } from "../../hooks";
@@ -245,6 +247,17 @@ export function GoalPage() {
         description={
           <Stack gap={6}>
             <DescriptionField {...editable} />
+            {/* While the goal can still change: Accept saves the edited proposal as its description. */}
+            {open && (
+              <ImproveGoal
+                statement={goal.statement}
+                context={{ goal_id: goal.id }}
+                onAccept={async (statement) => {
+                  const saved = await api.acceptEnrichment(goal.id, statement);
+                  setGoal((now) => (now ? { ...now, ...saved, issues: now.issues } : now));
+                }}
+              />
+            )}
             <Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>
           </Stack>
         }
@@ -348,10 +361,13 @@ export function GoalPage() {
                 "Issue tracker",
                 <Text size="sm">
                   {trackerTitle(goal.tracker ?? "github")}
-                  {Object.entries(goal.tracker_settings ?? {}).map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to the meta-harness" : `, ${name} ${value}`)).join("")}
+                  {Object.entries(goal.tracker_settings ?? {}).filter(([name]) => name !== "assignee" && name !== "parent").map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to the meta-harness" : `, ${name} ${value}`)).join("")}
                   <Text span size="sm" c="dimmed" display="block">Fixed when the goal was created.</Text>
                 </Text>,
               ],
+              ["Assignee", <AssigneeField goal={goal} />],
+              // Only Jira has a parent setting.
+              ...(goal.tracker === "jira" ? [["Parent", <ParentField goal={goal} />] as [string, ReactNode]] : []),
               ["Label", <LabelEdit {...editable} />],
               ["Repos", <ReposEdit {...editable} />],
               ["Without asking", <AutonomyEdit {...editable} />],
@@ -425,6 +441,7 @@ export function GoalPage() {
       >
         Issues and tasks
       </SectionTitle>
+      <UnstickGoal goalId={goal.id} watch={Object.values(tasks).map((t) => `${t.id}:${t.status}:${t.waiting_on ?? ""}`).join(",")} onChanged={() => void Promise.all([load(), loadProgress()])} />
       {progress && <GoalFailures issues={progress} tasks={tasks} onChanged={() => void Promise.all([load(), loadProgress()])} />}
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
       <GoalSpend goalId={goal.id} goalName={goalTitle(goal)} opened={spending} onClose={() => setSpending(false)} />
@@ -434,6 +451,8 @@ export function GoalPage() {
           tasks={tasks}
           spend={spend}
           steps={taskSteps}
+          goalId={open ? goal.id : undefined}
+          onFixed={() => void Promise.all([load(), loadProgress()])}
           actions={(i) => (
             <HeldActions goalId={goal.id} label={goal.label} issue={i} readOnly={!open} onChanged={() => void Promise.all([load(), loadProgress()])} />
           )}

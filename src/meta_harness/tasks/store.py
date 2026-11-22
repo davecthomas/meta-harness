@@ -49,7 +49,7 @@ COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
     "pr_url, head_sha, created_at, updated_at, attempts, waiting_on, retries, resume, review_claimed_by, "
-    "status_changed_at, recoveries, spent_carried_usd, drives, name"
+    "status_changed_at, recoveries, spent_carried_usd, drives, name, resume_by"
 )
 # A task's short name: at most this many words and characters, so it fits where an id did.
 NAME_WORDS = 4
@@ -234,7 +234,8 @@ def renew(conn: psycopg.Connection, task_id: str, task: NewTask, actor: str) -> 
         if row is None or row["status"] not in RENEWABLE:
             return None
         cur.execute(
-            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, retries = retries + 1, "
+            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, resume_by = NULL, "
+            "retries = retries + 1, "
             "cancel_requested = false, waiting_on = NULL, updated_at = now(), status_changed_at = now(), "
             "spent_carried_usd = 0, drives = 0, title = %s, description = %s, acceptance_checks = %s, paths = %s, "
             "goal_id = %s, repo = %s, task_type = %s, priority = %s, complexity = coalesce(%s, complexity), "
@@ -495,7 +496,8 @@ def requeue(
         if complexity:
             what += " with a stronger model"
         cur.execute(
-            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
+            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, resume_by = 'operator', "
+            "retries = retries + 1, "
             "cancel_requested = false, waiting_on = NULL, max_usd = coalesce(%s, max_usd), updated_at = now(), "
             "status_changed_at = now(), spent_carried_usd = 0, drives = 0, complexity = coalesce(%s, complexity) "
             f"WHERE id = %s RETURNING {COLUMNS}",
@@ -517,7 +519,8 @@ def drive(
     workflow ended with its pull request open, which the supervisor found it can move on.
 
     action merge: its next workflow merges the pull request, and resolves a conflict with its base first.
-    action review: its pull request goes back through checks, review and fixes. action retry: a `failed`
+    action restart: its pull request is closed and its branch deleted, and it runs fresh from the current base,
+    its tries counted from nothing, as after an operator's Start over. action review: its pull request goes back through checks, review and fixes. action retry: a `failed`
     task whose failure was the system's runs again. Any way the workflow
     counts spent_usd, what the task's runs spent so far, against its spend limit: unlike an operator's retry,
     a drive never gives a task its limit again. Refused once the task has been driven MAX_DRIVES times.
@@ -525,8 +528,8 @@ def drive(
     deploy causes; the spend it carries still bounds it. complexity: set on the task, so its next runs route
     to a stronger tier (high: complex). Returns (task, previous status).
     """
-    if action not in ("merge", "review", "retry"):
-        raise TaskError(f"a drive is merge, review or retry, not {action!r}")
+    if action not in ("merge", "review", "retry", "restart"):
+        raise TaskError(f"a drive is merge, review, retry or restart, not {action!r}")
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT status, pr_url, drives FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
         row = cur.fetchone()
@@ -539,24 +542,36 @@ def drive(
             raise TaskError(f"a {row['status']} task is not waiting with a pull request open")
         elif not row["pr_url"]:
             raise TaskError("the task has no pull request")
-        if counted and row["drives"] >= MAX_DRIVES:
+        # A start-over is a new attempt at the task, as an operator's is: its tries are counted from nothing.
+        restart = action == "restart"
+        if counted and not restart and row["drives"] >= MAX_DRIVES:
             raise TaskError(f"the Task Shepherd has already sent the task back {row['drives']} times")
         what = {
             "merge": "asked for its merge",
             "review": "sent it back through its review loop",
             "retry": "retried it",
+            "restart": "started it over on the current base",
         }[action]
         # A retried task resumes at its pull request when it has one, and starts over when it has none.
         resume = action if action != "retry" else ("review" if row["pr_url"] else None)
         cur.execute(
-            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
-            "drives = drives + %s, cancel_requested = false, waiting_on = NULL, spent_carried_usd = %s, "
+            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, resume_by = 'supervisor', "
+            "retries = retries + 1, "
+            "drives = CASE WHEN %s THEN 0 ELSE drives + %s END, cancel_requested = false, waiting_on = NULL, "
+            "spent_carried_usd = %s, "
             "complexity = coalesce(%s, complexity), "
             f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
             (
                 f"{why}, so the Task Shepherd {what} "
-                + (f"(try {row['drives'] + 1} of {MAX_DRIVES})" if counted else "(not one of its tries)"),
+                + (
+                    "(once)"
+                    if restart
+                    else f"(try {row['drives'] + 1} of {MAX_DRIVES})"
+                    if counted
+                    else "(not one of its tries)"
+                ),
                 resume,
+                restart,
                 1 if counted else 0,
                 spent_usd,
                 complexity,
@@ -597,7 +612,8 @@ def recover(conn: psycopg.Connection, task_id: str, why: str, spent_usd: Decimal
             reason = f"{why}, so the Task Shepherd sent it back to the queue (recovery {row['recoveries'] + 1})"
         recovered = 1 if status == "queued" else 0
         cur.execute(
-            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, waiting_on = NULL, "
+            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, resume_by = NULL, "
+            "waiting_on = NULL, "
             "retries = retries + %s, recoveries = recoveries + %s, spent_carried_usd = %s, "
             "cancel_requested = false, updated_at = now(), status_changed_at = now() "
             f"WHERE id = %s RETURNING {COLUMNS}",
@@ -679,7 +695,10 @@ def decide_budget(conn: psycopg.Connection, task_id: str, action: str, max_usd: 
     """An operator's answer to a task held for budget: raise (with a new spend limit for the task, or none when
     its goal's budget was raised) or end. Queues it for the task's workflow. Returns the task."""
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("SELECT status, waiting_on, max_usd FROM tasks.task WHERE id = %s FOR UPDATE", (task_id,))
+        cur.execute(
+            "SELECT status, waiting_on, max_usd, spent_carried_usd FROM tasks.task WHERE id = %s FOR UPDATE",
+            (task_id,),
+        )
         row = cur.fetchone()
         if row is None:
             raise NotFound(task_id)
@@ -690,7 +709,10 @@ def decide_budget(conn: psycopg.Connection, task_id: str, action: str, max_usd: 
             if row["max_usd"] is not None and max_usd <= row["max_usd"]:
                 raise TaskError(f"the new limit must be above the task's {usd(row['max_usd'])}")
             cur.execute("UPDATE tasks.task SET max_usd = %s, updated_at = now() WHERE id = %s", (max_usd, task_id))
-            body = f"raise:{max_usd}"
+            # The workflow counts only what its own runs spent, against a limit that had the earlier runs'
+            # spend taken off when it started. Its new limit has the same taken off, so the task as a whole
+            # stops at max_usd and not at max_usd more.
+            body = f"raise:{max_usd - (row['spent_carried_usd'] or 0)}"
         cur.execute(
             "INSERT INTO tasks.task_message (task_id, body, deliver, actor) VALUES (%s, %s, 'budget', %s)",
             (task_id, body, actor),

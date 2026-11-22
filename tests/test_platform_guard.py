@@ -45,6 +45,32 @@ def test_deleting_or_replacing_what_the_deployment_stands_on_is_refused():
     ]
 
 
+def test_removing_the_data_disks_snapshot_schedule_or_its_attachment_is_refused():
+    """The disk is the only copy of the deployment's state: a deploy never leaves it with no backup."""
+    plan = {
+        "resource_changes": [
+            change("google_compute_resource_policy.data_snapshots", ["delete", "create"], {"name": "mh-data-daily"}),
+            change("google_compute_disk_resource_policy_attachment.data_snapshots", ["delete"], {}),
+        ]
+    }
+    assert guard.refusals(plan) == [
+        "the plan replaces google_compute_resource_policy.data_snapshots",
+        "the plan deletes google_compute_disk_resource_policy_attachment.data_snapshots",
+    ]
+    created = {"resource_changes": [change("google_compute_resource_policy.data_snapshots", ["create"], {})]}
+    assert guard.refusals(created) == []
+
+
+def test_the_platform_stack_snapshots_the_data_disk_every_day():
+    from pathlib import Path
+
+    stack = (Path(__file__).resolve().parents[1] / "deploy" / "terraform" / "platform" / "main.tf").read_text()
+    assert 'resource "google_compute_resource_policy" "data_snapshots"' in stack
+    assert "days_in_cycle = 1" in stack and "max_retention_days    = 14" in stack
+    assert 'on_source_disk_delete = "KEEP_AUTO_SNAPSHOTS"' in stack
+    assert "disk = google_compute_disk.data.name" in stack
+
+
 def test_a_removed_grant_or_firewall_rule_applies():
     plan = {
         "resource_changes": [
