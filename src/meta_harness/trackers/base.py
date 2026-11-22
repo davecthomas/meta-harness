@@ -122,6 +122,16 @@ class Tracker(Protocol):
         """Adds a comment to the issue. Returns the comment's address, or "" when the tracker gives none."""
         ...
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds a section to the end of the issue's description: the heading on a line of its own, then the
+        text. The description it had is kept. Both come from `outbound.prepare`, the heading as a title and
+        the text as a body for this tracker, so a plain string is refused (TypeError).
+
+        Raises:
+            TrackerError: The tracker refused the change; the message gives its reason.
+        """
+        ...
+
     async def mark(self, ref: str) -> None:
         """Makes the issue carry the meta-harness's label (MARK_LABEL, or the deployment's). An adapter calls
         it itself before every write to an issue (a comment, a status, a pull request's link) and creates
@@ -150,6 +160,22 @@ class Tracker(Protocol):
             ValueError: The ref is not one of this tracker's, or not one this goal's source covers.
         """
         ...
+
+
+def with_section(description: str, heading: str, text: str, mark: str = "##") -> str:
+    """A description with a section added at its end, for `Tracker.add_section`. mark starts the heading's line
+    in the tracker's markup: `##` in Markdown, `h2.` in Jira's. The earlier text is kept; only the blank space
+    at its end is trimmed, so one blank line comes before the new heading.
+
+    Raises:
+        ValueError: The heading is empty.
+    """
+    line = " ".join(heading.split())
+    if not line:
+        raise ValueError("a section's heading is empty: name the section")
+    section = f"{mark} {line}\n\n{text.strip()}\n"
+    earlier = description.rstrip()
+    return f"{earlier}\n\n{section}" if earlier else section
 
 
 def scheme_of(ref: str) -> str:
