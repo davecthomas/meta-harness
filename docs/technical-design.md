@@ -2310,7 +2310,13 @@ sees the merge through. The pull request stands `clean`, `conflict`,
 `checks_failed`, `checks_pending`, `blocked` or `unknown`, read from its
 `mergeable` and `mergeable_state` and its head commit's checks. `blocked` with
 the checks passed means a rule on the branch wants what only a person gives,
-an approval or an exception. That task is an operator's. So is one whose
+an approval or an exception. That task is an operator's. A pull request that
+stands `clean` is merged whatever the task's tries say: asking the code host
+for a merge it would take spends nothing, so that send-back is none of the
+task's tries, which on a busy base were soon used up by the base moving under
+it. It is asked once per head commit, or again after a wait when the refusal
+was only a required check still running; refused at the same commit for
+anything else, the task is an operator's (`merge_refused`). So is one whose
 merge is held because its pull request changes `.github/` or `deploy/`
 (`merge_held`): the supervisor never asks for that merge. The supervisor sends
 one task back at most three times between an operator's retries (`drives`).
