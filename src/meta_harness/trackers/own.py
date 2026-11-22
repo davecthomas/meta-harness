@@ -32,7 +32,7 @@ from meta_harness.trackers.base import (
     Source,
     Supported,
     TrackerError,
-    refuse_twice,
+    check_section,
     with_section,
 )
 
@@ -146,13 +146,13 @@ class OwnTracker:
 
     async def add_section(self, ref: str, heading: str, text: str) -> None:
         """Adds a `## heading` section to the end of the issue's body, keeping what the body says. The body is
-        written only if no one changed it since it was read, so a change made meanwhile is not lost. A body that
-        has the heading already is refused and left as it is. Every issue here is the meta-harness's own, so
-        there is no label to add first."""
+        written only if no one changed it since it was read, so a change made meanwhile is not lost. A heading
+        the body has already is refused before anything is written. Every issue here is the meta-harness's own,
+        so there is no label to add first."""
         outbound.require(heading, "a section's heading", outbound.OWN, title=True)
         outbound.require(text, "a section of an issue's body", outbound.OWN)
         row = await asyncio.to_thread(self._one, ref)
-        refuse_twice(ref, row["body"] or "", heading)
+        check_section(ref, row["body"] or "", heading)
         body = with_section(row["body"] or "", heading, text)
         query = (
             "UPDATE planner.own_issue SET body = %s, updated_at = now() "

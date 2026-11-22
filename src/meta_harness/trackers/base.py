@@ -129,10 +129,9 @@ class Tracker(Protocol):
         the text as a body for this tracker, so a plain string is refused (TypeError).
 
         Raises:
-            TrackerError: The tracker refused the change; the message gives its reason. Not retryable when
-                the description already holds a section with that heading, at any level and in any case:
-                nothing was written, not even the label.
-            ValueError: The heading is empty.
+            TrackerError: The tracker refused the change; the message gives its reason. Not retryable, and
+                nothing written, when the description already has a section with that heading or the heading
+                is not one line.
         """
         ...
 
@@ -166,22 +165,28 @@ class Tracker(Protocol):
         ...
 
 
-# A Markdown heading line, any level, and its words.
+# A heading line of a description as the planner reads it, `#` to `######`, and the words it holds.
 HEADING_LINE = re.compile(r"^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
 
 
-def refuse_twice(ref: str, description: str, heading: str) -> None:
-    """Refuses a section whose heading the description, read as Markdown, has already, at any level and in
-    any case. An adapter calls it before the label and the write, so a refused section writes nothing.
+def has_section(body: str, heading: str) -> bool:
+    """Whether a description, as the planner reads it, has a heading of these words, whatever their capitals."""
+    wanted = " ".join(heading.split()).casefold()
+    return any(" ".join(found.split()).casefold() == wanted for found in HEADING_LINE.findall(body or ""))
+
+
+def check_section(ref: str, body: str, heading: str) -> None:
+    """Refuses a section the description cannot take: a heading that is not one line, or one it has already.
 
     Raises:
-        TrackerError: Not retryable: the heading is there.
+        TrackerError: Not retryable, so a caller does not write the section again and again.
     """
-    wanted = " ".join(heading.split()).casefold()
-    if any(" ".join(found.split()).casefold() == wanted for found in HEADING_LINE.findall(description or "")):
+    if not heading.strip() or "\n" in heading.strip():
+        raise TrackerError(f"a section's heading is one line of words, not {heading!r}", retryable=False)
+    if has_section(body, heading):
         raise TrackerError(
-            f"{ref}'s description already has a section headed {heading!r}, so it was not added again. "
-            "Edit that section in the tracker, or remove it there and try again.",
+            f"{ref}'s description already has a section {heading.strip()!r}, so it was not added again. Edit "
+            "that section in the tracker, or add the text under another heading.",
             retryable=False,
         )
 

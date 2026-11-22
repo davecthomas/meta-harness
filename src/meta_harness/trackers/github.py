@@ -19,8 +19,8 @@ from meta_harness.trackers.base import (
     Source,
     Supported,
     TrackerError,
+    check_section,
     configured_label,
-    refuse_twice,
     with_section,
 )
 
@@ -162,15 +162,14 @@ class GitHubTracker:
         return str(made.get("html_url") or "")
 
     async def add_section(self, ref: str, heading: str, text: str) -> None:
-        """Adds a `## heading` section to the end of the issue's body, keeping what the body says. A body that
-        has the heading already is refused before anything is written."""
+        """Adds a `## heading` section to the end of the issue's body, keeping what the body says. A heading
+        the body has already is refused before anything is written."""
         outbound.require(heading, "a section's heading", outbound.GITHUB, title=True)
         outbound.require(text, "a section of an issue's body", outbound.GITHUB)
         repo, number = parse_ref(ref)
         now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
-        earlier = now.get("body") or ""
-        refuse_twice(ref, earlier, heading)
-        body = with_section(earlier, heading, text)
+        check_section(ref, now.get("body") or "", heading)
+        body = with_section(now.get("body") or "", heading, text)
         await self.mark(ref)
         await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json={"body": body})
 

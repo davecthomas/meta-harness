@@ -109,7 +109,7 @@ async def test_a_section_is_appended_to_the_body_once_and_the_rest_stays():
     issue = await own.read(made.ref)
     assert issue.body == "Build the store.\n\nPaths: src/store\n\n## Acceptance checks\n\n- make test\n"
     assert (issue.checks, issue.paths) == (["make test"], ["src/store"])
-    with pytest.raises(TrackerError, match="already has a section headed") as refused:
+    with pytest.raises(TrackerError, match="already has a section") as refused:
         await own.add_section(made.ref, "acceptance checks", "- make other")
     assert not refused.value.retryable
     assert (await own.read(made.ref)).body == issue.body, "nothing was written the second time"

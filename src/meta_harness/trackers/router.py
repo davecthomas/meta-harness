@@ -69,7 +69,7 @@ class WithOwn:
             await tracker.link_pull_request(ref, pr_url, title)
 
     async def add_section(self, ref: str, heading: str, text: str) -> None:
-        # Not progress: it goes to the issue's tracker whether or not that one is told how a task goes.
+        # The issue's own content, not its progress: written whatever the tracker shows by itself.
         await self._of(ref).add_section(ref, heading, text)
 
     def repo_of(self, ref: str) -> str:

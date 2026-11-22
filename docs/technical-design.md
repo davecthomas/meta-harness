@@ -3112,7 +3112,7 @@ tracker, through one adapter interface:
 | `ensure_label(repo, label)` | Make sure an issue created for the repo can have the label |
 | `create_issue(repo, title, body, labels)` | Create an issue, for an approved plan's draft or a split. Returns it with its `ref` |
 | `comment(ref, text)` | Add a comment to the issue. Returns the comment's address |
-| `add_section(ref, heading, text)` | Add `## <heading>` and the text to the end of the issue's description, read just before, and keep what it said. The heading and the text come from `outbound.prepare`, and the issue is labeled first. A description that already has a heading with those words, in any case and at any level, is refused with a `TrackerError` that is not retryable, and nothing is written. Jira writes the heading `h2. <heading>`, which reads back as `## <heading>` |
+| `add_section(ref, heading, text)` | Add `## <heading>` and the text to the end of the issue's description, leaving the rest as it was. The heading and the text come from `outbound.prepare`. A description that already has a section with that heading is refused with a `TrackerError` that is not retryable, and nothing is written |
 | `mark(ref)` | Put the meta-harness's label on the issue. The adapter calls it itself before every write |
 | `set_status(ref, status)` | Move the issue to `todo`, `in_progress`, `in_review` or `done`, as far as the tracker has such a state. Returns whether it changed |
 | `link_pull_request(ref, pr_url, title)` | Record the pull request on the issue, where the tracker does not find it by itself |
@@ -3126,6 +3126,15 @@ place itself. A failed call raises `TrackerError`, with whether to try again,
 so no caller knows which tracker it spoke to. Outside an adapter a ref is
 opaque: stored, compared and passed back. `repo_of(ref)` is the one more
 operation: the code repo an issue's work is done in.
+
+`add_section` reads the description, checks its headings (`trackers/base.py`,
+`has_section`, in any capitals), marks the issue, and writes the description
+back with the section at its end. Its heading and text both come from
+`outbound.prepare`, the heading as a title. GitHub's and the own tracker's
+heading is `## <heading>`. Jira's is `h2. <heading>`, which the planner reads
+as `## <heading>`. The own tracker writes the body only if it is still the
+one it read. `WithOwn` sends the call to the tracker the ref names, whether or
+not that tracker is told of progress.
 
 **The registry of supported trackers** (`trackers/registry.py`) is the list
 of adapter modules. Each describes itself in a `SPEC`. That holds its name and
