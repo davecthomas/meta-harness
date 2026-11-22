@@ -115,3 +115,14 @@ project owner) and gh (a repo admin):
 `gcp-teardown` and `gcp-disable` ask once, before changing anything, for the
 project id typed out. Every step is safe to run again.
 `deploy/shutdown.sh` holds them.
+
+## The HTTP Gateway's commit
+
+The VM runs the HTTP Gateway at the one commit named in
+`deploy/vm/gateway.ref`, never at a branch. The gateway starts with the
+provider keys, and none of this repo's checks covers its code. To take a newer
+gateway, put its full commit SHA in that file
+(`git ls-remote https://github.com/davecthomas/ai-api-unified-http.git main`
+shows the newest) in a pull request. The file is under `deploy/`, so an
+operator merges it. The boot script stops, and an update rolls back, when the
+file does not hold 40 hex characters.

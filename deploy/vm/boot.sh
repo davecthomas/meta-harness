@@ -84,18 +84,26 @@ log "code at $REF ($MODE)"
 for dir in "$MH" "$GW"; do
   git config --system --get-all safe.directory 2>/dev/null | grep -qx "$dir" || git config --system --add safe.directory "$dir"
 done
-for pair in "$MH https://github.com/davecthomas/meta-harness.git $REF" "$GW https://github.com/davecthomas/ai-api-unified-http.git main"; do
-  read -r dir url ref <<<"$pair"
-  if [ -d "$dir/.git" ]; then
-    git -C "$dir" fetch -q origin "$ref"
-    git -C "$dir" checkout -q -f FETCH_HEAD
-  else
-    git clone -q "$url" "$dir"
-    git -C "$dir" fetch -q origin "$ref"
-    git -C "$dir" checkout -q -f FETCH_HEAD
-  fi
+# checkout DIR URL REF: the repo at that ref, cloned first when it is not there.
+checkout() {
+  local dir=$1 url=$2 ref=$3
+  [ -d "$dir/.git" ] || git clone -q "$url" "$dir"
+  git -C "$dir" fetch -q origin "$ref"
+  git -C "$dir" checkout -q -f FETCH_HEAD
   chown -R mh:mh "$dir"
-done
+}
+checkout "$MH" https://github.com/davecthomas/meta-harness.git "$REF"
+# The HTTP Gateway runs with the provider keys, and none of this repo's checks covers its code. So the VM runs
+# the one commit of it this checkout names (deploy/vm/gateway.ref, which only an operator's merge changes),
+# never whatever its main holds today.
+GW_REF=$(tr -d '[:space:]' <"$MH/deploy/vm/gateway.ref")
+if ! [[ "$GW_REF" =~ ^[0-9a-f]{40}$ ]]; then
+  log "deploy/vm/gateway.ref must hold the gateway's full commit SHA, 40 hex characters, and holds '$GW_REF'. Put the commit to run there (git ls-remote https://github.com/davecthomas/ai-api-unified-http.git main shows the newest) and deploy again."
+  # A failing command, not exit: that is what rolls an update back.
+  false
+fi
+checkout "$GW" https://github.com/davecthomas/ai-api-unified-http.git "$GW_REF"
+log "the HTTP Gateway at $GW_REF"
 
 log "secrets from Secret Manager into $ETC/env"
 secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT"; }
