@@ -1179,6 +1179,7 @@ Last by the control plane, in the writing pass
 | A comment: findings an operator dismissed, an operator's verdict | The activity that posts the comment |
 | The body of an issue a plan drafted | The planner, when the plan is approved |
 | A goal's update: its headline, body, what comes next and each thing it asks of the operator | The planner, before the update is saved. An update is shown on the goal's page and posted nowhere; it goes through the same pipeline, as `own` text. The update's `goal_update_written` event records a pass that found something as `writing`, and its rewrite's cost is a writing cost of the goal |
+| The Overview report: its headline, spend and finished lines, and each goal it says is moving, not moving or needing the operator | The planner, before the report is kept. It is shown in the console and posted nowhere, as `own` text. Its `overview_report_written` event records a pass that found something as `writing`, and its rewrite's cost is a writing cost of no goal |
 
 1. The text goes through the skill's scanner, `no-ai-slop-scan.py`. It is read
    from the shipped skill, which is locked (Skills). It runs as a child
@@ -2633,6 +2634,7 @@ credential.
 | POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps. That happens at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold or removed. 409 for one not held or closed, or for a met or canceled goal. The route reads the issue from GitHub first and records it closed, and answers 502 when it cannot be read. Records `issue_released` | built |
 | POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label. A goal with no label holds them by ref. Each body must have acceptance checks and a `Paths:` line (422 names each part and what it lacks), and gets a `Split from` line. The original gets a comment naming its parts and closes once they are done. A refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps. One split already is refused (409), as is a closed one. One the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row. Each has its state (in review, waiting, blocked, merged, closed), when it was opened and reached that state, its fix rounds and latest run. It is merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting. The answer holds the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
+| GET | `/v1/overview/report` | Planner | The planner's latest Overview report on all running goals (`planner/overview.py`), null before the first. With `since`, an ISO 8601 time when the operator last looked, it first writes a new one when the goals' facts changed, unless the last is under `overview.min_seconds` old or the day's reports reached `overview.max_usd`. The answer's `written` says whether it wrote one, `note` why an older one is shown, and `error` why a new one could not be written | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. A tier candidate's model select offers them | built |
@@ -3453,6 +3455,32 @@ least `min_seconds` apart. An update that asks something of the operator does
 not wait: it is replaced as soon as the goal moves. An approved plan's goal
 gets its update as soon as its first sweep has made its tasks. One that cannot be written is logged, said on the page,
 and tried again at the next pass.
+
+**The planner's Overview report** (`planner/overview.py`). One report covers
+every running goal (planning, active, stalled or stopped by its budget). It
+says which goals are moving and which are not, what the operator needs first
+and why, where spend stands against budgets, and what finished since the
+operator last looked. The facts of each goal are its latest update, what its
+tasks recorded since the last report (`task_status_changed` and the pull
+request events), what was done to unstick it, what waits on the operator and
+why, and its spend against its budget. Tasks closed and goals met since the
+operator last looked are what finished. One model call through the HTTP
+Gateway writes the report. The model is told to say only what the facts say,
+and the words go through the writing pass. A digest of the facts decides when
+to write: each goal's status, where each task is, what waits on the operator
+and its budget state. `GET /v1/overview/report` returns the latest report.
+With `since`, when the operator last looked, it first writes a new one when
+the digest differs from the last report's. Nothing writes a report unasked.
+The planning configuration's `overview` names the model (goal drafting's when
+left out), `max_response_tokens`, `min_seconds` between two reports, and
+`max_usd`, what reports may cost in a UTC day. It is checked at startup and
+when the configuration is saved. Past `max_usd` no model is called: the last
+report stays, and the answer's `note` says when it was written. Each report is
+an `overview_report_written` event that carries the report, its model and its
+`usd_cost`, counted as planning cost of no goal. The planner reads the latest
+report and each day's spend back from these events when it starts, so a
+restart keeps both. The report only reads: it starts, stops and changes no
+goal.
 
 **The planner's voice** (`planner/voice.py`). What the planner writes for the
 operator, its updates and a plan's summary and gaps, follows the planning

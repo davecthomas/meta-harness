@@ -393,6 +393,23 @@ REGISTRY: list[EventType] = [
             ["goal_id", "number", "model", "usd_cost"],
         ),
     ),
+    # The planner wrote its Overview report on all running goals (planner/overview.py): the report itself, the
+    # one model call and what it cost.
+    EventType(
+        "overview_report_written",
+        1,
+        _object(
+            {
+                "digest": {"type": "string"},
+                "headline": {"type": "string"},
+                "goals": {"type": "integer"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+                "written_at": {"type": "string"},
+            },
+            ["digest", "headline", "model", "usd_cost", "written_at"],
+        ),
+    ),
     EventType(
         "goal_drafted",
         1,
