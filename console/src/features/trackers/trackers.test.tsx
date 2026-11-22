@@ -284,6 +284,49 @@ test("the New goal form asks what the chosen tracker asks of a goal, and lists t
   expect(await screen.findByText("XX is not one of these: choose one that is.")).toBeTruthy();
 });
 
+test("the New goal form lists the people for the assignee setting, asked by the goal's project or repos", async () => {
+  const assignee: TrackerSetting = { name: "assignee", label: "Assignee", kind: "choice", required: false, help: "The person the goal's issues are assigned to.", scope: ["project"] };
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    if (url === "/v1/trackers/jira/choices/project") return respond({ choices: [{ value: "VL", label: "Voltron (VL)" }] });
+    if (url === "/v1/trackers/jira/choices/assignee?project=VL") return respond({ choices: [{ value: "acc-1", label: "Ada (ada@example.com)" }, { value: "acc-2", label: "Bea" }] });
+    if (url === "/v1/trackers/github/choices/assignee?repos=o%2Fr%2Co%2Fs") return respond({ choices: [{ value: "octocat", label: "octocat" }] });
+    return respond({});
+  });
+  const jira: Tracker = { ...JIRA, configured: true, signed_in: true, goal_settings: [...JIRA.goal_settings, assignee] };
+  const github: Tracker = { ...GITHUB, goal_settings: [{ ...assignee, scope: ["repos"] }] };
+  const changes: Record<string, string>[] = [];
+  const fields = (tracker: string, settings: Record<string, string>, repos: string[] = []) => (
+    <MantineProvider theme={theme}>
+      <GoalTrackerFields trackers={[github, jira]} tracker={tracker} onTracker={() => undefined} settings={settings} onSettings={(next) => changes.push(next)} repos={repos} />
+    </MantineProvider>
+  );
+
+  const { rerender } = render(fields("jira", {}));
+  // No project yet: whose people to list is not known, so none are asked for.
+  expect(await screen.findByPlaceholderText("Choose the Jira project first")).toBeTruthy();
+  expect(asked.some((url) => url.includes("/assignee"))).toBe(false);
+
+  rerender(fields("jira", { project: "VL" }));
+  const person = await screen.findByPlaceholderText("Nobody named");
+  await waitFor(() => expect((person as HTMLInputElement).disabled).toBe(false));
+  fireEvent.click(person);
+  expect(await screen.findByText("Ada (ada@example.com)")).toBeTruthy();
+  fireEvent.click(screen.getByText("Bea"));
+  expect(changes.at(-1)).toEqual({ project: "VL", assignee: "acc-2" });
+
+  rerender(fields("jira", { project: "VL", assignee: "acc-2" }));
+  expect(await screen.findByDisplayValue("Bea")).toBeTruthy();
+  cleanup();
+
+  render(fields("github", {}, ["o/r", "o/s"]));
+  const login = await screen.findByPlaceholderText("Nobody named");
+  await waitFor(() => expect((login as HTMLInputElement).disabled).toBe(false));
+  fireEvent.click(login);
+  expect(await screen.findByText("octocat")).toBeTruthy();
+});
+
 test("with one tracker set up the form still says which, and one with no sign-in says no issues will be read", () => {
   const fields = (trackers: Tracker[], tracker: string) => (
     <MantineProvider theme={theme}>

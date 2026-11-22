@@ -142,6 +142,22 @@ class Tracker(Protocol):
         the issue has changes nothing."""
         ...
 
+    async def assignee(self, ref: str) -> str:
+        """Who the issue is assigned to, as the tracker names a person (a GitHub login, a Jira account id, a
+        console user's email); "" when nobody is. A caller reads it to keep a person's assignment."""
+        ...
+
+    async def assign(self, ref: str, person: str) -> bool:
+        """Sets the issue's assignee to the person, named as `choices("assignee")` lists them. The adapter labels
+        the issue first (`mark`), as for any write. Returns whether the issue changed: False when the person
+        was assigned already.
+
+        Raises:
+            TrackerError: Not retryable, and nothing written, when the tracker does not know the person or
+                cannot assign them the issue.
+        """
+        ...
+
     async def set_status(self, ref: str, status: str) -> bool:
         """Moves the issue to one of STATUSES, as far as the tracker has such a state. Returns whether the
         issue changed: False when it was there already or the tracker has no state for it."""
@@ -231,6 +247,24 @@ class Setting:
     settings: list["Setting"] = field(default_factory=list)
     entry: str = ""
     of: str = ""
+    # For a choice: what the console asks its choices with, by name. Each is another of the goal's settings
+    # (Jira's `project`), or `repos`, the goal's repos joined by commas.
+    scope: list[str] = field(default_factory=list)
+
+
+def assignee_setting(help: str, scope: list[str] | None = None) -> Setting:
+    """The goal setting every tracker declares: the person its issues are assigned to, picked from the
+    tracker's people (`choices("assignee")`). Not required."""
+    return Setting("assignee", "Assignee", kind="choice", help=help, scope=list(scope or []))
+
+
+def unknown_person(person: str, where: str) -> TrackerError:
+    """The error for a person the tracker cannot assign: repeating the call will not mend it."""
+    return TrackerError(
+        f"{person!r} is not someone {where} can assign an issue to. Choose one of the people the goal's "
+        "Assignee setting lists, or add the person in the tracker.",
+        retryable=False,
+    )
 
 
 @dataclass(frozen=True)

@@ -201,11 +201,14 @@ def test_the_registry_is_each_adapters_own_description_and_checks_a_configuratio
     assert [(s.name, s.kind, s.required) for s in jira.goal_settings] == [
         ("project", "choice", True),
         ("assigned", "switch", False),
+        ("assignee", "choice", False),
     ]
     assert jira.takes_assigned({"assigned": "yes"}) and not jira.takes_assigned({})
     assert not registry.SUPPORTED["github"].takes_assigned({"assigned": "yes"})
     assert jira.credentials == ["MH_JIRA_EMAIL", "MH_JIRA_TOKEN"] and jira.writes_progress
-    assert registry.SUPPORTED["github"].goal_settings == [] and not registry.SUPPORTED["github"].writes_progress
+    assert [s.name for s in registry.SUPPORTED["github"].goal_settings] == ["assignee"] and not registry.SUPPORTED[
+        "github"
+    ].writes_progress
     assert registry.check(registry.seed(), None) == [] and registry.seed()["default"] == "github"
 
     site = {"site": "https://example.atlassian.net"}

@@ -15,6 +15,9 @@ export interface TrackerSetting {
   settings?: TrackerSetting[];
   entry?: string;
   of?: string;
+  // For a choice: what its list is asked with, by name. Another of the goal's settings (Jira's project), or
+  // repos, the goal's repos joined by commas.
+  scope?: string[];
 }
 
 // A tracker the meta-harness supports, from GET /v1/trackers.

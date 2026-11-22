@@ -19,12 +19,15 @@ from meta_harness.trackers.base import (
     Source,
     Supported,
     TrackerError,
+    assignee_setting,
     check_section,
     configured_label,
+    unknown_person,
     with_section,
 )
 
 SCHEME = "github"
+PAGE = 100
 READ_ISSUES = {"issues": "read"}
 # Creating a plan's issues and the goal's label for them, commenting, and closing.
 WRITE_ISSUES = {"issues": "write"}
@@ -73,6 +76,14 @@ def _issue(repo: str, data: dict) -> Issue:
         author=(data.get("user") or {}).get("login") or "",
         author_association=data.get("author_association") or "",
     )
+
+
+def _assignees(data: dict) -> list[str]:
+    """The logins an issue is assigned to."""
+    found = [user.get("login") or "" for user in data.get("assignees") or []]
+    if not found and (data.get("assignee") or {}).get("login"):
+        found = [data["assignee"]["login"]]
+    return [login for login in found if login]
 
 
 class GitHubTracker:
@@ -189,6 +200,54 @@ class GitHubTracker:
         await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json=change)
         return True
 
+    async def assignee(self, ref: str) -> str:
+        """The login of the issue's first assignee; "" when it has none."""
+        repo, number = parse_ref(ref)
+        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
+        return next(iter(_assignees(now)), "")
+
+    async def assign(self, ref: str, person: str) -> bool:
+        """Makes the login the issue's assignee. GitHub drops a login it cannot assign without a word, so the
+        repo's list of assignable users is asked first (204: assignable, 404: not)."""
+        repo, number = parse_ref(ref)
+        login = person.strip().removeprefix("@")
+        if not login or "/" in login:
+            raise unknown_person(person, repo)
+        try:
+            await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/assignees/{login}")
+        except TrackerError as err:
+            if err.status == 404:
+                raise unknown_person(person, repo) from err
+            raise
+        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
+        if [name.lower() for name in _assignees(now)] == [login.lower()]:
+            return False
+        await self.mark(ref)
+        await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json={"assignees": [login]})
+        return True
+
+    async def choices(self, setting: str, scope: dict[str, str] | None = None) -> list[dict[str, str]]:
+        """What the console offers for a setting. `assignee`, with scope's `repos` (owner/name, joined by commas)
+        or `repo`: the users assignable in any of those repos, by login. Empty for any other setting, and with
+        no repo."""
+        if setting != "assignee":
+            return []
+        given = (scope or {}).get("repos") or (scope or {}).get("repo") or ""
+        repos = [name.strip() for name in given.split(",") if re.fullmatch(r"[\w.-]+/[\w.-]+", name.strip())]
+        logins: dict[str, str] = {}
+        for repo in dict.fromkeys(repos):
+            page = 1
+            while True:
+                params = {"per_page": PAGE, "page": page}
+                batch = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/assignees", params=params) or []
+                for user in batch:
+                    if user.get("login"):
+                        logins.setdefault(user["login"].lower(), user["login"])
+                if len(batch) < PAGE:
+                    break
+                page += 1
+        return [{"value": login, "label": login} for _, login in sorted(logins.items())]
+
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Nothing to do: GitHub links a pull request to the issue its description's `Closes` line names."""
 
@@ -209,4 +268,11 @@ SPEC = Supported(
     "GitHub Issues",
     "Each repo's issues are its own GitHub issues, read and written through the repo owner's GitHub App.",
     build=GitHubTracker,
+    goal_settings=[
+        assignee_setting(
+            "The person the goal's issues are assigned to, from the users who can be assigned in its repos. "
+            "Empty: nobody named.",
+            scope=["repos"],
+        )
+    ],
 )

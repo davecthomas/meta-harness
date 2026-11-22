@@ -57,8 +57,10 @@ from meta_harness.trackers.base import (
     Source,
     Supported,
     TrackerError,
+    assignee_setting,
     check_section,
     configured_label,
+    unknown_person,
     with_section,
 )
 
@@ -69,6 +71,9 @@ REF = re.compile(r"^jira:(?P<key>[A-Z][A-Z0-9_]+-\d+)$")
 PROJECT = re.compile(r"^[A-Z][A-Z0-9_]+$")
 FIELDS = ["summary", "description", "labels", "status", "updated", "reporter", "issuelinks"]
 PAGE = 100
+# The most pages of people read for a project's assignable users: Jira may answer a page short while more
+# follow, so the list ends at an empty page or here.
+PEOPLE_PAGES = 20
 TIMEOUT_SECONDS = 30.0
 CONNECT_SECONDS = 10.0
 # Reused for every call. All of Jira is one address, and the VM reaches it through Cloud NAT, which has a limited
@@ -513,6 +518,47 @@ class JiraTracker:
         self._open.clear()
         return True
 
+    async def assignee(self, ref: str) -> str:
+        """The account id of the issue's assignee; "" when it has none."""
+        key = parse_ref(ref)
+        now = await self._call("GET", f"/issue/{key}", params={"fields": "assignee"})
+        return str(((now.get("fields") or {}).get("assignee") or {}).get("accountId") or "")
+
+    async def assign(self, ref: str, person: str) -> bool:
+        """Makes the account the issue's assignee. Jira is asked first whether the account can be assigned this
+        issue, so a person it does not know is refused before anything is written."""
+        key = parse_ref(ref)
+        account = person.strip()
+        if not account:
+            raise unknown_person(person, f"Jira's {key}")
+        found = await self._call("GET", "/user/assignable/search", params={"issueKey": key, "accountId": account})
+        if not any(isinstance(user, dict) and user.get("accountId") == account for user in found or []):
+            raise unknown_person(person, f"Jira's {key}")
+        if await self.assignee(ref) == account:
+            return False
+        await self.mark(ref)
+        await self._call("PUT", f"/issue/{key}/assignee", json={"accountId": account})
+        return True
+
+    async def _people(self, project: str) -> list[dict[str, str]]:
+        """The project's assignable users, active people only, by name with their email where Jira shows it."""
+        people: dict[str, dict[str, str]] = {}
+        for page in range(PEOPLE_PAGES):
+            params = {"project": project, "startAt": page * PAGE, "maxResults": PAGE}
+            batch = await self._call("GET", "/user/assignable/search", params=params) or []
+            for user in batch:
+                if not user.get("accountId") or user.get("active") is False or user.get("accountType") == "app":
+                    continue
+                name = str(user.get("displayName") or user["accountId"])
+                email = str(user.get("emailAddress") or "")
+                people[user["accountId"]] = {
+                    "value": user["accountId"],
+                    "label": f"{name} ({email})" if email else name,
+                }
+            if not batch:
+                break
+        return sorted(people.values(), key=lambda person: person["label"].lower())
+
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Adds the pull request to the issue's links. Its address is the link's id, so adding it again
         changes the one link."""
@@ -530,8 +576,14 @@ class JiraTracker:
         - `issue_type` and `statuses`, with scope's `project`: that project's own issue types (but the sub-task
           ones, which need a parent) and the status names of its workflows. A workflow belongs to a project, so
           another project's statuses move none of its issues, and they are not offered. Empty with no project.
+        - `assignee`, with scope's `project` (else the bound goal's): the project's assignable users, by account
+          id. Empty with no project.
         """
         project = str((scope or {}).get("project") or "").strip().upper()
+        if setting == "assignee":
+            if not project and self.source is not None:
+                project = str(self.source.settings.get("project") or "")
+            return await self._people(project) if PROJECT.match(project) else []
         if setting in ("statuses", "issue_type"):
             if not PROJECT.match(project):
                 return []
@@ -720,6 +772,10 @@ SPEC = Supported(
             kind="switch",
             help="On: the goal also takes every open issue of the project assigned, in Jira, to the account "
             "the meta-harness signs in as, whatever its labels. Assigning an issue there hands it over.",
+        ),
+        assignee_setting(
+            "The person the goal's issues are assigned to, from the project's assignable users. Empty: nobody named.",
+            scope=["project"],
         ),
     ],
     check_goal=check_goal,

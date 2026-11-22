@@ -32,7 +32,9 @@ from meta_harness.trackers.base import (
     Source,
     Supported,
     TrackerError,
+    assignee_setting,
     check_section,
+    unknown_person,
     with_section,
 )
 
@@ -176,6 +178,41 @@ class OwnTracker:
         await asyncio.to_thread(self._all, query, (status, state, row["id"]))
         return True
 
+    async def assignee(self, ref: str) -> str:
+        """The email of the console user the issue is assigned to; "" when nobody is."""
+        query = "SELECT assignee FROM planner.own_issue WHERE id = %s"
+        found = await asyncio.to_thread(self._all, query, (parse_ref(ref),))
+        if not found:
+            await self.read(ref)
+        return str(found[0]["assignee"] or "") if found else ""
+
+    async def assign(self, ref: str, person: str) -> bool:
+        """Assigns the issue to a console user, by email. One who may not sign in (deprovisioned) is not known."""
+        issue_id = parse_ref(ref)
+        query = "SELECT email FROM planner.console_user WHERE lower(email) = lower(%s) AND status <> 'deprovisioned'"
+        users = await asyncio.to_thread(self._all, query, (person.strip(),))
+        if not users:
+            raise unknown_person(person, "the meta-harness")
+        email = str(users[0]["email"])
+        query = (
+            "UPDATE planner.own_issue SET assignee = %s, updated_at = now() "
+            "WHERE id = %s AND assignee IS DISTINCT FROM %s RETURNING id"
+        )
+        if await asyncio.to_thread(self._all, query, (email, issue_id, email)):
+            return True
+        # Assigned already, or no such issue: reading it says which.
+        await self.read(ref)
+        return False
+
+    async def choices(self, setting: str, scope: dict[str, str] | None = None) -> list[dict[str, str]]:
+        """What the console offers for a setting. `assignee`: the console's users who may sign in, by email.
+        Empty for any other setting."""
+        if setting != "assignee":
+            return []
+        query = "SELECT email FROM planner.console_user WHERE status <> 'deprovisioned' ORDER BY lower(email)"
+        users = await asyncio.to_thread(self._all, query, ())
+        return [{"value": str(user["email"]), "label": str(user["email"])} for user in users]
+
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         query = "UPDATE planner.own_issue SET pr_url = %s, updated_at = now() WHERE id = %s RETURNING id"
         if not await asyncio.to_thread(self._all, query, (pr_url, parse_ref(ref))):
@@ -204,4 +241,7 @@ SPEC = Supported(
     "record outside the meta-harness.",
     build=OwnTracker,
     writes_progress=True,
+    goal_settings=[
+        assignee_setting("The console user the goal's tasks are assigned to. Empty: nobody named."),
+    ],
 )

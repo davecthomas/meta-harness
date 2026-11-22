@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NativeSelect, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { api, type Tracker } from "../../api";
+import type { TrackerSetting } from "./api";
 
 // The New goal form's part about where the goal's issues are: which tracker, when more than one is set up, and
 // what that tracker asks of a goal, drawn from what its adapter says it needs (Jira: the project). A goal uses
@@ -12,8 +13,15 @@ export function GoalTrackerFields(props: {
   onTracker: (scheme: string) => void;
   settings: Record<string, string>;
   onSettings: (settings: Record<string, string>) => void;
+  // The goal's repos, for a choice whose list depends on them (GitHub's assignable users).
+  repos?: string[];
 }) {
   const chosen = props.trackers.find((t) => t.scheme === props.tracker);
+  // A choice left empty is left out, as a goal that never had it.
+  function choose(name: string, value: string) {
+    const { [name]: _dropped, ...rest } = props.settings;
+    props.onSettings(value ? { ...rest, [name]: value } : rest);
+  }
   return (
     <Stack gap="lg">
       {props.trackers.length > 1 ? (
@@ -48,8 +56,9 @@ export function GoalTrackerFields(props: {
             label={setting.label}
             help={setting.help}
             required={setting.required}
+            {...scopeOf(setting, chosen!.goal_settings, props.settings, props.repos)}
             value={props.settings[setting.name] ?? ""}
-            onChange={(value) => props.onSettings({ ...props.settings, [setting.name]: value })}
+            onChange={(value) => choose(setting.name, value)}
           />
         ) : setting.kind === "switch" ? (
           // On is "yes"; off leaves the setting out, as a goal that never had it.
@@ -78,25 +87,63 @@ export function GoalTrackerFields(props: {
   );
 }
 
-// A setting chosen from what the tracker lists, such as the Jira projects the meta-harness works in. It is a
-// pick, never free text: nothing half-typed reaches the goal, or the calls that read its issues. Only when the
-// list cannot be read is the key typed, and then it counts once the field is left.
-function ChoiceField(props: { scheme: string; name: string; label: string; help: string; required: boolean; value: string; onChange: (value: string) => void }) {
+// What a choice's list is asked with (the setting's `scope`): the other goal settings it names, such as Jira's
+// project, and `repos`, the goal's repos joined by commas. While one is still empty, `waiting` says which, and
+// the list is not asked for.
+function scopeOf(setting: TrackerSetting, all: TrackerSetting[], settings: Record<string, string>, repos?: string[]): { scope: Record<string, string>; waiting: string } {
+  const scope: Record<string, string> = {};
+  const missing: string[] = [];
+  for (const name of setting.scope ?? []) {
+    const value = name === "repos" ? (repos ?? []).join(",") : (settings[name] ?? "").trim();
+    if (value) scope[name] = value;
+    else missing.push(name === "repos" ? "repositories" : all.find((s) => s.name === name)?.label ?? name);
+  }
+  return { scope, waiting: missing.join(" and ") };
+}
+
+// A setting chosen from what the tracker lists, such as the Jira projects the meta-harness works in, or the
+// people the goal's issues can be assigned to. It is a pick, never free text: nothing half-typed reaches the
+// goal, or the calls that read its issues. Only when the list of a required one cannot be read is the key
+// typed, and then it counts once the field is left. One that is not required can be left empty.
+function ChoiceField(props: {
+  scheme: string;
+  name: string;
+  label: string;
+  help: string;
+  required: boolean;
+  scope: Record<string, string>;
+  waiting: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   const [choices, setChoices] = useState<{ value: string; label: string }[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const asked = JSON.stringify(props.scope);
   useEffect(() => {
     let stale = false;
     setChoices(null);
     setError(null);
-    api.trackerChoices(props.scheme, props.name).then(
+    if (props.waiting) return;
+    api.trackerChoices(props.scheme, props.name, JSON.parse(asked)).then(
       (found) => !stale && setChoices(found),
       (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
     );
     return () => {
       stale = true;
     };
-  }, [props.scheme, props.name]);
+  }, [props.scheme, props.name, asked, props.waiting]);
   const chosen = props.value.trim();
+  if (props.waiting) {
+    return <Select label={props.label} description={props.help} required={props.required} disabled placeholder={`Choose the ${props.waiting} first`} data={[]} value={null} />;
+  }
+  if (error && !props.required) {
+    return (
+      <Stack gap={4}>
+        <Select label={props.label} description={props.help} disabled placeholder="Not listed" data={[]} value={null} />
+        <Text size="xs" c="orange">The list could not be read, so the goal names nobody here: {error}</Text>
+      </Stack>
+    );
+  }
   if (error) {
     return (
       <Stack gap={4}>
@@ -113,12 +160,13 @@ function ChoiceField(props: { scheme: string; name: string; label: string; help:
         description={props.help}
         required={props.required}
         searchable
-        allowDeselect={false}
+        allowDeselect={!props.required}
+        clearable={!props.required}
         disabled={choices === null}
-        placeholder={choices === null ? "Loading…" : "Choose one"}
+        placeholder={choices === null ? "Loading…" : props.required ? "Choose one" : "Nobody named"}
         nothingFoundMessage="None matches"
         value={known ? chosen : null}
-        onChange={(value) => value && props.onChange(value)}
+        onChange={(value) => (value ? props.onChange(value) : !props.required && props.onChange(""))}
         data={choices ?? []}
         maxDropdownHeight={280}
       />

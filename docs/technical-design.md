@@ -3119,6 +3119,9 @@ tracker, through one adapter interface:
 | `add_section(ref, heading, text)` | Add `## <heading>` and the text to the end of the issue's description, leaving the rest as it was. The heading and the text come from `outbound.prepare`. A description that already has a section with that heading is refused with a `TrackerError` that is not retryable, and nothing is written |
 | `mark(ref)` | Put the meta-harness's label on the issue. The adapter calls it itself before every write |
 | `set_status(ref, status)` | Move the issue to `todo`, `in_progress`, `in_review` or `done`, as far as the tracker has such a state. Returns whether it changed |
+| `assignee(ref)` | Who the issue is assigned to: a GitHub login, a Jira account id or a console user's email. Empty when nobody is |
+| `assign(ref, person)` | Set the issue's assignee, after `mark`. Returns whether it changed. A person the tracker cannot assign is refused with a `TrackerError` that is not retryable, and nothing is written. Nothing calls it yet: assigning issues as they are created or started is a later task |
+| `choices("assignee", scope)` | The people for the goal setting `assignee`: GitHub's assignable users of the repos in `scope.repos`, Jira's assignable users of `scope.project` (`GET /user/assignable/search`), the own tracker's console users who may sign in. A `choice` setting's `scope` names what the console asks its list with |
 | `link_pull_request(ref, pr_url, title)` | Record the pull request on the issue, where the tracker does not find it by itself |
 | `url(ref)` | Where a person reads the issue |
 | `webhook(payload)` | Planned: turn a tracker's webhook into `issue_opened`, `issue_edited`, `issue_labeled`, `issue_closed` events, so the Inputs view and the goal loop never poll |
