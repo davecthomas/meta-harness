@@ -100,6 +100,8 @@ test("an issue's standing names what it waits for or what it needs", () => {
   const byRef = new Map(ISSUES.map((i) => [i.ref, i]));
   const failed = { ...ISSUES[0], task_status: "failed", depends_on: [] };
   expect(standing(failed, "attention", byRef)).toBe("Needs you: failed, retry it");
+  // On a goal that is over, the same issue is said as what it was left as: nothing is asked of anyone.
+  expect(standing(failed, "attention", byRef, true)).toBe("Left failed");
   expect(standing({ ...ISSUES[0], depends_on: [] }, "queued", byRef)).toBe("Queued: starts when a place is free");
   expect(standing({ ...ISSUES[0], pr_url: "https://github.com/o/r/pull/30" }, "review", byRef)).toBe("In review: pull request #30");
 });

@@ -226,3 +226,13 @@ test("an update's age reads as a person would say it", () => {
   expect(since("2026-11-19T11:15:00Z", now)).toBe("45 minutes ago");
   expect(since("2026-11-19T09:00:00Z", now)).toBe("3 hours ago");
 });
+
+test("an ended goal's last update asks for nothing: no need, no button, no next step", async () => {
+  const need = { what: "Retry or drop the failed deploy check task.", ref: "", action: "retry", task_id: "t-1" };
+  show([{ updates: [{ ...LATEST, needs_you: [need], next: "It will merge once its checks pass." }], enabled: true, error: null }], false);
+
+  expect((await screen.findByTestId("planner-goal-over")).textContent).toContain("Nothing here needs you now");
+  expect(screen.queryByTestId("planner-need")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(screen.queryByText(/It will merge once its checks pass/)).toBeNull();
+});

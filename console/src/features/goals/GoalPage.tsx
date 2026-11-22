@@ -447,8 +447,8 @@ export function GoalPage() {
       >
         Issues and tasks
       </SectionTitle>
-      <UnstickGoal goalId={goal.id} watch={Object.values(tasks).map((t) => `${t.id}:${t.status}:${t.waiting_on ?? ""}`).join(",")} onChanged={() => void Promise.all([load(), loadProgress()])} />
-      {progress && <GoalFailures issues={progress} tasks={tasks} onChanged={() => void Promise.all([load(), loadProgress()])} />}
+      {open && <UnstickGoal goalId={goal.id} watch={Object.values(tasks).map((t) => `${t.id}:${t.status}:${t.waiting_on ?? ""}`).join(",")} onChanged={() => void Promise.all([load(), loadProgress()])} />}
+      {progress && <GoalFailures issues={progress} tasks={tasks} ended={!open} onChanged={() => void Promise.all([load(), loadProgress()])} />}
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
       <GoalSpend goalId={goal.id} goalName={goalTitle(goal)} opened={spending} onClose={() => setSpending(false)} />
       {issues.length > 0 && progress && shownView === "board" ? (
@@ -464,7 +464,7 @@ export function GoalPage() {
           )}
         />
       ) : issues.length > 0 && progress && shownView === "graph" ? (
-        <GoalGraph issues={progress} tasks={tasks} />
+        <GoalGraph issues={progress} tasks={tasks} ended={!open} />
       ) : issues.length ? (
         <DataTable head={["Task", "Issue state", "Task status", "Pull request", "Waits on", ""]}>
           {shown.items.map((i) => {

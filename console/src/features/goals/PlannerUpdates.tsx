@@ -242,10 +242,16 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
               <Loader size="xs" />
               <Text size="sm">Done. I'm writing what changed, which takes a few seconds.</Text>
             </Group>
-          ) : (
+          ) : open ? (
             <NeedsYou needs={latest.needs_you ?? []} planning={planning} goalId={goalId} label={label} onDone={() => void done()} />
+          ) : (
+            // The goal is over. This update was written while it ran: what it asked for then is asked of
+            // nobody now, and no button here would do anything the goal still wants.
+            <Text size="sm" c="dimmed" data-testid="planner-goal-over">
+              This is the last update from before the goal ended. Nothing here needs you now.
+            </Text>
           )}
-          {latest.next && (
+          {open && latest.next && (
             <Text size="sm"><Text span fw={650}>Next: </Text>{latest.next}</Text>
           )}
         </Stack>

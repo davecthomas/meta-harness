@@ -84,3 +84,18 @@ test("a goal with nothing failed shows no alert", () => {
   show([issue("github:o/r#4", { task_id: "t-4", task_status: "running" })]);
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+test("an ended goal's failed work is said as what was left, with no button to retry it", () => {
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <GoalFailures issues={ISSUES} tasks={{}} ended />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  const left = screen.getByTestId("goal-left-unfinished");
+  expect(left.textContent).toContain("4 issues were left unfinished when the goal ended");
+  expect(left.textContent).toContain("Nothing here needs you");
+  expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  expect(screen.queryByText(/issues need you/)).toBeNull();
+});
