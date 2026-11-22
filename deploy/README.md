@@ -126,3 +126,31 @@ gateway, put its full commit SHA in that file
 shows the newest) in a pull request. The file is under `deploy/`, so an
 operator merges it. The boot script stops, and an update rolls back, when the
 file does not hold 40 hex characters.
+
+## Backups of the data disk
+
+The `mh-data` disk holds Postgres, Temporal's history and the run workspaces.
+The platform stack snapshots it every day at 09:00 UTC and keeps each snapshot
+14 days (`mh-data-daily`). The snapshots outlive the disk. A deploy never
+deletes or replaces the schedule or its attachment (`deploy/platform_guard.py`),
+so a change to the schedule itself, which Google Cloud makes by replacing it,
+is applied by hand with `make platform`.
+
+To restore, with `PROJECT` and `ZONE` from `deploy/environment.json`:
+
+1. List the snapshots and pick one:
+   `gcloud compute snapshots list --project "$PROJECT" --filter "sourceDisk~mh-data" --sort-by ~creationTimestamp`
+2. Stop the VM, so nothing writes to the disk:
+   `gcloud compute instances stop mh-vm --zone "$ZONE" --project "$PROJECT"`
+3. Make a disk from the snapshot under a new name, and look at it before
+   anything is replaced:
+   `gcloud compute disks create mh-data-restored --source-snapshot <snapshot> --type pd-balanced --zone "$ZONE" --project "$PROJECT"`
+4. Swap the disks on the VM: detach `mh-data`, attach `mh-data-restored` under
+   the device name `data`, and start the VM. Keep the old disk until the
+   restored one has run a task end to end.
+5. Terraform still names the disk `mh-data`. Once the old disk is no longer
+   needed, rename by hand (delete the old disk, create `mh-data` from the same
+   snapshot, attach it), so the platform stack's state matches again.
+
+`make gcp-backup` still dumps the database to a laptop, for a copy outside the
+project.
