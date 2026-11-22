@@ -284,6 +284,56 @@ test("the New goal form asks what the chosen tracker asks of a goal, and lists t
   expect(await screen.findByText("XX is not one of these: choose one that is.")).toBeTruthy();
 });
 
+test("the New goal form lists the people for the assignee setting, from the goal's project or repos", async () => {
+  const assignee: TrackerSetting = { name: "assignee", label: "Assignee", kind: "choice", required: false, help: "Who the goal's issues are assigned to." };
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    if (url === "/v1/trackers/jira/choices/project") return respond({ choices: [{ value: "VL", label: "Voltron (VL)" }] });
+    if (url === "/v1/trackers/jira/choices/assignee?project=VL&repos=o%2Fr") {
+      return respond({ choices: [{ value: "acc-alice", label: "Alice Ng (alice@example.com)" }, { value: "acc-bob", label: "Bob Ray" }] });
+    }
+    if (url === "/v1/trackers/github/choices/assignee?repos=o%2Fr%2Co%2Fs") return respond({ choices: [{ value: "octocat", label: "octocat" }] });
+    return respond({});
+  });
+  const jira = { ...JIRA, configured: true, signed_in: true, goal_settings: [...JIRA.goal_settings, assignee] };
+  const github = { ...GITHUB, goal_settings: [assignee] };
+  const changes: Record<string, string>[] = [];
+  const fields = (tracker: string, settings: Record<string, string>, repos: string[]) => (
+    <MantineProvider theme={theme}>
+      <GoalTrackerFields trackers={[github, jira]} tracker={tracker} onTracker={() => undefined} settings={settings} onSettings={(next) => changes.push(next)} repos={repos} />
+    </MantineProvider>
+  );
+  // The field's input: its label also names the dropdown's list.
+  const field = async () => (await screen.findAllByLabelText("Assignee")).find((el) => el.tagName === "INPUT")!;
+
+  // Jira's people are a project's: none are asked for until the goal has one.
+  const { rerender } = render(fields("jira", {}, ["o/r"]));
+  expect((await field()).getAttribute("placeholder")).toBe("Choose the project first");
+  expect(asked.filter((url) => url.includes("/assignee"))).toEqual([]);
+
+  rerender(fields("jira", { project: "VL" }, ["o/r"]));
+  const person = await field();
+  await waitFor(() => expect(person.getAttribute("placeholder")).toBe("Choose one, or leave empty"));
+  fireEvent.click(person);
+  expect(await screen.findByText("Bob Ray")).toBeTruthy();
+  fireEvent.click(await screen.findByText("Alice Ng (alice@example.com)"));
+  expect(changes.at(-1)).toEqual({ project: "VL", assignee: "acc-alice" });
+
+  // Not required: picking the one chosen again empties it, and the setting is left out.
+  rerender(fields("jira", { project: "VL", assignee: "acc-alice" }, ["o/r"]));
+  expect(await screen.findByDisplayValue("Alice Ng (alice@example.com)")).toBeTruthy();
+  fireEvent.click(await field());
+  fireEvent.click(await screen.findByRole("option", { name: "Alice Ng (alice@example.com)", hidden: true }));
+  expect(changes.at(-1)).toEqual({ project: "VL" });
+
+  // GitHub's people are those every one of the goal's repos can assign.
+  rerender(fields("github", {}, ["o/r", "o/s"]));
+  fireEvent.click(await field());
+  fireEvent.click(await screen.findByText("octocat"));
+  expect(changes.at(-1)).toEqual({ assignee: "octocat" });
+});
+
 test("with one tracker set up the form still says which, and one with no sign-in says no issues will be read", () => {
   const fields = (trackers: Tracker[], tracker: string) => (
     <MantineProvider theme={theme}>

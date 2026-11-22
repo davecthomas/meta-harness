@@ -3326,9 +3326,10 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
 
 #### Who an issue is assigned to
 
-Status: proposed. The owner approves this section, or names another choice,
-before any code task for it starts (VL-14260). Today the meta-harness never
-sets an assignee, so its issues show in no one's "assigned to me" list.
+Status: partly built. The `Tracker` calls and the goal setting below are
+built. Nothing calls `assign` yet, so the meta-harness still sets no
+assignee when it creates or starts an issue (VL-14260). Its issues show in no
+one's "assigned to me" list.
 
 **Who.** For each issue, the first of these that applies:
 1. The person named in the goal's tracker settings (`assignee`), picked from
@@ -3363,26 +3364,29 @@ retries it is reported the same way and never stops the task.
 
 **New `Tracker` calls** (`trackers/base.py`, each adapter implementing them,
 `WithOwn` and `Trackers` routing them):
-- `assignable(query)` returns the people the tracker can assign, each with an
-  id, a display name and an email when the tracker shows it. It takes a text
-  to narrow the list and is bound to the goal's repos and settings. It also
-  serves the console's pick.
-- `assign(ref, person_id)` sets the issue's assignee. It returns whether it
-  changed anything, and changes nothing on an issue that has an assignee.
-- `Issue.assignee` holds the assignee's id, empty when none, so "already has
-  an assignee" is read from the issue.
-- `create_issue` takes an optional `assignee`, so an issue is assigned as it
-  is created.
+- Built: `choices("assignee", scope)` lists the people the tracker can
+  assign, each as an id (`value`) and a name (`label`). GitHub takes the
+  scope's `repos` (comma-separated) and lists the logins every one of them
+  can assign. Jira takes `project` and lists account ids, with the display
+  name and the email where Jira shows it. The own tracker lists the console
+  users who may sign in, by email. It serves the console's pick.
+- Built: `assign(ref, person)` sets the issue's assignee. It returns whether
+  it changed anything, and changes nothing on an issue that has an assignee.
+  A person the tracker cannot assign is a `TrackerError` that is not
+  retryable, raised before anything is written. Jira takes an account id or
+  a display name that names one person.
+- Built: `assignee(ref)` reads the issue's assignee id, empty when none.
+- Planned: `create_issue` takes an optional `assignee`, so an issue is
+  assigned as it is created.
 
 **The goal setting.** `assignee` is a `choice` setting every tracker declares
 in its `SPEC` `goal_settings`, read from `GET
-/v1/trackers/{scheme}/choices/assignee`, which calls `assignable`. The New
-goal form shows it as a pick from that list, empty by default, and never as
-free text. A goal's tracker settings are fixed when it is created, so so is
+/v1/trackers/{scheme}/choices/assignee`, which calls the adapter's
+`choices`. The New goal form shows it as a pick from that list, empty by
+default, and never as free text. It passes the goal's project and repos as
+the scope, and waits for a project on a tracker that asks for one. A goal's tracker settings are fixed when it is created, so so is
 this one. The goal's page shows who is assigned and, for an owner not found
 or a person not assignable, why nobody is.
-
-This section changes no code.
 
 An issue is one task, by its ref, so what the task was made from can fall
 behind the issue. A task that ended canceled or failed is made over when a
