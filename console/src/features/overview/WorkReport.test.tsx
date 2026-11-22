@@ -2,10 +2,12 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { retries } from "../../client";
 import { theme } from "../../theme";
-import { WorkReport } from "./WorkReport";
+import { Overview } from "./Overview";
+import { FIRST_LOOK_MS, WorkReport } from "./WorkReport";
 
 const report = {
   headline: "Two goals are moving.", moving: [{ goal_id: "g-1", goal: "Add exports", what: "A pull request opened." }],
@@ -33,6 +35,30 @@ test("the panel shows the report and sends since from the last visit", async () 
   expect(url.pathname).toBe("/v1/overview/report");
   expect(url.searchParams.get("since")).toBe("2026-11-08T09:00:00.000Z");
   expect(Date.parse(window.localStorage.getItem("mh:overview:last-visit")!)).toBeGreaterThan(Date.parse("2026-11-08T09:00:00.000Z"));
+});
+
+test("a first visit asks for a report covering the last day", async () => {
+  const calls = renderPanel(() => json({ report, written: true }));
+  await screen.findByText("Two goals are moving.");
+  const since = new URL(calls[0].url, "http://x").searchParams.get("since");
+  expect(since).toBeTruthy();
+  const age = Date.now() - Date.parse(since!);
+  expect(age).toBeGreaterThanOrEqual(FIRST_LOOK_MS);
+  expect(age).toBeLessThan(FIRST_LOOK_MS + 60_000);
+});
+
+test("the report is the first thing on the Overview", async () => {
+  vi.stubGlobal("fetch", (url: string) =>
+    Promise.resolve(url.startsWith("/v1/overview/report") ? json({ report, written: false }) : json({ detail: "not here" }, 404)));
+  render(<MantineProvider theme={theme}><MemoryRouter><Overview /></MemoryRouter></MantineProvider>);
+  await screen.findByText("Two goals are moving.");
+  const panel = screen.getByTestId("work-report");
+  const follows = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  // The page's title, then the report, then everything else.
+  expect(follows(screen.getByRole("heading", { name: "Overview" }), panel)).toBe(true);
+  for (const label of ["Needs you", "Running", "Open goals"]) {
+    for (const el of screen.getAllByText(label)) expect(follows(panel, el)).toBe(true);
+  }
 });
 
 test("a failed refresh keeps the last report and says so", async () => {
