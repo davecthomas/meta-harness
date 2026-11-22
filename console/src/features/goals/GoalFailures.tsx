@@ -29,10 +29,19 @@ export function groups(issues: IssueProgress[], tasks: Record<string, Task> = {}
 
 // A goal with failed work says so above its board: what went wrong, why, and what to do, once for the issues
 // that failed the same way, with the action that fixes them. Nothing when there is none.
-export function GoalFailures({ issues, tasks, onChanged }: { issues: IssueProgress[]; tasks: Record<string, Task>; onChanged?: () => void }) {
+// ended: the goal is met or canceled. Its failed work is then said as what was left, with no button: an ended
+// goal asks nothing of anyone, and a retry would start work the goal no longer wants.
+export function GoalFailures({ issues, tasks, onChanged, ended = false }: { issues: IssueProgress[]; tasks: Record<string, Task>; onChanged?: () => void; ended?: boolean }) {
   const found = groups(issues, tasks);
   const total = found.reduce((n, g) => n + g.items.length, 0);
   if (!total) return null;
+  if (ended) {
+    return (
+      <Alert color="gray" variant="light" title={`${total} ${total === 1 ? "issue was" : "issues were"} left unfinished when the goal ended`} mb="md" data-testid="goal-left-unfinished">
+        Nothing here needs you. To take {total === 1 ? "it" : "them"} up again, reopen the goal, and each can be retried from here.
+      </Alert>
+    );
+  }
   const count = `${total} ${total === 1 ? "issue needs" : "issues need"} you`;
   return (
     <Alert color="red" title={count} icon={<IconAlertTriangle size={18} />} mb="md" role="alert">

@@ -301,10 +301,12 @@ test("the settings most goals leave alone are folded away, and merging automatic
 
   const toggle = screen.getByTestId("more-settings");
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  expect(screen.getByLabelText("Budget")).toBeTruthy();
+  // The budget is one of them, and the folded line says the one in force.
+  expect(toggle.textContent).toContain("no budget, priority");
   fireEvent.click(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
   expect(screen.getByLabelText("Priority")).toBeTruthy();
+  expect(screen.getByLabelText("Budget")).toBeTruthy();
 
   // The way to start a goal from a spec comes before the form's own fields, and the merge switch after them all.
   const order = (el: Element, other: Element) => !!(el.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);

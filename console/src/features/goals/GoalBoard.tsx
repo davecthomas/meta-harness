@@ -158,6 +158,9 @@ function IssueCard(props: {
 
 // The goal's progress: its issues done of all, and what its tasks spent against its budget.
 // goal: the goal, for how it stands against its budget: past it, the spend line says so and the bar changes color.
+// A goal in one of these is over: nothing is left "to finish".
+const ENDED = ["met", "canceled"];
+
 export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<string, number>; budget: string | null; onSpend?: () => void; goal?: Goal }) {
   const { column } = layout(props.issues);
   const done = props.issues.filter((i) => column.get(i.ref) === "done").length;
@@ -175,7 +178,7 @@ export function GoalProgress(props: { issues: IssueProgress[]; spend: Record<str
       <Stack gap={2} w={220}>
         <Text size="sm" c="dimmed">
           ${spent.toFixed(2)} spent{budget ? ` of $${budget.toFixed(2)}` : ""}{words && `: ${words}`}
-          {projected !== null && done < props.issues.length && ` · about $${projected.toFixed(2)} to finish`}
+          {projected !== null && done < props.issues.length && !ENDED.includes(props.goal?.status ?? "") && ` · about $${projected.toFixed(2)} to finish`}
           {props.onSpend && spent > 0 && (
             <>
               {" · "}
@@ -263,8 +266,15 @@ const COLORS: Record<Column, string> = {
 };
 
 // A node's second line: where the issue stands, and what it waits for.
-export function standing(issue: IssueProgress, column: Column, byRef: Map<string, IssueProgress>): string {
+// ended: the goal is over, so an issue that would need the operator is said as what it was left as.
+export function standing(issue: IssueProgress, column: Column, byRef: Map<string, IssueProgress>, ended = false): string {
   if (column === "done") return "Done";
+  if (ended) {
+    if (issue.task_status === "failed") return "Left failed";
+    if (issue.task_status === "canceled") return "Canceled";
+    if (issue.task_status === "review_unresolved") return "Left with its review unresolved";
+    return issue.task_id ? "Left unfinished" : "Never started";
+  }
   if (column === "running") return "Running now";
   if (column === "review") return issue.pr_url ? `In review: pull request #${issue.pr_url.split("/").pop()}` : "In review";
   const open = issue.depends_on.filter((d) => byRef.has(d) && byRef.get(d)!.state !== "closed");
@@ -283,7 +293,7 @@ export function standing(issue: IssueProgress, column: Column, byRef: Map<string
 // The goal's issues in the order they can be worked: an issue sits to the right of every issue it waits on,
 // with an arrow from each of those. It answers what blocks what, and so what to fix first. A goal whose
 // issues do not depend on each other has no order to draw, and says so.
-export function GoalGraph(props: { issues: IssueProgress[]; tasks: Record<string, Task> }) {
+export function GoalGraph(props: { issues: IssueProgress[]; tasks: Record<string, Task>; ended?: boolean }) {
   const navigate = useNavigate();
   const { column, depth } = layout(props.issues);
   const byRef = new Map(props.issues.map((i) => [i.ref, i]));
@@ -340,10 +350,10 @@ export function GoalGraph(props: { issues: IssueProgress[]; tasks: Record<string
             return (
               <g key={i.ref} transform={`translate(${p.x},${p.y})`} style={{ cursor: i.task_id ? "pointer" : "default" }}
                 onClick={() => i.task_id && navigate(`/tasks/${i.task_id}`)} data-testid={`node-${i.ref}`} data-column={where}>
-                <title>{`${title} (${shortRef(i.ref)}): ${standing(i, where, byRef)}`}</title>
+                <title>{`${title} (${shortRef(i.ref)}): ${standing(i, where, byRef, props.ended)}`}</title>
                 <rect width={NODE_W} height={NODE_H} rx={6} fill="var(--mantine-color-body)" stroke={COLORS[where]} strokeWidth={where === "queued" || where === "running" || where === "review" ? 1 : 2} />
                 <text x={10} y={19} fontSize={12} fontWeight={600} fill="var(--mantine-color-text)">{title.length > 38 ? `${title.slice(0, 37)}…` : title}</text>
-                <text x={10} y={35} fontSize={11} fill={where === "attention" ? "var(--mantine-color-red-5)" : "var(--mantine-color-text)"}>{standing(i, where, byRef)}</text>
+                <text x={10} y={35} fontSize={11} fill={where === "attention" ? "var(--mantine-color-red-5)" : "var(--mantine-color-text)"}>{standing(i, where, byRef, props.ended)}</text>
                 <text x={10} y={50} fontSize={10} fill="var(--mantine-color-dimmed)">{shortRef(i.ref).split("/").pop()}</text>
               </g>
             );

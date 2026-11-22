@@ -417,26 +417,26 @@ export function NewGoal() {
               </Stack>
             </SimpleGrid>
             <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} source={source} />
-            <NumberInput
-              label="Budget"
-              description="What the goal's runs may spend. Leave it empty for none."
-              prefix="$"
-              min={0}
-              decimalScale={2}
-              maw={260}
-              value={budget}
-              onChange={setBudget}
-            />
             <div>
               <UnstyledButton onClick={() => setMore((now) => !now)} aria-expanded={more} data-testid="more-settings">
                 <Group gap={6}>
                   {more ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
                   <Text size="sm" fw={500}>More settings</Text>
-                  <Text size="sm" c="dimmed">priority, parallel tasks, what the budget does when it is reached</Text>
+                  <Text size="sm" c="dimmed">{budget === "" || budget === 0 ? "no budget" : `budget $${budget}`}, priority, parallel tasks, what the budget does when it is reached</Text>
                 </Group>
               </UnstyledButton>
               <Collapse expanded={more}>
                 <Stack gap="md" mt="sm">
+                  <NumberInput
+                    label="Budget"
+                    description="What the goal's runs may spend. Leave it empty for none."
+                    prefix="$"
+                    min={0}
+                    decimalScale={2}
+                    maw={260}
+                    value={budget}
+                    onChange={setBudget}
+                  />
                   <Group grow align="flex-start">
                     <NumberInput label="Priority" description="Higher runs first." value={priority} onChange={setPriority} />
                     <NumberInput
