@@ -410,6 +410,22 @@ REGISTRY: list[EventType] = [
             ["digest", "headline", "model", "usd_cost", "written_at"],
         ),
     ),
+    # The planner wrote a narrative summary for one reader (planner/narratives.py): of a goal (scope is its id)
+    # or of all running goals (scope "overview"), with the one model call's cost.
+    EventType(
+        "narrative_written",
+        1,
+        _object(
+            {
+                "scope": {"type": "string"},
+                "persona": {"type": "string"},
+                "digest": {"type": "string"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["scope", "persona", "digest", "model", "usd_cost"],
+        ),
+    ),
     # The planner answered the operator's question about the work from the Overview's facts (planner/overview.py):
     # the question, the answer, the one model call and what it cost.
     EventType(

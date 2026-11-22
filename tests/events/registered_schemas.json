@@ -1912,5 +1912,33 @@
       "retries"
     ],
     "additionalProperties": true
+  },
+  "narrative_written v1": {
+    "type": "object",
+    "properties": {
+      "scope": {
+        "type": "string"
+      },
+      "persona": {
+        "type": "string"
+      },
+      "digest": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "scope",
+      "persona",
+      "digest",
+      "model",
+      "usd_cost"
+    ],
+    "additionalProperties": true
   }
 }
