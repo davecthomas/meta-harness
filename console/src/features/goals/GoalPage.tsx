@@ -29,6 +29,7 @@ import { ProvenanceEdit, provenanceSummary, type ProvenanceGoal } from "./proven
 import { useEventStream, useInfinite } from "../../hooks";
 import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
 import { ConfirmButton } from "../../components/ConfirmButton";
+import { afterFailedChange } from "../../client";
 
 // How often an open goal's page rereads its issues.
 const REFRESH_MS = 5000;
@@ -206,7 +207,11 @@ export function GoalPage() {
       await Promise.all([load(), loadProgress()]);
     } catch (err) {
       // What was pressed did not happen: say so, since reloading would not do it either.
-      setError(`That did not happen: ${err instanceof Error ? err.message : String(err)}. Nothing changed; press it again, or fix what the message names first`);
+      const after = afterFailedChange(err);
+      setError(
+        `${after === "Nothing changed." ? "That did not happen" : "No answer came back"}: ${err instanceof Error ? err.message : String(err)}. ` +
+          (after === "Nothing changed." ? "Nothing changed; press it again, or fix what the message names first" : after),
+      );
     }
   }
 

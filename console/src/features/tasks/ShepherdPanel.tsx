@@ -4,6 +4,7 @@ import { Anchor, Button, Group, Stack, Text } from "@mantine/core";
 import { IconArrowBackUp, IconExternalLink, IconGitMerge, IconX } from "@tabler/icons-react";
 import { api, type Task, type TaskStanding } from "../../api";
 import { ConfirmButton } from "../../components/ConfirmButton";
+import { afterFailedChange } from "../../client";
 import { VoicePanel } from "../../components/Voice";
 import { when } from "../../components/ui";
 import { usd } from "../../money";
@@ -103,7 +104,11 @@ function Moves({ task, moves, onChanged }: { task: Task; moves: string[]; onChan
       await known[id].run!(task);
       setDone(id);
     } catch (err) {
-      setError(`${known[id].label} did not go through: ${err instanceof Error ? err.message : String(err)}. Nothing changed. Try it again.`);
+      const after = afterFailedChange(err);
+      setError(
+        `${known[id].label} did not go through: ${err instanceof Error ? err.message : String(err)}. ` +
+          (after === "Nothing changed." ? "Nothing changed. Try it again." : after),
+      );
       throw err;
     } finally {
       setBusy(null);

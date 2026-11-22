@@ -1,9 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { Alert, Button, Group, Modal, Stack, Text, type ButtonProps } from "@mantine/core";
+import { afterFailedChange } from "../client";
 
 // A button that asks first. For an action that cannot be taken back, or that stops or ships work: the dialog
 // says what will happen, in full, and the action runs only on its own button. While it runs the button shows
-// it; if it fails the dialog stays open and says so, with that nothing changed.
+// it; if it fails the dialog stays open and says so: that nothing changed when the service refused it, and that
+// it may have gone through when no answer came back.
 export function ConfirmButton(props: ButtonProps & {
   // The button's words, and the dialog's own button when `confirm` is not given.
   label: string;
@@ -22,6 +24,7 @@ export function ConfirmButton(props: ButtonProps & {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  const [after, setAfter] = useState("");
   async function go() {
     setBusy(true);
     setFailed(null);
@@ -30,6 +33,7 @@ export function ConfirmButton(props: ButtonProps & {
       setAsking(false);
     } catch (err) {
       setFailed(err instanceof Error ? err.message : String(err));
+      setAfter(afterFailedChange(err));
     } finally {
       setBusy(false);
     }
@@ -41,9 +45,11 @@ export function ConfirmButton(props: ButtonProps & {
         <Stack gap="md">
           <Text size="sm" component="div">{says}</Text>
           {failed && (
-            <Alert color="red" title="That did not happen" data-testid="confirm-failed">
+            <Alert color="red" title={after === "Nothing changed." ? "That did not happen" : "No answer came back"} data-testid="confirm-failed">
               <Text size="sm">{failed}</Text>
-              <Text size="sm" mt={4}>Nothing changed. Try again, or close this and fix what the message names.</Text>
+              <Text size="sm" mt={4}>
+                {after === "Nothing changed." ? "Nothing changed. Try again, or close this and fix what the message names." : after}
+              </Text>
             </Alert>
           )}
           <Group justify="flex-end">

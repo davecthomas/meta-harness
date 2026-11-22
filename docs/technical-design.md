@@ -4374,7 +4374,11 @@ standing's reason and its account of the reviews. For a task that waits on a
 person, it shows the supervisor's offered actions as buttons (The supervisor,
 Offered actions). The first button is filled and marked "(recommended)". An
 action that spends or cannot be undone asks first, in a dialog that says what
-will run. The failure's own message is inside the panel, and offers no buttons
+will run. When such an action fails, the console says "Nothing changed" only
+for a refusal, a 4xx answer other than a timeout. After a lost connection or a
+gateway's error the service may have done the work, so it says the change may
+have gone through and to reload before trying again (`afterFailedChange`,
+`console/src/client.ts`). The failure's own message is inside the panel, and offers no buttons
 of its own when the panel offers actions. A standing with none shows its ask
 as a sentence. The Goal Planner's panel on a goal's page shows its mark the
 same way, and Needs you on the Overview shows the Task Shepherd's. The marks
@@ -4629,7 +4633,8 @@ request. Mark done is offered when its pull request merged, or Cancel task
 when it did not (both `POST /v1/tasks/{id}/clear`). There is no Clear task
 button. A running task held for budget shows an alert at the top of its page.
 The alert says what the next run needs and what is left. It has a field for a
-new spend limit with Raise the limit and carry on, and End the task. One held
+new spend limit with Raise the limit and carry on, and End the task, which
+asks first since it stops a run. One held
 for its goal's budget has a field for the goal's new budget instead, holding
 the budget a resume would set. With it are Raise the goal's budget and carry
 on, a link to the goal, and Look again now. The scheduler hands an answer to
@@ -4792,7 +4797,11 @@ button and the banner lift it, after asking. While a deploy drains, a yellow
 banner says so. An admin may end the drain by hand, and is told to do so only
 if no deploy is running. Someone who is not an admin sees the banner and that
 an admin can lift it. Nothing shows while the switch is off. The console reads
-the switch every 15 seconds.
+the switch every 15 seconds. A reading it could not refresh stays on the
+banner with a line saying since when it could not be reread and that it may
+have changed. When the switch cannot be read at all, an admin still has Stop
+everything: the read fails when the services are unwell, which is when a stop
+may be needed.
 
 Router tiers are added, removed and put in order in the view
 (`console/src/features/config/TiersView.tsx`). The view opens by saying what a
