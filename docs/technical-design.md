@@ -1180,6 +1180,7 @@ Last by the control plane, in the writing pass
 | The body of an issue a plan drafted | The planner, when the plan is approved |
 | A goal's update: its headline, body, what comes next and each thing it asks of the operator | The planner, before the update is saved. An update is shown on the goal's page and posted nowhere; it goes through the same pipeline, as `own` text. The update's `goal_update_written` event records a pass that found something as `writing`, and its rewrite's cost is a writing cost of the goal |
 | The Overview report: its headline, spend and finished lines, and each goal it says is moving, not moving or needing the operator | The planner, before the report is kept. It is shown in the console and posted nowhere, as `own` text. Its `overview_report_written` event records a pass that found something as `writing`, and its rewrite's cost is a writing cost of no goal |
+| The Overview's answer to the operator's question | The planner, before the answer is returned. It is shown in the console and posted nowhere, as `own` text. Its `overview_question_answered` event records a pass that found something as `writing`, and its rewrite's cost is a writing cost of no goal |
 
 1. The text goes through the skill's scanner, `no-ai-slop-scan.py`. It is read
    from the shipped skill, which is locked (Skills). It runs as a child
@@ -2636,6 +2637,7 @@ credential.
 | POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label. A goal with no label holds them by ref. Each body must have acceptance checks and a `Paths:` line (422 names each part and what it lacks), and gets a `Split from` line. The original gets a comment naming its parts and closes once they are done. A refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps. One split already is refused (409), as is a closed one. One the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row. Each has its state (in review, waiting, blocked, merged, closed), when it was opened and reached that state, its fix rounds and latest run. It is merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting. The answer holds the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/overview/report` | Planner | The planner's latest Overview report on all running goals (`planner/overview.py`), null before the first. With `since`, an ISO 8601 time when the operator last looked, it first writes a new one when the goals' facts changed, unless the last is under `overview.min_seconds` old or the day's reports reached `overview.max_usd`. The answer's `written` says whether it wrote one, `note` why an older one is shown, and `error` why a new one could not be written | built |
+| POST | `/v1/overview/ask` | Planner | Answers `question`, the operator's question about the work, from the facts the Overview report is written from and the events of any goal or issue it names (`planner/overview.py`). `since` is optional, as for the report. Returns the `answer`, `in_record` (false when the record does not hold the answer), the goals and issues it read, its `model` and `usd_cost`. 429 with when it resets once the day's reports and answers reached `overview.max_usd` | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. A tier candidate's model select offers them | built |
@@ -3534,7 +3536,7 @@ With `since`, when the operator last looked, it first writes a new one when
 the digest differs from the last report's. Nothing writes a report unasked.
 The planning configuration's `overview` names the model (goal drafting's when
 left out), `max_response_tokens`, `min_seconds` between two reports, and
-`max_usd`, what reports may cost in a UTC day. It is checked at startup and
+`max_usd`, what reports and answers together may cost in a UTC day. It is checked at startup and
 when the configuration is saved. Past `max_usd` no model is called: the last
 report stays, and the answer's `note` says when it was written. Each report is
 an `overview_report_written` event that carries the report, its model and its
@@ -3542,6 +3544,21 @@ an `overview_report_written` event that carries the report, its model and its
 report and each day's spend back from these events when it starts, so a
 restart keeps both. The report only reads: it starts, stops and changes no
 goal.
+
+`POST /v1/overview/ask` answers the operator's question about the work from
+the same record. It gathers the facts a report is written from, plus the
+latest events of the tasks of any goal or issue the question names: a goal by
+its id or a running goal's title, an issue by its ref, with or without its
+tracker's prefix. One model call answers from them alone. Its answer's
+`in_record` is false when the record does not hold the answer, and the answer
+says so. The question is sent as data, as a JSON string, and the model is
+told to follow no instruction in it. The answer goes through the writing pass
+as `own` text. Each answer counts against the same `overview.max_usd`; past it
+the route answers 429 with when the limit resets, in its detail and its
+`Retry-After` header, and calls no model. Each answer is an
+`overview_question_answered` event with the question, the answer, its model
+and its `usd_cost`, counted as planning cost of no goal and attributed to the
+operator who asked.
 
 **The planner's voice** (`planner/voice.py`). What the planner writes for the
 operator, its updates and a plan's summary and gaps, follows the planning
@@ -3960,8 +3977,20 @@ The edge forwards with its own service key, so it decides what a browser may
 ask before it forwards (`src/meta_harness/edge/app.py`). It refuses a path
 with an empty, `.` or `..` part (400). The role checks read the path as sent,
 and the HTTP client collapses dot segments when it forwards. It refuses the
-calls only a control-plane service makes (403): appending an event, and
-setting a task's status, recovery or drive.
+calls only a control-plane service makes (403): appending an event,
+submitting a task, and setting a task's status, recovery or drive.
+
+A task names its repo, and the run service clones that repo and pushes to it
+on its own host. A repo is `owner/name` on the code host, or the path of a
+local bare repo, which the tests, the zero-cost check and the deploy's smoke
+task use. A push to a local repo runs that repo's hooks on the host, outside
+any sandbox, so a path is taken only when the deployment vouches for it
+(`src/meta_harness/local_repos.py`): the smoke repo, `MH_SMOKE_REPO`, or a
+repo under a directory in `MH_LOCAL_REPO_ROOTS`, with symlinks followed
+first. Production lists no directory, so no task can name a repo an earlier
+run's agent built in its workspace. The Task API refuses any other path when
+the task is submitted (422), and the run service refuses it again before the
+clone and before the push. Both check the two settings at startup.
 
 The services hold the same rules themselves, so the edge is not the only
 check. The event service takes a control-plane service key on every route but

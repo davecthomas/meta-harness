@@ -18,7 +18,9 @@ read-only (sandbox.git_dir_for). Every host git command names that
 directory and the work tree outright. So nothing pi writes in the workspace,
 a hook, a `.git` file pointing elsewhere, a `core.fsmonitor` or
 `core.hooksPath` setting, runs on the host when the publish activity commits
-and pushes. A local repo makes the whole path testable with no
+and pushes. A push to a local repo does run that repo's own hooks on the
+host, so a local path is taken only when the deployment vouches for it
+(meta_harness.local_repos). A local repo makes the whole path testable with no
 code host: the branch is pushed to it, and the pull request is written to
 runs/<REF>/pull-request.md instead of opened. `make e2e` uses one.
 
@@ -37,7 +39,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from meta_harness import outbound
+from meta_harness import local_repos, outbound
 from meta_harness.github_app import GitHubAppError, GitHubApps, git_auth_env
 from meta_harness.run_service.provenance import Provenance, commit_message, stamp
 
@@ -104,12 +106,21 @@ def apps() -> GitHubApps:
 
 
 def is_local(repo: str) -> bool:
-    return repo.startswith("/")
+    return local_repos.is_local(repo)
+
+
+def refuse_unlisted_local(repo: str) -> None:
+    """Raises CodeHostError for a local repo the deployment does not vouch for (meta_harness.local_repos).
+    Checked again at the clone and at the push, since a push runs the destination repo's hooks on the host."""
+    if is_local(repo) and not local_repos.allowed(repo):
+        raise CodeHostError(local_repos.refusal(repo), retryable=False)
 
 
 def check_repo(repo: str) -> None:
-    """Raises CodeHostError unless repo is owner/name with a GitHub App, or a local bare git repo."""
+    """Raises CodeHostError unless repo is owner/name with a GitHub App, or a local bare git repo the
+    deployment allows."""
     if is_local(repo):
+        refuse_unlisted_local(repo)
         if not (Path(repo) / "HEAD").is_file():
             raise CodeHostError(f"{repo} is not a bare git repo", retryable=False)
         return
@@ -231,6 +242,7 @@ async def clone(
     history and diffs but cannot plant a hook, a `core.fsmonitor` command or
     any other git setting the host would run when it commits and pushes.
     """
+    refuse_unlisted_local(repo)
     if git_dir.is_dir():
         return await _git(git_dir, workspace, "rev-parse", "--abbrev-ref", "HEAD")
     workspace.parent.mkdir(parents=True, exist_ok=True)
@@ -329,6 +341,7 @@ async def publish(
     if not files:
         return None
     commit = await _git(git_dir, workspace, "rev-parse", "HEAD")
+    refuse_unlisted_local(repo)
     env = None if is_local(repo) else git_auth_env(await _token(repo, WRITE_CODE))
     await _git(git_dir, workspace, "push", "--quiet", "--force-with-lease", "origin", f"{branch}:{branch}", env=env)
     if is_local(repo):

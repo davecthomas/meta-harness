@@ -25,7 +25,7 @@ from typing import Any, Literal, Protocol
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from meta_harness import auth, budget_request, db
+from meta_harness import auth, budget_request, db, local_repos
 from meta_harness.scheduler import holds
 from meta_harness.supervisor import standing
 from meta_harness.tasks import reviews, spend, store
@@ -170,6 +170,7 @@ def create_app(
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
     if not callers and not services:
         raise RuntimeError("set MH_TASK_API_KEYS or MH_SERVICE_KEYS: the Task API refuses to run without keys")
+    local_repos.check_settings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -235,6 +236,9 @@ def create_app(
     @app.post("/v1/tasks", status_code=201)
     def submit(body: TaskIn, response: Response, who: Caller = Depends(caller)) -> dict:
         within_ceiling(body.max_usd)
+        # The run service clones and pushes to a local repo on its host, so only a vouched-for path is taken.
+        if local_repos.is_local(body.repo) and not local_repos.allowed(body.repo):
+            raise HTTPException(status_code=422, detail=local_repos.refusal(body.repo))
         renewed = None
         try:
             with app.state.pool.connection() as conn:

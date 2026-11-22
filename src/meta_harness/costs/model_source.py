@@ -3,9 +3,9 @@
 A run's cost is its `attempt_finished` event: what the run's grant counted, the figure every other total in
 the meta-harness uses. The planner's own model calls are `goal_drafted`, `goal_titled`, `goal_enriched` and
 `issue_sized`, each under the goal it names, else under planning alone, and the Overview's
-`overview_report_written`, which belongs to no goal. The writing pass's rewrites are `writing_checked`, a task's
-or, for a plan's issue, a goal's. Each harvest reads the events after the position the last one reached, and
-saves their costs with the new position in one
+`overview_report_written` and `overview_question_answered`, which belong to no goal. The writing pass's rewrites
+are `writing_checked`, a task's or, for a plan's issue, a goal's. Each harvest reads the events after the position
+the last one reached, and saves their costs with the new position in one
 transaction, so an event is counted once however a harvest ends.
 """
 
@@ -22,10 +22,11 @@ from meta_harness.costs.store import Cost
 SOURCE = "model"
 EVENT_TYPES = (
     "attempt_finished,goal_drafted,goal_enriched,goal_titled,goal_update_written,issue_sized,plan_fixes_assessed,"
-    "failure_diagnosed,split_drafted,task_names_written,writing_checked,overview_report_written"
+    "failure_diagnosed,split_drafted,task_names_written,writing_checked,overview_report_written,"
+    "overview_question_answered"
 )
 # The events whose own writing pass rides on them, as `writing`.
-CARRIES_WRITING = ("goal_update_written", "goal_enriched", "overview_report_written")
+CARRIES_WRITING = ("goal_update_written", "goal_enriched", "overview_report_written", "overview_question_answered")
 PAGE = 2000
 # The kind of cost a writing pass's rewrite is.
 WRITING = "writing"
