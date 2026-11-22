@@ -16,7 +16,8 @@ export function GoalTrackerFields(props: {
   repos?: string[];
 }) {
   const chosen = props.trackers.find((t) => t.scheme === props.tracker);
-  // Whether the tracker asks a goal for a project, which then scopes its other lists (Jira's assignable people).
+  // Whether the tracker asks a goal for a project, which then scopes its other lists (Jira's assignable people,
+  // and the epics a goal's parent is picked from).
   const asksProject = (chosen?.goal_settings ?? []).some((s) => s.name === "project");
   const project = (props.settings.project ?? "").trim();
   const repos = (props.repos ?? []).join(",");
