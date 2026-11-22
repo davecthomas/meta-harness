@@ -24,6 +24,10 @@ const OPENING: Record<TaskStanding["owner"], string> = {
   planner: "Nothing for you to do: the Goal Planner has it.",
 };
 
+// A task nobody has: it was canceled, or its goal was. Its record names the planner, whose sweep closes what
+// is left of a goal, and saying the Goal Planner "has it" would read as work still going on.
+const OVER = "Nothing for you to do: this task is over.";
+
 interface Move {
   label: string;
   icon?: ReactNode;
@@ -167,7 +171,7 @@ export function ShepherdPanel({ task, status, children, onChanged }: {
   const moves = yours ? standing.moves ?? [] : [];
   return (
     <VoicePanel who="shepherd" note={`looked ${when(standing.checked_at)}`} testId="shepherd-panel">
-      <Text fw={650} size={yours || mine ? "lg" : "sm"} lh={1.3}>{OPENING[standing.owner] ?? ""}</Text>
+      <Text fw={650} size={yours || mine ? "lg" : "sm"} lh={1.3}>{standing.over ? OVER : OPENING[standing.owner] ?? ""}</Text>
       <Text size="sm" mt={2}>
         {sentence(standing.owner === "workflow" && task.status_reason ? task.status_reason : standing.reason)}
         {standing.saw ? ` ${sentence(standing.saw)}` : ""}

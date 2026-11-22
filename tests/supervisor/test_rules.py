@@ -233,6 +233,26 @@ def test_a_canceled_goal_asks_nothing_of_the_operator_and_stops_what_still_runs(
     assert decide(Facts("running", workflow="running", goal="met")).owner == "workflow"
 
 
+def test_a_task_nobody_has_is_said_to_be_over_not_the_planners():
+    """Its record names the planner, whose sweep closes what is left of a goal. A reader was told 'the Goal
+    Planner has it' of a canceled goal's task, which nobody has."""
+    from meta_harness.supervisor.rules import over
+
+    for facts in (
+        Facts("canceled", goal="canceled"),
+        Facts("canceled", pull="open", goal="canceled"),
+        Facts("failed", goal="canceled"),
+        Facts("ready", pull="open", goal="canceled"),
+    ):
+        decision = decide(facts)
+        assert over(decision.owner, decision.situation), facts
+    # A task the planner's sweep will move, and one the supervisor is stopping, are somebody's.
+    waiting = decide(Facts("blocked", goal="active"))
+    assert waiting.owner == "planner" and not over(waiting.owner, waiting.situation)
+    stopping = decide(Facts("running", workflow="running", goal="canceled"))
+    assert not over(stopping.owner, stopping.situation)
+
+
 def test_a_hold_no_raise_can_lift_is_ended_not_waited_out():
     held = Facts("running", workflow="running", goal="active", waiting_on="budget", over_ceiling=True)
     ended = decide(held)
