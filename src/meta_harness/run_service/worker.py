@@ -21,7 +21,7 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from meta_harness import charter
+from meta_harness import charter, local_repos
 from meta_harness.outbound import rules as writing_rules
 from meta_harness.run_service import events, provenance_headers, routing
 from meta_harness import logs
@@ -101,6 +101,11 @@ async def main() -> None:
         provenance_headers.check_settings()
     except RuntimeError as err:
         print(f"[worker] the provenance header settings are not usable: {err}", flush=True)
+        sys.exit(1)
+    try:
+        local_repos.check_settings()
+    except RuntimeError as err:
+        print(f"[worker] the local repo settings are not usable: {err}", flush=True)
         sys.exit(1)
     client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
     worker = Worker(
