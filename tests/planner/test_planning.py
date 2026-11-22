@@ -736,6 +736,37 @@ def test_new_tasks_can_be_kept_in_the_meta_harness_and_out_of_the_goals_tracker(
     assert by_ref[created["api"]]["depends_on"] == [created["store"]] and by_ref[keep]["depends_on"] == [created["api"]]
 
 
+def test_a_part_of_a_split_issue_is_the_plans_own_work_and_is_not_held_as_a_late_addition(planned):
+    """A labeled, planned goal took a split's parts in by their label, with nothing to say the plan covered
+    them: each was held as having joined after the plan, while the split recorded itself as done."""
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, github, tasks, _ = planned
+    goal, _, _ = _decided(client, events, tasks, github)
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+    whole = next(i["ref"] for i in client.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR).json()["issues"])
+    part = github.add(
+        REPO,
+        1_000_000 + uuid.uuid4().int % 10**12,
+        labels=[goal["label"]],
+        body=f"One half.\n\nPaths: docs\n\n{CHECKS}",
+        title="One half of it",
+    )
+    with db.connect(autocommit=True) as conn:
+        store.record_split(conn, whole, [part], "split into parts")
+        assert store.split_part(conn, goal["id"], part)
+        assert not store.split_part(conn, goal["id"], "github:o/r#1")
+
+    client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR)
+
+    card = next(
+        i for i in client.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR).json()["issues"] if i["ref"] == part
+    )
+    assert "joined the goal after its plan was approved" not in (card["held_reason"] or "")
+    assert part in {t["external_ref"] for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]}
+
+
 def test_an_issue_that_joins_after_approval_waits_as_a_proposed_addition(planned):
     client, events, github, tasks, _ = planned
     goal, _, _ = _decided(client, events, tasks, github)

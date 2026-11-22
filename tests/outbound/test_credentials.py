@@ -48,7 +48,10 @@ def test_a_policy_that_cannot_be_read_keeps_the_switch_as_it_was_last_read(monke
         raise RuntimeError("no database")
 
     monkeypatch.setattr(store, "current_document", unreadable)
-    assert credentials.enabled() is False, "never read: off"
+    monkeypatch.setattr(credentials, "_last", None)
+    assert credentials.enabled() is True, "never read: on, since the other mistake posts a secret"
+    monkeypatch.setattr(credentials, "_last", False)
+    assert credentials.enabled() is False, "read as off before: a failed read does not turn it on"
     _policy(monkeypatch, {"credential_redaction": True})
     assert credentials.enabled() is True
     monkeypatch.setattr(store, "current_document", unreadable)
@@ -100,3 +103,28 @@ def test_a_redaction_is_logged_with_its_kind_and_never_its_value(monkeypatch, ca
         _prepare(f"The log shows {GH_TOKEN}.")
     [said] = [record.getMessage() for record in caplog.records]
     assert "1 GitHub token" in said and "Replace each one" in said and GH_TOKEN not in said
+
+
+def test_each_key_of_a_variable_that_holds_several_is_redacted(monkeypatch):
+    """The keys that authorize this control plane's own APIs come as lists, MH_SERVICE_KEYS and the like: a name
+    that ends KEYS, and a value that is no single secret."""
+    monkeypatch.setenv("MH_SERVICE_KEYS", "planner:9f8e7d6c5b4a39281706f5e4,worker:1a2b3c4d5e6f7a8b9c0d1e2f")
+    monkeypatch.setenv("MH_OPERATOR_KEYS", '{"dave": "0f1e2d3c4b5a69788796a5b4"}')
+    text = "keys 9f8e7d6c5b4a39281706f5e4 and 1a2b3c4d5e6f7a8b9c0d1e2f and 0f1e2d3c4b5a69788796a5b4, by planner"
+
+    cleaned, found = credentials.redact(text)
+
+    assert cleaned == "keys [redacted] and [redacted] and [redacted], by planner", "a short label is left alone"
+    assert found == {credentials.OWN: 3}
+
+
+def test_a_redaction_that_fails_stops_the_post(monkeypatch):
+    _policy(monkeypatch, {"credential_redaction": True})
+
+    def broken(text):
+        raise RuntimeError("bad pattern")
+
+    monkeypatch.setattr(credentials, "redact", broken)
+
+    with pytest.raises(outbound.Blocked, match="the redact stage could not check the text"):
+        _prepare(f"The log shows {GH_TOKEN}.")

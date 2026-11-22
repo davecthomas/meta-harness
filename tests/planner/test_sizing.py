@@ -459,7 +459,7 @@ def test_an_issue_removed_while_the_sweep_sizes_it_makes_no_task(world):
     assert _sweep(client, goal)["held"] == [ref]
 
     # Edited, so the next sweep sizes it again, small now; while it waits on the model, an operator removes it.
-    tracker.issues[ref].updated_at = "2026-11-12T10:00:00Z"
+    tracker.issues[ref].body += "\n\nEdited."
     sizer.answers[ref] = {"size": "small", "reasons": [], "missing": [], "split": []}
 
     def removed(issue: Issue) -> None:
@@ -573,7 +573,7 @@ def test_split_creates_the_suggested_issues_with_the_goals_label_and_their_paths
     # its split kept, even once it is edited.
     for issue in tracker.created:
         issue.paths, issue.checks = ["console"], ["make test"]
-    tracker.issues[ref].updated_at = "2026-11-12T10:00:00Z"
+    tracker.issues[ref].body += "\n\nEdited."
     swept = _sweep(client, goal)
     assert all(_task(tasks, r) is not None for r in created) and _task(tasks, ref) is None
     assert ref in swept["held"]
@@ -769,7 +769,7 @@ def test_an_issue_split_while_the_sweep_sizes_it_makes_no_task_and_keeps_its_spl
     assert _sweep(client, goal)["held"] == [ref]
 
     # Edited, so the next sweep sizes it again, small now; while it waits on the model, an operator splits it.
-    tracker.issues[ref].updated_at = "2026-11-12T10:00:00Z"
+    tracker.issues[ref].body += "\n\nEdited."
     sizer.answers[ref] = {"size": "small", "reasons": [], "missing": [], "split": []}
     created = [f"github:{REPO}#{_number()}", f"github:{REPO}#{_number()}"]
     reason = splits.reason(created)
@@ -1234,3 +1234,39 @@ def test_the_planner_splits_an_issue_it_held_as_too_large_itself_once_and_record
     # Its one try is used: the stubborn issue waits for an operator, and is not drafted again each sweep.
     _sweep(client, goal)
     assert len(ledger.read(ref=stubborn)) == 1 and not _shown(client, goal)[stubborn]["split_into"]
+
+
+def test_a_comment_on_a_held_issue_does_not_send_it_to_be_sized_again(world):
+    """The planner comments on an issue it holds, which moves the issue's update time. Sizing an issue again
+    whenever that time moved made the planner's own comment a reason to size it, at every sweep."""
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Everything.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    sizer.answers[ref] = {"size": "large", "reasons": [], "missing": [], "split": ["Titles", "Labels"]}
+    assert _sweep(client, goal)["held"] == [ref]
+
+    # A comment: the time moves, the words do not.
+    tracker.issues[ref].updated_at = "2026-11-12T10:00:00Z"
+    assert _sweep(client, goal)["held"] == [ref]
+    assert sizer.calls == [ref], "not sized again"
+
+    # An edit of its words is sized again, once.
+    tracker.issues[ref].body += "\n\nNarrowed to the titles."
+    _sweep(client, goal)
+    assert sizer.calls == [ref, ref]
+
+
+def test_a_task_canceled_because_a_person_closed_its_pull_request_is_not_taken_up_again(world):
+    """Closing a pull request without merging is a no. The sweep took the task up again all the same, with a
+    fresh spend limit, each time a person closed its pull request."""
+    from meta_harness.planner import sweep
+
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    _sweep(client, goal)
+    task = _task(tasks, ref)
+    tasks.cancel(task["id"])
+    tasks.tasks[task["id"]]["status_reason"] = sweep.PULL_REQUEST_CLOSED_REASON
+
+    assert _sweep(client, goal)["retaken"] == [] and _task(tasks, ref)["status"] == "canceled"

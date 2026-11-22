@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import charter, db, outbound, retrying
 from meta_harness.outbound import rules as writing_rules
-from meta_harness.planner import issue_fix, repos, sizing, store
+from meta_harness.planner import copies, issue_fix, repos, sizing, store
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.planner.tracker import Issue, acceptance_checks, issue_paths
 from meta_harness.run_service.provenance import ISSUE, Provenance
@@ -440,7 +440,11 @@ def register(
             return None, f"the sections were added, but the issue could not be sized again: {err}"
         if sized is None:
             return None, None
-        record = {**sized.record(issue), "updated_at": issue.updated_at}
+        record = {
+            **sized.record(issue),
+            "updated_at": issue.updated_at,
+            "text_hash": copies.text_hash(issue.title, issue.body),
+        }
 
         def save() -> bool:
             with db.connect(autocommit=True) as conn:

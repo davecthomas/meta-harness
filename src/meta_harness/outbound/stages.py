@@ -51,6 +51,9 @@ class Redact(Stage):
     never personal data (credentials.py). Off unless the task policy's `credential_redaction` is true."""
 
     name = "redact"
+    # A deployment that turned redaction on is promised no credential leaves: a redaction that fails stops the
+    # post, as the other stage that guards what leaves does.
+    blocks = True
 
     def applies(self, context: Context) -> bool:
         return credentials.enabled()
@@ -94,10 +97,12 @@ class Deslop(Stage):
 
 # What GitHub acts on in a text. A name after @ notifies its person or team. An issue after one of these words
 # is closed when the pull request that says so merges.
-MENTION = re.compile(r"(?<![\w/.`@])@[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9_])?")
+MENTION = re.compile(r"(?<![\w/`@])@[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9_])?")
+# Put after an @ or a #, it stops GitHub from reading a mention or an issue number, and shows nothing.
+ZERO_WIDTH = "\u200b"
 CLOSING = re.compile(
     r"\b((?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+)"
-    r"((?:[\w.-]+/[\w.-]+)?#\d+|https://github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+)",
+    r"((?:[\w.-]+/[\w.-]+)?#\d+|GH-\d+|https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+)",
     re.IGNORECASE,
 )
 CODE = re.compile(f"{writing.FENCE.pattern}|{writing.CODE_SPAN.pattern}", writing.FENCE.flags)
@@ -117,11 +122,20 @@ class Inert(Stage):
 
     async def run(self, text: str, context: Context) -> Result:
         counts = {"mention": 0, "closing reference": 0}
+        # Whether each stretch of prose could take code spans.
+        plain: list[bool] = []
 
         def quiet(prose: str) -> str:
-            prose, counts["mention"] = _counted(MENTION.subn(lambda m: f"`{m.group(0)}`", prose), counts["mention"])
+            # A stray backtick in the prose (one with no partner on its line, or a span over several lines) would
+            # pair with the backticks a code span adds, and leave the mention outside, live. Such prose gets a
+            # zero-width space in each mention and reference instead, which pairs with nothing.
+            spans = "`" not in prose
+            plain.append(spans)
+            mention = (lambda m: f"`{m.group(0)}`") if spans else (lambda m: f"@{ZERO_WIDTH}{m.group(0)[1:]}")
+            prose, counts["mention"] = _counted(MENTION.subn(mention, prose), counts["mention"])
             if context.source == GENERATED:
-                closed = CLOSING.subn(lambda m: f"{m.group(1)}`{m.group(2)}`", prose)
+                closing = (lambda m: f"{m.group(1)}`{m.group(2)}`") if spans else _unlinked
+                closed = CLOSING.subn(closing, prose)
                 prose, counts["closing reference"] = _counted(closed, counts["closing reference"])
             return prose
 
@@ -132,7 +146,15 @@ class Inert(Stage):
             last = code.end()
         made = "".join([*parts, quiet(text[last:])])
         said = [f"{n} {what}{'' if n == 1 else 's'}" for what, n in counts.items() if n]
-        return Result(made, note=f"{' and '.join(said)} put in code spans" if said else "", extra=counts)
+        how = "put in code spans" if all(plain) else "made inert"
+        return Result(made, note=f"{' and '.join(said)} {how}" if said else "", extra=counts)
+
+
+def _unlinked(match: re.Match) -> str:
+    """A closing reference GitHub no longer reads as one: a zero-width space before its number."""
+    ref = match.group(2)
+    cut = max(ref.rfind("#"), ref.rfind("/"), ref.rfind("-")) + 1
+    return f"{match.group(1)}{ref[:cut]}{ZERO_WIDTH}{ref[cut:]}"
 
 
 def _counted(done: tuple[str, int], so_far: int) -> tuple[str, int]:
