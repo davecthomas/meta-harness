@@ -68,6 +68,10 @@ class WithOwn:
         if tracker:
             await tracker.link_pull_request(ref, pr_url, title)
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        # Not progress: it goes to the issue's tracker whether or not that one is told how a task goes.
+        await self._of(ref).add_section(ref, heading, text)
+
     def repo_of(self, ref: str) -> str:
         return self._of(ref).repo_of(ref)
 
@@ -152,6 +156,9 @@ class Trackers:
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         await self.for_ref(ref).link_pull_request(ref, pr_url, title)
+
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        await self.for_ref(ref).add_section(ref, heading, text)
 
     def repo_of(self, ref: str) -> str:
         return self.for_ref(ref).repo_of(ref)

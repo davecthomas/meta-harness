@@ -8,6 +8,7 @@ An issue's ref names its tracker by its first part, the scheme: `github:<owner>/
 outside an adapter treats the rest of a ref as opaque: it is stored, compared and passed back, never parsed.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -138,6 +139,19 @@ class Tracker(Protocol):
         """Records the pull request on the issue, where the tracker does not find it by itself."""
         ...
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Appends a section to the issue's description: `## <heading>` (the tracker's own way of writing a
+        heading) and the text, which comes from `outbound.prepare`. The rest of the description stays as it was.
+        heading is one line this code wrote, such as "Acceptance checks".
+
+        Raises:
+            TrackerError: Not retryable: the description already holds a section with that heading, so
+                nothing was written.
+            TypeError: The text did not come through the outbound pipeline.
+            ValueError: The heading is empty or more than one line.
+        """
+        ...
+
     def url(self, ref: str) -> str | None:
         """Where a person reads the issue, or None for a ref that is not this tracker's."""
         ...
@@ -150,6 +164,47 @@ class Tracker(Protocol):
             ValueError: The ref is not one of this tracker's, or not one this goal's source covers.
         """
         ...
+
+
+# A Markdown heading line, any level, and its words.
+HEADING_LINE = re.compile(r"^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
+
+
+def section_heading(heading: str) -> str:
+    """The heading of a section to add, trimmed.
+
+    Raises:
+        ValueError: It is empty or more than one line.
+    """
+    name = (heading or "").strip()
+    if not name or "\n" in name or "\r" in name:
+        raise ValueError(f"a section's heading is one line of words, not {heading!r}")
+    return name
+
+
+def refuse_twice(ref: str, body: str, heading: str) -> None:
+    """Refuses a section whose heading the description, read as Markdown, has already, in any case.
+
+    Raises:
+        TrackerError: Not retryable: the heading is there.
+    """
+    wanted = heading.casefold()
+    if any(found.strip().casefold() == wanted for found in HEADING_LINE.findall(body or "")):
+        raise TrackerError(
+            f"{ref}'s description already has a section headed {heading!r}, so it was not added again. "
+            "Edit that section in the tracker, or remove it there and try again.",
+            retryable=False,
+        )
+
+
+def with_section(body: str, heading_line: str, text: str) -> str:
+    """The description with a section after everything it holds, which stays as it was."""
+    section = f"{heading_line}\n\n{str(text).strip()}\n"
+    if not (body or "").strip():
+        return section
+    # A blank line before the heading, adding only the line breaks the description does not end with.
+    gap = "\n" * max(0, 2 - (len(body) - len(body.rstrip("\n"))))
+    return body + gap + section
 
 
 def scheme_of(ref: str) -> str:

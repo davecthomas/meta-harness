@@ -58,6 +58,9 @@ from meta_harness.trackers.base import (
     Supported,
     TrackerError,
     configured_label,
+    refuse_twice,
+    section_heading,
+    with_section,
 )
 
 log = logging.getLogger(__name__)
@@ -492,6 +495,22 @@ class JiraTracker:
         # What was read as open may now be done.
         self._open.clear()
         return True
+
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Appends the section to the issue's description, read just before. The heading is written `h2.`,
+        wiki markup's, which reads back as the `## <heading>` the planner parses."""
+        outbound.require(text, "a section of an issue's description", outbound.JIRA)
+        heading = section_heading(heading)
+        key = parse_ref(ref)
+        now = await self._call("GET", f"/issue/{key}", params={"fields": "description"})
+        body = (now.get("fields") or {}).get("description") or ""
+        refuse_twice(ref, markdown(body), heading)
+        await self.mark(ref)
+        await self._call(
+            "PUT", f"/issue/{key}", json={"fields": {"description": with_section(body, f"h2. {heading}", text)}}
+        )
+        # What was read before has the description as it was.
+        self._open.clear()
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Adds the pull request to the issue's links. Its address is the link's id, so adding it again

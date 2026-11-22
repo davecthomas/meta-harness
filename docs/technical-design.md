@@ -3115,6 +3115,7 @@ tracker, through one adapter interface:
 | `mark(ref)` | Put the meta-harness's label on the issue. The adapter calls it itself before every write |
 | `set_status(ref, status)` | Move the issue to `todo`, `in_progress`, `in_review` or `done`, as far as the tracker has such a state. Returns whether it changed |
 | `link_pull_request(ref, pr_url, title)` | Record the pull request on the issue, where the tracker does not find it by itself |
+| `add_section(ref, heading, text)` | Append `## <heading>` and the text to the issue's description, which is read just before and otherwise kept as it was. The text comes from `outbound.prepare`, and the issue is labeled first. A description that already has a heading with those words, in any case and at any level, is refused with a `TrackerError` that is not retryable, and nothing is written. Jira writes the heading `h2. <heading>`, which reads back as `## <heading>` |
 | `url(ref)` | Where a person reads the issue |
 | `webhook(payload)` | Planned: turn a tracker's webhook into `issue_opened`, `issue_edited`, `issue_labeled`, `issue_closed` events, so the Inputs view and the goal loop never poll |
 

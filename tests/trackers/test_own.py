@@ -87,6 +87,21 @@ async def test_a_task_that_is_not_kept_says_so_and_how_to_go_on():
         own.repo_of("github:o/r#1")
 
 
+async def test_a_section_is_appended_to_the_body_once_and_the_rest_stays():
+    own = OwnTracker()
+    made = await own.create_issue(REPO, "No checks yet", "Build the store.\n\nPaths: src/store\n", [])
+
+    await own.add_section(made.ref, "Acceptance checks", "- make test")
+
+    issue = await own.read(made.ref)
+    assert issue.body == "Build the store.\n\nPaths: src/store\n\n## Acceptance checks\n\n- make test\n"
+    assert (issue.checks, issue.paths) == (["make test"], ["src/store"])
+    with pytest.raises(TrackerError, match="already has a section headed") as refused:
+        await own.add_section(made.ref, "acceptance checks", "- make other")
+    assert not refused.value.retryable
+    assert (await own.read(made.ref)).body == issue.body, "nothing was written the second time"
+
+
 class Primary:
     """A goal's outside tracker, which shows a task's progress by itself as GitHub does."""
 
@@ -145,6 +160,8 @@ async def test_a_tracked_goal_reads_and_tells_each_issue_through_the_tracker_its
     assert (await goal.read(kept.ref)).title == "Kept here" and (await goal.read("github:o/r#1")).title == "Theirs"
     assert [i.title for i in await goal.list_open(REPO, "goal-x")] == ["Theirs", "Kept here"]
     assert [i.title for i in await goal.list_open(REPO, None)] == ["Theirs"], "what there is to pick is the tracker's"
+    await goal.add_section(kept.ref, "Notes", "Kept with the task.")
+    assert (await own.read(kept.ref)).body.endswith("## Notes\n\nKept with the task.\n")
     # Its own tasks are told how they go and closed; an outside tracker that shows progress itself is left alone.
     assert await goal.set_status(kept.ref, DONE) and (await own.read(kept.ref)).state == "closed"
     assert not await goal.set_status("github:o/r#1", DONE) and await goal.comment("github:o/r#1", "x") == ""
