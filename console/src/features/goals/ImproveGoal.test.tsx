@@ -60,41 +60,28 @@ async function typeAndImprove(text: string) {
   fireEvent.click(screen.getByRole("button", { name: "Improve with AI" }));
 }
 
-test("the proposal shows beside the original, with what was added and the open questions", async () => {
+test("the description is replaced at once, with the open questions under it and no proposal to accept", async () => {
   const asked: Record<string, unknown>[] = [];
   newGoal(() => respond(PROPOSAL), asked);
   await typeAndImprove("Fix the save bugs");
 
-  const panel = await screen.findByTestId("improve-proposal");
-  expect(within(panel).getByTestId("improve-original").textContent).toBe("Fix the save bugs");
-  expect((within(panel).getByRole("textbox", { name: "Proposed description" }) as HTMLTextAreaElement).value).toBe(PROPOSAL.statement);
-  expect(within(panel).getByTestId("improve-added").textContent).toContain("What is out of scope");
-  expect(within(panel).getByTestId("improve-questions").textContent).toContain("Which release must the fix ship in?");
+  await screen.findByTestId("improve-done");
+  expect(description().value).toBe(PROPOSAL.statement);
+  expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
+  expect(screen.queryByTestId("improve-proposal")).toBeNull();
+  expect(screen.getByTestId("improve-questions").textContent).toContain("Which release must the fix ship in?");
   expect(asked[0]).toMatchObject({ statement: "Fix the save bugs", repos: ["o/a"] });
 });
 
-test("discard leaves the description as it was typed", async () => {
+test("undo puts back the description as it was typed", async () => {
   newGoal(() => respond(PROPOSAL));
   await typeAndImprove("Fix the save bugs");
-  const panel = await screen.findByTestId("improve-proposal");
-  fireEvent.change(within(panel).getByRole("textbox", { name: "Proposed description" }), { target: { value: "Something else" } });
+  const done = await screen.findByTestId("improve-done");
 
-  fireEvent.click(within(panel).getByRole("button", { name: "Discard" }));
+  fireEvent.click(within(done).getByRole("button", { name: "Undo" }));
 
-  await waitFor(() => expect(screen.queryByTestId("improve-proposal")).toBeNull());
-  expect(description().value).toBe("Fix the save bugs");
-});
-
-test("accept fills the description with the proposal as the operator edited it", async () => {
-  newGoal(() => respond(PROPOSAL));
-  await typeAndImprove("Fix the save bugs");
-  const panel = await screen.findByTestId("improve-proposal");
-  fireEvent.change(within(panel).getByRole("textbox", { name: "Proposed description" }), { target: { value: `${PROPOSAL.statement} Ship in 2.4.` } });
-
-  fireEvent.click(within(panel).getByRole("button", { name: "Accept" }));
-
-  await waitFor(() => expect(description().value).toBe(`${PROPOSAL.statement} Ship in 2.4.`));
-  expect(screen.queryByTestId("improve-proposal")).toBeNull();
+  await waitFor(() => expect(description().value).toBe("Fix the save bugs"));
+  expect(screen.queryByTestId("improve-done")).toBeNull();
 });
 
 test("a failed call says so, keeps the text, and the goal can still be saved", async () => {
@@ -114,7 +101,7 @@ test("a failed call says so, keeps the text, and the goal can still be saved", a
   expect(created[0]).toMatchObject({ statement: "Fix the save bugs" });
 });
 
-test("on a goal's page, accept calls the accept path, and a refusal keeps the proposal open", async () => {
+test("on a goal's page the new description is saved at once, and a refusal says so and saves nothing", async () => {
   const accepted: unknown[] = [];
   let refuse = true;
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
@@ -139,15 +126,13 @@ test("on a goal's page, accept calls the accept path, and a refusal keeps the pr
     </MantineProvider>,
   );
   fireEvent.click(screen.getByRole("button", { name: "Improve with AI" }));
-  const panel = await screen.findByTestId("improve-proposal");
-
-  fireEvent.click(within(panel).getByRole("button", { name: "Accept" }));
-  expect((await screen.findByTestId("improve-refused")).textContent).toContain("the goal is met");
-  expect(screen.getByTestId("improve-proposal")).toBeTruthy();
+  const failed = await screen.findByTestId("improve-failed");
+  expect(failed.textContent).toContain("was not saved: the goal is met");
+  expect(screen.queryByTestId("improve-done")).toBeNull();
 
   refuse = false;
-  fireEvent.click(within(panel).getByRole("button", { name: "Accept" }));
-  await waitFor(() => expect(screen.queryByTestId("improve-proposal")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "Improve with AI" }));
+  await screen.findByTestId("improve-done");
   expect(accepted).toEqual([{ statement: PROPOSAL.statement }, { statement: PROPOSAL.statement }]);
   expect(saved).toEqual([PROPOSAL.statement]);
 });

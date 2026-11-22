@@ -212,7 +212,7 @@ test("a goal that plans its issues from the description needs no label and is cr
 
   fireEvent.change(await screen.findByLabelText(/Description/), { target: { value: "Let users export their data" } });
   await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.click(screen.getByText("Plan them from the description"));
+  fireEvent.click(screen.getByText("The description"));
   expect(screen.getByTestId("where-note").textContent).toContain("splits the description into issues");
   fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
 
@@ -396,11 +396,13 @@ test("a loaded spec chooses planning from the spec, and writes the title and des
   showSpecGoal(created, [drafted], asked);
   await screen.findByRole("checkbox", { name: "o/a", checked: true });
   expect(where("Issues that exist").checked).toBe(true);
+  expect(screen.getByText("Ask for anything. The planner will use this and the goal's issues.")).toBeTruthy();
 
   fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
   await uploadSpec();
 
-  expect(where("Plan them from the spec").checked).toBe(true);
+  expect(where("The spec").checked).toBe(true);
+  expect(screen.getByText("Ask for anything. The planner will use this and the loaded spec.")).toBeTruthy();
   await screen.findByTestId("spec-draft-filled");
   expect((screen.getByLabelText(/^Title/) as HTMLInputElement).value).toBe("Data export");
   expect((screen.getByLabelText(/^Description/) as HTMLTextAreaElement).value).toBe("Users can export their data as CSV.");
@@ -462,7 +464,7 @@ test("planning from the spec with none chosen opens the spec's choices, and is n
   await screen.findByRole("checkbox", { name: "o/a", checked: true });
   fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: "Let users export their data" } });
 
-  fireEvent.click(screen.getByText("Plan them from the spec"));
+  fireEvent.click(screen.getByText("The spec"));
 
   expect(screen.getByRole("radio", { name: "A file in the repo" })).toBeTruthy();
   expect(screen.getByTestId("where-note").textContent).toContain("Choose the spec above");
