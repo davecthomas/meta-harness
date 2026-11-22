@@ -151,6 +151,22 @@ class Tracker(Protocol):
         """Records the pull request on the issue, where the tracker does not find it by itself."""
         ...
 
+    async def assignee(self, ref: str) -> str:
+        """Who the issue is assigned to, as the id `assign` takes and `choices("assignee")` lists (GitHub: a
+        login; Jira: an account id; the own tracker: a console user's email). "" when no one is."""
+        ...
+
+    async def assign(self, ref: str, person: str) -> bool:
+        """Makes the person the issue's assignee. Returns whether the issue changed: False, and nothing written,
+        when the issue has an assignee already, the person or anyone else, since the meta-harness never replaces
+        or adds to a person's assignment.
+
+        Raises:
+            TrackerError: Not retryable, and nothing written, when the tracker does not know the person or
+                cannot assign them this issue.
+        """
+        ...
+
     def url(self, ref: str) -> str | None:
         """Where a person reads the issue, or None for a ref that is not this tracker's."""
         ...
@@ -231,6 +247,30 @@ class Setting:
     settings: list["Setting"] = field(default_factory=list)
     entry: str = ""
     of: str = ""
+
+
+# The goal setting that names who the goal's issues are assigned to, one of the people the tracker's
+# `choices("assignee")` lists.
+ASSIGNEE = "assignee"
+
+
+def assignee_setting(people: str) -> Setting:
+    """The `assignee` goal setting every tracker declares. people says whom the tracker lists."""
+    return Setting(
+        ASSIGNEE,
+        "Assignee",
+        kind="choice",
+        help=f"Who the goal's issues are assigned to: one of {people}. Empty: no one is named.",
+    )
+
+
+def unknown_person(ref: str, person: str, where: str) -> TrackerError:
+    """The error for a person the tracker cannot assign: not retryable, since asking again changes nothing."""
+    return TrackerError(
+        f"{ref} was not assigned: {person!r} is not one of {where}. Choose one of those for the goal's assignee, "
+        "or add the person to the tracker.",
+        retryable=False,
+    )
 
 
 @dataclass(frozen=True)

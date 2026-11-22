@@ -115,6 +115,35 @@ async def test_a_section_is_appended_to_the_body_once_and_the_rest_stays():
     assert (await own.read(made.ref)).body == issue.body, "nothing was written the second time"
 
 
+async def test_an_issue_is_assigned_to_a_console_user_and_never_to_someone_else():
+    own = OwnTracker()
+    made = await own.create_issue(REPO, "Assigned", BODY, [])
+    email, gone = f"assignee-{made.number}@example.com", f"gone-{made.number}@example.com"
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO planner.console_user (email, role, status, invited_by) VALUES (%s, 'user', 'active', 't'), "
+            "(%s, 'user', 'deprovisioned', 't')",
+            (email, gone),
+        )
+
+    assert await own.assignee(made.ref) == ""
+    assert await own.assign(made.ref, email.upper()) and await own.assignee(made.ref) == email
+    assert not await own.assign(made.ref, email), "the same person again changes nothing"
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO planner.console_user (email, role, status, invited_by) VALUES (%s, 'user', 'invited', 't')",
+            (f"other-{email}",),
+        )
+    assert not await own.assign(made.ref, f"other-{email}"), "a person's assignment is kept"
+    offered = [choice["value"] for choice in await own.choices("assignee")]
+    assert email in offered and gone not in offered
+    for stranger in (gone, "nobody@example.com"):
+        with pytest.raises(TrackerError, match="is not one of the console's users") as refused:
+            await own.assign(made.ref, stranger)
+        assert not refused.value.retryable
+    assert await own.assignee(made.ref) == email
+
+
 class Primary:
     """A goal's outside tracker, which shows a task's progress by itself as GitHub does."""
 
