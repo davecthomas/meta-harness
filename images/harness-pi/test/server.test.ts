@@ -228,6 +228,34 @@ function runBody(overrides: Record<string, unknown> = {}): Record<string, unknow
 
 // ---------------------------------------------------------------- tests
 
+test("with no token in its environment, the server takes one from the first POST /token and no other", async () => {
+	// The worker starts the server with no token in its environment, where anything the agent runs could read
+	// it, and sends it once the server is up, before any run exists.
+	const gateway = await startGateway(() => ({ body: DONE_TURN }));
+	const server = await startServer(gateway.url, { HARNESS_SERVER_TOKEN: "" });
+	const sent = "a".repeat(43);
+
+	assert.equal((await api(server, "GET", "/health", undefined, sent)).status, 401, "nothing is authorized before it");
+	assert.equal((await api(server, "POST", "/token", { token: "short" }, null)).status, 400);
+	assert.equal((await api(server, "POST", "/token", { token: sent }, null)).status, 200);
+	assert.equal((await api(server, "GET", "/health", undefined, sent)).status, 200);
+	const second = await api(server, "POST", "/token", { token: "b".repeat(43) }, null);
+	assert.equal(second.status, 409, "a second token is refused: whoever sent the first keeps the server");
+	assert.equal((await api(server, "GET", "/health", undefined, "b".repeat(43))).status, 401);
+	assert.equal((await api(server, "GET", "/health", undefined, sent)).status, 200);
+	await server.stop();
+	await gateway.close();
+});
+
+test("a server given its token in the environment, by a worker from before, refuses a POST /token", async () => {
+	const gateway = await startGateway(() => ({ body: DONE_TURN }));
+	const server = await startServer(gateway.url);
+	assert.equal((await api(server, "POST", "/token", { token: "c".repeat(43) }, null)).status, 409);
+	assert.equal((await api(server, "GET", "/health")).status, 200);
+	await server.stop();
+	await gateway.close();
+});
+
 test("rejects a request without the server token", async () => {
 	const gateway = await startGateway(() => ({ body: DONE_TURN }));
 	const server = await startServer(gateway.url);

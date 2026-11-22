@@ -4,7 +4,10 @@
  *   node server/main.ts
  *
  * Environment:
- *   HARNESS_SERVER_TOKEN  required. Every request must send `Authorization: Bearer <token>`.
+ *   HARNESS_SERVER_TOKEN  the token every request must send as `Authorization: Bearer <token>`. Left out, the
+ *                         server takes its token from the first `POST /token`, which the worker sends before
+ *                         anything else: the token is then in no process's environment, where anything the
+ *                         agent runs could read it (/proc/1/environ).
  *   PORT, HOST            default 8090, 127.0.0.1. PORT=0 picks a free port.
  *   GATEWAY_URL           HTTP Gateway base URL (default http://localhost:8080)
  *   WORKSPACE_DIR         pi's working directory (default: a new temporary directory).
@@ -41,13 +44,15 @@ import { useEnvProxy } from "./proxy.ts";
 
 const log = (text: string) => console.log(`[harness-server] ${text}`);
 
-const SERVER_TOKEN = process.env.HARNESS_SERVER_TOKEN;
-if (!SERVER_TOKEN) {
-	console.error("Set HARNESS_SERVER_TOKEN. Every request must send it as a bearer token.");
-	process.exit(2);
-}
-// pi's bash tool inherits this environment: the agent must not read the token that commands this server.
+// The token that commands this server. The worker sends it in POST /token once the server is up, so it is
+// held only in this process's memory. Deleting a variable from process.env hides it from child processes, but
+// /proc/1/environ keeps what the process started with, and pi's bash tool runs under this server's uid: a
+// token passed in the environment was the agent's to read, and with it to steer, stop or cancel its own run.
+// A worker from before this still passes it in the environment, and is served as before.
+let serverToken: string | undefined = process.env.HARNESS_SERVER_TOKEN || undefined;
 delete process.env.HARNESS_SERVER_TOKEN;
+// The least a token may be: the worker's are 43 characters.
+const MIN_TOKEN_CHARS = 32;
 
 // The sandbox holds no provider keys. Drop any the environment passed in, so pi's
 // built-in providers have nothing to authenticate with.
@@ -109,7 +114,9 @@ function summarize(event: RunEvent): string {
 function authorized(request: IncomingMessage): boolean {
 	const header = request.headers.authorization ?? "";
 	const presented = Buffer.from(header.startsWith("Bearer ") ? header.slice(7) : "");
-	const expected = Buffer.from(SERVER_TOKEN!);
+	// Until the worker has set the token, nothing is authorized.
+	if (!serverToken) return false;
+	const expected = Buffer.from(serverToken);
 	return presented.length === expected.length && timingSafeEqual(presented, expected);
 }
 
@@ -238,7 +245,19 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
 async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
 	const url = new URL(request.url ?? "/", "http://harness-server");
 	const key = `${request.method} ${url.pathname}`;
-	if (!authorized(request)) return send(response, 401, { error: "Send Authorization: Bearer <HARNESS_SERVER_TOKEN>." });
+	if (key === "POST /token") {
+		// Taken once, before any run exists: nothing the agent runs is there yet to send one first. A second
+		// one is refused, so whoever holds the first keeps the server.
+		if (serverToken) return send(response, 409, { error: "This server has its token already." });
+		const token = (await readJson(request)).token;
+		if (typeof token !== "string" || token.length < MIN_TOKEN_CHARS) {
+			return send(response, 400, { error: `Send {"token": "..."}, at least ${MIN_TOKEN_CHARS} characters.` });
+		}
+		serverToken = token;
+		log("the worker set this server's token");
+		return send(response, 200, { ok: true });
+	}
+	if (!authorized(request)) return send(response, 401, { error: "Send Authorization: Bearer <the server's token>." });
 	switch (key) {
 		case "GET /health": {
 			const health = await harness.health();

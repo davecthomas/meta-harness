@@ -57,6 +57,20 @@ def _env(args: list[str]) -> dict[str, str]:
     return dict(p.split("=", 1) for p in pairs if "=" in p)
 
 
+def test_the_harness_servers_token_is_in_no_environment_and_is_kept_where_no_sandbox_mounts(tmp_path: Path):
+    """A process's environment is readable by anything under its uid (/proc/1/environ), and the agent's bash
+    tool runs under the harness server's: a token passed there was the agent's to read, and with it to steer,
+    stop or cancel its own run. The worker hands the server its token once it is up, and keeps its own copy
+    beside the workspace."""
+    args = _args(tmp_path, tmp_path / "git")
+    assert not [a for a in args if "HARNESS_SERVER_TOKEN" in a]
+
+    kept = sandbox.token_path_for("task", "task:run-2")
+    workspace, git_dir = sandbox.workspace_for("task", "task:run-2"), sandbox.git_dir_for("task", "task:run-2")
+    assert kept.parent == workspace.parent == git_dir.parent
+    assert workspace not in kept.parents and git_dir not in kept.parents, "in neither directory the sandbox mounts"
+
+
 def test_a_profile_names_its_services_and_the_machine_sets_them_for_one_that_does_not(monkeypatch):
     monkeypatch.delenv("MH_SANDBOX_SERVICES", raising=False)
     assert sandbox.services_for({}) == ()

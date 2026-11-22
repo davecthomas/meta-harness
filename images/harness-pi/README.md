@@ -66,7 +66,7 @@ step and no tsx.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `HARNESS_SERVER_TOKEN` | required | Every request sends `Authorization: Bearer <token>` |
+| `HARNESS_SERVER_TOKEN` | none | The token every request sends as `Authorization: Bearer <token>`. Left out, the server takes it from the first `POST /token` (`{"token": "..."}`, 32 characters or more), which is how the worker sets it: a token in the environment can be read by anything the agent runs. Setting it here is for running the server by hand |
 | `PORT`, `HOST` | `8090`, `127.0.0.1` | `PORT=0` picks a free port |
 | `GATEWAY_URL` | `http://localhost:8080` | The HTTP Gateway |
 | `WORKSPACE_DIR` | a new temporary directory | pi's working directory. `/workspace` in the sandbox |
