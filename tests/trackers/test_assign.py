@@ -477,3 +477,42 @@ async def test_github_lists_a_repos_open_issues_as_the_ones_a_goal_can_be_planne
         {"value": "github:o/r#4", "label": "#4 Data export"},
     ], "newest first, and no pull request"
     assert await tracker.choices("parent", {}) == []
+
+
+async def _github_text(title: str, body: str):
+    from meta_harness import outbound
+
+    return (
+        await outbound.prepare(title, outbound.Context(outbound.GITHUB, outbound.TITLE, outbound.FIXED)),
+        await outbound.prepare(body, outbound.Context(outbound.GITHUB, outbound.BODY, outbound.FIXED)),
+    )
+
+
+async def test_a_new_github_issue_becomes_a_sub_issue_of_the_plans_epic(key_file):
+    created = {**GITHUB_ISSUE, "id": 9001, "number": 8, "title": "Build the button"}
+    tracker, service = github(
+        key_file,
+        {
+            ("POST", "/repos/o/r/issues"): httpx.Response(201, json=created),
+            ("POST", "/repos/o/r/issues/7/sub_issues"): httpx.Response(201, json={}),
+        },
+    )
+    title, body = await _github_text("Build the button", "Add it to the account page.")
+
+    made = await tracker.create_issue("o/r", title, body, ["mh:g"], parent="github:o/r#7")
+
+    assert made.parent == "github:o/r#7"
+    assert service.sent("POST", "/repos/o/r/issues/7/sub_issues") == [{"sub_issue_id": 9001}], "by id, not number"
+
+
+async def test_a_parent_github_refuses_leaves_the_new_issue_standing_alone(key_file):
+    created = {**GITHUB_ISSUE, "id": 9001, "number": 8, "title": "Build the button"}
+    # No answer for the sub-issues call: GitHub answers 404, as where sub-issues are not available.
+    tracker, service = github(key_file, {("POST", "/repos/o/r/issues"): httpx.Response(201, json=created)})
+    title, body = await _github_text("Build the button", "Add it to the account page.")
+
+    made = await tracker.create_issue("o/r", title, body, ["mh:g"], parent="github:o/r#7")
+
+    assert (made.ref, made.parent) == ("github:o/r#8", None), "the task exists either way"
+    alone = await tracker.create_issue("o/r", title, body, ["mh:g"])
+    assert alone.parent is None and len(service.sent("POST", "/repos/o/r/issues/7/sub_issues")) == 1

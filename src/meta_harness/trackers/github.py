@@ -4,7 +4,9 @@ An issue's ref is `github:<owner>/<repo>#<number>`. Every call goes through the 
 `issues: read` to read and `issues: write` to create, comment or close.
 """
 
+import logging
 import re
+from dataclasses import replace
 from typing import Any
 
 from meta_harness import outbound
@@ -28,6 +30,8 @@ from meta_harness.trackers.base import (
     unknown_person,
     with_section,
 )
+
+log = logging.getLogger("meta_harness.trackers.github")
 
 SCHEME = "github"
 READ_ISSUES = {"issues": "read"}
@@ -167,8 +171,10 @@ class GitHubTracker:
     async def create_issue(
         self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
     ) -> Issue:
-        """Creates one issue. Only the planner calls it, and only for a plan an operator approved. A GitHub
-        issue has no parent here, so parent is ignored."""
+        """Creates one issue. Only the planner calls it, and only for a plan an operator approved. With parent,
+        an issue of the same owner, the new issue is made its sub-issue, so GitHub shows the plan's tasks under
+        the issue that stands for the plan. A parent GitHub refuses is left off, and the issue stands alone:
+        the returned Issue's `parent` says what was set."""
         outbound.require(title, "an issue's title", outbound.GITHUB, title=True)
         outbound.require(body, "an issue's body", outbound.GITHUB)
         carried = list(dict.fromkeys([*labels, self.label()]))
@@ -177,12 +183,27 @@ class GitHubTracker:
         )
         made = _issue(repo, created)
         self.marked.refs.add((made.ref, self.label()))
+        under = REF.match(parent or "")
+        if under and created.get("id"):
+            try:
+                # By the new issue's id, not its number: that is what the sub-issues call takes.
+                await self._call(
+                    under["repo"],
+                    WRITE_ISSUES,
+                    "POST",
+                    f"/repos/{under['repo']}/issues/{under['number']}/sub_issues",
+                    json={"sub_issue_id": created["id"]},
+                )
+                made = replace(made, parent=parent)
+            except TrackerError as err:
+                # The issue exists and is the task either way; only its place under the parent is missing.
+                log.warning("GitHub would not put %s under %s, so it stands alone: %s", made.ref, parent, err)
         return made
 
     async def create_epic(self, repo: str, title: str, body: str) -> Issue:
         """Creates the issue that stands for a goal's whole plan. GitHub has no epic type, so it is a plain
-        issue with the meta-harness's own label and no goal's. A GitHub issue has no parent here, so the
-        plan's issues are not linked under it."""
+        issue with the meta-harness's own label and no goal's. The plan's issues become its sub-issues as
+        each is created (create_issue)."""
         outbound.require(title, "an epic's title", outbound.GITHUB, title=True)
         outbound.require(body, "an epic's body", outbound.GITHUB)
         created = await self._call(
