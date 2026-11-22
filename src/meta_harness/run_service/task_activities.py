@@ -22,7 +22,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from meta_harness import db
-from meta_harness.run_service import events
+from meta_harness.run_service import events, goal_grants
 from meta_harness.run_service.shared import (
     DEFAULT_SPEND_LIMIT_USD,
     AttemptRecord,
@@ -199,6 +199,8 @@ def _insert_run(record: AttemptRecord) -> None:
 async def record_attempt(record: AttemptRecord) -> None:
     a, h = record.attempt, record.harness
     await asyncio.to_thread(_insert_run, record)
+    # What the run spent is counted as spent from here on, so its goal no longer holds its grant back.
+    await asyncio.to_thread(goal_grants.release, record.task_id)
     events.emit(
         "attempt_finished",
         {

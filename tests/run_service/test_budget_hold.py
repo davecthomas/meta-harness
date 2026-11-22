@@ -216,6 +216,103 @@ def test_what_a_goal_has_left_is_measured_to_its_blocking_line():
     assert GoalBudget("10", "10.50", 2, block_at="11.00").share() == Decimal("0.2500")
 
 
+def test_a_share_is_never_more_than_is_left_after_the_other_tasks_grants_or_than_the_task_could_spend():
+    # $20 left, two running: an equal share is $10, but $14 is granted to the other task's run under way.
+    assert GoalBudget("20", "0", 2, granted_usd="14").share() == Decimal("6.0000")
+    assert GoalBudget("20", "0", 2, granted_usd="4").share() == Decimal("10.0000")
+    # A task holds back only what its own spend limit lets it spend.
+    assert GoalBudget("20", "0", 1, task_limit_usd="8.00").share() == Decimal("8.0000")
+    assert GoalBudget("20", "0", 1, granted_usd="20", task_limit_usd="8.00").share() == Decimal("0.0000")
+
+
+def test_tasks_asking_one_after_another_are_never_granted_more_than_the_goal_has_left(monkeypatch, conn):
+    """Spend is recorded when a run ends. Before grants were written down, a task asking alone was granted
+    everything left, and the next ones a half and a third of the same money."""
+    from meta_harness import migrations
+    from meta_harness.events import client as events_client
+    from meta_harness.planner import client as planner_client
+    from meta_harness.run_service import budget_activities, goal_grants
+
+    migrations.apply(conn)
+    goal_id = f"g-{id(conn)}"
+    names = [f"{goal_id}-a", f"{goal_id}-b", f"{goal_id}-c"]
+    running: list[str] = []
+    spent: dict[str, str] = {}
+
+    class Goals:
+        def __init__(self, **kwargs):
+            pass
+
+        def get(self, goal_id):
+            return {"max_usd": "20.0000", "budget_mode": "block", "budget_block_at": "20.00"}
+
+    class Tasks:
+        def list(self, statuses, goal_id, limit):
+            return [{"id": t, "status": "running" if t in running else "ready", "max_usd": "50"} for t in names]
+
+    class Events:
+        def __init__(self, **kwargs):
+            pass
+
+        def read(self, from_position, limit, task_id=None, event_type=None):
+            return {"events": [{"payload": {"spent_usd": spent[task_id]}}] if task_id in spent else []}
+
+    monkeypatch.setattr(planner_client, "GoalsClient", Goals)
+    monkeypatch.setattr(events_client, "EventClient", Events)
+    monkeypatch.setattr(budget_activities, "_tasks", lambda: Tasks())
+    monkeypatch.setattr(budget_activities, "_spend_limit", lambda task: "50.00")
+
+    shares = []
+    for name in names:
+        running.append(name)
+        shares.append(budget_activities._goal_budget(goal_id, name).share())
+
+    assert shares == [Decimal("20.0000"), Decimal("0.0000"), Decimal("0.0000")]
+    assert sum(shares) <= Decimal("20")
+    assert goal_grants.outstanding(conn, goal_id, names) == Decimal("20")
+
+    # The first run ends having spent $3: its grant is given back, and the next to ask gets a share of the rest.
+    spent[names[0]] = "3.00"
+    goal_grants.release(names[0])
+    running.remove(names[0])
+    again = budget_activities._goal_budget(goal_id, names[1])
+    assert again.share() == Decimal("8.5000"), "$17 left, shared by the two still running"
+    last = budget_activities._goal_budget(goal_id, names[2])
+    assert last.granted_usd == "8.5000" and last.share() == Decimal("8.5000")
+    assert Decimal("3") + again.share() + last.share() <= Decimal("20")
+
+    # Asking again replaces a task's own grant: it is never counted against itself.
+    assert budget_activities._goal_budget(goal_id, names[1]).share() == Decimal("8.5000")
+    for name in names:
+        goal_grants.release(name)
+
+
+def test_a_grant_counts_only_for_running_tasks(conn):
+    from meta_harness import migrations
+    from meta_harness.run_service import goal_grants
+
+    migrations.apply(conn)
+    goal_id, task = f"g-{id(conn)}-r", f"t-{id(conn)}-r"
+    goal_grants.reserve(conn, task, goal_id, Decimal("5"))
+    assert goal_grants.outstanding(conn, goal_id, [task]) == Decimal("5")
+    assert goal_grants.outstanding(conn, goal_id, []) == 0, "a task no longer running holds nothing back"
+    goal_grants.reserve(conn, task, goal_id, Decimal("0"))
+    assert goal_grants.outstanding(conn, goal_id, [task]) == 0
+
+
+def test_the_hold_says_when_money_is_held_for_runs_under_way_and_is_still_read_back():
+    from meta_harness import budget_request
+
+    why = budget_request.goal_why("g-1", "5", "20", "0", 2, "15")
+    assert why.endswith("leaves $0.00 for each of its 2 running tasks while $15.00 is held for runs under way")
+    asked = budget_request.parse(budget_request.hold_reason("run 2", "3", why))
+    assert (asked["for"], asked["goal_id"], asked["running"]) == ("goal", "g-1", 2)
+    plain = budget_request.goal_why("g-1", "5", "20", "7.5", 2)
+    assert plain.endswith("for each of its 2 running tasks") and budget_request.parse(
+        budget_request.hold_reason("run 2", "3", plain)
+    )
+
+
 def test_the_goals_budget_is_read_with_its_blocking_line_and_a_warn_goal_has_none(monkeypatch):
     from meta_harness.events import client as events_client
     from meta_harness.planner import client as planner_client
