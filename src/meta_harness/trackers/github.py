@@ -12,6 +12,7 @@ from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 from collections.abc import Callable
 
 from meta_harness.trackers.base import (
+    ASSIGNEE,
     DONE,
     TODO,
     Issue,
@@ -19,8 +20,10 @@ from meta_harness.trackers.base import (
     Source,
     Supported,
     TrackerError,
+    assignee_setting,
     check_section,
     configured_label,
+    unknown_person,
     with_section,
 )
 
@@ -32,6 +35,9 @@ REF = re.compile(r"^github:(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$")
 # "Depends on: #12, owner/repo#13" lines in an issue body.
 DEPENDS_LINE = re.compile(r"^\s*depends on:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 DEPENDS_ITEM = re.compile(r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>\d+)")
+REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
+# A GitHub login: letters, digits and single hyphens, up to 39 characters.
+LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 
 
 def ref_for(repo: str, number: int) -> str:
@@ -54,6 +60,13 @@ def depends_on(repo: str, body: str) -> list[str]:
             if ref not in refs:
                 refs.append(ref)
     return refs
+
+
+def _assignees(data: dict) -> list[str]:
+    """The logins an issue is assigned to, as GitHub gives the issue."""
+    found = [person["login"] for person in data.get("assignees") or [] if person.get("login")]
+    one = (data.get("assignee") or {}).get("login")
+    return found or ([one] if one else [])
 
 
 def _issue(repo: str, data: dict) -> Issue:
@@ -192,6 +205,68 @@ class GitHubTracker:
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Nothing to do: GitHub links a pull request to the issue its description's `Closes` line names."""
 
+    async def assignee(self, ref: str) -> str:
+        """The login of the issue's first assignee; "" when it has none."""
+        repo, number = parse_ref(ref)
+        found = _assignees(await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}"))
+        return found[0] if found else ""
+
+    async def assign(self, ref: str, person: str) -> bool:
+        """Makes the login the assignee of an issue that has none. GitHub drops a login it cannot assign without
+        saying so, so the login is checked against the repo's assignable users first, and refused before
+        anything is written when it is not one of them."""
+        repo, number = parse_ref(ref)
+        login = person.strip()
+        if not LOGIN.match(login) or not await self._assignable(repo, login):
+            raise unknown_person(ref, person, f"the people who can be assigned issues in {repo}")
+        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
+        if _assignees(now):
+            return False
+        await self.mark(ref)
+        await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json={"assignees": [login]})
+        return True
+
+    async def _assignable(self, repo: str, login: str) -> bool:
+        """Whether the repo's issues can be assigned to the login: GitHub answers 204 when they can, 404 not."""
+        try:
+            await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/assignees/{login}")
+        except TrackerError as err:
+            if err.status == 404:
+                return False
+            raise
+        return True
+
+    async def _assignable_users(self, repo: str) -> dict[str, str]:
+        """Every login the repo's issues can be assigned to, by its lower case."""
+        found: dict[str, str] = {}
+        page = 1
+        while True:
+            params = {"per_page": 100, "page": page}
+            batch = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/assignees", params=params) or []
+            found.update({user["login"].lower(): user["login"] for user in batch if user.get("login")})
+            if len(batch) < 100:
+                return found
+            page += 1
+
+    async def choices(self, setting: str, scope: dict[str, str] | None = None) -> list[dict[str, str]]:
+        """What the console offers for a setting, so a name is picked and not typed.
+
+        - `assignee`, with scope's `repos` (owner/name, comma-separated) or `repo`: the people who can be
+          assigned issues in every one of those repos, by login, so the one picked can be assigned any of the
+          goal's issues. Empty with no repo.
+        """
+        if setting != ASSIGNEE:
+            return []
+        given = f"{(scope or {}).get('repos', '')},{(scope or {}).get('repo', '')}"
+        repos = list(dict.fromkeys(name.strip() for name in given.split(",") if name.strip()))
+        common: dict[str, str] | None = None
+        for repo in repos:
+            if not REPO.match(repo):
+                raise TrackerError(f"{repo!r} is not a repo's owner/name, such as octo/api", retryable=False)
+            logins = await self._assignable_users(repo)
+            common = logins if common is None else {key: login for key, login in common.items() if key in logins}
+        return [{"value": login, "label": login} for login in sorted((common or {}).values(), key=str.lower)]
+
     def bound(self, source: Source) -> "GitHubTracker":
         """A repo's issues are the repo's own: a goal's repos are all GitHub needs, and each call names one."""
         return self
@@ -209,4 +284,5 @@ SPEC = Supported(
     "GitHub Issues",
     "Each repo's issues are its own GitHub issues, read and written through the repo owner's GitHub App.",
     build=GitHubTracker,
+    goal_settings=[assignee_setting("the people who can be assigned issues in all the goal's repos, by login")],
 )
