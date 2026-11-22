@@ -71,6 +71,7 @@ from meta_harness.planner import (
     goal_costs,
     merge_checks,
     naming,
+    narratives,
     overview,
     plan_api,
     planning,
@@ -294,6 +295,8 @@ def create_app(
     namer: naming.Namer | None = None,
     overview_writer: overview.Writer | None = None,
     overview_asker: overview.Asker | None = None,
+    # What writes a narrative from its prompt: a test's stand-in for the model call.
+    narrative_writer: Any = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -655,6 +658,7 @@ def create_app(
     costs_api.check_settings()
     planning.check_settings()
     overview.check_settings()
+    narratives.check_settings()
     writing_rules.check_settings()
     charter.check_settings()
     draft = drafter or drafting.draft_goal
@@ -1695,6 +1699,7 @@ def create_app(
     users.register(app, operator, events)
     app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)
     overview.register(app, operator, app.state.overview)
+    narratives.register(app, operator, load, narratives.Narratives(tasks, events, narrative_writer))
 
     def admin(key: str = Depends(auth.bearer), role: str | None = Header(default=None, alias="X-MH-Role")) -> bool:
         """Whether the caller is an admin: an operator key is, and the edge names the role of who it acts for."""

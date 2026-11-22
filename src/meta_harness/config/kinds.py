@@ -146,10 +146,11 @@ def check_planning(document: dict[str, Any], others: dict[str, dict[str, Any]] |
         value = document.get(key, 1)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             reasons.append(f"{key} must be a whole number above 0: how many {what}")
-    from meta_harness.planner import overview, voice
+    from meta_harness.planner import narratives, overview, voice
 
     reasons += voice.check(document)
     reasons += overview.check(document)
+    reasons += narratives.check(document)
     updates = document.get("updates", {})
     if not isinstance(updates, dict):
         reasons.append("updates must be an object: the settings of the planner's updates on a goal's page")

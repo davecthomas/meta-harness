@@ -1,3 +1,4 @@
+import { Narrative } from "../narratives/Narrative";
 import { useEffect, useRef, useState } from "react";
 import { TaskName } from "../../components/TaskName";
 import { Link } from "react-router-dom";
@@ -45,6 +46,7 @@ export function Overview() {
       <PageHeader title="Overview" description="What needs you, what is running, and what waits to start." />
 
       <WorkReport />
+      <Narrative title="Narrative of the running goals" path="/v1/overview/narrative" />
       <GettingStarted />
       <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} mb="lg">
         <Stat label="Needs you" value={count} link={count ? "See what to do" : undefined} alert={!!count}
