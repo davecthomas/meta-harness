@@ -86,6 +86,22 @@ def test_a_task_needs_a_known_key(api):
     assert api.post("/v1/tasks", json=_task(), headers=_as("nope")).status_code == 401
 
 
+def test_a_callers_key_names_only_a_registered_repo_and_puts_no_task_into_a_goal(api):
+    """A caller's key is not the planner's: with one, a task could name any repo the App is installed on, and
+    charge another goal's budget."""
+    unlisted = api.post("/v1/tasks", json=_task(repo="someone/unregistered"), headers=_as(CALLER_KEY))
+    assert unlisted.status_code == 422
+    assert "someone/unregistered is not in the repo registry" in unlisted.json()["detail"]
+    assert "Repos page" in unlisted.json()["detail"], "the refusal says what to do"
+
+    into_goal = api.post("/v1/tasks", json=_task(goal_id="g-someone-elses"), headers=_as(CALLER_KEY))
+    assert into_goal.status_code == 422 and "goal_id is the planner's to set" in into_goal.json()["detail"]
+
+    # The planner's own submissions are as before: its goals, and the repos its registry gave it.
+    planners = api.post("/v1/tasks", json=_task(repo="someone/unregistered", goal_id="g-1"), headers=_as(SERVICE_KEY))
+    assert planners.status_code == 201, planners.text
+
+
 def test_create_is_idempotent_on_the_callers_external_ref(api, events):
     body = _task()
     first = api.post("/v1/tasks", json=body, headers=_as(CALLER_KEY))

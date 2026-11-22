@@ -4263,6 +4263,12 @@ run's agent built in its workspace. The Task API refuses any other path when
 the task is submitted (422), and the run service refuses it again before the
 clone and before the push. Both check the two settings at startup.
 
+A caller's key (`MH_TASK_API_KEYS`) is not the planner's. With one, a task
+names a repo only from the repo registry, and sets no `goal_id`: a goal's
+budget and limits are its own, and the planner alone puts tasks into one. The
+Task API refuses either with what to do (422). A control-plane service's
+submission is not checked this way: the planner works from the registry already.
+
 The services hold the same rules themselves, so the edge is not the only
 check. The event service takes a control-plane service key on every route but
 `/health`, and does not start without `MH_SERVICE_KEYS`; the event client
