@@ -488,6 +488,34 @@
     ],
     "type": "object"
   },
+  "issue_not_assigned v1": {
+    "additionalProperties": true,
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "person": {
+        "type": "string"
+      },
+      "reason": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      },
+      "todo": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "ref",
+      "person",
+      "reason",
+      "todo"
+    ],
+    "type": "object"
+  },
   "issue_planned v1": {
     "additionalProperties": true,
     "properties": {},

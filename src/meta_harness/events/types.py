@@ -607,6 +607,22 @@ REGISTRY: list[EventType] = [
         1,
         _object({"ref": {"type": "string"}, "goal_id": {"type": "string"}}, ["ref", "goal_id"]),
     ),
+    # The planner could not assign a goal's issue to the person the goal names, or its owner
+    # (planner/assignees.py): the issue, the person, why, and what the operator can do.
+    EventType(
+        "issue_not_assigned",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "ref": {"type": "string"},
+                "person": {"type": "string"},
+                "reason": {"type": "string"},
+                "todo": {"type": "string"},
+            },
+            ["goal_id", "ref", "person", "reason", "todo"],
+        ),
+    ),
     # A feature goal's plan: a planning task asked for, a plan version saved, and the plan approved
     EventType(
         "plan_requested",

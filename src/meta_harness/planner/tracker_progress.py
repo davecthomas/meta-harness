@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from meta_harness import outbound
 from meta_harness import db
-from meta_harness.planner import store
+from meta_harness.planner import assignees, store
 from meta_harness.run_service.provenance import COMMENT, Provenance
 from meta_harness.trackers.base import DONE, IN_PROGRESS, IN_REVIEW, Tracker, TrackerError
 
@@ -75,15 +75,21 @@ def told_for(task: dict, before: str | None = None) -> Told | None:
     return None
 
 
-async def write(goal: dict, tracker: Tracker, tasks, errors: list[str]) -> list[str]:
+async def write(goal: dict, tracker: Tracker, tasks, errors: list[str], events=None) -> list[str]:
     """Tell the goal's tracker what changed for each of its issues since the last sweep. Returns the refs
-    written to; a write that fails is added to errors and is tried again next sweep."""
-    if not getattr(tracker, "writes_progress", False):
+    written to; a write that fails is added to errors and is tried again next sweep. With events, an issue
+    whose task has started and that has no assignee is assigned first, on every tracker (assignees.py)."""
+    progress = bool(getattr(tracker, "writes_progress", False))
+    if not progress and events is None:
         return []
     links = [link for link in await asyncio.to_thread(_links, goal["id"]) if link["task_id"]]
-    if not links:
+    if not links or not (progress or assignees.pending(links)):
         return []
     by_id = {task["id"]: task for task in await asyncio.to_thread(tasks.list, TASK_STATUSES, goal["id"], TASKS_READ)}
+    if events is not None:
+        await assignees.assign_started(goal, tracker, links, by_id, events)
+    if not progress:
+        return []
     written = []
     for link in links:
         task = by_id.get(link["task_id"])

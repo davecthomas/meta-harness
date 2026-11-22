@@ -14,7 +14,7 @@ from typing import Any
 
 from meta_harness import outbound
 from meta_harness import db
-from meta_harness.planner import splits, store
+from meta_harness.planner import assignees, splits, store
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.run_service import provenance, writing
 from meta_harness.trackers.base import TrackerError
@@ -97,6 +97,8 @@ async def split_issue(
             created.append(made.ref)
             if parent and made.parent != parent:
                 parent_refused(events, goal_id, ref, made.ref, parent)
+            # A person the tracker refuses is reported, and the part stays as created.
+            await assignees.assign_new(goal, writer, made.ref, repo, events, who)
     except TrackerError as err:
         # What was created is recorded as the split, so a retry never creates it twice; none: it may be split again.
         audit(created, await asyncio.to_thread(record, created))

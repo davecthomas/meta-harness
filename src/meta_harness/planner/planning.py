@@ -24,7 +24,7 @@ from meta_harness.config import kinds as config_kinds
 from meta_harness.config import store as config_store
 from meta_harness.planner import voice
 from meta_harness.trackers.base import TrackerError
-from meta_harness.planner import plans, splits, store
+from meta_harness.planner import assignees, plans, splits, store
 from meta_harness.planner.drafting import PLANNER_CONFIG_PATH
 from meta_harness.planner.tracker import Issue, ref_for
 from meta_harness.run_service import provenance, writing
@@ -488,6 +488,8 @@ async def approve(
                 actor=who,
                 tags={"goal_id": goal["id"]},
             )
+            # Assigned once it is noted, so a person the tracker refuses never costs the issue: it is reported.
+            await assignees.assign_new(goal, writer, ref, draft["repo"], events)
     except TrackerError as err:
         made = f" after creating {len(created)} of {len(plan['drafts'])} issues" if created else ""
         raise PlanError(f"{REFUSED}{made}: {err}. Approve again to carry on") from err
