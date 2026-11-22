@@ -446,6 +446,8 @@ export function GoalPage() {
           tasks={tasks}
           spend={spend}
           steps={taskSteps}
+          goalId={open ? goal.id : undefined}
+          onFixed={() => void Promise.all([load(), loadProgress()])}
           actions={(i) => (
             <HeldActions goalId={goal.id} label={goal.label} issue={i} readOnly={!open} onChanged={() => void Promise.all([load(), loadProgress()])} />
           )}

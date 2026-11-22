@@ -153,6 +153,36 @@ export interface IssueDoubt {
   reason: string;
 }
 
+// One part of an issue that Fix with AI drafted: the heading it goes under, whether the sizing doubted it (and
+// why) or found it missing, and the text the model proposes.
+export interface FixDraft {
+  part: IssueGap;
+  heading: string;
+  doubted: boolean;
+  reason: string;
+  text: string;
+}
+
+// An issue's sizing as the planner records it after a fix: what its card shows.
+export interface SizingRecord {
+  size: IssueSize;
+  reasons?: string[];
+  missing?: IssueGap[];
+  doubts?: IssueDoubt[];
+  split?: string[];
+  paths?: string[];
+  checks?: string[];
+}
+
+// What fix-accept wrote: the headings added, and the issue's new sizing, or why it could not be sized again.
+export interface FixAccepted {
+  goal_id: string;
+  ref: string;
+  added: string[];
+  sizing: SizingRecord | null;
+  sizing_error: string | null;
+}
+
 // One issue a held issue splits into, as the operator edited it before it is created.
 export interface SplitDraft {
   title: string;
@@ -271,6 +301,12 @@ export const goalsApi = {
       method: "POST",
       body: JSON.stringify({ ref, issues }),
     }),
+  // Fix with AI: a draft of each part an issue's sizing marks, written nowhere; and the operator's edited parts,
+  // written to the issue, which is then sized again.
+  fixDraft: (id: string, ref: string) =>
+    call<{ ref: string; drafts: FixDraft[] }>(`/v1/goals/${id}/issues/fix-draft`, { method: "POST", body: JSON.stringify({ ref }) }),
+  fixAccept: (id: string, ref: string, parts: { part: IssueGap; text: string }[]) =>
+    call<FixAccepted>(`/v1/goals/${id}/issues/fix-accept`, { method: "POST", body: JSON.stringify({ ref, parts }) }),
   // Each of a goal's issues with its task's status and its pull request's state and checks.
   goalIssues: (id: string) => call<{ issues: IssueProgress[] }>(`/v1/goals/${id}/issues`).then((r) => r.issues),
   // The same, with the goal's status and when its issues' states were read from GitHub.
