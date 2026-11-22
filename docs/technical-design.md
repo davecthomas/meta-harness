@@ -3315,6 +3315,20 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
   cannot find or a type that cannot sit under it), the adapter logs a warning
   and creates the issue again without it. The issue it returns then has no
   `parent`, so the caller can tell. Any other refusal is raised as before.
+- A goal's tracker setting `parent` (a `choice`, not required) names the
+  issue its plan's issues are created under, such as an epic (VL-14274).
+  `choices("parent", {"project": ...})` lists that project's open issues of a
+  type that can hold others: the types `GET /project/{key}` gives a
+  `hierarchyLevel` above 0, or the type named Epic on a site that gives no
+  levels. Each is offered by ref (`jira:<KEY>`), newest first. A goal's
+  parent must be in its own project (`check_goal`). On approval
+  (`planner/planning.py`) each issue the plan creates in the goal's tracker
+  is created with that `parent`; one kept in the meta-harness is not. When
+  the tracker refuses it, the issue is still created, and
+  `issue_parent_refused` names the issue, the parent and what to do, as for
+  a split (its `from_ref` is the issue the plan split, empty for a new task).
+  The New goal form lists the parents of the chosen project, and asks for none
+  before a project is chosen.
 
 #### Who an issue is assigned to
 
