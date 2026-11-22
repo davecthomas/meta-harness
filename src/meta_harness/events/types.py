@@ -680,6 +680,22 @@ REGISTRY: list[EventType] = [
             ["goal_id", "ref", "parts", "model", "usd_cost"],
         ),
     ),
+    # A model drafted what a goal's issue lacks, the parts its sizing marked, for an operator to edit and accept
+    # (planner/fix_issue.py): one model call. parts names those drafted.
+    EventType(
+        "issue_fix_drafted",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "ref": {"type": "string"},
+                "parts": {"type": "array", "items": {"type": "string"}},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "ref", "parts", "model", "usd_cost"],
+        ),
+    ),
     # The planner gave a goal's tasks their short names (planner/naming.py): one model call. goal_id is empty
     # for tasks of no goal.
     EventType(
