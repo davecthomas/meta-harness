@@ -16,7 +16,7 @@ from typing import Any
 from meta_harness.config.kinds import remedy_tries
 from meta_harness.planner import splits, store
 from meta_harness.planner.split_issue import SplitRefused, split_issue
-from meta_harness.planner.sweep import goal_tracker
+from meta_harness.planner.sweep import goal_tracker, still_as_read
 from meta_harness.run_service import routing
 from meta_harness.supervisor import failures, ledger
 from meta_harness.supervisor.loop import last_tier
@@ -96,6 +96,10 @@ async def run(goal: dict, tracker: Any, events: Any, tasks: Any = None) -> list[
         }
         try:
             issue = await goal_tracker(tracker, goal).read(link["ref"])
+            if not await still_as_read(issue, link):
+                # An outsider changed it after an operator read it: the sweep holds it to be read again, and
+                # nothing is drafted from the new text.
+                continue
             drafts, model, cost = await splits.draft(issue, list((link.get("sizing") or {}).get("split") or []))
             events.emit(
                 "split_drafted",

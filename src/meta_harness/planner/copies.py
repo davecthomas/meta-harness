@@ -39,3 +39,9 @@ def content_hash(title: str, body: str) -> str:
     if not made_by and len(kept) < LEAST_TEXT:
         return ""
     return hashlib.sha256(f"{_plain(title)}\n{made_by or kept}".encode()).hexdigest()
+
+
+def text_hash(title: str, body: str) -> str:
+    """A hash of everything an issue says, its hidden text included: what an operator read when they let an
+    outsider's issue run. A change of any character changes it."""
+    return hashlib.sha256(f"{title or ''}\n{body or ''}".encode()).hexdigest()

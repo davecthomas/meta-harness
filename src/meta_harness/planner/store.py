@@ -48,7 +48,7 @@ LINK_COLUMNS = (
     "labels, dropped, "
     # The issue's size and what its sizing found, why it is held if it is, whether an operator ran it anyway, and
     # the issues an operator split it into.
-    "size, sizing, held_reason, run_anyway, split_into, content_hash, "
+    "size, sizing, held_reason, run_anyway, split_into, content_hash, approved_hash, "
     # What the planner last told the issue's tracker about its task (tracker_progress.py).
     "progress, "
     # The reason the planner last gave the issue's tracker for not starting it (tracker_replies.py).
@@ -520,6 +520,12 @@ def set_link_replied(conn: psycopg.Connection, ref: str, reason: str) -> None:
     conn.execute("UPDATE planner.issue_link SET replied = %s WHERE ref = %s", (reason, ref))
 
 
+def set_link_approved(conn: psycopg.Connection, ref: str, approved: str) -> None:
+    """Records what an outsider's issue said when an operator let it run (copies.text_hash)."""
+    with conn.transaction():
+        conn.execute("UPDATE planner.issue_link SET approved_hash = %s WHERE ref = %s", (approved, ref))
+
+
 def set_link_content(conn: psycopg.Connection, ref: str, goal_id: str, content: str) -> None:
     """Records the hash of what the issue's work is, on the goal's link to it when it has one: a copy of the
     issue that turns up later is told by it."""
@@ -678,7 +684,11 @@ def run_anyway(conn: psycopg.Connection, goal_id: str, ref: str) -> dict:
                 f"{ref} was split into {parts}, which run in its place: running it too would do the same work "
                 "twice. It closes by itself once they are all done, so nothing is needed here"
             )
-        cur.execute("UPDATE planner.issue_link SET held_reason = NULL, run_anyway = true WHERE ref = %s", (ref,))
+        # What the issue says now is what the operator let run: the next sweep records it (approved_hash).
+        cur.execute(
+            "UPDATE planner.issue_link SET held_reason = NULL, run_anyway = true, approved_hash = NULL WHERE ref = %s",
+            (ref,),
+        )
         return _link(row)
 
 
