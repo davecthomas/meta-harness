@@ -1338,6 +1338,34 @@
     ],
     "type": "object"
   },
+  "split_parent_refused v1": {
+    "additionalProperties": true,
+    "properties": {
+      "from_ref": {
+        "type": "string"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "parent": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      },
+      "remedy": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ref",
+      "from_ref",
+      "parent",
+      "goal_id",
+      "remedy"
+    ],
+    "type": "object"
+  },
   "task_admitted v1": {
     "additionalProperties": true,
     "properties": {

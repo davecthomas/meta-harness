@@ -2843,7 +2843,8 @@ After sizing:
   cannot draft them, the dialog says why and starts from an outline of the
   suggested split. Creating them (`POST /v1/goals/{id}/issues/split`,
   `issue_split`) opens each in the held issue's repo with the goal's label and
-  a `Split from` line naming the original. It refuses a part with no
+  a `Split from` line naming the original, under the original's parent when
+  it has one (a Jira epic). It refuses a part with no
   acceptance check or no `Paths:` line (422, naming each part and what it
   lacks). For a goal with no label it holds them by ref.
   A part, known by its `Split from`
@@ -3114,9 +3115,9 @@ tracker, through one adapter interface:
 |---|---|
 | `list_open(repo, label)` | The open issues with the goal's label for one repo |
 | `list_assigned(repo)` | The open issues a person assigned, in the tracker, to the account the meta-harness signs in as, for a goal that asked to take them. Empty for a tracker with no such way |
-| `read(ref)` | One issue: title, body, labels, state, and the issues that block it |
+| `read(ref)` | One issue: title, body, labels, state, the issues that block it, and its `parent` (the ref of the issue it sits under, such as a Jira epic; empty when it has none) |
 | `ensure_label(repo, label)` | Make sure an issue created for the repo can have the label |
-| `create_issue(repo, title, body, labels)` | Create an issue, for an approved plan's draft or a split. Returns it with its `ref` |
+| `create_issue(repo, title, body, labels, parent=None)` | Create an issue, for an approved plan's draft or a split. Returns it with its `ref`. `parent` is the ref of an issue to create it under: Jira sets it, and GitHub and the own tracker ignore it |
 | `comment(ref, text)` | Add a comment to the issue. Returns the comment's address |
 | `add_section(ref, heading, text)` | Add `## <heading>` and the text to the end of the issue's description, leaving the rest as it was. The heading and the text come from `outbound.prepare`. A description that already has a section with that heading is refused with a `TrackerError` that is not retryable, and nothing is written |
 | `mark(ref)` | Put the meta-harness's label on the issue. The adapter calls it itself before every write |
@@ -3304,6 +3305,17 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
 - `link_pull_request` adds a remote link whose id is the pull request's
   address, so adding it twice changes the one link.
 - A label with a space is refused before any issue is made.
+- `create_issue` with a `parent` sets `fields.parent` to the parent's key, and
+  `read` gives `fields.parent` back as the issue's `parent`. When Jira refuses
+  the issue with that parent (400, such as a parent whose type cannot hold
+  it), the adapter logs a warning and creates the issue again without it. A
+  400 creates nothing, so the issue is never made twice. The returned issue's
+  `parent` is then empty. A parent that is not a `jira:` ref is left out.
+- A split creates each part under the held issue's parent, read from the
+  original (`planner/split_issue.py`). A part the tracker created without that
+  parent is kept, and the split goes on. A `split_parent_refused` event names
+  the part (`ref`), the original (`from_ref`), the `parent` and what to do
+  (`remedy`): set the part's parent in the tracker by hand.
 
 #### Who an issue is assigned to
 
@@ -3871,7 +3883,7 @@ Meta-harness services append through the event service client library:
 | Producer | Events |
 |---|---|
 | Task service | `task_created`, `task_status_changed`, `task_cancel_requested`, received code-host pull request webhooks |
-| Planner | Built: `goal_created`. `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume). `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line). `goal_drafted`. `goal_titled` with the model and its cost. `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created). `plan_requested` when a planning task starts (with the operator's note on a replan). `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is). `plan_approved` with the issues created. `issue_sized` when an issue is sized before it becomes a task (its size, reasons, what it is missing and the suggested split). It also has the model and its cost. `issue_released` when an operator runs a held issue anyway. `issue_split` with the issues a held one was split into. `issue_joined` (with the issue's size and the spend limit it set, for a sized issue). `issue_refused`, `issue_closed` and `task_unblocked`. `goal_met` when a goal is met, on its own or by an operator. No workflow watches a `ready` or `review_unresolved` task's pull request. For it the planner records `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`. Each is on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
+| Planner | Built: `goal_created`. `goal_changed` for every change to a goal's title, settings or status (with `resumed: true` for a budget resume). `goal_budget_reached` the first time a goal's spend reaches its budget (the spend, the budget, the mode and the blocking line). `goal_drafted`. `goal_titled` with the model and its cost. `issue_added` and `issue_dropped` for issues picked by ref (and `issue_added` for each issue an approved plan created). `plan_requested` when a planning task starts (with the operator's note on a replan). `plan_saved` for each plan version (its source, how many drafts, and why it is invalid if it is). `plan_approved` with the issues created. `issue_sized` when an issue is sized before it becomes a task (its size, reasons, what it is missing and the suggested split). It also has the model and its cost. `issue_released` when an operator runs a held issue anyway. `issue_split` with the issues a held one was split into. `split_parent_refused` for a split's part the tracker created without its original's parent, with what to do. `issue_joined` (with the issue's size and the spend limit it set, for a sized issue). `issue_refused`, `issue_closed` and `task_unblocked`. `goal_met` when a goal is met, on its own or by an operator. No workflow watches a `ready` or `review_unresolved` task's pull request. For it the planner records `pull_request_checks` for a new head commit's settled checks, `pull_request_merged` and `pull_request_closed`. Each is on the task and tagged with the goal, with the workflow's event id for the same fact. Planned: `goal_classified`, `plan_drafted`, `plan_approved`, `issues_created`, `criteria_evaluated`, `planning_task_created`, and the tracker webhooks it received |
 | Meta-harness scheduler | Admission decisions: `task_admitted`, and `task_held` with the reason and the kind of hold, recorded when a task's reason is new or has changed. `kill_switch_changed` with the operator as actor |
 | Meta-harness run service: RunTask workflow, `route` and run activities | `task_routed` from the meta-harness run service `route` activity result. One `run_prompt` per run, recorded on the task with the run's `run_id` before the run starts by the `record_prompt` activity (behind the `run-prompt` patch). The activity appends it at once, with a stable event id, without the client outbox. So it is stored before `run_harness` starts, ahead of the run's own events. It holds the run's `kind` (`task`, `review` or `fix`) and its `template`: `repo-task-v2` and `fix-v2`, or `repo-task-v1` and `fix-v1` before they asked for a marked summary. A review's is `review-v5`, or `review-v4` and `review-v3` before it. A caller's own text is `inline`. It also holds the filled-in `prompt` sent to the harness server. Just before it comes the run's `run_provenance` (Run provenance). One `attempt_finished` per run from the meta-harness run service run activity Collect result, joined to its pool manager sandbox lease by `run_id` |
 | Meta-harness run service: run activity (Wait step) | The per-run sandbox's harness server Run API event stream: `turn_started`, `model_call` (with the HTTP Gateway's model-token usage and running total), `tool_call`, `tool_result`, `file_changed`, `tests_run`, `guardrail_blocked`, `review_submitted`, `plan_updated`, `issue_drafted` (one draft from a planning run's `create_issue`), `compacted`, `turn_finished`, `run_finished`. The meta-harness run service run activity stays the only consumer of each per-run sandbox's harness server Run API stream. Harness server Run API heartbeats are not stored. |

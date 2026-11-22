@@ -69,6 +69,9 @@ class Issue:
     # COLLABORATOR, CONTRIBUTOR, NONE and so on). Empty when the tracker does not say.
     author: str = ""
     author_association: str = ""
+    # The ref of the issue this one sits under in the tracker, such as a Jira epic. Empty when it has none or
+    # the tracker has no parents.
+    parent: str = ""
 
 
 @dataclass(frozen=True)
@@ -115,8 +118,12 @@ class Tracker(Protocol):
         """Makes sure an issue created for the repo can carry the label."""
         ...
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
-        """Creates one issue for the repo, carrying the labels."""
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue:
+        """Creates one issue for the repo, carrying the labels. parent is the ref of an issue to create it under
+        (an `Issue.parent`). A tracker with no parents ignores it. One that refuses it creates the issue without
+        a parent, and the returned issue's `parent` is then empty."""
         ...
 
     async def comment(self, ref: str, body: str) -> str:

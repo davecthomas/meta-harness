@@ -8,6 +8,12 @@ from meta_harness.trackers.base import Issue, Source, Tracker, TrackerError, sch
 from meta_harness.trackers.own import SCHEME as OWN
 
 
+def _under(parent: str | None) -> dict[str, str]:
+    """The parent to pass on to the adapter that creates an issue: none when there is none, so a call with no
+    parent is made as before."""
+    return {"parent": parent} if parent else {}
+
+
 class WithOwn:
     """A goal's tracker together with the meta-harness's own (trackers/own.py), as one tracker.
 
@@ -44,8 +50,11 @@ class WithOwn:
     async def ensure_label(self, repo: str, label: str) -> None:
         await self.primary.ensure_label(repo, label)
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
-        return await self.primary.create_issue(repo, title, body, labels)
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue:
+        # The goal's tracker creates the issue, and so is the one to set its parent or ignore it.
+        return await self.primary.create_issue(repo, title, body, labels, **_under(parent))
 
     def _told(self, ref: str) -> Tracker | None:
         """The tracker to tell of the issue's progress; None for one that shows it by itself."""
@@ -149,8 +158,10 @@ class Trackers:
     async def ensure_label(self, repo: str, label: str) -> None:
         await self.for_repo(repo).ensure_label(repo, label)
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
-        return await self.for_repo(repo).create_issue(repo, title, body, labels)
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue:
+        return await self.for_repo(repo).create_issue(repo, title, body, labels, **_under(parent))
 
     async def comment(self, ref: str, body: str) -> str:
         return await self.for_ref(ref).comment(ref, body)

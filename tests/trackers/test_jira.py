@@ -156,6 +156,46 @@ async def test_an_issue_is_created_in_the_goals_project_and_a_label_with_a_space
     assert posted[-1]["fields"]["description"] == "Body.\n\nRepo: o/web\n"
 
 
+async def test_an_issue_is_created_under_its_parent_and_read_back_with_it():
+    jira = Jira(
+        {
+            ("POST", "/rest/api/2/issue"): {"key": "VL-9"},
+            ("GET", "/rest/api/2/issue/VL-9"): issue("VL-9", parent={"id": "10", "key": "VL-2"}),
+        }
+    )
+
+    made = await tracker(jira).create_issue("o/r", "Part 1", "Body.", ["mh"], parent="jira:VL-2")
+
+    [posted] = [body for method, path, body in jira.asked if (method, path) == ("POST", "/rest/api/2/issue")]
+    assert posted["fields"]["parent"] == {"key": "VL-2"}
+    assert made.parent == "jira:VL-2", "the parent is read back from fields.parent"
+
+
+async def test_a_parent_jira_refuses_is_left_off_and_the_issue_is_still_created():
+    def create(body):
+        if "parent" in body["fields"]:
+            return httpx.Response(400, json={"errors": {"parent": "Given parent work item does not belong here"}})
+        return {"key": "VL-9"}
+
+    jira = Jira({("POST", "/rest/api/2/issue"): create, ("GET", "/rest/api/2/issue/VL-9"): issue("VL-9")})
+
+    made = await tracker(jira).create_issue("o/r", "Part 1", "Body.", ["mh"], parent="jira:VL-2")
+
+    posted = [body for method, path, body in jira.asked if (method, path) == ("POST", "/rest/api/2/issue")]
+    assert ["parent" in body["fields"] for body in posted] == [True, False]
+    assert (made.ref, made.parent) == ("jira:VL-9", "")
+
+    # Any other refusal is the caller's to see, and is not tried again.
+    jira.answers[("POST", "/rest/api/2/issue")] = httpx.Response(403, json={"errorMessages": ["No permission"]})
+    with pytest.raises(TrackerError, match="403"):
+        await tracker(jira).create_issue("o/r", "Part 2", "Body.", [], parent="jira:VL-2")
+    # A parent that is not a Jira issue is left out before anything is asked.
+    jira.answers[("POST", "/rest/api/2/issue")] = {"key": "VL-9"}
+    await tracker(jira).create_issue("o/r", "Part 3", "Body.", [], parent="github:o/r#1")
+    last = [body for method, path, body in jira.asked if (method, path) == ("POST", "/rest/api/2/issue")][-1]
+    assert last["fields"]["summary"] == "Part 3" and "parent" not in last["fields"]
+
+
 async def test_the_sites_projects_are_listed_for_a_goal_to_choose_from():
     pages = {
         "0": {"values": [{"key": "VL", "name": "Voltron"}, {"key": "OPS", "name": "Operations"}], "isLast": False},

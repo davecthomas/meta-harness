@@ -70,7 +70,7 @@ log = logging.getLogger(__name__)
 SCHEME = "jira"
 REF = re.compile(r"^jira:(?P<key>[A-Z][A-Z0-9_]+-\d+)$")
 PROJECT = re.compile(r"^[A-Z][A-Z0-9_]+$")
-FIELDS = ["summary", "description", "labels", "status", "updated", "reporter", "issuelinks"]
+FIELDS = ["summary", "description", "labels", "status", "updated", "reporter", "issuelinks", "parent"]
 PAGE = 100
 TIMEOUT_SECONDS = 30.0
 CONNECT_SECONDS = 10.0
@@ -357,6 +357,7 @@ class JiraTracker:
             updated_at=fields.get("updated") or "",
             paths=issue_paths(body),
             author=(fields.get("reporter") or {}).get("displayName") or "",
+            parent=ref_for(fields["parent"]["key"]) if (fields.get("parent") or {}).get("key") else "",
         )
 
     async def list_open(self, repo: str, label: str | None) -> list[Issue]:
@@ -406,26 +407,41 @@ class JiraTracker:
                 retryable=False,
             )
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue:
         """Creates the issue in the goal's project. For a goal with several repos its description says which
-        one it is for, the way the planner reads it back."""
+        one it is for, the way the planner reads it back.
+
+        With parent, a `jira:` ref, the issue is created under that issue (`fields.parent`). When Jira refuses
+        the issue with the parent (400: the parent's type or project cannot hold it), it is created again
+        without one, and the returned issue's `parent` is empty. A parent that is not a Jira ref is left out."""
         outbound.require(title, "an issue's title", outbound.JIRA, title=True)
         outbound.require(body, "an issue's body", outbound.JIRA)
         several = self.source is not None and len(self.source.repos) > 1
         await self._check_name(self._project(), "issue_type", self._site().issue_type_of(self._project()))
-        made = await self._call(
-            "POST",
-            "/issue",
-            json={
-                "fields": {
-                    "project": {"key": self._project()},
-                    "summary": title,
-                    "description": f"{body.rstrip()}\n\nRepo: {repo}\n" if several else body,
-                    "issuetype": {"name": self._site().issue_type_of(self._project())},
-                    "labels": list(dict.fromkeys([*labels, self.label()])),
-                }
-            },
-        )
+        fields = {
+            "project": {"key": self._project()},
+            "summary": title,
+            "description": f"{body.rstrip()}\n\nRepo: {repo}\n" if several else body,
+            "issuetype": {"name": self._site().issue_type_of(self._project())},
+            "labels": list(dict.fromkeys([*labels, self.label()])),
+        }
+        under = REF.match(parent or "")
+        if parent and not under:
+            log.warning("the issue %r is created with no parent: %r is not a Jira issue", title, parent)
+        made = None
+        if under:
+            try:
+                made = await self._call("POST", "/issue", json={"fields": {**fields, "parent": {"key": under["key"]}}})
+            except TrackerError as err:
+                # Jira creates nothing when it answers 400, so creating the issue again without the parent
+                # cannot make it twice.
+                if err.status != 400:
+                    raise
+                log.warning("Jira refused %s as the parent of %r, so it is created with none: %s", parent, title, err)
+        if made is None:
+            made = await self._call("POST", "/issue", json={"fields": fields})
         self._open.clear()
         self.marked.refs.add((ref_for(made["key"]), self.label()))
         return await self.read(ref_for(made["key"]))

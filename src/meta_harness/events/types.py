@@ -541,6 +541,21 @@ REGISTRY: list[EventType] = [
             ["ref", "goal_id", "issues"],
         ),
     ),
+    # A split's part (ref) the tracker created without its original's (from_ref) parent, and what to do.
+    EventType(
+        "split_parent_refused",
+        1,
+        _object(
+            {
+                "ref": {"type": "string"},
+                "from_ref": {"type": "string"},
+                "parent": {"type": "string"},
+                "goal_id": {"type": "string"},
+                "remedy": {"type": "string"},
+            },
+            ["ref", "from_ref", "parent", "goal_id", "remedy"],
+        ),
+    ),
     # The issue the planner filed for a merged pull request's follow-up findings (planner/follow_ups.py).
     EventType(
         "follow_ups_filed",

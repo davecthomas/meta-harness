@@ -127,7 +127,10 @@ class OwnTracker:
     async def ensure_label(self, repo: str, label: str) -> None:
         return None
 
-    async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> Issue:
+    async def create_issue(
+        self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
+    ) -> Issue:
+        """Creates the issue in the meta-harness. Its issues have no parents, so parent is ignored."""
         outbound.require(title, "an issue's title", outbound.OWN, title=True)
         outbound.require(body, "an issue's body", outbound.OWN)
         issue_id = f"i-{secrets.token_hex(6)}"
