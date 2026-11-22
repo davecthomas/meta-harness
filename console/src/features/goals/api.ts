@@ -303,8 +303,12 @@ export const goalsApi = {
     }),
   // Fix with AI: a draft of each part an issue's sizing marks, written nowhere; and the operator's edited parts,
   // written to the issue, which is then sized again.
-  fixDraft: (id: string, ref: string) =>
-    call<{ ref: string; drafts: FixDraft[] }>(`/v1/goals/${id}/issues/fix-draft`, { method: "POST", body: JSON.stringify({ ref }) }),
+  // kept: the draft is one an accept kept while the issue's task ran; fresh asks the model past it.
+  fixDraft: (id: string, ref: string, fresh = false) =>
+    call<{ ref: string; kept?: boolean; drafts: FixDraft[] }>(`/v1/goals/${id}/issues/fix-draft`, {
+      method: "POST",
+      body: JSON.stringify(fresh ? { ref, fresh } : { ref }),
+    }),
   fixAccept: (id: string, ref: string, parts: { part: IssueGap; text: string }[]) =>
     call<FixAccepted>(`/v1/goals/${id}/issues/fix-accept`, { method: "POST", body: JSON.stringify({ ref, parts }) }),
   // Each of a goal's issues with its task's status and its pull request's state and checks.
