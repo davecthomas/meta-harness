@@ -149,3 +149,16 @@ def test_a_runs_database_has_a_host_name_short_enough_whatever_the_task_is_calle
     name = sandbox.database_name(long_ref)
     assert len(name) <= 63 and name == sandbox.database_name(long_ref)
     assert name.replace("-", "").isalnum()
+
+
+def test_the_harness_server_starts_from_a_node_it_can_run_but_not_read():
+    """A process started from an unreadable binary is not dumpable, so the agent's commands, which share the
+    server's uid, cannot read the run's token out of its memory. The egress check proves it in a sandbox."""
+    from meta_harness.run_service import egress_check
+    from meta_harness.run_service.paths import REPO_ROOT
+
+    dockerfile = (REPO_ROOT / "images" / "harness-pi" / "Dockerfile").read_text()
+    assert "chmod 0111 /usr/local/bin/node-server" in dockerfile
+    assert dockerfile.rstrip().endswith('CMD ["node-server", "server/main.ts"]')
+    assert dockerfile.index("chmod 0111") < dockerfile.index("USER node"), "set while the build is still root"
+    assert egress_check.SERVER_PROC_ENTRIES == ("mem", "maps", "environ")
