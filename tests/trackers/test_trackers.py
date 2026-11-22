@@ -67,6 +67,10 @@ async def test_the_github_adapter_creates_the_same_issue_when_given_a_parent():
     assert under.calls == plain.calls, "the parent changes nothing GitHub is asked"
     assert with_parent == made and with_parent.parent is None
 
+    # The router passes the parent on, and the GitHub adapter still ignores it.
+    routed = Trackers([GitHubTracker(Apps({("POST", "/repos/o/r/issues"): ISSUE}))], default=lambda: "github")
+    assert await routed.create_issue("o/r", "Fix it", "Body.", ["mh"], parent="github:o/r#1") == made
+
 
 def test_the_label_is_the_deployments_or_the_usual_one_and_a_label_no_tracker_could_hold_is_refused():
     assert registry.check({"default": "github", "trackers": {"github": {}}}, None) == []
