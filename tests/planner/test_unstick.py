@@ -9,7 +9,17 @@ from meta_harness.supervisor import standing
 from meta_harness.supervisor.rules import Decision
 from meta_harness.tasks.client import TaskApiError
 
-from .test_planner import OPERATOR, Events, FakeTasks, FakeTracker, _goal, _label, _no_title, migrated  # noqa: F401
+from .test_planner import (  # noqa: F401 - migrated and registry are fixtures
+    OPERATOR,
+    Events,
+    FakeTasks,
+    FakeTracker,
+    _goal,
+    _label,
+    _no_title,
+    migrated,
+    registry,
+)
 
 
 class Tasks(FakeTasks):
