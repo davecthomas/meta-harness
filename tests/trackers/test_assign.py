@@ -451,3 +451,29 @@ def test_every_tracker_checks_a_goals_assignee_when_it_is_saved(scheme, good, ba
     for value in bad:
         [why] = spec.check_goal({**base, "assignee": value}, site)
         assert why.startswith("assignee is ") and why.endswith("choose one from the list, or leave it empty"), value
+
+
+async def test_github_lists_a_repos_open_issues_as_the_ones_a_goal_can_be_planned_from(key_file):
+    issues = [
+        {
+            "number": 4,
+            "title": "Data export",
+            "body": "",
+            "labels": [],
+            "state": "open",
+            "updated_at": "2026-11-02T00:00:00Z",
+        },
+        {"number": 9, "title": "Sync", "body": "", "labels": [], "state": "open", "updated_at": "2026-11-20T00:00:00Z"},
+        {"number": 5, "title": "A pull request", "pull_request": {}, "updated_at": "2026-11-21T00:00:00Z"},
+    ]
+    tracker, _ = github(
+        key_file, {("GET", "/repos/o/r/issues"): lambda query, body: issues if query["page"] == "1" else []}
+    )
+
+    found = await tracker.choices("parent", {"repos": "o/r"})
+
+    assert found == [
+        {"value": "github:o/r#9", "label": "#9 Sync"},
+        {"value": "github:o/r#4", "label": "#4 Data export"},
+    ], "newest first, and no pull request"
+    assert await tracker.choices("parent", {}) == []

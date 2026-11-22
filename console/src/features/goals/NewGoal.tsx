@@ -78,12 +78,14 @@ export function NewGoal() {
     setTracker(next);
     setTrackerSettings({ ...(trackers.find((t) => t.scheme === next)?.goal_defaults ?? {}) });
     setRefs([]);
+    // An issue of the tracker left behind is no longer the specification.
+    setSpec((now) => (now && "ref" in now ? null : now));
   }
   function chooseSettings(next: Record<string, string>) {
     setTrackerSettings(next);
     // A switch changes which issues come in by themselves, and the assignee who gets them. Neither changes
     // where the issues are, so the picked ones stay.
-    const places = asked.filter((s) => s.kind !== "switch" && s.name !== "assignee");
+    const places = asked.filter((s) => s.kind !== "switch" && s.name !== "assignee" && s.name !== "parent");
     if (places.some((s) => (next[s.name] ?? "") !== (trackerSettings[s.name] ?? ""))) setRefs([]);
   }
   const asked = trackers.find((t) => t.scheme === tracker)?.goal_settings ?? [];
@@ -176,11 +178,12 @@ export function NewGoal() {
   // Whether this goal plans its tasks: asked for, from a specification, or the only way with no tracker.
   const plansNow = plans || untracked || plansEvery || !!spec;
   // The issue the goal names as its parent, where its tracker has parents: its description can be the specification.
-  const parent = asked.some((s) => s.name === "parent") ? (trackerSettings.parent ?? "").trim() : "";
+  const parentAsked = asked.some((s) => s.name === "parent");
+  const parent = parentAsked ? (trackerSettings.parent ?? "").trim() : "";
   // A parent that is no longer chosen is no longer the specification.
   useEffect(() => {
-    setSpec((now) => (now && "ref" in now && now.ref !== parent ? null : now));
-  }, [parent]);
+    if (parentAsked) setSpec((now) => (now && "ref" in now && now.ref !== parent ? null : now));
+  }, [parent, parentAsked]);
 
   function fromDraft(draft: GoalDraft) {
     setTitle(draft.title);
@@ -270,12 +273,43 @@ export function NewGoal() {
 
   return (
     <>
-      <PageHeader title="New goal" description="A goal says which repositories to work in and which issues are its work. Each issue becomes a task, and each task a pull request." />
+      <PageHeader title="New goal" description="Start from issues that exist, or from a spec or an epic that the planner breaks into tasks. Each task ends as a pull request." />
       {unsaved.element}
+      {/* Where the work is comes first: both ways to start a goal below read the repos and the tracker. */}
+      <Paper maw={1120} mb="lg" data-testid="goal-where">
+        <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl" verticalSpacing="lg">
+            <Checkbox.Group label="Repositories" description="The repositories the goal may change." withAsterisk value={chosen} onChange={setChosen}>
+              <Stack gap="xs" mt="xs">
+                {reposRead && repos.length === 0 && (
+                  <Text size="sm" c="orange" data-testid="no-repos">
+                    No repository is registered yet, so a goal has nothing to change. An admin adds one under{" "}
+                    <Anchor component={Link} to="/config?kind=repos" size="sm">Configuration, Repositories</Anchor>.
+                  </Text>
+                )}
+                {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
+              </Stack>
+            </Checkbox.Group>
+          <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} repos={chosen} shows={(s) => s.required} />
+        </SimpleGrid>
+      </Paper>
       {/* The quick ways to start a goal come first: from the issues a label holds, or from a spec or an epic. */}
       <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg" maw={1120}>
         {readable && !untracked && <LabelStart onDraft={fromDraft} source={source} />}
-        <SpecField value={spec} onChange={setSpec} parent={parent || undefined} parentLabel={parent ? refLabel(parent) : undefined} />
+        <SpecField
+          value={spec}
+          onChange={setSpec}
+          repos={chosen}
+          tracker={tracker}
+          project={(trackerSettings.project ?? "").trim()}
+          asksProject={asked.some((s) => s.name === "project")}
+          untracked={untracked}
+          parentAsked={parentAsked}
+          parent={parent}
+          onParent={(ref) => {
+            const { parent: _gone, ...rest } = trackerSettings;
+            setTrackerSettings(ref ? { ...rest, parent: ref } : rest);
+          }}
+        />
       </SimpleGrid>
       <Paper maw={1120}>
         <form onSubmit={submit}>
@@ -316,20 +350,10 @@ export function NewGoal() {
               }}
               onAccept={setStatement}
             />
-            <Checkbox.Group label="Repositories" description="The repositories the goal may change." withAsterisk value={chosen} onChange={setChosen}>
-              <Stack gap="xs" mt="xs">
-                {reposRead && repos.length === 0 && (
-                  <Text size="sm" c="orange" data-testid="no-repos">
-                    No repository is registered yet, so a goal has nothing to change. An admin adds one under{" "}
-                    <Anchor component={Link} to="/config?kind=repos" size="sm">Configuration, Repositories</Anchor>.
-                  </Text>
-                )}
-                {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
-              </Stack>
-            </Checkbox.Group>
               </Stack>
               <Stack gap="lg">
-            <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} repos={chosen} />
+            {/* What the tracker asks besides where its issues are: who gets them, and which come in by themselves. */}
+            <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} repos={chosen} settingsOnly shows={(s) => !s.required && s.name !== "parent"} />
             {untracked ? (
               <Text size="sm" data-testid="untracked-note">
                 With no issue tracker, a planning task reads the repos and writes the goal's tasks from its description. You review, edit
