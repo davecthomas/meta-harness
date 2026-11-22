@@ -449,6 +449,17 @@ async def _take_in_one(
         if not await asyncio.to_thread(_release_from_ended_goal, issue.ref):
             return
         existing = None
+    # An outsider's issue an operator let run is run as they read it. Its author can edit it afterwards: then
+    # it waits to be read again, and no task is made, made over or split from the new text.
+    if existing and not await still_as_read(issue, existing):
+        reason = (
+            f"{issue.author or 'its author'}, who has no write access to {issue.repo}, changed it after an "
+            "operator read it: read the issue again, including its raw text, then use Run anyway"
+        )
+        if reason != existing.get("held_reason"):
+            await asyncio.to_thread(_hold, issue.ref, reason)
+        result.held.append(issue.ref)
+        return
     if existing and existing["task_id"]:
         await _retake(existing["task_id"], goal, issue, tasks, result)
         return
@@ -994,6 +1005,24 @@ def _save_sizing(ref, goal_id, repo, depends_on, size, record, title, labels) ->
 def _set_content(ref: str, goal_id: str, content: str) -> None:
     with db.connect(autocommit=True) as conn:
         store.set_link_content(conn, ref, goal_id, content)
+
+
+async def still_as_read(issue: Issue, link: dict) -> bool:
+    """Whether an issue an operator let run still says what it said then. True for an issue by someone with
+    write access, and for one no operator has let run: neither was approved by its text. What an approved
+    outsider's issue says is recorded the first time it is seen after the approval."""
+    if not (link.get("run_anyway") or link.get("picked")) or not outside_author(issue):
+        return True
+    now = copies.text_hash(issue.title, issue.body)
+    if link.get("approved_hash") is None:
+        await asyncio.to_thread(_set_approved, issue.ref, now)
+        return True
+    return link["approved_hash"] == now
+
+
+def _set_approved(ref: str, approved: str) -> None:
+    with db.connect(autocommit=True) as conn:
+        store.set_link_approved(conn, ref, approved)
 
 
 def _earlier_copy(goal_id: str, ref: str, content: str) -> str | None:

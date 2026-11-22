@@ -2879,6 +2879,12 @@ issue, its raw text too, then Run anyway. An issue an operator picked by ref
 is not held. Every task's title and description leave out HTML comments, which
 GitHub hides from whoever labeled the issue. They also leave out any line
 shaped like the prompt's `--- task ---` markers (`tracker.task_text`).
+An operator's yes to an outsider's issue (a pick by ref, or Run anyway) is a
+yes to what it said then: the next sweep records a hash of its title and whole
+body (`approved_hash`). Its author can edit it afterwards. When what it says
+no longer matches, the sweep holds it again, saying who changed it, and no
+task is made, made over or split from the new text until an operator reads it
+and runs it anyway again.
 
 After sizing:
 
