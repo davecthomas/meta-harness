@@ -23,6 +23,10 @@ import sys
 from meta_harness.run_service import sandbox
 
 
+# What of the harness server's /proc entry must be closed to the sandbox's other processes.
+SERVER_PROC_ENTRIES = ("mem", "maps", "environ")
+
+
 async def _exec(container: str, *command: str) -> tuple[int, str]:
     process = await asyncio.create_subprocess_exec(
         "docker", "exec", container, *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
@@ -87,6 +91,21 @@ async def main() -> int:
             f"http://{box.name}:{sandbox.CONTAINER_PORT}/health",
         )  # fmt: skip
         report(code in (7, 28), f"the control listener {control} from inside: curl exit {code}, out of reach")
+
+        # The server is the sandbox's first process and holds the run's token. What the agent runs has its
+        # uid, so the server must be closed to it: its memory, its memory map and what it started with.
+        closed = []
+        for entry in SERVER_PROC_ENTRIES:
+            code, out = await _exec(box.name, "head", "-c", "1", f"/proc/1/{entry}")
+            closed.append(code != 0 and "Permission denied" in out)
+        report(
+            all(closed),
+            "the harness server's memory from inside the sandbox: "
+            + ("out of reach" if all(closed) else "readable, so a command the agent runs could take the run's token")
+            + f" (/proc/1/{', /proc/1/'.join(SERVER_PROC_ENTRIES)})",
+        )
+        code, out = await _exec(box.name, "head", "-c", "1", "/proc/self/maps")
+        report(code == 0, f"a process's own memory map, to show the check above can tell: head exit {code}")
     finally:
         await sandbox.destroy(run_id, ref)
         print(f"[egress-check] removed {box.name} and its network", flush=True)

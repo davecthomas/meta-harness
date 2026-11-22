@@ -605,9 +605,15 @@ under the server's, so a token passed there was the agent's to read: with it,
 a review run's own code could steer, stop or cancel the run that reports its
 verdict. The worker keeps its copy in the run's directory beside the
 workspace, which no sandbox mounts, so a worker that restarts finds it again.
-A process under the server's uid that could read the server's memory could
-still find the token there; that would take running the tools under another
-uid, which the sandbox's dropped capabilities do not allow today.
+The server's memory holds the token, and that is closed to the agent too. The
+image starts the server from a copy of node that can be executed but not read
+(`node-server`, mode 0111). The kernel marks a process started from a binary
+it cannot read as not dumpable, and then nothing else under its uid can open
+its memory, its memory map or its `/proc` entries. The agent's own `node` is
+the ordinary one. The sandbox's dropped capabilities rule out running the
+tools under another uid, which this makes unnecessary. The egress check of
+the zero-cost end-to-end check reads `/proc/1/mem`, `/proc/1/maps` and
+`/proc/1/environ` from inside a sandbox and fails if one opens.
 
 The RunTask workflow's Temporal history records every attempt, tier candidate
 and decision. The operator console and the harness analyzer read each run's

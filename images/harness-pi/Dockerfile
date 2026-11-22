@@ -61,6 +61,11 @@ ENV HOST=0.0.0.0 \
     PIP_CACHE_DIR=/tmp/home/.cache/pip
 
 RUN mkdir -p /workspace /sessions /tmp/home && chmod 0777 /workspace /sessions /tmp/home
+# The harness server runs from a copy of node that can be executed but not read. The kernel marks a process
+# started from an unreadable binary as not dumpable, so nothing else under its uid can open its memory or its
+# /proc entries. The agent's shell commands run under that uid, and the server holds the run's token. The
+# agent's own node stays the ordinary one.
+RUN cp /usr/local/bin/node /usr/local/bin/node-server && chmod 0111 /usr/local/bin/node-server
 USER node
 EXPOSE 8090
-CMD ["node", "server/main.ts"]
+CMD ["node-server", "server/main.ts"]
