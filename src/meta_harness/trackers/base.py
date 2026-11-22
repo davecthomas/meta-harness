@@ -126,6 +126,12 @@ class Tracker(Protocol):
         left off, and the issue is created without one: the returned Issue's `parent` says what was set."""
         ...
 
+    async def create_epic(self, repo: str, title: str, body: str) -> Issue:
+        """Creates the one issue that stands for a goal's whole plan, which the plan's tasks are created
+        under: an epic where the tracker has them (Jira), else a plain issue. It carries no goal label, so no
+        goal takes it in as a task."""
+        ...
+
     async def comment(self, ref: str, body: str) -> str:
         """Adds a comment to the issue. Returns the comment's address, or "" when the tracker gives none."""
         ...

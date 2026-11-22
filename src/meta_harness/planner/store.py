@@ -763,6 +763,17 @@ def set_link_state(conn: psycopg.Connection, ref: str, state: str) -> None:
         conn.execute("UPDATE planner.issue_link SET state = %s, last_seen_at = now() WHERE ref = %s", (state, ref))
 
 
+def set_parent(conn: psycopg.Connection, goal_id: str, ref: str) -> None:
+    """Names the issue the goal's plan creates its issues under, in its tracker settings: the epic made for a
+    goal planned from a specification. The rest of what the goal told its tracker stays as it is."""
+    with conn.transaction():
+        conn.execute(
+            "UPDATE planner.goal SET tracker_settings = coalesce(tracker_settings, '{}'::jsonb) || "
+            "jsonb_build_object('parent', %s::text), updated_at = now() WHERE id = %s",
+            (ref, goal_id),
+        )
+
+
 def autonomy_of(row: dict) -> str:
     """The goal's autonomy: what it stores, or for a goal from before the setting, what its auto_merge says."""
     return row.get("autonomy") or ("full" if row.get("auto_merge") else "standard")

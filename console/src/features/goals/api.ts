@@ -288,6 +288,8 @@ export const goalsApi = {
   askForGoalUpdate: (id: string) => call<{ update: PlannerUpdate | null }>(`/v1/goals/${id}/updates`, { method: "POST" }),
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
   goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
+  // The specification a goal was planned from: its name and text.
+  goalSpec: (id: string) => call<{ name: string; text: string }>(`/v1/goals/${id}/spec`),
   // What getting the goal's stuck tasks moving would do, and doing it: each takes its recommended step.
   unstickPlan: (id: string) => call<UnstickPlan>(`/v1/goals/${id}/unstick`),
   unstick: (id: string) => call<UnstickResult>(`/v1/goals/${id}/unstick`, { method: "POST" }),

@@ -24,7 +24,7 @@ from meta_harness.config import kinds as config_kinds
 from meta_harness.config import store as config_store
 from meta_harness.planner import voice
 from meta_harness.trackers.base import TrackerError
-from meta_harness.planner import assignees, plans, splits, store
+from meta_harness.planner import assignees, draft_sizes, plans, specs, splits, store
 from meta_harness.planner.drafting import PLANNER_CONFIG_PATH
 from meta_harness.planner.tracker import Issue, ref_for, task_text
 from meta_harness.run_service import provenance, writing
@@ -110,10 +110,15 @@ def goal_label(goal: dict) -> str:
 
 
 def prompt(
-    goal: dict, note: str | None, previous: list[dict[str, Any]] | None, issues: list[Issue] | None = None
+    goal: dict,
+    note: str | None,
+    previous: list[dict[str, Any]] | None,
+    issues: list[Issue] | None = None,
+    spec: dict[str, Any] | None = None,
 ) -> str:
-    """What the planning task is asked: the goal, its repos, the issues it already has, and the rules for the
-    plan. A replan adds the operator's note and the plan it replaces."""
+    """What the planning task is asked: the goal, its repos, the specification it was created with if it has
+    one, the issues it already has, and the rules for the plan. A replan adds the operator's note and the plan
+    it replaces."""
     repos = ", ".join(goal["repos"])
     issues = issues or []
     lines = [
@@ -129,6 +134,8 @@ def prompt(
         f"The goal's repositories: {repos}. /workspace holds {goal['repos'][0]}. Every new task names one of them.",
         "",
     ]
+    if spec:
+        lines += specs.prompt_lines(spec, int(settings().get("spec_chars", specs.PROMPT_CHARS)))
     if issues:
         config = settings()
         chars = int(config.get("issue_chars", ISSUE_CHARS))
@@ -155,9 +162,21 @@ def prompt(
             body = body[:chars] + " [cut]" if len(body) > chars else body
             lines += [f"## {issue.ref} ({issue.repo}): {task_text(issue.title)}", body or "(no description)", ""]
         lines += ["--- end of issues ---", ""]
+    elif spec:
+        lines += ["The goal has no issues yet: call create_issue once for each task the specification needs.", ""]
     else:
         lines += ["The goal has no issues yet: call create_issue once for each task it needs.", ""]
     lines += [
+        "Plan only work that is still needed. Before you plan a piece of work, look for it in the repository:",
+        "its code, its tests, its recent commits. Work the repository already has is not planned again:",
+        "- For an issue the goal has, decide leave_out, with a reason that starts 'Already done:' and names the",
+        "  files or the commit that hold it.",
+        "- For work the goal or its specification asks for, write no task, and add a gap that starts",
+        "  'Already done:' and says what is there and where.",
+        "- Two issues that ask for the same change are one piece of work: keep one and leave the other out, with",
+        "  a reason that starts 'Same work as' and names the one kept.",
+        "Work that is partly there is planned for the part that is missing, and the task says what exists.",
+        "",
         "Rules for a new task:",
         "- One task is one change a single pull request can make and its tests can prove. Prefer several small",
         "  tasks to one large one.",
@@ -223,7 +242,7 @@ async def start(
             task_type="plan",
             priority=goal["priority"],
             title=f"Plan: {goal.get('title') or goal['statement']}"[:300],
-            description=prompt(goal, note, before, issues),
+            description=prompt(goal, note, before, issues, await asyncio.to_thread(specs.of, goal["id"])),
             acceptance_checks=[],
             goal_id=goal["id"],
             pin=config["candidate"],
@@ -247,9 +266,21 @@ async def start(
     return task
 
 
-async def collect(goal: dict, tasks: TaskClient, events: Events) -> dict | None:
+async def collect(
+    goal: dict,
+    tasks: TaskClient,
+    events: Events,
+    sizer: Any = None,
+    issues_of: Any = None,
+) -> dict | None:
     """Turns an ended planning task's drafts into the goal's next plan version. Returns the plan saved, or None
     when the goal has no planning task, the task still runs, or its plan is saved already.
+
+    With a sizer, each new task is sized as an issue is before it runs (draft_sizes.py). One that is too
+    large for a pull request, or lacks what a run needs, makes the plan not approvable, saying why. With
+    issues_of too (the goal's issues to plan over), the planner is then sent back to resize those tasks, for
+    the planning configuration's resize_rounds at most: the goal keeps a planning task, and its page says the
+    planner is still working.
 
     A task that failed, or drafted nothing, saves a plan with no drafts and the reason, so the operator sees
     why and can ask for a new one.
@@ -272,6 +303,8 @@ async def collect(goal: dict, tasks: TaskClient, events: Events) -> dict | None:
     issues = await asyncio.to_thread(issues_given)
     found = await gather(goal, task, events, issues)
     drafts, items, summary, gaps, invalid = (found[k] for k in ("drafts", "items", "summary", "gaps", "invalid"))
+    oversized = await draft_sizes.findings(goal, drafts, sizer, events) if drafts else []
+    invalid = [*invalid, *draft_sizes.reasons(oversized)]
 
     def save() -> dict | None:
         with db.connect(autocommit=True) as conn:
@@ -297,6 +330,27 @@ async def collect(goal: dict, tasks: TaskClient, events: Events) -> dict | None:
     if plan is None:
         return None
     _emit_saved(events, plan, "planner")
+    rounds = int(settings().get("resize_rounds", draft_sizes.DEFAULT_ROUNDS))
+    round_no = draft_sizes.round_of(task) + 1
+    if oversized and issues_of is not None and round_no <= rounds:
+        # Not the operator's to fix yet: the planner resizes its own tasks first.
+        try:
+            await start(
+                goal,
+                tasks,
+                events,
+                "planner",
+                note=draft_sizes.note(oversized),
+                issues=await issues_of(goal),
+                external_ref=draft_sizes.resize_ref(goal["id"], plan["version"], round_no),
+            )
+        except Exception as err:  # noqa: BLE001 - the plan stands, saying which tasks are too large
+            log.error(
+                "goal %s: the planner could not be sent back to resize its plan: %s. The plan says which "
+                "tasks are too large; Replan on the goal's page asks again",
+                goal["id"],
+                err,
+            )
     return plan
 
 
@@ -412,14 +466,58 @@ def issue_body(draft: dict[str, Any], created: dict[str, str]) -> str:
     return f"{body}\n\nDepends on: {', '.join(names)}\n" if names else f"{body}\n"
 
 
+async def _epic(goal: dict, plan: dict, writer: Any, who: str, spec: dict[str, Any] | None) -> str:
+    """The ref of the epic that stands for a goal planned from a specification, created when the goal has none:
+    one issue for the broad work, which the plan's tasks are created under. "" for a goal with no
+    specification, and for a tracker that keeps no epics. The ref is saved in the goal's tracker settings as
+    its parent as soon as the epic exists, so an approval asked again makes no second one.
+
+    The epic carries no goal label: the goal takes in what its label lists, and the epic is not a task."""
+    create = getattr(writer, "create_epic", None)
+    if spec is None or create is None:
+        return ""
+    where = getattr(writer, "scheme", "github")
+    said = [
+        goal["statement"].strip(),
+        "",
+        f"Planned from the specification {spec['name']}, as {len(plan['drafts'])} "
+        f"task{'' if len(plan['drafts']) == 1 else 's'} under this issue.",
+    ]
+    if plan.get("summary"):
+        said += ["", "## The plan", "", str(plan["summary"]).strip()]
+    signed = provenance.Provenance(provenance.ISSUE, goal=goal["id"], task=plan.get("task_id") or "", by=who)
+    body = await outbound.for_tracker("\n".join(said), where, outbound.BODY, outbound.GENERATED, provenance=signed)
+    title = await outbound.for_tracker(
+        goal.get("title") or goal["statement"][:80], where, outbound.TITLE, outbound.GENERATED
+    )
+    epic = await create(sorted({d["repo"] for d in plan["drafts"]})[0], title, body)
+    ref = epic.ref or ref_for(epic.repo, epic.number)
+
+    def keep() -> None:
+        with db.connect(autocommit=True) as conn:
+            store.set_parent(conn, goal["id"], ref)
+
+    await asyncio.to_thread(keep)
+    return ref
+
+
 async def approve(
-    goal: dict, writer: IssueWriter, events: Events, who: str, tracked: bool = True, originals: Any = None
+    goal: dict,
+    writer: IssueWriter,
+    events: Events,
+    who: str,
+    tracked: bool = True,
+    originals: Any = None,
+    spec: dict[str, Any] | None = None,
 ) -> dict:
     """Applies the goal's plan. Its new tasks become issues, in dependency order, with the goal's label, in
     the tracker `writer` writes to: the goal's own, or the meta-harness's (tracked says which, for the
     record). Then each decision on an issue the goal already had is settled: a kept one is taken into the goal
     with what the plan says it waits on, a split one is replaced by its new tasks, and one left out is removed.
     Returns the plan with the issue each new task became.
+
+    spec: the specification the goal was created with, if any. Such a goal's new tasks are created under one
+    epic that stands for the whole, made here when the goal names no parent of its own.
 
     Each issue is noted as soon as it exists, so an approval the tracker interrupted is asked again and
     carries on from the next task, making none twice. Settling a decision twice changes nothing.
@@ -440,6 +538,9 @@ async def approve(
     label = goal["label"] or goal_label(goal)
     # The issue the goal's tracker settings name to hold its plan's issues; only the goal's own tracker has it.
     parent = str((goal.get("tracker_settings") or {}).get("parent") or "").strip() if tracked else ""
+    if tracked and not parent and plan["drafts"]:
+        # A goal planned from a specification gets one epic for the whole, and its tasks are created under it.
+        parent = await _epic(goal, plan, writer, who, spec)
     under = {"parent": parent} if parent else {}
     created: dict[str, str] = dict(plan["created"])
     # Each new task that takes the place of an issue the plan split, and that issue: its body says where it came from.

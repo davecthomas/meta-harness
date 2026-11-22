@@ -127,6 +127,35 @@ taken. When it is a person's to take, it is the one recommended:
 5. Close it, when other merged work already covers it.
 6. Ask a person, with the actions that remain as buttons, best first.
 
+### Friction rules
+
+Each of these was learned from a goal that stopped moving or spent on
+nothing. They are kept as rules so the same stop does not come back.
+
+- **Work is planned only when it is still needed.** The planning task looks
+  in the repository before it plans a piece of work. What is already there is
+  left out, and the plan says so with where it found it ("Already done:").
+  Two issues that ask for the same change are planned as one (`planning.prompt`).
+- **A goal builds a piece of work once.** An issue that is the same work as
+  one the goal already has is held as a copy (`planner/copies.py`), and a plan
+  is approved once however often Approve is pressed (`plans.claim_approval`).
+- **A planned task is one run's work.** The planner's new tasks meet the same
+  sizer as an incoming issue before the plan is shown. One too large for a
+  pull request sends the planner back to resize it, twice at most, before an
+  operator is asked (`planner/draft_sizes.py`).
+- **A goal keeps up with its base.** A pull request the code host would take
+  is merged whatever its task's tries say. One the base has left behind is
+  started over on the current base once before anyone is asked
+  (`supervisor/remedies/start_over.py`).
+- **A wait nobody can end is ended.** A task held for a budget that cannot be
+  raised is not left holding a place for a day (`remedies/end_hold.py`).
+- **A canceled goal asks for nothing.** Its running tasks stop, and none of
+  its tasks is listed as needing the operator.
+- **Work the meta-harness cannot do is said before it is tried.** An issue
+  that changes a workflow file is held as a person's when it is taken in.
+- **Many stuck tasks take one action.** A goal's page moves each stuck task by
+  its recommended step with one button (`planner/unstick_api.py`).
+
 ### Who speaks
 
 The Goal Planner and the Task Shepherd talk to a person. Each speaks in the
@@ -2686,6 +2715,7 @@ credential.
 | POST | `/v1/goals/{id}/enrich/accept` | Planner | Save the `statement` the operator accepted and edited from a proposal, and record `goal_changed` with the operator as its actor and `enriched: true`. 409 for a `met` or `canceled` goal, or one whose status moved during the save (`planner/enrich.py`) | built |
 | POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once. Cancel also cancels the goal's `queued` and `blocked` tasks and asks its `running` tasks to stop, whether they have a pull request or not: a canceled goal spends no more. A parked task's pull request stays open on the code host. Nothing of a canceled goal is the operator's afterwards: the supervisor stops a task still running or held for budget, and its failed and parked tasks stand as needing nothing, which the Overview's list follows. The goal comes back with `tasks`: the task ids `canceled`, `stopping`, `left` (parked with a pull request open) and `errors` | built |
 | POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on. The raise is `add_usd`, or with no body a worked-out amount. That amount is what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar. Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
+| GET | `/v1/goals/{id}/spec` | Planner | The specification a goal was created with: `{name, text, created_by, created_at}`. A goal is created with one as `spec`: a document's `name` and `text` (Markdown or plain text, 200,000 characters at most), or the `ref` of an issue of the goal's tracker, such as a Jira epic, whose description is the specification. Such a goal needs no label and no issues. Its planning task reads the specification between markers, as data, and breaks all of it into tasks sized for one pull request. On approval the tasks are created under one epic: the issue named by `ref`, or one the planner creates for the goal (`create_epic` in the tracker's adapter; an Epic in Jira, by the project's `epic_type`), which carries no goal label. 404 for a goal with none (`planner/specs.py`) | built |
 | GET, POST | `/v1/goals/{id}/unstick` | Planner | Get the goal's stuck tasks moving in one action (`planner/unstick_api.py`). Each task that waits on a person takes the first move the supervisor ranked for it, through the Task API under the operator's name: merge, resolve the conflict and merge, retry, retry with a stronger model, or start over. A task held for its own spend limit is raised to what its next run needs, or ended when that is more than one task may spend. GET answers what it would do with nothing done, `{moves, left}`; POST does it and answers `{done, failed, left}`. A task is left, with why, when its first move is one only a person makes, or it waits on its goal's budget. Ending a task and merging one with its findings unfixed are never taken here. The goal's page offers it as one button, "Get N tasks moving", whose dialog names each task and its step first | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
 | POST | `/v1/goals/{id}/complete`, `/reopen` | Planner | Set an `active`, `paused` or `stalled` goal `met` by hand, or move a `met` or `canceled` goal back to `active`, which sweeps its label at once | built |

@@ -67,7 +67,7 @@ test("a Jira goal starts on the default project, and its issues are read only fo
 
   const project = await screen.findByDisplayValue("Voltron (VL)");
   fireEvent.change(project, { target: { value: "V" } });
-  fireEvent.click(screen.getByRole("button", { name: "Draft from labels (optional)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Draft a goal from issue labels" }));
   expect((await screen.findAllByText("bug")).length).toBeGreaterThan(0);
 
   expect(asked.length).toBeGreaterThan(0);
@@ -252,3 +252,63 @@ test("a goal that cannot be saved says why beside the buttons, and where to fix 
   await waitFor(() => expect(screen.getByTestId("goal-not-saved").textContent).toContain("the label mh:x is held by goal g-9"));
   expect(screen.getByTestId("goal-not-saved").textContent).toContain("Nothing was created");
 });
+
+function showNewGoal(created: Record<string, unknown>[]) {
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
+    if (url === "/v1/goals" && init?.method === "POST") {
+      created.push(JSON.parse(String(init.body)));
+      return respond({ id: "g-1" }, 201);
+    }
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/new"]}>
+        <Routes>
+          <Route path="/goals/new" element={<NewGoal />} />
+          <Route path="/goals/:goalId" element={<p>Goal page</p>} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+}
+
+test("a goal planned from a loaded specification needs no label, and sends the file's name and text", async () => {
+  const created: Record<string, unknown>[] = [];
+  showNewGoal(created);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Let users export their data" } });
+
+  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
+  const file = new File(["# Exports\n\n- An export button.\n"], "exports-prd.md", { type: "text/markdown" });
+  fireEvent.change(screen.getByTestId("spec-field").querySelector("input[type=file]")!, { target: { files: [file] } });
+
+  expect((await screen.findByTestId("spec-loaded")).textContent).toContain("exports-prd.md, 31 characters.");
+  // A goal with a specification is planned from it: the button says so, and no label is asked for.
+  fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
+  expect(await screen.findByText("Goal page")).toBeTruthy();
+  expect(created[0].spec).toEqual({ name: "exports-prd.md", text: "# Exports\n\n- An export button.\n" });
+  expect(created[0].label).toBeUndefined();
+});
+
+test("the settings most goals leave alone are folded away, and merging automatically sits above the buttons", async () => {
+  showNewGoal([]);
+  await screen.findByRole("checkbox", { name: "o/a" });
+
+  const toggle = screen.getByTestId("more-settings");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.getByLabelText("Budget")).toBeTruthy();
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByLabelText("Priority")).toBeTruthy();
+
+  // The way to start a goal from a spec comes before the form's own fields, and the merge switch after them all.
+  const order = (el: Element, other: Element) => !!(el.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const merge = screen.getByLabelText(/Merge pull requests automatically/);
+  expect(order(screen.getByTestId("spec-field"), screen.getByLabelText(/Description/))).toBe(true);
+  expect(order(toggle, merge)).toBe(true);
+  expect(order(merge, screen.getByRole("button", { name: /^Save and/ }))).toBe(true);
+});
+

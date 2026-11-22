@@ -1,3 +1,4 @@
+import { SpecView } from "./SpecView";
 import { UnstickGoal } from "./Unstick";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -329,6 +330,7 @@ export function GoalPage() {
       />
       {/* The goal's settings, folded away once it has work to show: the board is what the page is for, and
           one line says what the settings are. Open on a goal with no issues yet, which is when they are set. */}
+      {goal.spec && <SpecView goalId={goal.id} spec={goal.spec} />}
       <Paper withBorder p="sm" mb="md" data-testid="goal-settings">
         <Group justify="space-between" wrap="nowrap" gap="md">
           <Text size="sm" c="dimmed" lineClamp={1} data-testid="goal-settings-summary">

@@ -108,11 +108,11 @@ export function LabelStart({ onDraft, source }: { onDraft: (draft: GoalDraft) =>
   return (
     <Paper maw={720} mb="lg">
       <Stack gap="md">
-        <UnstyledButton onClick={() => setOpened((now) => !now)} aria-expanded={opened} aria-label="Draft from labels (optional)">
+        <UnstyledButton onClick={() => setOpened((now) => !now)} aria-expanded={opened} aria-label="Draft a goal from issue labels">
           <Group gap="xs" wrap="nowrap">
             {opened ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
             <div>
-              <Title order={4}>Draft from labels (optional)</Title>
+              <Title order={4}>Draft a goal from issue labels</Title>
               <Text size="sm" c="dimmed">
                 Pick one label or several, and a model drafts the title and description from its open issues. It fills in the
                 form below and saves nothing.

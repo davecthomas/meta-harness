@@ -44,7 +44,7 @@ test("each field saves when it is committed and says Saved, with no Save setting
   expect(await screen.findByText("Saved")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
 
-  fireEvent.click(screen.getByRole("switch", { name: "Merge pull requests without me" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Merge pull requests automatically" }));
   await waitFor(() => expect(put).toHaveLength(2));
   expect(put[1]).toMatchObject({ planner: { repos: ["o/b"], auto_merge: true } });
 
@@ -86,7 +86,7 @@ test("two fields committed before the first save returns both persist", async ()
     </MantineProvider>,
   );
 
-  fireEvent.click(await screen.findByRole("switch", { name: "Merge pull requests without me" }));
+  fireEvent.click(await screen.findByRole("switch", { name: "Merge pull requests automatically" }));
   fireEvent.click(screen.getByRole("switch", { name: "Browser notifications for what needs me" }));
   await waitFor(() => expect(put).toHaveLength(1));
   // The second waits for the first to be stored, then builds on it.
@@ -98,5 +98,5 @@ test("two fields committed before the first save returns both persist", async ()
   const notify = () => screen.getByRole("switch", { name: "Browser notifications for what needs me" }) as HTMLInputElement;
   await waitFor(() => expect(notify().disabled).toBe(false));
   expect(notify().checked).toBe(true);
-  expect((screen.getByRole("switch", { name: "Merge pull requests without me" }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole("switch", { name: "Merge pull requests automatically" }) as HTMLInputElement).checked).toBe(true);
 });
