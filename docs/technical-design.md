@@ -3631,7 +3631,12 @@ and the words go through the writing pass. A digest of the facts decides when
 to write: each goal's status, where each task is, what waits on the operator
 and its budget state. `GET /v1/overview/report` returns the latest report.
 With `since`, when the operator last looked, it first writes a new one when
-the digest differs from the last report's. Nothing writes a report unasked.
+the digest differs from the last report's. Each planner sweep does the same
+for the operator's last look (`Overview.refresh`), so a goal that changes gets
+a new report before the operator comes back. The sweep writes none before the
+operator first opens the Overview, and it reads nothing while the last report
+is under `overview.min_seconds` old. A failure is logged once for each new
+reason, and the next sweep tries again.
 The planning configuration's `overview` names the model (goal drafting's when
 left out), `max_response_tokens`, `min_seconds` between two reports, and
 `max_usd`, what reports and answers together may cost in a UTC day. It is checked at startup and
