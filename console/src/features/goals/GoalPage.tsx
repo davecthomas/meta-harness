@@ -8,6 +8,7 @@ import { api, trackerTitle, goalStatus, goalTitle, type Goal, type IssueLink as 
 import { goalSource } from "../trackers/refs";
 import { issueSourceLabel } from "./issueSource";
 import { CancelGoal } from "./CancelGoal";
+import { ImproveGoal } from "./ImproveGoal";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { NoSuchRecord, isNotFound } from "../../components/NoSuchRecord";
 import { GoalStanding } from "./GoalStanding";
@@ -245,6 +246,17 @@ export function GoalPage() {
         description={
           <Stack gap={6}>
             <DescriptionField {...editable} />
+            {/* While the goal can still change: Accept saves the edited proposal as its description. */}
+            {open && (
+              <ImproveGoal
+                statement={goal.statement}
+                context={{ goal_id: goal.id }}
+                onAccept={async (statement) => {
+                  const saved = await api.acceptEnrichment(goal.id, statement);
+                  setGoal((now) => (now ? { ...now, ...saved, issues: now.issues } : now));
+                }}
+              />
+            )}
             <Group gap="xs"><StatusBadge status={status} /><Text size="sm" c="dimmed" ff="monospace">{goal.id}</Text></Group>
           </Stack>
         }
