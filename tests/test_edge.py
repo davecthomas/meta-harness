@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 from fastapi.testclient import TestClient
 
+from meta_harness.edge.directory import Directory
 from meta_harness.edge.app import create_app
 
 
@@ -450,6 +451,7 @@ def test_an_admin_reads_logs_from_cloud_logging_with_the_edges_own_token(tmp_pat
         identity="dave@example.com",
         service_key="svc-key",
         logs_transport=httpx.MockTransport(google),
+        directory=Directory(None, "", {"dave@example.com"}, set()),
     )
     client = TestClient(app)
 
@@ -478,7 +480,12 @@ def test_logs_without_google_credentials_say_why(tmp_path, monkeypatch):
         raise httpx.ConnectError("no route", request=request)
 
     app = create_app(
-        dist=tmp_path, operators={"d@x"}, identity="d@x", service_key="k", logs_transport=httpx.MockTransport(offline)
+        dist=tmp_path,
+        operators={"d@x"},
+        identity="d@x",
+        service_key="k",
+        logs_transport=httpx.MockTransport(offline),
+        directory=Directory(None, "", {"d@x"}, set()),
     )
     refused = TestClient(app).get("/v1/admin/logs")
     assert refused.status_code == 502 and "no Google credentials" in refused.json()["detail"]

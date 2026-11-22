@@ -2686,7 +2686,11 @@ session ends at their next request and a new role applies at once. The first
 time the edge finds no users, it hands the planner its first access list
 (every operator an admin when `MH_CONSOLE_ADMINS` is empty). From then on the
 users decide. A planner the edge cannot reach changes nothing: the users last
-read go on deciding. An invited user becomes active at their first sign-in. A
+read go on deciding. An edge that has never read the users, such as a fresh
+instance while the planner restarts, knows neither who was deprovisioned nor
+who is an admin. It lets nobody in by the first access list: it answers 503
+with `Retry-After`, which the console retries, and asks the planner again
+every second until a read succeeds. An invited user becomes active at their first sign-in. A
 sign-in the edge cannot report to the planner, as during a deploy, waits. The
 edge reports it after its next read of the users that reaches the planner. The
 console sends no email: an invitation is text the admin copies and sends. The
@@ -4289,7 +4293,11 @@ ask before it forwards (`src/meta_harness/edge/app.py`). It refuses a path
 with an empty, `.` or `..` part (400). The role checks read the path as sent,
 and the HTTP client collapses dot segments when it forwards. It refuses the
 calls only a control-plane service makes (403): appending an event,
-submitting a task, and setting a task's status, recovery or drive.
+submitting a task, setting a task's status, recovery, drive or name, and
+reading the tasks still to be named. The task service refuses them a second
+time. The edge names the signed-in user's role on everything it forwards
+(`X-MH-Role`) and no service does, so a service-only route answers 403 to any
+request that carries a role, whether or not the edge's list has the call.
 
 A task names its repo, and the run service clones that repo and pushes to it
 on its own host. A repo is `owner/name` on the code host, or the path of a

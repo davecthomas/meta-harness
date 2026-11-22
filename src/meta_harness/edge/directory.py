@@ -8,6 +8,10 @@ Until there are users, the edge's first access list decides, as it always did: M
 MH_CONSOLE_ADMINS. The first time the edge finds the planner with no users, it hands that list over (the seed),
 and from then on the planner's list decides and the two variables are read only to seed. A planner that cannot
 be reached changes nothing: the edge goes on with the list it last read.
+
+An edge that has never read the planner's users does not know who was deprovisioned or who is an admin, so it
+decides nothing by the first access list: `ready` is false and the edge answers 503 until a read succeeds. It
+asks again every second, not every REFRESH_SECONDS, so that lasts no longer than the planner's restart.
 """
 
 import logging
@@ -23,6 +27,8 @@ log = logging.getLogger("meta_harness.edge")
 # How long a read of the users serves requests before the edge reads again.
 REFRESH_SECONDS = 10.0
 TIMEOUT_SECONDS = 3.0
+# How soon the planner is asked again while no read has ever succeeded.
+FIRST_READ_SECONDS = 1.0
 
 
 class Directory:
@@ -51,15 +57,21 @@ class Directory:
         # The users last read, by email; None until a read has found some.
         self.users: dict[str, dict[str, Any]] | None = None
         self.read_at = 0.0
+        # Whether a read has ever reached the planner. Until one has, nothing is known of who may come in.
+        self.known = self.http is None
         self.lock = threading.Lock()
         # Sign-ins the planner could not be told of yet; told again after the next read that reaches it.
         self.unrecorded: set[str] = set()
 
     def _read(self) -> None:
-        if self.http is None or time.monotonic() - self.read_at < self.refresh_seconds:
+        if self.http is None:
+            return
+        # Before the first read that succeeds, the planner is asked again soon: the edge serves nobody until then.
+        wait = self.refresh_seconds if self.known else min(self.refresh_seconds, FIRST_READ_SECONDS)
+        if time.monotonic() - self.read_at < wait:
             return
         with self.lock:
-            if time.monotonic() - self.read_at < self.refresh_seconds:
+            if time.monotonic() - self.read_at < wait:
                 return
             # Whatever comes of it, do not ask again for a while: a planner that is down is not asked per request.
             self.read_at = time.monotonic()
@@ -76,21 +88,32 @@ class Directory:
                     log.warning("handed the planner the console's first %d users", len(found))
                 if found:
                     self.users = {user["email"]: user for user in found}
+                self.known = True
             except Exception as err:  # noqa: BLE001 - the list last read goes on deciding
                 log.warning("could not read the console's users: %s", err)
                 return
             for who in sorted(self.unrecorded):
                 self._record(who)
 
-    def allowed(self, who: str) -> bool:
-        """Whether this identity may use the console."""
+    def ready(self) -> bool:
+        """Whether the edge knows who may use the console: a read of the planner's users has succeeded, or
+        there is no planner to ask. False means decide nothing yet, and say to try again."""
         self._read()
+        return self.known
+
+    def allowed(self, who: str) -> bool:
+        """Whether this identity may use the console. Nobody, until the planner's users have been read once."""
+        self._read()
+        if not self.known:
+            return False
         if self.users is None:
             return who in self.operators
         return who in self.users and self.users[who]["status"] != "deprovisioned"
 
     def is_admin(self, who: str) -> bool:
         self._read()
+        if not self.known:
+            return False
         if self.users is None:
             # No admin list: every operator is an admin, so a deploy before the list is set changes nothing.
             return not self.admins or who in self.admins
