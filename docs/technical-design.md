@@ -4543,7 +4543,13 @@ that exist" are the label, the picked issues and the helper that drafts a goal
 from a label. That section says "it needs at least one of the two". Under
 "Plan them from the description" is only an optional label. A goal that could
 not be saved says why beside the Save buttons. It says where in the form to
-fix it and that nothing was created. How a goal gets its issues has one name
+fix it and that nothing was created. "Improve with AI" under the description
+asks `POST /v1/goals/enrich` for a proposal (`goals/ImproveGoal.tsx`). It
+shows beside the original with what was added and the open questions. The
+operator edits it, then accepts or discards it. On the form, Accept fills the
+description; on a goal's page, while the goal is not met or canceled, it
+calls `/v1/goals/{id}/enrich/accept`. A failed call says so and keeps the
+text. How a goal gets its issues has one name
 on every page, the form's own: "Issues that exist" or "Planned from the
 description". No page shows the service's word, modality. The goal page says
 it and the tracker were fixed when the goal was created. A person's Settings
