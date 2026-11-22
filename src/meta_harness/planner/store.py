@@ -48,7 +48,7 @@ LINK_COLUMNS = (
     "labels, dropped, "
     # The issue's size and what its sizing found, why it is held if it is, whether an operator ran it anyway, and
     # the issues an operator split it into.
-    "size, sizing, held_reason, run_anyway, split_into, "
+    "size, sizing, held_reason, run_anyway, split_into, content_hash, "
     # What the planner last told the issue's tracker about its task (tracker_progress.py).
     "progress, "
     # The reason the planner last gave the issue's tracker for not starting it (tracker_replies.py).
@@ -518,6 +518,32 @@ def set_link_progress(conn: psycopg.Connection, ref: str, progress: str) -> None
 def set_link_replied(conn: psycopg.Connection, ref: str, reason: str) -> None:
     """Note the reason the issue's tracker was last given for the issue not being started."""
     conn.execute("UPDATE planner.issue_link SET replied = %s WHERE ref = %s", (reason, ref))
+
+
+def set_link_content(conn: psycopg.Connection, ref: str, goal_id: str, content: str) -> None:
+    """Records the hash of what the issue's work is, on the goal's link to it when it has one: a copy of the
+    issue that turns up later is told by it."""
+    with conn.transaction():
+        conn.execute(
+            "UPDATE planner.issue_link SET content_hash = %s "
+            "WHERE ref = %s AND goal_id = %s AND content_hash IS DISTINCT FROM %s",
+            (content, ref, goal_id, content),
+        )
+
+
+def earlier_copy(conn: psycopg.Connection, goal_id: str, ref: str, content: str) -> str | None:
+    """The ref of an issue the goal took in before this one with the same hash of what its work is
+    (copies.content_hash), or None. The issue the goal saw first is the original, so of
+    two that are the same work it is always the same one that is the copy."""
+    with conn.transaction():
+        row = conn.execute(
+            "SELECT other.ref FROM planner.issue_link other LEFT JOIN planner.issue_link mine ON mine.ref = %s "
+            "WHERE other.goal_id = %s AND other.content_hash = %s AND other.ref <> %s AND NOT other.dropped "
+            "AND (mine.ref IS NULL OR (other.first_seen_at, other.ref) < (mine.first_seen_at, mine.ref)) "
+            "ORDER BY other.first_seen_at, other.ref LIMIT 1",
+            (ref, goal_id, content, ref),
+        ).fetchone()
+    return row[0] if row else None
 
 
 def set_link_held(conn: psycopg.Connection, ref: str, reason: str | None) -> None:
