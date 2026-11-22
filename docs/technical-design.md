@@ -3112,6 +3112,7 @@ tracker, through one adapter interface:
 | `ensure_label(repo, label)` | Make sure an issue created for the repo can have the label |
 | `create_issue(repo, title, body, labels)` | Create an issue, for an approved plan's draft or a split. Returns it with its `ref` |
 | `comment(ref, text)` | Add a comment to the issue. Returns the comment's address |
+| `add_section(ref, heading, text)` | Add a section to the end of the issue's description and keep what it said. The heading and the text come from `outbound.prepare` |
 | `mark(ref)` | Put the meta-harness's label on the issue. The adapter calls it itself before every write |
 | `set_status(ref, status)` | Move the issue to `todo`, `in_progress`, `in_review` or `done`, as far as the tracker has such a state. Returns whether it changed |
 | `link_pull_request(ref, pr_url, title)` | Record the pull request on the issue, where the tracker does not find it by itself |
