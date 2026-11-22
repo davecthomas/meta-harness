@@ -83,6 +83,7 @@ from meta_harness.planner import (
     suggestions,
     updates,
     sizing_api,
+    spec_files,
     specs,
     store,
     unstick_api,
@@ -1696,6 +1697,7 @@ def create_app(
     sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size)
     unstick_api.register(app, operator, load, tasks)
     specs.register(app, operator, load)
+    spec_files.register(app, operator, registered, apps)
     users.register(app, operator, events)
     app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)
     overview.register(app, operator, app.state.overview)

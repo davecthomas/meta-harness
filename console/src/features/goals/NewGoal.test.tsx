@@ -282,6 +282,8 @@ test("a goal planned from a loaded specification needs no label, and sends the f
   fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Let users export their data" } });
 
   fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
+  // A file in the repo is offered first; one from this machine is the other way.
+  fireEvent.click(screen.getByRole("radio", { name: "Upload a file" }));
   const file = new File(["# Exports\n\n- An export button.\n"], "exports-prd.md", { type: "text/markdown" });
   fireEvent.change(screen.getByTestId("spec-field").querySelector("input[type=file]")!, { target: { files: [file] } });
 
@@ -308,6 +310,9 @@ test("the settings most goals leave alone are folded away, and merging automatic
   const order = (el: Element, other: Element) => !!(el.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);
   const merge = screen.getByLabelText(/Merge pull requests automatically/);
   expect(order(screen.getByTestId("spec-field"), screen.getByLabelText(/Description/))).toBe(true);
+  // Where the work is comes before both: the repos and the tracker are what they read.
+  expect(order(screen.getByTestId("goal-where"), screen.getByTestId("spec-field"))).toBe(true);
+  expect(within(screen.getByTestId("goal-where")).getByRole("checkbox", { name: "o/a" })).toBeTruthy();
   expect(order(toggle, merge)).toBe(true);
   expect(order(merge, screen.getByRole("button", { name: /^Save and/ }))).toBe(true);
 });

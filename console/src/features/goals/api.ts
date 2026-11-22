@@ -289,6 +289,10 @@ export const goalsApi = {
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
   goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
   // The specification a goal was planned from: its name and text.
+  // A repo's Markdown and text files, the likeliest specifications first. complete: false when there are more.
+  specFiles: (repo: string) => call<{ files: { path: string }[]; complete: boolean }>(`/v1/repos/${repo}/spec-files`),
+  // One of them, read as a specification's name and text.
+  specFileText: (repo: string, path: string) => call<{ path: string; name: string; text: string }>(`/v1/repos/${repo}/spec-files/text?path=${encodeURIComponent(path)}`),
   goalSpec: (id: string) => call<{ name: string; text: string }>(`/v1/goals/${id}/spec`),
   // What getting the goal's stuck tasks moving would do, and doing it: each takes its recommended step.
   unstickPlan: (id: string) => call<UnstickPlan>(`/v1/goals/${id}/unstick`),

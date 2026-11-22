@@ -14,8 +14,15 @@ export function GoalTrackerFields(props: {
   onSettings: (settings: Record<string, string>) => void;
   // The goal's repos, owner/name: the scope of a list that depends on them, such as GitHub's assignable people.
   repos?: string[];
+  // Which of the tracker's settings this part of the form shows; all of them when left out. The form shows
+  // where the issues are first, and what most goals leave alone further down.
+  shows?: (setting: Tracker["goal_settings"][number]) => boolean;
+  // Leave out the tracker itself: another part of the form has it.
+  settingsOnly?: boolean;
 }) {
   const chosen = props.trackers.find((t) => t.scheme === props.tracker);
+  const shown = (chosen?.goal_settings ?? []).filter((s) => !props.shows || props.shows(s));
+  if (props.settingsOnly && !shown.length) return null;
   // Whether the tracker asks a goal for a project, which then scopes its other lists (Jira's assignable people,
   // and the epics a goal's parent is picked from).
   const asksProject = (chosen?.goal_settings ?? []).some((s) => s.name === "project");
@@ -28,7 +35,7 @@ export function GoalTrackerFields(props: {
   }
   return (
     <Stack gap="lg">
-      {props.trackers.length > 1 ? (
+      {props.settingsOnly ? null : props.trackers.length > 1 ? (
         <NativeSelect
           label="Issue tracker"
           description="Where the goal's issues are. A goal uses one tracker for all its issues, and keeps it."
@@ -46,12 +53,12 @@ export function GoalTrackerFields(props: {
           </Text>
         </div>
       )}
-      {chosen && !chosen.signed_in && (
+      {!props.settingsOnly && chosen && !chosen.signed_in && (
         <Text size="sm" c="orange" data-testid="tracker-signed-out">
           {chosen.title} has no sign-in yet, so a goal that uses it reads no issues until an admin adds one (Configuration, Issue trackers says which is missing).
         </Text>
       )}
-      {(chosen?.goal_settings ?? []).map((setting) =>
+      {shown.map((setting) =>
         setting.kind === "choice" ? (
           <ChoiceField
             key={`${chosen!.scheme}:${setting.name}`}
@@ -99,7 +106,7 @@ export function GoalTrackerFields(props: {
 // or the calls that read its issues. Only when the list cannot be read is the value typed, and then it counts
 // once the field is left. scope: what the list belongs to (the goal's project or repos); waiting: why the list
 // is not asked for yet. A setting that is not required can be emptied again.
-function ChoiceField(props: {
+export function ChoiceField(props: {
   scheme: string;
   name: string;
   label: string;

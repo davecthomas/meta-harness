@@ -38,6 +38,9 @@ REF = re.compile(r"^github:(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$")
 DEPENDS_LINE = re.compile(r"^\s*depends on:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 DEPENDS_ITEM = re.compile(r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>\d+)")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
+# The setting an issue to plan a goal from is listed under, as Jira lists its epics, and the most offered.
+PARENT = "parent"
+PARENT_CHOICES = 300
 # A GitHub login: letters, digits and single hyphens, up to 39 characters.
 LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 
@@ -289,11 +292,20 @@ class GitHubTracker:
         - `assignee`, with scope's `repos` (owner/name, comma-separated) or `repo`: the people who can be
           assigned issues in every one of those repos, by login, so the one picked can be assigned any of the
           goal's issues. Empty with no repo.
+        - `parent`, with the same scope: those repos' open issues, by ref, newest first. One is picked as the
+          issue a goal is planned from, its description the specification. Empty with no repo.
         """
-        if setting != ASSIGNEE:
-            return []
         given = f"{(scope or {}).get('repos', '')},{(scope or {}).get('repo', '')}"
         repos = list(dict.fromkeys(name.strip() for name in given.split(",") if name.strip()))
+        if setting == PARENT:
+            found = [issue for repo in repos if REPO.match(repo) for issue in await self.list_open(repo, None)]
+            several = len(repos) > 1
+            return [
+                {"value": i.ref, "label": f"{i.repo if several else ''}#{i.number} {i.title}"[:120]}
+                for i in sorted(found, key=lambda i: i.updated_at, reverse=True)[:PARENT_CHOICES]
+            ]
+        if setting != ASSIGNEE:
+            return []
         common: list[dict[str, str]] | None = None
         for repo in repos:
             found = await self.people(repo)
