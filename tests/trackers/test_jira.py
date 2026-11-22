@@ -548,3 +548,28 @@ async def test_an_unknown_issue_type_is_warned_at_first_use(caplog):
     warned = [r.getMessage() for r in caplog.records if "not one the site has" in r.getMessage()]
     assert len(warned) == 1
     assert "issue_type 'Epic'" in warned[0] and "Story, Task" in warned[0]
+
+
+async def test_an_issue_is_closed_as_work_that_will_not_be_done_by_its_workflows_name_for_it():
+    with_wont_do = {
+        "transitions": [
+            *MOVES["transitions"],
+            {"id": "61", "to": status("Canceled", "done")},
+            {"id": "51", "to": status("Won't Do", "done")},
+        ]
+    }
+    jira = workflow(("To Do", "new"), with_wont_do)
+    assert await tracker(jira).close_unplanned("jira:VL-7") is True
+    assert moved(jira) == ["51"], "Won't Do before Canceled, and never Done: the work was not done"
+
+    done = workflow(("Done", "done"), with_wont_do)
+    assert await tracker(done).close_unplanned("jira:VL-7") is False and moved(done) == []
+
+
+async def test_a_workflow_with_no_such_status_says_so_and_what_to_do():
+    jira = workflow(("To Do", "new"))
+
+    with pytest.raises(TrackerError, match="no status for work that will not be done") as refused:
+        await tracker(jira).close_unplanned("jira:VL-7")
+
+    assert "Close it in Jira" in str(refused.value) and moved(jira) == []

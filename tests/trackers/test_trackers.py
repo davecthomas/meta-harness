@@ -295,3 +295,18 @@ def test_a_goals_tracker_is_bound_to_its_repos_and_what_it_told_the_tracker():
     assert (bound[0].repos, bound[0].settings) == (("o/api", "o/web"), {"project": "VL"})
     github = trackers.adapter("github")
     assert trackers.for_goal({"id": "g-0", "tracker": None, "repos": ["o/r"]}) is github, "GitHub needs no binding"
+
+
+async def test_a_github_issue_is_closed_as_not_planned_once():
+    apps = Apps({("GET", "/repos/o/r/issues/7"): ISSUE})
+    tracker = GitHubTracker(apps)
+
+    assert await tracker.close_unplanned(REF) is True
+    assert apps.calls[-1] == (
+        {"issues": "write"}, "PATCH", "/repos/o/r/issues/7", {"state": "closed", "state_reason": "not_planned"}
+    )  # fmt: skip
+
+    apps.answers[("GET", "/repos/o/r/issues/7")] = {**ISSUE, "state": "closed"}
+    writes = len([c for c in apps.calls if c[1] == "PATCH"])
+    assert await tracker.close_unplanned(REF) is False
+    assert len([c for c in apps.calls if c[1] == "PATCH"]) == writes, "one closed already is left alone"

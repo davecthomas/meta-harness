@@ -74,6 +74,10 @@ class WithOwn:
         tracker = self._told(ref)
         return await tracker.set_status(ref, status) if tracker else False
 
+    async def close_unplanned(self, ref: str) -> bool:
+        # The operator's own decision on the issue, not its progress: made whatever the tracker shows by itself.
+        return await self._of(ref).close_unplanned(ref)
+
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         tracker = self._told(ref)
         if tracker:
@@ -176,6 +180,9 @@ class Trackers:
 
     async def set_status(self, ref: str, status: str) -> bool:
         return await self.for_ref(ref).set_status(ref, status)
+
+    async def close_unplanned(self, ref: str) -> bool:
+        return await self.for_ref(ref).close_unplanned(ref)
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         await self.for_ref(ref).link_pull_request(ref, pr_url, title)

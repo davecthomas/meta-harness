@@ -308,7 +308,21 @@ export function GoalPage() {
             {open && (
               <Button variant="default" leftSection={<IconListCheck size={16} />} onClick={() => setPicking(true)}>Add issues</Button>
             )}
-            {open && <CancelGoal tasks={Object.values(tasks)} onCancel={() => act(() => api.goalAction(goal.id, "cancel"))} />}
+            {open && (
+              <CancelGoal
+                tasks={Object.values(tasks)}
+                createdIssues={!!goal.planned && !!goal.plan_approved_at}
+                tracker={trackerTitle(goal.tracker ?? "github")}
+                onCancel={async (closeIssues) => {
+                  let left: string[] = [];
+                  await act(async () => {
+                    left = (await api.cancelGoal(goal.id, closeIssues)).issues?.errors ?? [];
+                  });
+                  // The goal is canceled all the same: say which of its issues are still open, and why.
+                  if (left.length) setError(`The goal is canceled, and ${left.length === 1 ? "one of its issues" : `${left.length} of its issues`} could not be closed: ${left.join("; ")}`);
+                }}
+              />
+            )}
           </>
         }
       />

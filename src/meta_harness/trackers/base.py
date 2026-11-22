@@ -160,6 +160,12 @@ class Tracker(Protocol):
         issue changed: False when it was there already or the tracker has no state for it."""
         ...
 
+    async def close_unplanned(self, ref: str) -> bool:
+        """Closes the issue as work that will not be done, in the tracker's own way of saying so: not planned on
+        GitHub, a "Won't Do" status in Jira. Returns whether the issue changed: False when it was closed
+        already. Raises TrackerError when the tracker has no such move for the issue, saying what to do."""
+        ...
+
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Records the pull request on the issue, where the tracker does not find it by itself."""
         ...

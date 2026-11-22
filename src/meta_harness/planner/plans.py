@@ -321,6 +321,12 @@ def record_created(conn: psycopg.Connection, goal_id: str, version: int, draft_i
         )
 
 
+def created_refs(conn: psycopg.Connection, goal_id: str) -> set[str]:
+    """Every issue the goal's plans created, by ref, across all their versions."""
+    rows = conn.execute("SELECT created FROM planner.plan WHERE goal_id = %s", (goal_id,)).fetchall()
+    return {str(ref) for (created,) in rows for ref in (created or {}).values()}
+
+
 def set_tracked(conn: psycopg.Connection, goal_id: str, version: int, tracked: bool) -> None:
     """Notes where an approval put the plan's new tasks: the goal's tracker, or the meta-harness alone."""
     with conn.transaction():
