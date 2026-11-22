@@ -407,6 +407,25 @@ REGISTRY: list[EventType] = [
             ["label", "issues", "model"],
         ),
     ),
+    # A model proposed a more detailed statement for a goal (planner/enrich.py); nothing was saved. goal_id is
+    # there when the goal exists, and writing when the writing pass found something in the statement
+    EventType(
+        "goal_enriched",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "repos": {"type": "array", "items": {"type": "string"}},
+                "issues": {"type": "integer"},
+                "added": {"type": "integer"},
+                "questions": {"type": "integer"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+                "writing": {"type": "object"},
+            },
+            ["issues", "model", "usd_cost"],
+        ),
+    ),
     EventType("goal_changed", 1, _object({"goal_id": {"type": "string"}, "changes": {"type": "object"}}, ["goal_id"])),
     # The first time a goal's spend reaches its budget: block_at is null for a goal that only warns
     EventType(

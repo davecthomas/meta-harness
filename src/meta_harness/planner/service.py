@@ -8,6 +8,7 @@
     POST       /v1/goals/{id}/resume-budget   raise the budget of a goal over it or stopped by it (budget_api.py)
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
+    POST       /v1/goals/enrich               a more detailed statement a model proposes; saves nothing (enrich.py)
     POST       /v1/goals/{id}/issues/run-anyway, /split   answer an issue the sweep held (sizing_api.py)
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
     GET, POST  /v1/admin/users                the console's users: invite, set a role, deprovision (users.py)
@@ -61,6 +62,7 @@ from meta_harness.planner import (
     budget_api,
     cost_facts,
     drafting,
+    enrich,
     goal_costs,
     merge_checks,
     naming,
@@ -265,6 +267,7 @@ def create_app(
     update_writer: updates.Writer | None = None,
     fix_assessor: suggestions.Assessor | None = None,
     namer: naming.Namer | None = None,
+    enricher: enrich.Enricher | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -602,6 +605,7 @@ def create_app(
         return change_with(goal_id, who, status=status)
 
     drafting.check_settings()
+    enrich.check_settings()
     sizing.check_settings()
     costs_api.check_settings()
     planning.check_settings()
@@ -1587,6 +1591,7 @@ def create_app(
     plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again)
     budget_api.register(app, operator, load, change_with, events, tasks)
     sizing_api.register(app, operator, load, events, tracker, sweep_one)
+    enrich.register(app, operator, load, events, registered, open_issues, bound_tracker, enricher)
     users.register(app, operator, events)
 
     def admin(key: str = Depends(auth.bearer), role: str | None = Header(default=None, alias="X-MH-Role")) -> bool:

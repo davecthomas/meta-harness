@@ -319,6 +319,44 @@
     ],
     "type": "object"
   },
+  "goal_enriched v1": {
+    "additionalProperties": true,
+    "properties": {
+      "added": {
+        "type": "integer"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "issues": {
+        "type": "integer"
+      },
+      "model": {
+        "type": "string"
+      },
+      "questions": {
+        "type": "integer"
+      },
+      "repos": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "usd_cost": {
+        "type": "string"
+      },
+      "writing": {
+        "type": "object"
+      }
+    },
+    "required": [
+      "issues",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
   "goal_met v1": {
     "additionalProperties": true,
     "properties": {
