@@ -389,7 +389,9 @@ class RunTask:
                 )
                 share = goal.share()
                 if not why and share is not None and share < need:
-                    why = budget_request.goal_why(goal_id, goal.spent_usd, goal.max_usd, share, goal.running)
+                    why = budget_request.goal_why(
+                        goal_id, goal.spent_usd, goal.max_usd, share, goal.running, goal.granted_usd
+                    )
             if not why:
                 if held:
                     await self._budget_hold(False, f"the budget was raised; carrying on with {what}")

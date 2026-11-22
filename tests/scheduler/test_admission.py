@@ -218,6 +218,32 @@ async def test_a_paused_or_spent_goal_holds_its_tasks(repo):
     assert "spent $1.05" in result.held[spent]
 
 
+async def test_a_goal_whose_budget_is_all_granted_to_runs_under_way_admits_no_more_until_one_ends(repo):
+    """Spend is counted when a run ends: what the goal has granted to runs under way is not there to grant
+    again, so a new task would start only to wait."""
+    from meta_harness.run_service import goal_grants
+
+    tasks, goals = Tasks(), Goals()
+    goal_id = f"g-{repo}"
+    goals.goals[goal_id] = {"status": "active", "max_usd": "10.00", "budget_mode": "block", "budget_block_at": "10.00"}
+    busy = tasks.add(f"{repo}-busy", status="running", goal_id=goal_id)
+    waiting = tasks.add(f"{repo}-waiting", goal_id=goal_id)
+    admission, started = _admission(tasks, goals, Events(spent={busy: [Decimal("4.00")]}))
+    with db.connect(autocommit=True) as conn:
+        goal_grants.reserve(conn, busy, goal_id, Decimal("6.00"))
+    try:
+        held = await admission.pass_once()
+        assert held.started == []
+        assert "spent $4.00 of its $10.00 budget and holds $6.00 for runs under way" in held.held[waiting]
+        assert "starts when one of them ends" in held.held[waiting], "the reason says what ends the wait"
+
+        # The run is recorded having spent less than its grant: the rest is there for the next task.
+        goal_grants.release(busy)
+        assert (await admission.pass_once()).started == [waiting]
+    finally:
+        goal_grants.release(busy)
+
+
 async def test_a_block_goal_is_held_at_its_blocking_line_and_a_warn_goal_never(repo):
     tasks, goals = Tasks(), Goals()
     # $1.05 spent of $1: over the budget, short of the line the planner worked out.

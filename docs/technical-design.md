@@ -833,8 +833,16 @@ out what the run may spend. That is what the task has left of its `max_usd`,
 or, when that is less, the task's share of what its goal has left. The goal's
 blocking line is its `max_usd` plus its allowed overage. What the goal has
 left is that line less what its tasks' runs have spent. The task's share is
-that amount divided among the goal's running tasks, so tasks running side by
-side cannot together pass the line. A goal whose budget only warns
+that amount divided among the goal's running tasks. Spend is recorded only
+when a run ends, so each share is also written down as granted when it is
+worked out (`run_service/goal_grants.py`), under one lock per goal, and kept
+until that task's run is recorded. A share is never more than what is left
+once the other running tasks' grants are taken off, nor more than the task's
+own spend limit. So the grants in force together never pass the line, whether
+the tasks asked at once or one after another. A task that finds everything
+left granted to runs under way holds like any other, says so, and looks again
+every few minutes; the scheduler admits no new task of that goal meanwhile. A
+goal whose budget only warns
 (`budget_mode: warn`) caps no run and holds none. A run needs what the task's
 last run of that kind spent, and at least $0.10. When the run may spend less
 than that, the task holds. It stays `running`, with its repo-area lock and its

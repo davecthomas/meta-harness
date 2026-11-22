@@ -284,24 +284,42 @@ class Admission:
             return None
         if goal_id not in spend:
             spend[goal_id] = await asyncio.to_thread(self._goal_spend, goal_id)
+        spent, granted = spend[goal_id]
         # The planner works the blocking line out; one from before it did blocks at the budget.
         line = Decimal(goal.get("budget_block_at") or goal["max_usd"])
-        if spend[goal_id] >= line:
+        detail = {"goal_id": goal_id, "spent_usd": str(spent), "max_usd": str(goal["max_usd"])}
+        if spent >= line:
             return Hold(
                 "goal_budget",
-                f"goal {goal_id} spent {usd(spend[goal_id])} of its {usd(goal['max_usd'])} budget, "
-                f"and stops at {usd(line)}",
-                {"goal_id": goal_id, "spent_usd": str(spend[goal_id]), "max_usd": str(goal["max_usd"])},
+                f"goal {goal_id} spent {usd(spent)} of its {usd(goal['max_usd'])} budget, and stops at {usd(line)}",
+                detail,
+            )
+        # Nothing is left to grant a new task's run: it would start only to wait. It is admitted once a run
+        # under way is recorded and gives back what it did not spend.
+        if spent + granted >= line:
+            return Hold(
+                "goal_budget",
+                f"goal {goal_id} spent {usd(spent)} of its {usd(goal['max_usd'])} budget and holds {usd(granted)} "
+                f"for runs under way, which reaches the {usd(line)} it stops at. It starts when one of them ends "
+                "with money to spare, or when the goal's budget is raised",
+                detail | {"granted_usd": str(granted)},
             )
         return None
 
-    def _goal_spend(self, goal_id: str) -> Decimal:
-        """What the goal's runs spent: the sum of attempt_finished across its tasks."""
+    def _goal_spend(self, goal_id: str) -> tuple[Decimal, Decimal]:
+        """What the goal's runs spent, the sum of attempt_finished across its tasks, and what it has granted to
+        its running tasks' runs that are not recorded yet (run_service.goal_grants)."""
+        from meta_harness.run_service import goal_grants
+
         total = Decimal(0)
-        for task in self.tasks.list(None, goal_id, 1000):
+        tasks = self.tasks.list(None, goal_id, 1000)
+        for task in tasks:
             page = self.events.read(0, 5000, task_id=task["id"], event_type="attempt_finished")
             total += sum((Decimal(e["payload"]["spent_usd"]) for e in page["events"]), Decimal(0))
-        return total
+        running = [task["id"] for task in tasks if task["status"] == "running"]
+        with db.connect(autocommit=True) as conn:
+            granted = goal_grants.outstanding(conn, goal_id, running)
+        return total, granted
 
 
 def kill_switch_engaged() -> bool:

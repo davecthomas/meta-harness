@@ -7,19 +7,22 @@ patch. When the task or the goal has too little left for the run, the task waits
 `waiting_on: budget`, until an operator raises the limit or ends it.
 
 What a goal has left is measured to its blocking line, its budget plus its allowed overage, which the planner
-works out and serves as `budget_block_at`. A goal whose budget only warns caps no run and holds none, and
+works out and serves as `budget_block_at`. What it has already granted to runs that have not finished counts
+against it too (goal_grants): spend is recorded only when a run ends, so tasks asking one after another were
+each promised the same money. A goal whose budget only warns caps no run and holds none, and
 neither does any goal while the deployment's budget policy is `track`.
 """
 
 import asyncio
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from meta_harness.run_service.task_activities import _task_api_error, _tasks
+from meta_harness.run_service import goal_grants
+from meta_harness.run_service.task_activities import _spend_limit, _task_api_error, _tasks
 from meta_harness.tasks.client import TaskApiError
 
 
@@ -33,15 +36,25 @@ class GoalBudget:
     running: int = 1
     # The spend the goal stops at: its budget plus its allowed overage. "": the budget itself.
     block_at: str = ""
+    # What the goal has granted to its other running tasks' unfinished runs: not spent yet, and not to grant twice.
+    granted_usd: str = "0"
+    # The most this task could spend of a grant: its own spend limit. "": not known, so no less is granted.
+    task_limit_usd: str = ""
 
     def share(self) -> Decimal | None:
-        """What one of the goal's running tasks may spend next: an equal share of what the goal has left before
-        its blocking line, so tasks running side by side cannot together pass it. None when the goal has no
-        budget."""
+        """What this task's next run may spend of the goal's budget: an equal share of what the goal has left
+        before its blocking line, and never more than is left once the other tasks' unfinished grants are
+        taken off, so the grants in force together never pass the line. No more than the task's own spend
+        limit either, so a task holds back only what it could spend. None when the goal has no budget."""
         if not self.max_usd:
             return None
         left = Decimal(self.block_at or self.max_usd) - Decimal(self.spent_usd)
-        return (left / max(self.running, 1)).quantize(Decimal("0.0001"))
+        share = left / max(self.running, 1)
+        if left > 0:
+            share = min(share, left - Decimal(self.granted_usd))
+        if self.task_limit_usd:
+            share = min(share, Decimal(self.task_limit_usd))
+        return share.quantize(Decimal("0.0001"))
 
 
 @dataclass
@@ -54,7 +67,9 @@ class BudgetHold:
     on: str = "budget"
 
 
-def _goal_budget(goal_id: str) -> GoalBudget:
+def _goal_budget(goal_id: str, task_id: str = "") -> GoalBudget:
+    """The goal's budget as task_id's next run finds it, with that run's share written down as granted. With
+    no task_id nothing is written: the budget is only read."""
     from meta_harness.events.client import EventClient
     from meta_harness.planner.client import GoalsClient
 
@@ -64,25 +79,43 @@ def _goal_budget(goal_id: str) -> GoalBudget:
     if goal.get("max_usd") is None or ("budget_block_at" in goal and goal["budget_block_at"] is None):
         return GoalBudget()
     events = EventClient(source="run_service")
-    tasks = _tasks().list(None, goal_id, 1000)
-    spent = Decimal(0)
-    for task in tasks:
-        page = events.read(0, 5000, task_id=task["id"], event_type="attempt_finished")
-        spent += sum((Decimal(e["payload"]["spent_usd"]) for e in page["events"]), Decimal(0))
-    running = sum(1 for task in tasks if task["status"] == "running")
-    return GoalBudget(
-        max_usd=str(goal["max_usd"]),
-        spent_usd=str(spent),
-        running=max(running, 1),
-        block_at=str(goal.get("budget_block_at") or ""),
-    )
+
+    def read() -> tuple[GoalBudget, set[str]]:
+        """The budget with nothing granted to others yet, and the goal's running tasks."""
+        tasks = _tasks().list(None, goal_id, 1000)
+        spent = Decimal(0)
+        for task in tasks:
+            page = events.read(0, 5000, task_id=task["id"], event_type="attempt_finished")
+            spent += sum((Decimal(e["payload"]["spent_usd"]) for e in page["events"]), Decimal(0))
+        running = {task["id"] for task in tasks if task["status"] == "running"}
+        mine = next((task for task in tasks if task["id"] == task_id), None)
+        budget = GoalBudget(
+            max_usd=str(goal["max_usd"]),
+            spent_usd=str(spent),
+            running=max(len(running), 1),
+            block_at=str(goal.get("budget_block_at") or ""),
+            task_limit_usd=_spend_limit(mine) if mine else "",
+        )
+        return budget, running
+
+    if not task_id:
+        return read()[0]
+    # One task at a time reads what the goal has left and takes its share of it.
+    with goal_grants.locked(goal_id) as conn:
+        budget, running = read()
+        budget = replace(budget, granted_usd=str(goal_grants.outstanding(conn, goal_id, running - {task_id})))
+        # Only a task of the goal holds a share of it back.
+        if budget.task_limit_usd:
+            goal_grants.reserve(conn, task_id, goal_id, budget.share() or Decimal(0))
+    return budget
 
 
 @activity.defn
 async def goal_budget(goal_id: str) -> GoalBudget:
-    """The goal's budget, what its tasks' runs have spent, and how many of its tasks are running."""
+    """The goal's budget, what its tasks' runs have spent and been granted, and how many of its tasks are
+    running. The share it leaves the asking task, whose workflow this is, is held for that task's next run."""
     try:
-        return await asyncio.to_thread(_goal_budget, goal_id)
+        return await asyncio.to_thread(_goal_budget, goal_id, activity.info().workflow_id)
     except TaskApiError as err:
         raise _task_api_error(err) from err
     except Exception as err:  # noqa: BLE001 - an unreachable planner or event service is retried

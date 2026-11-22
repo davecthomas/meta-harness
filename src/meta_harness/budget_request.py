@@ -20,9 +20,11 @@ _HOLD = re.compile(
     re.DOTALL,
 )
 _TASK_WHY = re.compile(rf"^the task has {_AMOUNT} left of its {_AMOUNT} spend limit$")
+# What follows the goal's sentence when part of why is money held for runs under way: its own sentence.
+_HELD = rf"(?:\. {_AMOUNT} is held for runs under way)?"
 _GOAL_WHY = re.compile(
     rf"^goal (?P<goal>\S+) has spent {_AMOUNT} of its {_AMOUNT} budget, which leaves {_AMOUNT} "
-    r"for each of its (?P<running>\d+) running tasks$"
+    r"for each of its (?P<running>\d+) running tasks" + _HELD + "$"
 )
 # The least a request asks for: a raise of cents would hold the task again at its next run.
 LEAST_ADD_USD = Decimal(1)
@@ -33,12 +35,14 @@ def task_why(left: Any, limit: Any) -> str:
     return f"the task has {usd(left)} left of its {usd(limit)} spend limit"
 
 
-def goal_why(goal_id: str, spent: Any, max_usd: Any, share: Any, running: int) -> str:
-    """Why a run cannot start for the goal's budget, shared among the goal's running tasks."""
-    return (
+def goal_why(goal_id: str, spent: Any, max_usd: Any, share: Any, running: int, granted: Any = "0") -> str:
+    """Why a run cannot start for the goal's budget, shared among the goal's running tasks. granted: what the
+    goal holds for its other tasks' runs under way, which is said when it is part of why."""
+    why = (
         f"goal {goal_id} has spent {usd(spent)} of its {usd(max_usd)} budget, which "
         f"leaves {usd(share)} for each of its {running} running tasks"
     )
+    return f"{why}. {usd(granted)} is held for runs under way" if Decimal(str(granted or 0)) > 0 else why
 
 
 def for_goal(why: str) -> bool:
