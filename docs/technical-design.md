@@ -3416,12 +3416,16 @@ on the first issue, with the action that opens it.
 
 **New `Tracker` calls** (`trackers/base.py`, each adapter implementing them,
 `WithOwn` and `Trackers` routing them):
-- Built: `choices("assignee", scope)` lists the people the tracker can
-  assign, each as an id (`value`) and a name (`label`). GitHub takes the
-  scope's `repos` (comma-separated) and lists the logins every one of them
-  can assign. Jira takes `project` and lists account ids, with the display
-  name and the email where Jira shows it. The own tracker lists the console
-  users who may sign in, by email. It serves the console's pick.
+- Built: `people(repo)` lists the people the repo's issues can be assigned
+  to for the bound goal, each as an id (`value`) and a name (`label`).
+  GitHub lists the repo's assignable logins. Jira lists the account ids of
+  the bound goal's project, with the display name and the email where Jira
+  shows it, and none when no project is bound. The own tracker lists the
+  console users who may sign in, by email, for any repo.
+- Built: `choices("assignee", scope)` offers those people for the goal
+  setting. GitHub takes the scope's `repos` (comma-separated) and lists the
+  logins every one of them can assign. Jira takes `project`. It serves the
+  console's pick.
 - Built: `assign(ref, person)` sets the issue's assignee. It returns whether
   it changed anything, and changes nothing on an issue that has an assignee.
   A person the tracker cannot assign is a `TrackerError` that is not
@@ -3436,9 +3440,16 @@ in its `SPEC` `goal_settings`, read from `GET
 /v1/trackers/{scheme}/choices/assignee`, which calls the adapter's
 `choices`. The New goal form shows it as a pick from that list, empty by
 default, and never as free text. It passes the goal's project and repos as
-the scope, and waits for a project on a tracker that asks for one. A goal's tracker settings are fixed when it is created, so so is
-this one. The goal's page shows, among what needs the operator, each person
-the tracker refused to assign (see "On the goal's page" above).
+the scope, and waits for a project on a tracker that asks for one. When the
+goal is saved, each tracker's `check_goal` checks the setting's form
+(`base.check_assignee`): empty, or one line in the tracker's own form. That
+is a GitHub login, any Jira account id or display name, or an email on the
+own tracker. Whether the tracker knows the person is for `assign` to say. A
+goal's tracker settings are fixed when it is created, so so is this one. The
+goal's page shows the person named as the tracker lists them
+(`AssigneeField`), marks one the tracker no longer lists, and says when none
+is named. It shows, among what needs the operator, each person the tracker
+refused to assign (see "On the goal's page" above).
 
 An issue is one task, by its ref, so what the task was made from can fall
 behind the issue. A task that ended canceled or failed is made over when a
