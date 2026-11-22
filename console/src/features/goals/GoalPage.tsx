@@ -19,7 +19,7 @@ import { ApprovedPlan, GoalPlan } from "./GoalPlan";
 import { OPEN_SETTINGS, PlannerUpdates, SHOW_ISSUES } from "./PlannerUpdates";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
-import { AUTONOMY, AssigneeField, AutonomyEdit, DescriptionField, LabelEdit, ParallelEdit, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
+import { AUTONOMY, AssigneeField, AutonomyEdit, DescriptionField, LabelEdit, ParallelEdit, ParentField, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { HeldActions, StrictIssuesEdit } from "./sizing";
 import { ProvenanceEdit, provenanceSummary, type ProvenanceGoal } from "./provenanceHeaders";
 import { useEventStream, useInfinite } from "../../hooks";
@@ -360,11 +360,13 @@ export function GoalPage() {
                 "Issue tracker",
                 <Text size="sm">
                   {trackerTitle(goal.tracker ?? "github")}
-                  {Object.entries(goal.tracker_settings ?? {}).filter(([name]) => name !== "assignee").map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to the meta-harness" : `, ${name} ${value}`)).join("")}
+                  {Object.entries(goal.tracker_settings ?? {}).filter(([name]) => name !== "assignee" && name !== "parent").map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to the meta-harness" : `, ${name} ${value}`)).join("")}
                   <Text span size="sm" c="dimmed" display="block">Fixed when the goal was created.</Text>
                 </Text>,
               ],
               ["Assignee", <AssigneeField goal={goal} />],
+              // Only Jira has a parent setting.
+              ...(goal.tracker === "jira" ? [["Parent", <ParentField goal={goal} />] as [string, ReactNode]] : []),
               ["Label", <LabelEdit {...editable} />],
               ["Repos", <ReposEdit {...editable} />],
               ["Without asking", <AutonomyEdit {...editable} />],
