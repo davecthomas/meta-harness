@@ -32,7 +32,7 @@ from psycopg.types.json import Jsonb
 
 from meta_harness import db, outbound, retrying
 from meta_harness.outbound import rules as writing_rules
-from meta_harness.planner import drafting, planning, plans, splits, store, voice
+from meta_harness.planner import assignees, drafting, planning, plans, splits, store, voice
 from meta_harness.run_service import writing
 from meta_harness.supervisor import ledger
 
@@ -412,6 +412,9 @@ def digest(found: dict[str, Any]) -> str:
         # Something done to unstick the goal's work since the last update is news, said once.
         "unstuck": sorted([u["task"] or "", u["did"], u["outcome"]] for u in found.get("unstuck") or []),
     }
+    if found.get("not_assigned"):
+        # Only when there are some, so a goal with none keeps the digest it had.
+        key["not_assigned"] = sorted([i["ref"], i["person"]] for i in found["not_assigned"])
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -546,6 +549,9 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
     since = before["created_at"] if before else ""
     remedies = await asyncio.to_thread(ledger.read, None, goal["id"], 20)
     found = facts(goal, links, tasks_of_goal, plan, suggestion, [r for r in remedies if r["created_at"] > since][:10])
+    # The issues the tracker would not assign to the person the goal names (assignees.py).
+    if unassigned := await asyncio.to_thread(assignees.not_assigned, events, goal["id"], links):
+        found["not_assigned"] = unassigned
     state = digest(found)
     if before and not asked:
         if before["digest"] == state:
@@ -579,6 +585,7 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
     if not written.headline or not written.body:
         raise UpdateError("the model wrote an empty update")
     written.needs_you = actionable(written.needs_you, goal, links, tasks_of_goal, suggestion)
+    written.needs_you += assignees.needs(found.get("not_assigned"), written.needs_you)
     passed = await _checked(written)
     saved = await asyncio.to_thread(_save, goal["id"], state, written)
     payload = {"goal_id": goal["id"], "number": saved["number"], "model": written.model, "usd_cost": written.usd_cost}
