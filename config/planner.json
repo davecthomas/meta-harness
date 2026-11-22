@@ -7,6 +7,12 @@
     "body_chars": 2000,
     "max_issues": 40
   },
+  "goal_enrich": {
+    "engine": "claude",
+    "model": "claude-haiku-4-5",
+    "max_response_tokens": 2000,
+    "max_issues": 40
+  },
   "issue_sizing": {
     "engine": "openai-responses",
     "model": "gpt-6-luna",
