@@ -4505,7 +4505,14 @@ pull request with its checks. It also has its issue's size (its reasons on
 hover) and what the issue is missing. A held card says why, with the suggested
 split, and offers Run anyway and Split. Split's dialog lists the suggested
 issues as drafts to edit and create, each with the goal's label and a `Paths:`
-line (`console/src/features/goals/sizing.tsx`). A Graph view lays the
+line (`console/src/features/goals/sizing.tsx`). A card whose issue the sizing
+marks missing something or doubted offers Fix with AI, and so does its row in
+the goal's issue picker (`console/src/features/goals/FixIssue.tsx`). It calls
+fix-draft and shows each drafted part beside what the issue has for it, to
+edit. Accept sends the edited parts to fix-accept once, and the card shows the
+new sizing. Discard sends nothing. A 409 while the task runs shows its message
+and keeps the draft, to accept once the task ends. A failed call says so on
+the card, and nothing changes. A Graph view lays the
 same issues out by dependency, colored by column, and a Table view lists
 them. Issues done and spend against budget head the section, and the page
 reloads them as the goal's tasks record events. Past the budget the spend line
