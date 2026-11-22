@@ -308,6 +308,10 @@ test("the settings most goals leave alone are folded away, and merging automatic
   expect(screen.getByLabelText("Priority")).toBeTruthy();
   expect(screen.getByLabelText("Budget")).toBeTruthy();
 
+  // The merge switch is on the buttons' side of the form, so it is seen on the way to Save.
+  const beside = screen.getByTestId("auto-merge");
+  expect(within(beside).getByRole("switch", { name: /Merge pull requests automatically/ })).toBeTruthy();
+  expect(beside.getAttribute("style")).toContain("--group-justify: flex-end");
   // The way to start a goal from a spec comes before the form's own fields, and the merge switch after them all.
   const order = (el: Element, other: Element) => !!(el.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);
   const merge = screen.getByLabelText(/Merge pull requests automatically/);

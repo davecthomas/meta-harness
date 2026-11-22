@@ -507,24 +507,27 @@ export function NewGoal() {
                 </Stack>
               </Collapse>
             </div>
-            {/* The one setting that decides whether a person is in the loop, right above the buttons. */}
-            <Switch
-              label="Merge pull requests automatically"
-              description="Off: every pull request waits for you to merge it."
-              checked={autoMerge}
-              onChange={(e) => setAutoMerge(e.currentTarget.checked)}
-            />
+            {plansNow && (
+              <Text size="sm" c="dimmed" ta="right" data-testid="plan-note">
+                Save and plan starts the planner. Its split into tasks opens on the goal's page for you to edit and approve before anything runs.
+              </Text>
+            )}
+            {/* The one setting that decides whether a person is in the loop: on the buttons' side of the form and
+                right above them, where the eye is when it reaches for Save. */}
+            <Group justify="flex-end" data-testid="auto-merge">
+              <Switch
+                label="Merge pull requests automatically"
+                description="Off: every pull request waits for you to merge it."
+                checked={autoMerge}
+                onChange={(e) => setAutoMerge(e.currentTarget.checked)}
+              />
+            </Group>
             {/* Beside the buttons that were pressed: a refusal is never out of sight at the top of a long form. */}
             {error && (
               <Alert color="red" title="The goal was not saved" data-testid="goal-not-saved">
                 <Text size="sm">{error}</Text>
                 <Text size="sm" mt={4}>Nothing was created. Fix what it names, then save again.</Text>
               </Alert>
-            )}
-            {plansNow && (
-              <Text size="sm" c="dimmed" ta="right" data-testid="plan-note">
-                Save and plan starts the planner. Its split into tasks opens on the goal's page for you to edit and approve before anything runs.
-              </Text>
             )}
             <Group justify="flex-end">
               <Button variant="default" onClick={() => navigate(-1)}>Cancel</Button>
