@@ -47,23 +47,24 @@ TASK_FACTS = ("label", "outcome")
 # A task's pull request outcome: merged, closed without merging, still open, or none opened.
 OUTCOMES = ("merged", "closed", "open", "none")
 # A cloud read that fails the same way again is warned of at most this often; store.failed records every one.
+# While the billing export has no table yet, each harvest fails the same way, so this is how often it is said.
 REPEAT_WARNING_SECONDS = 3600.0
 _clock = time.monotonic
+# A source's last warned error and when, by the clock, for harvests that are given no record of their own.
 _warned: dict[str, tuple[str, float]] = {}
 _warned_lock = threading.Lock()
 
 
-def _warn_now(source: str, error: str) -> bool:
+def _warn_now(source: str, error: str, warned: dict[str, tuple[str, float]], now: float) -> bool:
     """Whether a cloud harvest failure is logged as a warning: the first time, and then at most once an hour
     while the same error repeats. Every other source's failure is always warned of."""
     if source != cloud_source.SOURCE:
         return True
-    now = _clock()
     with _warned_lock:
-        last = _warned.get(source)
+        last = warned.get(source)
         if last and last[0] == error and now - last[1] < REPEAT_WARNING_SECONDS:
             return False
-        _warned[source] = (error, now)
+        warned[source] = (error, now)
         return True
 
 
@@ -94,8 +95,21 @@ def check_settings() -> None:
         raise RuntimeError(str(err)) from err
 
 
-def harvest_all(events: Any, tasks: Any, goal: Callable[[str], dict | None]) -> dict[str, Any]:
-    """Harvest every source once. A source that fails is recorded with why, and the others still run."""
+def harvest_all(
+    events: Any,
+    tasks: Any,
+    goal: Callable[[str], dict | None],
+    warned: dict[str, tuple[str, float]] | None = None,
+    now: Callable[[], float] | None = None,
+) -> dict[str, Any]:
+    """Harvest every source once. A source that fails is recorded with why, and the others still run.
+
+    warned holds, across harvests, each source's last warned error and when, by now's clock. The same cloud
+    error is warned of again only REPEAT_WARNING_SECONDS later; a different one, or one after a read that
+    succeeded, at once. Without them, the module's own record and clock are used.
+    """
+    warned = _warned if warned is None else warned
+    clock = _clock if now is None else now
     found: dict[str, Any] = {}
     cache: dict[str, dict | None] = {}
 
@@ -115,9 +129,9 @@ def harvest_all(events: Any, tasks: Any, goal: Callable[[str], dict | None]) -> 
             try:
                 found[source] = run()
                 with _warned_lock:
-                    _warned.pop(source, None)
+                    warned.pop(source, None)
             except Exception as err:  # noqa: BLE001 - one source's failure is its own
-                if _warn_now(source, str(err)):
+                if _warn_now(source, str(err), warned, clock()):
                     log.warning("could not harvest %s costs: %s", source, err)
                 else:
                     log.debug("could not harvest %s costs, again: %s", source, err)
@@ -180,8 +194,10 @@ def register(
     """Adds the cost routes. admin answers whether the caller is one. facts gives each task's issue labels and
     pull request outcome, {task id: {"labels": [...], "outcome": ...}}. Returns the harvest loop to start."""
 
+    warned: dict[str, tuple[str, float]] = {}
+
     def harvest_now() -> dict[str, Any]:
-        return harvest_all(events, tasks, goal)
+        return harvest_all(events, tasks, goal, warned)
 
     async def harvest_forever() -> None:
         every = harvest_seconds()

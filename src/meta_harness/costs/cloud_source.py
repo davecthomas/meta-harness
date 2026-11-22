@@ -56,6 +56,10 @@ class CloudCostError(RuntimeError):
     pass
 
 
+class NoExportTable(CloudCostError):
+    """The dataset holds no billing export table yet."""
+
+
 def table() -> str | None:
     """The billing export's dataset or table, as the setting names it, or None when the deployment names none.
 
@@ -100,7 +104,11 @@ def _token(http: httpx.Client) -> str:
 
 
 def _export_table(http: httpx.Client, headers: dict, dataset: str) -> str:
-    """The standard usage cost export's table in the dataset, else the detailed export's."""
+    """The standard usage cost export's table in the dataset, else the detailed export's.
+
+    Raises:
+        NoExportTable: The dataset holds neither.
+    """
     project, name = dataset.split(".")
     listed = http.get(TABLES_URL.format(project=project, dataset=name), headers=headers, params={"maxResults": 1000})
     if listed.status_code != 200:
@@ -110,8 +118,8 @@ def _export_table(http: httpx.Client, headers: dict, dataset: str) -> str:
         found = sorted(t for t in tables if t.startswith(prefix))
         if found:
             return f"{dataset}.{found[0]}"
-    raise CloudCostError(
-        f"{dataset} has no billing export table: no {EXPORT_PREFIX}<account> or {DETAILED_EXPORT_PREFIX}<account>. "
+    raise NoExportTable(
+        f"{dataset} has no billing export table yet: no {EXPORT_PREFIX}<account> or {DETAILED_EXPORT_PREFIX}<account>. "
         "Turn on Standard usage cost or Detailed usage cost to this dataset in Billing, Billing export; "
         "Google creates the table within a day"
     )

@@ -290,6 +290,67 @@ def test_the_same_cloud_failure_is_warned_of_once_an_hour_and_recorded_every_tim
     assert len(recorded) == 7
 
 
+def _bigquery_with(tables: list[str], asked: list[str]):
+    def bigquery(request: httpx.Request) -> httpx.Response:
+        if "metadata" in request.url.host:
+            return httpx.Response(200, json={"access_token": "t"})
+        if request.method == "GET":
+            return httpx.Response(200, json={"tables": [{"tableReference": {"tableId": t}} for t in tables]})
+        asked.append(request.content.decode())
+        return httpx.Response(
+            200, json={"jobComplete": True, "rows": [{"f": [{"v": "2026-11-10"}, {"v": "Cloud Run"}, {"v": "0.3"}]}]}
+        )
+
+    return httpx.MockTransport(bigquery)
+
+
+def test_a_dataset_holding_only_the_detailed_export_table_resolves_to_it(clean, monkeypatch):
+    asked: list[str] = []
+    tables = ["some_other_table", "gcp_billing_export_resource_v1_ABC"]
+    monkeypatch.setenv(cloud_source.SETTING, "meta-harness-prod.billing_export")
+    with db.connect(autocommit=True) as conn:
+        assert cloud_source.harvest(conn, date(2026, 11, 11), _bigquery_with(tables, asked)) == 1
+    assert "FROM `meta-harness-prod.billing_export.gcp_billing_export_resource_v1_ABC`" in asked[0]
+
+
+def test_a_missing_export_table_is_warned_of_once_an_hour_and_again_at_once_after_a_read(clean, monkeypatch, caplog):
+    asked: list[str] = []
+    tables: list[str] = []
+    real = cloud_source.harvest
+    monkeypatch.setattr(cloud_source, "harvest", lambda conn, today: real(conn, today, _bigquery_with(tables, asked)))
+    monkeypatch.setenv(cloud_source.SETTING, "meta-harness-prod.billing_export")
+    clock = [1000.0]
+    warned: dict[str, tuple[str, float]] = {}
+
+    def harvest() -> dict:
+        return costs_api.harvest_all(Events(), Tasks(TASKS), GOALS.get, warned, lambda: clock[0])
+
+    def warnings() -> int:
+        return sum(
+            "could not harvest cloud costs" in r.getMessage() for r in caplog.records if r.levelname == "WARNING"
+        )
+
+    caplog.set_level("DEBUG", logger="meta_harness.costs")
+    for minutes in (0, 5, 10, 59):
+        clock[0] = 1000.0 + minutes * 60
+        assert harvest()["cloud"].startswith("failed: ")
+    assert warnings() == 1, "one warning within the hour"
+    with db.connect(autocommit=True) as conn:
+        cloud = costs_api.sources(conn)["cloud"]
+    assert "has no billing export table yet" in cloud["error"], "the panel still shows the last failed read and why"
+
+    clock[0] = 1000.0 + 60 * 60
+    harvest()
+    assert warnings() == 2, "a second once an hour has passed"
+
+    tables[:] = ["gcp_billing_export_v1_ABC"]
+    assert harvest()["cloud"] == 1
+    tables[:] = []
+    clock[0] += 60
+    harvest()
+    assert warnings() == 3, "after a read succeeds, a missing table warns again at once"
+
+
 @pytest.fixture
 def api(clean, monkeypatch):
     class FakeTracker:
