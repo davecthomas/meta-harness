@@ -3,6 +3,7 @@ import { Alert, Anchor, Button, Group, NumberInput, Stack, Text } from "@mantine
 import { IconCoin } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import { api, type Task } from "../../api";
+import { ConfirmButton } from "../../components/ConfirmButton";
 import { RaiseGoalBudget } from "../goals/budget";
 import type { BudgetResume } from "../goals/api";
 import { moneyText } from "../../money";
@@ -105,7 +106,18 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
             <Group gap="sm" align="center">
               <Anchor component={Link} to={`/goals/${task.goal_id}`} size="sm">The goal's page</Anchor>
               <Button size="xs" variant="light" loading={busy} onClick={() => void answer("raise")}>Look again now</Button>
-              <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void answer("end")}>End the task</Button>
+              <ConfirmButton
+                size="xs"
+                variant="light"
+                color="red"
+                disabled={busy}
+                label="End the task"
+                title="End this task?"
+                says="It ends at its next step and its run stops. A pull request it opened stays open. Retry on the task's page starts it again."
+                confirm="End the task"
+                cancel="Keep it waiting"
+                onConfirm={() => answer("end")}
+              />
             </Group>
           </Stack>
         ) : asked?.over_ceiling ? (
@@ -116,7 +128,17 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
               Ended, it stops with its pull request open, to retry or start over.
             </Text>
             <Group gap="sm" align="center">
-              <Button variant="light" color="red" loading={busy} onClick={() => void answer("end")}>End the task</Button>
+              <ConfirmButton
+                variant="light"
+                color="red"
+                disabled={busy}
+                label="End the task"
+                title="End this task?"
+                says="It ends at its next step and its run stops. A pull request it opened stays open. Retry on the task's page starts it again."
+                confirm="End the task"
+                cancel="Keep it waiting"
+                onConfirm={() => answer("end")}
+              />
               <Anchor component={Link} to="/config?kind=task_policy" size="sm">Change what one task may spend</Anchor>
             </Group>
           </Stack>
@@ -141,7 +163,17 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
             <Button variant={asked ? "default" : "filled"} loading={busy} disabled={!(Number(limit) > current)} onClick={() => void answer("raise", Number(limit))}>
               Raise the limit and carry on
             </Button>
-            <Button variant="light" color="red" loading={busy} onClick={() => void answer("end")}>End the task</Button>
+            <ConfirmButton
+                variant="light"
+                color="red"
+                disabled={busy}
+                label="End the task"
+                title="End this task?"
+                says="It ends at its next step and its run stops. A pull request it opened stays open. Retry on the task's page starts it again."
+                confirm="End the task"
+                cancel="Keep it waiting"
+                onConfirm={() => answer("end")}
+              />
           </Group>
         )}
         {error && <Text size="sm" c="red">{error}</Text>}

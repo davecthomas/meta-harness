@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
-import { forget, KillSwitchBanner, KillSwitchButton } from "./KillSwitch";
+import { forget, KillSwitchBanner, KillSwitchButton, read } from "./KillSwitch";
 import { theme } from "../theme";
 
 // The kill switch is on every page: an admin can stop everything from the header, and while it is on a
@@ -109,4 +109,28 @@ test("a drain shows its own banner, and ending it by hand says to check for a ru
   fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "End the drain" }));
   await screen.findByRole("button", { name: "Stop everything" });
   expect(posted).toEqual([{ mode: "off", reason: "drain ended from the console" }]);
+});
+
+test("a reading that could not be refreshed says so on the banner", async () => {
+  let fail = false;
+  vi.stubGlobal("fetch", () =>
+    fail ? Promise.reject(new TypeError("Failed to fetch")) : respond({ ...OFF, engaged: true, changed_by: "dave", reason: "incident" }),
+  );
+  show(true);
+  await screen.findByTestId("kill-switch-banner");
+  expect(screen.queryByTestId("kill-switch-stale")).toBeNull();
+
+  fail = true;
+  read();
+  const stale = await screen.findByTestId("kill-switch-stale");
+  expect(stale.textContent).toContain("could not be reread");
+  expect(stale.textContent).toContain("it may have changed");
+});
+
+test("an admin can still stop everything when the switch cannot be read at all", async () => {
+  // The read fails when the services are unwell, which is when a stop may be needed most.
+  vi.stubGlobal("fetch", () => Promise.reject(new TypeError("Failed to fetch")));
+  show(true);
+  expect(await screen.findByRole("button", { name: "Stop everything" })).toBeTruthy();
+  expect(await screen.findByText("Could not read the kill switch")).toBeTruthy();
 });

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
@@ -55,7 +55,11 @@ test("a task held for its goal's budget has a field for the goal's new budget, l
   asked.length = 0;
   expect(screen.getByRole("link", { name: "The goal's page" }).getAttribute("href")).toBe("/goals/g-1");
   expect(screen.queryByLabelText(/New spend limit/)).toBeNull();
+  // Ending a task stops its run, so it asks first: one click sends nothing.
   fireEvent.click(screen.getByRole("button", { name: "End the task" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  expect(asked).toHaveLength(0);
+  fireEvent.click(dialog.getByRole("button", { name: "End the task" }));
   await waitFor(() => expect(asked).toHaveLength(1));
   expect(asked[0].body).toEqual({ action: "end" });
 });
@@ -174,6 +178,7 @@ test("Grant says what was sent in place of the alert", async () => {
 test("End the task says what was sent in place of the alert", async () => {
   served(HELD, [{}]);
   fireEvent.click(screen.getByRole("button", { name: "End the task" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "End the task" }));
   expect((await screen.findByRole("status")).textContent).toBe("Sent: end the task. It ends at its next step.");
   expect(screen.queryByRole("alert")).toBeNull();
 });

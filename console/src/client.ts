@@ -8,6 +8,16 @@ export class ApiError extends Error {
   }
 }
 
+// What to say after a change that failed: whether it can have happened all the same. A refusal (a 4xx other than
+// a timeout) means the service turned it down, so nothing changed. Anything else, such as a lost connection or a
+// gateway's 502, can come after the service did the work, and "nothing changed" would invite a second press.
+export function afterFailedChange(err: unknown): string {
+  const refused = err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408;
+  return refused
+    ? "Nothing changed."
+    : "It may have gone through all the same, since no answer came back. Reload the page to see before you try again.";
+}
+
 // Sent on window when the edge answers that nobody is signed in: a session that expired while a page was open.
 // The app answers it with the sign-in screen, and the page the operator was on is where they come back to.
 export const SIGNED_OUT = "mh:signed-out";
