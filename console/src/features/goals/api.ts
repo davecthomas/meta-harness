@@ -224,6 +224,13 @@ export interface GoalProposal {
 }
 
 // The goals feature's calls; src/api.ts spreads them into `api`.
+// One of a goal's stuck tasks, and the step the Task Shepherd recommends for it (planner/unstick_api.py).
+export interface UnstickMove { task_id: string; name: string; step: string; does: string }
+// A stuck task the action leaves for a person, or could not move, with why.
+export interface UnstickLeft { task_id: string; name: string; why: string }
+export interface UnstickPlan { moves: UnstickMove[]; left: UnstickLeft[] }
+export interface UnstickResult { done: UnstickMove[]; failed: (UnstickMove & { why: string })[]; left: UnstickLeft[] }
+
 export const goalsApi = {
   goals: async (statuses: string[], offset: number, limit: number): Promise<Page<Goal>> => {
     const r = await call<{ goals: Goal[]; total: number }>(
@@ -277,6 +284,9 @@ export const goalsApi = {
   askForGoalUpdate: (id: string) => call<{ update: PlannerUpdate | null }>(`/v1/goals/${id}/updates`, { method: "POST" }),
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
   goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
+  // What getting the goal's stuck tasks moving would do, and doing it: each takes its recommended step.
+  unstickPlan: (id: string) => call<UnstickPlan>(`/v1/goals/${id}/unstick`),
+  unstick: (id: string) => call<UnstickResult>(`/v1/goals/${id}/unstick`, { method: "POST" }),
   // items: the decisions on the goal's issues; left out, those of the version before stay.
   savePlan: (id: string, drafts: PlanDraft[], items?: PlanItem[]) =>
     call<GoalPlan>(`/v1/goals/${id}/plan`, { method: "PUT", body: JSON.stringify(items ? { drafts, items } : { drafts }) }),

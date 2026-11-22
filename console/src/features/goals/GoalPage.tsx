@@ -1,3 +1,4 @@
+import { UnstickGoal } from "./Unstick";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Collapse, Group, Loader, Paper, SegmentedControl, Stack, Table, Text } from "@mantine/core";
@@ -440,6 +441,7 @@ export function GoalPage() {
       >
         Issues and tasks
       </SectionTitle>
+      <UnstickGoal goalId={goal.id} watch={Object.values(tasks).map((t) => `${t.id}:${t.status}:${t.waiting_on ?? ""}`).join(",")} onChanged={() => void Promise.all([load(), loadProgress()])} />
       {progress && <GoalFailures issues={progress} tasks={tasks} onChanged={() => void Promise.all([load(), loadProgress()])} />}
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
       <GoalSpend goalId={goal.id} goalName={goalTitle(goal)} opened={spending} onClose={() => setSpending(false)} />
