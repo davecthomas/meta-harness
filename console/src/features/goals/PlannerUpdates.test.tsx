@@ -165,9 +165,31 @@ test("a fix the planner drafted is accepted or dismissed from the panel, with wh
   await waitFor(() => expect(posts).toContain("/v1/goals/g-1/suggestion/accept"));
   await waitFor(() => expect(changed).toBe(1));
 
-  fireEvent.click(within(row).getByRole("button", { name: "Dismiss" }));
+  // Once the update asked for after the accept has arrived, the needs are shown again.
+  const [again] = await screen.findAllByTestId("planner-need");
+  fireEvent.click(within(again).getByRole("button", { name: "Dismiss" }));
   await waitFor(() => expect(posts).toContain("/v1/goals/g-1/suggestion/dismiss"));
   window.removeEventListener("mh:plan-changed", onChanged);
+});
+
+test("after a fix is accepted the panel says what is happening, in place of the button, until the new update arrives", async () => {
+  const fix = { what: "I can run the api after the store. Accept?", ref: "", action: "accept_fix", changes: ["Build api now waits for Build store"] };
+  // The update asked for after the accept is a model call: it is held here until the test lets it answer.
+  let answer: (value: Response | PromiseLike<Response>) => void = () => undefined;
+  let posted = 0;
+  // The accept itself answers at once; the request for an update after it is the slow one.
+  const slow = () => (posted++ === 0 ? respond({}) : new Promise<Response>((resolve) => { answer = resolve; }));
+  show([{ updates: [{ ...LATEST, needs_you: [fix] }], enabled: true, error: null }], true, slow, true);
+
+  const [row] = await screen.findAllByTestId("planner-need");
+  fireEvent.click(within(row).getByRole("button", { name: "Accept the fix" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Accept" }));
+
+  const told = await screen.findByTestId("planner-acted");
+  expect(told.textContent).toContain("Done. I'm writing what changed");
+  expect(screen.queryByRole("button", { name: "Accept the fix" })).toBeNull();
+  answer(new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
+  await waitFor(() => expect(screen.queryByTestId("planner-acted")).toBeNull());
 });
 
 test("a need written before needs had actions still gets a button: on a goal being planned, the approval", async () => {

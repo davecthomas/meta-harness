@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Anchor, Button, Collapse, Group, List, Paper, Stack, Text, Timeline } from "@mantine/core";
+import { Alert, Anchor, Button, Collapse, Group, List, Loader, Paper, Stack, Text, Timeline } from "@mantine/core";
 import { IconCheck, IconRefresh } from "@tabler/icons-react";
 import { ConfirmButton } from "../../components/ConfirmButton";
 import { VoiceMark } from "../../components/Voice";
@@ -159,6 +159,7 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
   const [read, setRead] = useState<PlannerUpdatesRead | null>(null);
   const [asking, setAsking] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  const [acted, setActed] = useState(false);
   const [earlier, setEarlier] = useState(false);
   const [, setNow] = useState(0);
 
@@ -194,6 +195,16 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
     }
   }
 
+  // An action taken from the panel: the need it answered is hidden at once, and a new update is asked for.
+  async function done() {
+    setActed(true);
+    try {
+      await ask();
+    } finally {
+      setActed(false);
+    }
+  }
+
   const updates = read?.updates ?? [];
   if (!read || read.enabled === false || !Array.isArray(read.updates)) return null;
   if (!updates.length && !open) return null;
@@ -224,7 +235,16 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
       {latest && (
         <Stack gap="sm" pl={50}>
           <Text size="md" style={{ whiteSpace: "pre-wrap" }}>{latest.body}</Text>
-          <NeedsYou needs={latest.needs_you ?? []} planning={planning} goalId={goalId} label={label} onDone={() => void ask()} />
+          {acted ? (
+            // What was asked is done, so it is no longer asked: the update that says so takes a model call, and
+            // until it arrives the panel says what is happening, where the button was.
+            <Group gap="xs" data-testid="planner-acted" role="status">
+              <Loader size="xs" />
+              <Text size="sm">Done. I'm writing what changed, which takes a few seconds.</Text>
+            </Group>
+          ) : (
+            <NeedsYou needs={latest.needs_you ?? []} planning={planning} goalId={goalId} label={label} onDone={() => void done()} />
+          )}
           {latest.next && (
             <Text size="sm"><Text span fw={650}>Next: </Text>{latest.next}</Text>
           )}
