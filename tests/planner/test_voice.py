@@ -69,3 +69,13 @@ async def test_an_update_is_written_in_the_planners_voice(monkeypatch):
 def test_the_update_is_the_one_place_the_operator_reads_a_plan_waiting_for_approval():
     assert "While a plan waits for approval, your update is where the operator reads it" in updates.SYSTEM_PROMPT
     assert "each of its gaps the operator should weigh before approving" in updates.SYSTEM_PROMPT
+
+
+def test_a_plans_update_is_brief_and_says_only_what_this_goals_plan_is():
+    """The owner read a nine-sentence plan update that restated the gaps and what is true of any plan."""
+    prompt = updates.SYSTEM_PROMPT
+    assert "how many tasks the plan has and what this goal's work does once it is built" in prompt
+    assert "in two short sentences at most" in prompt
+    assert "Say nothing that is true of every plan" in prompt
+    assert "Leave out fallbacks, exceptions and conditions" in prompt
+    assert "Keep the gaps out of the body" in prompt
