@@ -10,6 +10,7 @@ import { LabelField } from "./LabelField";
 import { LabelStart } from "./LabelStart";
 import { ImproveGoal } from "./ImproveGoal";
 import { SpecField, type GoalSpec } from "./SpecField";
+import { specName, useSpecDraft } from "./SpecDraft";
 import { PageHeader } from "../../components/ui";
 import { PARALLEL_HELP } from "./parallel";
 
@@ -175,8 +176,17 @@ export function NewGoal() {
   }, [label, chosen, source, readable]);
   const viaLabel = useMemo(() => (labeled ?? []).filter((i) => !i.held_by).map((i) => i.ref), [labeled]);
 
-  // Whether the goal plans its own issues from its description (a feature goal) or runs issues that exist.
-  const [plans, setPlans] = useState(false);
+  // Where the goal's issues come from, as the operator last chose: issues that exist, a spec the planner
+  // breaks into issues, or the description the planner drafts them from. A spec that is loaded decides it.
+  const [from, setFrom] = useState<"fix" | "spec" | "feature">("fix");
+  const where = spec ? "spec" : from;
+  const plans = where === "feature";
+  function chooseWhere(next: string) {
+    setFrom(next as typeof from);
+    // One answer at a time: another one lets go of the spec.
+    if (next !== "spec") setSpec(null);
+  }
+  const trackerTitle = trackers.find((t) => t.scheme === tracker)?.title ?? "the tracker";
 
   // Whether this goal plans its tasks: asked for, from a specification, or the only way with no tracker.
   const plansNow = plans || untracked || plansEvery || !!spec;
@@ -192,6 +202,9 @@ export function NewGoal() {
     setTitle(draft.title);
     setStatement(draft.statement);
     setChosen(draft.repos);
+    // A draft from labels is a goal on issues that exist.
+    setFrom("fix");
+    setSpec(null);
     if (draft.label) {
       setLabel(draft.label);
     } else {
@@ -213,6 +226,10 @@ export function NewGoal() {
     }
     if (missing.length) {
       setError(`Choose the goal's ${missing.map((s) => s.label).join(" and ")}.`);
+      return null;
+    }
+    if (where === "spec" && !spec) {
+      setError('Choose the spec, under "Plan a goal from a spec or an epic" above, or give another answer under Where its issues come from.');
       return null;
     }
     if (!(plans || untracked || spec) && !label.trim() && !refs.length && !takesAssigned) {
@@ -238,7 +255,7 @@ export function NewGoal() {
         start: started,
         ...(spec ? { spec } : {}),
         // Where its issues come from, which is not whether it is planned: the planner decides that.
-        modality: plans || untracked ? "feature" : "fix",
+        modality: plans || untracked || spec ? "feature" : "fix",
       });
       return goal.id;
     } catch (err) {
@@ -257,6 +274,9 @@ export function NewGoal() {
       navigate(`/goals/${id}`);
     }
   }
+
+  // A spec that is chosen writes the title and description, where the operator has not.
+  const specDraft = useSpecDraft({ spec, repos: chosen, tracker, trackerSettings, title, statement, setTitle, setStatement });
 
   // Anything typed or drafted is worth asking about before it is lost.
   const dirty = Boolean(title.trim() || statement.trim() || label.trim() || refs.length || budget !== "");
@@ -308,6 +328,7 @@ export function NewGoal() {
           untracked={untracked}
           parentAsked={parentAsked}
           parent={parent}
+          open={from === "spec"}
           onParent={(ref) => {
             const { parent: _gone, ...rest } = trackerSettings;
             setTrackerSettings(ref ? { ...rest, parent: ref } : rest);
@@ -337,6 +358,7 @@ export function NewGoal() {
               value={statement}
               onChange={(e) => setStatement(e.currentTarget.value)}
             />
+            {specDraft.element}
             {/* Accept fills the field above; the goal is saved only by the buttons below. */}
             <ImproveGoal
               statement={statement}
@@ -359,7 +381,7 @@ export function NewGoal() {
             <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} repos={chosen} settingsOnly shows={(s) => !s.required && s.name !== "parent"} />
             {untracked ? (
               <Text size="sm" data-testid="untracked-note">
-                With no issue tracker, a planning task reads the repos and writes the goal's tasks from its description. You review, edit
+                With no issue tracker, a planning task reads the repos and writes the goal's tasks from {spec ? `its spec, ${specName(spec)}` : "its description"}. You review, edit
                 and approve the plan before anything runs. The tasks are kept in the meta-harness: nothing is written to any tracker, and
                 the pull requests are the only record outside it.
               </Text>
@@ -368,23 +390,28 @@ export function NewGoal() {
               <Text size="sm" fw={500} mb={4}>Where its issues come from</Text>
               <SegmentedControl
                 aria-label="Where its issues come from"
-                value={plans ? "feature" : "fix"}
-                onChange={(v) => setPlans(v === "feature")}
+                value={where}
+                onChange={chooseWhere}
                 data={[
                   { value: "fix", label: "Issues that exist" },
+                  { value: "spec", label: "Plan them from the spec" },
                   { value: "feature", label: "Plan them from the description" },
                 ]}
               />
-              <Text size="sm" c="dimmed" mt={4}>
-                {plans
-                  ? "A planning task reads the repos and drafts the issues. You review, edit and approve the plan before anything is created or run."
+              <Text size="sm" c="dimmed" mt={4} data-testid="where-note">
+                {where === "spec"
+                  ? spec
+                    ? `A planning task reads ${specName(spec)} and the repos, and splits the work into issues, each sized for one pull request. That split is the goal's plan: it opens on the goal's page, where you edit and approve it. Nothing is created in ${trackerTitle} and nothing runs before you approve.`
+                    : 'Choose the spec above, under "Plan a goal from a spec or an epic". It can be a file in the repo, an epic, or a file you upload.'
+                  : plans
+                  ? `A planning task reads the repos and splits the description into issues, each sized for one pull request. That split is the goal's plan: it opens on the goal's page, where you edit and approve it. Nothing is created in ${trackerTitle} and nothing runs before you approve.`
                   : plansEvery
                     ? "The goal takes the open issues with its label, and any you pick. A planner reads them together and proposes the order, any splits and anything missing; you approve its plan before anything runs."
                     : "The goal runs the open issues with its label, and any you pick."}
               </Text>
             </div>
             )}
-            {untracked ? null : plans ? (
+            {untracked ? null : where === "spec" && !spec ? null : plans || spec ? (
               <LabelField
                 value={label}
                 onChange={setLabel}
@@ -493,6 +520,11 @@ export function NewGoal() {
                 <Text size="sm">{error}</Text>
                 <Text size="sm" mt={4}>Nothing was created. Fix what it names, then save again.</Text>
               </Alert>
+            )}
+            {plansNow && (
+              <Text size="sm" c="dimmed" ta="right" data-testid="plan-note">
+                Save and plan starts the planner. Its split into tasks opens on the goal's page for you to edit and approve before anything runs.
+              </Text>
             )}
             <Group justify="flex-end">
               <Button variant="default" onClick={() => navigate(-1)}>Cancel</Button>

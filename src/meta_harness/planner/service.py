@@ -83,6 +83,7 @@ from meta_harness.planner import (
     suggestions,
     updates,
     sizing_api,
+    spec_draft,
     spec_files,
     specs,
     store,
@@ -298,6 +299,7 @@ def create_app(
     overview_asker: overview.Asker | None = None,
     # What writes a narrative from its prompt: a test's stand-in for the model call.
     narrative_writer: Any = None,
+    spec_drafter: Any = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -1698,6 +1700,22 @@ def create_app(
     unstick_api.register(app, operator, load, tasks)
     specs.register(app, operator, load)
     spec_files.register(app, operator, registered, apps)
+
+    async def spec_issue(ref: str, scheme: str | None, names: list[str], settings: dict[str, str]) -> Any:
+        """An issue of a goal's tracker, read to draft the goal from: 422 says why it could not be read."""
+        reader = bound_tracker(scheme, registered(names), settings) if hasattr(tracker, "named") else tracker
+        try:
+            return await reader.read(ref)
+        except (TrackerError, ValueError) as err:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"the specification {ref} could not be read: {err}. Pick an issue of the goal's tracker, "
+                    "or write the title and description yourself"
+                ),
+            ) from err
+
+    spec_draft.register(app, operator, spec_issue, spec_drafter)
     users.register(app, operator, events)
     app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)
     overview.register(app, operator, app.state.overview)

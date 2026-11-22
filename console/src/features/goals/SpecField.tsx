@@ -127,7 +127,7 @@ function RepoFile({ repos, onLoaded }: { repos: string[]; onLoaded: (spec: GoalS
 // Markdown or text file in one of the goal's repos, an issue of the goal's tracker whose description is the
 // specification (a Jira epic), or a file loaded from this machine. The planner breaks it down into tasks sized
 // for one pull request each, and on approval they are created under one epic.
-export function SpecField({ value, onChange, repos = [], tracker, project, asksProject = false, untracked = false, parentAsked = false, parent = "", onParent }: {
+export function SpecField({ value, onChange, repos = [], tracker, project, asksProject = false, untracked = false, parentAsked = false, parent = "", onParent, open = false }: {
   value: GoalSpec | null;
   onChange: (spec: GoalSpec | null) => void;
   // The goal's repos, owner/name: where a file is picked from, and the scope of GitHub's issues.
@@ -143,13 +143,15 @@ export function SpecField({ value, onChange, repos = [], tracker, project, asksP
   parentAsked?: boolean;
   parent?: string;
   onParent?: (ref: string) => void;
+  // The form asked for a spec, so the choices are shown without a click on the heading.
+  open?: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState(false);
   const [from, setFrom] = useState<From>("repo");
   const fromIssue = !!value && "ref" in value;
   // Open once it holds something, so what the goal will be planned from is never out of sight.
-  const shown = opened || !!value || !!parent;
+  const shown = opened || open || !!value || !!parent;
   const loaded = value && "text" in value ? value : null;
   // The issue picked: the goal's parent where its tracker has parents, else the specification's own.
   const issue = parentAsked ? parent : fromIssue ? (value as { ref: string }).ref : "";

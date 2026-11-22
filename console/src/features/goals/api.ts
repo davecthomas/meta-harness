@@ -269,6 +269,13 @@ export const goalsApi = {
     call<{ issues: LabelIssue[] }>(`/v1/repos/${repo}/issues` + query({ label, ...sourceQuery(source) })).then((r) => r.issues),
   draftGoal: (body: { labels: string[]; repos: string[]; refs: string[]; tracker?: string; tracker_settings?: Record<string, string> }) =>
     call<GoalDraft>("/v1/goals/draft", { method: "POST", body: JSON.stringify(body) }),
+  // A title and description for the goal a specification asks for, saved nowhere: the form fills them in.
+  draftFromSpec: (body: {
+    spec: { name: string; text: string } | { ref: string };
+    repos: string[];
+    tracker?: string;
+    tracker_settings?: Record<string, string>;
+  }) => call<{ title: string; statement: string; spec: string }>("/v1/goals/draft-from-spec", { method: "POST", body: JSON.stringify(body) }),
   goalAction: (id: string, action: "pause" | "resume" | "cancel" | "complete" | "reopen" | "sweep") =>
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
   // A proposed statement for a goal, saved nowhere; and saving the one the operator accepted on a goal.

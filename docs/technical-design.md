@@ -2731,6 +2731,7 @@ credential.
 | GET | `/v1/labels` | Planner | Every label on the registered repos' open issues (or one repo's, with `repo`), with its open-issue count in total and per repo. Each also has how many of those issues open goals hold (`held`, `held_by`). The New goal form's Label field suggests from it | built |
 | GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues, newest first, with a `label` and text `q` in the title when given. It answers a page at a time from `cursor`, each issue with the open goal that holds it, if any | built |
 | POST | `/v1/goals/draft` | Planner | A goal a model drafts from the open issues of one label (`label`) or several (`labels`), each issue read once. It can also draft from the `refs` chosen. The draft is a title, statement, theme and modality, made through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. A goal takes one label, so a draft from several answers `label` null and the issues it read in `refs`. The New goal form sets those as the goal's picked issues. Saves nothing | built |
+| POST | `/v1/goals/draft-from-spec` | Planner | A title and a statement for the goal a specification asks for, for the New goal form to fill in as soon as a spec is chosen. `spec` is a document's `name` and `text`, or an issue's `ref`, which is read from the goal's tracker (`repos`, `tracker`, `tracker_settings`). One model call through the HTTP Gateway with `config/planner.json`'s `goal_drafting`, on the specification cut to what a planning prompt carries. What the model wrote goes through the outbound pipeline, and the cost is a planning cost of no goal. 422 for a specification that cannot be read or is empty, 502 when the model fails, each saying what to do. Saves nothing (`planner/spec_draft.py`) | built |
 | POST | `/v1/goals/enrich` | Planner | A more detailed statement a model proposes for a goal, from its `statement` and what is known about it: `title`, `repos`, `tracker`, `project`, `label` and the `issues` it would take (`ref`, `title`, `body`). With `goal_id`, what the request leaves out is read from that goal. The proposal states the outcome, the scope, what is out of scope, how success is checked, the constraints and which issues the goal covers. It answers `statement`, `added` (each part added, with `what` and `why`) and `questions` only the operator can answer. What the model would have to assume goes into the questions, never into the statement. It is one call through the HTTP Gateway with `config/planner.json`'s `goal_enrich` (checked at startup), built with `retrying.async_transport`. The writing pass runs on the answer. Its cost goes into `costs.daily_cost` as a planning cost of the goal, or of no goal without `goal_id`. A model that fails after its retries answers 502 with a sentence the console shows. 404 for an unknown `goal_id`. Saves nothing (`planner/enrich.py`) | built |
 | POST | `/v1/goals/{id}/enrich/accept` | Planner | Save the `statement` the operator accepted and edited from a proposal, and record `goal_changed` with the operator as its actor and `enriched: true`. 409 for a `met` or `canceled` goal, or one whose status moved during the save (`planner/enrich.py`) | built |
 | POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once. Cancel also cancels the goal's `queued` and `blocked` tasks and asks its `running` tasks to stop, whether they have a pull request or not: a canceled goal spends no more. A parked task's pull request stays open on the code host. Nothing of a canceled goal is the operator's afterwards: the supervisor stops a task still running or held for budget, and its failed and parked tasks stand as needing nothing, which the Overview's list follows. The goal comes back with `tasks`: the task ids `canceled`, `stopping`, `left` (parked with a pull request open) and `errors` | built |
@@ -4628,9 +4629,17 @@ the labels of the repos it shows, with their open-issue counts, as the Label
 field does. Above the form, "Draft from a label (optional)" stays closed until
 asked for. It lists a label's open issues read-only and has a model draft the
 title and description from those no other goal holds. It fills the form and
-saves nothing. New goal asks where the goal's issues come from. One answer is
-issues that exist: a `fix` goal, by label and by picking. The other is issues
-planned from the description: a `feature` goal, whose label is optional. On a
+saves nothing. New goal asks where the goal's issues come from, in one
+control. Issues that exist make a `fix` goal, by label and by picking. Issues
+planned from a spec, or from the description, make a `feature` goal, whose
+label is optional. Loading a spec selects planning from the spec, and another
+answer lets go of the spec. Under the control, and again beside Save and plan,
+the form says where the split into issues is decided: a planning task makes
+it, and it opens on the goal's page to be edited and approved before anything
+is created or run. A spec that is chosen also writes the goal's title and
+description (`POST /v1/goals/draft-from-spec`), into whichever of the two the
+operator has left empty. A description the operator wrote is kept, with the
+spec's on offer, and removing the spec takes back what it wrote. On a
 goal in `planning`, the Goal page shows its plan (#75). While the planning
 task drafts, it shows a notice with a link to the task's run, reread every 5
 seconds. Then it shows each draft as a card, in the order the work can be
