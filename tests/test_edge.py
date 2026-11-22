@@ -56,6 +56,13 @@ def test_every_path_the_console_calls_has_a_route(tmp_path):
     assert unrouted == [], "add each to ROUTES in meta_harness/edge/app.py, with the service that owns it"
 
 
+def test_the_overview_report_and_ask_go_to_the_planner(tmp_path):
+    client, seen = _edge(tmp_path)
+    assert client.get("/v1/overview/report?since=2025-01-01T00:00:00Z").status_code == 200
+    assert client.post("/v1/overview/ask", json={"question": "how is it going?"}).status_code == 200
+    assert [(r.url.port, r.url.path) for r in seen] == [(8303, "/v1/overview/report"), (8303, "/v1/overview/ask")]
+
+
 def test_an_identity_outside_the_access_list_gets_403(tmp_path):
     client, seen = _edge(tmp_path, identity="someone@example.com")
     assert client.get("/v1/goals").status_code == 403
