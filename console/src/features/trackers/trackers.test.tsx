@@ -334,6 +334,44 @@ test("the New goal form lists the people for the assignee setting, from the goal
   expect(changes.at(-1)).toEqual({ assignee: "octocat" });
 });
 
+test("the New goal form lists the parents of the chosen project, and none before a project is chosen", async () => {
+  const parent: TrackerSetting = { name: "parent", label: "Parent", kind: "choice", required: false, help: "The epic the goal's plan's issues are created under." };
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    if (url === "/v1/trackers/jira/choices/project") return respond({ choices: [{ value: "OPS", label: "Operations (OPS)" }, { value: "VL", label: "Voltron (VL)" }] });
+    if (url === "/v1/trackers/jira/choices/parent?project=VL") return respond({ choices: [{ value: "jira:VL-100", label: "VL-100: Checkout" }] });
+    if (url === "/v1/trackers/jira/choices/parent?project=OPS") return respond({ choices: [{ value: "jira:OPS-7", label: "OPS-7: Uptime" }] });
+    return respond({});
+  });
+  const jira = { ...JIRA, configured: true, signed_in: true, goal_settings: [...JIRA.goal_settings, parent] };
+  const changes: Record<string, string>[] = [];
+  const fields = (settings: Record<string, string>) => (
+    <MantineProvider theme={theme}>
+      <GoalTrackerFields trackers={[jira]} tracker="jira" onTracker={() => undefined} settings={settings} onSettings={(next) => changes.push(next)} />
+    </MantineProvider>
+  );
+  const field = async () => (await screen.findAllByLabelText("Parent")).find((el) => el.tagName === "INPUT")!;
+
+  const { rerender } = render(fields({}));
+  expect((await field()).getAttribute("placeholder")).toBe("Choose the project first");
+  expect(asked.filter((url) => url.includes("/parent"))).toEqual([]);
+
+  rerender(fields({ project: "VL" }));
+  const epic = await field();
+  await waitFor(() => expect(epic.getAttribute("placeholder")).toBe("Choose one, or leave empty"));
+  fireEvent.click(epic);
+  fireEvent.click(await screen.findByText("VL-100: Checkout"));
+  expect(changes.at(-1)).toEqual({ project: "VL", parent: "jira:VL-100" });
+  expect(screen.queryByText("OPS-7: Uptime")).toBeNull();
+
+  // Another project's parents are its own.
+  rerender(fields({ project: "OPS" }));
+  fireEvent.click(await field());
+  expect(await screen.findByText("OPS-7: Uptime")).toBeTruthy();
+  expect(asked).toContain("/v1/trackers/jira/choices/parent?project=OPS");
+});
+
 test("with one tracker set up the form still says which, and one with no sign-in says no issues will be read", () => {
   const fields = (trackers: Tracker[], tracker: string) => (
     <MantineProvider theme={theme}>
