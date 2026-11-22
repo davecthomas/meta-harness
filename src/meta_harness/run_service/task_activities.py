@@ -199,9 +199,10 @@ def _insert_run(record: AttemptRecord) -> None:
 async def record_attempt(record: AttemptRecord) -> None:
     a, h = record.attempt, record.harness
     await asyncio.to_thread(_insert_run, record)
-    # What the run spent is counted as spent from here on, so its goal no longer holds its grant back.
-    await asyncio.to_thread(goal_grants.release, record.task_id)
-    events.emit(
+    # Appended now, not queued: a goal's spend is summed from these events, so one lost with a worker would be
+    # money no limit counts. A failure fails the activity, which Temporal retries; the stable id keeps one event.
+    await asyncio.to_thread(
+        events.append,
         "attempt_finished",
         {
             "attempt": a.attempt,
@@ -217,6 +218,8 @@ async def record_attempt(record: AttemptRecord) -> None:
         run_id=a.run_id,
         event_id=events.stable_id(a.run_id, "attempt_finished"),
     )
+    # Only once the event is stored is the spend counted as spent, so the goal holds its grant back till then.
+    await asyncio.to_thread(goal_grants.release, record.task_id)
 
 
 @activity.defn

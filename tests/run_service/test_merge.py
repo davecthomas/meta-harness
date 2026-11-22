@@ -498,3 +498,46 @@ async def test_the_bases_health_is_its_newest_commits_checks(monkeypatch):
         activities.base_health, BaseHealthRequest(repo="/tmp/origin.git", base="main")
     )
     assert local.state == "healthy"
+
+
+async def test_a_merge_that_was_refused_because_it_already_merged_says_merged(monkeypatch):
+    """The first merge's answer was lost and the call is made again: GitHub refuses a merged pull request with
+    405. The task must close as merged, not wait as blocked with its work already on the base."""
+    calls = _github(monkeypatch, 405, {"merged": True, "merge_commit_sha": "m9", "head": {"sha": "abc"}})
+
+    assert await code_host.merge_pull_request("o/r", 7, "abc") == ("merged", "m9", "abc", "")
+    assert [c[0] for c in calls] == ["PUT", "GET"]
+
+
+async def test_a_merged_pull_request_gets_no_base_brought_into_its_branch(monkeypatch):
+    calls = []
+
+    async def github(repo, permissions, method, path, **kwargs):
+        calls.append((method, path))
+        if "/compare/" in path:
+            return {"behind_by": 2}
+        return {"merged": True, "merge_commit_sha": "m9", "head": {"sha": "abc", "ref": "mh/t-1"}}
+
+    monkeypatch.setattr(code_host, "_github", github)
+
+    assert await code_host.merge_pull_request("o/r", 7, "abc", "main") == ("merged", "m9", "abc", "")
+    assert not any(path.endswith("/merges") for _, path in calls), "nothing is merged into a merged branch"
+    assert await code_host.bring_base_in("o/r", 7, "main", "abc") == ("current", "", "abc", "")
+
+
+async def test_pending_suites_counts_only_github_actions_suites_that_have_not_completed(monkeypatch, pending_suites):
+    async def github(repo, permissions, method, path, **kwargs):
+        assert path == "/repos/o/r/commits/abc/check-suites"
+        return {
+            "check_suites": [
+                {"app": {"slug": "github-actions"}, "status": "queued"},
+                {"app": {"slug": "github-actions"}, "status": "completed"},
+                {"app": {"slug": "github-actions"}, "status": "pending"},
+                # An app that gets a suite on every push and may never report.
+                {"app": {"slug": "some-app"}, "status": "queued"},
+            ]
+        }
+
+    monkeypatch.setattr(code_host, "_github", github)
+
+    assert await pending_suites("o/r", "abc") == 2

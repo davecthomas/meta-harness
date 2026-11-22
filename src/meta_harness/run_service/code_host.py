@@ -472,6 +472,25 @@ class CheckRun:
     actions_run: int | None = None
 
 
+# The app whose check suites say work is coming: a workflow run that is queued has a suite before it has a check
+# run. Other apps get a suite on every push whether or not they ever report, so theirs say nothing.
+ACTIONS_APP = "github-actions"
+
+
+async def pending_suites(repo: str, sha: str) -> int:
+    """How many GitHub Actions check suites on a commit have not completed. A workflow that is queued or
+    waiting shows here before any of its jobs is a check run, so the check runs listed at one moment are not
+    yet all the commit will have."""
+    found = await _github(
+        repo, READ_CHECKS, "GET", f"/repos/{repo}/commits/{sha}/check-suites", params={"per_page": 100}
+    )
+    return sum(
+        1
+        for suite in (found or {}).get("check_suites", [])
+        if (suite.get("app") or {}).get("slug") == ACTIONS_APP and suite.get("status") != "completed"
+    )
+
+
 async def check_runs(repo: str, sha: str) -> list[CheckRun]:
     """Every check on a commit: its check runs, and its commit statuses as runs of their own."""
     runs = await _github(repo, READ_CHECKS, "GET", f"/repos/{repo}/commits/{sha}/check-runs", params={"per_page": 100})
@@ -780,6 +799,9 @@ async def merge_pull_request(
     pull request merges against a base it was not checked on, though other tasks' pull requests merged
     while it was reviewed.
     """
+    # A merge whose answer was lost has still merged. Asked again, it must say so: bringing the base into a
+    # merged branch, or calling the pull request blocked, would leave its task open with its work on the base.
+    # Both reads of the pull request below look for that: before the base is brought in, and after a refusal.
     if base:
         brought = await _bring_base_in(repo, number, base, head_sha, provenance)
         if brought is not None:
@@ -800,12 +822,22 @@ async def merge_pull_request(
             raise
         refused = str(err)
     pull = await _github(repo, {"pull_requests": "read"}, "GET", f"/repos/{repo}/pulls/{number}")
+    done = _merged(pull, head_sha)
+    if done is not None:
+        return done
     head = str(pull.get("head", {}).get("sha", ""))
     if head and head != head_sha:
         return "head_changed", "", head, refused
     if pull.get("mergeable_state") == "dirty" or pull.get("mergeable") is False:
         return "conflict", "", head_sha, refused
     return "blocked", "", head_sha, f"{refused} (mergeable_state {pull.get('mergeable_state')})"
+
+
+def _merged(pull: dict | None, head_sha: str) -> tuple[str, str, str, str] | None:
+    """The answer for a pull request that has already merged, or None when it has not."""
+    if not (pull or {}).get("merged"):
+        return None
+    return "merged", str(pull.get("merge_commit_sha") or ""), head_sha, ""
 
 
 async def bring_base_in(
@@ -815,14 +847,16 @@ async def bring_base_in(
     (state, "", head, detail): current when the branch already holds them, head_changed with the new head, or
     conflict when the base does not merge in cleanly."""
     brought = await _bring_base_in(repo, number, base, head_sha, provenance)
-    return brought if brought is not None else ("current", "", head_sha, "")
+    # A pull request that merged meanwhile has nothing to bring in: its caller's next read of it says so.
+    return brought if brought is not None and brought[0] != "merged" else ("current", "", head_sha, "")
 
 
 async def _bring_base_in(
     repo: str, number: int, base: str, head_sha: str, provenance: Provenance | None = None
 ) -> tuple[str, str, str, str] | None:
     """None when head_sha holds the base's newest commit. Otherwise merges the base into the branch and returns
-    head_changed with the new head, or conflict when the base does not merge in cleanly.
+    head_changed with the new head, or conflict when the base does not merge in cleanly. A pull request that has
+    already merged comes back as merged, and nothing is brought into its branch.
 
     The merge goes through GitHub's merges endpoint, not update-branch, so its commit message is ours and
     carries provenance's trailers. That endpoint takes no expected head, so the branch's head is read first;
@@ -833,6 +867,9 @@ async def _bring_base_in(
     if behind == 0:
         return None
     pull = await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}
+    done = _merged(pull, head_sha)
+    if done is not None:
+        return done
     head = str(pull.get("head", {}).get("sha", ""))
     if head and head != head_sha:
         return "head_changed", "", head, f"{head[:12]} landed after {head_sha[:12]}"
