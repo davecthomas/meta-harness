@@ -428,3 +428,72 @@ def test_the_vm_runs_the_gateway_at_a_commit_this_repo_names_never_at_a_branch()
     assert 'checkout "$GW" https://github.com/davecthomas/ai-api-unified-http.git "$GW_REF"' in boot
     fetched = [line for line in boot.splitlines() if line.startswith("checkout ") and "ai-api-unified-http" in line]
     assert fetched == ['checkout "$GW" https://github.com/davecthomas/ai-api-unified-http.git "$GW_REF"']
+
+
+def _secret_functions(tmp_path, gcloud: str) -> str:
+    """A script holding boot.sh's secret functions, with a stand-in gcloud and no waits between tries."""
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    functions = boot[boot.index("SECRET_WAITS=(") : boot.index("umask 077")]
+    stub = tmp_path / "bin" / "gcloud"
+    stub.parent.mkdir()
+    stub.write_text("#!/bin/bash\n" + gcloud)
+    stub.chmod(0o755)
+    return (
+        f'set -eEuo pipefail\nPATH="{stub.parent}:$PATH"\nPROJECT=p\nlog() {{ echo "[boot] $*"; }}\n'
+        + functions
+        + "SECRET_WAITS=(0 0 0 0 0)\n"
+    )
+
+
+def _bash(script: str):
+    import subprocess
+
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+
+
+def test_a_secret_read_that_fails_at_first_is_tried_again_before_the_boot_gives_up(tmp_path):
+    count = tmp_path / "count"
+    flaky = f'n=$(cat {count} 2>/dev/null || echo 0); echo $((n + 1)) >{count}; [ "$n" -ge 2 ] || {{ echo "UNAVAILABLE" >&2; exit 1; }}; echo sk-value'
+    ran = _bash(_secret_functions(tmp_path, flaky) + 'key=$(secret ANTHROPIC_API_KEY)\necho "KEY=$key"\n')
+
+    assert ran.returncode == 0 and ran.stdout == "KEY=sk-value\n"
+    assert ran.stderr.count("reading the secret ANTHROPIC_API_KEY failed") == 2 and "try 2 of 5" in ran.stderr
+
+
+def test_a_secret_that_stays_unreadable_or_is_empty_stops_the_boot_naming_it_and_writes_no_key(tmp_path):
+    for gcloud in ('echo "PERMISSION_DENIED" >&2; exit 1', "exit 0"):
+        ran = _bash(_secret_functions(tmp_path, gcloud) + 'key=$(secret OPENAI_API_KEY)\necho "OPENAI_API_KEY=$key"\n')
+
+        assert ran.returncode != 0 and "OPENAI_API_KEY=" not in ran.stdout, "no empty key is written"
+        assert "the secret OPENAI_API_KEY could not be read or is empty" in ran.stderr
+        assert "gcloud secrets versions add OPENAI_API_KEY" in ran.stderr, "the message says what to do"
+        (tmp_path / "bin" / "gcloud").unlink()
+        (tmp_path / "bin").rmdir()
+
+
+def test_an_optional_secret_is_nothing_when_missing_and_stops_the_boot_when_it_exists_but_cannot_be_read(tmp_path):
+    missing = _bash(
+        _secret_functions(tmp_path, 'echo "ERROR: NOT_FOUND: Secret not found or has no versions" >&2; exit 1')
+        + 'email=$(optional_secret MH_JIRA_EMAIL)\necho "email=[$email]"\n'
+    )
+    assert missing.returncode == 0 and missing.stdout == "email=[]\n" and missing.stderr == ""
+
+    (tmp_path / "bin" / "gcloud").unlink()
+    (tmp_path / "bin").rmdir()
+    outage = _bash(
+        _secret_functions(tmp_path, 'echo "UNAVAILABLE" >&2; exit 1')
+        + 'email=$(optional_secret MH_JIRA_EMAIL)\necho "email=[$email]"\n'
+    )
+    assert outage.returncode != 0 and "email=" not in outage.stdout
+    assert "the optional secret MH_JIRA_EMAIL exists but could not be read" in outage.stderr
+
+
+def test_the_boot_script_reads_no_secret_where_a_failure_would_go_unnoticed():
+    """echo "NAME=$(secret NAME)" and a read in a loop's word list both succeed whatever the read did."""
+    import re
+
+    boot = (ROOT / "deploy" / "vm" / "boot.sh").read_text()
+    code = [line for line in boot.splitlines() if not line.lstrip().startswith("#")]
+    assert not [line for line in code if re.search(r"echo .*\$\((optional_)?secret ", line)]
+    assert not [line for line in code if re.search(r"for .* in .*\$\((optional_)?secret ", line)]
+    assert not [line for line in code if re.search(r"^\s*(optional_)?secret \S+ *[>|]", line)]
