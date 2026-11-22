@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from meta_harness import db
 from meta_harness.config import kinds
 from meta_harness.costs import model_source
-from meta_harness.planner import overview, planning
+from meta_harness.planner import overview, planning, updates
 from meta_harness.planner.service import create_app
 from meta_harness.run_service import writing
 
@@ -176,6 +176,72 @@ def test_past_max_usd_no_model_call_is_made_and_the_last_report_is_returned(worl
     restarted = overview.Overview(events, tasks, writer)
     kept = asyncio.run(restarted.report(since))
     assert writer.calls == 1 and kept["report"]["headline"] == "Report 1" and kept["note"]
+
+
+def test_a_report_is_built_from_the_goals_recorded_updates(world, monkeypatch):
+    client, events, tasks, gateway = world
+    goal = _feature(client, statement="Add exports")
+    gateway.goal_ids = [goal["id"]]
+    _only(monkeypatch, gateway.goal_ids)
+    updates._save(goal["id"], "d1", updates.Written(headline="The plan is half drafted.", body="Two of four parts."))
+    plan_task = next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])
+    events.emit("task_status_changed", {"from": "queued", "to": "running"}, task_id=plan_task["id"])
+
+    written = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
+
+    assert written["written"] is True
+    [given] = _given(gateway.calls[0])["goals"]
+    assert given["goal_id"] == goal["id"]
+    assert given["latest_update"]["headline"] == "The plan is half drafted.", "the planner's recorded update"
+    assert given["changes_since_last_report"] == [
+        {"task": overview._name(plan_task), "what": "task_status_changed", "from": "queued", "to": "running"}
+    ], "what its tasks recorded"
+    [moving] = written["report"]["moving"]
+    assert (moving["goal_id"], moving["goal"]) == (goal["id"], given["title"]), "each point names its goal"
+
+
+def test_a_goal_change_makes_the_sweep_write_a_new_report(world, monkeypatch):
+    client, events, tasks, _ = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+    _settings(monkeypatch, min_seconds=1)
+    writer = Writer()
+    looked = datetime.now(UTC) - timedelta(hours=1)
+    kept = overview.Overview(events, tasks, writer)
+
+    assert asyncio.run(kept.refresh()) is None and writer.calls == 0, "none before the operator first looks"
+    asyncio.run(kept.report(looked))
+    assert writer.calls == 1
+    kept.latest["written_at"] = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    assert asyncio.run(kept.refresh())["written"] is False and writer.calls == 1, "nothing changed"
+
+    # The goal moves: its planning task ends.
+    next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])["status"] = "closed"
+    refreshed = asyncio.run(kept.refresh())
+
+    assert refreshed["written"] is True and writer.calls == 2, "the change writes a new report unasked"
+    assert refreshed["report"]["headline"] == "Report 2"
+    assert refreshed["report"]["since"] == looked.isoformat(), "what finished counts from the operator's last look"
+    assert asyncio.run(kept.refresh()) is None, "the next is at least min_seconds later"
+    assert [e[1]["headline"] for e in events.events if e[0] == overview.EVENT] == ["Report 1", "Report 2"]
+
+
+def test_past_max_usd_the_sweep_makes_no_model_call(world, monkeypatch):
+    client, events, tasks, _ = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+    _settings(monkeypatch, max_usd="0.50", min_seconds=1)
+    writer = Writer()
+    kept = overview.Overview(events, tasks, writer)
+    asyncio.run(kept.report(datetime.now(UTC) - timedelta(hours=1)))
+
+    next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])["status"] = "closed"
+    kept.latest["written_at"] = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    limited = asyncio.run(kept.refresh())
+
+    assert writer.calls == 1, "past the day's limit no model is called"
+    assert limited["written"] is False and limited["report"]["headline"] == "Report 1"
+    assert "$0.50 limit" in limited["note"]
 
 
 @pytest.fixture
