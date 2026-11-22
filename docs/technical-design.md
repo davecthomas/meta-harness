@@ -3400,6 +3400,67 @@ An issue held by a goal that has ended (met or canceled) is
 released for a new goal with its label to take
 (`planner.store.release_from_ended_goal`). An open goal's issue stays its.
 
+**Who an issue is assigned to** (proposed, awaiting the owner's approval; no
+code yet). The meta-harness sets no assignee today, so its issues are in no
+one's "assigned to me" list (VL-14260). The rule below is the choice the
+owner is asked to approve, or to replace with another, before the code tasks
+start.
+
+*Who.* The first of these that gives a person:
+1. The person named in the goal's tracker settings (`assignee`), picked from
+   the tracker's people.
+2. The goal's owner (`created_by`), when the tracker knows a person with that
+   email.
+3. Nobody. The goal's page says that its issues have no assignee and why.
+
+*When.* An issue made from an approved plan or a split is assigned as it is
+created. An issue the goal takes in with no assignee (by label, by pick or
+assigned to the meta-harness) is assigned when its task starts. An issue that
+already has an assignee keeps it, at both times. The meta-harness never
+changes or clears an assignee.
+
+*A person the tracker does not know.* The named person, or the owner, may
+have no account the tracker can assign to. The issue is still created and
+its task still runs. The goal's page and a `goal_assignee_unresolved` event
+say who could not be assigned, in which tracker, and what to do: add the
+person to the tracker or project, or name another in the goal's settings.
+The event is recorded once for a goal and person, not for each issue.
+
+*Per tracker.* "The tracker's people" are:
+
+| Tracker | People an issue can be assigned to |
+|---|---|
+| GitHub | The repo's assignable users (`GET /repos/{owner}/{repo}/assignees`). A person is a login. The owner is found by a login whose public or commit email matches; no match is nobody |
+| Jira | The assignable users of the goal's project (`GET /user/assignable/search?project={key}`). A person is an account id. The owner is found by email, where the site lets the account read it |
+| The meta-harness's own tracker (`mh`) | The console's users. A person is a console user's email. The owner is always one |
+
+A goal with several repos on GitHub checks each repo's list. A person who is
+assignable in one repo and not another is assigned in the first and reported
+for the second.
+
+*New `Tracker` calls* (`trackers/base.py`), each raising `TrackerError` as
+the others do:
+
+| Call | Purpose |
+|---|---|
+| `people(query)` | The people the tracker can assign to for the bound goal, whose name, login or email match the query. Each is `{id, name, email}`. Feeds the setting's choices |
+| `find_person(email)` | The one person with that email, or none |
+| `assign(ref, person_id)` | Set the issue's assignee. Returns whether it changed. Does nothing when the issue has an assignee. The adapter labels the issue first (`mark`), as for any write |
+
+`Issue` gains `assignee`, the person's id or empty, so the sweep can see
+which issues keep theirs. `create_issue` takes an optional `assignee`, so a
+new issue is made assigned in one call where the tracker allows it (GitHub,
+Jira). The own tracker sets it in the same write.
+
+*The goal setting.* `assignee` joins the adapter's `goal_settings` in its
+`SPEC`, of kind `choice`, optional, for all three trackers. Its options come
+from `GET /v1/trackers/{scheme}/choices/assignee`, which calls `people` with
+the query the operator types. The New goal form shows it as a pick from that
+list and never as free text, with "Goal owner" as the default when the list
+holds the owner. A goal's page shows the person named, or the owner, or the
+note that nobody is assigned. Like the other tracker settings, it is fixed
+when the goal is created.
+
 **Every issue the meta-harness creates or changes has its label**,
 `ai:meta-harness` unless the `trackers` configuration names another
 (`label`, set on the Issue trackers page). A label is up to 50 characters with
