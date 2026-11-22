@@ -302,6 +302,7 @@ class RunTask:
             goal_id=spec.goal_id,
             attempts=spec.attempts,
             resume=spec.resume,
+            resume_by=spec.resume_by,
             task_type=spec.task_type,
         )
         self._task_type = spec.task_type
@@ -1420,6 +1421,7 @@ class RunTask:
                 head_sha=loop.head,
                 kind=version_kind(loop.request.task_type) if loop.merge_fix is False else "fix",
                 asked_for=asked_for,
+                by_operator=asked_for and loop.request.resume_by == "operator",
             ),
             start_to_close_timeout=CODE_HOST_TIMEOUT,
             retry_policy=CODE_HOST_RETRY,

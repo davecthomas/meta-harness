@@ -49,7 +49,7 @@ COLUMNS = (
     "id, caller, external_ref, repo, task_type, parent_task_id, goal_id, depends_on, priority, title, description, "
     "acceptance_checks, paths, complexity, max_tier, max_usd, pin, status, status_reason, cancel_requested, owner, "
     "pr_url, head_sha, created_at, updated_at, attempts, waiting_on, retries, resume, review_claimed_by, "
-    "status_changed_at, recoveries, spent_carried_usd, drives, name"
+    "status_changed_at, recoveries, spent_carried_usd, drives, name, resume_by"
 )
 # A task's short name: at most this many words and characters, so it fits where an id did.
 NAME_WORDS = 4
@@ -234,7 +234,8 @@ def renew(conn: psycopg.Connection, task_id: str, task: NewTask, actor: str) -> 
         if row is None or row["status"] not in RENEWABLE:
             return None
         cur.execute(
-            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, retries = retries + 1, "
+            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, resume_by = NULL, "
+            "retries = retries + 1, "
             "cancel_requested = false, waiting_on = NULL, updated_at = now(), status_changed_at = now(), "
             "spent_carried_usd = 0, drives = 0, title = %s, description = %s, acceptance_checks = %s, paths = %s, "
             "goal_id = %s, repo = %s, task_type = %s, priority = %s, complexity = coalesce(%s, complexity), "
@@ -495,7 +496,8 @@ def requeue(
         if complexity:
             what += " with a stronger model"
         cur.execute(
-            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
+            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, resume_by = 'operator', "
+            "retries = retries + 1, "
             "cancel_requested = false, waiting_on = NULL, max_usd = coalesce(%s, max_usd), updated_at = now(), "
             "status_changed_at = now(), spent_carried_usd = 0, drives = 0, complexity = coalesce(%s, complexity) "
             f"WHERE id = %s RETURNING {COLUMNS}",
@@ -549,7 +551,8 @@ def drive(
         # A retried task resumes at its pull request when it has one, and starts over when it has none.
         resume = action if action != "retry" else ("review" if row["pr_url"] else None)
         cur.execute(
-            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, retries = retries + 1, "
+            "UPDATE tasks.task SET status = 'queued', status_reason = %s, resume = %s, resume_by = 'supervisor', "
+            "retries = retries + 1, "
             "drives = drives + %s, cancel_requested = false, waiting_on = NULL, spent_carried_usd = %s, "
             "complexity = coalesce(%s, complexity), "
             f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
@@ -597,7 +600,8 @@ def recover(conn: psycopg.Connection, task_id: str, why: str, spent_usd: Decimal
             reason = f"{why}, so the Task Shepherd sent it back to the queue (recovery {row['recoveries'] + 1})"
         recovered = 1 if status == "queued" else 0
         cur.execute(
-            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, waiting_on = NULL, "
+            "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, resume_by = NULL, "
+            "waiting_on = NULL, "
             "retries = retries + %s, recoveries = recoveries + %s, spent_carried_usd = %s, "
             "cancel_requested = false, updated_at = now(), status_changed_at = now() "
             f"WHERE id = %s RETURNING {COLUMNS}",
