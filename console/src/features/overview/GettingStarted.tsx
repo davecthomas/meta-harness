@@ -57,7 +57,7 @@ export function GettingStarted() {
             key: "goal",
             done: (goals.total ?? 0) > 0,
             title: "Create a goal",
-            says: "A goal says which repositories to work in and which issues are its work: those with its label, or ones you pick.",
+            says: "Start from issues that exist, picked or by label, or from a spec or an epic that the planner breaks into tasks.",
             to: "/goals/new",
             button: "New goal",
           },

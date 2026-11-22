@@ -109,7 +109,7 @@ export function GoalsPage() {
         goals.total !== null && (
           <Empty>
             {show === "open" || show === "all"
-              ? <>No {show === "open" ? "open " : ""}goal yet. A goal says which repositories to work in and which issues are its work. <Anchor component={Link} to="/goals/new">New goal</Anchor></>
+              ? <>No {show === "open" ? "open " : ""}goal yet. Start one from issues that exist, or from a spec or an epic. <Anchor component={Link} to="/goals/new">New goal</Anchor></>
               : `No goal is ${FILTERS[show].label.toLowerCase()} yet. A goal is met when every issue it holds is done, and ended when it is met or canceled.`}
           </Empty>
         )
