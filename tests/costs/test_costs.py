@@ -4,6 +4,7 @@ The series math runs alone. The harvests and the API run against Postgres with f
 the Task API and BigQuery: no model, no Google Cloud.
 """
 
+import logging
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -227,14 +228,66 @@ def test_named_by_its_dataset_the_export_table_is_found_in_it(clean, monkeypatch
 
     monkeypatch.setenv(cloud_source.SETTING, "meta-harness-prod.billing_export")
     with db.connect(autocommit=True) as conn:
-        with pytest.raises(cloud_source.CloudCostError, match="has no billing export table yet"):
+        with pytest.raises(cloud_source.CloudCostError, match="has no billing export table") as missing:
             cloud_source.harvest(conn, date(2026, 11, 11), httpx.MockTransport(bigquery))
-        tables[:] = ["gcp_billing_export_v1_ABC"]
+        said = str(missing.value)
+        assert "gcp_billing_export_v1_" in said and "gcp_billing_export_resource_v1_" in said
+        assert "Billing, Billing export" in said and "Detailed usage cost" in said
+
+        tables[:] = ["cloud_pricing_export", "gcp_billing_export_resource_v1_ABC"]
         assert cloud_source.harvest(conn, date(2026, 11, 11), httpx.MockTransport(bigquery)) == 1
-        tables[:] = ["gcp_billing_export_v1_ABC", "gcp_billing_export_resource_v1_ABC"]
+        assert "`meta-harness-prod.billing_export.gcp_billing_export_resource_v1_ABC`" in asked[-1]
+        assert store.total(conn, date(2026, 11, 1), date(2026, 11, 30), {"source": ["cloud"]}) == Decimal("0.3")
+
+        tables[:] = ["gcp_billing_export_resource_v1_ABC", "gcp_billing_export_v1_ABC"]
         assert cloud_source.harvest(conn, date(2026, 11, 11), httpx.MockTransport(bigquery)) == 1
-    assert "`meta-harness-prod.billing_export.gcp_billing_export_v1_ABC`" in asked[0]
-    assert "`meta-harness-prod.billing_export.gcp_billing_export_resource_v1_ABC`" in asked[1], "detailed first"
+        assert "`meta-harness-prod.billing_export.gcp_billing_export_v1_ABC`" in asked[-1], "standard first"
+    for query in asked:
+        for column in ("usage_start_time", "service.description", "cost", "credits"):
+            assert column in query
+
+
+def test_the_same_cloud_failure_is_warned_of_once_an_hour_and_recorded_every_time(clean, monkeypatch, caplog):
+    now = [0.0]
+    error = ["billing_export has no billing export table"]
+    recorded: list[str] = []
+    store_failed = store.failed
+
+    def failing(conn, today):
+        if error[0] is None:
+            return 0
+        raise cloud_source.CloudCostError(error[0])
+
+    def failed(conn, source, why):
+        recorded.append(why)
+        store_failed(conn, source, why)
+
+    monkeypatch.setattr(costs_api, "_warned", {})
+    monkeypatch.setattr(costs_api, "_clock", lambda: now[0])
+    monkeypatch.setattr(costs_api.cloud_source, "harvest", failing)
+    monkeypatch.setattr(costs_api.store, "failed", failed)
+
+    def harvest_at(seconds: float) -> list[str]:
+        now[0] = seconds
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="meta_harness.costs"):
+            costs_api.harvest_all(Events(), Tasks(TASKS), GOALS.get)
+        return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+    warned = [w for t in (0, 300, 600, 3000) for w in harvest_at(t)]
+    assert warned == ["could not harvest cloud costs: billing_export has no billing export table"]
+    assert len(recorded) == 4, "Cost sources sees every failed read"
+    with db.connect(autocommit=True) as conn:
+        assert store.harvests(conn)["cloud"]["error"] == error[0]
+
+    assert len(harvest_at(3700)) == 1, "an hour on, it is warned of again"
+    error[0] = "BigQuery answered 403"
+    assert len(harvest_at(3800)) == 1, "a different error is warned of at once"
+    error[0] = None
+    assert harvest_at(3900) == []
+    error[0] = "BigQuery answered 403"
+    assert len(harvest_at(4000)) == 1, "after a read that succeeded, the first failure is warned of"
+    assert len(recorded) == 7
 
 
 def _bigquery_with(tables: list[str], asked: list[str]):
@@ -267,7 +320,7 @@ def test_a_missing_export_table_is_warned_of_once_an_hour_and_again_at_once_afte
     monkeypatch.setattr(cloud_source, "harvest", lambda conn, today: real(conn, today, _bigquery_with(tables, asked)))
     monkeypatch.setenv(cloud_source.SETTING, "meta-harness-prod.billing_export")
     clock = [1000.0]
-    warned: dict[str, float] = {}
+    warned: dict[str, tuple[str, float]] = {}
 
     def harvest() -> dict:
         return costs_api.harvest_all(Events(), Tasks(TASKS), GOALS.get, warned, lambda: clock[0])
