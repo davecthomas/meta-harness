@@ -94,6 +94,12 @@ def workspace_for(ref: str, run_id: str) -> Path:
     return RUNS_DIR / ref / run_id.rsplit(":", 1)[-1] / "workspace"
 
 
+def token_path_for(ref: str, run_id: str) -> Path:
+    """Where the worker keeps the run's harness server token: beside the workspace, in a directory no sandbox
+    mounts, so a worker that restarts finds it again and nothing the agent runs can read it."""
+    return RUNS_DIR / ref / run_id.rsplit(":", 1)[-1] / "harness-server.token"
+
+
 def log_path_for(ref: str, run_id: str) -> Path:
     """One harness server log per run, beside its workspace: runs/<ref>/run-1/harness-server.log."""
     return RUNS_DIR / ref / run_id.rsplit(":", 1)[-1] / "harness-server.log"
@@ -224,8 +230,8 @@ def run_args(
         "--security-opt", "no-new-privileges",
         "--cpus", f"{resources.cpus:g}", "--memory", f"{int(resources.memory_gb * 1024)}m",
         "--pids-limit", str(PIDS_LIMIT),
-        # A bare -e NAME copies the value from the docker command's own environment, set by the caller.
-        "--env", "HARNESS_SERVER_TOKEN",
+        # No token here: a process's environment is readable by anything running under its uid, and pi's bash
+        # tool runs under the harness server's. The worker hands the server its token once it is up (_claim).
         "--env", f"GATEWAY_URL={SANDBOX_GATEWAY_URL}",
         "--env", f"HEARTBEAT_SECONDS={HEARTBEAT_SECONDS}",
         # Everything leaves through the egress proxy. Node's fetch uses these only with NODE_USE_ENV_PROXY.
@@ -263,10 +269,15 @@ async def find(run_id: str) -> Sandbox | None:
     if not info["State"]["Running"]:
         raise SandboxError(f"the harness server in {name} exited with code {info['State']['ExitCode']}")
     env = dict(item.split("=", 1) for item in info["Config"]["Env"] if "=" in item)
+    # The token the worker kept for this run. A sandbox a worker from before that started has it in its
+    # environment.
+    ref = (info["Config"].get("Labels") or {}).get("meta-harness.ref", "")
+    kept = token_path_for(ref, run_id) if ref else None
+    token = kept.read_text(encoding="utf-8").strip() if kept and kept.is_file() else ""
     return Sandbox(
         name=name,
         url=f"http://{name}:{CONTAINER_PORT}",
-        token=env.get("HARNESS_SERVER_TOKEN", ""),
+        token=env.get("HARNESS_SERVER_TOKEN") or token,
         proxy=await control_proxy(),
         created=False,
     )
@@ -287,6 +298,8 @@ async def ensure(
     """
     existing = await find(run_id)
     if existing:
+        # A worker that restarted between starting the sandbox and handing its server the token does that now.
+        await _wait_ready(existing, run_id, ref)
         return existing
     proxy = await control_proxy()
     name = container_name(run_id)
@@ -295,6 +308,9 @@ async def ensure(
     workspace = workspace_for(ref, run_id)
     workspace.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(32)
+    kept = token_path_for(ref, run_id)
+    kept.touch(mode=0o600, exist_ok=True)
+    kept.write_text(token, encoding="utf-8")
     database = ""
     if "postgres" in services:
         await _ensure_database(run_id, ref, network)
@@ -310,7 +326,7 @@ async def ensure(
         resources=resources,
         database=database,
     )
-    code, _, err = await _docker(*args, env={"HARNESS_SERVER_TOKEN": token})
+    code, _, err = await _docker(*args)
     if code != 0:
         # Another attempt may have started it a moment ago.
         existing = await find(run_id)
@@ -399,11 +415,22 @@ async def _remove_network(network: str) -> None:
 async def _wait_ready(sandbox: Sandbox, run_id: str, ref: str) -> None:
     deadline = asyncio.get_running_loop().time() + READY_SECONDS
     last = "no answer"
+    claimed = False
     async with httpx.AsyncClient(
         base_url=sandbox.url, headers={"authorization": f"Bearer {sandbox.token}"}, proxy=sandbox.proxy
     ) as http:
         while asyncio.get_running_loop().time() < deadline:
             try:
+                if not claimed:
+                    # The server takes its token from the first to send one, and no run exists yet whose agent
+                    # could. 409: it has one, from this worker before a restart. 401: a server from before
+                    # this, which had its token in its environment.
+                    answer = await http.post("/token", json={"token": sandbox.token}, timeout=5.0)
+                    claimed = answer.status_code in (200, 409, 401)
+                    if not claimed:
+                        last = f"POST /token answered {answer.status_code}: {answer.text[:200]}"
+                        await asyncio.sleep(0.5)
+                        continue
                 response = await http.get("/health", timeout=5.0)
                 if response.status_code == 200:
                     return
