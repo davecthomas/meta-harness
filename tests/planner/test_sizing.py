@@ -347,6 +347,27 @@ def test_a_strict_goal_holds_an_issue_with_a_gap_until_the_issue_is_edited_or_th
     assert _task(tasks, other) is not None
 
 
+def test_a_strict_goal_runs_an_issue_whose_checks_the_model_doubts_with_the_doubt_on_its_card(world):
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client, strict_issues=True)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    reason = "make test runs nothing that covers the fix"
+    sizer.answers[ref] = {
+        "size": "small",
+        "reasons": [],
+        "missing": ["acceptance_checks"],
+        "missing_reason": reason,
+        "split": [],
+    }
+
+    assert _sweep(client, goal)["held"] == []
+
+    card = _shown(client, goal)[ref]
+    assert card["missing"] == [] and card["held_reason"] is None and _task(tasks, ref) is not None
+    assert card["doubts"] == [{"part": "acceptance_checks", "reason": reason}]
+    assert _payloads(events, "issue_sized")[-1]["missing"] == []
+
+
 def test_a_planned_goals_issue_the_sizer_cannot_size_runs_unsized(world):
     # Its approved plan already judged what one task can do: a sizer that fails does not hold its work.
     client, events, tracker, tasks, sizer = world

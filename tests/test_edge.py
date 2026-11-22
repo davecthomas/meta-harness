@@ -85,6 +85,17 @@ def test_a_non_admin_cannot_change_configuration_use_the_kill_switch_or_open_adm
     assert client.post("/v1/tasks/t-1/cancel", json={}).status_code == 200
 
 
+def test_a_browser_cannot_submit_a_task_or_make_a_service_only_task_call(tmp_path):
+    """A task names its repo, which the run service clones and pushes to: only the planner submits one."""
+    client, seen = _edge(tmp_path, admins=("dave@example.com",))
+
+    assert client.post("/v1/tasks", json={"repo": "/var/lib/x"}).status_code == 403
+    assert client.post("/v1/tasks/t-1/status", json={}).status_code == 403
+    assert seen == []
+    assert client.get("/v1/tasks").status_code == 200, "listing tasks stays open"
+    assert client.post("/v1/tasks/t-1/cancel", json={}).status_code == 200
+
+
 def test_an_admin_changes_configuration_and_reads_what_is_deployed(tmp_path, monkeypatch):
     monkeypatch.setenv("MH_COMMIT", "4a286e3")
     monkeypatch.setenv("K_REVISION", "mh-edge-00042-abc")
