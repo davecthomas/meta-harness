@@ -2,11 +2,26 @@ import { useEffect, useMemo, useState } from "react";
 import { Anchor, Autocomplete, Badge, Button, Checkbox, Group, Modal, Select, Stack, Table, Text, TextInput, Tooltip } from "@mantine/core";
 import { LabelOption, useLabelSuggestions } from "./LabelField";
 import { IconPlus } from "@tabler/icons-react";
-import { api, issueUrl, type IssueSource, type LabelIssue } from "../../api";
+import { api, issueUrl, type IssueProgress, type IssueSource, type LabelIssue, type SizingRecord } from "../../api";
 import { ErrorAlert } from "../../components/ui";
+import { FixIssue, fixable, withSizing } from "./FixIssue";
+import { SizingDoubts, gapText } from "./sizing";
 
 type Row = LabelIssue & { repo: string };
 const PAGE = 50;
+
+// What the goal's sizing marks on one of its issues in the list, and Fix with AI for it.
+// It stays mounted once fixed, to say what the fix added.
+function MarkedRow(props: { goalId: string; issue: IssueProgress; onFixed: (sizing: SizingRecord | null) => void }) {
+  const gap = fixable(props.issue) ? gapText(props.issue.missing) : null;
+  return (
+    <Stack gap={2} data-testid={`picker-marks-${props.issue.ref}`}>
+      {gap && <Text size="xs" c="yellow.8">{gap}</Text>}
+      <SizingDoubts issue={props.issue} />
+      <FixIssue goalId={props.goalId} issue={props.issue} onAccepted={props.onFixed} />
+    </Stack>
+  );
+}
 
 // Open issues across the configured repos, to add to a goal: pick a repo (or all), filter by label and
 // text, and check rows one at a time or a page at a time. An issue a goal already holds can't be picked.
@@ -36,6 +51,21 @@ export function IssuesPicker(props: {
   const [picked, setPicked] = useState<Set<string>>(new Set(props.chosen ?? []));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The goal's own issues as the planner sized them, by ref: a row it marks offers Fix with AI.
+  const [sized, setSized] = useState<Record<string, IssueProgress>>({});
+
+  useEffect(() => {
+    if (!props.opened || !props.goalId) return;
+    let stale = false;
+    // The marks only add to the list: when they cannot be read, the picker works as before without them.
+    api.goalIssues(props.goalId).then(
+      (found) => !stale && setSized(Object.fromEntries(found.map((i) => [i.ref, i]))),
+      () => !stale && setSized({}),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [props.opened, props.goalId]);
 
   useEffect(() => {
     if (!props.opened) return;
@@ -154,6 +184,13 @@ export function IssuesPicker(props: {
                     {labeled.has(row.ref) && free(row) && <Badge size="xs" color="gray" variant="light" tt="none">via label</Badge>}
                   </Group>
                   <Anchor href={issueUrl(row.ref) ?? undefined} target="_blank" size="xs" ff="monospace">{row.ref.replace(/^github:/, "")}</Anchor>
+                  {props.goalId && sized[row.ref] && (
+                    <MarkedRow
+                      goalId={props.goalId}
+                      issue={sized[row.ref]}
+                      onFixed={(sizing) => sizing && setSized((all) => ({ ...all, [row.ref]: withSizing(all[row.ref], sizing) }))}
+                    />
+                  )}
                 </Table.Td>
                 <Table.Td>
                   <Group gap={4}>{row.labels.map((l) => <Badge key={l} size="xs" variant="outline" tt="none">{l}</Badge>)}</Group>
