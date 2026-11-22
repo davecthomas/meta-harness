@@ -163,6 +163,17 @@ class Tracker(Protocol):
         login; Jira: an account id; the own tracker: a console user's email). "" when no one is."""
         ...
 
+    async def people(self, repo: str) -> list[dict[str, str]]:
+        """The people the repo's issues can be assigned to, for the bound goal: each as the id `assign` takes
+        (`value`) and a name a person reads (`label`), sorted by name (GitHub: the repo's assignable logins;
+        Jira: the bound goal's project's assignable accounts, empty when no project is bound; the own tracker:
+        the console's users by email). `choices("assignee")` offers these for the goal setting.
+
+        Raises:
+            TrackerError: The tracker could not list them, or repo is not owner/name.
+        """
+        ...
+
     async def assign(self, ref: str, person: str) -> bool:
         """Makes the person the issue's assignee. Returns whether the issue changed: False, and nothing written,
         when the issue has an assignee already, the person or anyone else, since the meta-harness never replaces
@@ -269,6 +280,18 @@ def assignee_setting(people: str) -> Setting:
         kind="choice",
         help=f"Who the goal's issues are assigned to: one of {people}. Empty: no one is named.",
     )
+
+
+def check_assignee(settings: dict[str, Any], fits: Callable[[str], bool], form: str) -> list[str]:
+    """Why a goal's `assignee` setting cannot be used, for `Supported.check_goal`; empty when it can. It is
+    optional, and else a string in the tracker's own form: fits says whether a value has that form, and form
+    describes it. Whether the tracker knows the person is for `assign` to say, since only a call can tell."""
+    value = settings.get(ASSIGNEE, "")
+    if value == "":
+        return []
+    if isinstance(value, str) and value == value.strip() and "\n" not in value and len(value) <= 255 and fits(value):
+        return []
+    return [f"assignee is {form}, not {value!r}: choose one from the list, or leave it empty"]
 
 
 def unknown_person(ref: str, person: str, where: str) -> TrackerError:

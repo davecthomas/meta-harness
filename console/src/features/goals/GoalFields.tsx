@@ -259,6 +259,47 @@ export function AutonomyEdit({ goal, readOnly, save }: FieldProps) {
   );
 }
 
+// Who the goal's issues are assigned to: its tracker setting `assignee`, picked on the New goal form from the
+// tracker's people and fixed then. The person is named as the tracker lists them, and one the tracker no longer
+// lists is marked, since its issues then stay unassigned.
+export function AssigneeField({ goal }: { goal: FieldProps["goal"] }) {
+  const scheme = goal.tracker ?? "github";
+  const named = (goal.tracker_settings?.assignee ?? "").trim();
+  const project = (goal.tracker_settings?.project ?? "").trim();
+  const repos = goal.repos.join(",");
+  const [people, setPeople] = useState<{ value: string; label: string }[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    setPeople(null);
+    setError(null);
+    if (!named) return;
+    api.trackerChoices(scheme, "assignee", { ...(project ? { project } : {}), ...(repos ? { repos } : {}) }).then(
+      (found) => !stale && setPeople(found),
+      (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [scheme, named, project, repos]);
+  if (!named) {
+    return <Text size="sm">None named: each issue goes to the goal's owner, when the tracker knows their email.</Text>;
+  }
+  const found = people?.find((p) => p.value === named);
+  return (
+    <Stack gap={0} data-testid="goal-assignee">
+      <Text size="sm">{found ? found.label : named}</Text>
+      {error && <Text size="xs" c="orange">The tracker's people could not be read, so this is the saved id: {error}</Text>}
+      {people !== null && !found && (
+        <Text size="xs" c="orange">
+          {named} is not one of the people the tracker can assign now, so the goal's issues stay unassigned. Add them to the tracker, or start a new goal that names another assignee.
+        </Text>
+      )}
+      <Text size="sm" c="dimmed">Fixed when the goal was created.</Text>
+    </Stack>
+  );
+}
+
 export function AutoMergeEdit({ goal, readOnly, save }: FieldProps) {
   return (
     <InlineSwitch

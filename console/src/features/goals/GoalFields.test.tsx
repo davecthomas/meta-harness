@@ -9,7 +9,13 @@ function respond(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
 }
 
-afterEach(() => vi.unstubAllGlobals());
+// What the page asked the trackers for, in the test that runs now.
+const trackerAsks: string[] = [];
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  trackerAsks.length = 0;
+});
 
 function goal(status = "active", more: Record<string, unknown> = {}) {
   return {
@@ -34,10 +40,15 @@ function goal(status = "active", more: Record<string, unknown> = {}) {
 }
 
 // The goal page over a fake API that records each PATCH body. refuse: the reason a PATCH is refused, if any.
-function renderGoal(start: Record<string, unknown>, refuse?: string) {
+// people: what the tracker lists for the assignee setting, or the reason it cannot list them.
+function renderGoal(start: Record<string, unknown>, refuse?: string, people?: { value: string; label: string }[] | string) {
   let current = start;
   const patched: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url.startsWith("/v1/trackers/")) {
+      trackerAsks.push(url);
+      return typeof people === "string" ? respond({ detail: people }, 422) : respond({ choices: people ?? [] });
+    }
     if (init?.method === "PATCH") {
       const body = JSON.parse(String(init.body));
       patched.push(body);
@@ -171,6 +182,33 @@ test("how much is done without asking is one choice of three, saved when picked,
   await waitFor(() => expect(patched).toEqual([{ autonomy: "ask" }]));
   fireEvent.click(screen.getByRole("radio", { name: "Also merge" }));
   await waitFor(() => expect(patched).toEqual([{ autonomy: "ask" }, { autonomy: "full" }]));
+});
+
+test("the goal's assignee is named as the tracker lists them, from the goal's project and repos", async () => {
+  const people = [{ value: "acc-alice", label: "Alice Ng (alice@example.com)" }];
+  renderGoal(goal("active", { tracker: "jira", tracker_settings: { project: "VL", assignee: "acc-alice" } }), undefined, people);
+
+  const field = await screen.findByTestId("goal-assignee");
+  await waitFor(() => expect(field.textContent).toContain("Alice Ng (alice@example.com)"));
+  expect(field.textContent).not.toContain("not one of the people");
+  expect(trackerAsks).toEqual(["/v1/trackers/jira/choices/assignee?project=VL&repos=o%2Fr"]);
+  // The tracker line no longer repeats the raw id.
+  expect(screen.queryByText(/assignee acc-alice/)).toBeNull();
+});
+
+test("an assignee the tracker no longer lists is marked, and one it cannot list is still shown", async () => {
+  renderGoal(goal("active", { tracker_settings: { assignee: "octocat" } }), undefined, [{ value: "zed", label: "zed" }]);
+  expect((await screen.findByText(/octocat is not one of the people the tracker can assign now/)).textContent).toContain("start a new goal that names another assignee");
+  cleanup();
+
+  renderGoal(goal("active", { tracker_settings: { assignee: "octocat" } }), undefined, "GitHub could not be reached");
+  expect((await screen.findByText(/The tracker's people could not be read/)).textContent).toContain("GitHub could not be reached");
+  expect(screen.getByTestId("goal-assignee").textContent).toContain("octocat");
+  cleanup();
+
+  // None named: no list is asked for.
+  renderGoal(goal());
+  expect(await screen.findByText(/^None named: each issue goes to the goal's owner/)).toBeTruthy();
 });
 
 test.each(["met", "canceled"])("a %s goal shows its fields read-only", async (status) => {
