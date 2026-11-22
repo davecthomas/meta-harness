@@ -22,6 +22,8 @@ does, until the cost service has a process of its own.
 import asyncio
 import logging
 import os
+import threading
+import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Callable
 
@@ -44,6 +46,25 @@ FILTERS = ("source", "kind", "goal", "task", "repo", "model", "engine", "operato
 TASK_FACTS = ("label", "outcome")
 # A task's pull request outcome: merged, closed without merging, still open, or none opened.
 OUTCOMES = ("merged", "closed", "open", "none")
+# A cloud read that fails the same way again is warned of at most this often; store.failed records every one.
+REPEAT_WARNING_SECONDS = 3600.0
+_clock = time.monotonic
+_warned: dict[str, tuple[str, float]] = {}
+_warned_lock = threading.Lock()
+
+
+def _warn_now(source: str, error: str) -> bool:
+    """Whether a cloud harvest failure is logged as a warning: the first time, and then at most once an hour
+    while the same error repeats. Every other source's failure is always warned of."""
+    if source != cloud_source.SOURCE:
+        return True
+    now = _clock()
+    with _warned_lock:
+        last = _warned.get(source)
+        if last and last[0] == error and now - last[1] < REPEAT_WARNING_SECONDS:
+            return False
+        _warned[source] = (error, now)
+        return True
 
 
 def harvest_seconds() -> float:
@@ -93,8 +114,13 @@ def harvest_all(events: Any, tasks: Any, goal: Callable[[str], dict | None]) -> 
         ):
             try:
                 found[source] = run()
+                with _warned_lock:
+                    _warned.pop(source, None)
             except Exception as err:  # noqa: BLE001 - one source's failure is its own
-                log.warning("could not harvest %s costs: %s", source, err)
+                if _warn_now(source, str(err)):
+                    log.warning("could not harvest %s costs: %s", source, err)
+                else:
+                    log.debug("could not harvest %s costs, again: %s", source, err)
                 store.failed(conn, source, str(err))
                 found[source] = f"failed: {err}"
     return found

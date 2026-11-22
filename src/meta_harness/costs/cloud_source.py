@@ -1,9 +1,11 @@
 """Cloud cost, harvested from the Google Cloud billing export in BigQuery.
 
 Google Cloud writes the project's bill to a BigQuery table once the billing account's export is turned on
-(Billing, Billing export, Standard usage cost). MH_BILLING_EXPORT_TABLE names the dataset the export writes to,
-`<project>.<dataset>`, and the harvest finds the export's table in it, `gcp_billing_export_v1_<billing
-account>`, so the billing account's id is named nowhere in the repo. It may name the table itself,
+(Billing, Billing export, Standard usage cost or Detailed usage cost). Either export works. MH_BILLING_EXPORT_TABLE
+names the dataset the export writes to, `<project>.<dataset>`, and the harvest finds the export's table in it:
+the standard export's `gcp_billing_export_v1_<billing account>` when the dataset has one, else the detailed
+export's `gcp_billing_export_resource_v1_<billing account>`. So the billing account's id is named nowhere in the
+repo. The query reads only columns both tables have. It may name the table itself,
 `<project>.<dataset>.<table>`. With it unset there is no cloud cost to read, and the cost API says so.
 
 The service asks BigQuery for each day's cost by billed service (Compute Engine, Cloud Run, Cloud Logging and
@@ -30,8 +32,10 @@ from meta_harness.costs.store import Cost
 SOURCE = "cloud"
 SETTING = "MH_BILLING_EXPORT_TABLE"
 TABLE = re.compile(r"^[A-Za-z0-9_\-]+\.[A-Za-z0-9_]+(\.[A-Za-z0-9_\-]+)?$")
-# The standard usage cost export's table; the detailed export's is gcp_billing_export_resource_v1_<account>.
+# The standard usage cost export's table, and the detailed export's: the first one the dataset has is read.
 EXPORT_PREFIX = "gcp_billing_export_v1_"
+DETAILED_EXPORT_PREFIX = "gcp_billing_export_resource_v1_"
+EXPORT_PREFIXES = (EXPORT_PREFIX, DETAILED_EXPORT_PREFIX)
 # How far back a harvest reads again: Google restates a day's cost for a while after it. A harvest also reads
 # from the first of the previous month, which is how far back Google fills a newly turned-on export.
 DAYS = 35
@@ -96,18 +100,21 @@ def _token(http: httpx.Client) -> str:
 
 
 def _export_table(http: httpx.Client, headers: dict, dataset: str) -> str:
-    """The standard usage cost export's table in the dataset."""
+    """The standard usage cost export's table in the dataset, else the detailed export's."""
     project, name = dataset.split(".")
     listed = http.get(TABLES_URL.format(project=project, dataset=name), headers=headers, params={"maxResults": 1000})
     if listed.status_code != 200:
         raise CloudCostError(f"BigQuery would not list {dataset}'s tables ({listed.status_code}): {listed.text[:300]}")
     tables = [t["tableReference"]["tableId"] for t in listed.json().get("tables") or []]
-    found = sorted(t for t in tables if t.startswith(EXPORT_PREFIX))
-    if not found:
-        raise CloudCostError(
-            f"{dataset} has no billing export table yet: Google creates it within a day of the export being turned on"
-        )
-    return f"{dataset}.{found[0]}"
+    for prefix in EXPORT_PREFIXES:
+        found = sorted(t for t in tables if t.startswith(prefix))
+        if found:
+            return f"{dataset}.{found[0]}"
+    raise CloudCostError(
+        f"{dataset} has no billing export table: no {EXPORT_PREFIX}<account> or {DETAILED_EXPORT_PREFIX}<account>. "
+        "Turn on Standard usage cost or Detailed usage cost to this dataset in Billing, Billing export; "
+        "Google creates the table within a day"
+    )
 
 
 def _read(
