@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Center, Loader, Paper, Stack, Text, Title } from "@mantine/core";
-import { IconHexagons } from "@tabler/icons-react";
+import { Alert, Loader, Paper, Stack, Text } from "@mantine/core";
+import { Splash } from "../../brand/Splash";
 import { api, ApiError } from "../../api";
 
 // Google Identity Services: Google's sign-in button, which hands this page an ID token for the console's
@@ -63,11 +63,12 @@ export function SignIn({ onSignedIn, expired = false }: { onSignedIn: (identity:
   }, [onSignedIn]);
 
   return (
-    <Center h="70vh">
-      <Paper withBorder radius="lg" p="xl" w={380}>
+    // The splash names the product, above the card. The card is there from the first paint: the splash plays
+    // beside it and never holds sign-in back.
+    <Stack align="center" justify="center" gap="md" mih="70vh" py="lg">
+      <Splash where="sign-in" />
+      <Paper withBorder radius="lg" p="xl" w={380} maw="92vw">
         <Stack align="center" gap="md">
-          <IconHexagons size={40} stroke={1.5} color="var(--mantine-primary-color-filled)" />
-          <Title order={3}>Meta-harness</Title>
           {expired && (
             <Alert color="yellow" title="Your session ended" w="100%" data-testid="session-ended">
               Sessions last 12 hours. Sign in again and you come back to the page you were on.
@@ -85,7 +86,7 @@ export function SignIn({ onSignedIn, expired = false }: { onSignedIn: (identity:
           )}
         </Stack>
       </Paper>
-    </Center>
+    </Stack>
   );
 }
 

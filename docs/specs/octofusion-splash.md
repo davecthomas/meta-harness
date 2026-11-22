@@ -2,7 +2,7 @@
 
 ## Why
 
-The sign-in screen is the first thing a person sees, and the Help page is where they go to understand the product. Both open with the octopus alive: its arms moving the way a real octopus's do, then the name and the tagline. This is built by hand, with a person judging the motion in a browser, since a coding agent cannot see what it draws. The rest of the rebrand is `octofusion-rebrand.md`.
+The sign-in screen is the first thing a person sees, and the Help page is where they go to understand the product. Both open with the octopus alive: its arms moving the way a real octopus's do, then the name and the tagline. It was built by hand, with the owner judging the motion in a browser, since a coding agent cannot see what it draws. It is built: `console/src/brand/` holds it, and this spec says what it does. The rest of the rebrand is `octofusion-rebrand.md`.
 
 ## What we have
 
@@ -22,9 +22,12 @@ The artwork is not cut into parts. Every point of every path is moved by one fie
 ### What plays
 
 1. The octopus rises into view.
-2. Its arms flail for about 2 seconds: wide, quick curls.
+2. Its arms flail for about 3 seconds: wide, quick curls.
 3. The arms settle toward the symbol's pose.
-4. The name fades in below the octopus, then the tagline below the name.
+4. As they begin to settle, the name comes out of the arms: it starts small behind them and slides down to sit just under their tips.
+5. Once the name has landed, the tagline rolls out from under it.
+
+The three sit close together, the name just under the arm tips and the tagline just under the name.
 
 After that the arms keep a slow, small sway for as long as the screen is open.
 
@@ -40,11 +43,17 @@ After that the arms keep a slow, small sway for as long as the screen is open.
 - With the system's reduced-motion setting on, nothing moves: the settled octopus, the name and the tagline show.
 - It stops drawing while its tab is hidden or it is scrolled out of view.
 - It is drawn from SVG by the browser. No video is loaded and no runtime dependency is added.
-- The artwork, the animation and its code add under 150 KB to what a screen loads, before compression.
+- The artwork, the animation and its code add under 200 KB to what a screen loads, before compression, and under 60 KB compressed.
+
+## Where it lives
+
+- `console/src/brand/octopus.ts`: each arm's centerline, and the motion. It draws by rewriting the paths' points on each frame, which takes about 3 milliseconds.
+- `console/src/brand/Splash.tsx` and `splash.css`: the component the two screens show, and what plays when.
+- `console/src/brand/octopus.svg`, `wordmark.svg` and `tagline.svg`: the artwork as shipped, made from `console/brand/source/` with its coordinates in whole units. The tagline is cut from the full lockup.
 
 ## How we will know it works
 
-- A person watching it says the arms move like an animal's and the settle is smooth. That is the owner's call, on a preview, before it is added to the console.
+- A person watching it says the arms move like an animal's and the settle is smooth. The owner approved it on a preview on 2026-11-22.
 - With motion at zero, the drawn paths equal the symbol's.
 - The sign-in screen's Google button works while the splash plays.
 - With reduced motion on, neither screen animates.

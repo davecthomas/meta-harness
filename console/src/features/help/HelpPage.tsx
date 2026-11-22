@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Alert, Anchor, Group, List, Stack, Text, Title } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
 import { Navigate, useLocation, useParams } from "react-router-dom";
+import { Splash } from "../../brand/Splash";
 import { PageHeader } from "../../components/ui";
 import { TOPICS, type Block } from "./topics";
 
@@ -39,6 +40,8 @@ export function HelpPage() {
   return (
     <Stack maw={720} gap="lg">
       <PageHeader title="Help" />
+      {/* Help opens on the octopus: it plays in full the first time in a session, then stays settled. */}
+      <Splash where="help" />
       <Group gap="md" data-testid="help-sections">
         {TOPICS.map((t) => <Anchor key={t.slug} href={`#${t.slug}`} size="sm">{t.title}</Anchor>)}
       </Group>
