@@ -899,7 +899,16 @@ of one from the meta-harness's App, which is never given that permission. So
 an issue whose `Paths:` name a file under `.github/workflows/` is held when
 the sweep takes it in, as a person's change, and no answer lifts that hold.
 A run that changes one anyway ends its task at the push with the same words,
-as a failure the supervisor never retries. Only an operator's does: the task records who sent it back
+as a failure the supervisor never retries.
+
+A goal builds a task for every issue it takes in, so it must tell two issues
+that are the same work (`planner/copies.py`). Each issue's link keeps a hash
+of what its work is: its title, and either the planning task its provenance
+line names or its body, without the lines saying what it waits on and where
+it came from. An issue whose hash another issue of the goal already has is
+held as a copy, naming the first, and makes no task; the issue the goal saw
+first is always the original. Run anyway takes a copy in when both are meant.
+An issue with almost nothing under its title is never called a copy. Only an operator's does: the task records who sent it back
 (`resume_by`), the workflow tells the merge activity, and a merge the
 supervisor asks for is held like any other. Merges are one at a time per repo. The run service's merge activity
 holds the repo's merge lock, a Postgres advisory lock, from checking the

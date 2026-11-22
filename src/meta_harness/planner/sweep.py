@@ -89,6 +89,7 @@ from meta_harness.events.client import stable_event_id
 from meta_harness.trackers.base import TrackerError
 from meta_harness.planner import (
     budget_api,
+    copies,
     cost_facts,
     covered,
     repos,
@@ -410,6 +411,24 @@ async def _take_in(
     result: SweepResult,
     sizer: sizing.Sizer | None = None,
 ):
+    """Take one issue into the goal, or hold it saying why. What its work is, is then kept on its link, so a
+    copy of it that turns up later, or later in this same sweep, is told from it (copies.py)."""
+    try:
+        await _take_in_one(goal, issue, tracker, tasks, events, result, sizer)
+    finally:
+        if content := copies.content_hash(issue.title[:300], issue.body):
+            await asyncio.to_thread(_set_content, issue.ref, goal["id"], content)
+
+
+async def _take_in_one(
+    goal: dict,
+    issue: Issue,
+    tracker: Tracker,
+    tasks: TaskClient,
+    events: Events,
+    result: SweepResult,
+    sizer: sizing.Sizer | None = None,
+):
     existing = await asyncio.to_thread(_link, issue.ref)
     if existing and existing.get("dropped"):
         # An operator removed the issue from its goal. That goal never takes it in again by its label;
@@ -480,6 +499,24 @@ async def _take_in(
             await asyncio.to_thread(
                 _save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, None, title, labels
             )
+        if reason != (existing or {}).get("held_reason"):
+            await asyncio.to_thread(_hold, issue.ref, reason)
+        result.held.append(issue.ref)
+        return
+    # An issue that is the same work as one the goal already took in is a copy: built too, it is the same change
+    # made twice, and the second conflicts with the first. Run anyway takes it in, for the rare pair that is
+    # meant.
+    content = copies.content_hash(title, issue.body)
+    original = await asyncio.to_thread(_earlier_copy, goal["id"], issue.ref, content) if content else None
+    if original and not (existing or {}).get("run_anyway"):
+        if not existing:
+            await asyncio.to_thread(
+                _save, issue.ref, goal["id"], issue.repo, "open", issue.depends_on, None, None, title, labels
+            )
+        reason = (
+            f"it is the same work as {splits.short(original)}, which this goal already has: the same title, from "
+            "the same plan or with the same text. Remove this copy from the goal, or use Run anyway if both are meant"
+        )
         if reason != (existing or {}).get("held_reason"):
             await asyncio.to_thread(_hold, issue.ref, reason)
         result.held.append(issue.ref)
@@ -952,6 +989,16 @@ def _save(ref, goal_id, repo, state, depends_on, task_id, refused_reason, title=
 def _save_sizing(ref, goal_id, repo, depends_on, size, record, title, labels) -> bool:
     with db.connect(autocommit=True) as conn:
         return store.save_sizing(conn, ref, goal_id, repo, depends_on, size, record, title, labels)
+
+
+def _set_content(ref: str, goal_id: str, content: str) -> None:
+    with db.connect(autocommit=True) as conn:
+        store.set_link_content(conn, ref, goal_id, content)
+
+
+def _earlier_copy(goal_id: str, ref: str, content: str) -> str | None:
+    with db.connect(autocommit=True) as conn:
+        return store.earlier_copy(conn, goal_id, ref, content)
 
 
 def _hold(ref: str, reason: str | None) -> None:

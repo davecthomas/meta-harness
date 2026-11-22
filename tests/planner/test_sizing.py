@@ -946,6 +946,71 @@ def test_an_issue_that_changes_a_workflow_file_is_held_for_a_person_and_no_answe
     assert _task(tasks, other) is not None
 
 
+def test_a_copy_of_an_issue_the_goal_already_has_is_held_naming_the_first_and_makes_no_task(world):
+    """On 2026-11-22 a plan's new tasks were created three times over, and the goal built each two or three
+    times. Copies made one after another differ only in what they say they wait on and in their provenance."""
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client)
+    text = f"Write one report on how all running goals are going, for the Overview.\n\nPaths: docs\n\n{CHECKS}"
+    from meta_harness.run_service import provenance
+
+    signed = provenance.line(provenance.Provenance(provenance.ISSUE, goal=goal["id"], task="t-plan", by="dave"))
+    stamp = f"\n\n{signed}\n"
+    first = tracker.add(REPO, _number(), body=f"{text}{stamp}", labels=[goal["label"]], title="Overview report")
+    copy = tracker.add(REPO, _number(), body=f"{text} {stamp}", labels=[goal["label"]], title="Overview report")
+    third = tracker.add(REPO, _number(), body=f"{text}{stamp}", labels=[goal["label"]], title="Overview report")
+    other = tracker.add(
+        REPO,
+        _number(),
+        body=f"Something else entirely, for the costs page.\n\nPaths: docs\n\n{CHECKS}",
+        labels=[goal["label"]],
+        title="Costs page",
+    )
+    for ref in (first, copy, third, other):
+        tracker.issues[ref].author_association = "OWNER"
+
+    swept = _sweep(client, goal)
+
+    assert _task(tasks, first) is not None and _task(tasks, other) is not None
+    assert sorted(swept["held"]) == sorted([copy, third]) and _task(tasks, copy) is None and _task(tasks, third) is None
+    held = _shown(client, goal)[copy]["held_reason"]
+    assert held.startswith(f"it is the same work as #{tracker.issues[first].number}, which this goal already has")
+    assert "Remove this copy from the goal, or use Run anyway if both are meant" in held
+
+    # The same on the next sweep: the first is the original however often the goal is swept.
+    again = _sweep(client, goal)
+    assert sorted(again["held"]) == sorted([copy, third]) and _task(tasks, copy) is None
+
+    # Run anyway takes the one copy in, for the rare pair that is meant.
+    ran = client.post(f"/v1/goals/{goal['id']}/issues/run-anyway", json={"ref": copy}, headers=OPERATOR)
+    assert ran.status_code == 200, ran.text
+    _sweep(client, goal)
+    assert _task(tasks, copy) is not None and _task(tasks, third) is None
+
+
+def test_two_issues_are_one_piece_of_work_by_their_plan_or_their_text_and_never_by_a_bare_title():
+    from meta_harness.planner import copies
+
+    from meta_harness.run_service import provenance
+
+    stamp = provenance.line(provenance.Provenance(provenance.ISSUE, goal="g-1", task="t-plan", by="dave"))
+    other_plan = provenance.line(provenance.Provenance(provenance.ISSUE, goal="g-1", task="t-other", by="dave"))
+    body = "Add the report to the Overview page, with its tests.\n\n## Acceptance checks\n\n- make test"
+    same = copies.content_hash("Overview report", f"{body}\n\nDepends on: #3\n\n{stamp}")
+    # From the same plan: the writing pass may have worded each copy's body a little differently.
+    assert copies.content_hash("overview  Report", f"Add a report to the Overview.\n\n{stamp}") == same
+    # With no plan behind them, by their text, whatever each says it waits on.
+    assert copies.content_hash("T", f"{body}\n\nDepends on: #3") == copies.content_hash(
+        "T", f"{body}\n\nDepends on: #9"
+    )
+    assert copies.content_hash("T", body) != copies.content_hash("T", body + " And the docs.")
+    assert copies.content_hash("T", body) != copies.content_hash("Another title", body)
+    # Another plan's issue of the same title is other work.
+    assert copies.content_hash("Overview report", f"{body}\n\n{other_plan}") != same
+    # A title with almost nothing under it says too little to call anything a copy.
+    assert copies.content_hash("Fix it", "") == "" and copies.content_hash("Fix it", "Paths: docs") == ""
+
+
 def test_an_outsiders_issue_waits_for_an_operator_and_its_task_carries_no_hidden_text(world):
     """Anyone may open an issue, and its text becomes an agent's instructions: one from someone with no write
     access is not sized or run until an operator runs it anyway, and HTML comments, which GitHub hides from
