@@ -134,6 +134,10 @@ export interface IssueProgress {
   size_reasons?: string[];
   // What the issue lacks: shown on its card, and what holds it if the goal is strict.
   missing?: IssueGap[];
+  // What the sizing model doubted that the issue has: checks that may not prove the fix, paths that may not cover
+  // the change, with its reason. Shown on the card; it holds nothing.
+  doubts?: IssueDoubt[];
+  doubt_reason?: string | null;
   // For a large issue, the smaller issues it splits into, and its own paths and checks, for the split drafts.
   split?: string[];
   paths?: string[];
@@ -146,6 +150,7 @@ export interface IssueProgress {
 
 export type IssueSize = "small" | "medium" | "large";
 export type IssueGap = "acceptance_checks" | "paths" | "testable_outcome";
+export type IssueDoubt = "acceptance_checks" | "paths";
 
 // One issue a held issue splits into, as the operator edited it before it is created.
 export interface SplitDraft {

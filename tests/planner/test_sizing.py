@@ -11,11 +11,12 @@ from meta_harness import db
 from fastapi.testclient import TestClient
 
 from meta_harness.config import kinds
-from meta_harness.planner import sizing, splits
+from meta_harness.planner import progress, sizing, splits
 from meta_harness.planner.service import create_app
 from meta_harness.planner.sizing import size_issue  # as it is, before conftest.py turns it off with no gateway
 from meta_harness.planner.tracker import Issue
 from meta_harness.run_service import provenance
+from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 
 from .test_planner import OPERATOR, Events, FakeTasks, _label, _no_title, _number, migrated, registry  # noqa: F401
 from .test_planning import WritingTracker
@@ -50,6 +51,51 @@ def test_the_answer_adds_what_the_planner_sees_missing_and_drops_what_it_does_no
     assert (sized.model, sized.usd_cost) == ("openai-decisions:m", "0.0004")
     with pytest.raises(sizing.SizingError, match="huge"):
         sizing.parse({**data, "size": "huge"}, _issue(), "m", "0")
+
+
+def _read(body: str) -> Issue:
+    """The issue as a tracker reads it from its body: its checks and paths are the planner's own reading."""
+    return _issue(body=body, paths=tuple(issue_paths(body)), checks=tuple(acceptance_checks(body)))
+
+
+def test_checks_the_planner_reads_are_not_missing_when_the_model_says_so_and_its_reason_is_a_doubt():
+    issue = _read(
+        "Fix the card.\n\nPaths: console/src\n\n## Acceptance checks\n\n- `npm test`\n- `npm run typecheck`\n"
+    )
+    data = {
+        "size": "small",
+        "reasons": [],
+        "missing": ["acceptance_checks", "paths", "testable_outcome"],
+        "missing_reason": "  The checks run the suite but test nothing   about the card. ",
+        "split": [],
+    }
+
+    sized = sizing.parse(data, issue, "m", "0")
+
+    assert sized.missing == ["testable_outcome"], "the testable outcome stays the model's call"
+    assert sized.doubts == ["acceptance_checks", "paths"]
+    assert sized.doubt_reason == "The checks run the suite but test nothing about the card."
+    record = sized.record(issue)
+    assert record["doubts"] == ["acceptance_checks", "paths"] and record["doubt_reason"] == sized.doubt_reason
+    assert sizing.hold_reason("small", {**record, "missing": []}, strict=True) is None, "a doubt holds nothing"
+    assert "testable outcome" in sizing.hold_reason("small", record, strict=True), "a missing part still holds"
+
+
+def test_an_issue_with_no_checks_section_is_missing_them_whatever_the_model_says():
+    issue = _read("Fix the card.\n\nPaths: console/src\n")
+    for said in ([], ["acceptance_checks"]):
+        data = {"size": "small", "reasons": [], "missing": said, "missing_reason": "no checks", "split": []}
+        sized = sizing.parse(data, issue, "m", "0")
+        assert sized.missing == ["acceptance_checks"] and sized.doubts == [] and sized.doubt_reason == ""
+    assert "missing_reason" not in sizing.SIZE_SCHEMA["required"], "the reason is optional"
+    assert sizing.parse({"size": "small", "missing": ["paths"]}, issue, "m", "0").doubts == ["paths"]
+
+
+def test_a_sizing_stored_before_doubts_were_kept_still_reads():
+    old = {"reasons": ["one file"], "missing": ["paths"], "split": [], "model": "m", "usd_cost": "0"}
+    view = progress._sizing_view({"size": "small", "sizing": old})
+    assert view["missing"] == ["paths"] and view["doubts"] == [] and view["doubt_reason"] is None
+    assert sizing.hold_reason("small", old, strict=True) is not None
 
 
 def test_a_large_issue_is_held_with_its_split_and_a_gap_holds_only_a_strict_goals_issue():
@@ -284,6 +330,27 @@ def test_a_strict_goal_holds_an_issue_with_a_gap_until_the_issue_is_edited_or_th
     assert patched.status_code == 200 and patched.json()["strict_issues"] is False
     _sweep(client, goal)
     assert _task(tasks, other) is not None
+
+
+def test_a_strict_goal_runs_an_issue_whose_checks_the_model_doubts_with_the_doubt_on_its_card(world):
+    client, events, tracker, tasks, sizer = world
+    goal = _goal(client, strict_issues=True)
+    ref = tracker.add(REPO, _number(), body=f"Fix it.\n\nPaths: docs\n\n{CHECKS}", labels=[goal["label"]])
+    reason = "make test runs nothing that covers the fix"
+    sizer.answers[ref] = {
+        "size": "small",
+        "reasons": [],
+        "missing": ["acceptance_checks"],
+        "missing_reason": reason,
+        "split": [],
+    }
+
+    assert _sweep(client, goal)["held"] == []
+
+    card = _shown(client, goal)[ref]
+    assert card["missing"] == [] and card["held_reason"] is None and _task(tasks, ref) is not None
+    assert (card["doubts"], card["doubt_reason"]) == (["acceptance_checks"], reason)
+    assert _payloads(events, "issue_sized")[-1]["missing"] == []
 
 
 def test_a_planned_goals_issue_the_sizer_cannot_size_runs_unsized(world):

@@ -8,8 +8,12 @@ engine is one the gateway serves completions on; the router classifier's own
 (openai-decisions) is not, and the gateway answers it 503. The model reads the issue's title and body and answers its size (small,
 medium or large), its reasons, what it is missing (acceptance checks, paths, a
 testable outcome) and, for a large one, the smaller issues it would split
-into. What the planner can tell without a model, no `## Acceptance checks` or
-no `Paths:` line, is added to what the model found missing.
+into. Whether an issue lacks acceptance checks or paths is the planner's own
+reading: no `## Acceptance checks` or no `Paths:` line. The model decides only
+whether it lacks a testable outcome. When the model calls checks or paths
+missing that the planner reads in the issue, it most likely means they do not
+prove or cover the change: that is kept as a doubt, with the model's reason,
+shown on the card. A doubt holds no issue.
 
 What the sweep does with a size (sweep.py):
 
@@ -54,6 +58,9 @@ SIZES = ("small", "medium", "large")
 COMPLEXITY_FOR_SIZE = {"small": "low", "medium": "medium", "large": "high"}
 # What an issue may lack, as the model and the planner name it.
 MISSING = ("acceptance_checks", "paths", "testable_outcome")
+# What the planner reads in an issue itself, so its reading alone decides whether they are missing.
+READ_BY_PLANNER = ("acceptance_checks", "paths")
+DOUBT_REASON_CHARS = 300
 MISSING_WORDS = {
     "acceptance_checks": "acceptance checks",
     "paths": "a Paths: line",
@@ -91,6 +98,13 @@ SIZE_SCHEMA = {
                 "changes), testable_outcome (a result a reviewer can check)."
             ),
         },
+        "missing_reason": {
+            "type": "string",
+            "description": (
+                "When missing names anything, one short sentence on why: for checks or paths the issue has, "
+                "why they do not prove or cover the change."
+            ),
+        },
         "split": {
             "type": "array",
             "items": {"type": "string"},
@@ -118,6 +132,10 @@ class Sized:
     reasons: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     split: list[str] = field(default_factory=list)
+    # What the model called missing that the planner reads in the issue (acceptance_checks, paths), and the
+    # model's reason: checks that may not prove the fix, paths that may not cover the change. Holds nothing.
+    doubts: list[str] = field(default_factory=list)
+    doubt_reason: str = ""
     model: str = ""
     usd_cost: str = "0"
 
@@ -172,18 +190,27 @@ def known_missing(issue: Issue) -> list[str]:
 
 
 def parse(data: dict[str, Any], issue: Issue, model: str, usd_cost: str) -> Sized:
-    """The model's answer as a Sized, with what the planner knows is missing added. SizingError for a bad size."""
+    """The model's answer as a Sized. SizingError for a bad size.
+
+    Checks and paths are missing only when the planner finds none: the model once called two listed checks
+    missing, when it meant they did not prove the fix. Such a call is kept as a doubt with the model's reason.
+    """
     size = data.get("size")
     if size not in SIZES:
         raise SizingError(f"the model named size {size!r}")
     said = [str(m) for m in data.get("missing") or [] if str(m) in MISSING]
-    missing = [m for m in MISSING if m in said or m in known_missing(issue)]
+    lacks = known_missing(issue)
+    missing = [m for m in MISSING if m in lacks or (m not in READ_BY_PLANNER and m in said)]
+    doubts = [m for m in READ_BY_PLANNER if m in said and m not in lacks]
+    reason = " ".join(str(data.get("missing_reason") or "").split())[:DOUBT_REASON_CHARS]
     split = [" ".join(str(t).split())[:SPLIT_TITLE_CHARS] for t in data.get("split") or []]
     return Sized(
         size=size,
         reasons=[str(r).strip() for r in data.get("reasons") or [] if str(r).strip()][:5],
         missing=missing,
         split=[t for t in split if t][:MAX_SPLIT],
+        doubts=doubts,
+        doubt_reason=reason if doubts else "",
         model=model,
         usd_cost=usd_cost,
     )

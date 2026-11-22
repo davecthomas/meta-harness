@@ -2803,9 +2803,14 @@ classifier's `openai-decisions` there, and `engine` `none` turns sizing off.
 The call reads the issue's title and body as data. It answers the issue's
 `size` (`small`, `medium` or `large`), its `reasons` and what it is `missing`
 (`acceptance_checks`, `paths`, `testable_outcome`). For a large one it also
-answers the titles of the issues it would `split` into. What the planner sees
-without the model, no `## Acceptance checks` or no `Paths:` line, is added to
-`missing`. The answer is stored on the issue link (`size`, `sizing`) and
+answers the titles of the issues it would `split` into. Whether checks or
+paths are missing is the planner's own reading: no `## Acceptance checks` or
+no `Paths:` line. Only `testable_outcome` is the model's call. When the model
+names `acceptance_checks` or `paths` that the planner reads in the issue, the
+sizing keeps them as `doubts` with the model's optional `missing_reason`. The
+card shows "Its checks may not prove the fix" or "Its paths may not cover the
+change" with that reason. A doubt holds no issue, on a strict goal too; a
+sizing stored before doubts has none. The answer is stored on the issue link (`size`, `sizing`) and
 recorded as `issue_sized` with the model and its cost.
 
 An issue opened by someone with no write access to the repo is held before it

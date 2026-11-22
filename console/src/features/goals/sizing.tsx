@@ -1,12 +1,13 @@
 // Issue sizing on the goal page: an issue's size and gaps on its card, the actions on one the planner held
 // (Run anyway, Split), and the goal's strict switch. The planner sizes each issue before it becomes a task
 // (src/meta_harness/planner/sizing.py): a large one is held to split, and one missing something runs with
-// the gap shown, unless the goal is strict.
+// the gap shown, unless the goal is strict. Checks or paths the issue has that the model doubts are shown as a
+// doubt, with its reason, and hold nothing.
 
 import { useEffect, useState } from "react";
 import { Alert, Badge, Button, Group, Loader, Modal, Stack, Text, TextInput, Textarea, Tooltip } from "@mantine/core";
 import { IconPlayerPlay, IconPlus, IconScissors, IconTrash } from "@tabler/icons-react";
-import { api, type Goal, type IssueGap, type IssueProgress, type IssueSize, type SplitDraft } from "../../api";
+import { api, type Goal, type IssueDoubt, type IssueGap, type IssueProgress, type IssueSize, type SplitDraft } from "../../api";
 import { InlineSwitch } from "./InlineEdit";
 import { SIGNED_ISSUES } from "./provenance";
 
@@ -27,6 +28,28 @@ export function gapText(missing: IssueGap[] | undefined): string | null {
   if (!words.length) return null;
   const list = words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : words[0];
   return `Missing ${list}`;
+}
+
+const DOUBT_WORDS: Record<IssueDoubt, string> = {
+  acceptance_checks: "Its checks may not prove the fix",
+  paths: "Its paths may not cover the change",
+};
+
+// What the sizing model doubted that the issue has, in words, with its reason: "Its checks may not prove the
+// fix. They test the parser only." Null when it doubted nothing.
+export function doubtText(doubts: IssueDoubt[] | undefined, reason?: string | null): string | null {
+  const words = (doubts ?? []).map((d) => DOUBT_WORDS[d]).filter(Boolean);
+  if (!words.length) return null;
+  const said = words.length > 1 ? `${words[0]}, and ${words.slice(1).join(", ").replace(/^Its/, "its")}` : words[0];
+  const why = (reason ?? "").trim();
+  if (!why) return `${said}.`;
+  return `${said}. ${why.charAt(0).toUpperCase()}${why.slice(1)}${/[.!?]$/.test(why) ? "" : "."}`;
+}
+
+// A doubt on an issue's card: shown, never a hold.
+export function DoubtLine({ issue }: { issue: IssueProgress }) {
+  const text = doubtText(issue.doubts, issue.doubt_reason);
+  return text ? <Text size="xs" c="dimmed" data-testid="issue-doubt">{text}</Text> : null;
 }
 
 export function SizeBadge({ issue }: { issue: IssueProgress }) {
