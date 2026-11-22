@@ -1484,7 +1484,8 @@ async def goal_auto_merge(goal_id: str) -> bool:
 # secrets, and a deploy applies its Terraform as the project's owner and its scripts as root on the VM. A pull
 # request that changes one is never merged on a model's review alone: an operator asks for the merge. The
 # supervisor's merge of an auto-merge goal's ready task does not count as one.
-OPERATOR_MERGE_PATHS = (".github/", "deploy/")
+# versioning.py is among them: the deploy and the VM's boot script run it to name the version.
+OPERATOR_MERGE_PATHS = (".github/", "deploy/", "src/meta_harness/versioning.py")
 HELD_FOR_OPERATOR = "held for an operator"
 
 

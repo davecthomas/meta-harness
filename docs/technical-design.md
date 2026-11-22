@@ -887,8 +887,11 @@ The merge (#86) reads the goal's `auto_merge` from the planner when it is due,
 so a change made while the task runs applies. It squash-merges with `sha` set
 to the reviewed head commit. A commit that landed after the review goes back
 to the checks and a new review. A pull request that changes a file under
-`.github/` or `deploy/` is never merged on a review alone, whatever
-`auto_merge` says. A workflow runs with the repo's secrets, and a deploy
+`.github/` or `deploy/`, or `src/meta_harness/versioning.py`, is never merged
+on a review alone, whatever `auto_merge` says. The deploy runs that one file
+of `src/` to name the version: in a job of its own with no Google Cloud
+identity, whose answer the deploy job checks is a version before using it, and
+on the VM as `mh`, not root. A workflow runs with the repo's secrets, and a deploy
 applies its Terraform as the project's owner and its scripts as root on the
 VM. The task ends `ready`, naming the paths, and an operator's Merge takes it
 through. Only an operator's does: the task records who sent it back

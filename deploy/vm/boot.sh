@@ -129,7 +129,11 @@ umask 077
   fi
   # The most per-run sandboxes the VM holds: the ceiling on the task policy's max_parallel.
   # The commit's version, worked out from main's history (versioning.py), for every service.
-  echo "MH_VERSION=$(python3 "$MH/src/meta_harness/versioning.py" 2>/dev/null || cat "$MH/VERSION")"
+  # versioning.py is a file a task's pull request can change, so it runs as mh, not as root, and what it
+  # prints is used only when it is a version: anything else would be written into the services' environment.
+  version=$(sudo -u mh python3 "$MH/src/meta_harness/versioning.py" 2>/dev/null || true)
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || version=$(head -n 1 "$MH/VERSION" | tr -cd '0-9.')
+  echo "MH_VERSION=$version"
   echo "MH_MAX_SANDBOXES=8"
   # Every run gets a Postgres beside its sandbox, for its task's tests, unless its harness profile says otherwise.
   echo "MH_SANDBOX_SERVICES=postgres"
