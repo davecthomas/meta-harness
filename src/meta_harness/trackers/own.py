@@ -25,7 +25,16 @@ from psycopg.rows import dict_row
 from meta_harness import outbound
 from meta_harness import db
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
-from meta_harness.trackers.base import DONE, STATUSES, Issue, Source, Supported, TrackerError, with_section
+from meta_harness.trackers.base import (
+    DONE,
+    STATUSES,
+    Issue,
+    Source,
+    Supported,
+    TrackerError,
+    check_section,
+    with_section,
+)
 
 SCHEME = "mh"
 REF = re.compile(r"^mh:(?P<id>i-[0-9a-f]{12})$")
@@ -137,10 +146,12 @@ class OwnTracker:
 
     async def add_section(self, ref: str, heading: str, text: str) -> None:
         """Adds a `## heading` section to the end of the issue's body, keeping what the body says. The body is
-        written only if no one changed it since it was read, so a change made meanwhile is not lost."""
+        written only if no one changed it since it was read, so a change made meanwhile is not lost. A heading
+        the body has already is refused before anything is written."""
         outbound.require(heading, "a section's heading", outbound.OWN, title=True)
         outbound.require(text, "a section of an issue's body", outbound.OWN)
         row = await asyncio.to_thread(self._one, ref)
+        check_section(ref, row["body"] or "", heading)
         body = with_section(row["body"] or "", heading, text)
         query = (
             "UPDATE planner.own_issue SET body = %s, updated_at = now() "

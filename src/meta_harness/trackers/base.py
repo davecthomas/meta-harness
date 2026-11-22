@@ -8,6 +8,7 @@ An issue's ref names its tracker by its first part, the scheme: `github:<owner>/
 outside an adapter treats the rest of a ref as opaque: it is stored, compared and passed back, never parsed.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -128,7 +129,9 @@ class Tracker(Protocol):
         the text as a body for this tracker, so a plain string is refused (TypeError).
 
         Raises:
-            TrackerError: The tracker refused the change; the message gives its reason.
+            TrackerError: The tracker refused the change; the message gives its reason. Not retryable, and
+                nothing written, when the description already has a section with that heading or the heading
+                is not one line.
         """
         ...
 
@@ -160,6 +163,32 @@ class Tracker(Protocol):
             ValueError: The ref is not one of this tracker's, or not one this goal's source covers.
         """
         ...
+
+
+# A heading line of a description as the planner reads it, `#` to `######`, and the words it holds.
+HEADING_LINE = re.compile(r"^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
+
+
+def has_section(body: str, heading: str) -> bool:
+    """Whether a description, as the planner reads it, has a heading of these words, whatever their capitals."""
+    wanted = " ".join(heading.split()).casefold()
+    return any(" ".join(found.split()).casefold() == wanted for found in HEADING_LINE.findall(body or ""))
+
+
+def check_section(ref: str, body: str, heading: str) -> None:
+    """Refuses a section the description cannot take: a heading that is not one line, or one it has already.
+
+    Raises:
+        TrackerError: Not retryable, so a caller does not write the section again and again.
+    """
+    if not heading.strip() or "\n" in heading.strip():
+        raise TrackerError(f"a section's heading is one line of words, not {heading!r}", retryable=False)
+    if has_section(body, heading):
+        raise TrackerError(
+            f"{ref}'s description already has a section {heading.strip()!r}, so it was not added again. Edit "
+            "that section in the tracker, or add the text under another heading.",
+            retryable=False,
+        )
 
 
 def with_section(description: str, heading: str, text: str, mark: str = "##") -> str:
