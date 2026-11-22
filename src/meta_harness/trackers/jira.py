@@ -57,6 +57,7 @@ from meta_harness.trackers.base import (
     Source,
     Supported,
     TrackerError,
+    check_section,
     configured_label,
     with_section,
 )
@@ -440,7 +441,10 @@ class JiraTracker:
         outbound.require(text, "a section of an issue's description", outbound.JIRA)
         key = parse_ref(ref)
         now = await self._call("GET", f"/issue/{key}", params={"fields": "description"})
-        description = with_section((now.get("fields") or {}).get("description") or "", heading, text, mark="h2.")
+        earlier = (now.get("fields") or {}).get("description") or ""
+        # Its headings as the planner reads them (`h2.` as `##`); a heading it has already is refused.
+        check_section(ref, markdown(earlier), heading)
+        description = with_section(earlier, heading, text, mark="h2.")
         await self.mark(ref)
         await self._call("PUT", f"/issue/{key}", json={"fields": {"description": description}})
         # What was read before holds the old description.
