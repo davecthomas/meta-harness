@@ -40,6 +40,7 @@ from meta_harness.run_service.activities import HELD_FOR_OPERATOR
 from meta_harness.run_service.code_host import CodeHostError
 from meta_harness.supervisor import diagnose, failures, ledger, pulls, remedies, standing
 from meta_harness.supervisor.remedies import registry
+from meta_harness.supervisor.remedies.drive import UNCOUNTED_SITUATIONS
 from meta_harness.supervisor.remedies.raise_limit import raise_to
 from meta_harness.config.kinds import remedy_tries
 from meta_harness.run_service import routing
@@ -222,6 +223,9 @@ class Supervisor:
                 waiting_on=task.get("waiting_on") or "",
                 cancel_requested=bool(task.get("cancel_requested")),
                 held_for_operator=HELD_FOR_OPERATOR in str(task.get("status_reason") or ""),
+                head=pull.head_sha if pull is not None else "",
+                merge_refused_at_head=how == "clean"
+                and await asyncio.to_thread(_merge_refused_at, task, pull.head_sha if pull is not None else ""),
                 admitted=admitted,
                 auto_merge=auto_merge,
                 autonomy=str((goal or {}).get("autonomy") or "standard"),
@@ -373,7 +377,8 @@ class Supervisor:
             "situation": decision.situation,
             "remedy": remedy.id,
             "try": tried,
-            "of": remedy.of(task),
+            # A send-back that is none of the task's tries has no limit to be counted against.
+            "of": None if decision.situation in UNCOUNTED_SITUATIONS else remedy.of(task),
             "because": decision.reason,
         }
         try:
@@ -497,6 +502,26 @@ def last_tier(events: Events, task_id: str) -> str:
     """The tier the task's last route picked, from its task_routed events; empty when it was never routed."""
     found = events.read(0, 500, task_id=task_id, event_type="task_routed").get("events") or []
     return str((found[-1].get("payload") or {}).get("tier") or "") if found else ""
+
+
+# How often the merge is asked for at one commit when each refusal was only a check still running.
+MERGE_ASKS_PER_HEAD = 5
+
+
+def _merge_refused_at(task: dict, head: str) -> bool:
+    """Whether the supervisor already asked for the task's merge at this commit and was refused. A refusal for
+    a required check that was still running does not count, up to MERGE_ASKS_PER_HEAD asks: the code host said
+    the pull request could merge a moment before its check had finished."""
+    if not head:
+        return False
+    asked = [
+        row
+        for row in ledger.read(task_id=task["id"], limit=50)
+        if row["remedy"] == "merge" and row["situation"] == "merge_due" and head[:12] in (row["because"] or "")
+    ]
+    if not asked:
+        return False
+    return not failures.merge_waits_on_checks(task.get("status_reason")) or len(asked) >= MERGE_ASKS_PER_HEAD
 
 
 def _since_status(task: dict, now: datetime) -> timedelta:

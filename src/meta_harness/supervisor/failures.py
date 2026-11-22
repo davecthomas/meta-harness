@@ -87,6 +87,19 @@ def clean_blocked(reason: str | None) -> bool:
     return bool(_CLEAN_BLOCKED.search(reason or ""))
 
 
+# A merge the code host refused only because a required check on the head had not finished: the merge was asked
+# for a moment too early, usually just after the base was brought in and the checks started over.
+_CHECK_RUNNING = re.compile(
+    r"Required status check .{0,200}? is (?:in progress|expected|queued|pending)", re.IGNORECASE
+)
+
+
+def merge_waits_on_checks(reason: str | None) -> bool:
+    """Whether the task's merge was refused because a required check was still running. Nothing about the task
+    was wrong, and the merge goes through once the check has reported."""
+    return bool(_CHECK_RUNNING.search(reason or ""))
+
+
 # A run the worker's own restart interrupted: a deploy restarts the worker on every merge.
 _RESTART = re.compile(r"WorkerShutdown|worker shutdown", re.IGNORECASE)
 

@@ -51,7 +51,7 @@ def ranked(situation: str, facts: "Facts") -> tuple[str, ...]:
         return ("retry", "merge_as_is", "start_over", "cancel")
     if situation == "ready":
         return ("merge",)
-    if situation in ("merge_blocked", "merge_wait_stale", "merge_held"):
+    if situation in ("merge_blocked", "merge_wait_stale", "merge_held", "merge_refused"):
         return ("open_pull_request", "merge")
     if situation == "merge_tries_used":
         return ("resolve_and_merge", "start_over", "cancel") if conflict else ("merge", "retry", "cancel")

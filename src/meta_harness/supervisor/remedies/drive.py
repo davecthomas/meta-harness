@@ -9,6 +9,10 @@ from meta_harness.supervisor.remedies import Context, Outcome, Remedy
 from meta_harness.tasks.store import MAX_DRIVES
 
 
+# Situations whose send-back is none of the task's tries: nothing the task did failed.
+UNCOUNTED_SITUATIONS = ("merge_due",)
+
+
 class Drive(Remedy):
     did = ""
     next = ""
@@ -37,7 +41,7 @@ class Drive(Remedy):
             self.action or self.id,
             ctx.decision.reason,
             str(spent),
-            self.counted(task),
+            self.counted(task) and ctx.decision.situation not in UNCOUNTED_SITUATIONS,
             self.complexity,
         )
         sup.forget_reads(task["id"])
