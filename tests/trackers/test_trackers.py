@@ -213,6 +213,7 @@ def test_the_registry_is_each_adapters_own_description_and_checks_a_configuratio
         ("project", "choice", True),
         ("assigned", "switch", False),
         ("assignee", "choice", False),
+        ("parent", "choice", False),
     ]
     assert jira.takes_assigned({"assigned": "yes"}) and not jira.takes_assigned({})
     assert not registry.SUPPORTED["github"].takes_assigned({"assigned": "yes"})

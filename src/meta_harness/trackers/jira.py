@@ -10,7 +10,8 @@ A workflow belongs to a project, so what depends on one is set for each project:
 issue the planner creates; Task when unset) and `statuses` (the project's own name for todo, in_progress,
 in_review or done, where its workflow's names are not the usual). `default_project` is required and is one of
 `projects`: the project a new goal starts with. A goal that uses Jira names one of the listed projects (its
-tracker setting `project`), and its repos as every goal does.
+tracker setting `project`), and its repos as every goal does. It may also name a `parent`, one of the project's
+open epics by ref: the issues its plan creates go under it.
 
 A configuration saved before projects were listed has `issue_type` and `statuses` for the whole site and no
 `projects`. It keeps working as it did, any project allowed, until its next save, which needs the projects.
@@ -72,6 +73,8 @@ REF = re.compile(r"^jira:(?P<key>[A-Z][A-Z0-9_]+-\d+)$")
 PROJECT = re.compile(r"^[A-Z][A-Z0-9_]+$")
 FIELDS = ["summary", "description", "labels", "status", "updated", "reporter", "issuelinks", "parent"]
 PAGE = 100
+# The goal setting that names the issue a plan's issues are created under: one of `choices("parent")`, by ref.
+PARENT = "parent"
 TIMEOUT_SECONDS = 30.0
 CONNECT_SECONDS = 10.0
 # Reused for every call. All of Jira is one address, and the VM reaches it through Cloud NAT, which has a limited
@@ -592,6 +595,34 @@ class JiraTracker:
                 ordered = sorted(people.items(), key=lambda item: item[1].lower())
                 return [{"value": account, "label": label} for account, label in ordered]
 
+    async def _parents(self, project: str) -> list[dict[str, str]]:
+        """The project's open issues of a type that can hold others (an epic, or a type above it), by ref, newest
+        first. A type's `hierarchyLevel` says it: above 0 holds children. A site that gives no levels has its
+        Epic type taken as the one."""
+        types = (await self._call("GET", f"/project/{project}")).get("issueTypes") or []
+        named = [t for t in types if not t.get("subtask") and str(t.get("name") or "").strip()]
+        if any("hierarchyLevel" in t for t in named):
+            holders = [t["name"] for t in named if int(t.get("hierarchyLevel") or 0) > 0]
+        else:
+            holders = [t["name"] for t in named if str(t["name"]).strip().lower() == "epic"]
+        if not holders:
+            return []
+        kinds = ", ".join(_quoted(name) for name in sorted(set(holders)))
+        jql = f'project = "{project}" AND issuetype in ({kinds}) AND statusCategory != Done ORDER BY created DESC'
+        found: list[dict[str, str]] = []
+        token: str | None = None
+        while True:
+            ask = {"jql": jql, "fields": ["summary"], "maxResults": PAGE, **({"nextPageToken": token} if token else {})}
+            page = await self._call("POST", "/search/jql", json=ask)
+            for item in page.get("issues") or []:
+                summary = str((item.get("fields") or {}).get("summary") or "").strip()
+                found.append(
+                    {"value": ref_for(item["key"]), "label": f"{item['key']}: {summary}" if summary else item["key"]}
+                )
+            token = page.get("nextPageToken")
+            if not token or page.get("isLast"):
+                return found
+
     async def choices(self, setting: str, scope: dict[str, str] | None = None) -> list[dict[str, str]]:
         """What the console offers for a setting, so a name is picked and not typed.
 
@@ -603,10 +634,14 @@ class JiraTracker:
           another project's statuses move none of its issues, and they are not offered. Empty with no project.
         - `assignee`, with scope's `project`: the people that project's issues can be assigned to, by account
           id. Empty with no project.
+        - `parent`, with scope's `project`: that project's open epics, or issues of another type that can hold
+          children, by ref (`jira:PROJ-12`). Empty with no project.
         """
         project = str((scope or {}).get("project") or "").strip().upper()
         if setting == ASSIGNEE:
             return await self._people(project) if PROJECT.match(project) else []
+        if setting == PARENT:
+            return await self._parents(project) if PROJECT.match(project) else []
         if setting in ("statuses", "issue_type"):
             if not PROJECT.match(project):
                 return []
@@ -734,6 +769,14 @@ def check_goal(settings: dict[str, Any], site: dict[str, Any] | None = None) -> 
             f"{project} is not one of the Jira projects the meta-harness works in ({', '.join(sorted(listed))}). "
             "Choose one of those, or add it under Configuration, Issue trackers, Jira, Projects"
         )
+    parent = settings.get("parent", "")
+    if parent and not (
+        isinstance(parent, str) and (match := REF.match(parent)) and match["key"].rsplit("-", 1)[0] == project
+    ):
+        reasons.append(
+            f"parent is an epic of the goal's project, by its ref such as jira:PROJ-12, not {parent!r}: choose "
+            "one from the list, or leave it empty"
+        )
     if settings.get("assigned", "") not in ("", "yes"):
         reasons.append('assigned is "yes" for a goal that takes the issues assigned to the meta-harness, else left out')
     return reasons
@@ -797,6 +840,13 @@ SPEC = Supported(
             "the meta-harness signs in as, whatever its labels. Assigning an issue there hands it over.",
         ),
         assignee_setting("the people the goal's project's issues can be assigned to"),
+        Setting(
+            PARENT,
+            "Parent",
+            kind="choice",
+            help="The epic, or other issue that holds others, that the goal's plan's issues are created under. "
+            "One of the project's open epics. Empty: they are created with no parent.",
+        ),
     ],
     check_goal=check_goal,
     goal_defaults=goal_defaults,
