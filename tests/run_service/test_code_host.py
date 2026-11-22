@@ -51,6 +51,40 @@ async def test_clone_keeps_the_git_directory_outside_the_workspace(origin: Path,
     assert git_dir not in workspace.parents and workspace not in git_dir.parents
 
 
+async def test_a_local_repo_the_deployment_does_not_list_is_never_cloned_or_pushed_to(
+    origin: Path, run_dir: Path, tmp_path: Path, monkeypatch
+):
+    """A push runs the destination repo's hooks on the host, so a path nobody vouched for is refused: at the
+    check, at the clone, and at the push of a run that cloned while the path was still listed."""
+    marker = tmp_path / "hook-ran"
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    hook.chmod(0o755)
+    workspace, git_dir = run_dir / "workspace", run_dir / "git"
+    await code_host.clone(str(origin), workspace, git_dir)
+    (workspace / "hello.txt").write_text("changed\n")
+    monkeypatch.setenv("MH_LOCAL_REPO_ROOTS", str(tmp_path / "somewhere-else"))
+
+    with pytest.raises(code_host.CodeHostError, match="MH_LOCAL_REPO_ROOTS") as refused:
+        code_host.check_repo(str(origin))
+    assert not refused.value.retryable
+    with pytest.raises(code_host.CodeHostError, match="MH_LOCAL_REPO_ROOTS"):
+        await code_host.clone(str(origin), tmp_path / "w2", tmp_path / "g2")
+    with pytest.raises(code_host.CodeHostError, match="MH_LOCAL_REPO_ROOTS"):
+        await code_host.publish(
+            repo=str(origin),
+            workspace=workspace,
+            git_dir=git_dir,
+            branch="mh/task",
+            title="t",
+            body="b",
+            commit_message="m",
+            pr_record=run_dir / "pull-request.md",
+        )
+    assert not marker.exists(), "the push ran the unlisted repo's hook on the host"
+    assert not (tmp_path / "w2").exists()
+
+
 async def test_clone_again_finds_the_earlier_clone(origin: Path, run_dir: Path):
     workspace, git_dir = run_dir / "workspace", run_dir / "git"
     await code_host.clone(str(origin), workspace, git_dir)
