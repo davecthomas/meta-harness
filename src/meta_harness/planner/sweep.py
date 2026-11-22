@@ -287,6 +287,10 @@ async def refresh_states(goal: dict, tracker: Tracker, events: Events, result: S
 GOAL_CANCELED_REASON = "its goal was canceled"
 # A task in one of these has a pull request open that canceling its goal leaves for the operator.
 LEFT_WITH_PULL_REQUEST = ["running", "ready", "review_unresolved"]
+# A task that ended with its pull request possibly still open: its end is recorded when a person merges or
+# closes it. And a task parked with one, which only an active goal's sweep watches.
+ENDED_WITH_PULL_REQUEST = ["canceled", "failed"]
+PARKED_WITH_PULL_REQUEST = ["ready", "review_unresolved"]
 
 
 async def cancel_goal_tasks(goal: dict, tasks: TaskClient, who: str) -> dict[str, list[str]]:
@@ -882,19 +886,25 @@ async def follow_up_goalless(tasks: TaskClient, events: Events, host: CodeHost |
 async def _watch_canceled_pull_requests(
     goal: dict | None, tasks: TaskClient, events: Events, host: CodeHost, result: SweepResult
 ) -> None:
-    """Record the end of each pull request a canceled task left open, which no workflow and no other watch
-    reads: one merged or closed by hand after its task was canceled. The task stays canceled. Each is read
-    until its end is recorded, then never again. Without a goal, the canceled tasks of no goal are watched."""
+    """Record the end of each pull request an ended task left open, which no workflow and no other watch
+    reads: one merged or closed by hand after its task was canceled or failed. That task stays as it ended.
+    A goal that is no longer swept (met, canceled, paused, stalled) has no other watch on its parked tasks
+    either, so their pull requests are read here too, and one that ended closes or cancels its task as the
+    sweep of an active goal does. Each is read until its end is recorded, then never again. Without a goal,
+    the ended tasks of no goal are watched."""
+    statuses = list(ENDED_WITH_PULL_REQUEST)
+    if goal and goal.get("status") in FOLLOWED_UP_STATUSES:
+        statuses += PARKED_WITH_PULL_REQUEST
     try:
         if goal:
-            canceled = await asyncio.to_thread(cost_facts.every_task, tasks, goal["id"], ["canceled"])
+            ended_tasks = await asyncio.to_thread(cost_facts.every_task, tasks, goal["id"], statuses)
         else:
-            every = await asyncio.to_thread(cost_facts.every_task, tasks, None, ["canceled"])
-            canceled = [task for task in every if not task.get("goal_id")]
+            every = await asyncio.to_thread(cost_facts.every_task, tasks, None, statuses)
+            ended_tasks = [task for task in every if not task.get("goal_id")]
     except TaskApiError as err:
         result.errors.append(f"{goal['id'] if goal else 'tasks of no goal'}: {err}")
         return
-    with_pull = [task for task in canceled if task.get("pr_url")]
+    with_pull = [task for task in ended_tasks if task.get("pr_url")]
     if not with_pull:
         return
     ended = await asyncio.to_thread(_ended, [task["id"] for task in with_pull])
@@ -911,6 +921,12 @@ async def _watch_canceled_pull_requests(
             result.errors.append(f"{task['id']}: {err}")
             continue
         if pull.state in ("open", "draft"):
+            continue
+        if task["status"] in PARKED_WITH_PULL_REQUEST:
+            try:
+                await _record_end(goal, task, pull, tasks, events, result)
+            except TaskApiError as err:
+                result.errors.append(f"{task['id']}: {err}")
             continue
         _emit_end(goal, task, pull, events)
         await asyncio.to_thread(_save_end, task["id"], pull.state)

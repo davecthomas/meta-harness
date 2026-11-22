@@ -8,7 +8,7 @@ export interface PullRequestCell {
   repo: string;
   pr_url: string;
   opened_at: string;
-  state: "in_review" | "waiting" | "blocked" | "merged" | "closed";
+  state: "in_review" | "waiting" | "blocked" | "left_open" | "merged" | "closed";
   state_at: string;
   fix_rounds: number;
 }

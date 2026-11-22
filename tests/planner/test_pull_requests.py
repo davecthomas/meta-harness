@@ -412,3 +412,53 @@ async def test_check_details_lists_each_check_with_its_times_and_log(monkeypatch
     assert (found[2]["seconds"], found[2]["url"]) == (107, "https://x/1")
     assert (found[0]["status"], found[0]["seconds"]) == ("in_progress", None)
     assert (found[1]["conclusion"], found[1]["url"]) == ("success", "https://x/s")
+
+
+async def test_a_failed_tasks_pull_request_closed_by_hand_is_recorded_and_the_task_stays_failed(ends):
+    tasks = Tasks(_task("t-f", 41, "failed"), _task("t-r", 42, "ready"))
+    host = Host({41: _pull(41, "closed"), 42: _pull(42, "merged", merge="m42")})
+    events = Events()
+
+    result = await _watch_canceled(tasks, host, events)
+
+    assert result.ended == ["t-f"] and ends == {"t-f": "closed"}
+    assert [e["event_type"] for e in events.events] == ["pull_request_closed"]
+    assert tasks.moves == [] and tasks.tasks["t-f"]["status"] == "failed", "the task stays failed"
+    assert host.reads == [(REPO, 41)], "a ready task of a swept goal is the sweep's own watch's to read"
+
+
+async def test_an_ended_goals_parked_tasks_end_with_their_pull_requests(ends):
+    tasks = Tasks(_task("t-r", 43, "ready"), _task("t-u", 44, "review_unresolved"), _task("t-o", 45, "ready"))
+    host = Host({43: _pull(43, "merged", merge="m43"), 44: _pull(44, "closed"), 45: _pull(45, "open")})
+    events = Events()
+    result = sweep.SweepResult(GOAL)
+
+    await sweep._watch_canceled_pull_requests({"id": GOAL, "status": "canceled"}, tasks, events, host, result)
+
+    assert not result.errors
+    assert sorted(tasks.moves) == [
+        ("t-r", "closed", "its pull request merged"),
+        ("t-u", "canceled", "its pull request was closed without merging"),
+    ], "no sweep watches a goal that ended, so the follow-up ends these as a sweep would"
+    assert tasks.tasks["t-o"]["status"] == "ready", "still open: left as it is"
+    assert ends == {"t-r": "merged", "t-u": "closed"}
+
+
+def test_a_pull_request_waits_on_the_operator_only_when_the_task_shepherd_says_the_operator_has_its_task():
+    from meta_harness.planner import activity
+
+    def state(status, standing=None):
+        return activity.pr_state({"status": status, "standing": standing}, [])
+
+    yours = {"owner": "operator", "over": False}
+    shepherds = {"owner": "supervisor", "over": False}
+    over = {"owner": "planner", "over": True}
+    assert (state("ready", yours), state("failed", yours)) == ("waiting", "blocked")
+    assert (state("ready", shepherds), state("failed", shepherds)) == ("in_review", "in_review"), (
+        "the Shepherd is merging or retrying it: nothing waits on a person"
+    )
+    assert (state("canceled", over), state("failed", over)) == ("left_open", "left_open"), (
+        "its task is over and nobody is asked to act, which is what Needs you says too"
+    )
+    assert (state("ready"), state("review_unresolved")) == ("waiting", "blocked"), "not looked at yet: by its status"
+    assert state("running", yours) == "in_review"
