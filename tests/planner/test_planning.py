@@ -951,3 +951,16 @@ async def test_a_parent_jira_refuses_leaves_the_part_created_without_it_and_reco
     ]
     assert "Set its parent to jira:VL-100 in the tracker" in refused[0]["action"]
     assert [p["issues"] for t, p in events.events if t == "issue_split"] == [made]
+
+
+def test_the_plan_says_when_planning_was_asked_for_and_keeps_it_after_the_planner_is_done(world):
+    client, events, tracker, tasks = world
+    goal = _feature(client)
+
+    drafting = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    assert drafting["planning_task_id"] and drafting["planning_asked_at"], "the wait for a plan has a start"
+
+    _planned(client, events, tasks, goal, [draft("store")])
+    made = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    assert made["planning_task_id"] is None and made["planning_asked_at"] == drafting["planning_asked_at"]
+    assert made["planning_asked_at"] <= made["plan"]["created_at"], "so the page can say how long the plan took"

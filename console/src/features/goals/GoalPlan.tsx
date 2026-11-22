@@ -1,3 +1,4 @@
+import { spanWords } from "../tasks/path";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Anchor, Badge, Button, Card, Code, Group, List, Loader, Modal, Select, Stack, Switch, TagsInput, Text, TextInput, Textarea } from "@mantine/core";
 import { IconCheck, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
@@ -209,6 +210,21 @@ function DraftForm({ draft, isNew, repos, others, goal, onSave, onCancel }: {
 // existing issue, and the new tasks it wrote. The operator edits any of it (each save is a new version), asks
 // for a new plan with a note, or approves it, choosing whether the new tasks go to the goal's tracker. Nothing
 // is created or run before that.
+// How long the planner has been planning, said while it does: the wait is otherwise time with nothing shown.
+export function planningFor(asked: string | null | undefined, now: number): string {
+  return asked ? `Planning for ${spanWords(now - Date.parse(asked))}. ` : "";
+}
+
+// How long the planner took over the plan shown, and how long that plan has waited for its approval. Only for
+// a plan the planner made: an edited version's time is the operator's own.
+export function plannedIn(plan: { source: string; created_at: string }, asked: string | null | undefined, drafting: boolean, now: number): string {
+  if (drafting || plan.source !== "planned") return "";
+  const made = Date.parse(plan.created_at);
+  const waited = `waiting ${spanWords(now - made)} for your approval. `;
+  if (!asked || Date.parse(asked) > made) return waited.replace(/^w/, "W");
+  return `Planned in ${spanWords(made - Date.parse(asked))}, ${waited}`;
+}
+
 export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => void }) {
   const [shown, setShown] = useState<Plan | null>(null);
   // The drafts as edited here and not yet saved; null when they are the saved version's.
@@ -243,6 +259,12 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
 
   // While the planning task drafts, look again every few seconds for its plan.
   const drafting = !!shown?.planning_task_id;
+  // The clock the planning times are told by: each second while the planner drafts, else each half minute.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), drafting ? 1000 : 30_000);
+    return () => clearInterval(timer);
+  }, [drafting]);
   useEffect(() => {
     if (!drafting) return;
     const timer = setInterval(() => !document.hidden && void load(), REFRESH_MS);
@@ -367,7 +389,9 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
         <Alert color="blue" mb="md" title="The planner is working on the plan">
           <Group gap="xs">
             <Loader size="xs" />
-            <Text size="sm">Nothing starts until you approve its plan.</Text>
+            <Text size="sm">
+              {planningFor(shown.planning_asked_at, now)}Nothing starts until you approve its plan.
+            </Text>
             <Anchor component={Link} to={`/tasks/${shown.planning_task_id}`} size="sm">Watch its run</Anchor>
           </Group>
         </Alert>
@@ -376,7 +400,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
         <Stack gap="md">
           <Group gap="sm">
             <Text size="sm">
-              Version {plan.version}, {plan.source === "planned" ? "made by the planner" : plan.source === "suggested" ? `the planner's fix, accepted by ${plan.created_by}` : `edited by ${plan.created_by}`}, {when(plan.created_at)}.
+              {plannedIn(plan, shown.planning_asked_at, drafting, now)}Version {plan.version}, {plan.source === "planned" ? "made by the planner" : plan.source === "suggested" ? `the planner's fix, accepted by ${plan.created_by}` : `edited by ${plan.created_by}`}, {when(plan.created_at)}.
               {base.length > 0 && <> Its new tasks will carry the label <Badge variant="outline" tt="none" radius="sm">{shown.label}</Badge></>}
             </Text>
             {plan.task_id && <Anchor component={Link} to={`/tasks/${plan.task_id}`} size="sm">The planning task's run</Anchor>}
