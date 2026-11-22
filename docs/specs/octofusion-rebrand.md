@@ -6,13 +6,14 @@ The product has a name and a mark now: Octofusion AI, "The Open Meta-Harness for
 
 ## What we have
 
-The brand's source artwork is in `console/brand/source/`. It was checked before this spec was written, and `console/brand/README.md` records what was found. What matters for the work:
+The brand's source artwork is in `console/brand/source/`. It was checked before this spec was written. What the check found:
 
 - Every file is a path-based SVG with no embedded image. Colors are flat fills: purple `#670fdc`, cyan `#08e7f5`, near-black `#0a0a14`, coral `#fb5b52`, and magenta `#c402f5` in the wordmark.
 - `octofusion-symbol.svg` is the whole octopus on a square canvas of 1418 units. Its eight arms are not separate shapes. The file is three color layers, and one path in each layer covers all the arms. Nothing in it can be moved by itself yet.
 - `octofusion-wordmark.svg` is the name, "OCTOFUSION AI", with its magenta fill. The lockup files that came with the artwork fill the name with the octopus's purple, which does not match the approved artwork, so they are not used. A lockup is built from the symbol and this wordmark.
 - The tagline exists only as paths inside `octofusion-full-lockup.svg`, in the band below y = 1250 of its 1426 units. No font file came with the artwork. The wordmark sits between y = 750 and y = 1250, and the symbol above y = 750, so the three parts separate cleanly by position.
 - `octofusion-symbol-black.svg`, `octofusion-symbol-white.svg` and the two wordmark files like them are single-color silhouettes.
+- Each color file groups its paths by color, under ids such as `octofusion-symbol-purple`. No file has a text element or a font.
 
 The artwork also came with bitmap icons and a 10-second video. Neither is used. The bitmap browser icons show only the octopus's head, and the video is 3.8 MB with a baked-in background and a sound track.
 
