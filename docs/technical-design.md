@@ -4616,7 +4616,8 @@ gives its reason and each run that did not finish, linked to that run. It
 links to the task's warnings and errors on the Logs page. Its goal's page
 shows an alert above the board. It lists each failed or unresolved task with
 its reason, linked to the task, and each issue the planner refused.
-New goal chooses a goal's issues in one place: its Label field and Pick
+New goal starts with the user's default repos chosen, or the registered repo
+when only one is registered. New goal chooses a goal's issues in one place: its Label field and Pick
 issues. A label, typed or set by a draft, selects every open issue with it in
 the goal's repos that no other goal holds. The form lists them under the
 field. Pick issues shows them checked and locked, marked "via label",

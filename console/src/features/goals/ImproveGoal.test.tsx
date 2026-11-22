@@ -55,7 +55,7 @@ function description(): HTMLTextAreaElement {
 }
 
 async function typeAndImprove(text: string) {
-  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
   fireEvent.change(description(), { target: { value: text } });
   fireEvent.click(screen.getByRole("button", { name: "Improve with AI" }));
 }

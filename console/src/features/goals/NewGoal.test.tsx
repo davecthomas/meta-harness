@@ -32,7 +32,7 @@ function fillAndPress(button: string, created: Record<string, unknown>[]) {
     </MantineProvider>,
   );
   return (async () => {
-    fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+    await screen.findByRole("checkbox", { name: "o/a", checked: true });
     fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
     fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
     fireEvent.click(screen.getByRole("button", { name: button }));
@@ -98,7 +98,7 @@ test("a goal with no tracker asks only for a description, and is saved to be pla
       </MemoryRouter>
     </MantineProvider>,
   );
-  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
   fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Add CSV export" } });
   // With a tracker, the goal says where its issues come from.
   expect(await screen.findByRole("radiogroup", { name: "Where its issues come from" })).toBeTruthy();
@@ -172,7 +172,7 @@ test("leaving a filled-in New goal asks first: keep editing stays, discard leave
 test("Save in the prompt saves the goal without starting it, then leaves", async () => {
   const created: Record<string, unknown>[] = [];
   const router = editorRouter(created);
-  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
   fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
   fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
 
@@ -211,7 +211,7 @@ test("a goal that plans its issues from the description needs no label and is cr
   );
 
   fireEvent.change(await screen.findByLabelText(/Description/), { target: { value: "Let users export their data" } });
-  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
   fireEvent.click(screen.getByText("Plan them from the description"));
   expect(screen.getByText(/A planning task reads the repos and drafts the issues/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
@@ -237,7 +237,7 @@ test("a goal that cannot be saved says why beside the buttons, and where to fix 
       </MemoryRouter>
     </MantineProvider>,
   );
-  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
   fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
 
   // Neither a label nor a picked issue: the form says which part of it to fill in.
@@ -278,7 +278,7 @@ function showNewGoal(created: Record<string, unknown>[]) {
 test("a goal planned from a loaded specification needs no label, and sends the file's name and text", async () => {
   const created: Record<string, unknown>[] = [];
   showNewGoal(created);
-  fireEvent.click(await screen.findByRole("checkbox", { name: "o/a" }));
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
   fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Let users export their data" } });
 
   fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
@@ -319,3 +319,31 @@ test("the settings most goals leave alone are folded away, and merging automatic
   expect(order(merge, screen.getByRole("button", { name: /^Save and/ }))).toBe(true);
 });
 
+
+function showWithRepos(names: string[]) {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/repos") return respond({ repos: names.map((name) => ({ name })) });
+    if (url === "/v1/labels") return respond({ repos: names, labels: [] });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/new"]}>
+        <Routes>
+          <Route path="/goals/new" element={<NewGoal />} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+}
+
+test("the only registered repository starts chosen", async () => {
+  showWithRepos(["o/a"]);
+  expect(await screen.findByRole("checkbox", { name: "o/a", checked: true })).toBeTruthy();
+});
+
+test("with several registered repositories none starts chosen", async () => {
+  showWithRepos(["o/a", "o/b"]);
+  expect(await screen.findByRole("checkbox", { name: "o/a", checked: false })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "o/b", checked: false })).toBeTruthy();
+});
