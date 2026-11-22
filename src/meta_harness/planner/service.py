@@ -9,6 +9,7 @@
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
     POST       /v1/goals/{id}/issues/run-anyway, /split   answer an issue the sweep held (sizing_api.py)
+    GET, POST  /v1/goals/{id}/unstick         take each stuck task's recommended step, or say what it would do (unstick_api.py)
     POST       /v1/goals/{id}/issues/fix-draft, /fix-accept  draft and write what an issue lacks (fix_issue.py)
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
     GET, POST  /v1/admin/users                the console's users: invite, set a role, deprovision (users.py)
@@ -80,6 +81,7 @@ from meta_harness.planner import (
     updates,
     sizing_api,
     store,
+    unstick_api,
     users,
 )
 from meta_harness.planner.sweep import (
@@ -1607,6 +1609,7 @@ def create_app(
     plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again)
     budget_api.register(app, operator, load, change_with, events, tasks)
     sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size)
+    unstick_api.register(app, operator, load, tasks)
     users.register(app, operator, events)
     app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)
     overview.register(app, operator, app.state.overview)
