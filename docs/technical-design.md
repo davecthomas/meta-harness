@@ -3302,6 +3302,66 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
   address, so adding it twice changes the one link.
 - A label with a space is refused before any issue is made.
 
+#### Who an issue is assigned to
+
+Status: proposed. The owner approves this section, or names another choice,
+before any code task for it starts (VL-14260). Today the meta-harness never
+sets an assignee, so its issues show in no one's "assigned to me" list.
+
+**Who.** For each issue, the first of these that applies:
+1. The person named in the goal's tracker settings (`assignee`), picked from
+   the tracker's people.
+2. The goal's owner (`goal.created_by`), when the tracker knows a person with
+   that email.
+3. Nobody. The goal's page says that its issues have no assignee and why.
+
+**When.**
+- An issue created from a plan (approve) or a split is assigned in the call
+  that creates it, so it never exists without its assignee.
+- An issue a goal takes in with no assignee (by label, by pick or by
+  `list_assigned`) is assigned when its task starts.
+- An issue that already has an assignee keeps it. The meta-harness never
+  replaces or adds to a person's assignment.
+
+**A person the tracker does not know.** The setting names someone the tracker
+cannot assign, or an owner's email matches no one. The issue is still
+created, or its task still starts. The goal's page and an event
+(`assignee_unresolved`) say who could not be assigned and what to do: fix the
+setting, or add the person to the tracker. A transient failure of the lookup
+or the assign call is retried first, as for any tracker call. After the
+retries it is reported the same way and never stops the task.
+
+**Per tracker.** The people are:
+
+| Tracker | Who can be assigned | Matched by |
+| --- | --- | --- |
+| GitHub | The repo's assignable users (`GET /repos/{owner}/{repo}/assignees`). A goal with several repos assigns each issue from its own repo's list | Login for the setting. Email for the owner, only where GitHub shows it; otherwise nobody |
+| Jira | The assignable users of the goal's project (`GET /user/assignable/search?project={key}`) | Account id or display name for the setting, email for the owner |
+| Own tracker (`mh`) | The console's users, the people who sign in to the console | Email for both |
+
+**New `Tracker` calls** (`trackers/base.py`, each adapter implementing them,
+`WithOwn` and `Trackers` routing them):
+- `assignable(query)` returns the people the tracker can assign, each with an
+  id, a display name and an email when the tracker shows it. It takes a text
+  to narrow the list and is bound to the goal's repos and settings. It also
+  serves the console's pick.
+- `assign(ref, person_id)` sets the issue's assignee. It returns whether it
+  changed anything, and changes nothing on an issue that has an assignee.
+- `Issue.assignee` holds the assignee's id, empty when none, so "already has
+  an assignee" is read from the issue.
+- `create_issue` takes an optional `assignee`, so an issue is assigned as it
+  is created.
+
+**The goal setting.** `assignee` is a `choice` setting every tracker declares
+in its `SPEC` `goal_settings`, read from `GET
+/v1/trackers/{scheme}/choices/assignee`, which calls `assignable`. The New
+goal form shows it as a pick from that list, empty by default, and never as
+free text. A goal's tracker settings are fixed when it is created, so so is
+this one. The goal's page shows who is assigned and, for an owner not found
+or a person not assignable, why nobody is.
+
+This section changes no code.
+
 An issue is one task, by its ref, so what the task was made from can fall
 behind the issue. A task that ended canceled or failed is made over when a
 control-plane service submits its issue again (`tasks.store.renew`). Its
