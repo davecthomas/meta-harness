@@ -8,7 +8,7 @@ import { PrLink, StatusBadge } from "../../components/ui";
 import { projection } from "../tasks/Spend";
 import { NowLine } from "../tasks/TaskPath";
 import { moneyText } from "../../money";
-import { SizeBadge, gapText } from "./sizing";
+import { SizeBadge, SizingDoubts, gapText } from "./sizing";
 import { SummarySource } from "./SummarySource";
 
 // The board's columns, in order, each with its color in the board and the graph.
@@ -136,6 +136,7 @@ function IssueCard(props: { issue: IssueProgress; task?: Task; usd?: number; act
           <Text size="xs" c="orange" data-testid="held-reason">Held: {held}</Text>
         ) : null}
         {gap && <Text size="xs" c="yellow.8" data-testid="issue-gap">{gap}</Text>}
+        <SizingDoubts issue={issue} />
         {props.actions}
         {/* Why a queued task has not started, from the scheduler. */}
         {task?.status === "queued" && task.held && <Text size="xs" lineClamp={3}>{moneyText(task.held.reason)}</Text>}
