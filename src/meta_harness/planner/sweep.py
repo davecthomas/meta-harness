@@ -206,7 +206,8 @@ async def sweep_goal(
     await _release_unblocked(goal, tracker, tasks, events, result)
     result.replied = await tracker_replies.write(goal, tracker, result.errors)
     # Before the goal is looked at for being met: for a tracker that is told, done is what closes an issue.
-    result.told = await tracker_progress.write(goal, goal_tracker(tracker, goal), tasks, result.errors)
+    # With the events, a started task's issue with no assignee is assigned too.
+    result.told = await tracker_progress.write(goal, goal_tracker(tracker, goal), tasks, result.errors, events)
     # A split issue's own failed task ends when its parts did its work, and the issue is its parts' again.
     result.covered = await covered.end_covered(await asyncio.to_thread(_links, goal["id"]), tasks, result.errors)
     # A split issue whose parts are all done is closed, with a comment: it needs nothing from anyone.
