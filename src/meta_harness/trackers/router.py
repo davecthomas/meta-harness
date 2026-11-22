@@ -72,6 +72,13 @@ class WithOwn:
         # The issue's own content, not its progress: written whatever the tracker shows by itself.
         await self._of(ref).add_section(ref, heading, text)
 
+    async def assignee(self, ref: str) -> str:
+        return await self._of(ref).assignee(ref)
+
+    async def assign(self, ref: str, person: str) -> bool:
+        # Who the issue is assigned to, not its progress: set whatever the tracker shows by itself.
+        return await self._of(ref).assign(ref, person)
+
     def repo_of(self, ref: str) -> str:
         return self._of(ref).repo_of(ref)
 
@@ -159,6 +166,12 @@ class Trackers:
 
     async def add_section(self, ref: str, heading: str, text: str) -> None:
         await self.for_ref(ref).add_section(ref, heading, text)
+
+    async def assignee(self, ref: str) -> str:
+        return await self.for_ref(ref).assignee(ref)
+
+    async def assign(self, ref: str, person: str) -> bool:
+        return await self.for_ref(ref).assign(ref, person)
 
     def repo_of(self, ref: str) -> str:
         return self.for_ref(ref).repo_of(ref)
