@@ -266,7 +266,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
       onApproved();
     } else if (!shown.approving && shown.approve_error) {
       setWatching(false);
-      setError(`${shown.approve_error}. Approve again to carry on: a task already created is not made twice.`);
+      setError(`${shown.approve_error}. Approve again to go on: a task already created is not made twice.`);
     }
   }, [watching, shown, onApproved]);
 
@@ -482,7 +482,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
                 : "Starting its tasks."}
             </Text>
           </Group>
-          <Text size="sm" c="dimmed">Each task is written and checked before it is created, so this can take a few minutes. It carries on if you leave this page, and there is nothing more to press.</Text>
+          <Text size="sm" c="dimmed">Each task is written and checked before it is created, so this can take a few minutes. It keeps going if you leave this page, and there is nothing more to press.</Text>
         </Stack>
       </Modal>
       <Modal opened={asking === "approve" && !approving && canApprove} onClose={() => setAsking(null)} title="Approve the plan" size="lg">

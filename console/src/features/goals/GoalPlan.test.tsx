@@ -194,7 +194,7 @@ test("an approval that stops says why in the dialog, with what approving again d
 
   const error = await screen.findByTestId("approve-error", undefined, { timeout: 5000 });
   expect(error.textContent).toContain("the issue tracker refused after creating 1 of 3 issues: 403");
-  expect(error.textContent).toContain("Approve again to carry on: a task already created is not made twice.");
+  expect(error.textContent).toContain("Approve again to go on: a task already created is not made twice.");
   expect(screen.getByRole("button", { name: "Approve and start" })).toBeTruthy();
 }, 15000);
 
