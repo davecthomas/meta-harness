@@ -165,6 +165,37 @@ resource "google_compute_disk" "data" {
   }
 }
 
+# A snapshot of that disk every day, kept two weeks. The disk is the only copy of the tasks, goals, events,
+# spend and workflow history, so a corrupted file system or a bad migration costs a day at most.
+# deploy/README.md says how to restore from one. The snapshots outlive the disk.
+resource "google_compute_resource_policy" "data_snapshots" {
+  name   = "mh-data-daily"
+  region = var.region
+  snapshot_schedule_policy {
+    schedule {
+      daily_schedule {
+        days_in_cycle = 1
+        # UTC. Early morning in the Americas, when the fewest tasks run.
+        start_time = "09:00"
+      }
+    }
+    retention_policy {
+      max_retention_days    = 14
+      on_source_disk_delete = "KEEP_AUTO_SNAPSHOTS"
+    }
+    snapshot_properties {
+      storage_locations = [var.region]
+      labels            = { app = "meta-harness" }
+    }
+  }
+}
+
+resource "google_compute_disk_resource_policy_attachment" "data_snapshots" {
+  name = google_compute_resource_policy.data_snapshots.name
+  disk = google_compute_disk.data.name
+  zone = var.zone
+}
+
 # --- Identity --------------------------------------------------------------------------------------
 
 resource "google_service_account" "vm" {
