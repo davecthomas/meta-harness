@@ -700,6 +700,55 @@
     ],
     "type": "object"
   },
+  "overview_report_written v1": {
+    "additionalProperties": true,
+    "properties": {
+      "digest": {
+        "type": "string"
+      },
+      "finished": {
+        "type": "string"
+      },
+      "goals": {
+        "type": "integer"
+      },
+      "headline": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "moving": {
+        "type": "string"
+      },
+      "needs_you": {
+        "items": {
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "spend": {
+        "type": "string"
+      },
+      "through_position": {
+        "type": "integer"
+      },
+      "usd_cost": {
+        "type": "string"
+      },
+      "written_at": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "headline",
+      "digest",
+      "written_at",
+      "model",
+      "usd_cost"
+    ],
+    "type": "object"
+  },
   "plan_approved v1": {
     "additionalProperties": true,
     "properties": {

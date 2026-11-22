@@ -1,7 +1,8 @@
 """Model cost, harvested from the events that record it.
 
 A run's cost is its `attempt_finished` event: what the run's grant counted, the figure every other total in
-the meta-harness uses. The planner's own model calls are `goal_drafted`, `goal_titled` and `issue_sized`, and the
+the meta-harness uses. The planner's own model calls include `goal_drafted`, `goal_titled`, `issue_sized` and
+the Overview's `overview_report_written`, a planning cost of no goal. The
 writing pass's rewrites are `writing_checked`, a task's or, for a plan's issue, a goal's. Each harvest reads
 the events after the position the last one reached, and saves their costs with the new position in one
 transaction, so an event is counted once however a harvest ends.
@@ -20,8 +21,10 @@ from meta_harness.costs.store import Cost
 SOURCE = "model"
 EVENT_TYPES = (
     "attempt_finished,goal_drafted,goal_titled,goal_update_written,issue_sized,plan_fixes_assessed,"
-    "failure_diagnosed,split_drafted,task_names_written,writing_checked"
+    "failure_diagnosed,split_drafted,task_names_written,writing_checked,overview_report_written"
 )
+# The events whose own writing pass rides on them, as `writing`: its rewrite's cost is a writing cost.
+WRITING_RIDERS = ("goal_update_written", "overview_report_written")
 PAGE = 2000
 # The kind of cost a writing pass's rewrite is.
 WRITING = "writing"
@@ -115,7 +118,7 @@ def harvest(
             if usd:
                 costs.append(cost)
             # An update's own writing pass rides on its event: the rewrite's cost is a writing cost of the goal.
-            passed = payload.get("writing") if event["event_type"] == "goal_update_written" else None
+            passed = payload.get("writing") if event["event_type"] in WRITING_RIDERS else None
             if isinstance(passed, dict) and (rewrite_usd := Decimal(str(passed.get("usd_cost") or 0))):
                 engine, model = model_of(str(passed.get("model") or ""))
                 costs.append(replace(cost, item=WRITING, usd=rewrite_usd, model=model, engine=engine))

@@ -2633,6 +2633,7 @@ credential.
 | POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps. That happens at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold or removed. 409 for one not held or closed, or for a met or canceled goal. The route reads the issue from GitHub first and records it closed, and answers 502 when it cannot be read. Records `issue_released` | built |
 | POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label. A goal with no label holds them by ref. Each body must have acceptance checks and a `Paths:` line (422 names each part and what it lacks), and gets a `Split from` line. The original gets a comment naming its parts and closes once they are done. A refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps. One split already is refused (409), as is a closed one. One the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row. Each has its state (in review, waiting, blocked, merged, closed), when it was opened and reached that state, its fix rounds and latest run. It is merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting. The answer holds the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
+| GET | `/v1/overview/report` | Planner | The planner's latest report on all running goals (`planner/overview.py`): `report` (`headline`, `moving`, `needs_you` with each item's `goal_id`, `what` and `why`, `spend`, `finished`, `written_at`, `model`, `usd_cost`), `written`, `written_at`, `held` and `error`. With `since`, when the operator last looked, it first writes a new report when the goals' digest differs from the latest report's. `held` says why none was written although the goals changed: the latest is under `min_seconds` old, or the day's `max_usd` is spent, and it names when the latest was written. `error` says why a model call failed; the latest report stays. It reads only, and starts, stops or changes no goal | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
 | GET | `/v1/config` | Configuration, in the planner process | Every kind with its active version | built |
 | GET | `/v1/config/models` | Configuration, in the planner process | The models a tier candidate can name, as `<engine>:<model>`: every priced completions model in ai-api-unified's model registry, OpenAI's through `openai-responses`. A tier candidate's model select offers them | built |
@@ -3453,6 +3454,32 @@ least `min_seconds` apart. An update that asks something of the operator does
 not wait: it is replaced as soon as the goal moves. An approved plan's goal
 gets its update as soon as its first sweep has made its tasks. One that cannot be written is logged, said on the page,
 and tried again at the next pass.
+
+**The planner's Overview report** (`planner/overview.py`). The planner also
+writes one report across goals. It gathers the facts of every running goal,
+and of each that closed since the operator last looked: its latest update,
+what it waits on the operator for and why, its spend against its budget, and
+the events recorded on it since the last report. One model call through the
+HTTP Gateway turns them into a short report. It says which goals move and
+which do not, what the operator needs first and why, where spend stands
+against budgets, and what finished. The model is told to say only what the
+facts say, and the text goes through the writing pass as `own` text. A digest
+of the facts decides when to write, as for an update: each goal's status, its
+latest update's digest, its open issues, what it waits on the operator for,
+whether it is past its budget and whether it finished. Spend and recorded
+events are left out. `GET /v1/overview/report` returns the latest report. With
+`since`, it first writes a new one when the digest differs from the latest
+report's. Nothing else writes a report, so no report is written that no one
+asked for. The planning configuration's `overview` names the `model` (goal
+drafting's when left out), `max_response_tokens`, `min_seconds` between two
+reports, and `max_usd`, what reports may cost in a UTC day, the writing pass's
+rewrites included. The service checks them at startup. Past `max_usd` no model
+call is made: the latest report stays, and the answer says when it was
+written. Each report is an `overview_report_written` event carrying its text,
+digest, `model` and `usd_cost`. The cost harvest counts it as planning, of no
+goal. The planner reads the latest reports back from their events once at
+startup and keeps them in memory after that, so a report needs no table of its
+own. The report reads only: it starts, stops or changes no goal.
 
 **The planner's voice** (`planner/voice.py`). What the planner writes for the
 operator, its updates and a plan's summary and gaps, follows the planning

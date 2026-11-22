@@ -14,6 +14,7 @@
     GET        /v1/costs                      costs over time, by source, goal, model and more (costs/api.py)
     GET, PUT   /v1/me/settings                the signed-in user's own settings
     GET        /v1/activity                   every pull request opened lately, by state, for the Overview's row
+    GET        /v1/overview/report            the planner's report on all running goals (overview.py)
     GET        /health
 
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
@@ -64,6 +65,7 @@ from meta_harness.planner import (
     goal_costs,
     merge_checks,
     naming,
+    overview,
     plan_api,
     planning,
     plans,
@@ -265,6 +267,7 @@ def create_app(
     update_writer: updates.Writer | None = None,
     fix_assessor: suggestions.Assessor | None = None,
     namer: naming.Namer | None = None,
+    overview_writer: overview.Writer | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -605,6 +608,7 @@ def create_app(
     sizing.check_settings()
     costs_api.check_settings()
     planning.check_settings()
+    overview.check_settings()
     writing_rules.check_settings()
     charter.check_settings()
     draft = drafter or drafting.draft_goal
@@ -1588,6 +1592,7 @@ def create_app(
     budget_api.register(app, operator, load, change_with, events, tasks)
     sizing_api.register(app, operator, load, events, tracker, sweep_one)
     users.register(app, operator, events)
+    overview.register(app, operator, events, tasks, overview_writer)
 
     def admin(key: str = Depends(auth.bearer), role: str | None = Header(default=None, alias="X-MH-Role")) -> bool:
         """Whether the caller is an admin: an operator key is, and the edge names the role of who it acts for."""
