@@ -434,6 +434,22 @@ class JiraTracker:
         made = await self._call("POST", f"/issue/{key}/comment", json={"body": body})
         return f"{self._site().site}/browse/{key}?focusedCommentId={made['id']}" if made.get("id") else ""
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds an `h2.` section to the end of the issue's description, keeping what the description says. The
+        description is read as Jira holds it, in wiki markup, so the earlier text is written back unchanged."""
+        outbound.require(heading, "a section's heading", outbound.JIRA, title=True)
+        outbound.require(text, "a section of an issue's description", outbound.JIRA)
+        key = parse_ref(ref)
+        now = await self._call("GET", f"/issue/{key}", params={"fields": "description"})
+        earlier = (now.get("fields") or {}).get("description") or ""
+        # Its headings as the planner reads them (`h2.` as `##`); a heading it has already is refused.
+        check_section(ref, markdown(earlier), heading)
+        description = with_section(earlier, heading, text, mark="h2.")
+        await self.mark(ref)
+        await self._call("PUT", f"/issue/{key}", json={"fields": {"description": description}})
+        # What was read before holds the old description.
+        self._open.clear()
+
     async def set_status(self, ref: str, status: str) -> bool:
         """Moves the issue through its workflow: to the status the site's settings name for ours; else to one
         with the usual name for it (In Progress, Done, any name with "review"); else to one of the matching
@@ -502,21 +518,6 @@ class JiraTracker:
         link = {"globalId": pr_url, "object": {"url": pr_url, "title": title or pr_url}}
         await self.mark(ref)
         await self._call("POST", f"/issue/{key}/remotelink", json=link)
-
-    async def add_section(self, ref: str, heading: str, text: str) -> None:
-        """Reads the issue's description, adds the heading as Jira writes one (`h2. <heading>`, which the
-        planner reads as `## <heading>`) and the text at its end, and writes the description back."""
-        outbound.require(heading, "a section's heading", outbound.JIRA, title=True)
-        outbound.require(text, "a section of an issue's description", outbound.JIRA)
-        key = parse_ref(ref)
-        now = await self._call("GET", f"/issue/{key}", params={"fields": "description"})
-        description = (now.get("fields") or {}).get("description") or ""
-        check_section(ref, markdown(description), heading)
-        await self.mark(ref)
-        written = with_section(description, f"h2. {heading.strip()}", text)
-        await self._call("PUT", f"/issue/{key}", json={"fields": {"description": written}})
-        # What was read of the issue now lacks the section.
-        self._open.clear()
 
     async def choices(self, setting: str, scope: dict[str, str] | None = None) -> list[dict[str, str]]:
         """What the console offers for a setting, so a name is picked and not typed.

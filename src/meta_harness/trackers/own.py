@@ -144,6 +144,22 @@ class OwnTracker:
             await self.read(ref)
         return ""
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds a `## heading` section to the end of the issue's body, keeping what the body says. The body is
+        written only if no one changed it since it was read, so a change made meanwhile is not lost. A heading
+        the body has already is refused before anything is written."""
+        outbound.require(heading, "a section's heading", outbound.OWN, title=True)
+        outbound.require(text, "a section of an issue's body", outbound.OWN)
+        row = await asyncio.to_thread(self._one, ref)
+        check_section(ref, row["body"] or "", heading)
+        body = with_section(row["body"] or "", heading, text)
+        query = (
+            "UPDATE planner.own_issue SET body = %s, updated_at = now() "
+            "WHERE id = %s AND body IS NOT DISTINCT FROM %s RETURNING id"
+        )
+        if not await asyncio.to_thread(self._all, query, (body, row["id"], row["body"])):
+            raise TrackerError(f"{ref}'s body changed while a section was being added to it. Try again.")
+
     async def mark(self, ref: str) -> None:
         """Every issue here is the meta-harness's own: there is nothing to tell apart."""
         return None
@@ -163,26 +179,6 @@ class OwnTracker:
         query = "UPDATE planner.own_issue SET pr_url = %s, updated_at = now() WHERE id = %s RETURNING id"
         if not await asyncio.to_thread(self._all, query, (pr_url, parse_ref(ref))):
             await self.read(ref)
-
-    async def add_section(self, ref: str, heading: str, text: str) -> None:
-        """Adds `## <heading>` and the text at the end of the issue's body. The body is written only if it is
-        still the one read, so a section added at the same time is not lost."""
-        outbound.require(heading, "a section's heading", outbound.OWN, title=True)
-        outbound.require(text, "a section of an issue's description", outbound.OWN)
-        try:
-            row = await asyncio.to_thread(self._one, ref)
-        except ValueError as err:
-            raise TrackerError(str(err), retryable=False) from err
-        body = row["body"] or ""
-        check_section(ref, body, heading)
-        await self.mark(ref)
-        query = (
-            "UPDATE planner.own_issue SET body = %s, updated_at = now() "
-            "WHERE id = %s AND coalesce(body, '') = %s RETURNING id"
-        )
-        written = with_section(body, f"## {heading.strip()}", text)
-        if not await asyncio.to_thread(self._all, query, (written, row["id"], body)):
-            raise TrackerError(f"{ref}'s description changed while the section was being added: try again")
 
     def url(self, ref: str) -> str | None:
         """No page outside the console shows the issue."""

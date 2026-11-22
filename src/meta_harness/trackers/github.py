@@ -161,6 +161,18 @@ class GitHubTracker:
         )
         return str(made.get("html_url") or "")
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds a `## heading` section to the end of the issue's body, keeping what the body says. A heading
+        the body has already is refused before anything is written."""
+        outbound.require(heading, "a section's heading", outbound.GITHUB, title=True)
+        outbound.require(text, "a section of an issue's body", outbound.GITHUB)
+        repo, number = parse_ref(ref)
+        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
+        check_section(ref, now.get("body") or "", heading)
+        body = with_section(now.get("body") or "", heading, text)
+        await self.mark(ref)
+        await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json={"body": body})
+
     async def set_status(self, ref: str, status: str) -> bool:
         """A GitHub issue is open or closed, nothing between: done closes it, todo opens it again, and a status
         in progress or in review changes nothing. A pull request's `Closes` line closes its issue by itself
@@ -179,18 +191,6 @@ class GitHubTracker:
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Nothing to do: GitHub links a pull request to the issue its description's `Closes` line names."""
-
-    async def add_section(self, ref: str, heading: str, text: str) -> None:
-        """Reads the issue's body, adds `## <heading>` and the text at its end, and writes the body back."""
-        outbound.require(heading, "a section's heading", outbound.GITHUB, title=True)
-        outbound.require(text, "a section of an issue's description", outbound.GITHUB)
-        repo, number = parse_ref(ref)
-        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
-        body = now.get("body") or ""
-        check_section(ref, body, heading)
-        await self.mark(ref)
-        written = with_section(body, f"## {heading.strip()}", text)
-        await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json={"body": written})
 
     def bound(self, source: Source) -> "GitHubTracker":
         """A repo's issues are the repo's own: a goal's repos are all GitHub needs, and each call names one."""

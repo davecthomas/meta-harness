@@ -123,6 +123,18 @@ class Tracker(Protocol):
         """Adds a comment to the issue. Returns the comment's address, or "" when the tracker gives none."""
         ...
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds a section to the end of the issue's description: the heading on a line of its own, then the
+        text. The description it had is kept. Both come from `outbound.prepare`, the heading as a title and
+        the text as a body for this tracker, so a plain string is refused (TypeError).
+
+        Raises:
+            TrackerError: The tracker refused the change; the message gives its reason. Not retryable, and
+                nothing written, when the description already has a section with that heading or the heading
+                is not one line.
+        """
+        ...
+
     async def mark(self, ref: str) -> None:
         """Makes the issue carry the meta-harness's label (MARK_LABEL, or the deployment's). An adapter calls
         it itself before every write to an issue (a comment, a status, a pull request's link) and creates
@@ -137,17 +149,6 @@ class Tracker(Protocol):
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Records the pull request on the issue, where the tracker does not find it by itself."""
-        ...
-
-    async def add_section(self, ref: str, heading: str, text: str) -> None:
-        """Adds a section to the end of the issue's description: `## <heading>` (the tracker's own way of
-        writing it) and the text, the rest of the description left as it was. Both come from
-        `outbound.prepare`, the heading as a title. The adapter marks the issue before it writes.
-
-        Raises:
-            TrackerError: Not retryable, and nothing written, when the description already has a section
-                with that heading or the heading is not one line.
-        """
         ...
 
     def url(self, ref: str) -> str | None:
@@ -190,13 +191,20 @@ def check_section(ref: str, body: str, heading: str) -> None:
         )
 
 
-def with_section(body: str, heading_line: str, text: str) -> str:
-    """The description with a section added at its end, after a blank line; what was there before is kept as
-    it was. heading_line: the heading as the tracker writes one (`## Checks`, Jira's `h2. Checks`)."""
-    section = heading_line + "\n\n" + text.strip("\n") + "\n"
-    if not body:
-        return section
-    return body + ("\n" if body.endswith("\n") else "\n\n") + section
+def with_section(description: str, heading: str, text: str, mark: str = "##") -> str:
+    """A description with a section added at its end, for `Tracker.add_section`. mark starts the heading's line
+    in the tracker's markup: `##` in Markdown, `h2.` in Jira's. The earlier text is kept; only the blank space
+    at its end is trimmed, so one blank line comes before the new heading.
+
+    Raises:
+        ValueError: The heading is empty.
+    """
+    line = " ".join(heading.split())
+    if not line:
+        raise ValueError("a section's heading is empty: name the section")
+    section = f"{mark} {line}\n\n{text.strip()}\n"
+    earlier = description.rstrip()
+    return f"{earlier}\n\n{section}" if earlier else section
 
 
 def scheme_of(ref: str) -> str:
