@@ -308,6 +308,55 @@ async def test_a_cancel_request_stops_that_running_task(repo):
     assert canceled == [task_id]
 
 
+async def test_a_task_stopped_then_retried_is_stopped_again_when_asked(repo):
+    """The workflow id is the task's id, so a retried task runs under the id that was canceled before."""
+    tasks = Tasks()
+    task_id = tasks.add(repo, status="running")
+    tasks.tasks[task_id]["cancel_requested"] = True
+    canceled = []
+
+    async def cancel(task_id):
+        canceled.append(task_id)
+
+    admission, _ = _admission(tasks)
+    admission.cancel = cancel
+    await admission.pass_once()
+    # The cancel took effect, and an operator retried the task: it runs again, with nothing asked of it.
+    tasks.tasks[task_id].update(status="running", cancel_requested=False)
+    await admission.pass_once()
+    assert canceled == [task_id]
+
+    tasks.tasks[task_id]["cancel_requested"] = True
+    await admission.pass_once()
+    await admission.pass_once()
+    assert canceled == [task_id, task_id], "the second cancel reaches the workflow, once"
+
+
+async def test_the_kill_switch_stops_a_task_that_was_stopped_and_retried_before(repo):
+    from meta_harness.scheduler.admission import set_kill_switch
+
+    tasks = Tasks()
+    task_id = tasks.add(repo, status="running")
+    tasks.tasks[task_id]["cancel_requested"] = True
+    canceled = []
+
+    async def cancel(task_id):
+        canceled.append(task_id)
+
+    admission, _ = _admission(tasks)
+    admission.cancel = cancel
+    await admission.pass_once()
+    tasks.tasks[task_id].update(status="running", cancel_requested=False)
+    await admission.pass_once()
+
+    set_kill_switch(True, "test", "stop everything")
+    try:
+        await admission.pass_once()
+    finally:
+        set_kill_switch(False, "test", "lifted")
+    assert canceled == [task_id, task_id]
+
+
 async def test_each_operator_message_is_signaled_to_its_task_once_and_a_failed_one_waits(repo):
     tasks = Tasks()
     tasks.messages = [
