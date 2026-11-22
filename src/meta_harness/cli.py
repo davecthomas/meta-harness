@@ -111,11 +111,22 @@ def tasks() -> None:
     """The task service."""
 
 
+def _check_event_key() -> None:
+    """Stops a service that records events and has no key to send them with, naming the setting."""
+    from meta_harness.events.client import check_service_key
+
+    try:
+        check_service_key()
+    except RuntimeError as err:
+        raise click.ClickException(str(err)) from err
+
+
 @tasks.command("serve")
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--port", default=8302, show_default=True)
 def tasks_serve(host: str, port: int) -> None:
     """Run the task service and its Task API. Keys come from MH_TASK_API_KEYS and MH_SERVICE_KEYS."""
+    _check_event_key()
     import uvicorn
 
     from meta_harness.events.client import EventClient
@@ -241,6 +252,7 @@ def _planner_parts():
 @click.option("--port", default=8303, show_default=True)
 def planner_serve(host: str, port: int) -> None:
     """Run the planner service. It sweeps every active goal every MH_PLANNER_SWEEP_SECONDS."""
+    _check_event_key()
     import uvicorn
 
     from meta_harness.planner.service import create_app
@@ -499,6 +511,7 @@ def _admission():
 @click.option("--port", default=8304, show_default=True)
 def scheduler_serve(host: str, port: int) -> None:
     """Run the meta-harness scheduler: an admission pass every MH_ADMISSION_SECONDS."""
+    _check_event_key()
     import uvicorn
 
     from meta_harness.scheduler.service import create_app

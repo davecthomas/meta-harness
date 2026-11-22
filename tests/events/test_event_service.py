@@ -189,3 +189,49 @@ def _wait_for(condition, timeout: float = 10.0) -> None:
             return
         time.sleep(0.05)
     raise AssertionError("timed out waiting")
+
+
+def test_a_refused_batch_is_dropped_with_what_to_do_and_later_events_still_go(monkeypatch, caplog):
+    """A wrong service key made the outbox send one batch forever, and log that the service was unreachable."""
+    import httpx
+
+    from meta_harness.events import client as events_client
+
+    asked: list[int] = []
+    answers = [401, 200]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        status = answers[0] if len(asked) == 0 else answers[-1]
+        asked.append(status)
+        return httpx.Response(status, json={"detail": "unknown API key"} if status == 401 else {"positions": [1]})
+
+    made = EventClient("http://events.test", source="test")
+    made.http = httpx.Client(base_url="http://events.test", transport=httpx.MockTransport(handle))
+
+    with caplog.at_level("ERROR", logger=events_client.log.name):
+        made.emit("debug_ping", {"n": 1})
+        assert made.flush(5)
+        made.emit("debug_ping", {"n": 2})
+        assert made.flush(5)
+    made.close()
+
+    assert asked == [401, 200], "the refused batch is sent once, and the next one is not held behind it"
+    assert made.rejected == 1
+    [line] = [r.getMessage() for r in caplog.records if "refused" in r.getMessage()]
+    assert "with 401" in line and "MH_SERVICE_KEY" in line and "restart it" in line
+
+
+def test_a_service_with_no_key_to_send_stops_at_startup_by_name(monkeypatch):
+    from meta_harness.events.client import check_service_key
+
+    monkeypatch.setenv("MH_SERVICE_KEYS", "svc:a-long-service-key")
+    monkeypatch.delenv("MH_SERVICE_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="MH_SERVICE_KEY is not set while MH_SERVICE_KEYS is"):
+        check_service_key()
+
+    monkeypatch.setenv("MH_SERVICE_KEY", "a-long-service-key")
+    check_service_key()
+    # A local stack that sets no keys at all takes calls without one.
+    monkeypatch.delenv("MH_SERVICE_KEYS")
+    monkeypatch.delenv("MH_SERVICE_KEY")
+    check_service_key()
