@@ -2636,6 +2636,7 @@ credential.
 | POST, DELETE | `/v1/goals/{id}/issues`, `/v1/goals/{id}/issues/{ref}` | Planner | Add issues to the goal by ref, or remove one from it, with or without a task. A ref another goal holds is refused, naming that goal. Removing an issue cancels its task when the task has not ended, and answers `{dropped, task_canceled}`. A task with a pull request open is refused (409) unless `force=true`, which cancels the task and leaves the pull request open. The goal keeps the ref marked `dropped`, so its label never sweeps the issue back in. Adding it back by ref clears the mark, and another goal may take it meanwhile | built |
 | POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps. That happens at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold or removed. 409 for one not held or closed, or for a met or canceled goal. The route reads the issue from GitHub first and records it closed, and answers 502 when it cannot be read. Records `issue_released` | built |
 | POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label. A goal with no label holds them by ref. Each body must have acceptance checks and a `Paths:` line (422 names each part and what it lacks), and gets a `Split from` line. The original gets a comment naming its parts and closes once they are done. A refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps. One split already is refused (409), as is a closed one. One the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
+| POST | `/v1/goals/{id}/issues/fix-draft`, `/fix-accept` | Planner | Fix with AI for an issue the goal holds (`ref`). fix-draft: one model call drafts each part its sizing marks missing or doubted, as `drafts` (`part`, `heading`, `doubted`, `reason`, `text`). Nothing is written. Records `issue_fix_drafted`. fix-accept: `parts` (`part`, `text`) are added to the issue's description as sections, the issue is labeled and sized again (`issue_sized`). 409 while the issue's task has not ended, for a heading the description has already, or for a draft of an issue with nothing marked. 422 for an empty part. 502 when the issue cannot be read or the model call fails | built |
 | GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row. Each has its state (in review, waiting, blocked, merged, closed), when it was opened and reached that state, its fix rounds and latest run. It is merged or closed as its `pull_request_merged` and `pull_request_closed` events say, so a canceled task's pull request left open is waiting. The answer holds the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/overview/report` | Planner | The planner's latest Overview report on all running goals (`planner/overview.py`), null before the first. With `since`, an ISO 8601 time when the operator last looked, it first writes a new one when the goals' facts changed, unless the last is under `overview.min_seconds` old or the day's reports reached `overview.max_usd`. The answer's `written` says whether it wrote one, `note` why an older one is shown, and `error` why a new one could not be written | built |
 | POST | `/v1/overview/ask` | Planner | Answers `question`, the operator's question about the work, from the facts the Overview report is written from and the events of any goal or issue it names (`planner/overview.py`). `since` is optional, as for the report. Returns the `answer`, `in_record` (false when the record does not hold the answer), the goals and issues it read, its `model` and `usd_cost`. 429 with when it resets once the day's reports and answers reached `overview.max_usd` | built |
@@ -2902,6 +2903,26 @@ After sizing:
 - A held issue edited since it was sized is sized again on the next sweep. So
   adding what it lacked, or cutting it down, lets it go. A split one is
   not.
+- Fix with AI fills in what the sizing marks missing or doubted
+  (`planner/fix_issue.py`). `POST /v1/goals/{id}/issues/fix-draft` makes one
+  model call, on the model `config/planner.json`'s `issue_fixing` names. It
+  reads the issue's text, the paths the goal's other issues in that repo
+  name, and the repo registry's default checks. It answers each marked part
+  as the text of a section: acceptance checks, a `Paths:` line, or a testable
+  outcome. It writes nothing and records `issue_fix_drafted`, a planning cost
+  of the goal. `POST /v1/goals/{id}/issues/fix-accept` takes the operator's
+  edited text per part. It adds each part to the end of the issue's
+  description (`Tracker.add_section`), through `outbound.prepare` as a
+  person's words, with the goal and the operator as provenance. A missing part
+  goes under the heading the planner reads (`Acceptance checks`, `Paths`,
+  `Outcome`). A doubted one goes under `More acceptance checks` or
+  `More paths`, since a description takes a heading once. The issue is then
+  labeled as the meta-harness's and sized again, recorded as `issue_sized`.
+  An active goal is swept at once, so a strict goal's held issue can run. A
+  heading the description has already is refused (409) before anything is
+  written. Both routes refuse (409) an issue whose task has not ended
+  (`closed`, `failed` or `canceled`): its run read the issue already. A model
+  call that fails after its retries answers 502, and nothing changes.
 - The size is stored on the task as its `complexity` (small `low`, medium
   `medium`, large `high`, which also sets the router's `complex` floor). The
   task's `max_usd` is the issue's own `Spend limit: $N` line, else the
@@ -4052,10 +4073,11 @@ routes and harvest loop run in the planner's process for now, as the
 configuration API does. Every `MH_COSTS_HARVEST_SECONDS` (300; 0 turns it off;
 checked at startup) it reads each source into `costs.daily_cost`. Model cost
 comes from the event service. It is each run's `attempt_finished` and the
-planner's own model calls: `goal_drafted`, `goal_titled` and `issue_sized`,
-each a planning cost of its goal. A goal proposal (`POST /v1/goals/enrich`)
-has no event: the planner writes its cost into `costs.daily_cost` itself,
-with no harvest position (`costs.store.record`). The harvest reads them from the position the
+planner's own model calls: `goal_drafted`, `goal_titled`, `issue_sized` and
+`issue_fix_drafted`, each a planning cost of its goal. A goal proposal
+(`POST /v1/goals/enrich`) has no event: the planner writes its cost into
+`costs.daily_cost` itself, with no harvest position (`costs.store.record`).
+The harvest reads them from the position the
 last one reached. It saves them with the new position in one transaction, so
 an event is counted once. Cloud cost comes from the Google Cloud billing
 export in BigQuery, by billed service. Each harvest reads again the last 35
