@@ -738,6 +738,37 @@
     ],
     "type": "object"
   },
+  "overview_report_written v1": {
+    "additionalProperties": true,
+    "properties": {
+      "digest": {
+        "type": "string"
+      },
+      "goals": {
+        "type": "integer"
+      },
+      "headline": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "usd_cost": {
+        "type": "string"
+      },
+      "written_at": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "digest",
+      "headline",
+      "model",
+      "usd_cost",
+      "written_at"
+    ],
+    "type": "object"
+  },
   "plan_approved v1": {
     "additionalProperties": true,
     "properties": {

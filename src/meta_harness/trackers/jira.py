@@ -436,7 +436,9 @@ class JiraTracker:
 
     async def add_section(self, ref: str, heading: str, text: str) -> None:
         """Adds an `h2.` section to the end of the issue's description, keeping what the description says. The
-        description is read as Jira holds it, in wiki markup, so the earlier text is written back unchanged."""
+        description is read as Jira holds it, in wiki markup, so the earlier text is written back unchanged. A
+        description whose headings, read back as Markdown, have the heading already is refused before anything
+        is written."""
         outbound.require(heading, "a section's heading", outbound.JIRA, title=True)
         outbound.require(text, "a section of an issue's description", outbound.JIRA)
         key = parse_ref(ref)

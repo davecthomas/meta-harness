@@ -42,6 +42,12 @@
       "max_per_goal": 60,
       "min_seconds": 90
     },
+    "overview": {
+      "model": "claude:claude-haiku-4-5",
+      "max_response_tokens": 900,
+      "min_seconds": 300,
+      "max_usd": "1.00"
+    },
     "voice": {
       "tone": "casual",
       "detail": "low"
