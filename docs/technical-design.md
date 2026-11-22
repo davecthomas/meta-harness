@@ -3354,8 +3354,9 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
 #### Who an issue is assigned to
 
 Status: built (VL-14260). The planner assigns the issues it creates and
-starts (`planner/assignees.py`). `create_issue` does not take an assignee
-yet, so an issue is assigned by a second call right after it is created.
+starts (`planner/assignees.py`) with each tracker's `assign` call.
+`create_issue` does not take an assignee yet, so an issue is assigned by a
+second call right after it is created.
 
 **Who.** `assignees.person_for` works it out, the first of these that
 applies:
@@ -3364,8 +3365,10 @@ applies:
    applies only to an issue there. A task a plan keeps in the meta-harness
    goes to the owner.
 2. The goal's owner (`goal.created_by`), when the tracker knows a person with
-   that email: the one person `choices("assignee")` lists with it, as the id
-   or as a label ending in `(email)`. On the own tracker the email is the id.
+   that email: the one person `people(repo)` lists with it for the issue's
+   own repo, as the id or as a label ending in `(email)`. A tracker without
+   `people` is asked for `choices("assignee")`. On the own tracker the email
+   is the id.
 3. Nobody. The issue is left unassigned and the planner logs why.
 
 The answer is kept for ten minutes for each goal, tracker and repo, so the
@@ -3416,7 +3419,8 @@ on the first issue, with the action that opens it.
   GitHub lists the repo's assignable logins. Jira lists the account ids of
   the bound goal's project, with the display name and the email where Jira
   shows it, and none when no project is bound. The own tracker lists the
-  console users who may sign in, by email, for any repo.
+  console users who may sign in, by email, for any repo. The planner
+  matches the goal's owner among them.
 - Built: `choices("assignee", scope)` offers those people for the goal
   setting. GitHub takes the scope's `repos` (comma-separated) and lists the
   logins every one of them can assign. Jira takes `project`. It serves the

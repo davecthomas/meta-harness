@@ -33,19 +33,19 @@ class AssigningTracker(WritingTracker):
     def __init__(self):
         super().__init__()
         # The people who can be assigned, by id, with their name and email as Jira shows them.
-        self.people = {"dave-gh": f"Dave ({OWNER})", "ana": "Ana (ana@example.com)"}
+        self.listed = {"dave-gh": f"Dave ({OWNER})", "ana": "Ana (ana@example.com)"}
         self.assigned: dict[str, str] = {}
         self.assign_calls: list[tuple[str, str]] = []
 
     async def choices(self, setting, scope=None):
-        return [{"value": person, "label": label} for person, label in self.people.items()]
+        return [{"value": person, "label": label} for person, label in self.listed.items()]
 
     async def assignee(self, ref):
         return self.assigned.get(ref, "")
 
     async def assign(self, ref, person):
         self.assign_calls.append((ref, person))
-        if person not in self.people:
+        if person not in self.listed:
             raise unknown_person(ref, person, "the people who can be assigned issues")
         if self.assigned.get(ref):
             return False
