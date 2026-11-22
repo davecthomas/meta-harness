@@ -36,17 +36,25 @@ class WritingTracker(FakeTracker):
         self.next = 1_000_000 + uuid.uuid4().int % 10**15
         # Refuse the nth create_issue call (from 1) once, as GitHub would.
         self.refuse_at: int | None = None
+        # The parent each create_issue call named, None for none; refuse_parent: create without it, as Jira does
+        # a parent it will not take.
+        self.parents: list[str | None] = []
+        self.refuse_parent = False
 
     async def ensure_label(self, repo, label):
         self.labels.append((repo, label))
 
-    async def create_issue(self, repo, title, body, labels):
+    async def create_issue(self, repo, title, body, labels, parent=None):
         if self.refuse_at == len(self.created) + 1:
             self.refuse_at = None
             raise TrackerError("403 Resource not accessible by integration", retryable=False, status=403)
+        self.parents.append(parent)
         self.next += 1
         ref = f"github:{repo}#{self.next}"
-        issue = Issue(ref=ref, repo=repo, number=self.next, title=title, body=body, labels=list(labels), state="open")
+        kept = None if self.refuse_parent else parent
+        issue = Issue(
+            ref=ref, repo=repo, number=self.next, title=title, body=body, labels=list(labels), state="open", parent=kept
+        )
         self.issues[ref] = issue
         self.created.append(issue)
         return issue
@@ -198,6 +206,55 @@ def test_approving_creates_the_issues_in_order_with_the_goals_label_and_starts_t
     assert "plan_approved" in events.types()
     # The plan is settled: it is read, not changed.
     assert client.put(f"/v1/goals/{goal['id']}/plan", json={"drafts": []}, headers=OPERATOR).status_code == 409
+
+
+# The goal's parent: the issue its plan's issues are created under, such as a Jira epic.
+PARENT = "github:davecthomas/meta-harness#900"
+
+
+def test_a_plans_issues_are_created_under_the_goals_parent(world):
+    client, events, tracker, tasks = world
+    goal = _feature(client, tracker_settings={"parent": PARENT})
+    _planned(client, events, tasks, goal, [draft("api", ("store",)), draft("store")])
+
+    approved = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+
+    assert approved.status_code == 200, approved.text
+    assert tracker.parents == [PARENT, PARENT]
+    assert [i.parent for i in tracker.created] == [PARENT, PARENT]
+    assert "issue_parent_refused" not in events.types()
+
+
+def test_a_goal_that_names_no_parent_creates_its_plans_issues_with_none(world):
+    client, events, tracker, tasks = world
+    goal = _feature(client)
+    _planned(client, events, tasks, goal, [draft("store")])
+
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+
+    assert tracker.parents == [None] and tracker.created[0].parent is None
+    assert "issue_parent_refused" not in events.types()
+
+
+def test_a_parent_the_tracker_refuses_leaves_the_issue_created_and_records_what_to_do(world):
+    client, events, tracker, tasks = world
+    tracker.refuse_parent = True
+    goal = _feature(client, tracker_settings={"parent": PARENT})
+    _planned(client, events, tasks, goal, [draft("store")])
+
+    approved = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+
+    assert approved.status_code == 200, approved.text
+    [issue] = tracker.created
+    [refused] = [p for t, p in events.events if t == "issue_parent_refused"]
+    assert (refused["ref"], refused["parent"], refused["from_ref"], refused["goal_id"]) == (
+        issue.ref,
+        PARENT,
+        "",
+        goal["id"],
+    )
+    assert f"Set its parent to {PARENT} in the tracker" in refused["action"]
+    assert client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "active"
 
 
 def test_an_approval_github_interrupts_carries_on_without_making_an_issue_twice(world):
