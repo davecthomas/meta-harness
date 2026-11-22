@@ -3354,7 +3354,11 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
   `issue_parent_refused` names the issue, the parent and what to do, as for
   a split (its `from_ref` is the issue the plan split, empty for a new task).
   The New goal form lists the parents of the chosen project, and asks for none
-  before a project is chosen.
+  before a project is chosen. The goal page shows a Jira goal's parent by the
+  name the list gives it, and marks one that is no longer an open epic of the
+  project, since Jira may then refuse it. A GitHub goal or one in the own
+  tracker has no parent setting, and its plan's issues are created as before.
+  `tests/planner/test_plan_parent.py` proves the approval against a mock Jira.
 
 #### Who an issue is assigned to
 
