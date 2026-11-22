@@ -244,6 +244,9 @@ class Supervisor:
                     if status in ("failed", "review_unresolved")
                     else {}
                 ),
+                start_over_left=status in ("ready", "review_unresolved")
+                and pull_state == "open"
+                and await asyncio.to_thread(_start_over_left, task),
                 raise_left=task.get("waiting_on") == "budget" and await asyncio.to_thread(self._may_raise, task, goal),
                 clean_review=status == "review_unresolved"
                 and (failures.clean_blocked(task.get("status_reason")) or passed_head),
@@ -502,6 +505,11 @@ def last_tier(events: Events, task_id: str) -> str:
     """The tier the task's last route picked, from its task_routed events; empty when it was never routed."""
     found = events.read(0, 500, task_id=task_id, event_type="task_routed").get("events") or []
     return str((found[-1].get("payload") or {}).get("tier") or "") if found else ""
+
+
+def _start_over_left(task: dict) -> bool:
+    """Whether the supervisor may still start the task over: the task policy's tries, less those in the ledger."""
+    return ledger.tries(task["id"], "start_over") < remedy_tries(routing.task_policy(), "start_over")
 
 
 # How often the merge is asked for at one commit when each refusal was only a check still running.

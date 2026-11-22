@@ -46,6 +46,7 @@ ACTIONS = (
     "retry_stronger",
     "fix_again",
     "raise_limit",
+    "start_over",
 )
 # Where the issues a blocked task waits on stand. open: each is being worked, or will be. stuck: one's task
 # failed, was canceled or ended unresolved, and waits on an operator. unheld: one is in no goal, so nothing
@@ -68,6 +69,7 @@ ASKED_FIRST = {
     "retry": ("retry it", "retry"),
     "retry_stronger": ("retry it with a stronger model", "retry_stronger"),
     "fix_again": ("give its review one more set of fix rounds on a stronger model", "retry_stronger"),
+    "start_over": ("close its pull request and start it over on the current base", "start_over"),
 }
 
 
@@ -112,6 +114,8 @@ class Facts:
     # review the fixes did not settle.
     stronger_left: bool = False
     fix_again_left: bool = False
+    # Whether the task may still be started over on the current base by the supervisor: once per task.
+    start_over_left: bool = False
     # For an unresolved task: its last review came back clean, and only a conflict with its base kept it from
     # merging (failures.clean_blocked).
     clean_review: bool = False
@@ -440,11 +444,20 @@ def _parked(facts: Facts) -> Decision:
                 "its review loop ended without a clean review, and its pull request conflicts with its base",
                 action="review",
             )
+        if facts.goal in SWEPT and facts.start_over_left:
+            return _start_over(
+                "review_unresolved_conflict",
+                "its pull request conflicts with its base, and the fix runs sent to resolve that did not",
+            )
         return Decision(
             "operator",
             "review_unresolved_conflict",
             "its review loop ended without a clean review, and its pull request conflicts with its base",
             ask="Resolve the conflict and merge: a fix run resolves it, and it merges once a review is clean.",
+        )
+    if facts.status == "review_unresolved" and facts.goal in SWEPT and facts.start_over_left:
+        return _start_over(
+            "review_unresolved", "its review loop ended without a clean review, and its fix rounds are used up"
         )
     if facts.status == "review_unresolved":
         return Decision(
@@ -471,6 +484,12 @@ def _parked(facts: Facts) -> Decision:
         else "its review is clean and its pull request is open, and it has no goal to merge it",
         ask="Merge the pull request, on the code host or with Merge on the task's page.",
     )
+
+
+def _start_over(situation: str, why: str) -> Decision:
+    """The last step the supervisor takes by itself for a task parked at a pull request that is going nowhere:
+    start it over on the base as it is now, once (remedies/start_over.py)."""
+    return Decision("supervisor", situation, f"{why}, so it is started over on the current base", action="start_over")
 
 
 def _to_merge(facts: Facts) -> Decision:
@@ -521,6 +540,8 @@ def _to_merge(facts: Facts) -> Decision:
         "conflict": ("merge_conflict", "its pull request conflicts with its base", "merge"),
         "checks_failed": ("merge_checks_failed", "its pull request's checks failed after its review", "review"),
     }[how]
+    if not facts.drives_left and how == "conflict" and facts.start_over_left:
+        return _start_over("merge_conflict", f"{what[1]}, and the fix runs sent to resolve that did not")
     if not facts.drives_left:
         return Decision(
             "operator",

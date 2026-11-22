@@ -19,6 +19,7 @@
     "fix_again": 1,
     "raise_limit": 1,
     "auto_split": 1,
-    "rerun_checks": 1
+    "rerun_checks": 1,
+    "start_over": 1
   }
 }

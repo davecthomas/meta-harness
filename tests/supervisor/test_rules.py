@@ -183,6 +183,33 @@ def test_a_clean_pull_request_is_merged_whatever_the_tries_and_once_per_commit()
     assert not failures.merge_waits_on_checks("405: At least 1 approving review is required")
 
 
+def test_a_pull_request_going_nowhere_is_started_over_on_the_current_base_once_before_anyone_is_asked():
+    """On 2026-11-22 three tasks sat unresolved behind conflicts their fix runs had not resolved, their tries
+    used up, and six more waited on them: each needed a person to press Start over."""
+    conflicted = Facts(
+        "review_unresolved", pull="open", goal="active", mergeable="conflict", drives_left=False, start_over_left=True
+    )
+    over = decide(conflicted)
+    assert (over.owner, over.action, over.situation) == ("supervisor", "start_over", "review_unresolved_conflict")
+    assert "started over on the current base" in over.reason
+    # A review that never came clean, with its fix rounds and its stronger model used: the same last step.
+    spent = Facts("review_unresolved", pull="open", goal="active", mergeable="clean", start_over_left=True)
+    assert decide(spent).action == "start_over"
+    # A ready task whose conflict the fix runs did not resolve.
+    assert decide(_ready("conflict", drives_left=False, start_over_left=True)).action == "start_over"
+
+    # Once is all: after it, the task is an operator's, as before.
+    assert decide(dataclasses.replace(conflicted, start_over_left=False)).owner == "operator"
+    assert decide(_ready("conflict", drives_left=False)).situation == "merge_tries_used"
+    # Tries it still has come first: a start-over is the last step, not the first.
+    assert decide(dataclasses.replace(conflicted, drives_left=True)).action == "review"
+    # A goal that asks first is offered it as the first button.
+    asked = decide(dataclasses.replace(conflicted, autonomy="ask"))
+    assert asked.owner == "operator" and asked.moves[0] == "start_over" and "start it over" in asked.ask
+    # Not for a goal that is not being worked.
+    assert decide(dataclasses.replace(conflicted, goal="paused")).action != "start_over"
+
+
 def test_the_supervisors_own_tries_are_bounded_and_then_an_operator_is_asked():
     for how in ("conflict", "checks_failed"):
         spent = decide(_ready(how, drives_left=False))

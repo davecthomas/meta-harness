@@ -379,6 +379,36 @@ async def test_a_pull_request_the_code_host_would_take_is_merged_once_per_commit
     assert "refused it when the Task Shepherd asked" in refused["reason"]
 
 
+async def test_an_unresolved_task_behind_a_conflict_is_started_over_once_then_is_an_operators(world):
+    supervisor, tasks, _, _, host = world
+    task = tasks.add(
+        "review_unresolved",
+        pr_url=f"https://github.com/{REPO}/pull/41",
+        goal_id=_auto_merge_goal(),
+        drives=3,
+        status_reason="fix round 1 changed nothing",
+    )
+    host.pulls, host.raw = {41: "open"}, {41: {"mergeable": False, "mergeable_state": "dirty"}}
+
+    await supervisor.pass_once()
+
+    assert [(t, a, spent) for t, a, _, spent in tasks.driven] == [(task["id"], "restart", "0")]
+    assert tasks.uncounted == [task["id"]], "a start-over is none of the tries the task had"
+    with db.connect(autocommit=True) as conn:
+        row = conn.execute(
+            "SELECT remedy, did, next FROM supervisor.remedy WHERE task_id = %s", (task["id"],)
+        ).fetchone()
+    assert row[0] == "start_over" and "started it over on the current base" in row[1] and "I will ask you" in row[2]
+
+    # The fresh run did not come clean either, and conflicts again: that was the one start-over.
+    task.update(status="review_unresolved", drives=3)
+    supervisor.forget_reads(task["id"])
+    await supervisor.pass_once(datetime.now(UTC) + timedelta(hours=8))
+    assert len(tasks.driven) == 1
+    stuck = _standing(task["id"])
+    assert (stuck["owner"], stuck["situation"]) == ("operator", "review_unresolved_conflict")
+
+
 async def test_checks_that_never_report_are_an_operators_after_a_day(world):
     supervisor, tasks, _, _, host = world
     task = tasks.add("ready", pr_url=f"https://github.com/{REPO}/pull/31", goal_id=_auto_merge_goal())
