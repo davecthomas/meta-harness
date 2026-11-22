@@ -1,144 +1,239 @@
-# Created by the meta-harness in run t-6bac325712f8:run-1 on harness:pi-careful/claude:claude-opus-5-5.
+# Created by the meta-harness in run t-c5871d1caed3:run-1 on harness:pi-careful/claude:claude-opus-5-5.
 
-"""A section added to an issue's description: appended, the rest unchanged, and never written twice."""
+"""Each adapter adds a section to an issue's description, keeping what it said and never writing a heading
+twice, against a fake HTTP service."""
 
 import json
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from meta_harness import outbound
-from meta_harness.trackers import GitHubTracker, Source, TrackerError, Trackers
-from meta_harness.trackers.base import with_section
+from meta_harness.github_app import AppConfig, GitHubApps
+from meta_harness.trackers import GitHubTracker, OwnTracker, TrackerError, Trackers
+from meta_harness.trackers.base import refuse_twice, with_section
 from meta_harness.trackers.jira import JiraTracker, Site, markdown
-from meta_harness.trackers.own import OwnTracker
 
-REF = "github:o/r#7"
-ISSUE = {"number": 7, "title": "Fix it", "body": "", "state": "open", "labels": []}
-
-
-class Apps:
-    """GitHub as the adapter calls it: what it was asked, and what it answers by method and path."""
-
-    def __init__(self, answers: dict | None = None) -> None:
-        self.calls: list[tuple] = []
-        self.answers = answers or {}
-
-    async def call(self, repo, permissions, method, path, **kwargs):
-        self.calls.append((permissions, method, path, kwargs.get("json")))
-        return self.answers.get((method, path), {})
+SITE = "https://example.atlassian.net"
+EARLIER = "Build the store.\n\n## Acceptance checks\n\n- make test\n\nPaths: src/store\n"
 
 
-class Jira:
-    """Jira's REST API as a mock transport: what the adapter asked, and what each method and path answers."""
+async def prepared(destination: str, heading: str, text: str) -> tuple[outbound.Checked, outbound.Checked]:
+    """A heading and a text as a caller passes them: through the outbound pipeline, for the destination."""
+    return (
+        await outbound.prepare(heading, outbound.Context(destination, outbound.TITLE, outbound.FIXED)),
+        await outbound.prepare(text, outbound.Context(destination, outbound.BODY, outbound.FIXED)),
+    )
 
-    def __init__(self, answers: dict | None = None) -> None:
+
+class Service:
+    """A fake HTTP service: what it was asked, and what it answers by method and path. An answer may be a
+    function of the request's body."""
+
+    def __init__(self, answers: dict) -> None:
         self.asked: list[tuple[str, str, dict | None]] = []
-        self.answers = answers or {}
+        self.answers = answers
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content) if request.content else None
         self.asked.append((request.method, request.url.path, body))
-        return httpx.Response(200, json=self.answers.get((request.method, request.url.path), {}))
+        answer = self.answers.get((request.method, request.url.path))
+        if callable(answer):
+            answer = answer(body)
+        if answer is None:
+            return httpx.Response(404, json={"message": "Not Found"})
+        return answer if isinstance(answer, httpx.Response) else httpx.Response(200, json=answer)
+
+    def sent(self, method: str, path: str) -> list[dict | None]:
+        return [body for m, p, body in self.asked if (m, p) == (method, path)]
 
 
-def tracker(jira: Jira) -> JiraTracker:
-    site = Site(site="https://example.atlassian.net")
-    adapter = JiraTracker("bot@example.com", "t", site=lambda: site, transport=httpx.MockTransport(jira))
-    return adapter.bound(Source(("o/r",), {"project": "VL"}))
+@pytest.fixture
+def key_file(tmp_path):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    path = tmp_path / "app.pem"
+    path.write_bytes(
+        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
+    return path
 
 
-def issue(key: str, description: str) -> dict:
-    return {"key": key, "fields": {"summary": "Fix it", "description": description, "labels": []}}
+def github(key_file, answers: dict) -> tuple[GitHubTracker, Service]:
+    token = {"token": "tok", "expires_at": "2099-01-01T00:00:00Z"}
+    service = Service(
+        {
+            ("GET", "/repos/o/r/installation"): {"id": 42},
+            ("POST", "/app/installations/42/access_tokens"): httpx.Response(201, json=token),
+            **answers,
+        }
+    )
+    apps = GitHubApps({"o": AppConfig("o", "1", key_file)}, transport=httpx.MockTransport(service))
+    return GitHubTracker(apps, label=lambda: "bot"), service
 
 
-BODY = "Fix it.\n\nPaths: src/store\nDepends on: #3"
-CHECKS = outbound.trusted("- `uv run pytest -q`\n")
+def jira(answers: dict) -> tuple[JiraTracker, Service]:
+    service = Service(answers)
+    site = Site(site=SITE)
+    return JiraTracker("bot@example.com", "t", lambda: site, httpx.MockTransport(service), label=lambda: "bot"), service
 
 
-async def test_the_github_adapter_appends_the_section_after_labeling_the_issue():
-    apps = Apps({("GET", "/repos/o/r/issues/7"): {**ISSUE, "body": BODY}})
+async def test_github_appends_the_section_to_the_issue_body_and_keeps_the_earlier_text(key_file):
+    issue = {"number": 7, "title": "Fix it", "body": EARLIER, "state": "open", "labels": []}
+    tracker, service = github(
+        key_file,
+        {
+            ("GET", "/repos/o/r/issues/7"): issue,
+            ("POST", "/repos/o/r/issues/7/labels"): [],
+            ("PATCH", "/repos/o/r/issues/7"): issue,
+        },
+    )
+    heading, text = await prepared(outbound.GITHUB, "Accepted draft", "Store the rows in Postgres.")
 
-    await GitHubTracker(apps).add_section(REF, "Acceptance checks", CHECKS)
+    await tracker.add_section("github:o/r#7", heading, text)
 
-    assert [call[1:3] for call in apps.calls] == [
-        ("GET", "/repos/o/r/issues/7"),
-        ("POST", "/repos/o/r/issues/7/labels"),
-        ("PATCH", "/repos/o/r/issues/7"),
-    ]
-    written = apps.calls[-1][3]["body"]
-    assert written == f"{BODY}\n\n## Acceptance checks\n\n- `uv run pytest -q`\n"
-    assert written.startswith(BODY), "the rest of the description is unchanged"
-
-
-async def test_the_jira_adapter_appends_a_wiki_heading_that_reads_back_as_the_section():
-    description = "Make it so.\n\nh2. Paths\nconsole\n"
-    jira = Jira({("GET", "/rest/api/2/issue/VL-7"): issue("VL-7", description=description)})
-
-    await tracker(jira).add_section("jira:VL-7", "Acceptance checks", CHECKS)
-
-    assert [(method, path) for method, path, _ in jira.asked] == [
-        ("GET", "/rest/api/2/issue/VL-7"),
-        ("PUT", "/rest/api/2/issue/VL-7"),
-        ("PUT", "/rest/api/2/issue/VL-7"),
-    ]
-    assert jira.asked[1][2] == {"update": {"labels": [{"add": "ai:meta-harness"}]}}, "labeled first"
-    written = jira.asked[2][2]["fields"]["description"]
-    assert written == f"{description}\nh2. Acceptance checks\n\n- `uv run pytest -q`\n"
-    assert written.startswith(description), "the rest of the description is unchanged"
-    assert "## Acceptance checks" in markdown(written)
+    [patch] = service.sent("PATCH", "/repos/o/r/issues/7")
+    assert patch == {"body": f"{EARLIER}\n## Accepted draft\n\nStore the rows in Postgres.\n"}
+    assert patch["body"].startswith(EARLIER), "the earlier text is kept as it was"
+    assert service.sent("POST", "/repos/o/r/issues/7/labels") == [{"labels": ["bot"]}], "labeled before the write"
 
 
-async def test_the_router_sends_the_section_to_the_tracker_the_ref_names():
-    apps = Apps({("GET", "/repos/o/r/issues/7"): {**ISSUE, "body": BODY}})
-    trackers = Trackers([GitHubTracker(apps)], default=lambda: "github")
+async def test_github_gives_its_refusal_as_a_tracker_error_with_its_reason(key_file):
+    issue = {"number": 7, "title": "Fix it", "body": EARLIER, "state": "open", "labels": []}
+    refused = httpx.Response(422, json={"message": "body is too long (maximum is 65536 characters)"})
+    tracker, _ = github(
+        key_file,
+        {
+            ("GET", "/repos/o/r/issues/7"): issue,
+            ("POST", "/repos/o/r/issues/7/labels"): [],
+            ("PATCH", "/repos/o/r/issues/7"): refused,
+        },
+    )
+    heading, text = await prepared(outbound.GITHUB, "Accepted draft", "More.")
 
-    await trackers.add_section(REF, "Acceptance checks", CHECKS)
-
-    assert apps.calls[-1][1:3] == ("PATCH", "/repos/o/r/issues/7")
-
-
-async def test_a_plain_string_is_refused_by_every_adapter_before_any_call():
-    apps, jira = Apps(), Jira()
-    adapters = [
-        (GitHubTracker(apps), REF),
-        (tracker(jira), "jira:VL-7"),
-        (OwnTracker(connect=lambda: pytest.fail("no call is made")), "mh:i-000000000000"),
-    ]
-
-    for adapter, ref in adapters:
-        with pytest.raises(TypeError, match="must come through the outbound pipeline"):
-            await adapter.add_section(ref, "Acceptance checks", "- make test")
-    assert apps.calls == [] and jira.asked == []
+    with pytest.raises(TrackerError, match="body is too long") as failed:
+        await tracker.add_section("github:o/r#7", heading, text)
+    assert (failed.value.status, failed.value.retryable) == (422, False)
 
 
-async def test_a_text_prepared_for_another_tracker_is_refused():
-    for_jira = outbound.Checked("- make test", context=outbound.Context(outbound.JIRA))
+async def test_jira_appends_the_section_to_the_description_in_wiki_markup_and_keeps_the_earlier_text():
+    earlier = "Make it so.\n\nh2. Acceptance checks\n* {{uv run pytest -q}}\n"
+    tracker, service = jira(
+        {
+            ("GET", "/rest/api/2/issue/VL-7"): {"key": "VL-7", "fields": {"description": earlier}},
+            ("PUT", "/rest/api/2/issue/VL-7"): httpx.Response(204),
+        }
+    )
+    heading, text = await prepared(outbound.JIRA, "Accepted draft", "Store the rows in Postgres.")
 
-    with pytest.raises(TypeError, match="prepared for jira"):
-        await GitHubTracker(Apps()).add_section(REF, "Acceptance checks", for_jira)
+    await tracker.add_section("jira:VL-7", heading, text)
+
+    puts = service.sent("PUT", "/rest/api/2/issue/VL-7")
+    assert puts[0] == {"update": {"labels": [{"add": "bot"}]}}, "labeled before the write"
+    description = puts[1]["fields"]["description"]
+    assert description == f"{earlier}\nh2. Accepted draft\n\nStore the rows in Postgres.\n"
+    assert description.startswith(earlier), "the earlier text is written back as Jira held it"
+    assert "## Accepted draft" in markdown(description), "the wiki heading reads back as the section"
 
 
-@pytest.mark.parametrize("heading", ["Acceptance checks", "acceptance checks", "  Acceptance checks "])
-async def test_a_heading_the_description_has_is_refused_and_nothing_is_written(heading):
-    held = f"{BODY}\n\n### Acceptance Checks\n\n- make test\n"
-    apps = Apps({("GET", "/repos/o/r/issues/7"): {**ISSUE, "body": held}})
-    jira = Jira({("GET", "/rest/api/2/issue/VL-7"): issue("VL-7", description="Do it.\nh2. Acceptance checks\n* x")})
+async def test_jira_gives_its_refusal_as_a_tracker_error_with_its_reason():
+    refused = httpx.Response(400, json={"errors": {"description": "The entered text is too long."}})
+    tracker, _ = jira(
+        {
+            ("GET", "/rest/api/2/issue/VL-7"): {"key": "VL-7", "fields": {"description": None}},
+            # The label is added; the description is refused.
+            ("PUT", "/rest/api/2/issue/VL-7"): lambda body: refused if "fields" in body else httpx.Response(204),
+        }
+    )
+    heading, text = await prepared(outbound.JIRA, "Accepted draft", "More.")
 
-    for adapter, ref, asked in ((GitHubTracker(apps), REF, apps.calls), (tracker(jira), "jira:VL-7", jira.asked)):
+    with pytest.raises(TrackerError, match="description: The entered text is too long") as failed:
+        await tracker.add_section("jira:VL-7", heading, text)
+    assert (failed.value.status, failed.value.retryable) == (400, False)
+
+
+def test_a_section_goes_after_the_earlier_text_with_one_blank_line_and_an_empty_body_takes_it_alone():
+    assert with_section("Earlier.\n\n\n", "Draft\n  one", "Text.") == "Earlier.\n\n## Draft one\n\nText.\n"
+    assert with_section("", "Draft", "Text.", mark="h2.") == "h2. Draft\n\nText.\n"
+    with pytest.raises(ValueError, match="heading is empty"):
+        with_section("Earlier.", " \n", "Text.")
+
+
+async def test_the_router_sends_the_section_to_the_tracker_the_ref_names(key_file):
+    issue = {"number": 7, "title": "Fix it", "body": EARLIER, "state": "open", "labels": []}
+    tracker, service = github(
+        key_file,
+        {
+            ("GET", "/repos/o/r/issues/7"): issue,
+            ("POST", "/repos/o/r/issues/7/labels"): [],
+            ("PATCH", "/repos/o/r/issues/7"): issue,
+        },
+    )
+    heading, text = await prepared(outbound.GITHUB, "Accepted draft", "Store the rows in Postgres.")
+
+    await Trackers([tracker], default=lambda: "github").add_section("github:o/r#7", heading, text)
+
+    assert len(service.sent("PATCH", "/repos/o/r/issues/7")) == 1
+
+
+@pytest.mark.parametrize("words", ["Acceptance checks", "acceptance checks", "  Acceptance   checks "])
+async def test_a_heading_the_description_has_is_refused_and_nothing_is_written(key_file, words):
+    held = f"{EARLIER}\n### Acceptance Checks ###\n\n- make lint\n"
+    issue = {"number": 7, "title": "Fix it", "body": held, "state": "open", "labels": []}
+    hub, hub_service = github(key_file, {("GET", "/repos/o/r/issues/7"): issue})
+    wiki = "Do it.\n\nh3. Acceptance checks\n* x\n"
+    site, site_service = jira({("GET", "/rest/api/2/issue/VL-7"): {"key": "VL-7", "fields": {"description": wiki}}})
+
+    for tracker, ref, destination, service in (
+        (hub, "github:o/r#7", outbound.GITHUB, hub_service),
+        (site, "jira:VL-7", outbound.JIRA, site_service),
+    ):
+        heading, text = await prepared(destination, words, "- make test")
         with pytest.raises(TrackerError, match="already has a section headed") as refused:
-            await adapter.add_section(ref, heading, CHECKS)
+            await tracker.add_section(ref, heading, text)
         assert not refused.value.retryable
-        assert len(asked) == 1, "only the read: no label and no write"
+        written = [(m, p) for m, p, _ in service.asked if m in ("PUT", "PATCH") or p.endswith("/labels")]
+        assert written == [], "no label and no write"
 
 
-async def test_a_heading_that_is_empty_or_several_lines_is_refused():
-    for heading in ("", "  ", "Acceptance\nchecks"):
-        with pytest.raises(ValueError, match="one line"):
-            await GitHubTracker(Apps()).add_section(REF, heading, CHECKS)
+def test_only_a_heading_line_with_the_same_words_counts_as_the_section():
+    refuse_twice("mh:i-0123456789ab", "Acceptance checks are below.\n#Acceptance checks\n", "Acceptance checks")
+    refuse_twice("mh:i-0123456789ab", "## Acceptance checks for later\n", "Acceptance checks")
+    with pytest.raises(TrackerError, match="already has a section headed"):
+        refuse_twice("mh:i-0123456789ab", "Intro\n\n   ## acceptance  CHECKS\n", "Acceptance checks")
 
 
-def test_a_section_goes_after_a_blank_line_and_an_empty_description_is_the_section_alone():
-    assert with_section("", "## H", "x") == "## H\n\nx\n"
-    assert with_section("a\n", "## H", "x") == "a\n\n## H\n\nx\n"
-    assert with_section("a\n\n\n", "## H", "x") == "a\n\n\n## H\n\nx\n"
+def refusing_service(request: httpx.Request) -> httpx.Response:
+    raise AssertionError(f"a refused text reached the tracker: {request.method} {request.url}")
+
+
+def no_database():
+    raise AssertionError("a refused text reached the database")
+
+
+@pytest.mark.parametrize(
+    ("make", "ref", "destination"),
+    [
+        (lambda key: GitHubTracker(GitHubApps({"o": AppConfig("o", "1", key)}, httpx.MockTransport(refusing_service))),
+         "github:o/r#7", outbound.GITHUB),
+        (lambda key: JiraTracker("b@example.com", "t", lambda: Site(site=SITE), httpx.MockTransport(refusing_service)),
+         "jira:VL-7", outbound.JIRA),
+        (lambda key: OwnTracker(no_database), "mh:i-0123456789ab", outbound.OWN),
+    ],
+    ids=["github", "jira", "own"],
+)  # fmt: skip
+async def test_a_plain_string_or_a_text_prepared_for_another_place_is_refused(key_file, make, ref, destination):
+    tracker = make(key_file)
+    heading, text = await prepared(destination, "Accepted draft", "Text.")
+    other = outbound.JIRA if destination != outbound.JIRA else outbound.GITHUB
+    _, elsewhere = await prepared(other, "Accepted draft", "Text.")
+
+    with pytest.raises(TypeError, match="must come through the outbound pipeline"):
+        await tracker.add_section(ref, heading, "Text.")
+    with pytest.raises(TypeError, match="must come through the outbound pipeline"):
+        await tracker.add_section(ref, "Accepted draft", text)
+    with pytest.raises(TypeError, match=f"is being posted to {destination}"):
+        await tracker.add_section(ref, heading, elsewhere)
+    with pytest.raises(TypeError, match="Prepare it with the kind outbound.TITLE"):
+        await tracker.add_section(ref, text, text)

@@ -33,7 +33,6 @@ from meta_harness.trackers.base import (
     Supported,
     TrackerError,
     refuse_twice,
-    section_heading,
     with_section,
 )
 
@@ -145,6 +144,23 @@ class OwnTracker:
             await self.read(ref)
         return ""
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds a `## heading` section to the end of the issue's body, keeping what the body says. The body is
+        written only if no one changed it since it was read, so a change made meanwhile is not lost. A body that
+        has the heading already is refused and left as it is. Every issue here is the meta-harness's own, so
+        there is no label to add first."""
+        outbound.require(heading, "a section's heading", outbound.OWN, title=True)
+        outbound.require(text, "a section of an issue's body", outbound.OWN)
+        row = await asyncio.to_thread(self._one, ref)
+        refuse_twice(ref, row["body"] or "", heading)
+        body = with_section(row["body"] or "", heading, text)
+        query = (
+            "UPDATE planner.own_issue SET body = %s, updated_at = now() "
+            "WHERE id = %s AND body IS NOT DISTINCT FROM %s RETURNING id"
+        )
+        if not await asyncio.to_thread(self._all, query, (body, row["id"], row["body"])):
+            raise TrackerError(f"{ref}'s body changed while a section was being added to it. Try again.")
+
     async def mark(self, ref: str) -> None:
         """Every issue here is the meta-harness's own: there is nothing to tell apart."""
         return None
@@ -159,17 +175,6 @@ class OwnTracker:
         query = "UPDATE planner.own_issue SET status = %s, state = %s, updated_at = now() WHERE id = %s RETURNING id"
         await asyncio.to_thread(self._all, query, (status, state, row["id"]))
         return True
-
-    async def add_section(self, ref: str, heading: str, text: str) -> None:
-        """Appends `## <heading>` and the text to the issue's body. Every issue here is the meta-harness's
-        own, so there is no label to add first."""
-        outbound.require(text, "a section of an issue's description", outbound.OWN)
-        heading = section_heading(heading)
-        row = await asyncio.to_thread(self._one, ref)
-        body = row["body"] or ""
-        refuse_twice(ref, body, heading)
-        query = "UPDATE planner.own_issue SET body = %s, updated_at = now() WHERE id = %s RETURNING id"
-        await asyncio.to_thread(self._all, query, (with_section(body, f"## {heading}", text), row["id"]))
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         query = "UPDATE planner.own_issue SET pr_url = %s, updated_at = now() WHERE id = %s RETURNING id"

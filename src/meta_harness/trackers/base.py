@@ -123,6 +123,19 @@ class Tracker(Protocol):
         """Adds a comment to the issue. Returns the comment's address, or "" when the tracker gives none."""
         ...
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds a section to the end of the issue's description: the heading on a line of its own, then the
+        text. The description it had is kept. Both come from `outbound.prepare`, the heading as a title and
+        the text as a body for this tracker, so a plain string is refused (TypeError).
+
+        Raises:
+            TrackerError: The tracker refused the change; the message gives its reason. Not retryable when
+                the description already holds a section with that heading, at any level and in any case:
+                nothing was written, not even the label.
+            ValueError: The heading is empty.
+        """
+        ...
+
     async def mark(self, ref: str) -> None:
         """Makes the issue carry the meta-harness's label (MARK_LABEL, or the deployment's). An adapter calls
         it itself before every write to an issue (a comment, a status, a pull request's link) and creates
@@ -137,19 +150,6 @@ class Tracker(Protocol):
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Records the pull request on the issue, where the tracker does not find it by itself."""
-        ...
-
-    async def add_section(self, ref: str, heading: str, text: str) -> None:
-        """Appends a section to the issue's description: `## <heading>` (the tracker's own way of writing a
-        heading) and the text, which comes from `outbound.prepare`. The rest of the description stays as it was.
-        heading is one line this code wrote, such as "Acceptance checks".
-
-        Raises:
-            TrackerError: Not retryable: the description already holds a section with that heading, so
-                nothing was written.
-            TypeError: The text did not come through the outbound pipeline.
-            ValueError: The heading is empty or more than one line.
-        """
         ...
 
     def url(self, ref: str) -> str | None:
@@ -170,26 +170,15 @@ class Tracker(Protocol):
 HEADING_LINE = re.compile(r"^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
 
 
-def section_heading(heading: str) -> str:
-    """The heading of a section to add, trimmed.
-
-    Raises:
-        ValueError: It is empty or more than one line.
-    """
-    name = (heading or "").strip()
-    if not name or "\n" in name or "\r" in name:
-        raise ValueError(f"a section's heading is one line of words, not {heading!r}")
-    return name
-
-
-def refuse_twice(ref: str, body: str, heading: str) -> None:
-    """Refuses a section whose heading the description, read as Markdown, has already, in any case.
+def refuse_twice(ref: str, description: str, heading: str) -> None:
+    """Refuses a section whose heading the description, read as Markdown, has already, at any level and in
+    any case. An adapter calls it before the label and the write, so a refused section writes nothing.
 
     Raises:
         TrackerError: Not retryable: the heading is there.
     """
-    wanted = heading.casefold()
-    if any(found.strip().casefold() == wanted for found in HEADING_LINE.findall(body or "")):
+    wanted = " ".join(heading.split()).casefold()
+    if any(" ".join(found.split()).casefold() == wanted for found in HEADING_LINE.findall(description or "")):
         raise TrackerError(
             f"{ref}'s description already has a section headed {heading!r}, so it was not added again. "
             "Edit that section in the tracker, or remove it there and try again.",
@@ -197,14 +186,20 @@ def refuse_twice(ref: str, body: str, heading: str) -> None:
         )
 
 
-def with_section(body: str, heading_line: str, text: str) -> str:
-    """The description with a section after everything it holds, which stays as it was."""
-    section = f"{heading_line}\n\n{str(text).strip()}\n"
-    if not (body or "").strip():
-        return section
-    # A blank line before the heading, adding only the line breaks the description does not end with.
-    gap = "\n" * max(0, 2 - (len(body) - len(body.rstrip("\n"))))
-    return body + gap + section
+def with_section(description: str, heading: str, text: str, mark: str = "##") -> str:
+    """A description with a section added at its end, for `Tracker.add_section`. mark starts the heading's line
+    in the tracker's markup: `##` in Markdown, `h2.` in Jira's. The earlier text is kept; only the blank space
+    at its end is trimmed, so one blank line comes before the new heading.
+
+    Raises:
+        ValueError: The heading is empty.
+    """
+    line = " ".join(heading.split())
+    if not line:
+        raise ValueError("a section's heading is empty: name the section")
+    section = f"{mark} {line}\n\n{text.strip()}\n"
+    earlier = description.rstrip()
+    return f"{earlier}\n\n{section}" if earlier else section
 
 
 def scheme_of(ref: str) -> str:

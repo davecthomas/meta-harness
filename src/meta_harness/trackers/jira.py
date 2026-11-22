@@ -59,7 +59,6 @@ from meta_harness.trackers.base import (
     TrackerError,
     configured_label,
     refuse_twice,
-    section_heading,
     with_section,
 )
 
@@ -435,6 +434,23 @@ class JiraTracker:
         made = await self._call("POST", f"/issue/{key}/comment", json={"body": body})
         return f"{self._site().site}/browse/{key}?focusedCommentId={made['id']}" if made.get("id") else ""
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds an `h2.` section to the end of the issue's description, keeping what the description says. The
+        description is read as Jira holds it, in wiki markup, so the earlier text is written back unchanged. A
+        description whose headings, read back as Markdown, have the heading already is refused before anything
+        is written."""
+        outbound.require(heading, "a section's heading", outbound.JIRA, title=True)
+        outbound.require(text, "a section of an issue's description", outbound.JIRA)
+        key = parse_ref(ref)
+        now = await self._call("GET", f"/issue/{key}", params={"fields": "description"})
+        earlier = (now.get("fields") or {}).get("description") or ""
+        refuse_twice(ref, markdown(earlier), heading)
+        description = with_section(earlier, heading, text, mark="h2.")
+        await self.mark(ref)
+        await self._call("PUT", f"/issue/{key}", json={"fields": {"description": description}})
+        # What was read before holds the old description.
+        self._open.clear()
+
     async def set_status(self, ref: str, status: str) -> bool:
         """Moves the issue through its workflow: to the status the site's settings name for ours; else to one
         with the usual name for it (In Progress, Done, any name with "review"); else to one of the matching
@@ -495,22 +511,6 @@ class JiraTracker:
         # What was read as open may now be done.
         self._open.clear()
         return True
-
-    async def add_section(self, ref: str, heading: str, text: str) -> None:
-        """Appends the section to the issue's description, read just before. The heading is written `h2.`,
-        wiki markup's, which reads back as the `## <heading>` the planner parses."""
-        outbound.require(text, "a section of an issue's description", outbound.JIRA)
-        heading = section_heading(heading)
-        key = parse_ref(ref)
-        now = await self._call("GET", f"/issue/{key}", params={"fields": "description"})
-        body = (now.get("fields") or {}).get("description") or ""
-        refuse_twice(ref, markdown(body), heading)
-        await self.mark(ref)
-        await self._call(
-            "PUT", f"/issue/{key}", json={"fields": {"description": with_section(body, f"h2. {heading}", text)}}
-        )
-        # What was read before has the description as it was.
-        self._open.clear()
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Adds the pull request to the issue's links. Its address is the link's id, so adding it again

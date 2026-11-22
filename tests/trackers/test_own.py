@@ -68,6 +68,19 @@ async def test_done_closes_the_issue_and_its_progress_is_kept_with_it():
     assert row == ("https://github.com/o/r/pull/9", [{"body": "A pull request is open."}])
 
 
+async def test_a_section_is_added_to_the_end_of_the_body_and_the_earlier_text_is_kept():
+    own = OwnTracker()
+    made = await own.create_issue(REPO, "The store", BODY, [])
+
+    await own.add_section(made.ref, "Accepted draft", "Store the rows in Postgres.")
+
+    body = (await own.read(made.ref)).body
+    assert body == f"{BODY}\n## Accepted draft\n\nStore the rows in Postgres.\n"
+    assert (await own.read(made.ref)).checks == ["make test"], "what the body said still reads the same"
+    with pytest.raises(TrackerError, match="is not a task the meta-harness keeps"):
+        await own.add_section("mh:i-000000000000", "Accepted draft", "x")
+
+
 async def test_a_task_that_is_not_kept_says_so_and_how_to_go_on():
     own = OwnTracker()
 

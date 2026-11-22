@@ -21,7 +21,6 @@ from meta_harness.trackers.base import (
     TrackerError,
     configured_label,
     refuse_twice,
-    section_heading,
     with_section,
 )
 
@@ -162,6 +161,19 @@ class GitHubTracker:
         )
         return str(made.get("html_url") or "")
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds a `## heading` section to the end of the issue's body, keeping what the body says. A body that
+        has the heading already is refused before anything is written."""
+        outbound.require(heading, "a section's heading", outbound.GITHUB, title=True)
+        outbound.require(text, "a section of an issue's body", outbound.GITHUB)
+        repo, number = parse_ref(ref)
+        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
+        earlier = now.get("body") or ""
+        refuse_twice(ref, earlier, heading)
+        body = with_section(earlier, heading, text)
+        await self.mark(ref)
+        await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json={"body": body})
+
     async def set_status(self, ref: str, status: str) -> bool:
         """A GitHub issue is open or closed, nothing between: done closes it, todo opens it again, and a status
         in progress or in review changes nothing. A pull request's `Closes` line closes its issue by itself
@@ -177,23 +189,6 @@ class GitHubTracker:
         change = {"state": wanted, **({"state_reason": "completed"} if wanted == "closed" else {})}
         await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json=change)
         return True
-
-    async def add_section(self, ref: str, heading: str, text: str) -> None:
-        """Appends `## <heading>` and the text to the issue's body, read just before."""
-        outbound.require(text, "a section of an issue's description", outbound.GITHUB)
-        heading = section_heading(heading)
-        repo, number = parse_ref(ref)
-        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
-        body = now.get("body") or ""
-        refuse_twice(ref, body, heading)
-        await self.mark(ref)
-        await self._call(
-            repo,
-            WRITE_ISSUES,
-            "PATCH",
-            f"/repos/{repo}/issues/{number}",
-            json={"body": with_section(body, f"## {heading}", text)},
-        )
 
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Nothing to do: GitHub links a pull request to the issue its description's `Closes` line names."""
