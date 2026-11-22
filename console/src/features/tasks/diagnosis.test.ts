@@ -43,3 +43,10 @@ test("a task held for budget, a refused issue and a working task", () => {
   expect(diagnose({ status: "running", reason: null })).toBeNull();
   expect(diagnose({ status: "review_unresolved", reason: "review round 2 got no verdict: the run ended" })!.kind).toBe("no_verdict");
 });
+
+test("a run that changed nothing says what a second model found missing, when one checked", () => {
+  const checked = failed("TaskFailed: run 1 finished, but pi changed nothing in o/r, and the base branch does not have the work yet: no export button in Account.tsx");
+  expect(checked.kind).toBe("no_change");
+  expect(checked.cause).toContain("found the work missing: no export button in Account.tsx");
+  expect(checked.remedies[0]).toBe("issue");
+});

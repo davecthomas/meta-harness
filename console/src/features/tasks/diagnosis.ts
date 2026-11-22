@@ -111,12 +111,23 @@ const RULES: Rule[] = [
   {
     kind: "no_change",
     test: /pi changed nothing/,
-    write: () => ({
-      summary: "The task's run finished without changing any file",
-      cause: "The agent ended its run and left the repo as it found it, so there is no pull request. Usually the work is already done, or the issue does not say what to change.",
-      fix: "Read the run's last turn on the task's page. Close the issue if it is done; otherwise say in the issue what to change, then retry.",
-      remedies: ["task", "issue", "retry"],
-    }),
+    write: (_, detail) => {
+      // A second model read the base branch and found the work missing: what it found is the thing to act on.
+      const missing = detail.match(/the base branch does not have the work yet: (.+)$/s)?.[1]?.trim();
+      return missing
+        ? {
+            summary: "The task's run changed no file, and the work is not there yet",
+            cause: `The agent ended its run with the repo as it found it. A second model then read the base branch and found the work missing: ${missing}`,
+            fix: "Say in the issue what to change, with the file when you know it, then retry. If the issue is too large, split it.",
+            remedies: ["issue", "task", "retry"],
+          }
+        : {
+            summary: "The task's run finished without changing any file",
+            cause: "The agent ended its run and left the repo as it found it, so there is no pull request. No second model was there to check whether the work is already done.",
+            fix: "Read the run's last turn on the task's page. Close the issue if it is done; otherwise say in the issue what to change, then retry.",
+            remedies: ["task", "issue", "retry"],
+          };
+    },
   },
   {
     kind: "limit",

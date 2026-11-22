@@ -1,3 +1,4 @@
+import { AlreadyDone } from "./AlreadyDone";
 import { SpecView } from "./SpecView";
 import { Narrative } from "../narratives/Narrative";
 import { UnstickGoal } from "./Unstick";
@@ -332,6 +333,7 @@ export function GoalPage() {
       {/* The goal's settings, folded away once it has work to show: the board is what the page is for, and
           one line says what the settings are. Open on a goal with no issues yet, which is when they are set. */}
       {goal.spec && <SpecView goalId={goal.id} spec={goal.spec} />}
+      <AlreadyDone goalId={goal.id} tasks={Object.values(tasks)} watch={goal.status} />
       <Narrative title="Narrative" path={`/v1/goals/${goal.id}/narrative`} watch={`${goal.status}:${Object.values(tasks).map((t) => t.status).join(",")}`} />
       <Paper withBorder p="sm" mb="md" data-testid="goal-settings">
         <Group justify="space-between" wrap="nowrap" gap="md">
