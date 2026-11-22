@@ -60,6 +60,7 @@ from meta_harness.trackers.base import (
     Supported,
     TrackerError,
     assignee_setting,
+    check_assignee,
     check_section,
     configured_label,
     unknown_person,
@@ -579,6 +580,12 @@ class JiraTracker:
             raise
         return [p for p in found or [] if p.get("accountId") and p.get("active", True)]
 
+    async def people(self, repo: str) -> list[dict[str, str]]:
+        """The people the bound goal's project's issues can be assigned to, by account id. One project holds
+        the issues of all the goal's repos, so repo does not narrow them. Empty with no project bound."""
+        project = str((self.source.settings if self.source else {}).get("project") or "").strip().upper()
+        return await self._people(project) if PROJECT.match(project) else []
+
     async def _people(self, project: str) -> list[dict[str, str]]:
         """Every active person the project's issues can be assigned to, by account id, named as Jira shows them."""
         people: dict[str, str] = {}
@@ -779,6 +786,7 @@ def check_goal(settings: dict[str, Any], site: dict[str, Any] | None = None) -> 
         )
     if settings.get("assigned", "") not in ("", "yes"):
         reasons.append('assigned is "yes" for a goal that takes the issues assigned to the meta-harness, else left out')
+    reasons += check_assignee(settings, bool, "a Jira account id, or the display name of one person, on one line")
     return reasons
 
 
