@@ -210,6 +210,10 @@ def depends_on(issue: dict[str, Any], body: str) -> list[str]:
     return [ref_for(key) for key in dict.fromkeys(keys) if key != issue["key"]]
 
 
+# What a workflow calls the status of work that will not be done, the likeliest first.
+WONT_DO = ("won't do", "wont do", "won't fix", "wont fix", "canceled", "cancelled", "rejected", "declined", "abandoned")
+
+
 class JiraTracker:
     scheme = SCHEME
     # Nothing in Jira shows a task's progress, or closes its issue, unless the planner says.
@@ -567,6 +571,35 @@ class JiraTracker:
         await self.mark(ref)
         await self._call("POST", f"/issue/{key}/transitions", json={"transition": {"id": chosen[0]["id"]}})
         # What was read as open may now be done.
+        self._open.clear()
+        return True
+
+    async def close_unplanned(self, ref: str) -> bool:
+        """Moves the issue to its workflow's status for work that will not be done, by the usual names for one
+        (WONT_DO). An issue already in a done status stays.
+
+        Raises:
+            TrackerError: The issue's workflow has no move to such a status from where it is.
+        """
+        key = parse_ref(ref)
+        now = (await self._call("GET", f"/issue/{key}", params={"fields": "status"}))["fields"]["status"]
+        if (now.get("statusCategory") or {}).get("key") == "done":
+            return False
+        moves = (await self._call("GET", f"/issue/{key}/transitions")).get("transitions") or []
+        order = {name: i for i, name in enumerate(WONT_DO)}
+        chosen = sorted(
+            (m for m in moves if (m.get("to") or {}).get("name", "").lower() in order),
+            key=lambda m: order[m["to"]["name"].lower()],
+        )
+        if not chosen:
+            can = ", ".join(sorted(m.get("to", {}).get("name", "?") for m in moves)) or "nowhere"
+            raise TrackerError(
+                f"{key} is {now.get('name')!r} and its workflow has no status for work that will not be done "
+                f"(it can go to: {can}). Close it in Jira.",
+                retryable=False,
+            )
+        await self.mark(ref)
+        await self._call("POST", f"/issue/{key}/transitions", json={"transition": {"id": chosen[0]["id"]}})
         self._open.clear()
         return True
 

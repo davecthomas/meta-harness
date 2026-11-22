@@ -182,6 +182,15 @@ class OwnTracker:
         """Every issue here is the meta-harness's own: there is nothing to tell apart."""
         return None
 
+    async def close_unplanned(self, ref: str) -> bool:
+        """The meta-harness's own issues have no status for work that will not be done: the issue is closed."""
+        row = await asyncio.to_thread(self._one, ref)
+        if row["state"] == "closed":
+            return False
+        query = "UPDATE planner.own_issue SET state = 'closed', updated_at = now() WHERE id = %s RETURNING id"
+        await asyncio.to_thread(self._all, query, (row["id"],))
+        return True
+
     async def set_status(self, ref: str, status: str) -> bool:
         if status not in STATUSES:
             raise ValueError(f"{status!r} is not one of {', '.join(STATUSES)}")

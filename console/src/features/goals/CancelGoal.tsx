@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { TaskName } from "../../components/TaskName";
-import { Button, Group, Modal, Stack, Text } from "@mantine/core";
+import { Button, Checkbox, Group, Modal, Stack, Text } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
 import type { Task } from "../../api";
 
@@ -23,14 +23,23 @@ export function cancelEffect(tasks: Pick<Task, "id" | "status" | "pr_url">[]): {
   return effect;
 }
 
-export function CancelGoal({ tasks, onCancel }: { tasks: Pick<Task, "id" | "status" | "pr_url">[]; onCancel: () => Promise<unknown> }) {
+export function CancelGoal({ tasks, createdIssues = false, tracker = "its tracker", onCancel }: {
+  tasks: Pick<Task, "id" | "status" | "pr_url">[];
+  // Whether the goal's plan created issues in its tracker: canceling can close the open ones too.
+  createdIssues?: boolean;
+  // What the goal's tracker is called, for the sentence that says where they are closed.
+  tracker?: string;
+  onCancel: (closeIssues: boolean) => Promise<unknown>;
+}) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
+  // On unless turned off: issues made for a goal that is canceled are work nobody will do.
+  const [closeIssues, setCloseIssues] = useState(true);
   const effect = cancelEffect(tasks);
   async function confirm() {
     setBusy(true);
     try {
-      await onCancel();
+      await onCancel(createdIssues && closeIssues);
       setAsking(false);
     } finally {
       setBusy(false);
@@ -58,6 +67,14 @@ export function CancelGoal({ tasks, onCancel }: { tasks: Pick<Task, "id" | "stat
                 ))}
               </Group>
             </Stack>
+          )}
+          {createdIssues && (
+            <Checkbox
+              label="Also close the open issues this goal's plan created"
+              description={`They are closed in ${tracker} as not planned, each with a note that the goal was canceled. Issues that existed before the goal, and any with a pull request open, are left as they are.`}
+              checked={closeIssues}
+              onChange={(e) => setCloseIssues(e.currentTarget.checked)}
+            />
           )}
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setAsking(false)}>Not now</Button>

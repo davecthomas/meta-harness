@@ -254,6 +254,17 @@ class GitHubTracker:
         await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json=change)
         return True
 
+    async def close_unplanned(self, ref: str) -> bool:
+        """Closes the issue as not planned, GitHub's own reason for work that will not be done."""
+        repo, number = parse_ref(ref)
+        now = await self._call(repo, READ_ISSUES, "GET", f"/repos/{repo}/issues/{number}")
+        if now["state"] == "closed":
+            return False
+        await self.mark(ref)
+        change = {"state": "closed", "state_reason": "not_planned"}
+        await self._call(repo, WRITE_ISSUES, "PATCH", f"/repos/{repo}/issues/{number}", json=change)
+        return True
+
     async def link_pull_request(self, ref: str, pr_url: str, title: str) -> None:
         """Nothing to do: GitHub links a pull request to the issue its description's `Closes` line names."""
 

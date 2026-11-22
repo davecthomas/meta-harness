@@ -65,6 +65,7 @@ from meta_harness.planner import (
     auto_split,
     follow_ups,
     budget_api,
+    cancel_issues,
     cost_facts,
     drafting,
     fix_issue,
@@ -173,6 +174,11 @@ class GoalIn(BaseModel):
     # A specification to plan the goal from, for work that has no issues yet (specs.py): its planning task
     # breaks it down into tasks, which are created under one epic when the plan is approved.
     spec: SpecIn | None = None
+
+
+class CancelIn(BaseModel):
+    # True: also close, as not planned, the open issues the goal's plans created in its tracker.
+    close_issues: bool = False
 
 
 class LineCommentIn(BaseModel):
@@ -1636,18 +1642,25 @@ def create_app(
         return goal
 
     @app.post("/v1/goals/{goal_id}/cancel")
-    async def cancel(goal_id: str, who: str = Depends(operator)) -> dict:
+    async def cancel(goal_id: str, body: CancelIn | None = None, who: str = Depends(operator)) -> dict:
         """Cancel the goal, and end what it has not started: its queued and blocked tasks are canceled, and
         its running tasks with no pull request are asked to stop. A task with a pull request open is left for
         the operator. The goal comes back with `tasks`: the task ids canceled, stopping, left, and any the
-        task service refused."""
+        task service refused. With `close_issues`, the open issues the goal's plans created are closed in its
+        tracker as not planned, and the goal comes back with `issues` too: the refs closed, and each that
+        could not be with why (cancel_issues.py)."""
         # Under the goal's sweep lock, so a sweep in progress makes no task after these are ended.
         async with locks.setdefault(goal_id, asyncio.Lock()):
             goal = await asyncio.to_thread(change, goal_id, who, status="canceled")
             done = await cancel_goal_tasks(goal, tasks, who)
         for error in done["errors"]:
             log.warning("goal %s: could not end a task on cancel: %s", goal_id, error)
-        return {**goal, "tasks": done}
+        if body is None or not body.close_issues:
+            return {**goal, "tasks": done}
+        closed = await cancel_issues.close_created(goal, goal_tracker(tracker, goal), who, done["left"])
+        for error in closed["errors"]:
+            log.warning("goal %s: could not close an issue its plan created: %s", goal_id, error)
+        return {**goal, "tasks": done, "issues": closed}
 
     @app.post("/v1/goals/{goal_id}/complete")
     def complete(goal_id: str, who: str = Depends(operator)) -> dict:

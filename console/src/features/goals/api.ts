@@ -276,6 +276,13 @@ export const goalsApi = {
     tracker?: string;
     tracker_settings?: Record<string, string>;
   }) => call<{ title: string; statement: string; spec: string }>("/v1/goals/draft-from-spec", { method: "POST", body: JSON.stringify(body) }),
+  // Cancel a goal. closeIssues: also close, as not planned, the open issues its plans created in its tracker.
+  // `issues` comes back then: the refs closed, and each that could not be closed with why.
+  cancelGoal: (id: string, closeIssues: boolean) =>
+    call<{ issues?: { closed: string[]; errors: string[] } }>(`/v1/goals/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ close_issues: closeIssues }),
+    }),
   goalAction: (id: string, action: "pause" | "resume" | "cancel" | "complete" | "reopen" | "sweep") =>
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
   // A proposed statement for a goal, saved nowhere; and saving the one the operator accepted on a goal.

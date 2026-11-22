@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { expect, test, vi } from "vitest";
@@ -50,6 +50,8 @@ test("Cancel goal asks first, says what happens to the tasks, and links those it
 
   fireEvent.click(screen.getAllByRole("button", { name: "Cancel goal" }).at(-1)!);
   await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));
+  // No plan created issues here, so there is nothing to offer to close.
+  expect(onCancel).toHaveBeenCalledWith(false);
 });
 
 test("a goal with no tasks to cancel or stop says only that it takes in no more issues", async () => {
@@ -67,4 +69,36 @@ test("a goal with no tasks to cancel or stop says only that it takes in no more 
   expect(dialog.textContent).toContain("The goal takes in no more issues.");
   expect(dialog.textContent).not.toMatch(/\b0 tasks?\b/);
   expect(dialog.textContent).not.toContain("Reopening the goal");
+});
+
+test("a goal whose plan created issues offers to close them, on unless turned off", async () => {
+  const onCancel = vi.fn((_close: boolean) => Promise.resolve());
+  const shown = render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <CancelGoal tasks={[]} createdIssues tracker="Jira" onCancel={onCancel} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel goal" }));
+  const dialog = await screen.findByTestId("cancel-goal");
+  const close = screen.getByRole("checkbox", { name: "Also close the open issues this goal's plan created" }) as HTMLInputElement;
+  expect(close.checked).toBe(true);
+  expect(dialog.textContent).toContain("closed in Jira as not planned");
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel goal" }));
+  await waitFor(() => expect(onCancel).toHaveBeenLastCalledWith(true));
+  shown.unmount();
+
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <CancelGoal tasks={[]} createdIssues tracker="Jira" onCancel={onCancel} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel goal" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Also close the open issues this goal's plan created" }));
+  fireEvent.click(within(await screen.findByTestId("cancel-goal")).getByRole("button", { name: "Cancel goal" }));
+  await waitFor(() => expect(onCancel).toHaveBeenLastCalledWith(false));
 });

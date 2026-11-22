@@ -161,3 +161,52 @@ def test_a_specification_that_cannot_be_used_is_refused_saying_what_to_send(worl
     assert "has no description to plan from" in refused({"ref": empty})
     missing = refused({"ref": f"github:{REPO}#1"})
     assert "could not be read" in missing and "or load the specification as a file" in missing
+
+
+def test_canceling_a_goal_closes_the_open_issues_its_plan_created_when_asked(world, monkeypatch):
+    """Canceling a goal planned from a spec left its created issues open in the tracker, for nobody."""
+    client, events, tracker, tasks = world
+    closed: list[str] = []
+
+    async def close_unplanned(ref):
+        if ref.endswith("#refuse"):
+            raise TrackerError("its workflow has no status for work that will not be done. Close it in Jira.")
+        tracker.issues[ref].state = "closed"
+        closed.append(ref)
+        return True
+
+    tracker.close_unplanned = close_unplanned
+    goal = _goal(client, spec={"name": "exports-prd.md", "text": SPEC})
+    _planned(client, events, tasks, goal, [draft("button"), draft("csv", ("button",))])
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+    made = [i.ref for i in tracker.created]
+    epic = tracker.epics[0].ref
+
+    canceled = client.post(f"/v1/goals/{goal['id']}/cancel", json={"close_issues": True}, headers=OPERATOR)
+
+    assert canceled.status_code == 200, canceled.text
+    assert canceled.json()["issues"] == {"closed": made, "errors": []}
+    assert closed == made and epic not in closed, "the two tasks, and not the epic the goal did not plan as a task"
+    notes = [body for ref, body in tracker.comments if ref in made]
+    assert len(notes) == 2 and all("the goal this issue was created for was canceled by dave" in str(n) for n in notes)
+    shown = client.get(f"/v1/goals/{goal['id']}/issues", headers=OPERATOR).json()["issues"]
+    assert {i["ref"]: i["state"] for i in shown if i["ref"] in made} == {ref: "closed" for ref in made}
+
+
+def test_canceling_a_goal_closes_nothing_in_the_tracker_unless_asked(world):
+    client, events, tracker, tasks = world
+    closed: list[str] = []
+
+    async def close_unplanned(ref):
+        closed.append(ref)
+        return True
+
+    tracker.close_unplanned = close_unplanned
+    goal = _goal(client, spec={"name": "exports-prd.md", "text": SPEC})
+    _planned(client, events, tasks, goal, [draft("button")])
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+
+    canceled = client.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
+
+    assert canceled.status_code == 200 and "issues" not in canceled.json()
+    assert closed == [] and not getattr(tracker, "comments", [])
