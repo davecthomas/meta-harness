@@ -497,3 +497,13 @@ def test_the_boot_script_reads_no_secret_where_a_failure_would_go_unnoticed():
     assert not [line for line in code if re.search(r"echo .*\$\((optional_)?secret ", line)]
     assert not [line for line in code if re.search(r"for .* in .*\$\((optional_)?secret ", line)]
     assert not [line for line in code if re.search(r"^\s*(optional_)?secret \S+ *[>|]", line)]
+
+
+def test_a_newer_merge_never_cancels_the_checks_the_deploy_of_an_earlier_one_waits_for():
+    """Two merges minutes apart: the first commit's checks were cancelled by the second, its deploy read the
+    cancelled check as failed, stopped, and opened a 'deploy blocked' issue. On main each commit's checks are
+    a concurrency group of their own; a pull request's still replace one another."""
+    for name in ("control-plane.yml", "e2e.yml"):
+        workflow = (WORKFLOWS / name).read_text()
+        assert "-${{ github.event_name == 'pull_request' && github.ref || github.sha }}" in workflow, name
+        assert "-${{ github.ref }}\n" not in workflow, name
