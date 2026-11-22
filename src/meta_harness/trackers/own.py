@@ -25,7 +25,16 @@ from psycopg.rows import dict_row
 from meta_harness import outbound
 from meta_harness import db
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
-from meta_harness.trackers.base import DONE, STATUSES, Issue, Source, Supported, TrackerError
+from meta_harness.trackers.base import (
+    DONE,
+    STATUSES,
+    Issue,
+    Source,
+    Supported,
+    TrackerError,
+    check_section,
+    with_section,
+)
 
 SCHEME = "mh"
 REF = re.compile(r"^mh:(?P<id>i-[0-9a-f]{12})$")
@@ -134,6 +143,22 @@ class OwnTracker:
         if not await asyncio.to_thread(self._all, query, (note, parse_ref(ref))):
             await self.read(ref)
         return ""
+
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds a `## heading` section to the end of the issue's body, keeping what the body says. The body is
+        written only if no one changed it since it was read, so a change made meanwhile is not lost. A heading
+        the body has already is refused before anything is written."""
+        outbound.require(heading, "a section's heading", outbound.OWN, title=True)
+        outbound.require(text, "a section of an issue's body", outbound.OWN)
+        row = await asyncio.to_thread(self._one, ref)
+        check_section(ref, row["body"] or "", heading)
+        body = with_section(row["body"] or "", heading, text)
+        query = (
+            "UPDATE planner.own_issue SET body = %s, updated_at = now() "
+            "WHERE id = %s AND body IS NOT DISTINCT FROM %s RETURNING id"
+        )
+        if not await asyncio.to_thread(self._all, query, (body, row["id"], row["body"])):
+            raise TrackerError(f"{ref}'s body changed while a section was being added to it. Try again.")
 
     async def mark(self, ref: str) -> None:
         """Every issue here is the meta-harness's own: there is nothing to tell apart."""

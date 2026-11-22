@@ -8,6 +8,7 @@ An issue's ref names its tracker by its first part, the scheme: `github:<owner>/
 outside an adapter treats the rest of a ref as opaque: it is stored, compared and passed back, never parsed.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -122,6 +123,18 @@ class Tracker(Protocol):
         """Adds a comment to the issue. Returns the comment's address, or "" when the tracker gives none."""
         ...
 
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds a section to the end of the issue's description: the heading on a line of its own, then the
+        text. The description it had is kept. Both come from `outbound.prepare`, the heading as a title and
+        the text as a body for this tracker, so a plain string is refused (TypeError).
+
+        Raises:
+            TrackerError: The tracker refused the change; the message gives its reason. Not retryable, and
+                nothing written, when the description already has a section with that heading or the heading
+                is not one line.
+        """
+        ...
+
     async def mark(self, ref: str) -> None:
         """Makes the issue carry the meta-harness's label (MARK_LABEL, or the deployment's). An adapter calls
         it itself before every write to an issue (a comment, a status, a pull request's link) and creates
@@ -150,6 +163,48 @@ class Tracker(Protocol):
             ValueError: The ref is not one of this tracker's, or not one this goal's source covers.
         """
         ...
+
+
+# A heading line of a description as the planner reads it, `#` to `######`, and the words it holds.
+HEADING_LINE = re.compile(r"^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
+
+
+def has_section(body: str, heading: str) -> bool:
+    """Whether a description, as the planner reads it, has a heading of these words, whatever their capitals."""
+    wanted = " ".join(heading.split()).casefold()
+    return any(" ".join(found.split()).casefold() == wanted for found in HEADING_LINE.findall(body or ""))
+
+
+def check_section(ref: str, body: str, heading: str) -> None:
+    """Refuses a section the description cannot take: a heading that is not one line, or one it has already.
+
+    Raises:
+        TrackerError: Not retryable, so a caller does not write the section again and again.
+    """
+    if not heading.strip() or "\n" in heading.strip():
+        raise TrackerError(f"a section's heading is one line of words, not {heading!r}", retryable=False)
+    if has_section(body, heading):
+        raise TrackerError(
+            f"{ref}'s description already has a section {heading.strip()!r}, so it was not added again. Edit "
+            "that section in the tracker, or add the text under another heading.",
+            retryable=False,
+        )
+
+
+def with_section(description: str, heading: str, text: str, mark: str = "##") -> str:
+    """A description with a section added at its end, for `Tracker.add_section`. mark starts the heading's line
+    in the tracker's markup: `##` in Markdown, `h2.` in Jira's. The earlier text is kept; only the blank space
+    at its end is trimmed, so one blank line comes before the new heading.
+
+    Raises:
+        ValueError: The heading is empty.
+    """
+    line = " ".join(heading.split())
+    if not line:
+        raise ValueError("a section's heading is empty: name the section")
+    section = f"{mark} {line}\n\n{text.strip()}\n"
+    earlier = description.rstrip()
+    return f"{earlier}\n\n{section}" if earlier else section
 
 
 def scheme_of(ref: str) -> str:

@@ -57,7 +57,9 @@ from meta_harness.trackers.base import (
     Source,
     Supported,
     TrackerError,
+    check_section,
     configured_label,
+    with_section,
 )
 
 log = logging.getLogger(__name__)
@@ -431,6 +433,22 @@ class JiraTracker:
         await self.mark(ref)
         made = await self._call("POST", f"/issue/{key}/comment", json={"body": body})
         return f"{self._site().site}/browse/{key}?focusedCommentId={made['id']}" if made.get("id") else ""
+
+    async def add_section(self, ref: str, heading: str, text: str) -> None:
+        """Adds an `h2.` section to the end of the issue's description, keeping what the description says. The
+        description is read as Jira holds it, in wiki markup, so the earlier text is written back unchanged."""
+        outbound.require(heading, "a section's heading", outbound.JIRA, title=True)
+        outbound.require(text, "a section of an issue's description", outbound.JIRA)
+        key = parse_ref(ref)
+        now = await self._call("GET", f"/issue/{key}", params={"fields": "description"})
+        earlier = (now.get("fields") or {}).get("description") or ""
+        # Its headings as the planner reads them (`h2.` as `##`); a heading it has already is refused.
+        check_section(ref, markdown(earlier), heading)
+        description = with_section(earlier, heading, text, mark="h2.")
+        await self.mark(ref)
+        await self._call("PUT", f"/issue/{key}", json={"fields": {"description": description}})
+        # What was read before holds the old description.
+        self._open.clear()
 
     async def set_status(self, ref: str, status: str) -> bool:
         """Moves the issue through its workflow: to the status the site's settings name for ours; else to one
