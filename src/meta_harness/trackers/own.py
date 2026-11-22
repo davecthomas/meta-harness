@@ -147,7 +147,8 @@ class OwnTracker:
     async def add_section(self, ref: str, heading: str, text: str) -> None:
         """Adds a `## heading` section to the end of the issue's body, keeping what the body says. The body is
         written only if no one changed it since it was read, so a change made meanwhile is not lost. A heading
-        the body has already is refused before anything is written."""
+        the body has already is refused before anything is written. Every issue here is the meta-harness's own,
+        so there is no label to add first."""
         outbound.require(heading, "a section's heading", outbound.OWN, title=True)
         outbound.require(text, "a section of an issue's body", outbound.OWN)
         row = await asyncio.to_thread(self._one, ref)

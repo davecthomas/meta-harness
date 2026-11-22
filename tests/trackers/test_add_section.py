@@ -1,6 +1,7 @@
 # Created by the meta-harness in run t-c5871d1caed3:run-1 on harness:pi-careful/claude:claude-opus-5-5.
 
-"""Each adapter adds a section to an issue's description, keeping what it said, against a fake HTTP service."""
+"""Each adapter adds a section to an issue's description, keeping what it said and never writing a heading
+twice, against a fake HTTP service."""
 
 import json
 from datetime import datetime, timezone
@@ -13,8 +14,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from meta_harness import outbound
 from meta_harness.github_app import AppConfig, GitHubApps
 from meta_harness.trackers import GitHubTracker, OwnTracker, Source, TrackerError, Trackers
-from meta_harness.trackers.base import with_section
-from meta_harness.trackers.jira import JiraTracker, Site
+from meta_harness.trackers.base import has_section, with_section
+from meta_harness.trackers.jira import JiraTracker, Site, markdown
 from meta_harness.trackers.router import WithOwn
 
 SITE = "https://example.atlassian.net"
@@ -135,6 +136,7 @@ async def test_jira_appends_the_section_to_the_description_in_wiki_markup_and_ke
     description = puts[1]["fields"]["description"]
     assert description == f"{earlier}\nh2. Accepted draft\n\nStore the rows in Postgres.\n"
     assert description.startswith(earlier), "the earlier text is written back as Jira held it"
+    assert "## Accepted draft" in markdown(description), "the wiki heading reads back as the section"
 
 
 async def test_jira_gives_its_refusal_as_a_tracker_error_with_its_reason():
@@ -158,6 +160,49 @@ def test_a_section_goes_after_the_earlier_text_with_one_blank_line_and_an_empty_
     assert with_section("", "Draft", "Text.", mark="h2.") == "h2. Draft\n\nText.\n"
     with pytest.raises(ValueError, match="heading is empty"):
         with_section("Earlier.", " \n", "Text.")
+
+
+async def test_the_router_sends_the_section_to_the_tracker_the_ref_names(key_file):
+    issue = {"number": 7, "title": "Fix it", "body": EARLIER, "state": "open", "labels": []}
+    tracker, service = github(
+        key_file,
+        {
+            ("GET", "/repos/o/r/issues/7"): issue,
+            ("POST", "/repos/o/r/issues/7/labels"): [],
+            ("PATCH", "/repos/o/r/issues/7"): issue,
+        },
+    )
+    heading, text = await prepared(outbound.GITHUB, "Accepted draft", "Store the rows in Postgres.")
+
+    await Trackers([tracker], default=lambda: "github").add_section("github:o/r#7", heading, text)
+
+    assert len(service.sent("PATCH", "/repos/o/r/issues/7")) == 1
+
+
+@pytest.mark.parametrize("words", ["Acceptance checks", "acceptance checks", "  Acceptance   checks "])
+async def test_a_heading_the_description_has_is_refused_and_nothing_is_written(key_file, words):
+    held = f"{EARLIER}\n### Acceptance Checks ###\n\n- make lint\n"
+    issue = {"number": 7, "title": "Fix it", "body": held, "state": "open", "labels": []}
+    hub, hub_service = github(key_file, {("GET", "/repos/o/r/issues/7"): issue})
+    wiki = "Do it.\n\nh3. Acceptance checks\n* x\n"
+    site, site_service = jira({("GET", "/rest/api/2/issue/VL-7"): {"key": "VL-7", "fields": {"description": wiki}}})
+
+    for tracker, ref, destination, service in (
+        (hub, "github:o/r#7", outbound.GITHUB, hub_service),
+        (site, "jira:VL-7", outbound.JIRA, site_service),
+    ):
+        heading, text = await prepared(destination, words, "- make test")
+        with pytest.raises(TrackerError, match="already has a section") as refused:
+            await tracker.add_section(ref, heading, text)
+        assert not refused.value.retryable
+        written = [(m, p) for m, p, _ in service.asked if m in ("PUT", "PATCH") or p.endswith("/labels")]
+        assert written == [], "no label and no write"
+
+
+def test_only_a_heading_line_with_the_same_words_counts_as_the_section():
+    assert not has_section("Acceptance checks are below.\n#Acceptance checks\n", "Acceptance checks")
+    assert not has_section("## Acceptance checks for later\n", "Acceptance checks")
+    assert has_section("Intro\n\n   ## acceptance  CHECKS\n", "Acceptance checks")
 
 
 def refusing_service(request: httpx.Request) -> httpx.Response:
