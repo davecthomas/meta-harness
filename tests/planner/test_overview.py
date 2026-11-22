@@ -1,0 +1,215 @@
+# Created by the meta-harness in run t-7195062f4e6f:run-1 on harness:pi-careful/claude:claude-opus-5-5.
+
+"""The planner's Overview report: one report on all running goals, written from their facts when they change.
+
+The planner's API runs against Postgres with fakes for the tracker, the Task API and the event service. The
+model is a mock HTTP Gateway or a fake writer: no model is called.
+"""
+
+import asyncio
+import functools
+import json
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from meta_harness import db
+from meta_harness.config import kinds
+from meta_harness.costs import model_source
+from meta_harness.planner import overview, planning
+from meta_harness.planner.service import create_app
+from meta_harness.run_service import writing
+
+from .test_planner import OPERATOR, Events, FakeTasks, _no_title, migrated, registry  # noqa: F401
+from .test_planning import WritingTracker, _feature
+
+SINCE = {"since": (datetime.now(UTC) - timedelta(days=1)).isoformat()}
+
+
+class Gateway:
+    """A mock HTTP Gateway's /v1/structured: it answers with a report on the goals it is told of."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+        self.goal_ids: list[str] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(json.loads(request.content))
+        data = {
+            "headline": "Two goals are being planned.",
+            "moving": [{"goal_id": goal_id, "what": "Its plan is being drafted."} for goal_id in self.goal_ids],
+            "not_moving": [{"goal_id": "g-none", "why": "No such goal."}],
+            "needs_you": [],
+            "spend": "Nothing is spent yet.",
+            "finished": "",
+        }
+        return httpx.Response(200, json={"data": data, "finish_reason": "complete", "usd_cost": "0.0042"})
+
+
+@pytest.fixture
+def passed(monkeypatch):
+    """The writing pass finds nothing, and calls no gateway."""
+
+    async def check_all(texts, transport=None):
+        return [writing.Outcome(text=t) for t in texts]
+
+    monkeypatch.setattr(writing, "check_all", check_all)
+
+
+def _only(monkeypatch, ids: list[str]) -> None:
+    """The report covers only this test's goals: the database holds other tests' goals too."""
+    real = overview.running_goals
+    monkeypatch.setattr(overview, "running_goals", lambda: [g for g in real() if g["id"] in ids])
+    monkeypatch.setattr(overview, "finished_goals", lambda since: [])
+
+
+def _settings(monkeypatch, **changed) -> None:
+    shipped = planning.settings()
+    monkeypatch.setattr(planning, "settings", lambda: {**shipped, "overview": {**shipped["overview"], **changed}})
+
+
+@pytest.fixture
+def world(monkeypatch, passed):
+    monkeypatch.setenv("GATEWAY_URL", "http://gateway.test")
+    monkeypatch.setenv("GATEWAY_API_KEY", "k")
+    gateway = Gateway()
+    events, tasks = Events(), FakeTasks()
+    writer = functools.partial(overview.write_report, transport=httpx.MockTransport(gateway))
+    app = create_app(
+        events,
+        WritingTracker(),
+        tasks,
+        operator_keys={"op-key": "dave"},
+        service_keys={},
+        sweep_seconds=0,
+        titler=_no_title,
+        overview_writer=writer,
+    )
+    with TestClient(app) as client:
+        yield client, events, tasks, gateway
+
+
+def test_two_goals_facts_give_one_report_and_an_unchanged_digest_writes_none(world, monkeypatch):
+    client, events, tasks, gateway = world
+    goals = [_feature(client, statement="Add exports"), _feature(client, statement="Add imports")]
+    gateway.goal_ids = [g["id"] for g in goals]
+    _only(monkeypatch, gateway.goal_ids)
+
+    assert client.get("/v1/overview/report", headers=OPERATOR).json()["report"] is None, "none before the first"
+    first = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
+
+    assert first["written"] is True and len(gateway.calls) == 1, "one model call for both goals"
+    report = first["report"]
+    assert report["headline"] == "Two goals are being planned." and report["goals"] == 2
+    assert {m["goal_id"] for m in report["moving"]} == set(gateway.goal_ids)
+    assert report["not_moving"][0]["goal_id"] == "", "a goal the facts do not hold is not named"
+    prompt = gateway.calls[0]["prompt"]
+    assert all(goal_id in prompt for goal_id in gateway.goal_ids) and "--- your last report ---" in prompt
+    assert "Say only what the facts say" in gateway.calls[0]["system_prompt"]
+
+    again = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
+    assert again["written"] is False and again["report"] == report, "nothing changed: the last report stands"
+    assert len(gateway.calls) == 1, "and nothing is spent"
+
+    # A goal moves: its planning task ends, so its plan waits for approval.
+    plan_task = next(t for t in tasks.tasks.values() if t.get("goal_id") == goals[0]["id"])
+    plan_task["status"] = "closed"
+    held = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
+    assert held["written"] is False and report["written_at"] in held["note"], "the last is too recent"
+    _settings(monkeypatch, min_seconds=1)
+    client.app.state.overview.latest["written_at"] = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    moved = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
+    assert moved["written"] is True and len(gateway.calls) == 2
+    assert moved["report"]["digest"] != report["digest"]
+    facts = json.loads(gateway.calls[1]["prompt"].split("--- facts ---\n")[1].split("\n--- end of facts")[0])
+    [waiting] = [g for g in facts["goals"] if g["goal_id"] == goals[0]["id"]]
+    assert waiting["needs_operator"][0]["need"] == "approve_plan"
+
+
+def test_since_must_be_a_time(world):
+    client, *_ = world
+    refused = client.get("/v1/overview/report", params={"since": "yesterday"}, headers=OPERATOR)
+    assert refused.status_code == 422
+
+
+class Writer:
+    def __init__(self):
+        self.calls = 0
+
+    async def __call__(self, found, before):
+        self.calls += 1
+        return overview.Written(
+            headline=f"Report {self.calls}", spend="Spend is low.", model="claude:m", usd_cost="0.60"
+        )
+
+
+def test_past_max_usd_no_model_call_is_made_and_the_last_report_is_returned(world, monkeypatch):
+    client, events, tasks, _ = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+    _settings(monkeypatch, max_usd="0.50", min_seconds=1)
+    writer = Writer()
+    since = datetime.now(UTC) - timedelta(hours=1)
+    first = overview.Overview(events, tasks, writer)
+
+    written = asyncio.run(first.report(since))
+    assert written["written"] is True and first.spent_today() == Decimal("0.60")
+
+    next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])["status"] = "closed"
+    first.latest["written_at"] = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    limited = asyncio.run(first.report(since))
+
+    assert writer.calls == 1, "past the day's limit no model is called"
+    assert limited["written"] is False and limited["report"]["headline"] == "Report 1"
+    assert "$0.50 limit" in limited["note"] and limited["report"]["written_at"] in limited["note"]
+
+    # The day's spend is in the event log, so a restarted planner keeps to the limit too.
+    restarted = overview.Overview(events, tasks, writer)
+    kept = asyncio.run(restarted.report(since))
+    assert writer.calls == 1 and kept["report"]["headline"] == "Report 1" and kept["note"]
+
+
+@pytest.fixture
+def no_costs():
+    with db.connect(autocommit=True) as conn:
+        conn.execute("DELETE FROM costs.daily_cost")
+        conn.execute("DELETE FROM costs.harvest")
+
+
+def test_the_event_carries_the_cost_and_it_is_counted_as_planning(world, monkeypatch, no_costs):
+    client, events, tasks, _ = world
+    goal = _feature(client)
+    _only(monkeypatch, [goal["id"]])
+
+    asyncio.run(overview.Overview(events, tasks, Writer()).report(datetime.now(UTC)))
+
+    [event] = [e for e in events.events if e[0] == "overview_report_written"]
+    payload = event[1]
+    assert (payload["model"], payload["usd_cost"], payload["headline"]) == ("claude:m", "0.60", "Report 1")
+
+    class Log:
+        def read(self, from_position=0, limit=500, **filters):
+            found = [{"position": 1, "event_type": event[0], "payload": payload, "time_utc": payload["written_at"]}]
+            return {"events": [e for e in found if e["position"] > from_position]}
+
+    with db.connect(autocommit=True) as conn:
+        assert model_source.harvest(conn, Log(), lambda _: None, lambda _: None) == 1
+        rows = conn.execute("SELECT item, goal_id, model, usd FROM costs.daily_cost").fetchall()
+    assert rows == [("planning", "", "m", Decimal("0.60"))]
+
+
+def test_the_overview_settings_are_checked():
+    shipped = planning.settings()
+    assert kinds.check_planning(shipped, None) == []
+
+    def reasons(**changed) -> list[str]:
+        return kinds.check_planning({**shipped, "overview": {**shipped["overview"], **changed}}, None)
+
+    assert reasons(model="haiku")[0].startswith("overview.model must be <engine>:<model>")
+    assert reasons(max_response_tokens=0)[0].startswith("overview.max_response_tokens must be a whole number")
+    assert reasons(min_seconds=1.5)[0].startswith("overview.min_seconds must be a whole number")
+    assert reasons(max_usd="0")[0].startswith("overview.max_usd must be an amount above 0")
+    assert kinds.check_planning({k: v for k, v in shipped.items() if k != "overview"}, None) == []
