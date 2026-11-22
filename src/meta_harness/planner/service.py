@@ -15,6 +15,7 @@
     GET, PUT   /v1/me/settings                the signed-in user's own settings
     GET        /v1/activity                   every pull request opened lately, by state, for the Overview's row
     GET        /v1/overview/report            the planner's report on all running goals (overview.py)
+    POST       /v1/overview/ask               answer the operator's question about the work from the same record
     GET        /health
 
 Operators call it with an operator key (MH_OPERATOR_KEYS); control-plane
@@ -268,6 +269,7 @@ def create_app(
     fix_assessor: suggestions.Assessor | None = None,
     namer: naming.Namer | None = None,
     overview_writer: overview.Writer | None = None,
+    overview_asker: overview.Asker | None = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
@@ -1592,7 +1594,7 @@ def create_app(
     budget_api.register(app, operator, load, change_with, events, tasks)
     sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks, size)
     users.register(app, operator, events)
-    app.state.overview = overview.Overview(events, tasks, overview_writer)
+    app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)
     overview.register(app, operator, app.state.overview)
 
     def admin(key: str = Depends(auth.bearer), role: str | None = Header(default=None, alias="X-MH-Role")) -> bool:

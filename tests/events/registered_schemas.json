@@ -700,6 +700,37 @@
     ],
     "type": "object"
   },
+  "overview_question_answered v1": {
+    "additionalProperties": true,
+    "properties": {
+      "answer": {
+        "type": "string"
+      },
+      "answered_at": {
+        "type": "string"
+      },
+      "in_record": {
+        "type": "boolean"
+      },
+      "model": {
+        "type": "string"
+      },
+      "question": {
+        "type": "string"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "question",
+      "answer",
+      "model",
+      "usd_cost",
+      "answered_at"
+    ],
+    "type": "object"
+  },
   "overview_report_written v1": {
     "additionalProperties": true,
     "properties": {
