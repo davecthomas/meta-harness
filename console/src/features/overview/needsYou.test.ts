@@ -49,6 +49,27 @@ test("each thing that needs the operator is named by what it asks for, goals fir
   expect(by["goal-waits-g-4"].to).toBe("/goals/g-4");
 });
 
+test("a task the Task Shepherd has, or that nobody needs to touch, is not the operator's whatever its status", () => {
+  // A canceled goal's tasks: the Shepherd found nothing is left to do for the failed and parked ones, and it
+  // is stopping the one held for budget. And a failed task it is about to retry by itself.
+  const standing = (owner: string, situation: string, reason: string) => ({ ...waiting, owner, situation, reason }) as Task["standing"];
+  const ended = standing("planner", "failed_goal_ended", "the task failed, and its goal was canceled: nothing is left to do");
+  const items = needsYouItems(
+    [
+      task("a", "failed", { standing: ended }),
+      task("b", "review_unresolved", { standing: standing("planner", "goal_ended", "its goal was canceled, so nothing more is done for it") }),
+      task("c", "running", { waiting_on: "budget", status_reason: "it spent $8.00 of its $8.00 limit", standing: standing("supervisor", "goal_ended", "its goal was canceled, so its run is stopped") }),
+      task("d", "failed", { standing: standing("supervisor", "retry_due", "the task failed on the system's side") }),
+      task("e", "ready", { pr_url: "https://github.com/o/r/pull/9", standing: standing("supervisor", "merge_due", "the code host would take its merge now") }),
+      // Still the operator's: one the Shepherd handed over, and one it has not looked at yet.
+      task("f", "failed", { standing: standing("operator", "failed", "the task failed on its own account") }),
+      task("g", "failed"),
+    ],
+    [],
+  );
+  expect(items.map((i) => i.key)).toEqual(["task-f", "task-g"]);
+});
+
 test("a failure says its fix in plain words, not the raw error", () => {
   const grant = "TaskFailed: run 1 on harness:pi-lean/claude:claude-sonnet-5 ended for good: run_harness failed (HarnessConfigError): HarnessConfigError: the HTTP Gateway refused the run grant (422): [{'type': 'string_pattern_mismatch', 'loc': ['body', 'spend_limit_usd'], 'msg': \"String should match pattern\", 'input': '1000000.00'}]";
   const [item] = needsYouItems([task("c", "failed", { status_reason: grant })], []);

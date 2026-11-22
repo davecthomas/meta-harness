@@ -96,7 +96,9 @@ def test_no_task_is_left_to_a_driver_that_is_not_there():
         if decision.owner == "scheduler":
             assert facts.status == "queued" and facts.goal in ("none", *SWEPT), facts
         if decision.owner == "planner" and facts.status in ("blocked", "ready", "review_unresolved"):
-            assert facts.goal in SWEPT, f"{facts}: left to a sweep that does not cover its goal"
+            # A parked task of a canceled goal is left to nobody: nothing more is done for it.
+            ended = decision.situation == "goal_ended" and facts.goal == "canceled"
+            assert facts.goal in SWEPT or ended, f"{facts}: left to a sweep that does not cover its goal"
 
 
 def test_a_running_task_with_no_workflow_is_recovered_whatever_it_was_waiting_on():
@@ -208,6 +210,27 @@ def test_a_pull_request_going_nowhere_is_started_over_on_the_current_base_once_b
     assert asked.owner == "operator" and asked.moves[0] == "start_over" and "start it over" in asked.ask
     # Not for a goal that is not being worked.
     assert decide(dataclasses.replace(conflicted, goal="paused")).action != "start_over"
+
+
+def test_a_canceled_goal_asks_nothing_of_the_operator_and_stops_what_still_runs():
+    """On 2026-11-22 a goal was canceled and the Overview still said 11 of its tasks needed the operator: one
+    waited on a budget nobody would raise, and the rest had failed or were parked."""
+    held = Facts("running", workflow="running", goal="canceled", waiting_on="budget", over_ceiling=True)
+    stopped = decide(held)
+    assert (stopped.owner, stopped.action, stopped.situation) == ("supervisor", "cancel_for_goal", "goal_ended")
+    assert decide(Facts("running", workflow="running", goal="canceled")).action == "cancel_for_goal"
+    assert decide(dataclasses.replace(held, cancel_requested=True)).owner == "workflow", "asked once, not each pass"
+    for status in ("ready", "review_unresolved"):
+        for how in ("clean", "conflict", "unknown"):
+            parked = decide(Facts(status, pull="open", goal="canceled", auto_merge=True, mergeable=how))
+            assert (parked.owner, parked.action, parked.moves) == ("planner", "", ()), (status, how)
+            assert "its pull request stays open" in parked.reason
+    assert decide(Facts("failed", goal="canceled")).owner == "planner"
+    assert decide(Facts("canceled", pull="open", goal="canceled")).owner == "planner"
+    # A task canceled by itself, in a goal still going, leaves its open pull request to the operator as before.
+    assert decide(Facts("canceled", pull="open", goal="active")).owner == "operator"
+    # A goal completed by hand lets its running tasks finish, as its own dialog says.
+    assert decide(Facts("running", workflow="running", goal="met")).owner == "workflow"
 
 
 def test_a_hold_no_raise_can_lift_is_ended_not_waited_out():
