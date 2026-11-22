@@ -24,6 +24,8 @@ export * from "./features/tasks/api";
 
 export interface Goal {
   id: string;
+  // The specification the goal was planned from, by name and length, when it has one.
+  spec?: { name: string; chars: number } | null;
   // The goal's short name. Null until the operator or the planner's model gives it one: goalTitle covers that.
   title: string | null;
   // The goal's description: what it is, which the planner reads.

@@ -55,6 +55,9 @@ class WithOwn:
     ) -> Issue:
         return await self.primary.create_issue(repo, title, body, labels, **_under(parent))
 
+    async def create_epic(self, repo: str, title: str, body: str) -> Issue:
+        return await self.primary.create_epic(repo, title, body)
+
     def _told(self, ref: str) -> Tracker | None:
         """The tracker to tell of the issue's progress; None for one that shows it by itself."""
         tracker = self._of(ref)
@@ -161,6 +164,9 @@ class Trackers:
         self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
     ) -> Issue:
         return await self.for_repo(repo).create_issue(repo, title, body, labels, **_under(parent))
+
+    async def create_epic(self, repo: str, title: str, body: str) -> Issue:
+        return await self.for_repo(repo).create_epic(repo, title, body)
 
     async def comment(self, ref: str, body: str) -> str:
         return await self.for_ref(ref).comment(ref, body)

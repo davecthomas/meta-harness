@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Alert, Anchor, Button, Checkbox, Group, NativeSelect, NumberInput, Paper, SegmentedControl, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
-import { IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
+import { Alert, Anchor, Button, Checkbox, Collapse, Group, NativeSelect, NumberInput, Paper, SegmentedControl, SimpleGrid, Stack, Switch, Text, TextInput, Textarea, UnstyledButton } from "@mantine/core";
+import { IconChevronDown, IconChevronRight, IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { api, refLabel, type GoalDraft, type IssueSource, type LabelIssue, type Tracker } from "../../api";
@@ -9,6 +9,7 @@ import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
 import { LabelStart } from "./LabelStart";
 import { ImproveGoal } from "./ImproveGoal";
+import { SpecField, type GoalSpec } from "./SpecField";
 import { PageHeader } from "../../components/ui";
 import { PARALLEL_HELP } from "./parallel";
 
@@ -118,6 +119,10 @@ export function NewGoal() {
   }, []);
   const [priority, setPriority] = useState<string | number>(0);
   const [autoMerge, setAutoMerge] = useState(false);
+  // A specification to plan the goal from: a loaded file, or the goal's parent issue.
+  const [spec, setSpec] = useState<GoalSpec | null>(null);
+  // The settings most goals leave as they are, folded away until asked for.
+  const [more, setMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Which button submitted the form: Save (false) or Save and start (true). Null while not saving.
   const [saving, setSaving] = useState<boolean | null>(null);
@@ -168,8 +173,14 @@ export function NewGoal() {
   // Whether the goal plans its own issues from its description (a feature goal) or runs issues that exist.
   const [plans, setPlans] = useState(false);
 
-  // Whether this goal plans its tasks: asked for, or the only way with no tracker.
-  const plansNow = plans || untracked || plansEvery;
+  // Whether this goal plans its tasks: asked for, from a specification, or the only way with no tracker.
+  const plansNow = plans || untracked || plansEvery || !!spec;
+  // The issue the goal names as its parent, where its tracker has parents: its description can be the specification.
+  const parent = asked.some((s) => s.name === "parent") ? (trackerSettings.parent ?? "").trim() : "";
+  // A parent that is no longer chosen is no longer the specification.
+  useEffect(() => {
+    setSpec((now) => (now && "ref" in now && now.ref !== parent ? null : now));
+  }, [parent]);
 
   function fromDraft(draft: GoalDraft) {
     setTitle(draft.title);
@@ -198,7 +209,7 @@ export function NewGoal() {
       setError(`Choose the goal's ${missing.map((s) => s.label).join(" and ")}.`);
       return null;
     }
-    if (!(plans || untracked) && !label.trim() && !refs.length && !takesAssigned) {
+    if (!(plans || untracked || spec) && !label.trim() && !refs.length && !takesAssigned) {
       setError(`Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to the meta-harness" : ""}.`);
       return null;
     }
@@ -219,6 +230,7 @@ export function NewGoal() {
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
         start: started,
+        ...(spec ? { spec } : {}),
         // Where its issues come from, which is not whether it is planned: the planner decides that.
         modality: plans || untracked ? "feature" : "fix",
       });
@@ -260,9 +272,18 @@ export function NewGoal() {
     <>
       <PageHeader title="New goal" description="A goal says which repositories to work in and which issues are its work. Each issue becomes a task, and each task a pull request." />
       {unsaved.element}
-      <Paper maw={720}>
+      {/* The quick ways to start a goal come first: from the issues a label holds, or from a spec or an epic. */}
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg" maw={1120}>
+        {readable && !untracked && <LabelStart onDraft={fromDraft} source={source} />}
+        <SpecField value={spec} onChange={setSpec} parent={parent || undefined} parentLabel={parent ? refLabel(parent) : undefined} />
+      </SimpleGrid>
+      <Paper maw={1120}>
         <form onSubmit={submit}>
           <Stack gap="lg">
+            {/* Two columns where there is room, so the whole form is in view: what the goal is on the left,
+                where its work comes from on the right. */}
+            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl" verticalSpacing="lg">
+              <Stack gap="lg">
             <TextInput
               label="Title"
               description="A few words for lists. Leave it empty and a model writes one from the description."
@@ -306,6 +327,8 @@ export function NewGoal() {
                 {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
               </Stack>
             </Checkbox.Group>
+              </Stack>
+              <Stack gap="lg">
             <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} repos={chosen} />
             {untracked ? (
               <Text size="sm" data-testid="untracked-note">
@@ -365,56 +388,74 @@ export function NewGoal() {
                           : "Optional: pick open issues for the goal by hand."}
                   </Text>
                 </Group>
-                {readable && <LabelStart onDraft={fromDraft} source={source} />}
               </Stack>
             )}
+              </Stack>
+            </SimpleGrid>
             <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} source={source} />
-            <Group grow align="flex-start">
-              <NumberInput
-                label="Budget"
-                description="Optional. What the goal's runs may spend; below, what happens when they have."
-                prefix="$"
-                min={0}
-                decimalScale={2}
-                value={budget}
-                onChange={setBudget}
-              />
-              <NumberInput label="Priority" description="Higher runs first." value={priority} onChange={setPriority} />
-              <NumberInput
-                label="Parallel tasks"
-                description={PARALLEL_HELP}
-                placeholder={systemParallel ? `System setting: ${systemParallel}` : "System setting"}
-                min={1}
-                max={systemParallel ?? undefined}
-                allowDecimal={false}
-                value={parallel}
-                onChange={setParallel}
-              />
-            </Group>
-            {budget !== "" && (
-              <Group grow align="flex-start">
-                <NativeSelect
-                  label="When the budget is reached"
-                  description="Stop: no more of its tasks start. Warn: the overrun is recorded and shown, and the goal keeps going."
-                  data={[{ value: "block", label: "Stop" }, { value: "warn", label: "Warn and keep going" }]}
-                  value={budgetMode}
-                  onChange={(e) => setBudgetMode(e.currentTarget.value as "block" | "warn")}
-                />
-                {budgetMode === "block" && (
-                  <NumberInput
-                    label="Allowed overage"
-                    description="How far past its budget the goal may go before it stops. 0 stops at the budget exactly."
-                    suffix="%"
-                    min={0}
-                    allowDecimal={false}
-                    value={overage}
-                    onChange={setOverage}
-                  />
-                )}
-              </Group>
-            )}
+            <NumberInput
+              label="Budget"
+              description="What the goal's runs may spend. Leave it empty for none."
+              prefix="$"
+              min={0}
+              decimalScale={2}
+              maw={260}
+              value={budget}
+              onChange={setBudget}
+            />
+            <div>
+              <UnstyledButton onClick={() => setMore((now) => !now)} aria-expanded={more} data-testid="more-settings">
+                <Group gap={6}>
+                  {more ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
+                  <Text size="sm" fw={500}>More settings</Text>
+                  <Text size="sm" c="dimmed">priority, parallel tasks, what the budget does when it is reached</Text>
+                </Group>
+              </UnstyledButton>
+              <Collapse expanded={more}>
+                <Stack gap="md" mt="sm">
+                  <Group grow align="flex-start">
+                    <NumberInput label="Priority" description="Higher runs first." value={priority} onChange={setPriority} />
+                    <NumberInput
+                      label="Parallel tasks"
+                      description={PARALLEL_HELP}
+                      placeholder={systemParallel ? `System setting: ${systemParallel}` : "System setting"}
+                      min={1}
+                      max={systemParallel ?? undefined}
+                      allowDecimal={false}
+                      value={parallel}
+                      onChange={setParallel}
+                    />
+                  </Group>
+                  {budget === "" ? (
+                    <Text size="sm" c="dimmed">Give the goal a budget to choose what happens when it is reached.</Text>
+                  ) : (
+                    <Group grow align="flex-start">
+                      <NativeSelect
+                        label="When the budget is reached"
+                        description="Stop: no more of its tasks start. Warn: the overrun is recorded and shown, and the goal keeps going."
+                        data={[{ value: "block", label: "Stop" }, { value: "warn", label: "Warn and keep going" }]}
+                        value={budgetMode}
+                        onChange={(e) => setBudgetMode(e.currentTarget.value as "block" | "warn")}
+                      />
+                      {budgetMode === "block" && (
+                        <NumberInput
+                          label="Allowed overage"
+                          description="How far past its budget the goal may go before it stops. 0 stops at the budget exactly."
+                          suffix="%"
+                          min={0}
+                          allowDecimal={false}
+                          value={overage}
+                          onChange={setOverage}
+                        />
+                      )}
+                    </Group>
+                  )}
+                </Stack>
+              </Collapse>
+            </div>
+            {/* The one setting that decides whether a person is in the loop, right above the buttons. */}
             <Switch
-              label="Merge pull requests without me"
+              label="Merge pull requests automatically"
               description="Off: every pull request waits for you to merge it."
               checked={autoMerge}
               onChange={(e) => setAutoMerge(e.currentTarget.checked)}

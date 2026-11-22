@@ -72,7 +72,7 @@ test("the draft helper is closed until asked for, lists a label's issues read-on
   );
 
   // Optional and closed: the form below is the goal.
-  const helper = await screen.findByRole("button", { name: "Draft from labels (optional)" });
+  const helper = await screen.findByRole("button", { name: "Draft a goal from issue labels" });
   expect(helper.getAttribute("aria-expanded")).toBe("false");
   expect(screen.queryByRole("button", { name: "Label bug" })).toBeNull();
   fireEvent.click(helper);
@@ -127,7 +127,7 @@ test("the label list filters by text and by repo", async () => {
     </MantineProvider>,
   );
 
-  fireEvent.click(await screen.findByRole("button", { name: "Draft from labels (optional)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Draft a goal from issue labels" }));
   expect(await screen.findByRole("button", { name: "Label docs" })).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Find a label"), { target: { value: "bu" } });
   expect(screen.queryByRole("button", { name: "Label docs" })).toBeNull();
@@ -141,7 +141,7 @@ test("an answer for a project no longer asked about, even a refusal arriving las
     <MantineProvider theme={theme}><LabelStart onDraft={() => undefined} source={{ tracker: "jira", settings: { project } }} /></MantineProvider>
   );
   const { rerender } = render(view("V"));
-  fireEvent.click(screen.getByRole("button", { name: "Draft from labels (optional)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Draft a goal from issue labels" }));
   rerender(view("AB"));
   await waitFor(() => expect(Object.keys(answers).sort()).toEqual(["AB", "V"]));
 
@@ -175,7 +175,7 @@ test("a draft from several labels reads each issue once and fills the form with 
       </MemoryRouter>
     </MantineProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Draft from labels (optional)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Draft a goal from issue labels" }));
 
   fireEvent.click(await screen.findByRole("button", { name: "Label bug" }));
   fireEvent.click(screen.getByRole("button", { name: "Label ux" }));

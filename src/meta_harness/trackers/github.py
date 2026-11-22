@@ -176,6 +176,23 @@ class GitHubTracker:
         self.marked.refs.add((made.ref, self.label()))
         return made
 
+    async def create_epic(self, repo: str, title: str, body: str) -> Issue:
+        """Creates the issue that stands for a goal's whole plan. GitHub has no epic type, so it is a plain
+        issue with the meta-harness's own label and no goal's. A GitHub issue has no parent here, so the
+        plan's issues are not linked under it."""
+        outbound.require(title, "an epic's title", outbound.GITHUB, title=True)
+        outbound.require(body, "an epic's body", outbound.GITHUB)
+        created = await self._call(
+            repo,
+            WRITE_ISSUES,
+            "POST",
+            f"/repos/{repo}/issues",
+            json={"title": title, "body": body, "labels": [self.label()]},
+        )
+        made = _issue(repo, created)
+        self.marked.refs.add((made.ref, self.label()))
+        return made
+
     async def comment(self, ref: str, body: str) -> str:
         outbound.require(body, "a comment on an issue", outbound.GITHUB)
         repo, number = parse_ref(ref)

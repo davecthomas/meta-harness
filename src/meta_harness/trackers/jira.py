@@ -99,6 +99,10 @@ USUAL = {
 CATEGORY = {TODO: "new", IN_PROGRESS: "indeterminate", IN_REVIEW: "indeterminate", DONE: "done"}
 
 
+# The issue type of an epic in a Jira project that names no other (its `epic_type` in the trackers configuration).
+EPIC_TYPE = "Epic"
+
+
 @dataclass(frozen=True)
 class Site:
     """The Jira site, as the trackers configuration describes it."""
@@ -113,6 +117,10 @@ class Site:
     def issue_type_of(self, project: str) -> str:
         """The type of an issue the planner creates in the project."""
         return str((self.projects.get(project) or {}).get("issue_type") or self.issue_type)
+
+    def epic_type_of(self, project: str) -> str:
+        """The type of the issue that stands for a whole plan in the project: its `epic_type`, else Epic."""
+        return str((self.projects.get(project) or {}).get("epic_type") or EPIC_TYPE)
 
     def statuses_of(self, project: str) -> dict[str, str]:
         """The project's own names for our statuses."""
@@ -444,6 +452,34 @@ class JiraTracker:
                 made = await self._call("POST", "/issue", json={"fields": fields})
         else:
             made = await self._call("POST", "/issue", json={"fields": fields})
+        self._open.clear()
+        self.marked.refs.add((ref_for(made["key"]), self.label()))
+        return await self.read(ref_for(made["key"]))
+
+    async def create_epic(self, repo: str, title: str, body: str) -> Issue:
+        """Creates an epic in the goal's project, for the plan's issues to be created under. It carries the
+        meta-harness's own label and no goal's."""
+        outbound.require(title, "an epic's title", outbound.JIRA, title=True)
+        outbound.require(body, "an epic's body", outbound.JIRA)
+        kind = self._site().epic_type_of(self._project())
+        fields = {
+            "project": {"key": self._project()},
+            "summary": title,
+            "description": body,
+            "issuetype": {"name": kind},
+            "labels": [self.label()],
+        }
+        try:
+            made = await self._call("POST", "/issue", json={"fields": fields})
+        except TrackerError as err:
+            if err.status != 400:
+                raise
+            raise TrackerError(
+                f"Jira would not create the plan's epic as a {kind} in {self._project()}: {err}. Name the "
+                "project's epic issue type as epic_type in the trackers configuration, or set the goal's parent "
+                "to an existing issue, then approve again",
+                status=err.status,
+            ) from err
         self._open.clear()
         self.marked.refs.add((ref_for(made["key"]), self.label()))
         return await self.read(ref_for(made["key"]))

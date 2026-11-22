@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from meta_harness import db
-from meta_harness.planner import enrich, planning, plans, store, suggestions
+from meta_harness.planner import enrich, planning, plans, specs, store, suggestions
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.trackers.base import TrackerError
 from meta_harness.trackers.own import SCHEME as OWN
@@ -65,6 +65,7 @@ def register(
     activate: Callable[[str, str], Any],
     issues_of: Callable[[dict], Any],
     plan_again: Callable[[str, str], Any],
+    sizer: Any = None,
 ) -> None:
     """Adds the plan routes. activate(goal_id, who) makes a planning goal active and sweeps it. issues_of(goal)
     reads the issues the goal has that no task has started on, for its planning task to plan over.
@@ -100,7 +101,9 @@ def register(
     async def read_plan(goal_id: str, who: str = Depends(operator)) -> dict:
         goal = load(goal_id)
         # An ended planning task's drafts become the plan when it is first asked for, not only at the next sweep.
-        if goal["status"] == "planning" and await planning.collect(goal, tasks, events):
+        if goal["status"] == "planning" and await planning.collect(
+            goal, tasks, events, sizer=sizer, issues_of=issues_of
+        ):
             goal = load(goal_id)
         return await asyncio.to_thread(shown, goal)
 
@@ -202,7 +205,13 @@ def register(
             )
         try:
             await planning.approve(
-                goal, writer if tracked or kept is None else kept, events, who, tracked, originals=writer
+                goal,
+                writer if tracked or kept is None else kept,
+                events,
+                who,
+                tracked,
+                originals=writer,
+                spec=await asyncio.to_thread(specs.of, goal_id),
             )
 
             def approved() -> None:

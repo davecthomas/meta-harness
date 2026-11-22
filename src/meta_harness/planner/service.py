@@ -9,6 +9,7 @@
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
     POST       /v1/goals/{id}/issues/run-anyway, /split   answer an issue the sweep held (sizing_api.py)
+    GET        /v1/goals/{id}/spec            the specification the goal was created with (specs.py)
     GET, POST  /v1/goals/{id}/unstick         take each stuck task's recommended step, or say what it would do (unstick_api.py)
     POST       /v1/goals/{id}/issues/fix-draft, /fix-accept  draft and write what an issue lacks (fix_issue.py)
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
@@ -81,9 +82,11 @@ from meta_harness.planner import (
     suggestions,
     updates,
     sizing_api,
+    specs,
     store,
     unstick_api,
     users,
+    splits,
 )
 from meta_harness.planner.sweep import (
     FOLLOW_UP_SECONDS,
@@ -121,6 +124,18 @@ STATE_CHECK_SECONDS = 60.0
 USUAL_CHECKS_SECONDS = 600.0
 
 
+class SpecIn(BaseModel):
+    """A goal's specification, one of two ways: a document's text, with its name, or an issue of the goal's
+    tracker by ref (a Jira epic), whose description is the specification."""
+
+    # What the document is called: its file name, or a title. Left out for an issue: its key and title.
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    # Its text, as Markdown or plain text.
+    text: str | None = Field(default=None, min_length=1, max_length=specs.MAX_CHARS)
+    # The issue that holds it, as jira:PROJ-12. The plan's tasks are created under that issue.
+    ref: str | None = Field(default=None, min_length=1, max_length=200)
+
+
 class GoalIn(BaseModel):
     # The goal's short name, for lists. Left out: the planner's model writes one from the statement.
     title: str | None = Field(default=None, min_length=1, max_length=80)
@@ -152,6 +167,9 @@ class GoalIn(BaseModel):
     tracker_settings: dict[str, str] = Field(default_factory=dict)
     # False: save the goal paused and never started; resume starts it.
     start: bool = True
+    # A specification to plan the goal from, for work that has no issues yet (specs.py): its planning task
+    # breaks it down into tasks, which are created under one epic when the plan is approved.
+    spec: SpecIn | None = None
 
 
 class LineCommentIn(BaseModel):
@@ -385,7 +403,8 @@ def create_app(
         not planned: a planning run would spend on nothing. It goes back to not started, and False comes back."""
         try:
             issues = await issues_to_plan(goal)
-            if not issues and goal["modality"] not in store.PLANNED_MODALITIES and not goal.get("plan_approved_at"):
+            from_text = goal["modality"] in store.PLANNED_MODALITIES or await asyncio.to_thread(specs.of, goal["id"])
+            if not issues and not from_text and not goal.get("plan_approved_at"):
                 await asyncio.to_thread(move_with, goal["id"], who, "paused", {"planning"})
                 log.info("goal %s: no open issue to plan over yet, so no planning task started", goal["id"])
                 return False
@@ -499,7 +518,7 @@ def create_app(
 
             # A planning goal's ended planning task becomes its plan.
             async def collect(goal: dict) -> None:
-                await planning.collect(goal, tasks, events)
+                await planning.collect(goal, tasks, events, sizer=size, issues_of=issues_to_plan)
                 await suggest(goal)
 
             await each(await listed(planning_goals, "plans"), collect, "collecting of its plan")
@@ -1145,13 +1164,56 @@ def create_app(
             "refs": [i.ref for i in issues],
         }
 
+    async def loaded_spec(body: GoalIn, scheme: str | None, names: list[str]) -> tuple[str, str] | None:
+        """The goal's specification as (name, text), or None when it has none. One given as an issue is read
+        from the goal's tracker, and that issue becomes the goal's parent where the tracker has parents, so
+        the plan's tasks are created under it and no second epic is made. 422 says what is wrong and what to
+        send."""
+        spec = body.spec
+        if spec is None:
+            return None
+        if (spec.text is None) == (spec.ref is None):
+            raise HTTPException(
+                status_code=422,
+                detail="a specification is its text, with a name, or an issue's ref such as jira:PROJ-12: send one of the two",
+            )
+        if spec.text is not None:
+            if not spec.name:
+                raise HTTPException(
+                    status_code=422, detail="a specification sent as text needs a name: its file name will do"
+                )
+            return spec.name.strip(), spec.text
+        reader = bound_tracker(scheme, names, body.tracker_settings) if hasattr(tracker, "named") else tracker
+        try:
+            issue = await reader.read(spec.ref)
+        except (TrackerError, ValueError) as err:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"the specification {spec.ref} could not be read: {err}. Name an issue of the goal's tracker "
+                    "by its ref, such as jira:PROJ-12, or load the specification as a file"
+                ),
+            ) from err
+        if not (issue.body or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"{spec.ref} has no description to plan from: write the specification there, or load it as a file",
+            )
+        # The issue is where the plan's tasks go, unless the goal names another parent, when its tracker takes one.
+        under = {"parent": issue.ref, **body.tracker_settings}
+        registered = tracker_registry.spec(scheme or "")
+        if registered and not registered.check_goal(dict(under)):
+            body.tracker_settings = under
+        return f"{spec.name or splits.short(issue.ref) + ': ' + issue.title}"[:200], issue.body[: specs.MAX_CHARS]
+
     @app.post("/v1/goals", status_code=201)
     async def create(body: GoalIn, who: str = Depends(operator)) -> dict:
         unknown = [name for name in body.repos if repos.get(name) is None]
         if unknown:
             raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
         names = [repos.get(name).name for name in body.repos]
-        planned = body.modality in store.PLANNED_MODALITIES
+        # A goal with a specification is planned from it, whatever else it takes in.
+        planned = body.modality in store.PLANNED_MODALITIES or body.spec is not None
         # A goal that plans its own issues needs neither: its plan's issues get a label of the goal's own. Nor
         # does one that takes the issues assigned to the meta-harness in its tracker.
         chosen_tracker = body.tracker or tracker_registry.default()
@@ -1179,9 +1241,10 @@ def create_app(
         scheme = getattr(tracker_named(body.tracker), "scheme", "") or None
         # What the tracker asks of a goal is checked before the goal exists: a Jira goal names its project.
         bound_tracker(scheme, names, body.tracker_settings)
+        loaded = await loaded_spec(body, scheme, names)
         pairs = checked_refs(body.refs, names, scheme, body.tracker_settings)
         fields = {
-            **body.model_dump(exclude={"refs", "autonomy"}),
+            **body.model_dump(exclude={"refs", "autonomy", "spec"}),
             # full is auto_merge on, whichever of the two the caller sent.
             "auto_merge": body.auto_merge if body.autonomy is None else body.autonomy == "full",
             "tracker": scheme,
@@ -1196,6 +1259,8 @@ def create_app(
                 if body.autonomy == "ask":
                     goal, _ = store.update(conn, goal["id"], autonomy="ask")
                 held = store.add_refs(conn, goal["id"], pairs)
+                if loaded is not None:
+                    specs.save(conn, goal["id"], loaded[0], loaded[1], who)
                 if planned and not goal["label"]:
                     goal, _ = store.update(conn, goal["id"], label=planning.goal_label(goal))
         except store.GoalError as err:
@@ -1298,6 +1363,13 @@ def create_app(
                 return store.links(conn, goal_id)
 
         goal["issues"] = await asyncio.to_thread(links)
+
+        def spec() -> dict | None:
+            with app.state.pool.connection() as conn:
+                return specs.summary(conn, goal_id)
+
+        # The specification the goal was created with, by name and length: GET /v1/goals/{id}/spec has its text.
+        goal["spec"] = await asyncio.to_thread(spec)
         # When the planner last swept the goal, and what that sweep could not do: empty when it did all of it.
         goal["sweep"] = app.state.sweeps.get(goal_id)
         await asyncio.to_thread(standings, [goal])
@@ -1615,10 +1687,11 @@ def create_app(
         goal, _ = await asyncio.to_thread(move_with, goal_id, who, "planning", {"active", "stalled"})
         return goal
 
-    plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again)
+    plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again, sizer=size)
     budget_api.register(app, operator, load, change_with, events, tasks)
     sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size)
     unstick_api.register(app, operator, load, tasks)
+    specs.register(app, operator, load)
     users.register(app, operator, events)
     app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)
     overview.register(app, operator, app.state.overview)

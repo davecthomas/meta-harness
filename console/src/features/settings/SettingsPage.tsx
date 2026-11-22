@@ -70,7 +70,7 @@ export function SettingsPage() {
               "Budget",
               <InlineField kind="number" label="Budget" value={planner.max_usd === null ? null : Number(planner.max_usd)} min={0} decimalScale={2} prefix="$" allowEmpty empty="None" showSaved onCommit={(v) => savePlanner({ max_usd: v === null ? null : String(v) })} />,
             ],
-            ["Merging", <InlineField kind="switch" label="Merge pull requests without me" switchLabel="Merge pull requests without me" value={planner.auto_merge} showSaved onCommit={(v) => savePlanner({ auto_merge: v })} />],
+            ["Merging", <InlineField kind="switch" label="Merge pull requests automatically" switchLabel="Merge pull requests automatically" value={planner.auto_merge} showSaved onCommit={(v) => savePlanner({ auto_merge: v })} />],
           ]}
         />
       </Paper>
