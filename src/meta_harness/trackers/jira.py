@@ -357,7 +357,7 @@ class JiraTracker:
             updated_at=fields.get("updated") or "",
             paths=issue_paths(body),
             author=(fields.get("reporter") or {}).get("displayName") or "",
-            parent=ref_for(fields["parent"]["key"]) if (fields.get("parent") or {}).get("key") else "",
+            parent=ref_for(key) if (key := (fields.get("parent") or {}).get("key")) else None,
         )
 
     async def list_open(self, repo: str, label: str | None) -> list[Issue]:
@@ -411,11 +411,10 @@ class JiraTracker:
         self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
     ) -> Issue:
         """Creates the issue in the goal's project. For a goal with several repos its description says which
-        one it is for, the way the planner reads it back.
-
-        With parent, a `jira:` ref, the issue is created under that issue (`fields.parent`). When Jira refuses
-        the issue with the parent (400: the parent's type or project cannot hold it), it is created again
-        without one, and the returned issue's `parent` is empty. A parent that is not a Jira ref is left out."""
+        one it is for, the way the planner reads it back. With parent, a Jira issue's ref, the issue is created
+        under that issue (its `fields.parent`). When Jira refuses the parent (400, naming it), the issue is
+        created again without one and a warning is logged: the returned Issue's `parent` is then None, so the
+        caller can tell a person to set it."""
         outbound.require(title, "an issue's title", outbound.JIRA, title=True)
         outbound.require(body, "an issue's body", outbound.JIRA)
         several = self.source is not None and len(self.source.repos) > 1
@@ -428,19 +427,18 @@ class JiraTracker:
             "labels": list(dict.fromkeys([*labels, self.label()])),
         }
         under = REF.match(parent or "")
-        if parent and not under:
-            log.warning("the issue %r is created with no parent: %r is not a Jira issue", title, parent)
-        made = None
         if under:
             try:
                 made = await self._call("POST", "/issue", json={"fields": {**fields, "parent": {"key": under["key"]}}})
             except TrackerError as err:
-                # Jira creates nothing when it answers 400, so creating the issue again without the parent
-                # cannot make it twice.
-                if err.status != 400:
+                # Only a refusal of the parent itself is worth a second try; anything else would fail again.
+                if err.status != 400 or "parent" not in str(err).lower():
                     raise
-                log.warning("Jira refused %s as the parent of %r, so it is created with none: %s", parent, title, err)
-        if made is None:
+                log.warning(
+                    "Jira refused %s as the parent of a new issue, so it is created without one: %s", parent, err
+                )
+                made = await self._call("POST", "/issue", json={"fields": fields})
+        else:
             made = await self._call("POST", "/issue", json={"fields": fields})
         self._open.clear()
         self.marked.refs.add((ref_for(made["key"]), self.label()))

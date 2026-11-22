@@ -156,44 +156,53 @@ async def test_an_issue_is_created_in_the_goals_project_and_a_label_with_a_space
     assert posted[-1]["fields"]["description"] == "Body.\n\nRepo: o/web\n"
 
 
-async def test_an_issue_is_created_under_its_parent_and_read_back_with_it():
+def _created(jira: Jira) -> list[dict]:
+    """The fields of each issue the adapter asked Jira to create."""
+    return [body["fields"] for method, path, body in jira.asked if (method, path) == ("POST", "/rest/api/2/issue")]
+
+
+async def test_an_issue_is_created_under_its_parent_and_read_with_it():
     jira = Jira(
         {
             ("POST", "/rest/api/2/issue"): {"key": "VL-9"},
-            ("GET", "/rest/api/2/issue/VL-9"): issue("VL-9", parent={"id": "10", "key": "VL-2"}),
+            ("GET", "/rest/api/2/issue/VL-9"): issue("VL-9", parent={"id": "10100", "key": "VL-100"}),
+            ("GET", "/rest/api/2/issue/VL-100"): issue("VL-100"),
         }
     )
 
-    made = await tracker(jira).create_issue("o/r", "Part 1", "Body.", ["mh"], parent="jira:VL-2")
+    made = await tracker(jira).create_issue("o/r", "Split 1", "Body.", ["mh"], parent="jira:VL-100")
 
-    [posted] = [body for method, path, body in jira.asked if (method, path) == ("POST", "/rest/api/2/issue")]
-    assert posted["fields"]["parent"] == {"key": "VL-2"}
-    assert made.parent == "jira:VL-2", "the parent is read back from fields.parent"
+    [fields] = _created(jira)
+    assert fields["parent"] == {"key": "VL-100"}
+    assert made.parent == "jira:VL-100"
+    assert (await tracker(jira).read("jira:VL-9")).parent == "jira:VL-100"
+    assert (await tracker(jira).read("jira:VL-100")).parent is None, "an issue with no parent has none"
 
 
 async def test_a_parent_jira_refuses_is_left_off_and_the_issue_is_still_created():
-    def create(body):
-        if "parent" in body["fields"]:
-            return httpx.Response(400, json={"errors": {"parent": "Given parent work item does not belong here"}})
-        return {"key": "VL-9"}
+    refused = httpx.Response(
+        400, json={"errorMessages": [], "errors": {"parent": "Could not find issue by id or key."}}
+    )
+    jira = Jira(
+        {
+            ("POST", "/rest/api/2/issue"): lambda body: refused if "parent" in body["fields"] else {"key": "VL-9"},
+            ("GET", "/rest/api/2/issue/VL-9"): issue("VL-9"),
+        }
+    )
 
-    jira = Jira({("POST", "/rest/api/2/issue"): create, ("GET", "/rest/api/2/issue/VL-9"): issue("VL-9")})
+    made = await tracker(jira).create_issue("o/r", "Split 1", "Body.", ["mh"], parent="jira:VL-100")
 
-    made = await tracker(jira).create_issue("o/r", "Part 1", "Body.", ["mh"], parent="jira:VL-2")
+    assert (made.ref, made.parent) == ("jira:VL-9", None), "the caller can tell the parent was not set"
+    first, second = _created(jira)
+    assert first["parent"] == {"key": "VL-100"} and "parent" not in second
+    assert {k: v for k, v in first.items() if k != "parent"} == second, "the same issue, without the parent"
 
-    posted = [body for method, path, body in jira.asked if (method, path) == ("POST", "/rest/api/2/issue")]
-    assert ["parent" in body["fields"] for body in posted] == [True, False]
-    assert (made.ref, made.parent) == ("jira:VL-9", "")
-
-    # Any other refusal is the caller's to see, and is not tried again.
-    jira.answers[("POST", "/rest/api/2/issue")] = httpx.Response(403, json={"errorMessages": ["No permission"]})
-    with pytest.raises(TrackerError, match="403"):
-        await tracker(jira).create_issue("o/r", "Part 2", "Body.", [], parent="jira:VL-2")
-    # A parent that is not a Jira issue is left out before anything is asked.
-    jira.answers[("POST", "/rest/api/2/issue")] = {"key": "VL-9"}
-    await tracker(jira).create_issue("o/r", "Part 3", "Body.", [], parent="github:o/r#1")
-    last = [body for method, path, body in jira.asked if (method, path) == ("POST", "/rest/api/2/issue")][-1]
-    assert last["fields"]["summary"] == "Part 3" and "parent" not in last["fields"]
+    # Any other refusal is Jira's answer to the issue itself, and is not tried again.
+    other = httpx.Response(400, json={"errors": {"summary": "Summary is required."}})
+    jira = Jira({("POST", "/rest/api/2/issue"): other})
+    with pytest.raises(TrackerError, match="Summary is required"):
+        await tracker(jira).create_issue("o/r", "Split 1", "Body.", ["mh"], parent="jira:VL-100")
+    assert len(_created(jira)) == 1
 
 
 async def test_the_sites_projects_are_listed_for_a_goal_to_choose_from():

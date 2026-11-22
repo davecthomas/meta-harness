@@ -157,7 +157,7 @@ class GitHubTracker:
         self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
     ) -> Issue:
         """Creates one issue. Only the planner calls it, and only for a plan an operator approved. A GitHub
-        issue has no parent here, so parent is ignored and the issue is created as without one."""
+        issue has no parent here, so parent is ignored."""
         outbound.require(title, "an issue's title", outbound.GITHUB, title=True)
         outbound.require(body, "an issue's body", outbound.GITHUB)
         carried = list(dict.fromkeys([*labels, self.label()]))

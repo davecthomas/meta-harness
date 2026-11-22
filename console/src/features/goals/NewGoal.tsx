@@ -8,6 +8,7 @@ import { api, refLabel, type GoalDraft, type IssueSource, type LabelIssue, type 
 import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
 import { LabelStart } from "./LabelStart";
+import { ImproveGoal } from "./ImproveGoal";
 import { PageHeader } from "../../components/ui";
 import { PARALLEL_HELP } from "./parallel";
 
@@ -277,6 +278,22 @@ export function NewGoal() {
               minRows={3}
               value={statement}
               onChange={(e) => setStatement(e.currentTarget.value)}
+            />
+            {/* Accept fills the field above; the goal is saved only by the buttons below. */}
+            <ImproveGoal
+              statement={statement}
+              context={{
+                ...(title.trim() ? { title: title.trim() } : {}),
+                repos: chosen,
+                ...(tracker ? { tracker } : {}),
+                ...(trackerSettings.project ? { project: trackerSettings.project } : {}),
+                ...(label.trim() ? { label: label.trim() } : {}),
+                issues: [
+                  ...(labeled ?? []).filter((i) => !i.held_by).map((i) => ({ ref: i.ref, title: i.title })),
+                  ...refs.filter((r) => !viaLabel.includes(r)).map((ref) => ({ ref })),
+                ].slice(0, 200),
+              }}
+              onAccept={setStatement}
             />
             <Checkbox.Group label="Repositories" description="The repositories the goal may change." withAsterisk value={chosen} onChange={setChosen}>
               <Stack gap="xs" mt="xs">

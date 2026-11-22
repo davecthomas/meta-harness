@@ -9,8 +9,8 @@ from meta_harness.trackers.own import SCHEME as OWN
 
 
 def _under(parent: str | None) -> dict[str, str]:
-    """The parent to pass on to the adapter that creates an issue: none when there is none, so a call with no
-    parent is made as before."""
+    """The parent to pass on to an adapter's create_issue: none at all when there is none, so an adapter that
+    takes no parent is called as before."""
     return {"parent": parent} if parent else {}
 
 
@@ -53,7 +53,6 @@ class WithOwn:
     async def create_issue(
         self, repo: str, title: str, body: str, labels: list[str], parent: str | None = None
     ) -> Issue:
-        # The goal's tracker creates the issue, and so is the one to set its parent or ignore it.
         return await self.primary.create_issue(repo, title, body, labels, **_under(parent))
 
     def _told(self, ref: str) -> Tracker | None:

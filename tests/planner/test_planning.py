@@ -4,7 +4,7 @@ The planner's API runs against Postgres with fakes for the tracker, the Task API
 model, no GitHub and no run is called: the planning task's drafts are events the test records.
 """
 
-import asyncio
+import contextlib
 import json
 import uuid
 
@@ -12,14 +12,14 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from meta_harness import db, outbound
-from meta_harness.planner import store
-from meta_harness.planner.split_issue import split_issue
-from meta_harness.trackers import TrackerError, Trackers
-from meta_harness.trackers.jira import JiraTracker, Site
+from meta_harness import outbound
+from meta_harness.trackers import TrackerError
+from meta_harness.planner import split_issue
 from meta_harness.planner.service import create_app
 from meta_harness.planner.tracker import Issue
 from meta_harness.run_service import provenance
+from meta_harness.trackers import Source
+from meta_harness.trackers.jira import JiraTracker, Site
 
 from .test_planner import OPERATOR, Events, FakeTasks, FakeTracker, _no_title, migrated, registry  # noqa: F401
 
@@ -713,79 +713,84 @@ def test_autonomy_and_auto_merge_say_one_thing_between_them(world):
     assert (asked["autonomy"], asked["auto_merge"]) == ("ask", False)
 
 
-# --- A split's parts go under their original's parent in Jira ---------------------------------------------
+# A split of a Jira issue: each part goes under the original's parent, against Jira's REST API as it answers.
+
+JIRA_SITE = "https://example.atlassian.net"
+SPLIT_GOAL = {"id": "g-split-parent", "label": "meta-harness:goal-split"}
+SPLIT_LINK = {"ref": "jira:VL-1", "repo": REPO, "split_into": None}
+SPLIT_PARTS = [(t, "Split from VL-1.\n\nPaths: console\n\n## Acceptance checks\n\n- make test") for t in ("One", "Two")]
 
 
-class SplitJira:
-    """Jira's REST API as a split meets it: the held issue under an epic, and each part as it was created."""
+class MockJira:
+    """Jira as the adapter calls it: the original VL-1 under the epic VL-100, and each issue created after it.
+    refuse_parent: answer a create that names a parent as Jira does a parent it will not take."""
 
-    def __init__(self, original: str, epic: str, refuse_parent: bool = False) -> None:
-        self.issues = {original: {"summary": "Everything", "parent": {"key": epic}}}
-        self.created: list[dict] = []
+    def __init__(self, refuse_parent: bool = False) -> None:
         self.refuse_parent = refuse_parent
-        self.next = int(original.rsplit("-", 1)[1])
+        self.created: list[dict] = []
+        self.issues = {"VL-1": self._issue("VL-1", {"key": "VL-100"})}
+
+    @staticmethod
+    def _issue(key: str, parent: dict | None) -> dict:
+        fields = {"summary": key, "description": "", "labels": [], "status": {"statusCategory": {"key": "new"}}}
+        return {"key": key, "fields": {**fields, **({"parent": parent} if parent else {})}}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content) if request.content else None
         path = request.url.path.removeprefix("/rest/api/2")
-        if (request.method, path) == ("POST", "/issue"):
-            fields = body["fields"]
-            if "parent" in fields and self.refuse_parent:
-                return httpx.Response(400, json={"errors": {"parent": "Given parent work item does not belong here"}})
-            self.next += 1
-            key = f"VL-{self.next}"
-            self.issues[key] = fields
+        if request.method == "POST" and path == "/issue":
+            fields = json.loads(request.content)["fields"]
             self.created.append(fields)
+            if self.refuse_parent and "parent" in fields:
+                return httpx.Response(400, json={"errorMessages": [], "errors": {"parent": "Could not find issue"}})
+            key = f"VL-{len(self.issues) + 1}"
+            self.issues[key] = self._issue(key, fields.get("parent"))
             return httpx.Response(201, json={"key": key})
-        key = path.removeprefix("/issue/")
-        if request.method == "GET" and key in self.issues:
-            fields = self.issues[key]
-            state = {"name": "To Do", "statusCategory": {"key": "new"}}
-            return httpx.Response(200, json={"key": key, "fields": {"description": "", **fields, "status": state}})
+        if request.method == "GET" and path.startswith("/issue/") and path.count("/") == 2:
+            return httpx.Response(200, json=self.issues[path.rsplit("/", 1)[1]])
         return httpx.Response(200, json={})
 
 
-def _split_in_jira(jira: SplitJira, original: str, events: Events) -> list[str]:
-    """Splits the held Jira issue original, of a new goal, in two: through the Jira adapter on a mock transport."""
-    site = Site(site="https://example.atlassian.net")
-    adapter = JiraTracker("bot@example.com", "t", site=lambda: site, transport=httpx.MockTransport(jira))
-    with db.connect(autocommit=True) as conn:
-        settings = {"project": "VL"}
-        new = store.NewGoal("Split it", [REPO], f"mh-{uuid.uuid4().hex[:8]}", tracker="jira", tracker_settings=settings)
-        goal = store.create(conn, "dave", new)
-        store.add_refs(conn, goal["id"], [(original, REPO)])
-        conn.execute("UPDATE planner.issue_link SET held_reason = 'too large' WHERE ref = %s", (original,))
-        link = store.link(conn, original)
-    parts = [(title, f"Build {title}.\n\nPaths: src\n\n{CHECKS}") for title in ("Store", "API")]
-    return asyncio.run(split_issue(goal, link, parts, Trackers([adapter]), events, "dave"))
+@pytest.fixture
+def jira_split(monkeypatch):
+    """split_issue against the mock Jira, with the split's claim and record kept in memory."""
+    recorded: list[list[str]] = []
+    monkeypatch.setattr(split_issue.db, "connect", lambda **kw: contextlib.nullcontext(None))
+    monkeypatch.setattr(split_issue.store, "claim_split", lambda conn, goal_id, ref, failed_task=None: True)
+    monkeypatch.setattr(split_issue.store, "record_split", lambda conn, ref, created, reason: recorded.append(created))
+
+    async def split(jira: MockJira) -> tuple[list[str], Events]:
+        site = Site(site=JIRA_SITE)
+        adapter = JiraTracker("bot@example.com", "t", site=lambda: site, transport=httpx.MockTransport(jira))
+        events = Events()
+        bound = adapter.bound(Source(repos=(REPO,), settings={"project": "VL"}))
+        made = await split_issue.split_issue(SPLIT_GOAL, SPLIT_LINK, SPLIT_PARTS, bound, events, "dave")
+        assert recorded == [made]
+        return made, events
+
+    return split
 
 
-def _original() -> str:
-    return f"VL-{1_000_000 + uuid.uuid4().int % 10**9}"
+async def test_a_split_part_of_a_jira_issue_is_created_under_the_originals_parent(jira_split):
+    jira = MockJira()
+
+    made, events = await jira_split(jira)
+
+    assert made == ["jira:VL-2", "jira:VL-3"]
+    assert [f["parent"] for f in jira.created] == [{"key": "VL-100"}, {"key": "VL-100"}]
+    assert "issue_parent_refused" not in events.types()
 
 
-def test_a_split_part_is_created_in_jira_under_its_originals_parent():
-    events, key = Events(), _original()
-    jira = SplitJira(key, epic="VL-1")
+async def test_a_parent_jira_refuses_leaves_the_part_created_without_it_and_records_what_to_do(jira_split):
+    jira = MockJira(refuse_parent=True)
 
-    created = _split_in_jira(jira, f"jira:{key}", events)
+    made, events = await jira_split(jira)
 
-    assert len(created) == 2
-    assert [fields["parent"] for fields in jira.created] == [{"key": "VL-1"}, {"key": "VL-1"}]
-    assert "split_parent_refused" not in events.types()
-    assert [payload["issues"] for kind, payload in events.events if kind == "issue_split"] == [created]
-
-
-def test_a_parent_jira_refuses_still_creates_the_part_and_records_what_to_do():
-    events, key = Events(), _original()
-    jira = SplitJira(key, epic="VL-1", refuse_parent=True)
-
-    created = _split_in_jira(jira, f"jira:{key}", events)
-
-    assert len(created) == 2 and all("parent" not in fields for fields in jira.created), "the split goes on"
-    refused = [payload for kind, payload in events.events if kind == "split_parent_refused"]
-    assert [(p["ref"], p["from_ref"], p["parent"]) for p in refused] == [
-        (part, f"jira:{key}", "jira:VL-1") for part in created
+    assert made == ["jira:VL-2", "jira:VL-3"], "the split goes on"
+    assert ["parent" in f for f in jira.created] == [True, False, True, False], "each is tried under it once"
+    refused = [p for t, p in events.events if t == "issue_parent_refused"]
+    assert [(p["ref"], p["parent"], p["from_ref"]) for p in refused] == [
+        ("jira:VL-2", "jira:VL-100", "jira:VL-1"),
+        ("jira:VL-3", "jira:VL-100", "jira:VL-1"),
     ]
-    assert all("Set its parent to jira:VL-1" in p["remedy"] for p in refused)
-    assert [payload["issues"] for kind, payload in events.events if kind == "issue_split"] == [created]
+    assert "Set its parent to jira:VL-100 in the tracker" in refused[0]["action"]
+    assert [p["issues"] for t, p in events.events if t == "issue_split"] == [made]
