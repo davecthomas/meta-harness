@@ -3881,9 +3881,10 @@ The planner speaks to the operator in one place: its panel at the head of the
 goal's page. The plan's section shows the plan itself: its order of work, its
 decisions on the goal's issues, its new tasks and the approval. The plan's
 summary and gaps reach the operator through the planner's update. While a plan
-waits for approval, the update says what it does and lists approving it
-and each
-gap worth weighing under "Needs you". A goal with a plan keeps its settings
+waits for approval, the update says how many tasks it has and what this
+goal's work does once built, in two short sentences at most. It says nothing
+that holds for every plan, and no fallback or exception. Approving it and each
+gap worth weighing are listed under "Needs you", never in the body. A goal with a plan keeps its settings
 folded to one line, so the plan comes first.
 
 Every "Needs you" item comes with what resolves it. The update's model picks an
