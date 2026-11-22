@@ -14,6 +14,7 @@ checks a plan and stores its versions; it calls nothing outside the database.
 """
 
 import re
+from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -331,12 +332,20 @@ def set_tracked(conn: psycopg.Connection, goal_id: str, version: int, tracked: b
 def set_plan_task(
     conn: psycopg.Connection, goal_id: str, task_id: str | None, issues: list[dict[str, Any]] | None = None
 ) -> None:
-    """Records the goal's planning task in flight, with the issues it was given; None when it has none."""
+    """Records the goal's planning task in flight, with the issues it was given; None when it has none. When
+    one is set, the time is kept as when planning was asked for, and stays after the task ends."""
     with conn.transaction():
         conn.execute(
-            "UPDATE planner.goal SET plan_task_id = %s, plan_issues = %s, updated_at = now() WHERE id = %s",
-            (task_id, Jsonb(issues) if task_id and issues is not None else None, goal_id),
+            "UPDATE planner.goal SET plan_task_id = %s, plan_issues = %s, updated_at = now(), "
+            "plan_asked_at = CASE WHEN %s::text IS NULL THEN plan_asked_at ELSE now() END WHERE id = %s",
+            (task_id, Jsonb(issues) if task_id and issues is not None else None, task_id, goal_id),
         )
+
+
+def asked_at(conn: psycopg.Connection, goal_id: str) -> datetime | None:
+    """When the goal's planning task in flight, or its last one, was asked for; None when it never had one."""
+    row = conn.execute("SELECT plan_asked_at FROM planner.goal WHERE id = %s", (goal_id,)).fetchone()
+    return row[0] if row else None
 
 
 def plan_issues(conn: psycopg.Connection, goal_id: str) -> list[dict[str, Any]]:

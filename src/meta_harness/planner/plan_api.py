@@ -82,6 +82,7 @@ def register(
         with db.connect(autocommit=True) as conn:
             plan = plans.latest(conn, goal["id"])
             approval = plans.approval(conn, goal["id"])
+            asked = plans.asked_at(conn, goal["id"])
         return {
             "goal_id": goal["id"],
             "status": goal["status"],
@@ -91,6 +92,8 @@ def register(
             # The planning task still drafting, if one is: its page shows the run.
             "planning_task_id": goal.get("plan_task_id"),
             "approved_at": goal.get("plan_approved_at"),
+            # When planning was last asked for: with the plan's created_at, how long the planner took.
+            "planning_asked_at": asked.isoformat() if asked else None,
             "label": goal["label"] or planning.goal_label(goal),
             "plan": plan,
             # A fix the planner suggests for this plan, with what it changes; None when there is none.

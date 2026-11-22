@@ -73,6 +73,8 @@ export interface GoalPlan {
   status: string;
   // The planning task still drafting, if one is.
   planning_task_id: string | null;
+  // When planning was last asked for; absent from a planner older than this field.
+  planning_asked_at?: string | null;
   approved_at: string | null;
   // An approval is creating the plan's tasks now (plan.created grows as each exists), and why the last one
   // stopped when it did not finish.

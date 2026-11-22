@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { Goal, GoalPlan as Plan, PlanDraft, PlanItem } from "../../api";
 import { planSentence, tasksOf } from "./PlanReview";
 import { theme } from "../../theme";
-import { ApprovedPlan, GoalPlan, inOrder, splitBody } from "./GoalPlan";
+import { ApprovedPlan, GoalPlan, inOrder, splitBody, plannedIn, planningFor } from "./GoalPlan";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -56,6 +56,18 @@ test("while the planning task drafts, the page says so and links to its run", as
   expect(await screen.findByText("The planner is working on the plan")).toBeTruthy();
   expect(screen.getByRole("link", { name: "Watch its run" }).getAttribute("href")).toBe("/tasks/t-plan");
   expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
+});
+
+test("the planner's time is told: how long it has planned, then how long the plan took and has waited", () => {
+  const at = (minutes: number) => Date.parse("2026-11-22T10:00:00Z") + minutes * 60_000;
+  expect(planningFor("2026-11-22T10:00:00Z", at(4))).toBe("Planning for 4 minutes. ");
+  expect(planningFor(null, at(4))).toBe("");
+  const plan = { source: "planned", created_at: "2026-11-22T10:06:00Z" };
+  expect(plannedIn(plan, "2026-11-22T10:00:00Z", false, at(20))).toBe("Planned in 6 minutes, waiting 14 minutes for your approval. ");
+  // A planner that does not say when it was asked, and a plan the operator edited.
+  expect(plannedIn(plan, null, false, at(20))).toBe("Waiting 14 minutes for your approval. ");
+  expect(plannedIn({ ...plan, source: "edited" }, "2026-11-22T10:00:00Z", false, at(20))).toBe("");
+  expect(plannedIn(plan, "2026-11-22T10:00:00Z", true, at(20))).toBe("");
 });
 
 test("the plan shows each draft in the order the work can be done, with its checks set apart", async () => {
