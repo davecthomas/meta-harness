@@ -81,6 +81,13 @@ class FakeJira(FakeTracker):
 class FakeGitHub(FakeTracker):
     scheme = "github"
 
+    async def set_status(self, ref: str, status: str) -> bool:
+        # As the adapter does: done closes the issue.
+        self.statuses = [*getattr(self, "statuses", []), (ref, status)]
+        if status == "done":
+            self.issues[ref].state = "closed"
+        return True
+
     def bound(self, source):
         return self
 
@@ -314,6 +321,31 @@ def test_a_jira_issue_is_told_how_its_task_goes_once_per_change_and_done_closes_
     assert client.post(f"/v1/goals/{other['id']}/sweep", headers=OPERATOR).json()["told"] == []
 
 
+def test_a_task_closed_as_already_done_closes_its_issue_on_any_tracker_saying_where_the_work_is(world):
+    """No pull request closes the issue of a task whose run changed nothing, so the planner does, once, with
+    what the check of the base branch found. On GitHub too, which is told nothing else about a task."""
+    client, github, jira, tasks, _ = world
+    goal = _goal(client, tracker="github", start=True)
+    ref = github.add(REPO, 1_000_000 + uuid.uuid4().int % 10**12, labels=[goal["label"]])
+    sweep = lambda: client.post(f"/v1/goals/{goal['id']}/sweep", headers=OPERATOR).json()  # noqa: E731
+    sweep()
+    [task] = [t for t in tasks.tasks.values() if t["goal_id"] == goal["id"]]
+
+    task.update(
+        status="closed",
+        status_reason="the work is already on the base branch: app.py has the fix, from pull request #5.",
+    )
+    assert sweep()["told"] == [ref]
+
+    assert github.statuses == [(ref, "done")] and github.issues[ref].state == "closed"
+    [(to, body)] = github.comments
+    assert to == ref and body.startswith(
+        "Already done: app.py has the fix, from pull request #5. No change was needed, so the task opened no pull request."
+    )
+    # Its only issue is closed, so the goal is met: the work being there already counts as done.
+    assert client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "met"
+
+
 def test_what_a_task_tells_its_issue():
     from meta_harness.planner.tracker_progress import told_for
 
@@ -333,6 +365,10 @@ def test_what_a_task_tells_its_issue():
     )
     assert told_for(working, again.key) is None
     assert told_for(working, "canceled").key == "in_progress", "taken up again after it ended"
+    done = told_for(
+        {"id": "t-1", "status": "closed", "status_reason": "the work is already on the base branch: x.py has it"}
+    )
+    assert (done.key, done.status, done.every_tracker) == ("already_done", "done", True)
     unresolved = told_for({"id": "t-1", "status": "review_unresolved", "pr_url": "https://github.com/o/r/pull/9"})
     assert "its review left findings for a person to settle" in unresolved.comment
 

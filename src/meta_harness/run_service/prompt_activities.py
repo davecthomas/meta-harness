@@ -24,12 +24,12 @@ from temporalio.exceptions import ApplicationError
 from meta_harness.run_service import events, run_provenance
 
 # The template each review loop run's kind fills in, in prompts/.
-LOOP_TEMPLATES = {"review": "review-v5", "fix": "fix-v2"}
+LOOP_TEMPLATES = {"review": "review-v5", "fix": "fix-v2", "already_done": "already-done-v1"}
 
 
 def loop_template(kind: str) -> str:
     """The template a review loop run of this kind is given: review-v5 for a review, fix-v2 for any fix."""
-    return LOOP_TEMPLATES["review"] if kind == "review" else LOOP_TEMPLATES["fix"]
+    return LOOP_TEMPLATES[kind] if kind in ("review", "already_done") else LOOP_TEMPLATES["fix"]
 
 
 @dataclass

@@ -367,9 +367,16 @@ class ChecksResult:
     passed: list[str] = field(default_factory=list)
 
 
+# How a task ends when its run changed nothing because the base branch already has the work: its outcome, and
+# what its reason starts with. The planner reads the reason to tell the issue's people (planner/already_done.py).
+ALREADY_DONE = "already_done"
+ALREADY_DONE_REASON = "the work is already on the base branch: "
+
+
 @dataclass
 class LoopPromptRequest:
-    """What a review or fix run's prompt is built from. kind: review, or fix."""
+    """What a review or fix run's prompt is built from. kind: review, fix, or already_done (a check of the base
+    branch for a task whose run changed nothing)."""
 
     kind: str
     repo: str
@@ -387,6 +394,8 @@ class LoopPromptRequest:
     conflict: bool = False
     # A fix after a merge: the merged pull request whose merge commit failed failed_checks.
     merged_pr: str = ""
+    # An already_done check: what the run that changed nothing said, which the check tests.
+    answer: str = ""
     # A review after the first: the round before's findings and summary, which this round judges first.
     previous_findings: list[dict[str, Any]] = field(default_factory=list)
     previous_summary: str = ""

@@ -108,6 +108,8 @@ with workflow.unsafe.imports_passed_through():
     from meta_harness import budget_request
     from meta_harness.run_service.shared import (
         FollowUpsRequest,
+        ALREADY_DONE,
+        ALREADY_DONE_REASON,
         Attempt,
         BaseHealthRequest,
         BaseRequest,
@@ -173,6 +175,8 @@ HARNESS_RETRY = RetryPolicy(
 # after it, and how long the workflow waits for the worker to be back before it asks.
 WORKER_SHUTDOWN = "WorkerShutdown"
 WORKER_RESTARTS = 5
+# How much of what the check of the base branch found is kept as a task's reason.
+ALREADY_DONE_CHARS = 1200
 WORKER_RESTART_WAIT = timedelta(seconds=20)
 # run_finished end reasons the next candidate may get past: the infrastructure failed, not the task.
 NEXT_CANDIDATE_END_REASONS = frozenset({"model_error", "harness_error", "server_shutdown"})
@@ -339,7 +343,7 @@ class RunTask:
         if result.outcome == "review_unresolved":
             workflow.logger.warning("%s ended review_unresolved: %s", self._where(), result.outcome_reason)
             await self._task_status("review_unresolved", result.outcome_reason, pr_url)
-        elif result.outcome in ("merged", "planned"):
+        elif result.outcome in ("merged", "planned", ALREADY_DONE):
             await self._task_status("closed", result.outcome_reason, pr_url)
         elif result.outcome == "merge_checks_failed":
             workflow.logger.error("%s failed: %s", self._where(), result.outcome_reason)
@@ -630,7 +634,29 @@ class RunTask:
             )
         published = await self._publish(prepared, harness, candidate, spent) if prepared.repo else None
         if published is not None and not published.pr_url:
-            raise _failed(f"run {attempt} finished, but pi changed nothing in {prepared.repo}", attempts)
+            nothing = f"run {attempt} finished, but pi changed nothing in {prepared.repo}"
+            # A run changes nothing when it could not do the work, and also when the base branch has the work
+            # already: another task, or a person, merged it first. Failing the second sends the task round its
+            # retries for work that is done. So another model reads the base branch and says which it is.
+            # Behind a patch, as every change to what a workflow runs is.
+            if request.review and workflow.patched("nothing-changed-check"):
+                loop = _Loop(request, prepared, candidate, published, limit, spent, attempts, None)
+                done, said = await self._already_done(loop, harness)
+                if done:
+                    workflow.logger.info("%s: the base branch already has the work: %s", info.workflow_id, said)
+                    return RunTaskResult(
+                        template=prepared.template,
+                        prompt=prepared.prompt,
+                        route=route_result,
+                        attempts=attempts,
+                        harness=harness,
+                        spent_usd=str(loop.spent),
+                        outcome=ALREADY_DONE,
+                        outcome_reason=f"{ALREADY_DONE_REASON}{said}",
+                    )
+                if said:
+                    nothing = f"{nothing}, and the base branch does not have the work yet: {said}"
+            raise _failed(nothing, attempts)
         if self._task_id and published is not None:
             await self._record(record_published, PublishedRecord(self._task_id, published))
         outcome, reason = "", ""
@@ -1492,11 +1518,14 @@ class RunTask:
         thinking: str | None,
         merge_base: str = "",
         branch: str | None = None,
+        template: str = "",
     ) -> tuple[HarnessResult | None, str]:
         """A review or fix run on the pull request's branch, or on branch when given ("": the repo's default
-        branch), recorded as the task's next attempt."""
+        branch), recorded as the task's next attempt. template: the prompt's, when it is not its kind's own."""
         while True:
-            harness, detail = await self._one_loop_run(loop, prompt, candidate, kind, thinking, merge_base, branch)
+            harness, detail = await self._one_loop_run(
+                loop, prompt, candidate, kind, thinking, merge_base, branch, template
+            )
             # A run that stopped at its spend limit left its work unfinished: ask for more and run it again.
             if not (_out_of_budget(harness) and self._holds()):
                 return harness, detail
@@ -1510,6 +1539,7 @@ class RunTask:
         thinking: str | None,
         merge_base: str,
         branch: str | None,
+        template: str = "",
     ) -> tuple[HarnessResult | None, str]:
         """One review or fix run, once the task and its goal have the budget for it."""
         info = workflow.info()
@@ -1531,7 +1561,7 @@ class RunTask:
             branch=loop.published.branch if branch is None else branch,
             merge_base=merge_base,
             kind=kind,
-            template=loop_template(kind),
+            template=template or loop_template(kind),
             follows=loop.attempts[-1].run_id if loop.attempts else "",
         )
         loop.spent += run_spent
@@ -1571,6 +1601,34 @@ class RunTask:
                 detail,
             )
         return harness, detail
+
+    async def _already_done(self, loop: "_Loop", harness: HarnessResult) -> tuple[bool, str]:
+        """Whether the base branch already has the work of a task whose run changed nothing, as another model
+        that read it says, with what that model found. (False, "") when no other model could be asked: the
+        task then fails as one that changed nothing always has."""
+        policy = await workflow.execute_activity(
+            review_policy,
+            f"{loop.author.engine}:{loop.author.model}",
+            start_to_close_timeout=RECORD_TIMEOUT,
+            retry_policy=PREPARE_RETRY,
+        )
+        if not policy.reviewers:
+            return False, ""
+        prompt = await self._loop_prompt(loop.prompt_request("already_done", answer=harness.answer or ""))
+        for reviewer in policy.reviewers:
+            if loop.left() <= 0 and not self._holds():
+                return False, ""
+            # On the base branch itself: the run's own branch holds nothing the base does not.
+            checked, _ = await self._loop_run(
+                loop, prompt, reviewer, "review", thinking=None, branch="", template=loop_template("already_done")
+            )
+            if checked is not None and checked.review:
+                review = checked.review
+                if review.get("verdict") == "clean":
+                    return True, str(review.get("summary") or "").strip()[:ALREADY_DONE_CHARS]
+                missing = "; ".join(str(f.get("body") or "").strip() for f in review.get("findings") or [])
+                return False, (missing or str(review.get("summary") or "")).strip()[:ALREADY_DONE_CHARS]
+        return False, ""
 
     async def _loop_prompt(self, request: LoopPromptRequest) -> str:
         return await workflow.execute_activity(

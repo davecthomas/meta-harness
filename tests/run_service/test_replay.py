@@ -144,6 +144,13 @@ SCENARIOS = {
         "goal_id": "g-1",
         "auto_merge": True,
     },
+    # After the nothing-changed-check patch: the run changed nothing, another model found the work on the base
+    # branch, and the task closed as already done.
+    "patched-nothing-changed-already-done": {
+        "run_changes_nothing": True,
+        "verdicts": [{"verdict": "clean", "summary": "app.py already has the fix.", "findings": []}],
+        "goal_id": "g-1",
+    },
     # After the merge-base-health patch: the merge waits while the base's own checks run, then merges.
     "patched-merge-base-health": {
         "verdicts": [CLEAN],
