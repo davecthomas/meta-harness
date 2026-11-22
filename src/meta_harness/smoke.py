@@ -127,6 +127,7 @@ def run(
 
 def main(say: Callable[[str], None] = print) -> int:
     """`mh deploy smoke`, on the deployment's own machine: its Task API, its configuration, its kill switch."""
+    from meta_harness import local_repos
     from meta_harness.config import store
     from meta_harness.scheduler.admission import kill_switch_state
     from meta_harness.tasks.client import TaskClient
@@ -134,6 +135,6 @@ def main(say: Callable[[str], None] = print) -> int:
     engaged, draining = kill_switch_state()
     held = "the kill switch is on" if engaged else "the scheduler is draining" if draining else ""
     commit = os.environ.get("MH_DEPLOYED_COMMIT") or "unknown"
-    repo_path = Path(os.environ.get("MH_SMOKE_REPO", "/var/lib/meta-harness/smoke/origin.git"))
+    repo_path = local_repos.smoke_repo()
     tasks = TaskClient(api_key=os.environ.get("MH_SERVICE_KEY", ""))
     return run(tasks, store.current_document("tiers"), repo_path, commit, say, held)

@@ -148,6 +148,9 @@ def service_only(method: str, path: str) -> bool:
     """Whether a request is one only a control-plane service may make, never a browser."""
     if path == "/v1/events" or path.startswith("/v1/events/"):
         return method in WRITE_METHODS
+    # Submitting a task names its repo, which the run service clones and pushes to. Only the planner does it.
+    if path == "/v1/tasks":
+        return method in WRITE_METHODS
     parts = path.split("/")
     return len(parts) == 5 and parts[1:3] == ["v1", "tasks"] and parts[4] in SERVICE_ONLY_TASK_CALLS
 

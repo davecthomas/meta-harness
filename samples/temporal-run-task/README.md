@@ -327,7 +327,7 @@ while the server runs.
 | `MODELS_ENV` | empty: `ROUTER_CONFIG` as it is, or its `zero-cost` entry (no classifier call) with `GATEWAY=fake` |
 | `FLOOR`, `CEILING` | empty: the lowest and highest tier the router may pick |
 | `PIN` | empty. `harness:<profile>/<engine>:<model>` runs that pair, with no routing. |
-| `REPO` | empty: an empty workspace. `owner/name` on GitHub, or a local bare repo's path, makes it a repo task. |
+| `REPO` | empty: an empty workspace. `owner/name` on GitHub, or a local bare repo's path, makes it a repo task. A local path must sit under a directory in `MH_LOCAL_REPO_ROOTS`, which defaults to `RUNS_DIR` here. |
 | `TICKET` | empty. `owner/name#number`: the GitHub issue's text and checks, its repo, and a pull request that closes it |
 | `CHECKS` | empty: one acceptance check command, when the ticket names none |
 | `SPEND_LIMIT` | `0.50`, in USD: the most the task's runs may spend on model calls, together |
