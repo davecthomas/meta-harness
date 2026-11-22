@@ -86,6 +86,16 @@ def test_an_issue_with_no_checks_section_is_missing_them_whatever_the_model_says
     assert "missing acceptance checks" in sizing.hold_reason("small", sized.record(issue), strict=True)
 
 
+def test_an_issue_with_no_paths_line_is_missing_it_whatever_the_model_says():
+    issue = _issue(f"Fix it.\n\n{CHECKS}", checks=("make test",))
+    for said in ([], ["paths"], ["acceptance_checks"], ["acceptance_checks", "paths"]):
+        data = {"size": "small", "reasons": [], "missing": said, "missing_reason": "checks look thin", "split": []}
+        sized = sizing.parse(data, issue, "m", "0")
+        assert sized.missing == ["paths"], said
+        assert [d["part"] for d in sized.doubts] == (["acceptance_checks"] if "acceptance_checks" in said else []), said
+        assert "missing a Paths: line" in sizing.hold_reason("small", sized.record(issue), strict=True), said
+
+
 def test_a_sizing_stored_before_doubts_still_reads():
     stored = {"size": "small", "reasons": ["one file"], "missing": ["paths"], "split": [], "model": "m"}
     view = progress._sizing_view({"size": "small", "sizing": stored})
