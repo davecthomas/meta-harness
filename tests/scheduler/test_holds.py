@@ -102,7 +102,8 @@ def test_the_task_api_serves_a_queued_tasks_hold(repo):  # noqa: F811
             return "id"
 
     app = create_app(Recorded(), caller_keys={"caller-key": "ops"}, service_keys={"service-key": "scheduler"})
-    as_caller = {"Authorization": "Bearer caller-key"}
+    # As a control-plane service: a caller's key names only a registered repo, and this one is made up.
+    as_caller = {"Authorization": "Bearer service-key"}
     with TestClient(app) as api:
         body = {
             "external_ref": f"hold-{repo}",

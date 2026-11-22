@@ -256,6 +256,27 @@ def create_app(
         # The run service clones and pushes to a local repo on its host, so only a vouched-for path is taken.
         if local_repos.is_local(body.repo) and not local_repos.allowed(body.repo):
             raise HTTPException(status_code=422, detail=local_repos.refusal(body.repo))
+        if not who.service:
+            # A caller's key is not the planner's. It names a repo only from the registry, the deployment's own
+            # list of where it works, and it puts no task into a goal: a goal's budget and limits are its own.
+            from meta_harness.planner import repos
+
+            if not local_repos.is_local(body.repo) and repos.get(body.repo) is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"{body.repo} is not in the repo registry. Add it on the console's Repos page, or name "
+                        "one that is there"
+                    ),
+                )
+            if body.goal_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "goal_id is the planner's to set. Leave it out; to add work to a goal, give its issue "
+                        "the goal's label"
+                    ),
+                )
         renewed = None
         try:
             with app.state.pool.connection() as conn:
