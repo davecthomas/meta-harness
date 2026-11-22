@@ -943,7 +943,7 @@ def test_an_outsiders_issue_changed_after_an_operator_read_it_waits_to_be_read_a
     assert changed["held"] == [ref] and _task(tasks, ref)["status"] == "canceled"
     assert "service key" not in _task(tasks, ref)["description"]
     held = _shown(client, goal)[ref]["held_reason"]
-    assert held.startswith("mallory, who has no write access") and "changed it after an operator read it" in held
+    assert held.startswith("mallory, who has no write access") and "changed it after an operator read it." in held
     assert "then use Run anyway" in held
 
 

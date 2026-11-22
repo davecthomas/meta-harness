@@ -454,7 +454,7 @@ async def _take_in_one(
     if existing and not await still_as_read(issue, existing):
         reason = (
             f"{issue.author or 'its author'}, who has no write access to {issue.repo}, changed it after an "
-            "operator read it: read the issue again, including its raw text, then use Run anyway"
+            "operator read it. Read the issue again, including its raw text, then use Run anyway"
         )
         if reason != existing.get("held_reason"):
             await asyncio.to_thread(_hold, issue.ref, reason)
