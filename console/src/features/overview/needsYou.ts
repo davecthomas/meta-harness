@@ -60,6 +60,10 @@ function goalItems(g: Goal): NeedsYouItem[] {
 }
 
 function taskItem(t: Task): NeedsYouItem | null {
+  // The Task Shepherd looks at every open task and records who has it. One it has itself, or that nobody
+  // needs to touch (a failed task of a canceled goal, a task it is about to retry or merge), is not the
+  // operator's, whatever its status says. Only a task it has not looked at yet is judged by its status.
+  if (t.standing && t.standing.owner !== "operator") return null;
   const base = { key: `task-${t.id}`, title: t.title, to: `/tasks/${t.id}`, task: t, since: t.standing?.since };
   if (t.waiting_on === "budget") {
     const asked = t.budget_request?.for === "task" && t.budget_request.add_usd ? `$${Number(t.budget_request.add_usd).toFixed(2)}` : null;

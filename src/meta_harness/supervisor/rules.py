@@ -192,6 +192,14 @@ def _decide(facts: Facts) -> Decision:
     if status == "failed":
         return _failed(facts)
     if status == "canceled":
+        if facts.pull == "open" and facts.goal == "canceled":
+            # Whoever canceled the goal chose to stop its work. Its pull requests stay open on the code host,
+            # and none of them is something the operator is asked to act on.
+            return Decision(
+                "planner",
+                "canceled",
+                "the task and its goal were canceled, and its pull request stays open on the code host",
+            )
         if facts.pull == "open":
             return Decision(
                 "operator",
@@ -269,6 +277,12 @@ def _running(facts: Facts) -> Decision:
         return Decision("workflow", "workflow_unknown", "Temporal could not be asked whether its workflow is running")
     if facts.cancel_requested:
         return Decision("workflow", "stopping", "it was asked to cancel, and its workflow is stopping its run")
+    if facts.goal == "canceled":
+        # A canceled goal's work stops, whatever its task was doing: mid-run, or waiting on a budget nobody
+        # will raise now. Its pull request, if it has one, stays open on the code host.
+        return Decision(
+            "supervisor", "goal_ended", "its goal was canceled, so its run is stopped", action="cancel_for_goal"
+        )
     if facts.waiting_on == "budget" and facts.raise_left:
         return Decision(
             "supervisor",
@@ -389,6 +403,12 @@ def _blocked(facts: Facts) -> Decision:
 
 def _parked(facts: Facts) -> Decision:
     """A task whose workflow ended with its pull request open: ready, or review_unresolved."""
+    if facts.goal == "canceled" and facts.pull not in ("merged", "closed"):
+        return Decision(
+            "planner",
+            "goal_ended",
+            "its goal was canceled, so nothing more is done for it: its pull request stays open on the code host",
+        )
     if facts.pull in ("merged", "closed"):
         # A swept goal's sweep records the end; for any other task nothing would, so the supervisor does.
         if facts.goal in SWEPT:

@@ -17,8 +17,8 @@ const TASKS = [
 test("canceling a goal cancels unstarted tasks, stops running ones, and leaves those with a pull request open", () => {
   expect(cancelEffect(TASKS)).toEqual({
     canceled: ["t-queued", "t-blocked"],
-    stopped: ["t-running"],
-    left: ["t-published", "t-ready"],
+    stopped: ["t-running", "t-published"],
+    left: ["t-ready"],
   });
 });
 
@@ -44,10 +44,9 @@ test("Cancel goal asks first, says what happens to the tasks, and links those it
 
   const dialog = await screen.findByTestId("cancel-goal");
   expect(onCancel).not.toHaveBeenCalled();
-  expect(dialog.textContent).toContain("2 tasks that have not started are canceled. 1 running task is stopped.");
-  expect(dialog.textContent).toContain("2 tasks have a pull request open and are left as they are");
-  expect((await screen.findByRole("link", { name: "Profile image picker" })).getAttribute("href")).toBe("/tasks/t-published");
-  expect(screen.getByRole("link", { name: "Hint text contrast" }).getAttribute("href")).toBe("/tasks/t-ready");
+  expect(dialog.textContent).toContain("2 tasks that have not started are canceled. 2 running tasks are stopped.");
+  expect(dialog.textContent).toContain("1 task has a pull request open and is left as it is. Nothing more is asked of you for it");
+  expect((await screen.findByRole("link", { name: "Hint text contrast" })).getAttribute("href")).toBe("/tasks/t-ready");
 
   fireEvent.click(screen.getAllByRole("button", { name: "Cancel goal" }).at(-1)!);
   await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));

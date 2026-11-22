@@ -85,11 +85,12 @@ def test_canceling_a_goal_cancels_its_unstarted_tasks_and_leaves_one_with_a_pull
     assert canceled["status"] == "canceled"
     assert by_ref[queued]["status"] == "canceled" and by_ref[blocked]["status"] == "canceled"
     assert by_ref[running]["status"] == "running" and by_ref[running]["cancel_requested"], "asked to stop"
-    assert by_ref[published]["status"] == "running" and not by_ref[published].get("cancel_requested")
+    # A running task is asked to stop whether it has a pull request or not: a canceled goal spends no more.
+    assert by_ref[published]["status"] == "running" and by_ref[published]["cancel_requested"]
     assert by_ref[ready]["status"] == "ready"
     assert sorted(canceled["tasks"]["canceled"]) == sorted([by_ref[queued]["id"], by_ref[blocked]["id"]])
-    assert canceled["tasks"]["stopping"] == [by_ref[running]["id"]]
-    assert sorted(canceled["tasks"]["left"]) == sorted([by_ref[published]["id"], by_ref[ready]["id"]])
+    assert sorted(canceled["tasks"]["stopping"]) == sorted([by_ref[running]["id"], by_ref[published]["id"]])
+    assert canceled["tasks"]["left"] == [by_ref[ready]["id"]]
     assert canceled["tasks"]["errors"] == []
     assert {(reason, actor) for _, reason, actor in tasks.cancels} == {("its goal was canceled", "dave")}
 

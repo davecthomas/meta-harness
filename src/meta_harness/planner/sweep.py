@@ -290,9 +290,9 @@ LEFT_WITH_PULL_REQUEST = ["running", "ready", "review_unresolved"]
 
 
 async def cancel_goal_tasks(goal: dict, tasks: TaskClient, who: str) -> dict[str, list[str]]:
-    """End what a canceled goal has not started: cancel each of its queued and blocked tasks, and ask each
-    running one with no pull request to stop, as a task cancel does. A task with a pull request open is left
-    for the operator, who decides what becomes of the pull request. Returns the task ids by what was done:
+    """End a canceled goal's work: cancel each of its queued and blocked tasks, and ask each running one to
+    stop, as a task cancel does, whether it has a pull request or not. A parked task with a pull request open
+    is left as it is: the pull request stays open on the code host. Returns the task ids by what was done:
     canceled, stopping, left (a pull request open), and errors for those the task service refused."""
     done: dict[str, list[str]] = {"canceled": [], "stopping": [], "left": [], "errors": []}
     try:
@@ -303,7 +303,9 @@ async def cancel_goal_tasks(goal: dict, tasks: TaskClient, who: str) -> dict[str
         done["errors"].append(f"{goal['id']}: {err}")
         return done
     for task in found:
-        if task.get("pr_url"):
+        # A parked task's pull request is left as it is. A running task is stopped whether it has one or not:
+        # a canceled goal spends nothing more, and its pull request stays open.
+        if task.get("pr_url") and task["status"] != "running":
             done["left"].append(task["id"])
             continue
         if task["status"] not in UNSTARTED_OR_RUNNING:
