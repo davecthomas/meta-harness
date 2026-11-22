@@ -3,6 +3,9 @@
 // Fix with AI on an issue the sizing marks as missing something or doubted: the planner drafts each marked part
 // (POST /v1/goals/{id}/issues/fix-draft), the operator edits the draft beside what the issue has now, and Accept
 // writes the edited parts to the issue (fix-accept), which is then sized again. Discard sends nothing.
+// While the issue's task has not ended, its run has read the issue already: the card says so, both routes
+// answer 409, and an accept refused so is kept by the planner. Once the task ends, fix-draft offers that kept
+// draft for the next run, and Draft again asks the model anew (fresh).
 // The routes are src/meta_harness/planner/fix_issue.py.
 
 import { useRef, useState } from "react";
@@ -18,7 +21,17 @@ const PART_WORDS: Record<IssueGap, string> = {
 };
 
 // The issue as Fix with AI needs it: its ref, title, marks, and the paths and checks it names now.
-export type FixableIssue = Pick<IssueProgress, "ref" | "title" | "state" | "missing" | "doubts" | "paths" | "checks_named">;
+export type FixableIssue = Pick<IssueProgress, "ref" | "title" | "state" | "missing" | "doubts" | "paths" | "checks_named"> &
+  Partial<Pick<IssueProgress, "task_id" | "task_status">>;
+
+// The task statuses the planner counts as ended (TASK_ENDED in fix_issue.py): only then does a change reach a run.
+const TASK_ENDED = new Set(["closed", "failed", "canceled"]);
+
+// The status of the issue's task when it has not ended, else null.
+export function runningStatus(issue: FixableIssue): string | null {
+  if (!issue.task_id || !issue.task_status) return null;
+  return TASK_ENDED.has(issue.task_status) ? null : issue.task_status;
+}
 
 // Whether the sizing marks anything on the issue for Fix with AI to draft. A closed issue is not changed.
 export function fixable(issue: FixableIssue): boolean {
@@ -61,8 +74,12 @@ export function FixIssue(props: { goalId: string; issue: FixableIssue; onAccepte
   const { issue } = props;
   const [drafting, setDrafting] = useState(false);
   const [drafts, setDrafts] = useState<FixDraft[] | null>(null);
+  // The draft shown is the one an accept kept while the issue's task ran, not a new one.
+  const [kept, setKept] = useState(false);
   const [texts, setTexts] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState<string | null>(null);
+  // A 409 for a draft: the issue's task is running, so there is nothing to draft for until it ends.
+  const [later, setLater] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // A 409: the issue's task is running, so the draft waits until it ends.
   const [waiting, setWaiting] = useState<string | null>(null);
@@ -71,19 +88,25 @@ export function FixIssue(props: { goalId: string; issue: FixableIssue; onAccepte
   // Set while an accept is on its way, so a second click before the page redraws sends nothing.
   const sending = useRef(false);
   if (!fixable(issue) && !drafts) return done ? <Text size="xs" c="teal" data-testid="fix-done">{done}</Text> : null;
+  const status = runningStatus(issue);
 
-  async function draft() {
+  // fresh: draft with the model again, past a kept draft.
+  async function draft(fresh = false) {
     setDrafting(true);
     setFailed(null);
+    setLater(null);
     setDone(null);
     try {
-      const found = await api.fixDraft(props.goalId, issue.ref);
+      const found = await api.fixDraft(props.goalId, issue.ref, fresh);
       setDrafts(found.drafts);
+      setKept(Boolean(found.kept));
       setTexts(Object.fromEntries(found.drafts.map((d) => [d.part, d.text])));
       setWaiting(null);
       setSaveError(null);
     } catch (err) {
-      setFailed(`Fix with AI failed: ${message(err)}. Nothing was changed.`);
+      if (err instanceof ApiError && err.status === 409 && !drafts) setLater(err.detail);
+      else if (drafts) setSaveError(`Could not draft again: ${message(err)}. The draft shown is unchanged.`);
+      else setFailed(`Fix with AI failed: ${message(err)}. Nothing was changed.`);
     } finally {
       setDrafting(false);
     }
@@ -91,6 +114,7 @@ export function FixIssue(props: { goalId: string; issue: FixableIssue; onAccepte
 
   function discard() {
     setDrafts(null);
+    setKept(false);
     setTexts({});
     setWaiting(null);
     setSaveError(null);
@@ -108,6 +132,7 @@ export function FixIssue(props: { goalId: string; issue: FixableIssue; onAccepte
     try {
       const made = await api.fixAccept(props.goalId, issue.ref, parts);
       setDrafts(null);
+      setKept(false);
       setTexts({});
       setDone(
         `Added ${made.added.join(", ") || "nothing"} to the issue.` + (made.sizing_error ? ` ${made.sizing_error}.` : ""),
@@ -131,6 +156,12 @@ export function FixIssue(props: { goalId: string; issue: FixableIssue; onAccepte
             Fix with AI
           </Button>
         </Group>
+        {status && !later && (
+          <Text size="xs" c="orange" data-testid="fix-running">
+            Its task is {status.replace(/_/g, " ")}, and its run has read the issue already. A draft accepted now is kept for the next run.
+          </Text>
+        )}
+        {later && <Text size="xs" c="orange" data-testid="fix-later">{later.replace(/\.$/, "")}.</Text>}
         {failed && <Text size="xs" c="red" data-testid="fix-failed">{failed}</Text>}
         {done && <Text size="xs" c="teal" data-testid="fix-done">{done}</Text>}
       </Stack>
@@ -138,6 +169,14 @@ export function FixIssue(props: { goalId: string; issue: FixableIssue; onAccepte
         <Modal opened onClose={discard} title={`Fix ${shortRef(issue.ref)} with AI`} size="xl">
           <Stack gap="md" data-testid="fix-draft">
             {issue.title && <Text size="sm" fw={500}>{issue.title}</Text>}
+            {kept && (
+              <Alert color="blue" variant="light" data-testid="fix-kept">
+                <Group justify="space-between" gap="xs">
+                  <Text size="sm">This draft was kept while the issue's task ran. Accept it to add it to the issue for the next run.</Text>
+                  <Button size="compact-xs" variant="default" loading={drafting} onClick={() => void draft(true)}>Draft again</Button>
+                </Group>
+              </Alert>
+            )}
             <Text size="sm" c="dimmed">
               Each part is added to the end of the issue's description under its heading. Edit or empty a part before you accept; an empty part is left out.
             </Text>
@@ -171,7 +210,7 @@ export function FixIssue(props: { goalId: string; issue: FixableIssue; onAccepte
             })}
             {waiting && (
               <Alert color="orange" variant="light" data-testid="fix-waiting">
-                {waiting.replace(/\.$/, "")}. The draft is kept here.
+                {waiting.replace(/\.$/, "")}.
               </Alert>
             )}
             {saveError && <Alert color="red" variant="light" data-testid="fix-save-error">{saveError}</Alert>}

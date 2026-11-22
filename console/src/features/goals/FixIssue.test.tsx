@@ -71,11 +71,11 @@ const DRAFT_URL = "/v1/goals/g-1/issues/fix-draft";
 const ACCEPT_URL = "/v1/goals/g-1/issues/fix-accept";
 const accepts = (asked: Asked[]) => asked.filter((a) => a.url === ACCEPT_URL);
 
-function board(onFixed: () => void = () => {}) {
+function board(onFixed: () => void = () => {}, issue: IssueProgress = MARKED) {
   return render(
     <MantineProvider theme={theme}>
       <MemoryRouter>
-        <GoalBoard issues={[MARKED]} tasks={{}} spend={{}} goalId="g-1" onFixed={onFixed} />
+        <GoalBoard issues={[issue]} tasks={{}} spend={{}} goalId="g-1" onFixed={onFixed} />
       </MemoryRouter>
     </MantineProvider>,
   );
@@ -139,7 +139,9 @@ test("discard sends nothing and leaves the card as it was", async () => {
 });
 
 test("a 409 for a running task shows its message and keeps the draft, which accepts once the task ends", async () => {
-  const running = "github:o/r#4's task t-9 is running, and its run has the issue's text already. The change can be accepted once the task ends";
+  const running =
+    "github:o/r#4's task t-9 is running, and its run has the issue's text already, so the issue is left as it is. " +
+    "The draft is kept: Fix with AI offers it again once the task ends, and it can be accepted once the task ends";
   const asked = stub({
     [DRAFT_URL]: [{ status: 200, body: DRAFTS }],
     [ACCEPT_URL]: [{ status: 409, body: { detail: running } }, { status: 200, body: ACCEPTED }],
@@ -162,6 +164,50 @@ test("a 409 for a running task shows its message and keeps the draft, which acce
   await waitFor(() => expect(screen.queryByTestId("fix-draft")).toBeNull());
   expect(accepts(asked)).toHaveLength(2);
   expect(accepts(asked)[1].body.parts[1]).toEqual({ part: "paths", text: "Paths: tests/test_save.py, docs/save.md" });
+});
+
+test("a running task's card says so, and a draft refused while it runs shows the planner's message", async () => {
+  const later = "github:o/r#4's task t-9 is running, and its run has the issue's text already, so the issue is left as it is. Fix with AI once the task ends";
+  const asked = stub({ [DRAFT_URL]: [{ status: 409, body: { detail: later } }] });
+  board(() => {}, { ...MARKED, task_id: "t-9", task_status: "running" });
+
+  const card = screen.getByTestId("column-running");
+  expect(within(card).getByTestId("fix-running").textContent).toContain("Its task is running");
+  expect(within(card).getByTestId("fix-running").textContent).toContain("kept for the next run");
+
+  fireEvent.click(within(card).getByRole("button", { name: "Fix with AI" }));
+  const shown = await within(card).findByTestId("fix-later");
+  expect(shown.textContent).toContain(later);
+  expect(within(card).queryByTestId("fix-failed")).toBeNull();
+  expect(screen.queryByTestId("fix-draft")).toBeNull();
+  expect(accepts(asked)).toHaveLength(0);
+});
+
+test("an ended task's card says nothing about a run", () => {
+  stub({});
+  board(() => {}, { ...MARKED, task_id: "t-9", task_status: "failed" });
+  expect(screen.getByRole("button", { name: "Fix with AI" })).toBeTruthy();
+  expect(screen.queryByTestId("fix-running")).toBeNull();
+});
+
+test("a draft kept while the task ran is offered for the next run, and Draft again asks the model anew", async () => {
+  const kept = { ...DRAFTS, kept: true, drafts: [{ ...DRAFTS.drafts[0], text: "- `pytest -k kept`" }] };
+  const fresh = { ...DRAFTS, kept: false };
+  const asked = stub({ [DRAFT_URL]: [{ status: 200, body: kept }, { status: 200, body: fresh }], [ACCEPT_URL]: [{ status: 200, body: ACCEPTED }] });
+  board();
+
+  const draft = await openDraft();
+  expect(asked.filter((a) => a.url === DRAFT_URL)[0].body).toEqual({ ref: REF });
+  expect(within(draft).getByTestId("fix-kept").textContent).toContain("kept while the issue's task ran");
+  expect((within(draft).getByRole("textbox", { name: "Draft of Acceptance checks" }) as HTMLTextAreaElement).value).toBe("- `pytest -k kept`");
+
+  fireEvent.click(within(draft).getByRole("button", { name: "Draft again" }));
+  await waitFor(() => expect(screen.queryByTestId("fix-kept")).toBeNull());
+  expect(asked.filter((a) => a.url === DRAFT_URL)[1].body).toEqual({ ref: REF, fresh: true });
+  const now = screen.getByTestId("fix-draft");
+  expect((within(now).getByRole("textbox", { name: "Draft of Acceptance checks" }) as HTMLTextAreaElement).value).toBe("- `pytest tests/test_save.py`");
+  expect(within(now).getByRole("textbox", { name: "Draft of Paths" })).toBeTruthy();
+  expect(accepts(asked)).toHaveLength(0);
 });
 
 test("a failed draft says so on the card, and nothing changes", async () => {
@@ -187,6 +233,25 @@ test("a board with no goal named, or an issue with no marks, offers no Fix with 
     </MantineProvider>,
   );
   expect(screen.queryByRole("button", { name: "Fix with AI" })).toBeNull();
+});
+
+test("on a goal's board only the marked, open issue offers Fix with AI", () => {
+  stub({});
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <GoalBoard
+          issues={[MARKED, { ...MARKED, ref: "github:o/r#5", missing: [], doubts: [] }, { ...MARKED, ref: "github:o/r#6", state: "closed" }]}
+          tasks={{}}
+          spend={{}}
+          goalId="g-1"
+        />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  expect(screen.getAllByRole("button", { name: "Fix with AI" })).toHaveLength(1);
+  expect(within(screen.getByTestId("column-queued")).getAllByRole("button", { name: "Fix with AI" })).toHaveLength(1);
+  expect(within(screen.getByTestId("column-done")).queryByRole("button", { name: "Fix with AI" })).toBeNull();
 });
 
 test("the issue picker marks the goal's issue and offers Fix with AI on it", async () => {
