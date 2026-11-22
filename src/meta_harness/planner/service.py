@@ -9,6 +9,7 @@
     POST       /v1/goals/{id}/complete, /reopen  set a goal met by hand, or make a met or canceled goal active again
     POST       /v1/goals/{id}/sweep           take in the goal's labeled issues now
     POST       /v1/goals/enrich               a more detailed statement a model proposes; saves nothing (enrich.py)
+    POST       /v1/goals/{id}/enrich/accept   save the statement the operator edited from a proposal (enrich.py)
     POST       /v1/goals/{id}/issues/run-anyway, /split   answer an issue the sweep held (sizing_api.py)
     GET, PUT   /v1/config/{kind}              configuration, with versions and rollback (meta_harness.config.api)
     GET, POST  /v1/admin/users                the console's users: invite, set a role, deprovision (users.py)

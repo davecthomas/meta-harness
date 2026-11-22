@@ -2625,6 +2625,7 @@ credential.
 | GET | `/v1/repos/{owner}/{name}/issues` | Planner | A registered repo's open issues, newest first, with a `label` and text `q` in the title when given. It answers a page at a time from `cursor`, each issue with the open goal that holds it, if any | built |
 | POST | `/v1/goals/draft` | Planner | A goal a model drafts from the open issues of one label (`label`) or several (`labels`), each issue read once. It can also draft from the `refs` chosen. The draft is a title, statement, theme and modality, made through the HTTP Gateway with `config/planner.json`'s `goal_drafting`. A goal takes one label, so a draft from several answers `label` null and the issues it read in `refs`. The New goal form sets those as the goal's picked issues. Saves nothing | built |
 | POST | `/v1/goals/enrich` | Planner | A more detailed statement for a goal, or a goal to be, that a model proposes (`planner/enrich.py`). It takes the `statement` and what is known of the goal: `title`, `repos`, `tracker`, `tracker_settings`, `label`, `refs` and an optional `goal_id`. It reads the issues the goal would take: the label's open issues, then the picked refs. One call through the HTTP Gateway's `/v1/structured`, with `config/planner.json`'s `goal_enrichment`, answers `statement`, `added` (each addition with `why`) and `questions` (each with the `assumption` made until the operator answers). The prompt asks for the outcome, scope, what is out of scope, how success is checked, constraints and the issues covered. Anything assumed is a question, never a fact in the statement. The statement goes through the writing pass before it is returned. Saves nothing. A model call that fails after its retries answers 502 with the reason; an unknown `goal_id` answers 404 | built |
+| POST | `/v1/goals/{id}/enrich/accept` | Planner | Save the `statement` the operator accepted and edited from a proposal, and record `goal_changed` with the operator as its actor and `enriched: true`. 409 for a `met` or `canceled` goal, or one whose status moved during the save (`planner/enrich.py`) | built |
 | POST | `/v1/goals/{id}/pause`, `/resume`, `/cancel` | Planner | Pause, resume or cancel the goal. Resuming a goal not started starts it: it sets `started_at` and sweeps the goal at once. Cancel also cancels the goal's `queued` and `blocked` tasks and asks its `running` tasks with no pull request to stop. The goal comes back with `tasks`: the task ids `canceled`, `stopping`, `left` (a pull request open) and `errors` | built |
 | POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on. The raise is `add_usd`, or with no body a worked-out amount. That amount is what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar. Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
@@ -3306,9 +3307,10 @@ works with Jira Cloud's REST API version 2, whose descriptions are text:
 
 #### Who an issue is assigned to
 
-Status: proposed. The owner approves this section, or names another choice,
-before any code task for it starts (VL-14260). Today the meta-harness never
-sets an assignee, so its issues show in no one's "assigned to me" list.
+Status: partly built. The `Tracker` calls and the goal setting below are
+built. Nothing calls `assign` yet, so the meta-harness still sets no
+assignee when it creates or starts an issue (VL-14260). Its issues show in no
+one's "assigned to me" list.
 
 **Who.** For each issue, the first of these that applies:
 1. The person named in the goal's tracker settings (`assignee`), picked from
@@ -3343,26 +3345,29 @@ retries it is reported the same way and never stops the task.
 
 **New `Tracker` calls** (`trackers/base.py`, each adapter implementing them,
 `WithOwn` and `Trackers` routing them):
-- `assignable(query)` returns the people the tracker can assign, each with an
-  id, a display name and an email when the tracker shows it. It takes a text
-  to narrow the list and is bound to the goal's repos and settings. It also
-  serves the console's pick.
-- `assign(ref, person_id)` sets the issue's assignee. It returns whether it
-  changed anything, and changes nothing on an issue that has an assignee.
-- `Issue.assignee` holds the assignee's id, empty when none, so "already has
-  an assignee" is read from the issue.
-- `create_issue` takes an optional `assignee`, so an issue is assigned as it
-  is created.
+- Built: `choices("assignee", scope)` lists the people the tracker can
+  assign, each as an id (`value`) and a name (`label`). GitHub takes the
+  scope's `repos` (comma-separated) and lists the logins every one of them
+  can assign. Jira takes `project` and lists account ids, with the display
+  name and the email where Jira shows it. The own tracker lists the console
+  users who may sign in, by email. It serves the console's pick.
+- Built: `assign(ref, person)` sets the issue's assignee. It returns whether
+  it changed anything, and changes nothing on an issue that has an assignee.
+  A person the tracker cannot assign is a `TrackerError` that is not
+  retryable, raised before anything is written. Jira takes an account id or
+  a display name that names one person.
+- Built: `assignee(ref)` reads the issue's assignee id, empty when none.
+- Planned: `create_issue` takes an optional `assignee`, so an issue is
+  assigned as it is created.
 
 **The goal setting.** `assignee` is a `choice` setting every tracker declares
 in its `SPEC` `goal_settings`, read from `GET
-/v1/trackers/{scheme}/choices/assignee`, which calls `assignable`. The New
-goal form shows it as a pick from that list, empty by default, and never as
-free text. A goal's tracker settings are fixed when it is created, so so is
+/v1/trackers/{scheme}/choices/assignee`, which calls the adapter's
+`choices`. The New goal form shows it as a pick from that list, empty by
+default, and never as free text. It passes the goal's project and repos as
+the scope, and waits for a project on a tracker that asks for one. A goal's tracker settings are fixed when it is created, so so is
 this one. The goal's page shows who is assigned and, for an owner not found
 or a person not assignable, why nobody is.
-
-This section changes no code.
 
 An issue is one task, by its ref, so what the task was made from can fall
 behind the issue. A task that ended canceled or failed is made over when a
@@ -4028,8 +4033,12 @@ standard usage cost export writes to the platform stack's `billing_export`
 dataset (turned on 2026-11-11), which the VM's service account may read and
 query. `MH_BILLING_EXPORT_TABLE` names the dataset, and the harvest finds the
 export's table in it, so the billing account's id is named nowhere in the
-repo. Until Google has created the table, within a day of the export being
-turned on, the page says the last read failed and why. Temporal runs on the
+repo. It reads the detailed usage cost export's table
+(`gcp_billing_export_resource_v1_*`) when there is one, else the standard
+export's (`gcp_billing_export_v1_*`). Until Google has created the table,
+within a day of the export being turned on, the page says the last read failed
+and why. The harvest logs a warning for the missing table once, then at most
+once an hour, and at once again after a read has succeeded. Temporal runs on the
 VM, so its cost is inside Compute Engine's. A source is a module with a
 `harvest` function. The edge names the caller's role to the services
 (`X-MH-Role`), and the cost API decides by it who sees what.

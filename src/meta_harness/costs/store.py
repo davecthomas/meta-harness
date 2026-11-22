@@ -67,6 +67,18 @@ def add(conn: psycopg.Connection, source: str, costs: list[Cost], upto: int) -> 
         _harvested(conn, source, upto, None)
 
 
+def record(conn: psycopg.Connection, costs: list[Cost]) -> None:
+    """Add costs a service knows at the moment it spends them, such as a model call no event records. No
+    harvest position moves: these costs come from no harvested source, so nothing counts them again."""
+    with conn.transaction():
+        for cost in costs:
+            conn.execute(
+                f"INSERT INTO costs.daily_cost ({KEY}, usd) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                f"ON CONFLICT ({KEY}) DO UPDATE SET usd = costs.daily_cost.usd + EXCLUDED.usd",
+                cost.values(),
+            )
+
+
 def replace(conn: psycopg.Connection, source: str, first: date, last: date, costs: list[Cost]) -> None:
     """Put a source's costs for a span of days in place of what was there: a bill is restated for days."""
     with conn.transaction():

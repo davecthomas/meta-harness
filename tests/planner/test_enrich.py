@@ -1,11 +1,12 @@
 # Created by the meta-harness in run t-dc8b62922990:run-1 on harness:pi-careful/claude:claude-opus-5-5.
 
-"""A more detailed goal statement proposed by one gateway call: POST /v1/goals/enrich.
+"""A more detailed goal statement proposed by one gateway call: POST /v1/goals/enrich, and its accept path.
 
 The module's tests run alone. The route's run against Postgres, with a fake HTTP Gateway, tracker and event
 service: no model is called.
 """
 
+import contextlib
 import functools
 import json
 import uuid
@@ -18,7 +19,8 @@ from fastapi.testclient import TestClient
 
 from meta_harness import db, migrations
 from meta_harness.costs import model_source
-from meta_harness.planner import enrich
+from meta_harness.planner import enrich, store
+from meta_harness.planner import service as planner_service
 from meta_harness.planner.service import create_app
 from meta_harness.planner.tracker import Issue
 from meta_harness.run_service import writing
@@ -309,3 +311,83 @@ def test_a_model_call_that_fails_after_its_retries_answers_502_with_the_reason(d
     assert "answered 503" in refused.json()["detail"]
     assert len(seen) > 1, "the call was tried again before it failed"
     assert not events.of("goal_enriched")
+
+
+# --- Accepting an edited statement --------------------------------------------------------------------
+
+
+class _Pool:
+    @contextlib.contextmanager
+    def connection(self):
+        yield None
+
+    def close(self):
+        pass
+
+
+@contextlib.contextmanager
+def _no_database(*args, **kwargs):
+    yield None
+
+
+@pytest.fixture
+def one_goal(monkeypatch):
+    """The planner over one goal kept in memory, with no database."""
+    goal = {"id": "g-1", "title": "Saving", "statement": "Fix saving.", "status": "active", "repos": [REPO]}
+    saved: list[dict] = []
+
+    def get(conn, goal_id):
+        if goal_id != goal["id"]:
+            raise store.NotFound(goal_id)
+        return dict(goal)
+
+    def update(conn, goal_id, only_if=None, dropped=None, **fields):
+        if only_if is not None and goal["status"] != only_if:
+            return dict(goal), {}
+        before = {k: goal[k] for k, v in fields.items() if goal[k] != v}
+        goal.update(fields)
+        saved.append(fields)
+        return dict(goal), before
+
+    monkeypatch.setattr(planner_service.db, "pool", lambda url=None: _Pool())
+    monkeypatch.setattr(enrich.db, "connect", _no_database)
+    monkeypatch.setattr(store, "get", get)
+    monkeypatch.setattr(store, "update", update)
+    events = Events()
+    app = create_app(events, None, None, operator_keys={"op-key": "dave"}, service_keys={}, sweep_seconds=0)
+    with TestClient(app) as client:
+        yield client, goal, events, saved
+
+
+def test_accept_saves_the_edited_statement_and_records_goal_changed_with_the_user(one_goal):
+    client, goal, events, saved = one_goal
+    edited = "Every save keeps the last edit."
+
+    accepted = client.post("/v1/goals/g-1/enrich/accept", json={"statement": edited}, headers=OPERATOR)
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["statement"] == edited == goal["statement"]
+    assert saved == [{"statement": edited}]
+    [event] = events.of("goal_changed")
+    assert event["actor"] == "dave" and event["tags"] == {"goal_id": "g-1"}
+    assert event["payload"]["changes"] == {"statement": {"from": "Fix saving.", "to": edited}}
+    assert event["payload"]["enriched"] is True
+
+
+def test_accept_of_the_same_statement_records_nothing(one_goal):
+    client, _, events, _ = one_goal
+
+    accepted = client.post("/v1/goals/g-1/enrich/accept", json={"statement": "Fix saving."}, headers=OPERATOR)
+
+    assert accepted.status_code == 200 and events.events == []
+
+
+@pytest.mark.parametrize("status", ["met", "canceled"])
+def test_accept_refuses_a_goal_that_has_ended(one_goal, status):
+    client, goal, events, saved = one_goal
+    goal["status"] = status
+
+    accepted = client.post("/v1/goals/g-1/enrich/accept", json={"statement": "New."}, headers=OPERATOR)
+
+    assert accepted.status_code == 409 and "reopen" in accepted.json()["detail"]
+    assert saved == [] and events.events == [] and goal["statement"] == "Fix saving."

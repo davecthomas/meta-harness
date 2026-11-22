@@ -14,6 +14,9 @@ the writing pass before it is returned. Nothing is saved: the operator edits the
 any change to a goal. A `goal_enriched` event records the model and its cost, under the goal when one is
 named, else under planning (costs/model_source.py).
 
+POST /v1/goals/{id}/enrich/accept saves the statement the operator edited while the goal can still change
+(not met or canceled), and records goal_changed with the operator as its actor and `enriched: true`.
+
 Environment: GATEWAY_URL and GATEWAY_API_KEY, the HTTP Gateway the meta-harness calls.
 """
 
@@ -28,8 +31,9 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from meta_harness import charter, outbound, retrying
+from meta_harness import charter, db, outbound, retrying
 from meta_harness.outbound import rules as writing_rules
+from meta_harness.planner import store
 from meta_harness.planner.tracker import Issue, TrackerError
 from meta_harness.run_service import writing
 from meta_harness.run_service.paths import REPO_ROOT
@@ -37,6 +41,8 @@ from meta_harness.run_service.paths import REPO_ROOT
 PLANNER_CONFIG_PATH = REPO_ROOT / "config" / "planner.json"
 # The longest statement a goal takes (service.GoalIn): a longer proposal could not be saved.
 STATEMENT_CHARS = 4000
+# Goals whose statement no longer changes: reopen one first.
+ENDED = ("met", "canceled")
 ENRICH_SCHEMA = {
     "type": "object",
     "properties": {
@@ -244,6 +250,10 @@ class EnrichIn(BaseModel):
     goal_id: str | None = Field(default=None, min_length=1)
 
 
+class AcceptIn(BaseModel):
+    statement: str = Field(min_length=1, max_length=STATEMENT_CHARS)
+
+
 def register(
     app: FastAPI,
     operator: Callable[..., str],
@@ -254,7 +264,7 @@ def register(
     bound_tracker: Callable[..., Any],
     enricher: Enricher | None = None,
 ) -> None:
-    """Add POST /v1/goals/enrich to the planner's app. The service passes its own helpers: load (a goal, or
+    """Add POST /v1/goals/enrich and /v1/goals/{id}/enrich/accept to the planner's app. The service passes its own helpers: load (a goal, or
     404), registered (repo names, or 404), open_issues (a label's open issues per repo) and bound_tracker (the
     tracker for a goal's repos and settings)."""
     enrich = enricher or enrich_goal
@@ -330,3 +340,37 @@ def register(
             "goal_id": body.goal_id,
             "refs": [i.ref for i in issues],
         }
+
+    @app.post("/v1/goals/{goal_id}/enrich/accept")
+    def accept(goal_id: str, body: AcceptIn, who: str = Depends(operator)) -> dict:
+        """Save the statement the operator accepted and edited, and record goal_changed by them. 409 for a met
+        or canceled goal, or one whose status moved while the statement was saved."""
+        goal = load(goal_id)
+        if goal["status"] in ENDED:
+            raise HTTPException(status_code=409, detail=f"the goal is {goal['status']}: reopen it to change it")
+        statement = body.statement.strip()
+        if not statement:
+            raise HTTPException(status_code=422, detail="the statement is empty")
+        try:
+            with db.connect(autocommit=True) as conn:
+                saved, changed = store.update(conn, goal_id, only_if=goal["status"], statement=statement)
+        except store.NotFound as err:
+            raise HTTPException(status_code=404, detail="no such goal") from err
+        except store.GoalError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        if not changed and saved.get("statement") != statement:
+            raise HTTPException(
+                status_code=409, detail=f"the goal became {saved['status']} meanwhile: look at it, then accept again"
+            )
+        if changed:
+            events.emit(
+                "goal_changed",
+                {
+                    "goal_id": goal_id,
+                    "changes": {k: {"from": str(v), "to": str(saved[k])} for k, v in changed.items()},
+                    "enriched": True,
+                },
+                actor=who,
+                tags={"goal_id": goal_id},
+            )
+        return saved

@@ -12,8 +12,19 @@ export function GoalTrackerFields(props: {
   onTracker: (scheme: string) => void;
   settings: Record<string, string>;
   onSettings: (settings: Record<string, string>) => void;
+  // The goal's repos, owner/name: the scope of a list that depends on them, such as GitHub's assignable people.
+  repos?: string[];
 }) {
   const chosen = props.trackers.find((t) => t.scheme === props.tracker);
+  // Whether the tracker asks a goal for a project, which then scopes its other lists (Jira's assignable people).
+  const asksProject = (chosen?.goal_settings ?? []).some((s) => s.name === "project");
+  const project = (props.settings.project ?? "").trim();
+  const repos = (props.repos ?? []).join(",");
+  // A choice is set, or left out when emptied, as a goal that never had it.
+  function choose(name: string, value: string) {
+    const { [name]: _gone, ...rest } = props.settings;
+    props.onSettings(value ? { ...rest, [name]: value } : rest);
+  }
   return (
     <Stack gap="lg">
       {props.trackers.length > 1 ? (
@@ -49,7 +60,11 @@ export function GoalTrackerFields(props: {
             help={setting.help}
             required={setting.required}
             value={props.settings[setting.name] ?? ""}
-            onChange={(value) => props.onSettings({ ...props.settings, [setting.name]: value })}
+            onChange={(value) => choose(setting.name, value)}
+            // The project itself is listed whole. Every other list is the goal's project's, or its repos'.
+            scope={setting.name === "project" ? {} : { ...(project ? { project } : {}), ...(repos ? { repos } : {}) }}
+            waiting={setting.name !== "project" && asksProject && !project ? "Choose the project first" : undefined}
+            keyCase={setting.name === "project"}
           />
         ) : setting.kind === "switch" ? (
           // On is "yes"; off leaves the setting out, as a goal that never had it.
@@ -78,30 +93,46 @@ export function GoalTrackerFields(props: {
   );
 }
 
-// A setting chosen from what the tracker lists, such as the Jira projects the meta-harness works in. It is a
-// pick, never free text: nothing half-typed reaches the goal, or the calls that read its issues. Only when the
-// list cannot be read is the key typed, and then it counts once the field is left.
-function ChoiceField(props: { scheme: string; name: string; label: string; help: string; required: boolean; value: string; onChange: (value: string) => void }) {
+// A setting chosen from what the tracker lists, such as the Jira projects the meta-harness works in, or the
+// people a goal's issues can be assigned to. It is a pick, never free text: nothing half-typed reaches the goal,
+// or the calls that read its issues. Only when the list cannot be read is the value typed, and then it counts
+// once the field is left. scope: what the list belongs to (the goal's project or repos); waiting: why the list
+// is not asked for yet. A setting that is not required can be emptied again.
+function ChoiceField(props: {
+  scheme: string;
+  name: string;
+  label: string;
+  help: string;
+  required: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  scope?: Record<string, string>;
+  waiting?: string;
+  keyCase?: boolean;
+}) {
   const [choices, setChoices] = useState<{ value: string; label: string }[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The scope as text, so a new object with the same values does not ask again.
+  const scope = JSON.stringify(props.scope ?? {});
   useEffect(() => {
     let stale = false;
     setChoices(null);
     setError(null);
-    api.trackerChoices(props.scheme, props.name).then(
+    if (props.waiting) return;
+    api.trackerChoices(props.scheme, props.name, JSON.parse(scope)).then(
       (found) => !stale && setChoices(found),
       (err) => !stale && setError(err instanceof Error ? err.message : String(err)),
     );
     return () => {
       stale = true;
     };
-  }, [props.scheme, props.name]);
+  }, [props.scheme, props.name, scope, props.waiting]);
   const chosen = props.value.trim();
   if (error) {
     return (
       <Stack gap={4}>
-        <TypedKey label={props.label} help={props.help} required={props.required} value={props.value} onChange={props.onChange} />
-        <Text size="xs" c="orange">The list could not be read, so type the key exactly: {error}</Text>
+        <TypedKey label={props.label} help={props.help} required={props.required} value={props.value} onChange={props.onChange} keyCase={props.keyCase} />
+        <Text size="xs" c="orange">The list could not be read, so type {props.keyCase ? "the key" : "it"} exactly: {error}</Text>
       </Stack>
     );
   }
@@ -113,12 +144,13 @@ function ChoiceField(props: { scheme: string; name: string; label: string; help:
         description={props.help}
         required={props.required}
         searchable
-        allowDeselect={false}
+        allowDeselect={!props.required}
+        clearable={!props.required}
         disabled={choices === null}
-        placeholder={choices === null ? "Loading…" : "Choose one"}
+        placeholder={props.waiting ?? (choices === null ? "Loading…" : choices.length === 0 ? "None to choose from" : props.required ? "Choose one" : "Choose one, or leave empty")}
         nothingFoundMessage="None matches"
         value={known ? chosen : null}
-        onChange={(value) => value && props.onChange(value)}
+        onChange={(value) => (value ? props.onChange(value) : !props.required && props.onChange(""))}
         data={choices ?? []}
         maxDropdownHeight={280}
       />
@@ -127,8 +159,8 @@ function ChoiceField(props: { scheme: string; name: string; label: string; help:
   );
 }
 
-// A key typed by hand, in capitals as keys are, which counts once the field is left.
-function TypedKey(props: { label: string; help: string; required: boolean; value: string; onChange: (value: string) => void }) {
+// A value typed by hand, which counts once the field is left. keyCase: a key, in capitals as keys are.
+function TypedKey(props: { label: string; help: string; required: boolean; value: string; onChange: (value: string) => void; keyCase?: boolean }) {
   const [draft, setDraft] = useState(props.value);
   return (
     <TextInput
@@ -136,7 +168,7 @@ function TypedKey(props: { label: string; help: string; required: boolean; value
       description={props.help}
       required={props.required}
       value={draft}
-      onChange={(e) => setDraft(e.currentTarget.value.toUpperCase())}
+      onChange={(e) => setDraft(props.keyCase ? e.currentTarget.value.toUpperCase() : e.currentTarget.value)}
       onBlur={() => draft.trim() !== props.value && props.onChange(draft.trim())}
     />
   );
