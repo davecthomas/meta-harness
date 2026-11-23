@@ -6,7 +6,8 @@ Canceling the goal ended its tasks and left those issues open, with the goal's l
 planned on GitHub. Each gets a comment that says why first.
 
 Only issues the goal itself created are closed: those its plans created, by the record each plan keeps of
-them, and the parts it split one of its issues into. An issue that existed before the goal is never closed,
+them; the parts it split one of its issues into; and any other that says so itself, in the provenance line
+the planner signs each issue with. That last covers an issue an approval created and failed to record. An issue that existed before the goal is never closed,
 nor one whose task has a pull request open, which the cancel leaves for the operator. One the tracker will
 not close stays open and is named in the answer, with the tracker's reason.
 
@@ -26,7 +27,8 @@ from fastapi import Depends, FastAPI, HTTPException
 
 from meta_harness import db, outbound
 from meta_harness.planner import plans, store
-from meta_harness.run_service.provenance import COMMENT, Provenance
+from meta_harness.run_service.provenance import COMMENT, ISSUE, Provenance
+from meta_harness.run_service.provenance import parse as parse_provenance
 from meta_harness.trackers.base import Tracker, TrackerError
 
 
@@ -40,16 +42,39 @@ ENDED = ("canceled", "met")
 PARKED = ["ready", "review_unresolved"]
 
 
-def _open_created(goal_id: str) -> list[dict]:
-    """The goal's open issues that it created: by one of its plans, or as a part of an issue it split."""
+def _open_links(goal_id: str) -> tuple[list[dict], set[str]]:
+    """The goal's open issues, and the refs it is on record as having created: by one of its plans, or as a
+    part of an issue it split."""
     with db.connect(autocommit=True) as conn:
         links = store.links(conn, goal_id)
         created = plans.created_refs(conn, goal_id)
         for link in links:
             created.update(link.get("split_into") or [])
-        return [
-            link for link in links if link["ref"] in created and link["state"] == "open" and not link.get("dropped")
-        ]
+        return [link for link in links if link["state"] == "open" and not link.get("dropped")], created
+
+
+def signed_by(body: str, goal_id: str) -> bool:
+    """Whether an issue's text says the goal's plan created it: the provenance line the planner signs with."""
+    return any(p.get("kind") == ISSUE and p.get("goal") == goal_id for p in parse_provenance(body or ""))
+
+
+async def open_created(goal: dict, tracker: Tracker) -> list[dict]:
+    """The goal's open issues that it created. One that is not on record is read from the tracker, and counts
+    when its own text says this goal's plan made it. An issue that cannot be read is left out: nothing is
+    closed on a guess."""
+    links, created = await asyncio.to_thread(_open_links, goal["id"])
+    found = []
+    for link in links:
+        if link["ref"] in created:
+            found.append(link)
+            continue
+        try:
+            issue = await tracker.read(link["ref"])
+        except (TrackerError, ValueError):
+            continue
+        if signed_by(issue.body, goal["id"]):
+            found.append(link)
+    return found
 
 
 def _closed(ref: str) -> None:
@@ -63,7 +88,7 @@ async def close_created(goal: dict, tracker: Tracker, who: str, left: list[str])
     closed, the ref with why."""
     done: dict[str, list[str]] = {"closed": [], "errors": []}
     close = getattr(tracker, "close_unplanned", None)
-    for link in await asyncio.to_thread(_open_created, goal["id"]):
+    for link in await open_created(goal, tracker):
         ref = link["ref"]
         if link.get("task_id") in left:
             continue
@@ -93,8 +118,8 @@ def register(app: FastAPI, operator: Callable[..., str], load: Callable[[str], d
     async def left_open(goal_id: str, who: str = Depends(operator)) -> dict:
         """The open issues the goal created, each with its title: what a cancel with `close_issues`, or
         close-left-open, would close. 404 for an unknown goal."""
-        await asyncio.to_thread(load, goal_id)
-        found = await asyncio.to_thread(_open_created, goal_id)
+        goal = await asyncio.to_thread(load, goal_id)
+        found = await open_created(goal, goal_tracker(tracker, goal))
         return {"issues": [{"ref": link["ref"], "title": link.get("title") or link["ref"]} for link in found]}
 
     @app.post("/v1/goals/{goal_id}/close-left-open")
