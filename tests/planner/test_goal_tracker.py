@@ -434,7 +434,7 @@ def test_a_goal_that_asks_takes_an_issue_assigned_to_the_meta_harness_with_no_la
         json={"statement": "Fix bugs", "repos": [REPO], "tracker_settings": {"project": "VL"}},
         headers=OPERATOR,
     )
-    assert refused.status_code == 422 and "assigned to the meta-harness" in refused.json()["detail"]
+    assert refused.status_code == 422 and "assigned to Octofusion" in refused.json()["detail"]
 
 
 def test_an_issue_that_is_not_started_is_told_why_in_its_tracker_once_for_each_reason(world):
