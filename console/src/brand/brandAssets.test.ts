@@ -3,6 +3,8 @@
 import { describe, expect, test } from "vitest";
 import lockup from "./octofusion-lockup.svg?raw";
 import symbol from "./octofusion-symbol.svg?raw";
+import tagline from "./tagline.svg?raw";
+import wordmark from "./wordmark.svg?raw";
 
 // The files `npm run brand` writes. The limits are docs/specs/octofusion-brand-sizes.md's, in bytes.
 const FILES = [
@@ -42,10 +44,24 @@ describe.each(FILES)("$name", ({ text, limit }) => {
   });
 });
 
-test("the lockup holds the symbol and the magenta wordmark", () => {
+test("the lockup holds the symbol and the clean wordmark: a violet name with one dark keyline, and a plain coral AI", () => {
   const svg = parse(lockup);
   expect(svg.querySelector("#octofusion-symbol-purple")?.getAttribute("fill")).toBe("#670fdc");
-  expect(svg.querySelector("#octofusion-wordmark-purple")?.getAttribute("fill")).toBe("#c402f5");
+  const name = svg.querySelector("#octofusion-lockup-wordmark #octofusion")!;
+  expect([name.getAttribute("fill"), name.getAttribute("stroke")]).toEqual(["#c402f5", "#0a0a14"]);
+  expect(svg.querySelector("#octofusion-lockup-wordmark #ai")?.getAttribute("fill")).toBe("#fb5b52");
+  // The first wordmark's cyan outline, which muddied at small sizes, is gone from the name.
+  expect(svg.querySelector("#octofusion-lockup-wordmark")!.innerHTML).not.toContain("#08e7f5");
+});
+
+test("the splash's name and tagline are built from the same artwork, each on a canvas it fills", () => {
+  const name = parse(wordmark);
+  expect(name.getAttribute("aria-label")).toBe("Octofusion AI");
+  expect(name.querySelector("#octofusion")?.getAttribute("fill")).toBe("#c402f5");
+  const said = parse(tagline);
+  expect(said.getAttribute("aria-label")).toBe("The Open Meta-Harness for Coding at Scale");
+  const [, , width, height] = said.getAttribute("viewBox")!.split(" ").map(Number);
+  expect(width / height).toBeGreaterThan(10);
 });
 
 // The source artwork leaves a tenth of its canvas empty on each side and draws the name at under a third of
