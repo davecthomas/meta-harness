@@ -80,6 +80,8 @@ ROUTES: list[tuple[str, str, str]] = [
     ("/v1/limits", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     # The Overview's report on all goals, and the box to ask about the work.
     ("/v1/overview", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
+    # What needs the operator, across every goal and task: the one list every page reads (planner/needs.py).
+    ("/v1/needs", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     # What the supervisor last found, for the Overview's "Needs you" list.
     ("/v1/supervisor", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     # The edge answers /v1/me itself; the planner keeps each user's settings under it.

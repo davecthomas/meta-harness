@@ -5,6 +5,7 @@ import { VoiceMark } from "../../components/Voice";
 import { api } from "../../api";
 import { when } from "../../components/ui";
 import { NeedButton, type Need } from "./needActions";
+import { reloadNeeds } from "../overview/needsYou";
 
 // The need's shape, its actions and the events a need's button sends live with the buttons (needActions.tsx).
 // They are named here too, for the pages that have always read them from the planner's panel.
@@ -31,6 +32,9 @@ export interface PlannerUpdatesRead {
   error?: string | null;
   // Where a planning goal's plan stands now: its version, and whether the planner is writing a new one.
   plan?: { version: number | null; replanning: boolean } | null;
+  // What the goal needs now, from the one list every page reads (planner/needs.py). The panel's rows and
+  // buttons are these, so they say what the Overview and the inbox say. Absent from an older planner.
+  needs?: Need[];
 }
 
 const REFRESH_MS = 15000;
@@ -117,6 +121,8 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
   // An action taken from the panel: the need it answered is hidden at once, and a new update is asked for.
   async function done() {
     setActed(true);
+    // What needs the operator changed: every page showing the one list reads it again.
+    void reloadNeeds();
     try {
       await ask();
     } finally {
@@ -137,8 +143,14 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
       ? { now: standing.version, then: latest.plan_version }
       : null;
   const ofPlan = (need: Need) => PLAN_ACTIONS.includes(need.action || (need.ref ? "open_issue" : "approve_plan"));
-  const asked = latest?.needs_you ?? [];
+  // What needs the operator is the planner's one list, read as the panel is: the update's own rows are what
+  // its model wrote when it was written, kept for a planner that does not serve the list.
+  const asked = read.needs ?? latest?.needs_you ?? [];
   const needs = standing?.replanning ? asked.filter((need) => !ofPlan(need)) : asked;
+  // What the update's model noted for the operator that the list does not hold: a plan's gaps to weigh
+  // before approving. Said as text under the rows, with no button of its own.
+  const held = new Set(needs.map((need) => need.what));
+  const notes = read.needs ? (latest?.needs_you ?? []).map((need) => need.what).filter((what) => what && !held.has(what)) : [];
 
   return (
     <Paper withBorder p="lg" mb="md" radius="md" data-testid="planner-updates" style={{ borderLeft: "5px solid var(--mantine-color-indigo-6)" }}>
@@ -181,6 +193,12 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
             </Group>
           ) : open ? (
             <>
+              {!replaced && notes.length > 0 && (
+                <Stack gap={2} data-testid="planner-notes">
+                  <Text size="sm" fw={600}>Worth weighing</Text>
+                  {notes.map((note) => <Text key={note} size="sm">{note}</Text>)}
+                </Stack>
+              )}
               {needs.length < asked.length && (
                 <Group gap="xs" data-testid="planner-replanning" role="status">
                   <Loader size="xs" />

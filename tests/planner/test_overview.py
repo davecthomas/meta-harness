@@ -127,8 +127,7 @@ def test_two_goals_facts_give_one_report_and_an_unchanged_digest_writes_none(wor
     assert len(gateway.calls) == 1, "and nothing is spent"
 
     # A goal moves: its planning task ends, so its plan waits for approval.
-    plan_task = next(t for t in tasks.tasks.values() if t.get("goal_id") == goals[0]["id"])
-    plan_task["status"] = "closed"
+    _planned(client, events, tasks, goals[0], [draft("store")])
     held = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
     assert held["written"] is False and report["written_at"] in held["note"], "the last is too recent"
     _settings(monkeypatch, min_seconds=1)

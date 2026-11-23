@@ -12,6 +12,7 @@ import { useInfinite } from "../../hooks";
 import { Empty, ErrorAlert, IssueLink, PageHeader, PrLink, SectionTitle, TitleLink, when } from "../../components/ui";
 import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
 import { RetryAll, retryAllPlan } from "../tasks/Remedies";
+import { NeedButton } from "../goals/needActions";
 import { needsYouNote, useNeedsYou, type NeedsYouItem } from "./needsYou";
 import { WorkReport } from "./WorkReport";
 import { GettingStarted } from "./GettingStarted";
@@ -92,6 +93,8 @@ export function Overview() {
   );
 }
 
+const PLAN_NEEDS = ["approve_plan", "fix_plan", "accept_fix"];
+
 // One thing that needs the operator: what it asks for, what it is about, why, and the action where there is one
 // to take from here.
 function NeedsYouRow({ item, onActed }: { item: NeedsYouItem; onActed: () => void }) {
@@ -115,6 +118,11 @@ function NeedsYouRow({ item, onActed }: { item: NeedsYouItem; onActed: () => voi
         </Stack>
         <Group gap="xs">
           {raisesGoal && <ResumeBudget goalId={(goal?.id ?? task?.goal_id)!} goal={goal} size="xs" variant="light" onResumed={onActed} />}
+          {/* A plan's own steps (approve it, update it with the planner's fix, plan again) are the same button
+              the report's row and the goal's page show for them. */}
+          {PLAN_NEEDS.includes(item.need.action ?? "") && (
+            <NeedButton need={item.need} planning={false} goalId={item.need.goal_id} label={item.need.label || null} onDone={onActed} away />
+          )}
           <Button component={Link} to={item.to} size="xs" variant="default">Open</Button>
         </Group>
       </Group>

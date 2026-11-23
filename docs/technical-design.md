@@ -2776,6 +2776,7 @@ credential.
 | POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on. The raise is `add_usd`, or with no body a worked-out amount. That amount is what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar. Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
 | GET | `/v1/goals/{id}/spec` | Planner | The specification a goal was created with: `{name, text, created_by, created_at}`. A goal is created with one as `spec`: a document's `name` and `text` (Markdown or plain text, 200,000 characters at most), or the `ref` of an issue of the goal's tracker, such as a Jira epic, whose description is the specification. Such a goal needs no label and no issues. Its planning task reads the specification between markers, as data, and breaks all of it into tasks sized for one pull request. On approval the tasks are created under one epic: the issue named by `ref`, or one the planner creates for the goal (`create_epic` in the tracker's adapter; an Epic in Jira, by the project's `epic_type`), which carries no goal label. 404 for a goal with none (`planner/specs.py`) On GitHub each of the plan's issues is made a sub-issue of that epic as it is created; one GitHub refuses to place stands alone, and is still the task. The goal's page lists the work that needed no building, with where it already is: what the plan left out as done or as the same work as another issue, and each task that closed as already done (`console/src/features/goals/AlreadyDone.tsx`). | built |
 | GET | `/v1/goals/{id}/narrative`, `/v1/overview/narrative`, `/v1/overview/personas` | Planner | A narrative summary for one kind of reader, `?persona=`: of a goal's work, or one across the running goals' narratives. The readers are the planning configuration's `narratives.personas` (a label and who the reader is), listed by `/v1/overview/personas` for a page to offer. A narrative is written from the facts an update is written from, by one call to the model `narratives.model` names, through the writing pass. It is stored with the digest of those facts (`planner.narrative`) and served from storage until they change, so reading one spends nothing. A read never waits for the model: when a narrative must be written, the read answers at once with what is stored and `writing: true`, the write goes on in the background, and the page reads again until it is there. The Overview's is kept against the goals' digests. Past `narratives.max_usd` for the day, or when the call fails, a stored narrative is served marked `stale` with `why`; with none stored, 503 says what to do. Each one written is a `narrative_written` event with its cost. The goal's page and the Overview show it folded, with the reader picked from the list and a Copy button (`planner/narratives.py`) | built |
+| GET | `/v1/needs` | Planner | Everything that needs the operator now, across every goal and task, with how many: the one list the console's Needs you, its inbox, its counts, a goal's badge and panel, and the Overview's buttons are drawn from. Each has what it asks, what it is about, one sentence on why, the action a page offers for it, and its goal and task. Decided from the records by `planner/needs.py` | built |
 | GET, POST | `/v1/goals/{id}/next-steps`, `/v1/goals/{id}/next-steps/{step}/goal` | Planner | A goal's next steps: up to three things the planner would do next if it carried the work on, each with a title, one sentence on why and the statement of a new goal. Read from storage and written again, in the background, only when the goal's facts change; `?write=false` reads what is stored and writes nothing. The POST starts a new goal from one step, with the first goal's repos, tracker and settings, planned first. A step already started answers with its goal and makes no other | built |
 | GET | `/v1/repos/{owner}/{name}/spec-files`, `/v1/repos/{owner}/{name}/spec-files/text?path=` | Planner | A specification picked from the goal's repo. The first lists a registered repo's Markdown and text files on its default branch, those under `docs/` first, leaving out folders of other people's code; `complete` is false when the repo holds more than are listed. The second reads one as `name` and `text`. Both go through the owner's GitHub App with `contents: read`. The New goal page offers this first, then an issue of the goal's tracker (the adapter's `choices("parent")`: Jira's epics, GitHub's open issues), then a file from the operator's machine. The page sends a picked file's text as the goal's `spec`, so the goal keeps what it was planned from (`planner/spec_files.py`) | built |
 | GET, POST | `/v1/goals/{id}/unstick` | Planner | Get the goal's stuck tasks moving in one action (`planner/unstick_api.py`). Each task that waits on a person takes the first move the supervisor ranked for it, through the Task API under the operator's name: merge, resolve the conflict and merge, retry, retry with a stronger model, or start over. A task held for its own spend limit is raised to what its next run needs, or ended when that is more than one task may spend. GET answers what it would do with nothing done, `{moves, left}`; POST does it and answers `{done, failed, left}`. A task is left, with why, when its first move is one only a person makes, or it waits on its goal's budget. Ending a task and merging one with its findings unfixed are never taken here. The goal's page offers it as one button, "Get N tasks moving", whose dialog names each task and its step first | built |
@@ -3863,6 +3864,33 @@ being written, and asks nothing: a panel once said two tasks were too big to
 approve, under an Approve button, after version 2 had split them. An approved plan's goal
 gets its update as soon as its first sweep has made its tasks. One that cannot be written is logged, said on the page,
 and tried again at the next pass.
+
+**What needs the operator is decided in one place.** Seven parts of the
+system once each worked it out by their own rules: the browser for the
+Overview's list and the header's inbox, the Task Shepherd for a goal's badge,
+two prompts' facts for the planner's words, and more for the buttons. They
+disagreed on one page. The Overview's report said a plan waited for approval,
+with the button for it, while the list under it and its tile said nothing
+needed anyone, and the goal's own badge called it held. Each had fresh data;
+the rules differed. So `planner/needs.py` decides, through `actions.for_goal`
+for a goal (its plan, the planner's fix, its budget, its tasks, its held
+issues) and `actions.for_task` for a task of no goal. For a task the Task
+Shepherd's record of who has it is the word (`actions.waits_on_operator`).
+`GET /v1/needs` serves the list, and everything else reads it. The console
+keeps one copy (`needsYou.ts`), read every 30 seconds and again after anything
+the operator does that can change it (`reloadNeeds`). The Overview's list and
+tile, the inbox and the report's buttons all draw that copy, so they agree and
+change together. A goal's badge (`standing`) says it needs the operator when
+its plan waits, and its planner panel's rows are the list's, read as the panel
+is. The report's model is given the same list as its facts. A model may write
+the words around a need. It does not decide whether something needs the
+operator, or what its button is. The console's copy decides nothing either:
+it draws what the list says, and reads the tasks and goals beside it only to
+draw more about an item. `tests/planner/test_needs.py` fails a page that reads
+the list by itself and a copy that works anything out. One mapping stays in
+the browser: which buttons a task's status calls for once its row is shown
+(`TaskNeedAction`), so a task acted on changes its buttons before the list is
+read again.
 
 **The Overview's rows come with their buttons.** The report says in words what
 needs the operator and which goals are not moving. Each such row about a goal

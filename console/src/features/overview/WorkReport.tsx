@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { api, ApiError } from "../../api";
 import { when } from "../../components/ui";
 import { NeedButton } from "../goals/needActions";
+import { reloadNeeds, useGoalNeeds } from "./needsYou";
 import type { GoalAction, ReportItem, SuggestedAction, WorkAnswer, WorkReportAnswer } from "./api";
 
 const VISIT_KEY = "mh:overview:last-visit";
@@ -141,8 +142,12 @@ export function WorkReport() {
   const report = found?.report ?? null;
   // The goals whose buttons a row already carries, so a goal named twice gets them once.
   const withButtons = new Set<string>();
-  // After a button acted, the report is read again: what the goal needs has changed.
-  const reread = () => void api.overviewReport().then((got) => setFound((now) => (now ? { ...now, actions: got.actions } : got)), () => undefined);
+  // What each goal needs now comes from the one list every page shares (needsYou.ts), so a row's buttons
+  // are the same as the Needs you list's, and change with it. After a button acted, that list is read again.
+  const needsOf = useGoalNeeds();
+  const reread = () => void reloadNeeds();
+  const goalsNamed = [...(report?.needs_you ?? []), ...(report?.not_moving ?? [])].map((row) => row.goal_id).filter(Boolean);
+  const actions: Record<string, GoalAction[]> = Object.fromEntries(goalsNamed.map((id) => [id, needsOf(id).slice(0, 3)]));
   return (
     <Paper withBorder p="md" mb="lg" data-testid="work-report">
       <Stack gap="xs">
@@ -156,10 +161,10 @@ export function WorkReport() {
         {report && (
           <>
             <Text fw={600}>{report.headline}</Text>
-            <Items title="Needs you" items={report.needs_you} actions={found?.actions ?? {}} shown={withButtons} onDone={reread} />
+            <Items title="Needs you" items={report.needs_you} actions={actions} shown={withButtons} onDone={reread} />
             <Items title="Moving" items={report.moving} />
             {/* A goal already under Needs you is not said again here: the report's model writes both lists. */}
-            <Items title="Waiting" items={report.not_moving.filter((row) => !row.goal_id || !report.needs_you.some((n) => n.goal_id === row.goal_id))} actions={found?.actions ?? {}} shown={withButtons} onDone={reread} />
+            <Items title="Waiting" items={report.not_moving.filter((row) => !row.goal_id || !report.needs_you.some((n) => n.goal_id === row.goal_id))} actions={actions} shown={withButtons} onDone={reread} />
             {report.spend && <Text size="sm">{report.spend}</Text>}
             {report.finished && <Text size="sm">{report.finished}</Text>}
           </>

@@ -48,7 +48,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import db, outbound, retrying
 from meta_harness.outbound import rules as writing_rules
-from meta_harness.planner import actions, drafting, planning, plans, store, updates, voice
+from meta_harness.planner import actions, drafting, planning, store, updates, voice
 from meta_harness.run_service import writing
 from meta_harness.supervisor import ledger
 
@@ -300,33 +300,13 @@ def _name(task: dict) -> str:
 
 
 def needs(goal: dict, links: list[dict], tasks: list[dict]) -> list[dict[str, str]]:
-    """What waits on the operator in the goal, and why, from its records: each kind of need with the task or
-    issue it is about."""
-    found = []
-    if goal["status"] == "budget_exhausted":
-        found.append(
-            {"need": "raise_budget", "about": "", "why": f"spent ${goal.get('spent_usd')} of ${goal.get('max_usd')}"}
-        )
-    plan_task = next((t for t in tasks if t["id"] == goal.get("plan_task_id")), None)
-    if goal["status"] == "planning" and plan_task and plan_task["status"] in planning.ENDED:
-        found.append({"need": "approve_plan", "about": "", "why": "the plan is drafted and waits for approval"})
-    for task in tasks:
-        if task.get("task_type") == "plan":
-            continue
-        reason = str(task.get("status_reason") or "")[:200]
-        if task.get("waiting_on"):
-            found.append({"need": "answer", "about": _name(task), "why": str(task["waiting_on"])[:200]})
-        elif task["status"] == "failed":
-            found.append({"need": "retry_or_leave", "about": _name(task), "why": reason or "the task failed"})
-        elif task["status"] == "review_unresolved":
-            found.append({"need": "settle_review", "about": _name(task), "why": reason or "the review is unsettled"})
-        elif task["status"] == "ready" and task.get("pr_url") and not goal.get("auto_merge"):
-            found.append({"need": "merge", "about": _name(task), "why": "its pull request passed checks and review"})
-    for link in links:
-        if link["state"] == "open" and not link.get("task_id") and not link.get("split_into"):
-            if why := link.get("refused_reason") or link.get("held_reason"):
-                found.append({"need": "open_issue", "about": link.get("title") or link["ref"], "why": str(why)[:200]})
-    return found[:MAX_NEEDS]
+    """What waits on the operator in the goal, and why, for the report's model to put into words: each kind of
+    need with the task or issue it is about. It is the one list every page reads (needs.of_goal), so the
+    report never says a goal needs the operator when the list under it says nothing does."""
+    from meta_harness.planner import needs as all_needs
+
+    found = all_needs.of_goal(goal, tasks, MAX_NEEDS)
+    return [{"need": need["action"], "about": need["title"], "why": need["what"]} for need in found]
 
 
 def goal_facts(
@@ -717,14 +697,10 @@ class Overview:
         return {"report": self.latest, "written": written, "note": note, "error": error}
 
     def _needs(self, goal_id: str, most: int = actions.MAX_FOR_GOAL) -> tuple[dict, list[dict]]:
-        """The goal, and what its records say it needs now (actions.for_goal)."""
-        from meta_harness.planner import suggestions
+        """The goal, and what its records say it needs now: the one list every page reads (needs.py)."""
+        from meta_harness.planner import needs as all_needs
 
-        with db.connect(autocommit=True) as conn:
-            goal = store.get(conn, goal_id)
-            links, plan = store.links(conn, goal_id), plans.latest(conn, goal_id)
-        suggestion = suggestions.current(goal_id) if goal["status"] == "planning" else None
-        return goal, actions.for_goal(goal, links, self.tasks.list(None, goal_id, 500), plan, suggestion, most)
+        return all_needs.by_id(goal_id, self.tasks, most)
 
     def suggested(self, suggests: list[dict[str, str]]) -> list[dict]:
         """The buttons for the steps an answer suggests, each checked against its goal's records as the answer

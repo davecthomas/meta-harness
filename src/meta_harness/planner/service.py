@@ -74,6 +74,7 @@ from meta_harness.planner import (
     merge_checks,
     naming,
     narratives,
+    needs,
     next_steps,
     overview,
     plan_api,
@@ -1347,7 +1348,11 @@ def create_app(
                 refused = sum(
                     1 for link in store.links(conn, goal["id"]) if link["refused_reason"] and link["state"] == "open"
                 )
-                goal["standing"] = goal_standing(goal["status"], by_goal.get(goal["id"], []), refused)
+                of_goal = by_goal.get(goal["id"], [])
+                # Whether its plan waits on the operator comes from the one list of what does (needs.py), so
+                # the goal's badge and the Overview's Needs you say the same.
+                waits = goal["status"] == "planning" and needs.plan_waits(needs.of_goal(goal, of_goal))
+                goal["standing"] = goal_standing(goal["status"], of_goal, refused, plan_waits=waits)
 
     # For each goal no sweep covers: when its issues' states were last read from the tracker, and whether
     # every one could be read.
@@ -1403,6 +1408,10 @@ def create_app(
             "updates": await asyncio.to_thread(updates.latest, goal_id),
             # Where the plan stands now: an update written about a version since replaced asks nothing.
             "plan": await asyncio.to_thread(updates.plan_standing, goal),
+            # What the goal needs now, from the one list every page reads: the panel's rows and buttons.
+            "needs": (await asyncio.to_thread(needs.by_id, goal_id, tasks))[1]
+            if goal["status"] not in ("met", "canceled")
+            else [],
             "enabled": bool(updates.settings()["enabled"]),
             "error": app.state.update_errors.get(goal_id),
         }
@@ -1742,6 +1751,7 @@ def create_app(
     app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)
     overview.register(app, operator, app.state.overview)
     narratives.register(app, operator, load, narratives.Narratives(tasks, events, narrative_writer))
+    needs.register(app, operator, tasks)
 
     async def start_goal(fields: dict, who: str) -> dict:
         """Creates a goal as POST /v1/goals does, for one started from a next step."""
