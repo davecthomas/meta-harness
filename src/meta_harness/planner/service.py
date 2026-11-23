@@ -1246,7 +1246,7 @@ def create_app(
             raise HTTPException(
                 status_code=422,
                 detail="a goal needs issues to take in: give it a label, or pick issues by ref. Where its "
-                "tracker supports it, you can also have the goal take the issues assigned to the meta-harness",
+                "tracker supports it, you can also have the goal take the issues assigned to Octofusion",
             )
         if why := parallel_reason(body.max_parallel):
             raise HTTPException(status_code=422, detail=why)

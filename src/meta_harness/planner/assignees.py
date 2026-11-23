@@ -126,7 +126,7 @@ async def person_for(goal: dict, tracker: Any, ref: str, repo: str) -> Who:
 def _todo(who: Who, refused: bool) -> str:
     if not refused:
         return (
-            "The tracker could not be reached after its retries. The meta-harness tries again when the issue's "
+            "The tracker could not be reached after its retries. Octofusion tries again when the issue's "
             f"task starts, or assign {who.person or 'someone'} in the tracker."
         )
     if who.source == "setting":
