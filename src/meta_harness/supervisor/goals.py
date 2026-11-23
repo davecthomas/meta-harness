@@ -29,8 +29,13 @@ HELD = {
 }
 
 
-def goal_standing(status: str, tasks: list[dict[str, Any]], refused: int = 0) -> dict[str, Any]:
+def goal_standing(
+    status: str, tasks: list[dict[str, Any]], refused: int = 0, plan_waits: bool = False
+) -> dict[str, Any]:
     """The goal's standing: {state, reason, ask, yours, moving}.
+
+    plan_waits: the goal's plan is what waits on the operator (planner/needs.py says so: its approval, or the
+    planner's fix to it). A goal being planned is otherwise held: its planner is still at work.
 
     tasks are the goal's tasks as the Task API serves them, each with its `standing`. refused is how many of
     its open issues the planner refused. yours lists the tasks an operator has, each with what to do, longest
@@ -60,6 +65,14 @@ def goal_standing(status: str, tasks: list[dict[str, Any]], refused: int = 0) ->
         # A task the supervisor has not looked at yet is taken as moving: its first pass says otherwise.
         if t.get("standing") is None or t["standing"].get("owner") in MOVING_OWNERS
     )
+    if status == "planning" and plan_waits:
+        return _standing(
+            "needs_you",
+            "its plan waits for you",
+            "Read the plan on its page, then approve it or ask for a new one.",
+            yours,
+            moving,
+        )
     if status in HELD:
         reason, ask = HELD[status]
         return _standing("held", reason, ask, yours, moving)

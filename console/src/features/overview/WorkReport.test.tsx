@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { retries } from "../../client";
 import { theme } from "../../theme";
 import { Overview } from "./Overview";
+import { forgetNeeds } from "./needsYou";
 import { FIRST_LOOK_MS, WorkReport } from "./WorkReport";
 
 const report = {
@@ -22,11 +23,22 @@ function Arrived() {
 }
 
 beforeEach(() => { window.localStorage.clear(); retries.baseMs = 0; });
-afterEach(() => { vi.unstubAllGlobals(); retries.baseMs = 400; });
+afterEach(() => { vi.unstubAllGlobals(); retries.baseMs = 400; forgetNeeds(); });
+
+// What GET /v1/needs answers in a test: set before the panel is drawn.
+const needs: { current: unknown[] } = { current: [] };
+beforeEach(() => { needs.current = []; });
 
 function renderPanel(handler: (url: string, init?: RequestInit) => Response) {
   const calls: { url: string; init?: RequestInit }[] = [];
-  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => { calls.push({ url, init }); return Promise.resolve(handler(url, init)); });
+  // The one list of what needs the operator, which the report's rows take their buttons from, is read beside
+  // the report: a handler that does not serve it answers an empty one.
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url.startsWith("/v1/needs")) return Promise.resolve(json({ needs: needs.current, count: needs.current.length }));
+    if (url.startsWith("/v1/goals?") || url.startsWith("/v1/tasks?")) return Promise.resolve(json({ goals: [], tasks: [], total: 0 }));
+    calls.push({ url, init });
+    return Promise.resolve(handler(url, init));
+  });
   render(
     <MantineProvider theme={theme}>
       <MemoryRouter initialEntries={["/"]}>
@@ -121,13 +133,12 @@ test("a row that needs the operator says what each step is and carries the butto
     ],
     not_moving: [{ goal_id: "g-2", goal: "Keep tasks through compaction", why: "Its plan waits for you." }, { goal_id: "g-4", goal: "Add search", why: "It waits its turn." }],
   };
-  const actions = {
-    "g-2": [{ what: "The plan is ready, with 16 new tasks. Nothing runs until you approve it.", ref: "", action: "approve_plan", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2" }],
-    "g-3": [{ what: "Imports: its pull request passed checks and review.", ref: "mh:i-1", action: "merge", task_id: "t-1", pr_url: "https://github.com/o/r/pull/9", goal_id: "g-3", label: "mh:g-3" }],
-    "g-4": [],
-  };
+  needs.current = [
+    { key: "approve_plan:g-2", asks: "Approve the plan", title: "", since: "", goal: "Keep tasks through compaction", what: "The plan is ready, with 16 new tasks. Nothing runs until you approve it.", ref: "", action: "approve_plan", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2" },
+    { key: "merge:t-1", asks: "Merge", title: "Imports", since: "", goal: "Add imports", what: "Imports: its pull request passed checks and review.", ref: "mh:i-1", action: "merge", task_id: "t-1", pr_url: "https://github.com/o/r/pull/9", goal_id: "g-3", label: "mh:g-3" },
+  ];
   const calls = renderPanel((url) =>
-    url.startsWith("/v1/tasks/t-1") ? json({ id: "t-1", title: "Imports", status: "ready", pr_url: "https://github.com/o/r/pull/9", max_usd: "5" }) : json({ report: needing, written: true, actions }));
+    url.startsWith("/v1/tasks/t-1") ? json({ id: "t-1", title: "Imports", status: "ready", pr_url: "https://github.com/o/r/pull/9", max_usd: "5" }) : json({ report: needing, written: true }));
 
   const rows = await screen.findAllByTestId("report-row");
   // A goal already under Needs you is not said again under Waiting: four rows, not five.
@@ -152,10 +163,10 @@ test("a row that needs the operator says what each step is and carries the butto
 
 test("the planner's fix to a plan is offered as Update the plan, with what it changes, and Dismiss comes last", async () => {
   const needing = { ...report, needs_you: [{ goal_id: "g-2", goal: "Keep tasks through compaction", what: "Check the plan.", why: "" }] };
-  const actions = {
-    "g-2": [{ what: "The planner drafted a fix for gaps in this goal's plan. Accepting it makes a new plan version.", ref: "", action: "accept_fix", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2", changes: ["Adds: track compaction after release"] }],
-  };
-  renderPanel(() => json({ report: needing, written: true, actions }));
+  needs.current = [
+    { key: "accept_fix:g-2", asks: "Update the plan", title: "", since: "", goal: "Keep tasks through compaction", what: "The planner drafted a fix for gaps in this goal's plan. Accepting it makes a new plan version.", ref: "", action: "accept_fix", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2", changes: ["Adds: track compaction after release"] },
+  ];
+  renderPanel(() => json({ report: needing, written: true }));
 
   const [step] = await screen.findAllByTestId("report-action");
   expect(step.textContent).toContain("The planner drafted a fix for gaps in this goal's plan.");

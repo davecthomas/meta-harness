@@ -101,6 +101,12 @@ class TaskClient:
             params["goal_id"] = goal_id
         return self._call("GET", "/v1/tasks", params=params)
 
+    def held_by(self, owner: str, limit: int = 200) -> list[dict]:
+        """The tasks the supervisor found this owner to have (operator, supervisor, workflow, scheduler or
+        planner), longest in their situation first."""
+        params = {"has_it": owner, "limit": limit, "offset": 0, "smoke": "true"}
+        return self._call("GET", "/v1/tasks", params=params)["tasks"]
+
     def cancel(self, task_id: str, reason: str = "canceled through the Task API", actor: str | None = None) -> dict:
         return self._call("POST", f"/v1/tasks/{task_id}/cancel", actor=actor, json={"reason": reason})
 

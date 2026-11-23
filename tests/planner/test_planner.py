@@ -145,6 +145,9 @@ class FakeTasks:
         ]
         return found[:limit]
 
+    def held_by(self, owner, limit=200):
+        return [t for t in self.tasks.values() if (t.get("standing") or {}).get("owner") == owner][:limit]
+
     def page(self, statuses=None, goal_id=None, limit=25, offset=0):
         found = self.list(statuses, goal_id, len(self.tasks))
         return {"tasks": found[offset : offset + limit], "total": len(found), "offset": offset, "limit": limit}

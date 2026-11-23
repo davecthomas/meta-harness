@@ -1,15 +1,29 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, goalTitle, type Goal, type Task } from "../../api";
+import { useEffect, useSyncExternalStore } from "react";
+import { api, type Goal, type Task } from "../../api";
+import { call } from "../../client";
+import type { Need } from "../goals/needActions";
 import { diagnose, oneLine } from "../tasks/diagnosis";
-import { standingLine } from "../tasks/Standing";
-import { moneyText } from "../../money";
 
-// What needs the operator, as one list with one count. The Overview shows all of it, and the header's inbox
-// its count and first few: both read this, so the two never disagree. Each item is named by what it asks for
-// ("Merge", "Raise the budget"), since "needs you" alone says nothing.
+// What needs the operator, as one list with one count, decided in one place: the planner's GET /v1/needs
+// (planner/needs.py). The Overview's list and tile, the header's inbox and the buttons on the report's rows
+// all read the copy kept here, so they never disagree and they change together. Nothing in the console
+// decides whether something needs the operator, or what is asked: it draws what the list says. The tasks
+// and goals are read beside it only to draw more about an item (a failure's diagnosis, a budget's figures).
 //
 // What is not in it, on purpose: an agent's review in progress, which the operator may join but need not; and
 // the kill switch, which has its own banner on every page.
+
+// One thing that needs the operator, as the planner serves it.
+export interface ServerNeed extends Need {
+  key: string;
+  // What it asks, in a word or three; what it is about; and one sentence on why.
+  asks: string;
+  title: string;
+  since: string;
+  goal_id: string;
+  goal: string;
+  label: string;
+}
 
 export interface NeedsYouItem {
   key: string;
@@ -28,84 +42,44 @@ export interface NeedsYouItem {
   goal?: Goal;
   // Since when it has waited, when the supervisor said.
   since?: string;
+  // The need as served: its action is the button a page offers for it.
+  need: ServerNeed;
 }
 
-// The goals worth asking about, and how often the list is read again.
-export const NEEDS_YOU_GOALS = ["active", "budget_exhausted", "stalled"];
+// The goals read beside the list, to draw more about an item, and how often the list is read again.
+export const NEEDS_YOU_GOALS = ["planning", "active", "budget_exhausted", "stalled"];
 export const NEEDS_YOU_POLL_MS = 30_000;
 const MOST = 200;
-// How many of a stuck goal's waiting tasks its line names.
-const MOST_NAMED = 3;
 
-function goalItems(g: Goal): NeedsYouItem[] {
-  const items: NeedsYouItem[] = [];
-  const base = { title: goalTitle(g), to: `/goals/${g.id}`, goal: g };
-  // A goal past its budget, once: its key is the same whether it is over or stopped.
-  if (g.status === "budget_exhausted" || g.budget_state === "blocked") {
-    items.push({ ...base, key: `goal-${g.id}`, action: "Raise the budget", detail: "Its budget stopped it: none of its tasks starts until it has more to spend. Raise the budget, or leave it stopped." });
-  } else if (g.budget_state === "over") {
-    items.push({ ...base, key: `goal-${g.id}`, action: "Over budget", detail: "It is past its budget and keeps running. Raise the budget, or pause the goal." });
-  }
-  // A goal with work left and none of it moving: everything it has left waits on the operator.
-  if (g.standing?.state === "needs_you") {
-    const reason = `${g.standing.reason.charAt(0).toUpperCase()}${g.standing.reason.slice(1)}`;
-    // Named, so the operator sees which tasks without opening the goal: three at most, then how many more.
-    const yours = g.standing.yours ?? [];
-    const named = yours.slice(0, MOST_NAMED).map((t) => t.title).join(", ");
-    const more = yours.length > MOST_NAMED ? ` and ${yours.length - MOST_NAMED} more` : "";
-    const waiting = named ? ` Waiting on you: ${named}${more}.` : "";
-    items.push({ ...base, key: `goal-waits-${g.id}`, action: "Unstick the goal", detail: `${reason}.${waiting} The goal goes on as soon as one of them is unstuck.` });
-  }
-  return items;
+// One need as a row: named by what it asks, with where to go for it. tasks and goals only add to what is
+// drawn; an item is in the list because the planner's list holds it, whether or not they were read.
+function item(need: ServerNeed, tasks: Map<string, Task>, goals: Map<string, Goal>): NeedsYouItem {
+  const task = need.task_id ? tasks.get(need.task_id) : undefined;
+  const goal = need.goal_id ? goals.get(need.goal_id) : undefined;
+  // A failure reads better by its diagnosis, when the console has one for its reason.
+  const diagnosis = task && ["failed", "review_unresolved"].includes(task.status) ? diagnose({ status: task.status, reason: task.status_reason }) : null;
+  const pr = need.action === "merge" && need.pr_url && /^https?:/.test(need.pr_url) ? need.pr_url : undefined;
+  return {
+    // The keys a row has always had: a task's, and a goal's budget's.
+    key: need.task_id ? `task-${need.task_id}` : need.action === "raise_budget" ? `goal-${need.goal_id}` : need.key,
+    action: need.asks,
+    title: need.title || need.goal,
+    to: need.task_id ? `/tasks/${need.task_id}` : `/goals/${need.goal_id}`,
+    detail: diagnosis ? oneLine(diagnosis) : need.what,
+    href: pr,
+    hrefLabel: pr ? "Open the pull request" : undefined,
+    task,
+    goal,
+    since: need.since || undefined,
+    need,
+  };
 }
 
-function taskItem(t: Task): NeedsYouItem | null {
-  // The Task Shepherd looks at every open task and records who has it. One it has itself, or that nobody
-  // needs to touch (a failed task of a canceled goal, a task it is about to retry or merge), is not the
-  // operator's, whatever its status says. Only a task it has not looked at yet is judged by its status.
-  if (t.standing && t.standing.owner !== "operator") return null;
-  const base = { key: `task-${t.id}`, title: t.title, to: `/tasks/${t.id}`, task: t, since: t.standing?.since };
-  if (t.waiting_on === "budget") {
-    const asked = t.budget_request?.for === "task" && t.budget_request.add_usd ? `$${Number(t.budget_request.add_usd).toFixed(2)}` : null;
-    return {
-      ...base,
-      // Named by the amount when the service could say what the next run needs.
-      action: asked ? `Grant ${asked} more` : t.budget_request?.for === "goal" ? "Raise the goal's budget" : "Raise the spend limit",
-      detail: `${moneyText(t.status_reason) ?? "It reached its spend limit"}. Open it to ${asked ? `grant the ${asked} in one click, set another limit,` : "raise the limit"} or end it.`,
-    };
-  }
-  if (t.waiting_on === "operator_review") {
-    return { ...base, action: "Finish the review", detail: `${t.review_claimed_by ?? "An operator"} took its review over: the task waits for that verdict.` };
-  }
-  if (t.waiting_on === "review") {
-    return { ...base, action: "Decide on the review", detail: "Its review asks for changes and waits for you: dismiss findings, or let the fix run start." };
-  }
-  if (t.status === "ready") {
-    return {
-      ...base,
-      action: "Merge",
-      detail: "Its review is clean and its pull request is open. Merge it with Merge on the task's page, or on GitHub.",
-      href: t.pr_url && /^https?:/.test(t.pr_url) ? t.pr_url : undefined,
-      hrefLabel: "Open the pull request",
-    };
-  }
-  if (t.status === "review_unresolved" || t.status === "failed") {
-    const diagnosis = diagnose({ status: t.status, reason: t.status_reason });
-    return {
-      ...base,
-      action: t.status === "failed" ? "Retry or fix" : "Settle the review",
-      detail: diagnosis ? oneLine(diagnosis) : t.standing ? standingLine(t.standing) : "Open it to see what happened and what to do.",
-    };
-  }
-  // Anything else the supervisor found to be an operator's: stuck behind another task, waiting with no goal
-  // to move it. Its standing says why and what to do.
-  if (t.standing?.owner === "operator") return { ...base, action: "Look at", detail: standingLine(t.standing) };
-  return null;
-}
-
-// The one list. tasks: the tasks the supervisor found an operator to have (others are left out); goals: the open ones.
-export function needsYouItems(tasks: Task[], goals: Goal[]): NeedsYouItem[] {
-  return [...goals.flatMap(goalItems), ...tasks.flatMap((t) => taskItem(t) ?? [])];
+// The one list, as rows. needs: the planner's; tasks and goals: read beside it, for what each row draws.
+export function needsYouItems(needs: ServerNeed[], tasks: Task[] = [], goals: Goal[] = []): NeedsYouItem[] {
+  const byTask = new Map(tasks.map((t) => [t.id, t]));
+  const byGoal = new Map(goals.map((g) => [g.id, g]));
+  return needs.map((need) => item(need, byTask, byGoal));
 }
 
 // The line under the count: what it is made of, by what each asks for, so it is never a bare number.
@@ -117,24 +91,70 @@ export function needsYouNote(items: NeedsYouItem[] | null): string {
   return `${[...counts].map(([action, n]) => `${n} to ${action.charAt(0).toLowerCase()}${action.slice(1)}`).join(", ")}.`;
 }
 
-// The list as it is now, read again every NEEDS_YOU_POLL_MS and whenever `refresh` changes. A read that
-// fails keeps the list it had and says why: an empty list must mean nothing needs the operator.
-export function useNeedsYou(refresh = 0): { items: NeedsYouItem[] | null; error: string | null; reload: () => void } {
-  const [items, setItems] = useState<NeedsYouItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => {
-    try {
-      const [tasks, goals] = await Promise.all([api.tasks({ hasIt: "operator" }, 0, MOST), api.goals(NEEDS_YOU_GOALS, 0, MOST)]);
-      setItems(needsYouItems(tasks.items, goals.items));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+// The one copy of the list every page shares: read once, kept here, and told to whoever is showing it.
+type Held = { items: NeedsYouItem[] | null; error: string | null };
+let held: Held = { items: null, error: null };
+const watching = new Set<() => void>();
+let timer: ReturnType<typeof setInterval> | undefined;
+let reading: Promise<void> | null = null;
+
+async function read(): Promise<void> {
+  try {
+    const [found, tasks, goals] = await Promise.all([
+      call<{ needs: ServerNeed[] }>("/v1/needs"),
+      // Only for what a row draws: a failed read of either leaves the rows plainer, not missing.
+      api.tasks({ hasIt: "operator" }, 0, MOST).then((page) => page.items, () => [] as Task[]),
+      api.goals(NEEDS_YOU_GOALS, 0, MOST).then((page) => page.items, () => [] as Goal[]),
+    ]);
+    held = { items: needsYouItems(found.needs, tasks, goals), error: null };
+  } catch (err) {
+    // The list it had stays, with why it could not be read: an empty list must mean nothing needs the operator.
+    held = { ...held, error: err instanceof Error ? err.message : String(err) };
+  }
+  for (const tell of watching) tell();
+}
+
+// Reads the list again now, for every page showing it. Called after anything the operator does that can
+// change what needs them, so each place that shows it changes at once and together.
+export function reloadNeeds(): Promise<void> {
+  reading ??= read().finally(() => {
+    reading = null;
+  });
+  return reading;
+}
+
+function watch(tell: () => void): () => void {
+  watching.add(tell);
+  if (watching.size === 1) {
+    void reloadNeeds();
+    timer = setInterval(() => void reloadNeeds(), NEEDS_YOU_POLL_MS);
+  }
+  return () => {
+    watching.delete(tell);
+    if (!watching.size) {
+      clearInterval(timer);
+      timer = undefined;
     }
-  }, []);
+  };
+}
+
+// Forgets the list: for tests, so one test's list is not the next one's.
+export function forgetNeeds(): void {
+  held = { items: null, error: null };
+}
+
+// The list as it is now: the one shared copy, read again every NEEDS_YOU_POLL_MS and whenever `refresh`
+// changes. A read that fails keeps the list it had and says why.
+export function useNeedsYou(refresh = 0): { items: NeedsYouItem[] | null; error: string | null; reload: () => void } {
+  const now = useSyncExternalStore(watch, () => held);
   useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), NEEDS_YOU_POLL_MS);
-    return () => clearInterval(timer);
-  }, [load, refresh]);
-  return { items, error, reload: () => void load() };
+    if (refresh) void reloadNeeds();
+  }, [refresh]);
+  return { items: now.items, error: now.error, reload: () => void reloadNeeds() };
+}
+
+// What one goal needs now, from the shared list: the buttons for a row about it, wherever the row is.
+export function useGoalNeeds(): (goalId: string) => ServerNeed[] {
+  const { items } = useNeedsYou();
+  return (goalId) => (items ?? []).filter((i) => i.need.goal_id === goalId).map((i) => i.need);
 }

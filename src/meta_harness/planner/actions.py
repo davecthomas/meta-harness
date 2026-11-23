@@ -130,7 +130,8 @@ def for_goal(
     Each is what `actionable` answers, with the goal it is about (`goal_id`) and that goal's label, which
     splitting a held issue needs."""
     wanted: list[dict] = []
-    if goal["status"] == "budget_exhausted":
+    # Stopped by its budget, or past it and still running: either way the budget is the operator's to raise.
+    if goal["status"] == "budget_exhausted" or goal.get("budget_state") in ("blocked", "over"):
         wanted.append({"what": "", "ref": "", "action": "raise_budget"})
     if goal["status"] == "planning" and plan is not None:
         # `actionable` turns this into the plan's fix when it cannot be approved, and drops it while the
@@ -146,9 +147,7 @@ def for_goal(
             if (link.get("held_reason") or link.get("refused_reason")) and not _split_already(link):
                 held.append({"what": "", "ref": link["ref"], "action": "open_issue"})
             continue
-        status = task.get("status")
-        ready = status == "ready" and task.get("pr_url") and not goal.get("auto_merge")
-        if task.get("waiting_on") or status in ("failed", "review_unresolved") or ready:
+        if waits_on_operator(task, bool(goal.get("auto_merge"))):
             wanted.append({"what": "", "ref": link["ref"], "action": "open_task"})
     found = actionable([*wanted, *held], goal, links, tasks, suggestion, plan)
     # One decision on a plan at a time: while the planner's fix waits, approving would approve the plan
@@ -161,11 +160,76 @@ def for_goal(
             **need,
             # What the button beside it is for, said from the records: a button is never shown bare.
             "what": said(need, goal, by_ref.get(need["ref"]), by_id.get(need["task_id"]), plan),
+            "asks": asks(need, goal, by_id.get(need["task_id"])),
+            "title": _title(by_ref.get(need["ref"]), by_id.get(need["task_id"])),
+            "since": ((by_id.get(need["task_id"]) or {}).get("standing") or {}).get("since") or "",
             "goal_id": goal["id"],
             "label": goal.get("label") or "",
         }
         for need in found[:most]
     ]
+
+
+def waits_on_operator(task: dict, auto_merge: bool = False) -> bool:
+    """Whether the task is the operator's to move. The Task Shepherd looks at every open task and records who
+    has it (`standing`): its word decides, so a failed task it is about to retry, or one of a goal that is
+    not running, is not the operator's whatever its status says. Only a task it has not looked at yet is
+    judged by its status."""
+    standing = task.get("standing")
+    if standing:
+        return standing.get("owner") == "operator" and standing.get("situation") != "goal_not_active"
+    status = task.get("status")
+    ready = status == "ready" and bool(task.get("pr_url")) and not auto_merge
+    return bool(task.get("waiting_on")) or status in ("failed", "review_unresolved") or ready
+
+
+def for_task(task: dict) -> list[dict]:
+    """What a task of no goal needs from the operator now: one action, or none. A goal's tasks are in
+    `for_goal`, which this follows."""
+    if task.get("status") in ("closed", "canceled") or not waits_on_operator(task):
+        return []
+    ref = task.get("external_ref") or f"task:{task['id']}"
+    alone = {"id": "", "status": "active", "label": ""}
+    link = {"ref": ref, "task_id": task["id"], "state": "open", "title": task.get("title")}
+    return for_goal(alone, [link], [task])
+
+
+def _title(link: dict | None, task: dict | None) -> str:
+    """What an action is about, by name: the task's short name or title, else its issue's."""
+    return str((task or {}).get("name") or (task or {}).get("title") or (link or {}).get("title") or "")
+
+
+# What each action asks of the operator, in a word or three: the label a list of needs leads each with.
+ASKS = {
+    "approve_plan": "Approve the plan",
+    "fix_plan": "Fix the plan",
+    "accept_fix": "Update the plan",
+    "merge": "Merge",
+    "settle_review": "Settle the review",
+    "retry": "Retry or fix",
+    "split_or_run": "Split or run",
+    "raise_budget": "Raise the budget",
+    "review": "Review the changes",
+    "open_issue": "Look at the issue",
+    "open_task": "Look at",
+}
+
+
+def asks(need: dict, goal: dict, task: dict | None) -> str:
+    """The need in a word or three, named for what is asked, since "needs you" alone says nothing."""
+    waiting = (task or {}).get("waiting_on")
+    if need["action"] == "open_task" and waiting == "budget":
+        request = (task or {}).get("budget_request") or {}
+        if request.get("for") == "task" and request.get("add_usd"):
+            return f"Grant ${float(request['add_usd']):.2f} more"
+        return "Raise the goal's budget" if request.get("for") == "goal" else "Raise the spend limit"
+    if need["action"] == "open_task" and waiting == "operator_review":
+        return "Finish the review"
+    if need["action"] == "open_task" and waiting == "review":
+        return "Decide on the review"
+    if need["action"] == "raise_budget" and goal.get("status") != "budget_exhausted":
+        return "Over budget" if goal.get("budget_state") == "over" else ASKS["raise_budget"]
+    return ASKS.get(need["action"], "Look at")
 
 
 def _short(text: object, most: int = 140) -> str:
@@ -189,6 +253,8 @@ def said(need: dict, goal: dict, link: dict | None, task: dict | None, plan: dic
         why = _short(next(iter((plan or {}).get("invalid") or []), ""))
         return f"The plan can't be approved yet{': ' + why if why else ''}."
     if action == "raise_budget":
+        if goal.get("status") != "budget_exhausted" and goal.get("budget_state") == "over":
+            return f"The goal is past its budget of ${goal.get('max_usd')} and keeps running."
         return f"The goal has spent its budget of ${goal.get('max_usd')}, so its work has stopped."
     if action == "merge":
         return f"{name}: its pull request passed checks and review."
@@ -199,8 +265,19 @@ def said(need: dict, goal: dict, link: dict | None, task: dict | None, plan: dic
         return f"{name} failed{': ' + why if why else ''}."
     if action == "split_or_run":
         return f"{name} is held as too large for one pull request."
-    if action == "open_task" and (task or {}).get("waiting_on"):
-        return f"{name} waits on your answer: {_short(task['waiting_on'])}."
+    waiting = (task or {}).get("waiting_on")
+    if action == "open_task" and waiting == "budget":
+        return f"{name} reached its spend limit{': ' + _short(task.get('status_reason')) if task.get('status_reason') else ''}."
+    if action == "open_task" and waiting == "operator_review":
+        return f"{name} waits for the review {task.get('review_claimed_by') or 'an operator'} took over."
+    if action == "open_task" and waiting == "review":
+        return f"{name}: its review asks for changes and waits for you."
+    if action == "open_task" and waiting:
+        return f"{name} waits on your answer: {_short(waiting)}."
+    standing = (task or {}).get("standing") or {}
+    if action == "open_task" and standing.get("reason"):
+        ask = f" {_short(standing['ask'])}." if standing.get("ask") else ""
+        return f"{name}: {_short(standing['reason'])}.{ask}"
     if action == "open_issue":
         why = _short((link or {}).get("refused_reason") or (link or {}).get("held_reason"))
         return f"{name} is not running{': ' + why if why else ''}."

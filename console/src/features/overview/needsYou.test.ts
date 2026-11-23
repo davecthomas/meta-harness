@@ -1,108 +1,64 @@
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { Goal, Task } from "../../api";
-import { needsYouItems, needsYouNote } from "./needsYou";
+import { forgetNeeds, needsYouItems, needsYouNote, reloadNeeds, type ServerNeed } from "./needsYou";
 
-// One list of what needs the operator, for the Overview and the header's inbox, each item named by what it asks.
+afterEach(() => {
+  vi.unstubAllGlobals();
+  forgetNeeds();
+});
 
-const task = (id: string, status: string, more: Partial<Task> = {}) => ({ id, status, title: `Task ${id}`, updated_at: "2026-11-10T10:00:00Z", ...more }) as Task;
-const waiting = { owner: "operator", situation: "blocked_on_stuck", reason: "it waits on o/r#7, whose task is not moving", ask: "Open that issue's task and retry or fix it.", since: "2026-11-10T09:00:00Z", checked_at: "", attempts: 0, last_error: null };
+function need(more: Partial<ServerNeed>): ServerNeed {
+  return { key: "k", what: "Why it waits.", ref: "", action: "open_task", task_id: "", pr_url: "", asks: "Look at", title: "", since: "", goal_id: "", goal: "", label: "", ...more };
+}
 
-test("each thing that needs the operator is named by what it asks for, goals first", () => {
-  const items = needsYouItems(
-    [
-      task("a", "ready", { pr_url: "https://github.com/o/r/pull/9" }),
-      task("b", "review_unresolved"),
-      task("c", "failed", { updated_at: "2026-10-01T00:00:00Z" }),
-      task("d", "running", { waiting_on: "budget", status_reason: "it spent $5.00 of its $5.00 limit" }),
-      task("e", "running", { waiting_on: "review" }),
-      task("f", "running", { waiting_on: "operator_review", review_claimed_by: "pat@example.com" }),
-      task("g", "blocked", { standing: waiting } as Partial<Task>),
-      task("h", "running"),
-    ],
-    [
-      { id: "g-1", status: "budget_exhausted", title: "Saves", statement: "x" } as Goal,
-      { id: "g-2", status: "active", budget_state: "over", title: "Exports", statement: "x" } as Goal,
-      { id: "g-3", status: "active", budget_state: "ok", title: "Quiet", statement: "x" } as Goal,
-      { id: "g-4", status: "active", title: "Stuck", statement: "x", standing: { state: "needs_you", reason: "nothing in it is moving: 2 tasks wait on you", ask: "", yours: [], moving: 0 } } as unknown as Goal,
-    ],
-  );
-
-  expect(items.map((i) => `${i.action}: ${i.title}`)).toEqual([
-    "Raise the budget: Saves",
-    "Over budget: Exports",
-    "Unstick the goal: Stuck",
-    "Merge: Task a",
-    "Settle the review: Task b",
-    "Retry or fix: Task c",
-    "Raise the spend limit: Task d",
-    "Decide on the review: Task e",
-    "Finish the review: Task f",
-    "Look at: Task g",
+test("a row is what the planner's list says: what it asks, what it is about, why, and where to go", () => {
+  const rows = needsYouItems([
+    need({ key: "approve_plan:g-1", action: "approve_plan", asks: "Approve the plan", goal_id: "g-1", goal: "Add exports", what: "The plan is ready, with 3 new tasks. Nothing runs until you approve it." }),
+    need({ key: "merge:t-1", action: "merge", asks: "Merge", task_id: "t-1", title: "CSV export", goal_id: "g-1", goal: "Add exports", pr_url: "https://github.com/o/r/pull/9", what: "CSV export: its pull request passed checks and review.", since: "2026-11-23T10:00:00Z" }),
+    need({ key: "raise_budget:g-2", action: "raise_budget", asks: "Raise the budget", goal_id: "g-2", goal: "Add imports" }),
   ]);
-  const by = Object.fromEntries(items.map((i) => [i.key, i]));
-  expect(by["task-a"].href).toBe("https://github.com/o/r/pull/9");
-  expect(by["task-a"].detail).toContain("Merge it with Merge on the task's page");
-  expect(by["task-c"].detail).toBeTruthy(), "an old failure still needs someone: nothing ages out of the list";
-  expect(by["task-f"].detail).toBe("pat@example.com took its review over: the task waits for that verdict.");
-  expect(by["task-g"].detail).toBe("It waits on o/r#7, whose task is not moving. Open that issue's task and retry or fix it.");
-  expect(by["task-g"].since).toBe("2026-11-10T09:00:00Z");
-  expect(by["goal-waits-g-4"].to).toBe("/goals/g-4");
+
+  expect(rows.map((r) => [r.key, r.action, r.title, r.to])).toEqual([
+    ["approve_plan:g-1", "Approve the plan", "Add exports", "/goals/g-1"],
+    ["task-t-1", "Merge", "CSV export", "/tasks/t-1"],
+    ["goal-g-2", "Raise the budget", "Add imports", "/goals/g-2"],
+  ]);
+  expect(rows[0].detail).toBe("The plan is ready, with 3 new tasks. Nothing runs until you approve it.");
+  expect([rows[1].href, rows[1].hrefLabel, rows[1].since]).toEqual(["https://github.com/o/r/pull/9", "Open the pull request", "2026-11-23T10:00:00Z"]);
+  expect(rows[0].href).toBeUndefined();
 });
 
-test("a task the Task Shepherd has, or that nobody needs to touch, is not the operator's whatever its status", () => {
-  // A canceled goal's tasks: the Shepherd found nothing is left to do for the failed and parked ones, and it
-  // is stopping the one held for budget. And a failed task it is about to retry by itself.
-  const standing = (owner: string, situation: string, reason: string) => ({ ...waiting, owner, situation, reason }) as Task["standing"];
-  const ended = standing("planner", "failed_goal_ended", "the task failed, and its goal was canceled: nothing is left to do");
-  const items = needsYouItems(
-    [
-      task("a", "failed", { standing: ended }),
-      task("b", "review_unresolved", { standing: standing("planner", "goal_ended", "its goal was canceled, so nothing more is done for it") }),
-      task("c", "running", { waiting_on: "budget", status_reason: "it spent $8.00 of its $8.00 limit", standing: standing("supervisor", "goal_ended", "its goal was canceled, so its run is stopped") }),
-      task("d", "failed", { standing: standing("supervisor", "retry_due", "the task failed on the system's side") }),
-      task("e", "ready", { pr_url: "https://github.com/o/r/pull/9", standing: standing("supervisor", "merge_due", "the code host would take its merge now") }),
-      // Still the operator's: one the Shepherd handed over, and one it has not looked at yet.
-      task("f", "failed", { standing: standing("operator", "failed", "the task failed on its own account") }),
-      task("g", "failed"),
-    ],
-    [],
-  );
-  expect(items.map((i) => i.key)).toEqual(["task-f", "task-g"]);
+test("the console decides nothing: a task or goal read beside the list only adds to what a row draws", () => {
+  const failed = { id: "t-2", title: "Import", status: "failed", status_reason: "the run reached its turn limit", external_ref: "mh:i-2" } as unknown as Task;
+  const running = { id: "t-9", title: "Search", status: "failed", status_reason: "x" } as unknown as Task;
+  const goal = { id: "g-1", statement: "Add exports", status: "planning" } as unknown as Goal;
+
+  // Tasks and goals with no need in the list make no row, whatever their status.
+  expect(needsYouItems([], [failed, running], [goal])).toEqual([]);
+  const [row] = needsYouItems([need({ key: "retry:t-2", action: "retry", asks: "Retry or fix", task_id: "t-2", title: "Import", what: "Import failed." })], [failed, running], [goal]);
+  expect([row.key, row.action, row.task?.id]).toEqual(["task-t-2", "Retry or fix", "t-2"]);
+  // A need whose task could not be read is still a row.
+  const [bare] = needsYouItems([need({ key: "retry:t-3", action: "retry", asks: "Retry or fix", task_id: "t-3", title: "Export", what: "Export failed." })]);
+  expect([bare.title, bare.detail, bare.task]).toEqual(["Export", "Export failed.", undefined]);
 });
 
-test("a failure says its fix in plain words, not the raw error", () => {
-  const grant = "TaskFailed: run 1 on harness:pi-lean/claude:claude-sonnet-5 ended for good: run_harness failed (HarnessConfigError): HarnessConfigError: the HTTP Gateway refused the run grant (422): [{'type': 'string_pattern_mismatch', 'loc': ['body', 'spend_limit_usd'], 'msg': \"String should match pattern\", 'input': '1000000.00'}]";
-  const [item] = needsYouItems([task("c", "failed", { status_reason: grant })], []);
-  expect(item.detail).toContain("Retry the task");
-  expect(item.detail).not.toContain("string_pattern_mismatch");
-});
-
-test("the count says what it is made of", () => {
-  const items = needsYouItems([task("a", "ready"), task("b", "ready"), task("c", "failed")], [{ id: "g-1", status: "budget_exhausted", title: "Saves", statement: "x" } as Goal]);
-  expect(needsYouNote(items)).toBe("1 to raise the budget, 2 to merge, 1 to retry or fix.");
-  expect(needsYouNote([])).toBe("Nothing needs you.");
+test("the count's note says what it is made of", () => {
   expect(needsYouNote(null)).toBe("");
+  expect(needsYouNote([])).toBe("Nothing needs you.");
+  const rows = needsYouItems([need({ key: "a", asks: "Merge" }), need({ key: "b", asks: "Merge" }), need({ key: "c", asks: "Approve the plan" })]);
+  expect(needsYouNote(rows)).toBe("2 to merge, 1 to approve the plan.");
 });
 
-test("a task held for budget is named by the amount it asks for when the service says it", () => {
-  const request = { for: "task" as const, what: "fix run 2", needs_usd: "1.65", left_usd: "0.40", limit_usd: "3.00", add_usd: "2", to_usd: "5.00" };
-  const [own, goals] = needsYouItems(
-    [
-      task("a", "running", { waiting_on: "budget", status_reason: "fix run 2 needs about $1.65", budget_request: request }),
-      task("b", "running", { waiting_on: "budget", status_reason: "the review needs about $0.30", budget_request: { for: "goal", what: "the review", needs_usd: "0.30", goal_id: "g-1" } }),
-    ],
-    [],
-  );
-  expect(own.action).toBe("Grant $2.00 more");
-  expect(own.detail).toContain("grant the $2.00 in one click, set another limit, or end it");
-  expect(goals.action).toBe("Raise the goal's budget");
-});
+test("every page shares one read of the list, and a read that fails keeps the list it had", async () => {
+  const asked: string[] = [];
+  let fail = false;
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    const body = url.startsWith("/v1/needs") ? { needs: [need({ key: "approve_plan:g-1", action: "approve_plan", asks: "Approve the plan", goal_id: "g-1", goal: "Add exports" })], count: 1 } : { tasks: [], goals: [], total: 0 };
+    return Promise.resolve(new Response(JSON.stringify(fail && url.startsWith("/v1/needs") ? { detail: "the planner is restarting" } : body), { status: fail && url.startsWith("/v1/needs") ? 503 : 200, headers: { "Content-Type": "application/json" } }));
+  });
 
-test("a stuck goal's line names the tasks that wait, three at most, with no pointer to another page", () => {
-  const yours = ["Save drafts", "Export CSV", "Sort the list", "Fix the footer"].map((title, n) => ({ task_id: `t-${n}`, title, reason: "", ask: "", since: "" }));
-  const goal = { id: "g-9", status: "active", title: "Stuck", statement: "x", standing: { state: "needs_you", reason: "nothing in it is moving: 4 tasks wait on you", ask: "", yours, moving: 0 } } as unknown as Goal;
-  const [item] = needsYouItems([], [goal]);
-  expect(item.detail).toBe(
-    "Nothing in it is moving: 4 tasks wait on you. Waiting on you: Save drafts, Export CSV, Sort the list and 1 more. The goal goes on as soon as one of them is unstuck.",
-  );
+  // Two pages asking at once make one read.
+  await Promise.all([reloadNeeds(), reloadNeeds()]);
+  expect(asked.filter((u) => u.startsWith("/v1/needs"))).toHaveLength(1);
 });

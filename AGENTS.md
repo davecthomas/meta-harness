@@ -124,3 +124,14 @@ from colliding:
   matches. When the list cannot be read, the field says why and still takes
   a typed value. A new such setting comes with the call that lists its
   choices (for a tracker, the adapter's `choices`).
+- What needs the operator is decided in one place, `src/meta_harness/planner/needs.py`
+  (through `planner/actions.py`), and served as `GET /v1/needs`. Every page that
+  lists it, counts it or offers a button for it reads that list through
+  `console/src/features/overview/needsYou.ts` and draws the shared `NeedButton`.
+  No page, control or prompt works it out from a task's or a goal's fields: that
+  is how the Overview came to say a plan waited while the list under it said
+  nothing did. A new kind of need is a new action in `planner/actions.py`, with
+  its sentence (`said`) and its label (`ASKS`). After anything the operator does
+  that can change the list, call `reloadNeeds()`, so every page showing it
+  changes together. `tests/planner/test_needs.py` fails a page that reads the
+  list by itself or a copy that decides anything.
