@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { api, ApiError } from "../../api";
 import { when } from "../../components/ui";
 import { NeedButton } from "../goals/needActions";
-import type { GoalAction, ReportItem, WorkAnswer, WorkReportAnswer } from "./api";
+import type { GoalAction, ReportItem, SuggestedAction, WorkAnswer, WorkReportAnswer } from "./api";
 
 const VISIT_KEY = "mh:overview:last-visit";
 // How often the open page asks for a newer report.
@@ -63,6 +63,28 @@ function Items({ title, items, actions, shown, onDone }: { title: string; items:
           </Group>
         );
       })}
+    </Stack>
+  );
+}
+
+const OPENS = { plan: "Open the plan", goal: "Open the goal", next_steps: "See its next steps" };
+
+// The steps an answer suggests, each with the goal it is about and the button that takes it. A step that only
+// looks opens the goal's page; the others are the goal's own buttons.
+function Suggested({ actions, onDone }: { actions: SuggestedAction[]; onDone: () => void }) {
+  if (!actions.length) return null;
+  return (
+    <Stack gap={6} mt="xs" data-testid="answer-actions">
+      {actions.map((step, i) => (
+        <Group key={i} gap="sm" wrap="wrap" data-testid="answer-action">
+          <Text size="sm" fw={600}>{step.goal}</Text>
+          {step.action === "open_goal" ? (
+            <Button size="xs" variant="light" component={Link} to={`/goals/${step.goal_id}`}>{OPENS[step.says ?? "goal"]}</Button>
+          ) : (
+            <NeedButton need={step as GoalAction} planning={false} goalId={step.goal_id} label={step.label || null} onDone={onDone} away />
+          )}
+        </Group>
+      ))}
     </Stack>
   );
 }
@@ -145,6 +167,7 @@ export function WorkReport() {
           <div data-testid="work-answer">
             <Text size="sm">{answer.answer}</Text>
             {!answer.in_record && <Text size="xs" c="dimmed">The record does not hold the answer.</Text>}
+            <Suggested actions={answer.actions ?? []} onDone={reread} />
           </div>
         )}
         {askFailed && <Text size="sm" c="red" role="alert" data-testid="work-ask-error">{askFailed}</Text>}

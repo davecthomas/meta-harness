@@ -63,6 +63,15 @@ export interface GoalAction extends Need {
 export interface WorkAnswer {
   answer: string;
   in_record: boolean;
+  // The buttons for the steps the answer suggests, each checked against its goal's records as it was given.
+  actions?: SuggestedAction[];
+}
+
+// A step an answer suggests. says: for one that opens the goal's page, what the answer said to look at there.
+export interface SuggestedAction extends Omit<GoalAction, "action"> {
+  action: Need["action"] | "open_goal";
+  goal: string;
+  says?: "plan" | "goal" | "next_steps";
 }
 
 // The overview feature's calls; src/api.ts spreads them into `api`.

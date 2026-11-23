@@ -57,3 +57,24 @@ def test_a_plan_is_offered_for_approval_only_when_it_can_be_approved():
         "approve_plan",
     ]
     assert _kinds({"status": "budget_exhausted"}, [], []) == [("raise_budget", "")]
+
+
+def test_a_suggested_step_gets_the_goals_own_needs_of_its_kind_or_the_way_to_the_goal():
+    goal = {"id": "g-1", "label": "mh:x", "status": "active"}
+    needs = [
+        {"action": "merge", "ref": "mh:i-1", "task_id": "t-1"},
+        {"action": "retry", "ref": "mh:i-2", "task_id": "t-2"},
+        {"action": "merge", "ref": "mh:i-3", "task_id": "t-3"},
+        {"action": "merge", "ref": "mh:i-4", "task_id": "t-4"},
+    ]
+
+    def kinds(wanted: str, about: dict = goal, given: list[dict] = needs) -> list[tuple[str, str]]:
+        return [(b["action"], b.get("says") or b["ref"]) for b in actions.suggested(wanted, about, given)]
+
+    assert kinds("merge") == [("merge", "mh:i-1"), ("merge", "mh:i-3")], "two at most"
+    assert kinds("open_task") == [("merge", "mh:i-1"), ("retry", "mh:i-2")]
+    assert kinds("raise_budget") == [("open_goal", "goal")], "the records hold no such need: open the goal"
+    assert kinds("open_plan") == [("open_goal", "goal")], "an active goal's plan is approved already"
+    assert kinds("open_plan", {**goal, "status": "planning"}, []) == [("open_goal", "plan")]
+    assert kinds("next_steps", {**goal, "status": "met"}, []) == [("open_goal", "next_steps")]
+    assert kinds("next_steps") == [("open_goal", "goal")], "a running goal has not left anything for later yet"
