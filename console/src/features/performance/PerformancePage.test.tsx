@@ -51,6 +51,12 @@ test("the axis steps are round, a range ends today, and a series keeps its color
   expect(costLabel("task", { labels: {}, group_by: "model" })).toBe("task");
 });
 
+test("the page says what Octofusion costs, under the old name nowhere", async () => {
+  show(COSTS);
+  expect(await screen.findByText("What Octofusion costs over time, where the money goes, and where it is heading.")).toBeTruthy();
+  expect(document.body.textContent).not.toMatch(/meta-harness/i);
+});
+
 test("an admin sees the totals, the chart with its trend, where the money went and each source", async () => {
   const asked = show(COSTS);
   const stats = await screen.findByTestId("cost-stats");

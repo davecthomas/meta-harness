@@ -1,4 +1,4 @@
-// The console's only way to the meta-harness: the /v1 REST API, through the edge (src/meta_harness/edge).
+// The console's only way to Octofusion: the /v1 REST API, through the edge (src/meta_harness/edge).
 // In the cloud the edge needs a Google sign-in session (/auth); locally it names the operator itself.
 
 import { ApiError, call, query } from "./client";
