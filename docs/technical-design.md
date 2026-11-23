@@ -3959,7 +3959,7 @@ folded to one line, so the plan comes first.
 
 Every "Needs you" item comes with what resolves it. The update's model picks an
 action for each (`approve_plan`, `merge`, `review`, `open_task`,
-`raise_budget`, `open_issue`). `updates.actionable` checks it against the
+`raise_budget`, `open_issue`). `actions.actionable` (`planner/actions.py`, shared by every place the planner asks or suggests something) checks it against the
 goal's records before it is saved. A merge needs a task whose pull request
 passed review, and an approval needs a goal that is planning with a plan that
 can be approved. A plan that cannot be approved gets `fix_plan`, which opens
