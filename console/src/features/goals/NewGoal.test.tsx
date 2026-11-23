@@ -240,9 +240,9 @@ test("a goal that cannot be saved says why beside the buttons, and where to fix 
   await screen.findByRole("checkbox", { name: "o/a", checked: true });
   fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
 
-  // Neither a label nor a picked issue: the form says which part of it to fill in.
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  const missing = await screen.findByTestId("goal-not-saved");
+  // Neither a label nor a picked issue: the buttons stay off, and the line beside them says what to fill in.
+  expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  const missing = screen.getByTestId("goal-lacking");
   expect(missing.textContent).toContain("give it a label, or pick issues by hand, under Where its issues come from");
   expect(within(screen.getByTestId("existing-issues")).getByText(/It needs at least one of the two/)).toBeTruthy();
 
@@ -468,8 +468,8 @@ test("planning from the spec with none chosen opens the spec's choices, and is n
 
   expect(screen.getByRole("radio", { name: "A file in the repo" })).toBeTruthy();
   expect(screen.getByTestId("where-note").textContent).toContain("Choose the spec above");
-  fireEvent.click(screen.getByRole("button", { name: /^Save and/ }));
-  expect((await screen.findByTestId("goal-not-saved")).textContent).toContain("Choose the spec");
+  expect((screen.getByRole("button", { name: /^Save and/ }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByTestId("goal-lacking").textContent).toContain("Choose the spec");
   expect(created).toEqual([]);
 });
 
@@ -484,4 +484,31 @@ test("another answer to where the issues come from lets go of the spec", async (
   expect(screen.queryByTestId("spec-loaded")).toBeNull();
   expect(where("Issues that exist").checked).toBe(true);
   expect(screen.getByTestId("existing-issues")).toBeTruthy();
+});
+
+test("an empty form cannot be saved or planned, and says what it needs first", async () => {
+  const created: Record<string, unknown>[] = [];
+  showSpecGoal(created, [drafted]);
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+
+  const plan = screen.getByRole("button", { name: /^Save and/ }) as HTMLButtonElement;
+  expect(plan.disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByTestId("goal-lacking").textContent).toBe("Describe the goal, under Description, or choose a spec to draft it from.");
+  fireEvent.click(plan);
+  expect(created).toEqual([]);
+
+  // Spaces are not a description.
+  fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: "   " } });
+  expect(plan.disabled).toBe(true);
+
+  fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: "Let users export their data" } });
+  // On existing issues, a description is not enough: the goal needs to know which issues.
+  expect(screen.getByTestId("goal-lacking").textContent).toContain("Say which issues are the goal's");
+  expect(plan.disabled).toBe(true);
+
+  // Planned from its description, it has all it needs.
+  fireEvent.click(screen.getByText("The description"));
+  await waitFor(() => expect(screen.queryByTestId("goal-lacking")?.textContent ?? null).toBeNull());
+  expect(plan.disabled).toBe(false);
 });
