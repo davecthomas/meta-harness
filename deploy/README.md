@@ -57,7 +57,7 @@ the project's.
    lets the organization's accounts sign in; External needs each operator as
    a test user while the app is in testing), and a web client whose
    authorized JavaScript origins are `https://<console_site>.web.app` and
-   `https://<console_home_site>.web.app` (the console's new address,
+   `https://<console_home_site>.web.app` and `https://<console_next_site>.web.app` (the console's addresses,
    `platform/variables.tf`). Its id
    goes in `deploy/environment.json` as `google_client_id`; the release stack
    refuses to deploy while that is empty.

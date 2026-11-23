@@ -246,6 +246,31 @@ resource "google_firebase_hosting_release" "home" {
   message      = "every path to the Cloud Run service ${local.edge}"
 }
 
+# The console's next name, Muxtopus, serves it too. Sign-in works there once the web client lists the address;
+# then a later release makes it the home and the others redirect to it.
+resource "google_firebase_hosting_version" "next" {
+  count    = try(local.platform.console_next_site, "") == "" ? 0 : 1
+  provider = google-beta
+  site_id  = local.platform.console_next_site
+  config {
+    rewrites {
+      glob = "**"
+      run {
+        service_id = google_cloud_run_v2_service.edge.name
+        region     = local.region
+      }
+    }
+  }
+}
+
+resource "google_firebase_hosting_release" "next" {
+  count        = length(google_firebase_hosting_version.next)
+  provider     = google-beta
+  site_id      = local.platform.console_next_site
+  version_name = google_firebase_hosting_version.next[0].name
+  message      = "every path to the Cloud Run service ${local.edge}"
+}
+
 # The other new addresses send a visitor on to the home address, path and query kept.
 resource "google_firebase_hosting_version" "redirect" {
   for_each = toset(local.platform.console_redirect_sites)
