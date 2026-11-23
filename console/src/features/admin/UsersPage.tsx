@@ -13,7 +13,7 @@ const STATUS_COLOR: Record<string, string> = { active: "teal", invited: "blue", 
 
 // What to send someone who was invited: this deployment sends no email itself.
 export function inviteText(email: string, by: string, origin: string): string {
-  return `${by} invited you to the meta-harness console. Sign in at ${origin} with your Google account, ${email}.`;
+  return `${by} invited you to the Octofusion console. Sign in at ${origin} with your Google account, ${email}.`;
 }
 
 export function UsersPage() {
