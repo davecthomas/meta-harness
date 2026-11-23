@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
 import { GoalPage } from "./GoalPage";
@@ -349,4 +349,29 @@ test.each([
 
   expect(await screen.findByRole("button", { name: "Show and edit settings" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Edit budget" })).toBeNull();
+});
+
+test("a link that asks for something on arrival has the page do it once, then drops it from the address", async () => {
+  const heard: string[] = [];
+  const hear = () => heard.push("budget");
+  window.addEventListener("mh:open-settings", hear);
+  vi.stubGlobal("fetch", (url: string) => (url.startsWith("/v1/tasks") ? respond({ tasks: [], total: 0 }) : respond(goal("active"))));
+  let at = "";
+  function Where() {
+    at = useLocation().search;
+    return null;
+  }
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/g-1?do=budget"]}>
+        <Routes>
+          <Route path="/goals/:goalId" element={<><GoalPage /><Where /></>} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  await waitFor(() => expect(heard).toEqual(["budget"]), { timeout: 3000 });
+  window.removeEventListener("mh:open-settings", hear);
+  await waitFor(() => expect(at).toBe(""));
 });

@@ -3,7 +3,7 @@ import { SpecView } from "./SpecView";
 import { Narrative } from "../narratives/Narrative";
 import { UnstickGoal } from "./Unstick";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Anchor, Badge, Button, Center, Collapse, Group, Loader, Paper, SegmentedControl, Stack, Table, Text } from "@mantine/core";
 import { IconArrowBackUp, IconCircleCheck, IconDownload, IconListCheck, IconPlayerPause, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
@@ -22,6 +22,7 @@ import { GoalFailures, failures } from "./GoalFailures";
 import { usd } from "../../money";
 import { ApprovedPlan, GoalPlan } from "./GoalPlan";
 import { NextSteps } from "./NextSteps";
+import { EVENT_BY_DO } from "./needActions";
 import { OPEN_SETTINGS, PlannerUpdates, SHOW_ISSUES } from "./PlannerUpdates";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
@@ -84,6 +85,22 @@ export function GoalPage() {
       window.removeEventListener(SHOW_ISSUES, issuesShown);
     };
   }, []);
+  // A link from another page can ask for something on arrival, `?do=`: the plan's approval, its Plan again,
+  // the budget, the issues (needActions.tsx). It is done once the goal is shown, and then taken off the address,
+  // so a reload does not do it again.
+  const [search, setSearch] = useSearchParams();
+  const asked = search.get("do");
+  const arrived = goal?.id === goalId;
+  useEffect(() => {
+    if (!asked || !arrived) return;
+    const name = EVENT_BY_DO[asked];
+    // After this render's children have mounted and are listening.
+    const timer = window.setTimeout(() => {
+      if (name) window.dispatchEvent(new CustomEvent(name));
+      setSearch((now) => { now.delete("do"); return now; }, { replace: true });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [asked, arrived, setSearch]);
   const [from, setFrom] = useState<number | null>(null);
   // When the board last reread its issues, and why its latest reread failed, if it did.
   const [refreshed, setRefreshed] = useState<number | null>(null);
