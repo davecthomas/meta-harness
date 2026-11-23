@@ -62,13 +62,13 @@ Every icon shows the whole octopus, arms included. The head-only crop is not use
 
 ### The header
 
-The header shows the horizontal lockup where it shows the hexagon and "Meta-harness" today. It is 44 pixels tall, in a header of 64, and links to the Overview. The name's letters are then about 18 pixels tall. The first build drew the lockup 32 pixels tall from artwork with a tenth of its canvas empty on each side and the name at its source size, under a third of the octopus's height: the letters came out 7 pixels tall and could not be read. On a phone-width screen the header shows the symbol alone. The image's accessible name is "Octofusion AI". One full-color file serves the light theme and the dark theme, since its cyan and near-black outlines hold on both.
+The header shows the horizontal lockup where it shows the hexagon and "Meta-harness" today. It is 53 pixels tall, in a header of 72, and links to the Overview. The name's letters are then about 22 pixels tall. The first build drew the lockup 32 pixels tall from artwork with a tenth of its canvas empty on each side and the name at its source size, under a third of the octopus's height: the letters came out 7 pixels tall and could not be read. On a phone-width screen the header shows the symbol alone. The image's accessible name is "Octofusion AI". One full-color file serves the light theme and the dark theme, since its cyan and near-black outlines hold on both.
 
 ### The footer
 
 The console has no footer today. Every page gets one at the end of its content, the sign-in screen included. It scrolls with the page and is never fixed to the window. It holds:
 
-- the lockup at 32 pixels, which names the product;
+- the lockup at 38 pixels, which names the product;
 - the tagline, as text;
 - the version and the deployed commit, which move here from the header;
 - a link to the project on GitHub.

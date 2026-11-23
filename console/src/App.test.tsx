@@ -211,7 +211,7 @@ test("the header shows the lockup at wide widths and the symbol alone at phone w
   expect(phone.getAttribute("src")).toContain("octofusion-symbol.svg");
   expect(phone.className).toContain("mantine-hidden-from-sm");
   // Large enough to read: at 32 pixels the name's letters were 7 pixels tall.
-  expect(LOGO_HEIGHT).toBeGreaterThanOrEqual(44);
+  expect(LOGO_HEIGHT).toBeGreaterThanOrEqual(53);
   expect(HEADER_HEIGHT).toBeGreaterThan(LOGO_HEIGHT);
   for (const image of images) expect(image.style.getPropertyValue("--image-height") || image.style.height).toContain(`${LOGO_HEIGHT / 16}rem`);
 });
