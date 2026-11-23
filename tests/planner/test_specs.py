@@ -253,3 +253,26 @@ def test_an_ended_goal_lists_what_it_left_open_and_closes_it_on_request(world):
     assert done.status_code == 200 and sorted(done.json()["closed"]) == sorted([*made, part])
     assert done.json()["errors"] == [] and sorted(closed) == sorted([*made, part])
     assert client.get(f"/v1/goals/{goal['id']}/left-open", headers=OPERATOR).json() == {"issues": []}
+
+
+def test_an_issue_the_goal_signed_counts_as_its_own_though_no_plan_recorded_it(world):
+    """Twelve issues of a canceled goal were open and nine were listed: an approval had created three and
+    failed to record them. Each still said, in its own text, which goal's plan made it."""
+    client, events, tracker, tasks = world
+    goal = _goal(client, spec={"name": "exports-prd.md", "text": SPEC})
+    _planned(client, events, tasks, goal, [draft("button")])
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+    [made] = [i.ref for i in tracker.created]
+    signed = f"Do it.\n\nProvenance: meta-harness 0.138.0; kind issue; goal {goal['id']}; task t-1; by dave"
+    theirs = "Do it.\n\nProvenance: meta-harness 0.138.0; kind issue; goal g-000000000000; task t-1; by dave"
+    unrecorded = tracker.add(REPO, uuid.uuid4().int % 10**15, body=signed, labels=[goal["label"]], title="Unrecorded")
+    someone_elses = tracker.add(REPO, uuid.uuid4().int % 10**15, body=theirs, labels=[goal["label"]], title="Another's")
+    by_hand = tracker.add(REPO, uuid.uuid4().int % 10**15, body="A person's own issue.", labels=[goal["label"]])
+    client.post(f"/v1/goals/{goal['id']}/issues", json={"refs": [unrecorded, someone_elses, by_hand]}, headers=OPERATOR)
+    assert client.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR).status_code == 200
+
+    listed = client.get(f"/v1/goals/{goal['id']}/left-open", headers=OPERATOR).json()["issues"]
+
+    assert sorted(i["ref"] for i in listed) == sorted([made, unrecorded]), (
+        "what the goal signed, and never an issue a person or another goal wrote"
+    )
