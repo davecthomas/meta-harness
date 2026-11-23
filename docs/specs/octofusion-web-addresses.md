@@ -27,7 +27,7 @@ The site names are settings in `deploy/environment.json`, as the first one is, a
 
 ## Where it stands
 
-The first release is built: the platform stack holds both sites (`console_home_site`, `console_redirect_sites`), the console is served at `octofusion-ai.web.app` beside its old address, `octofusion.web.app` redirects there with a 302, and `MH_CONSOLE_ORIGIN` lists both console addresses. The sites' names are platform variables with defaults, not `deploy/environment.json` settings, so the deploy needs no new secret; Terraform checks each name.
+Both releases are done (2026-11-23). The platform stack holds both sites (`console_home_site`, `console_redirect_sites`). `octofusion-ai.web.app` serves the console. `octofusion.web.app` and the deployment's first address answer every path with a 301 to it, path and query kept. `MH_CONSOLE_ORIGIN` holds the new address alone. The web client's authorized JavaScript origins list the new address. The sites' names are platform variables with defaults, not `deploy/environment.json` settings, so the deploy needs no new secret; Terraform checks each name.
 
 ## How we will know it works
 
