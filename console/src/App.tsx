@@ -10,19 +10,19 @@ import {
   Button,
   Center,
   Group,
+  Image,
   Loader,
   Menu,
   NavLink,
   ScrollArea,
   Text,
-  Title,
   Tooltip,
   UnstyledButton,
   useComputedColorScheme,
   useMantineColorScheme,
 } from "@mantine/core";
 import { useDisclosure, useHotkeys } from "@mantine/hooks";
-import { IconHexagons, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconMoon, IconPlus, IconSettings, IconSun } from "@tabler/icons-react";
+import { IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconMoon, IconPlus, IconSettings, IconSun } from "@tabler/icons-react";
 import { api, ApiError } from "./api";
 import { SIGNED_OUT } from "./client";
 import { SignIn, signOut } from "./features/auth/SignIn";
@@ -35,6 +35,8 @@ import { loadTrackers } from "./features/trackers/refs";
 import { KillSwitchBanner, KillSwitchButton } from "./components/KillSwitch";
 import { TreeItem } from "./components/NavTree";
 import { NewVersion } from "./components/NewVersion";
+import lockup from "./brand/octofusion-lockup.svg";
+import symbol from "./brand/octofusion-symbol.svg";
 
 // The navigation's entries, from the features, in order; admin entries only for an admin. The Admin section's
 // entries go in one menu at the bottom of the pane.
@@ -168,8 +170,10 @@ export function App() {
           <Group gap="sm" wrap="nowrap">
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Menu" />
             {who && <MenuToggle hidden={hidden} onToggle={toggleMenu} />}
-            <IconHexagons size={26} stroke={1.6} color="var(--mantine-primary-color-filled)" />
-            <Title order={4}>Meta-harness</Title>
+            <Anchor component={RouterLink} to="/" aria-label="Octofusion AI" display="flex" style={{ lineHeight: 0 }}>
+              <Image src={lockup} alt="Octofusion AI" h={32} w="auto" fit="contain" visibleFrom="sm" />
+              <Image src={symbol} alt="Octofusion AI" h={32} w="auto" fit="contain" hiddenFrom="sm" />
+            </Anchor>
             {who && <VersionTag />}
           </Group>
           <Group gap="xs" wrap="nowrap">
