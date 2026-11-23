@@ -21,13 +21,13 @@ const SOURCES: Record<SummarySource, { label: string; says: string; color: strin
     color: "teal",
   },
   recorded: {
-    label: "Written by the meta-harness",
-    says: "The run left no usable summary, so the meta-harness wrote this one from its record of the run. That record holds the files it changed, how each acceptance check ended, its last plan and the commands it ran.",
+    label: "Written by Octofusion",
+    says: "The run left no usable summary, so Octofusion wrote this one from its record of the run. That record holds the files it changed, how each acceptance check ended, its last plan and the commands it ran.",
     color: "orange",
   },
   files: {
-    label: "Written by the meta-harness",
-    says: "The run left no usable summary, so the meta-harness wrote this one from the files the branch changes.",
+    label: "Written by Octofusion",
+    says: "The run left no usable summary, so Octofusion wrote this one from the files the branch changes.",
     color: "orange",
   },
 };
@@ -61,5 +61,5 @@ export function summaryLine(payload: Record<string, unknown>): string {
   if (!isSource(payload.source)) return `${what} was added to the description`;
   if (payload.source === "run") return `${what}: the run's own words`;
   const from = payload.source === "recorded" ? "its record of the run" : "the files the branch changes";
-  return `${what}: written by the meta-harness from ${from}, as the run left none it could use`;
+  return `${what}: written by Octofusion from ${from}, as the run left none it could use`;
 }
