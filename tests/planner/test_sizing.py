@@ -960,9 +960,7 @@ def test_an_issue_that_changes_a_workflow_file_is_held_for_a_person_and_no_answe
 
     assert swept["held"] == [ref] and _task(tasks, ref) is None and sizer.calls == []
     held = _shown(client, goal)[ref]["held_reason"]
-    assert held.startswith(
-        "it changes .github/workflows/deploy.yml, and the meta-harness may not change a workflow file"
-    )
+    assert held.startswith("it changes .github/workflows/deploy.yml, and Octofusion may not change a workflow file")
     assert "A person makes this change" in held and "Remove the issue from the goal" in held
 
     # Run anyway does not lift it: nothing an operator answers makes the push go through.

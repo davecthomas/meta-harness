@@ -322,7 +322,7 @@ class RunTask:
         )
         self._goal_id = spec.goal_id or ""
         again = f" again (retry {spec.retries})" if spec.retries else ""
-        await self._task_status("running", f"the meta-harness run service started its RunTask workflow{again}")
+        await self._task_status("running", f"the run service started its RunTask workflow{again}")
         try:
             result = await self._run_loop(request)
         except asyncio.CancelledError:
