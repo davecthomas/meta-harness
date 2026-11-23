@@ -4238,7 +4238,7 @@ specified in `docs/specs/octofusion-splash.md`): the octopus's arms flail and
 settle, the name comes out of them and the tagline rolls out under it. It is
 drawn from the symbol's own SVG paths, whose points are moved along each
 arm's centerline on every frame, with no video and no library. It plays in
-full once in a browser session on each screen, starts settled after that,
+full every time its screen opens,
 holds still under the system's reduced-motion setting, and never delays
 sign-in: the sign-in card is there from the first paint. Every
 error the console shows says what to do about it. Where the page knows a

@@ -39,7 +39,7 @@ After that the arms keep a slow, small sway for as long as the screen is open.
 ### What it must not do
 
 - It never delays sign-in. The sign-in card and Google's button are on the screen and usable from the first paint.
-- It plays in full once in a browser session on each screen. Opened again in the same session, it starts on the settled pose with the slow sway.
+- It plays in full every time its screen opens. It first played once in a browser session and then started settled, and a splash that sat still on a second visit read as broken.
 - With the system's reduced-motion setting on, nothing moves: the settled octopus, the name and the tagline show.
 - It stops drawing while its tab is hidden or it is scrolled out of view.
 - It is drawn from SVG by the browser. No video is loaded and no runtime dependency is added.
@@ -57,7 +57,7 @@ After that the arms keep a slow, small sway for as long as the screen is open.
 - With motion at zero, the drawn paths equal the symbol's.
 - The sign-in screen's Google button works while the splash plays.
 - With reduced motion on, neither screen animates.
-- The console's tests cover the three states on each screen: first visit, a later visit in the session, and reduced motion.
+- The console's tests cover that it plays from the start each time it opens, and that it holds still under reduced motion.
 
 ## Constraints
 

@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { NAME, Splash, TAGLINE } from "./Splash";
 import { createOctopus, energyAt, FLAIL_SECONDS, SETTLE_SECONDS, SPINES } from "./octopus";
 import symbol from "./octopus.svg?raw";
@@ -8,7 +8,6 @@ function motion(reduced: boolean) {
   vi.stubGlobal("matchMedia", (query: string) => ({ matches: reduced && query.includes("reduce"), addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
 }
 
-beforeEach(() => window.sessionStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
 
 function drawn(): SVGSVGElement {
@@ -61,23 +60,15 @@ test("the flail gives way to the slow sway", () => {
   expect(energyAt(FLAIL_SECONDS + SETTLE_SECONDS + 5)).toBe(0);
 });
 
-test("a first visit starts with nothing shown, and the name and tagline are named for a screen reader", () => {
+test("it plays from the start every time its screen opens", () => {
   motion(false);
-  render(<Splash where="sign-in" />);
-  const splash = screen.getByTestId("splash");
-  expect(Number(splash.getAttribute("data-shown"))).toBeLessThan(2);
+  const first = render(<Splash where="help" />);
+  expect(Number(screen.getByTestId("splash").getAttribute("data-shown"))).toBeLessThan(2);
   expect(screen.getByAltText(NAME)).toBeTruthy();
   expect(screen.getByAltText(TAGLINE)).toBeTruthy();
-  expect(window.sessionStorage.getItem("splash:sign-in")).toBe("played");
-});
-
-test("a later visit in the session starts settled, on each screen by itself", () => {
-  motion(false);
-  window.sessionStorage.setItem("splash:sign-in", "played");
-  const first = render(<Splash where="sign-in" />);
-  expect(screen.getByTestId("splash").getAttribute("data-shown")).toBe("3");
   first.unmount();
 
+  // Opened again in the same session: from the start again, never already settled.
   render(<Splash where="help" />);
   expect(Number(screen.getByTestId("splash").getAttribute("data-shown"))).toBeLessThan(2);
 });
