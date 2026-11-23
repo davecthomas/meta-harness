@@ -236,3 +236,50 @@ test("an ended goal's last update asks for nothing: no need, no button, no next 
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   expect(screen.queryByText(/It will merge once its checks pass/)).toBeNull();
 });
+
+const ABOUT_V1 = {
+  ...FIRST,
+  number: 2,
+  headline: "Plan ready, but two tasks are too big to approve.",
+  needs_you: [{ what: "Decide whether to split the two large tasks or draft a new plan.", ref: "", action: "approve_plan" }],
+  next: "Tasks start once you approve.",
+  plan_version: 1,
+};
+
+test("an update about a plan version since replaced asks nothing, and says the next one is being written", async () => {
+  show([{ updates: [ABOUT_V1], enabled: true, error: null, plan: { version: 2, replanning: false } }], true, undefined, true);
+
+  const replaced = await screen.findByTestId("planner-plan-replaced");
+  expect(replaced.textContent).toContain("I wrote this about version 1 of the plan. The plan is now version 2");
+  expect(screen.queryByTestId("planner-needs-you")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
+  expect(screen.queryByText(/Tasks start once you approve/)).toBeNull();
+  cleanup();
+
+  // The same update while its version is still the plan keeps its need.
+  show([{ updates: [ABOUT_V1], enabled: true, error: null, plan: { version: 1, replanning: false } }], true, undefined, true);
+  expect(await screen.findByRole("button", { name: "Approve the plan" })).toBeTruthy();
+  expect(screen.queryByTestId("planner-plan-replaced")).toBeNull();
+});
+
+test("while the planner writes a new version, nothing about the plan is asked", async () => {
+  show([{ updates: [ABOUT_V1], enabled: true, error: null, plan: { version: 1, replanning: true } }], true, undefined, true);
+
+  expect((await screen.findByTestId("planner-replanning")).textContent).toContain("I'm writing a new version of the plan");
+  expect(screen.queryByTestId("planner-needs-you")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
+});
+
+test("a plan that cannot be approved is offered to be planned again, never approved", async () => {
+  const heard: string[] = [];
+  const hear = () => heard.push("replan");
+  window.addEventListener("mh:replan", hear);
+  const stuck = { ...ABOUT_V1, needs_you: [{ ...ABOUT_V1.needs_you[0], action: "fix_plan" }] };
+  show([{ updates: [stuck], enabled: true, error: null, plan: { version: 1, replanning: false } }], true, undefined, true);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Plan again" }));
+  window.removeEventListener("mh:replan", hear);
+
+  expect(heard).toEqual(["replan"]);
+  expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
+});

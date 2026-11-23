@@ -106,11 +106,12 @@ def test_an_update_is_written_once_for_a_state_and_again_when_the_goal_moves(wor
 
     first = _write(goal, tasks, events, writer)
 
-    assert (first["number"], first["headline"], first["needs_you"]) == (
+    assert (first["number"], first["headline"], first["needs_you"], first["plan_version"]) == (
         1,
         "Update 1",
-        [{"what": "Approve the plan.", "ref": "", "action": "approve_plan", "task_id": "", "pr_url": ""}],
-    ), "a need with no action of its own gets the one the goal's state supports"
+        [],
+        None,
+    ), "a plan still being drafted cannot be approved, so nothing about it is asked"
     found, before = writer.calls[0]
     assert before is None and found["goal"]["status"] == "planning" and found["plan"]["planning_task"] == "queued"
     assert (
@@ -123,12 +124,16 @@ def test_an_update_is_written_once_for_a_state_and_again_when_the_goal_moves(wor
     _planned(client, events, tasks, goal, [draft("store"), draft("api", ("store",))])
     second = _write(_goal(client, goal["id"]), tasks, events, writer)
 
-    assert second["number"] == 2
+    assert (second["number"], second["plan_version"]) == (2, 1), "an update keeps the plan version it is about"
+    assert second["needs_you"] == [
+        {"what": "Approve the plan.", "ref": "", "action": "approve_plan", "task_id": "", "pr_url": ""}
+    ], "a need with no action of its own gets the one the goal's state supports"
     found, before = writer.calls[1]
     assert before["headline"] == "Update 1", "the writer is given its last update, to say what changed"
     assert (found["plan"]["version"], found["plan"]["new_tasks"], found["plan"]["approved"]) == (1, 2, False)
     shown = client.get(f"/v1/goals/{goal['id']}/updates", headers=OPERATOR).json()
     assert [u["number"] for u in shown["updates"]] == [2, 1] and shown["enabled"] is True and shown["error"] is None
+    assert shown["plan"] == {"version": 1, "replanning": False}, "the page holds the update against the plan now"
 
 
 def test_an_updates_words_go_through_the_writing_pass_before_a_person_reads_them(world, at_once, monkeypatch):
@@ -474,3 +479,52 @@ def test_an_update_from_the_facts_names_each_open_issue_and_where_it_stands():
     assert plain.body == "Describe the change: its pull request is open, and Octofusion is running its checks."
     assert (plain.model, plain.usd_cost, plain.needs_you) == ("claude:m", "0.01", [])
     updates.written_true(plain, found)
+
+
+def test_a_plan_that_cannot_be_approved_is_never_offered_for_approval():
+    """A sentence asking to split two tasks carried an Approve button."""
+    stuck = {"version": 1, "invalid": ["the task api is too large for one pull request"]}
+    need = {"what": "Decide whether to split the two large tasks or draft a new plan.", "ref": ""}
+
+    def actions(goal: dict, plan: dict | None, action: str) -> list[str]:
+        found = updates.actionable([{**need, "action": action}], goal, [], [], None, plan)
+        return [n["action"] for n in found]
+
+    waiting = {"status": "planning", "plan_task_id": None}
+    assert actions(waiting, stuck, "approve_plan") == ["fix_plan"]
+    assert actions(waiting, stuck, "open_issue") == ["fix_plan"], "about no issue, so about the plan"
+    assert actions(waiting, {"version": 2, "invalid": []}, "approve_plan") == ["approve_plan"]
+    # The planner is resizing the plan itself: the version the need speaks of is being replaced.
+    resizing = {"status": "planning", "plan_task_id": "t-9"}
+    assert actions(resizing, stuck, "approve_plan") == []
+    assert actions(resizing, stuck, "raise_budget") == ["raise_budget"], "a need about something else stays"
+
+
+def test_the_facts_say_when_the_planner_is_writing_a_new_plan_version_itself():
+    plan = {"version": 1, "invalid": ["the task api is too large"], "drafts": [], "summary": "", "gaps": []}
+    goal = {"id": "g-1", "status": "planning", "planned": True, "plan_task_id": "t-9"}
+
+    assert updates.facts(goal, [], [{"id": "t-9", "status": "running"}], plan)["plan"]["replanning"] is True
+    assert updates.facts({**goal, "plan_task_id": None}, [], [], plan)["plan"]["replanning"] is False
+    assert updates.facts(goal, [], [], None)["plan"]["replanning"] is False, "the first plan is drafted, not replaced"
+    assert "ask the operator nothing about the plan" in updates.SYSTEM_PROMPT
+
+
+def test_a_new_plan_version_brings_a_new_update_and_the_page_is_told_where_the_plan_stands(world, at_once):
+    """The panel described version 1 after version 2 had replaced it."""
+    client, events, tasks, writer = world
+    goal = _feature(client)
+    _planned(client, events, tasks, goal, [draft("store"), draft("api", ("store",))])
+    first = _write(_goal(client, goal["id"]), tasks, events, writer)
+
+    edited = client.put(f"/v1/goals/{goal['id']}/plan", json={"drafts": [draft("store")]}, headers=OPERATOR)
+    assert edited.status_code == 200, edited.text
+    shown = client.get(f"/v1/goals/{goal['id']}/updates", headers=OPERATOR).json()
+    assert (shown["updates"][0]["plan_version"], shown["plan"]) == (1, {"version": 2, "replanning": False}), (
+        "until the next update is written, the page can tell this one is about a plan since replaced"
+    )
+
+    second = _write(_goal(client, goal["id"]), tasks, events, writer)
+
+    assert (first["plan_version"], second["plan_version"]) == (1, 2), "a new version is news by itself"
+    assert client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "planning"

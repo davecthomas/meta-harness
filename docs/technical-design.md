@@ -3839,7 +3839,12 @@ above a board that said "1 issue needs you". Updates are rows of `planner.goal_u
 configuration's `updates` turns them off and names the model (goal drafting's
 when left out). It bounds them too: `max_per_goal` updates for a goal, at
 least `min_seconds` apart. An update that asks something of the operator does
-not wait: it is replaced as soon as the goal moves. An approved plan's goal
+not wait: it is replaced as soon as the goal moves. An update keeps the plan version it was written about (`plan_version`), and
+the read says where a planning goal's plan stands now (`plan`: its version, and
+whether a new one is being written). Between a new version and the update
+about it, the panel says which version the update is about, that the next is
+being written, and asks nothing: a panel once said two tasks were too big to
+approve, under an Approve button, after version 2 had split them. An approved plan's goal
 gets its update as soon as its first sweep has made its tasks. One that cannot be written is logged, said on the page,
 and tried again at the next pass.
 
@@ -3914,7 +3919,13 @@ Every "Needs you" item comes with what resolves it. The update's model picks an
 action for each (`approve_plan`, `merge`, `review`, `open_task`,
 `raise_budget`, `open_issue`). `updates.actionable` checks it against the
 goal's records before it is saved. A merge needs a task whose pull request
-passed review, and an approval needs a goal that is planning. An action the
+passed review, and an approval needs a goal that is planning with a plan that
+can be approved. A plan that cannot be approved gets `fix_plan`, which opens
+the plan's Plan again, so an Approve button never sits under a sentence asking
+for something else. While a planning task writes a new version of the plan
+(the planner resizing its own tasks, or a Plan again), the facts say so
+(`plan.replanning`), the update is told to ask nothing about the plan, and a
+need about the plan is dropped. An action the
 records do not support becomes the nearest one they do. A task's or an issue's
 own state overrides the model's pick. A review no fix settled
 is `settle_review`, a task

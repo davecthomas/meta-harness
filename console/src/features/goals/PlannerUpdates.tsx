@@ -17,6 +17,8 @@ export interface PlannerUpdate {
   needs_you: Need[];
   next: string;
   created_at: string;
+  // The plan version it was written about; absent on an update from before versions were kept.
+  plan_version?: number | null;
 }
 
 export interface PlannerUpdatesRead {
@@ -24,6 +26,8 @@ export interface PlannerUpdatesRead {
   enabled?: boolean;
   // Why the latest update could not be written, when it could not.
   error?: string | null;
+  // Where a planning goal's plan stands now: its version, and whether the planner is writing a new one.
+  plan?: { version: number | null; replanning: boolean } | null;
 }
 
 const REFRESH_MS = 15000;
@@ -41,13 +45,15 @@ export function since(iso: string, now = Date.now()): string {
 // What resolves a need: the page's own button for it. Every need has one.
 export type NeedAction =
   | "approve_plan" | "accept_fix" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue"
-  | "settle_review" | "retry" | "split_or_run";
+  | "settle_review" | "retry" | "split_or_run" | "fix_plan";
 // changes: for accept_fix, what the planner's fix changes in the plan, a line each.
 export type Need = { what: string; ref: string; action?: NeedAction | ""; task_id?: string; pr_url?: string; changes?: string[] };
 
 // Events the goal page listens for, so a need is resolved where it is shown: the plan's approval, and the
 // goal's settings (its budget).
 export const APPROVE_PLAN = "mh:approve-plan";
+// Opens the plan's Plan again, for a plan that cannot be approved as it is.
+export const REPLAN = "mh:replan";
 export const OPEN_SETTINGS = "mh:open-settings";
 export const SHOW_ISSUES = "mh:show-issues";
 // Sent once the plan changed from here (a fix accepted or dismissed), so the plan's section reads it again.
@@ -67,6 +73,8 @@ function NeedAction({ need, planning, goalId, label, onDone }: { need: Need; pla
   switch (action) {
     case "approve_plan":
       return <Button size="xs" color="teal" leftSection={<IconCheck size={14} />} onClick={send(APPROVE_PLAN)}>Approve the plan</Button>;
+    case "fix_plan":
+      return <Button size="xs" variant="light" leftSection={<IconRefresh size={14} />} onClick={send(REPLAN)}>Plan again</Button>;
     case "accept_fix":
       return (
         <Group gap="xs" wrap="nowrap">
@@ -128,6 +136,9 @@ function NeedAction({ need, planning, goalId, label, onDone }: { need: Need; pla
     }
   }
 }
+
+// The actions that are about the plan itself.
+const PLAN_ACTIONS: string[] = ["approve_plan", "fix_plan", "accept_fix"];
 
 // What an update asks of the operator, each with the button that resolves it.
 function NeedsYou({ needs, planning, goalId, label, onDone }: { needs: Need[]; planning: boolean; goalId: string; label: string | null; onDone: () => void }) {
@@ -209,6 +220,17 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
   if (!read || read.enabled === false || !Array.isArray(read.updates)) return null;
   if (!updates.length && !open) return null;
   const [latest, ...before] = updates;
+  // An update is about the plan as it was when written. Once the plan is another version, what the update asks
+  // is about a plan that is gone: it asks nothing, and says the next update is on its way. While the planner
+  // writes a new version, nothing about the plan is the operator's either.
+  const standing = planning ? read.plan : null;
+  const replaced =
+    standing?.version != null && latest?.plan_version != null && standing.version !== latest.plan_version
+      ? { now: standing.version, then: latest.plan_version }
+      : null;
+  const ofPlan = (need: Need) => PLAN_ACTIONS.includes(need.action || (need.ref ? "open_issue" : "approve_plan"));
+  const asked = latest?.needs_you ?? [];
+  const needs = standing?.replanning ? asked.filter((need) => !ofPlan(need)) : asked;
 
   return (
     <Paper withBorder p="lg" mb="md" radius="md" data-testid="planner-updates" style={{ borderLeft: "5px solid var(--mantine-color-indigo-6)" }}>
@@ -242,8 +264,23 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
               <Loader size="xs" />
               <Text size="sm">Done. I'm writing what changed, which takes a few seconds.</Text>
             </Group>
+          ) : open && replaced ? (
+            <Group gap="xs" data-testid="planner-plan-replaced" role="status">
+              <Loader size="xs" />
+              <Text size="sm">
+                I wrote this about version {replaced.then} of the plan. The plan is now version {replaced.now}, and I'm writing what changed.
+              </Text>
+            </Group>
           ) : open ? (
-            <NeedsYou needs={latest.needs_you ?? []} planning={planning} goalId={goalId} label={label} onDone={() => void done()} />
+            <>
+              {needs.length < asked.length && (
+                <Group gap="xs" data-testid="planner-replanning" role="status">
+                  <Loader size="xs" />
+                  <Text size="sm">I'm writing a new version of the plan. Nothing about it needs you until it's ready.</Text>
+                </Group>
+              )}
+              <NeedsYou needs={needs} planning={planning} goalId={goalId} label={label} onDone={() => void done()} />
+            </>
           ) : (
             // The goal is over. This update was written while it ran: what it asked for then is asked of
             // nobody now, and no button here would do anything the goal still wants.
@@ -251,7 +288,7 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
               This is the last update from before the goal ended. Nothing here needs you now.
             </Text>
           )}
-          {open && latest.next && (
+          {open && !replaced && latest.next && (
             <Text size="sm"><Text span fw={650}>Next: </Text>{latest.next}</Text>
           )}
         </Stack>

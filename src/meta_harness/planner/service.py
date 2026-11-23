@@ -1392,11 +1392,13 @@ def create_app(
 
     @app.get("/v1/goals/{goal_id}/updates")
     async def goal_updates(goal_id: str, who: str = Depends(operator)) -> dict:
-        """The planner's updates on the goal, newest first, whether it writes them, and why the latest could
-        not be written when it could not."""
-        await asyncio.to_thread(load, goal_id)
+        """The planner's updates on the goal, newest first, whether it writes them, why the latest could
+        not be written when it could not, and where a planning goal's plan stands now."""
+        goal = await asyncio.to_thread(load, goal_id)
         return {
             "updates": await asyncio.to_thread(updates.latest, goal_id),
+            # Where the plan stands now: an update written about a version since replaced asks nothing.
+            "plan": await asyncio.to_thread(updates.plan_standing, goal),
             "enabled": bool(updates.settings()["enabled"]),
             "error": app.state.update_errors.get(goal_id),
         }
