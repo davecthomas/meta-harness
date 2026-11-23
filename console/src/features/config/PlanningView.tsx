@@ -101,7 +101,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               label="A plan's new tasks go to the issue tracker"
               nameByLabel
               value={tracks}
-              switchLabel={tracks ? "Added to the goal's issue tracker" : "Kept in the meta-harness alone"}
+              switchLabel={tracks ? "Added to the goal's issue tracker" : "Kept in Octofusion alone"}
               changed={changed(s, ["track_new_tasks"])}
               reasons={s.reasons("track_new_tasks")}
               readOnly={s.readOnly}
