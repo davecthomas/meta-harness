@@ -204,7 +204,7 @@ test("nothing is shown with updates off, or on a closed goal that never had one"
   await waitFor(() => expect(screen.queryByTestId("planner-updates")).toBeNull());
 });
 
-test("a need about a task kept in the meta-harness shows no ref beside it", async () => {
+test("a need about a task kept in Octofusion shows no ref beside it", async () => {
   show([{ updates: [{ ...LATEST, needs_you: [{ what: "Merge pull request #382.", ref: "mh:i-abdbf8c1cc27" }] }], enabled: true, error: null }]);
 
   const needs = await screen.findByTestId("planner-needs-you");
