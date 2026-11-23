@@ -21,6 +21,7 @@
     "react-router-dom": "7.18.5"
   },
   "devDependencies": {
+    "@resvg/resvg-wasm": "2.6.2",
     "@testing-library/dom": "10.4.0",
     "@testing-library/react": "16.1.0",
     "@types/react": "19.3.0",
