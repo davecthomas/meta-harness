@@ -76,6 +76,26 @@ variable "console_site" {
   type        = string
 }
 
+variable "console_home_site" {
+  description = "The Firebase Hosting site that becomes the console's address, https://<console_home_site>.web.app (docs/specs/octofusion-web-addresses.md). Unique across Firebase: the plan fails, naming it, when it is taken."
+  type        = string
+  default     = "octofusion-ai"
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{4,28}[a-z0-9]$", var.console_home_site))
+    error_message = "console_home_site must be 6 to 30 lowercase letters, digits and hyphens, starting and ending with a letter or digit: a Firebase Hosting site name."
+  }
+}
+
+variable "console_redirect_sites" {
+  description = "Firebase Hosting sites that only send a visitor on to the console's home address, path kept."
+  type        = list(string)
+  default     = ["octofusion"]
+  validation {
+    condition     = alltrue([for s in var.console_redirect_sites : can(regex("^[a-z0-9][a-z0-9-]{4,28}[a-z0-9]$", s))])
+    error_message = "each of console_redirect_sites must be 6 to 30 lowercase letters, digits and hyphens: a Firebase Hosting site name."
+  }
+}
+
 variable "google_client_id" {
   description = "The OAuth client the console's Google sign-in uses (a client id is public). Made by hand in the project (deploy/README.md); empty until then, and the release stack refuses to deploy without it."
   type        = string

@@ -21,7 +21,9 @@ here. The edge signs operators in itself, with Google:
   address, so the Cloud Run URL offers nothing without signing in, and only
   the console's origin can sign in (the OAuth client lists only it).
 - The cookie is HttpOnly, Secure and SameSite=Strict, and a request that
-  changes something must come from the console's origin, MH_CONSOLE_ORIGIN.
+  changes something must come from one of the console's origins, MH_CONSOLE_ORIGIN: a comma-separated list,
+  the address people are given first. The console is served at more than one address while it moves to a new
+  one, and a change from any of them is the console's.
 
 - The live event stream does not go through Firebase Hosting, which ends a
   request at 60 seconds. POST /auth/stream-ticket gives a signed-in console a
@@ -262,7 +264,21 @@ def create_app(
     key = service_key if service_key is not None else os.environ.get("MH_SERVICE_KEY", "")
     client_id = google_client_id if google_client_id is not None else os.environ.get("MH_GOOGLE_CLIENT_ID", "")
     signing_key = session_key if session_key is not None else os.environ.get("MH_SESSION_KEY", "")
-    origin = (console_origin if console_origin is not None else os.environ.get("MH_CONSOLE_ORIGIN", "")).rstrip("/")
+    origins = tuple(
+        part.strip().rstrip("/")
+        for part in (console_origin if console_origin is not None else os.environ.get("MH_CONSOLE_ORIGIN", "")).split(
+            ","
+        )
+        if part.strip()
+    )
+    bad = [o for o in origins if not o.startswith("https://") and not o.startswith("http://localhost")]
+    if bad:
+        raise RuntimeError(
+            f"MH_CONSOLE_ORIGIN holds {', '.join(bad)}, which is not an https address. Set it to the console's "
+            "addresses, comma-separated, such as https://<console_site>.web.app"
+        )
+    # The address people are given: named in a refusal, so the operator knows where to go.
+    origin = origins[0] if origins else ""
     stream_base = (stream_origin if stream_origin is not None else os.environ.get("MH_STREAM_ORIGIN", "")).rstrip("/")
     if client_id and not signing_key:
         raise RuntimeError("MH_GOOGLE_CLIENT_ID is set without MH_SESSION_KEY: sessions could not be signed")
@@ -329,7 +345,7 @@ def create_app(
         sent = request.headers.get("origin", "").rstrip("/")
         # A browser names the page a change comes from, in Origin or, for a same-origin request some send
         # without it, in Sec-Fetch-Site. A change that names neither is not known to be the console's.
-        same = sent == origin or (not sent and request.headers.get("sec-fetch-site") == "same-origin")
+        same = sent in origins or (not sent and request.headers.get("sec-fetch-site") == "same-origin")
         if not same:
             detail = f"changes come only from {origin}: open the console there and make the change in it"
             return private(JSONResponse({"detail": detail}, status_code=403))
@@ -527,8 +543,9 @@ def create_app(
         passed = {k: v for k, v in response.headers.items() if k.lower() not in DROPPED_RESPONSE_HEADERS}
         passed["Cache-Control"] = "no-store"
         # The console opens the stream on this address from its own origin: let it read the stream, only.
-        if origin and request.url.path == STREAM_PATH and request.headers.get("origin", "").rstrip("/") == origin:
-            passed["Access-Control-Allow-Origin"] = origin
+        asking = request.headers.get("origin", "").rstrip("/")
+        if origins and request.url.path == STREAM_PATH and asking in origins:
+            passed["Access-Control-Allow-Origin"] = asking
             passed["Vary"] = "Origin"
 
         async def body():

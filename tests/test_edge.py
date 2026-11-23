@@ -170,7 +170,7 @@ def _google_tokens():
     return token, verify
 
 
-def _cloud_edge(tmp_path):
+def _cloud_edge(tmp_path, origin: str = ORIGIN):
     token, verify = _google_tokens()
     seen: list[httpx.Request] = []
 
@@ -187,7 +187,7 @@ def _cloud_edge(tmp_path):
         transport=httpx.MockTransport(upstream),
         google_client_id=CLIENT_ID,
         session_key=SESSION_KEY,
-        console_origin=ORIGIN,
+        console_origin=origin,
         verify_google=verify,
         stream_origin="https://edge-123.us-central1.run.app",
     )
@@ -498,3 +498,31 @@ def test_version_names_the_version_and_the_deployed_commit(tmp_path, monkeypatch
     client, seen = _edge(tmp_path)
     assert client.get("/v1/version").json() == {"version": __version__, "commit": "4a286e3c0ffee"}
     assert seen == []
+
+
+NEW_ORIGIN = "https://octofusion-ai.web.app"
+
+
+def test_while_the_console_moves_a_change_from_either_of_its_addresses_is_its_own(tmp_path):
+    """The console is served at its old address and its new one until everyone has moved."""
+    client, token, seen = _cloud_edge(tmp_path, f"{ORIGIN}, {NEW_ORIGIN}/")
+    client.post("/auth/google", json={"credential": token()}, headers={"origin": NEW_ORIGIN})
+
+    assert client.post("/v1/goals", json={}, headers={"origin": NEW_ORIGIN}).status_code == 200
+    assert client.post("/v1/goals", json={}, headers={"origin": ORIGIN}).status_code == 200
+    refused = client.post("/v1/goals", json={}, headers={"origin": "https://evil.example.com"})
+    assert refused.status_code == 403 and f"changes come only from {ORIGIN}:" in refused.json()["detail"]
+    # The stream is granted to the address that asks, when it is one of the console's.
+    ticket = client.post("/auth/stream-ticket", headers={"origin": NEW_ORIGIN}).json()["ticket"]
+    stream = client.get(f"/v1/events/tail?ticket={ticket}", headers={"origin": NEW_ORIGIN})
+    assert stream.headers["access-control-allow-origin"] == NEW_ORIGIN
+
+
+def test_a_console_address_that_is_not_https_stops_the_edge_with_its_name(tmp_path):
+    import pytest
+
+    with pytest.raises(RuntimeError, match="MH_CONSOLE_ORIGIN holds octofusion-ai.web.app, which is not an https"):
+        create_app(
+            dist=tmp_path, google_client_id="client.apps.googleusercontent.com", session_key="k" * 32,
+            console_origin=f"{ORIGIN},octofusion-ai.web.app", service_key="key", operators={"dave@example.com"},
+        )  # fmt: skip

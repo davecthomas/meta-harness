@@ -55,7 +55,9 @@ the project's.
    Auth Platform): its branding, its audience (Internal, in an organization,
    lets the organization's accounts sign in; External needs each operator as
    a test user while the app is in testing), and a web client whose
-   authorized JavaScript origin is `https://<console_site>.web.app`. Its id
+   authorized JavaScript origins are `https://<console_site>.web.app` and
+   `https://<console_home_site>.web.app` (the console's new address,
+   `platform/variables.tf`). Its id
    goes in `deploy/environment.json` as `google_client_id`; the release stack
    refuses to deploy while that is empty.
 4. The repo secret `MH_OPERATORS`, the console's Google accounts as a JSON

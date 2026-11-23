@@ -386,3 +386,21 @@ resource "google_firebase_hosting_site" "console" {
   site_id    = var.console_site
   depends_on = [google_firebase_project.this]
 }
+
+# The console's Octofusion addresses (docs/specs/octofusion-web-addresses.md): the home site, which serves the
+# console beside console_site until that one redirects to it, and the sites that only redirect to it. Made
+# here so their names are held; the release stack says what each serves.
+resource "google_firebase_hosting_site" "home" {
+  provider   = google-beta
+  project    = var.project
+  site_id    = var.console_home_site
+  depends_on = [google_firebase_project.this]
+}
+
+resource "google_firebase_hosting_site" "redirect" {
+  for_each   = toset(var.console_redirect_sites)
+  provider   = google-beta
+  project    = var.project
+  site_id    = each.value
+  depends_on = [google_firebase_project.this]
+}
