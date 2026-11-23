@@ -1,4 +1,6 @@
-# Deploys main to Google Cloud after every merge, once main's checks pass at that commit.
+# Deploys main to Google Cloud after every merge, once the merged files have passed their checks: on the pull
+# request that merged them when it held exactly those files, else on main at that commit. A deploy whose commit
+# a newer merge has replaced on main stops before it changes anything, and the newer one deploys both.
 #
 # A deploy is both Terraform stacks, in order. First the platform stack (deploy/terraform/platform): the
 # network, the identities and their roles, the secrets' containers. It is applied only when its plan
@@ -27,6 +29,9 @@ permissions:
   # write: a deploy that passed its smoke task is published as a release of its version (the last step).
   contents: write
   checks: read
+  # read: which pull request a commit merged. write on actions: a deploy a newer merge replaced cancels itself.
+  pull-requests: read
+  actions: write
   id-token: write
   issues: write
 
@@ -107,13 +112,48 @@ jobs:
             echo "STATE_BUCKET=$(jq -r .state_bucket "$settings")"
             echo "EDGE_IMAGE=$(jq -r '"\(.region)-docker.pkg.dev/\(.project)/mh/edge"' "$settings"):${{ github.sha }}"
           } >>"$GITHUB_ENV"
+      - name: see whether these files already passed their checks on the pull request
+        id: tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          # The pull request that merged this commit, and its last commit. None for a commit pushed by hand.
+          head=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null)][0].head.sha // empty' || true)
+          [ -n "$head" ] || { echo "no merged pull request for this commit: the deploy waits for main's checks"; exit 0; }
+          tree=$(gh api "repos/$REPO/git/commits/$SHA" --jq .tree.sha)
+          pr_tree=$(gh api "repos/$REPO/git/commits/$head" --jq .tree.sha || true)
+          if [ -z "$tree" ] || [ "$tree" != "$pr_tree" ]; then
+            echo "main moved under the pull request, so the merged files are not the ones it tested: the deploy waits for main's checks"
+            exit 0
+          fi
+          verdict=$(gh api "repos/$REPO/commits/$head/check-runs?per_page=100" | python3 deploy/tested_already.py || echo wait)
+          if [ "$verdict" = "tested" ]; then
+            echo "these exact files passed their checks on the pull request, at $head: the deploy does not wait for main's"
+            echo "already=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "the pull request's checks did not all pass at $head: the deploy waits for main's checks"
+          fi
       - name: wait for main's checks to pass at this commit
         id: checks
+        if: steps.tested.outputs.already != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           CHECKS: "control plane tests|console web app|zero-cost end-to-end check|harness server tests|sandbox runs this repo's checks"
         run: |
           for i in $(seq 1 120); do
+            # A newer merge is on main: its deploy waits behind this one and carries this commit too. So this
+            # one stops here, before it has changed anything, and the newer one starts sooner.
+            if [ "${{ github.event_name }}" = "push" ]; then
+              latest=$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha || true)
+              if [ -n "$latest" ] && [ "$latest" != "${{ github.sha }}" ]; then
+                echo "main is at $latest now: this deploy stops, and that commit's deploy carries this one"
+                # The cancel ends this job within seconds. If it cannot be asked for, the deploy goes on
+                # waiting as before: a stop that fails is never reported as a failed check.
+                gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" && sleep 120 || echo "this deploy could not stop itself, so it goes on"
+              fi
+            fi
             runs=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs?per_page=100" \
               --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv')
             failed=$(echo "$runs" | awk -F'\t' -v c="$CHECKS" '$1 ~ "^("c")$" && $2=="completed" && $3!="success"')
