@@ -77,7 +77,7 @@ async def test_a_section_is_added_to_the_end_of_the_body_and_the_earlier_text_is
     body = (await own.read(made.ref)).body
     assert body == f"{BODY}\n## Accepted draft\n\nStore the rows in Postgres.\n"
     assert (await own.read(made.ref)).checks == ["make test"], "what the body said still reads the same"
-    with pytest.raises(TrackerError, match="is not a task the meta-harness keeps"):
+    with pytest.raises(TrackerError, match="is not a task Octofusion keeps"):
         await own.add_section("mh:i-000000000000", "Accepted draft", "x")
 
 
@@ -89,9 +89,7 @@ async def test_a_task_that_is_not_kept_says_so_and_how_to_go_on():
         own.set_status("mh:i-000000000000", DONE),
         own.comment("mh:i-000000000000", "x"),
     ):
-        with pytest.raises(
-            TrackerError, match="is not a task the meta-harness keeps.*Remove it from the goal"
-        ) as refused:
+        with pytest.raises(TrackerError, match="is not a task Octofusion keeps.*Remove it from the goal") as refused:
             await call
         assert not refused.value.retryable
     with pytest.raises(TrackerError, match="is not mh:i-"):
