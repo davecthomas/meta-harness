@@ -99,7 +99,7 @@ def check(task: NewTask, *, internal: bool) -> None:
     if task.task_type not in TASK_TYPES:
         raise TaskError(f"task_type {task.task_type!r} is not one of {sorted(TASK_TYPES)}")
     if task.task_type in (INTERNAL_TASK_TYPES | SERVICE_TASK_TYPES) and not internal:
-        raise TaskError(f"only the meta-harness creates {task.task_type} tasks")
+        raise TaskError(f"only Octofusion creates {task.task_type} tasks")
     if task.task_type in INTERNAL_TASK_TYPES and not task.parent_task_id:
         raise TaskError(f"a {task.task_type} task needs parent_task_id")
     if task.complexity is not None and task.complexity not in COMPLEXITIES:
