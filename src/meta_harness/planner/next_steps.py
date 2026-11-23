@@ -66,12 +66,13 @@ HANDED_ON = (
     "provenance",
 )
 ENDED = ("met", "canceled")
+# No maxItems on the array: the model provider refuses a schema that has one. The prompt asks for at most
+# MAX_STEPS, and `write` keeps no more.
 SCHEMA = {
     "type": "object",
     "properties": {
         "steps": {
             "type": "array",
-            "maxItems": MAX_STEPS,
             "description": "The next steps, most valuable first. Empty when the facts support none.",
             "items": {
                 "type": "object",
