@@ -5,13 +5,24 @@ Canceling the goal ended its tasks and left those issues open, with the goal's l
 `close_issues`, a cancel also closes them, as work that will not be done: "Won't Do" in Jira, closed as not
 planned on GitHub. Each gets a comment that says why first.
 
-Only issues the goal's own plans created are closed, by the record each plan keeps of them. An issue that
-existed before the goal is never closed, nor one whose task has a pull request open, which the cancel leaves
-for the operator. One the tracker will not close stays open and is named in the answer, with the tracker's
-reason.
+Only issues the goal itself created are closed: those its plans created, by the record each plan keeps of
+them, and the parts it split one of its issues into. An issue that existed before the goal is never closed,
+nor one whose task has a pull request open, which the cancel leaves for the operator. One the tracker will
+not close stays open and is named in the answer, with the tracker's reason.
+
+A goal that has already ended can have them closed too:
+
+    GET  /v1/goals/{id}/left-open        the open issues the goal created, for its page to list
+    POST /v1/goals/{id}/close-left-open  close them as not planned; 409 while the goal is still open
+
+A goal canceled before a cancel could close anything, or met with duplicates left over, would otherwise keep
+its issues open in the tracker with no way from the console to close them.
 """
 
 import asyncio
+from typing import Any, Callable
+
+from fastapi import Depends, FastAPI, HTTPException
 
 from meta_harness import db, outbound
 from meta_harness.planner import plans, store
@@ -23,14 +34,21 @@ def reason(who: str) -> str:
     return f"Closed as not planned: the goal this issue was created for was canceled by {who}."
 
 
+# A goal whose work is over: its issues are no longer waiting for a task of its own.
+ENDED = ("canceled", "met")
+# A task parked with its pull request open, which a cancel leaves for the operator.
+PARKED = ["ready", "review_unresolved"]
+
+
 def _open_created(goal_id: str) -> list[dict]:
-    """The goal's open issues that one of its plans created."""
+    """The goal's open issues that it created: by one of its plans, or as a part of an issue it split."""
     with db.connect(autocommit=True) as conn:
+        links = store.links(conn, goal_id)
         created = plans.created_refs(conn, goal_id)
+        for link in links:
+            created.update(link.get("split_into") or [])
         return [
-            link
-            for link in store.links(conn, goal_id)
-            if link["ref"] in created and link["state"] == "open" and not link.get("dropped")
+            link for link in links if link["ref"] in created and link["state"] == "open" and not link.get("dropped")
         ]
 
 
@@ -64,3 +82,38 @@ async def close_created(goal: dict, tracker: Tracker, who: str, left: list[str])
         await asyncio.to_thread(_closed, ref)
         done["closed"].append(ref)
     return done
+
+
+def register(app: FastAPI, operator: Callable[..., str], load: Callable[[str], dict], tracker: Any, tasks: Any) -> None:
+    """Adds the routes that list and close what an ended goal left open."""
+    from meta_harness.planner.sweep import goal_tracker
+    from meta_harness.tasks.client import TaskApiError
+
+    @app.get("/v1/goals/{goal_id}/left-open")
+    async def left_open(goal_id: str, who: str = Depends(operator)) -> dict:
+        """The open issues the goal created, each with its title: what a cancel with `close_issues`, or
+        close-left-open, would close. 404 for an unknown goal."""
+        await asyncio.to_thread(load, goal_id)
+        found = await asyncio.to_thread(_open_created, goal_id)
+        return {"issues": [{"ref": link["ref"], "title": link.get("title") or link["ref"]} for link in found]}
+
+    @app.post("/v1/goals/{goal_id}/close-left-open")
+    async def close_left_open(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Close, as not planned, each open issue the ended goal created. Answers the refs `closed` and the
+        `errors`, as a cancel with `close_issues` does. 409 for a goal that is still open: cancel it first,
+        since its issues are its work until then."""
+        goal = await asyncio.to_thread(load, goal_id)
+        if goal["status"] not in ENDED:
+            raise HTTPException(
+                status_code=409,
+                detail=f"the goal is {goal['status']}, so its open issues are still its work. Cancel the goal "
+                "to close them, with the choice to close its issues turned on",
+            )
+        try:
+            parked = await asyncio.to_thread(tasks.list, PARKED, goal_id, 1000)
+        except TaskApiError as err:
+            raise HTTPException(
+                status_code=502, detail=f"the goal's tasks could not be read ({err}), so nothing was closed. Try again"
+            ) from err
+        left = [task["id"] for task in parked if task.get("pr_url")]
+        return await close_created(goal, goal_tracker(tracker, goal), who, left)

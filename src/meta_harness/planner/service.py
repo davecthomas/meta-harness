@@ -1712,6 +1712,7 @@ def create_app(
     sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size)
     unstick_api.register(app, operator, load, tasks)
     specs.register(app, operator, load)
+    cancel_issues.register(app, operator, load, tracker, tasks)
     spec_files.register(app, operator, registered, apps)
 
     async def spec_issue(ref: str, scheme: str | None, names: list[str], settings: dict[str, str]) -> Any:

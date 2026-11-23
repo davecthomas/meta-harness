@@ -13,6 +13,7 @@ import { goalSource } from "../trackers/refs";
 import { issueSourceLabel } from "./issueSource";
 import { CancelGoal } from "./CancelGoal";
 import { ImproveGoal } from "./ImproveGoal";
+import { LeftOpenIssues } from "./LeftOpenIssues";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { NoSuchRecord, isNotFound } from "../../components/NoSuchRecord";
 import { GoalStanding } from "./GoalStanding";
@@ -327,6 +328,8 @@ export function GoalPage() {
         }
       />
       <ErrorAlert error={error} />
+      {/* An ended goal says what it left open in its tracker, with the button that closes it. */}
+      {!open && <LeftOpenIssues goalId={goal.id} tracker={trackerTitle(goal.tracker ?? "github")} onClosed={() => void Promise.all([load(), loadProgress()])} />}
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
       <GoalStanding standing={goal.standing} explained={explained} budgetShown={budgetStanding(goal, spentNow) !== "ok"} />
       {/* The planner's word on the goal, ahead of everything the page lists. */}
