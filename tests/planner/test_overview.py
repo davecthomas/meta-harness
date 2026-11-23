@@ -37,13 +37,15 @@ class Gateway:
         self.goal_ids: list[str] = []
         # The goals the report says need the operator.
         self.needs: list[str] = []
+        # The steps an answer says it suggests.
+        self.suggests: list[dict] = []
         self.answer_cost = "0.0030"
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         self.calls.append(body)
         if "answer" in body["response_schema"]["properties"]:
-            data = {"answer": "Its plan is being drafted.", "in_record": True}
+            data = {"answer": "Its plan is being drafted.", "in_record": True, "suggests": self.suggests}
             return httpx.Response(200, json={"data": data, "finish_reason": "complete", "usd_cost": self.answer_cost})
         data = {
             "headline": "Two goals are being planned.",
@@ -467,3 +469,41 @@ def test_the_reports_rows_come_with_what_each_goal_needs_now_read_from_its_recor
     later = client.get("/v1/overview/report", headers=OPERATOR).json()
     assert later["report"]["written_at"] == read["report"]["written_at"], "the same report"
     assert [a["action"] for a in later["actions"][drafted["id"]]] != ["approve_plan"]
+
+
+def test_an_answer_comes_with_the_buttons_for_what_it_suggests_checked_against_the_records(world, monkeypatch):
+    """Asked what to follow up on, the planner said to check a plan and approve it, with no way to do either."""
+    client, events, tasks, gateway = world
+    drafting, drafted = _feature(client, statement="Add exports"), _feature(client, statement="Add imports")
+    gateway.goal_ids = [drafting["id"], drafted["id"]]
+    _only(monkeypatch, gateway.goal_ids)
+    _planned(client, events, tasks, drafted, [draft("store")])
+
+    def ask(*suggests: dict) -> list[tuple[str, str, str]]:
+        gateway.suggests = list(suggests)
+        answer = client.post("/v1/overview/ask", json={"question": "What should I follow up on?"}, headers=OPERATOR)
+        assert answer.status_code == 200, answer.text
+        return [(a["goal_id"], a["action"], a.get("says", "")) for a in answer.json()["actions"]]
+
+    # To check a plan is to open it; to approve one that can be approved is its approval.
+    assert ask(
+        {"goal_id": drafted["id"], "action": "open_plan"}, {"goal_id": drafted["id"], "action": "approve_plan"}
+    ) == [
+        (drafted["id"], "open_goal", "plan"),
+        (drafted["id"], "approve_plan", ""),
+    ]
+    # A plan still being drafted cannot be approved, whatever the answer said: the button opens the goal.
+    assert ask({"goal_id": drafting["id"], "action": "approve_plan"}) == [(drafting["id"], "open_goal", "goal")]
+    # A step the records do not support, a goal they do not hold, and an action that is no action: no button
+    # that could not work.
+    assert ask({"goal_id": drafted["id"], "action": "merge"}) == [(drafted["id"], "open_goal", "goal")]
+    assert (
+        ask({"goal_id": "g-000000000000", "action": "approve_plan"}, {"goal_id": drafted["id"], "action": "delete"})
+        == []
+    )
+    assert ask() == []
+    schema = gateway.calls[-1]["response_schema"]["properties"]["suggests"]
+    assert "maxItems" not in schema, "the model provider refuses a schema with one"
+    assert "to check or look at a plan is open_plan, not approve_plan" in gateway.calls[-1]["system_prompt"]
+    # The buttons are not part of the answer's record.
+    assert all("actions" not in e[1] for e in events.events if e[0] == "overview_question_answered")

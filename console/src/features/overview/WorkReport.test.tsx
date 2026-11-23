@@ -146,3 +146,31 @@ test("a row that needs the operator carries the button that does it, read from t
   expect((await screen.findByTestId("arrived")).textContent).toBe("/goals/g-2?do=approve");
   expect(calls.some((c) => c.init?.method === "POST")).toBe(false);
 });
+
+test("an answer carries the buttons for what it suggests, each beside the goal it is about", async () => {
+  const actions = [
+    { what: "", ref: "", action: "open_goal", says: "plan", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2", goal: "Keep tasks through compaction" },
+    { what: "", ref: "", action: "approve_plan", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2", goal: "Keep tasks through compaction" },
+  ];
+  renderPanel((_url, init) =>
+    init?.method === "POST" ? json({ answer: "Check the context limits in the plan, then approve it.", in_record: true, actions }) : json({ report, written: true }));
+  await screen.findByText("Two goals are moving.");
+  fireEvent.change(screen.getByLabelText("Ask about the work"), { target: { value: "What should I follow up on?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  const [open, approve] = await screen.findAllByTestId("answer-action");
+  expect(open.textContent).toContain("Keep tasks through compaction");
+  expect(within(open).getByRole("link", { name: "Open the plan" }).getAttribute("href")).toBe("/goals/g-2");
+  fireEvent.click(within(approve).getByRole("button", { name: "Approve the plan" }));
+  expect((await screen.findByTestId("arrived")).textContent).toBe("/goals/g-2?do=approve");
+});
+
+test("an answer that suggests no step has no button", async () => {
+  renderPanel((_url, init) => (init?.method === "POST" ? json({ answer: "Nothing is waiting.", in_record: true, actions: [] }) : json({ report, written: true })));
+  await screen.findByText("Two goals are moving.");
+  fireEvent.change(screen.getByLabelText("Ask about the work"), { target: { value: "Anything waiting?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await screen.findByText("Nothing is waiting.");
+  expect(screen.queryByTestId("answer-actions")).toBeNull();
+});

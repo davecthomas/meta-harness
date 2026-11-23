@@ -3879,6 +3879,19 @@ page does in place opens that page with it asked for, `?do=approve`,
 says what it creates. A goal named in two rows gets its buttons once, and a
 row whose goal needs nothing now links to the goal.
 
+**An answer comes with the buttons for what it suggests.** `POST /v1/overview/ask`
+answers `actions` beside the answer. The model that writes the answer also
+lists the steps it tells the operator to take (`suggests`, two at most), each
+with a goal's id and an action from a fixed list that matches its own words:
+to check a plan is `open_plan`, never `approve_plan`. Each is then checked
+against that goal's records (`actions.suggested`). A step that changes
+something is offered only as the records support it now, as the goal's own
+needs of that kind. When they hold none, the button opens the goal, where the
+operator sees why. A step that only looks opens the goal's page, named for
+what the answer said to look at: Open the plan, See its next steps, Open the
+goal. A goal the records do not hold gets no button. The buttons are the ones
+the report's rows use, and are not kept in the answer's event.
+
 **A goal's next steps** (`planner/next_steps.py`). Many goals end nearly
 complete, with more that could be done, and some end short of what was meant:
 a rebrand met its specification and left logos too small to read. So the

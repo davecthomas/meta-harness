@@ -116,7 +116,12 @@ MAX_FOR_GOAL = 3
 
 
 def for_goal(
-    goal: dict, links: list[dict], tasks: list[dict], plan: dict | None = None, suggestion: dict | None = None
+    goal: dict,
+    links: list[dict],
+    tasks: list[dict],
+    plan: dict | None = None,
+    suggestion: dict | None = None,
+    most: int = MAX_FOR_GOAL,
 ) -> list[dict]:
     """What the goal needs from the operator now, from its records alone, each as the action a page offers:
     most urgent first, `MAX_FOR_GOAL` at most. No model has a say, so a page that lists goals (the Overview)
@@ -146,4 +151,40 @@ def for_goal(
         if task.get("waiting_on") or status in ("failed", "review_unresolved") or ready:
             wanted.append({"what": "", "ref": link["ref"], "action": "open_task"})
     found = actionable([*wanted, *held], goal, links, tasks, suggestion, plan)
-    return [{**need, "goal_id": goal["id"], "label": goal.get("label") or ""} for need in found[:MAX_FOR_GOAL]]
+    return [{**need, "goal_id": goal["id"], "label": goal.get("label") or ""} for need in found[:most]]
+
+
+# What an answer may say it suggests, besides `ACTIONS`: looking at a goal's plan, at a goal, or at what a
+# finished goal could lead to. None of these changes anything: each opens the goal's page.
+LOOKS = ("open_plan", "open_goal", "next_steps")
+SUGGESTABLE = (*ACTIONS, *LOOKS)
+# The actions a goal's records may answer each suggested one with. A suggestion to approve becomes the plan's
+# fix when the plan cannot be approved; one to merge becomes the review's settling when the review is unsettled.
+_ANSWERS = {
+    "approve_plan": ("approve_plan", "fix_plan", "accept_fix"),
+    "accept_fix": ("accept_fix",),
+    "merge": ("merge", "settle_review"),
+    "review": ("merge", "settle_review", "review"),
+    "open_task": ("retry", "settle_review", "merge", "open_task"),
+    "raise_budget": ("raise_budget",),
+    "open_issue": ("split_or_run", "open_issue"),
+}
+MAX_SUGGESTED = 2
+
+
+def suggested(wanted: str, goal: dict, needs: list[dict]) -> list[dict]:
+    """The buttons for one step an answer suggests about a goal. wanted: the action the model named for its
+    own words. needs: what the goal's records say it needs now (for_goal, uncut).
+
+    A step that changes something is offered only as the records support it: the goal's needs of that kind,
+    `MAX_SUGGESTED` at most. When the records hold none, the suggestion is not dropped, since the answer still
+    said it: the button opens the goal, where the operator sees why. A step that only looks opens the goal's
+    page, named for what the answer said to look at."""
+    look = {"action": "open_goal", "says": "goal", "what": "", "ref": "", "task_id": "", "pr_url": ""}
+    look |= {"goal_id": goal["id"], "label": goal.get("label") or ""}
+    if wanted == "open_plan" and goal["status"] == "planning":
+        return [{**look, "says": "plan"}]
+    if wanted == "next_steps" and goal["status"] in ("met", "canceled"):
+        return [{**look, "says": "next_steps"}]
+    matched = [need for need in needs if need["action"] in _ANSWERS.get(wanted, ())]
+    return matched[:MAX_SUGGESTED] or [look]
