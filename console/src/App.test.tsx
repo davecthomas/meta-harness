@@ -148,6 +148,36 @@ test("the header shows the version and the deployed commit, linked", async () =>
   expect(screen.getByRole("link", { name: "4a286e3" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness/commit/4a286e3c0ffee");
 });
 
+function stubSignedIn() {
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url === "/v1/me") return respond({ identity: "operator@example.com", roles: ["operator"] });
+    if (url.startsWith("/v1/goals")) return respond({ goals: [], total: 0 });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+}
+
+test("the header has a link to the Overview named Octofusion AI, and no Meta-harness name", async () => {
+  stubSignedIn();
+  renderAt("/goals");
+  await screen.findByRole("heading", { name: "Goals" });
+  const header = within(screen.getByRole("banner"));
+  expect(header.getByRole("link", { name: "Octofusion AI" }).getAttribute("href")).toBe("/");
+  expect(header.queryByText("Meta-harness")).toBeNull();
+});
+
+test("the header shows the lockup at wide widths and the symbol alone at phone width", async () => {
+  stubSignedIn();
+  renderAt("/goals");
+  await screen.findByRole("heading", { name: "Goals" });
+  const images = within(screen.getByRole("banner")).getAllByRole("img", { name: "Octofusion AI" });
+  expect(images).toHaveLength(2);
+  const [wide, phone] = images;
+  expect(wide.getAttribute("src")).toContain("octofusion-lockup.svg");
+  expect(wide.className).toContain("mantine-visible-from-sm");
+  expect(phone.getAttribute("src")).toContain("octofusion-symbol.svg");
+  expect(phone.className).toContain("mantine-hidden-from-sm");
+});
+
 test("an address that is no page's says so and offers the ways on", async () => {
   vi.stubGlobal("fetch", (url: string) => {
     if (url === "/v1/me") return respond({ identity: "operator@example.com", roles: ["operator"] });
