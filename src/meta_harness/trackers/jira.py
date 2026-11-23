@@ -801,7 +801,7 @@ def check_settings(jira: dict[str, Any], repos: set[str] | None) -> list[str]:
         not isinstance(key, str) or not PROJECT.match(key) or not isinstance(spec, dict)
         for key, spec in projects.items()
     ):
-        reasons.append("projects lists the Jira projects the meta-harness works in, each by its key, such as PROJ")
+        reasons.append("projects lists the Jira projects Octofusion works in, each by its key, such as PROJ")
         projects = {}
     for key, spec in projects.items():
         reasons += _check_names(f"project {key}: ", spec)
@@ -842,7 +842,7 @@ def check_goal(settings: dict[str, Any], site: dict[str, Any] | None = None) -> 
         )
     elif listed and project not in listed:
         reasons.append(
-            f"{project} is not one of the Jira projects the meta-harness works in ({', '.join(sorted(listed))}). "
+            f"{project} is not one of the Jira projects Octofusion works in ({', '.join(sorted(listed))}). "
             "Choose one of those, or add it under Configuration, Issue trackers, Jira, Projects"
         )
     parent = settings.get("parent", "")
@@ -854,7 +854,7 @@ def check_goal(settings: dict[str, Any], site: dict[str, Any] | None = None) -> 
             "one from the list, or leave it empty"
         )
     if settings.get("assigned", "") not in ("", "yes"):
-        reasons.append('assigned is "yes" for a goal that takes the issues assigned to the meta-harness, else left out')
+        reasons.append('assigned is "yes" for a goal that takes the issues assigned to Octofusion, else left out')
     reasons += check_assignee(settings, bool, "a Jira account id, or the display name of one person, on one line")
     return reasons
 
@@ -871,7 +871,7 @@ SPEC = Supported(
             kind="entries",
             entry="project",
             required=True,
-            help="The Jira projects the meta-harness works in. A goal names one of them. A workflow belongs to a "
+            help="The Jira projects Octofusion works in. A goal names one of them. A workflow belongs to a "
             "project, so each has its own issue type and status names.",
             settings=[
                 Setting(
@@ -911,10 +911,10 @@ SPEC = Supported(
         ),
         Setting(
             "assigned",
-            "Take issues assigned to the meta-harness",
+            "Take issues assigned to Octofusion",
             kind="switch",
             help="On: the goal also takes every open issue of the project assigned, in Jira, to the account "
-            "the meta-harness signs in as, whatever its labels. Assigning an issue there hands it over.",
+            "Octofusion signs in as, whatever its labels. Assigning an issue there hands it over.",
         ),
         assignee_setting("the people the goal's project's issues can be assigned to"),
         Setting(

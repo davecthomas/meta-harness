@@ -151,7 +151,7 @@ def test_a_goal_starts_with_jiras_default_project_and_names_only_a_listed_one(wo
     }
     refused = client.post("/v1/goals", json=body, headers=OPERATOR)
     assert refused.status_code == 422
-    assert "AB is not one of the Jira projects the meta-harness works in (OPS, VL)" in refused.json()["detail"]
+    assert "AB is not one of the Jira projects Octofusion works in (OPS, VL)" in refused.json()["detail"]
 
 
 def test_a_project_an_open_goal_uses_cannot_leave_the_trackers_configuration(world):
@@ -169,7 +169,7 @@ def test_a_project_an_open_goal_uses_cannot_leave_the_trackers_configuration(wor
 
     assert refused.status_code == 422
     [reason] = [r for r in refused.json()["detail"]["reasons"] if goal["id"] in r]
-    assert reason.startswith("jira: OPS is not one of the Jira projects the meta-harness works in (VL)")
+    assert reason.startswith("jira: OPS is not one of the Jira projects Octofusion works in (VL)")
     assert reason.endswith("uses it")
     client.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
 
