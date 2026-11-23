@@ -8,7 +8,7 @@ import { ApiError } from "../../client";
 import { OWN, goalSource, refLabel, trackerTitle } from "../trackers/refs";
 import { SIGNED_ISSUES } from "./provenance";
 import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview";
-import { APPROVE_PLAN, PLAN_CHANGED } from "./PlannerUpdates";
+import { APPROVE_PLAN, PLAN_CHANGED, REPLAN } from "./PlannerUpdates";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { ErrorAlert, SectionTitle, when } from "../../components/ui";
 
@@ -342,15 +342,18 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
     },
   });
 
-  // "Approve the plan" in the planner's panel opens this plan's approval, where its counts are said first; a
-  // fix accepted there makes a new version, read here at once.
+  // "Approve the plan" in the planner's panel opens this plan's approval, where its counts are said first,
+  // and its "Plan again" opens this plan's; a fix accepted there makes a new version, read here at once.
   useEffect(() => {
     const approve = () => setAsking("approve");
+    const replan = () => setAsking("replan");
     const changed = () => void load();
     window.addEventListener(APPROVE_PLAN, approve);
+    window.addEventListener(REPLAN, replan);
     window.addEventListener(PLAN_CHANGED, changed);
     return () => {
       window.removeEventListener(APPROVE_PLAN, approve);
+      window.removeEventListener(REPLAN, replan);
       window.removeEventListener(PLAN_CHANGED, changed);
     };
   }, [load]);
