@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Group, List, Stack, Text } from "@mantine/core";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { IconCheck, IconGitMerge, IconRefresh } from "@tabler/icons-react";
 import { api, type IssueProgress, type Task } from "../../api";
 import { ConfirmButton } from "../../components/ConfirmButton";
@@ -115,17 +115,26 @@ export const OPEN_SETTINGS = "mh:open-settings";
 export const SHOW_ISSUES = "mh:show-issues";
 // Sent once the plan changed from here (a fix accepted or dismissed), so the plan's section reads it again.
 export const PLAN_CHANGED = "mh:plan-changed";
+// What a link to a goal's page asks it to do on arrival, `?do=`, and the event that does it.
+export const DO_BY_EVENT: Record<string, string> = { [APPROVE_PLAN]: "approve", [REPLAN]: "replan", [OPEN_SETTINGS]: "budget", [SHOW_ISSUES]: "issues" };
+export const EVENT_BY_DO: Record<string, string> = Object.fromEntries(Object.entries(DO_BY_EVENT).map(([event, name]) => [name, event]));
 
 // The button that resolves one need, or takes the operator to where they do. Every place the planner asks or
 // suggests something shows this one, so a need has the same button wherever it is read.
 // planning: the goal is being planned, so a need written before needs had actions, about no issue, is the
 // plan's approval.
-export function NeedButton({ need, planning, goalId, label, onDone }: { need: Need; planning: boolean; goalId: string; label: string | null; onDone: () => void }) {
+// away: the button is shown somewhere other than its goal's page (the Overview). What the goal's page does in
+// place (its plan's approval, its Plan again, its budget, its issues) is then a link there that opens it.
+export function NeedButton({ need, planning, goalId, label, onDone, away = false }: { need: Need; planning: boolean; goalId: string; label: string | null; onDone: () => void; away?: boolean }) {
   const changed = () => {
     window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
     onDone();
   };
-  const send = (name: string) => () => window.dispatchEvent(new CustomEvent(name));
+  const navigate = useNavigate();
+  // On the goal's page a press sends its event; away from it, the same press opens the page with that event
+  // sent on arrival (GoalPage reads `do`).
+  const send = (name: string) => () =>
+    void (away ? navigate(`/goals/${goalId}?do=${DO_BY_EVENT[name]}`) : window.dispatchEvent(new CustomEvent(name)));
   const task = need.task_id ?? "";
   const action = need.action || (planning && !need.ref ? "approve_plan" : "");
   switch (action) {

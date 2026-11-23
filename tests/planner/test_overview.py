@@ -24,7 +24,7 @@ from meta_harness.planner.service import create_app
 from meta_harness.run_service import writing
 
 from .test_planner import OPERATOR, Events, FakeTasks, _no_title, migrated, registry  # noqa: F401
-from .test_planning import WritingTracker, _feature
+from .test_planning import WritingTracker, _feature, _planned, draft
 
 SINCE = {"since": (datetime.now(UTC) - timedelta(days=1)).isoformat()}
 
@@ -35,6 +35,8 @@ class Gateway:
     def __init__(self):
         self.calls: list[dict] = []
         self.goal_ids: list[str] = []
+        # The goals the report says need the operator.
+        self.needs: list[str] = []
         self.answer_cost = "0.0030"
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -47,7 +49,9 @@ class Gateway:
             "headline": "Two goals are being planned.",
             "moving": [{"goal_id": goal_id, "what": "Its plan is being drafted."} for goal_id in self.goal_ids],
             "not_moving": [{"goal_id": "g-none", "why": "No such goal."}],
-            "needs_you": [],
+            "needs_you": [
+                {"goal_id": g, "what": "Approve its plan.", "why": "Nothing starts first."} for g in self.needs
+            ],
             "spend": "Nothing is spent yet.",
             "finished": "",
         }
@@ -435,3 +439,31 @@ def test_the_overview_settings_are_checked():
     assert reasons(min_seconds=1.5)[0].startswith("overview.min_seconds must be a whole number")
     assert reasons(max_usd="0")[0].startswith("overview.max_usd must be an amount above 0")
     assert kinds.check_planning({k: v for k, v in shipped.items() if k != "overview"}, None) == []
+
+
+def test_the_reports_rows_come_with_what_each_goal_needs_now_read_from_its_records(world, monkeypatch):
+    """The report said what needed the operator, in words alone: nothing on it took the step."""
+    client, events, tasks, gateway = world
+    drafting, drafted = _feature(client, statement="Add exports"), _feature(client, statement="Add imports")
+    gateway.goal_ids = gateway.needs = [drafting["id"], drafted["id"]]
+    _only(monkeypatch, gateway.goal_ids)
+    _planned(client, events, tasks, drafted, [draft("store")])
+
+    read = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
+
+    assert [row["goal_id"] for row in read["report"]["needs_you"]] == gateway.goal_ids
+    # The plan that is drafted can be approved. The one still being drafted cannot, whatever the report says.
+    assert read["actions"][drafting["id"]] == []
+    [approve] = read["actions"][drafted["id"]]
+    assert (approve["action"], approve["goal_id"], approve["label"]) == (
+        "approve_plan",
+        drafted["id"],
+        approve["label"],
+    )
+    assert approve["label"].startswith("meta-harness:goal-")
+
+    # The buttons are read as the report is read: approved since, the goal's row offers no approval.
+    assert client.post(f"/v1/goals/{drafted['id']}/approve", headers=OPERATOR).status_code == 200
+    later = client.get("/v1/overview/report", headers=OPERATOR).json()
+    assert later["report"]["written_at"] == read["report"]["written_at"], "the same report"
+    assert [a["action"] for a in later["actions"][drafted["id"]]] != ["approve_plan"]

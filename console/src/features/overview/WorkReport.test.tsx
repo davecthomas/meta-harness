@@ -1,8 +1,8 @@
 // Created by the meta-harness in run t-33d72d7e8075:run-1 on harness:pi-lean/claude:claude-sonnet-5-5.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { retries } from "../../client";
 import { theme } from "../../theme";
@@ -15,13 +15,28 @@ const report = {
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
+// Stands in for a goal's page: it says where the link led.
+function Arrived() {
+  const at = useLocation();
+  return <div data-testid="arrived">{at.pathname + at.search}</div>;
+}
+
 beforeEach(() => { window.localStorage.clear(); retries.baseMs = 0; });
 afterEach(() => { vi.unstubAllGlobals(); retries.baseMs = 400; });
 
 function renderPanel(handler: (url: string, init?: RequestInit) => Response) {
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => { calls.push({ url, init }); return Promise.resolve(handler(url, init)); });
-  render(<MantineProvider theme={theme}><WorkReport /></MantineProvider>);
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<WorkReport />} />
+          <Route path="/goals/:id" element={<Arrived />} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
   return calls;
 }
 
@@ -29,7 +44,7 @@ test("the panel shows the report and sends since from the last visit", async () 
   window.localStorage.setItem("mh:overview:last-visit", "2026-11-08T09:00:00.000Z");
   const calls = renderPanel(() => json({ report, written: true }));
   expect(await screen.findByText("Two goals are moving.")).toBeTruthy();
-  expect(screen.getByText(/Add exports: A pull request opened\./)).toBeTruthy();
+  expect(screen.getByTestId("report-row").textContent).toBe("Add exports: A pull request opened.");
   expect(screen.getByTestId("work-report-written").textContent).toContain("Written");
   const url = new URL(calls[0].url, "http://x");
   expect(url.pathname).toBe("/v1/overview/report");
@@ -95,4 +110,39 @@ test("a question shows its answer, and a 429 shows its message", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Ask" }));
   await waitFor(() => expect(screen.getByTestId("work-ask-error").textContent).toContain("limit resets at 2026-11-10"));
   expect(screen.queryByText("Exports merged today.")).toBeNull();
+});
+
+test("a row that needs the operator carries the button that does it, read from the goal's records", async () => {
+  const needing = {
+    ...report,
+    needs_you: [
+      { goal_id: "g-2", goal: "Keep tasks through compaction", what: "Check the context limits in the plan.", why: "Nothing starts until you sign off." },
+      { goal_id: "g-3", goal: "Add imports", what: "Its pull request is ready.", why: "" },
+    ],
+    not_moving: [{ goal_id: "g-2", goal: "Keep tasks through compaction", why: "Its plan waits for you." }, { goal_id: "g-4", goal: "Add search", why: "It waits its turn." }],
+  };
+  const actions = {
+    "g-2": [{ what: "", ref: "", action: "approve_plan", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2" }],
+    "g-3": [{ what: "", ref: "mh:i-1", action: "merge", task_id: "t-1", pr_url: "https://github.com/o/r/pull/9", goal_id: "g-3", label: "mh:g-3" }],
+    "g-4": [],
+  };
+  const calls = renderPanel((url) =>
+    url.startsWith("/v1/tasks/t-1") ? json({ id: "t-1", title: "Imports", status: "ready", pr_url: "https://github.com/o/r/pull/9", max_usd: "5" }) : json({ report: needing, written: true, actions }));
+
+  const rows = await screen.findAllByTestId("report-row");
+  // The goal's name is a link to its page, and its first row has its button.
+  expect(within(rows[0]).getByRole("link", { name: "Keep tasks through compaction" }).getAttribute("href")).toBe("/goals/g-2");
+  expect(within(rows[0]).getByRole("button", { name: "Approve the plan" })).toBeTruthy();
+  // A task's button acts where it is read, from the task as it is now.
+  expect(await within(rows[1]).findByRole("button", { name: "Merge" })).toBeTruthy();
+  // A goal named again gets its button once, and one that needs nothing gets the way to its page.
+  expect(within(rows[3]).queryByRole("button")).toBeNull();
+  expect(within(rows[4]).getByRole("link", { name: "Open the goal" }).getAttribute("href")).toBe("/goals/g-4");
+  // The moving rows ask nothing, so they carry no button.
+  expect(within(rows[2]).queryByTestId("report-actions")).toBeNull();
+
+  // Approving is the goal page's to do: the button opens it there, with the approval asked for.
+  fireEvent.click(within(rows[0]).getByRole("button", { name: "Approve the plan" }));
+  expect((await screen.findByTestId("arrived")).textContent).toBe("/goals/g-2?do=approve");
+  expect(calls.some((c) => c.init?.method === "POST")).toBe(false);
 });

@@ -3864,6 +3864,21 @@ approve, under an Approve button, after version 2 had split them. An approved pl
 gets its update as soon as its first sweep has made its tasks. One that cannot be written is logged, said on the page,
 and tried again at the next pass.
 
+**The Overview's rows come with their buttons.** The report says in words what
+needs the operator and which goals are not moving. Each such row about a goal
+carries the buttons for what that goal needs now: `GET /v1/overview/report`
+answers `actions`, by goal id, beside the report. They are read from the
+goal's records as the report is read (`actions.for_goal`, three at most for a
+goal), with no model, and are not kept with the report: a button is true now
+however old the report's words are, and one for a step already taken is gone
+at the next read. The console draws them with the button the planner's panel
+on a goal's page uses (`needActions.tsx`). Merge, Retry, a review's choices
+and a held issue's Split or Run anyway act where they are read. What a goal's
+page does in place opens that page with it asked for, `?do=approve`,
+`replan`, `budget` or `issues`: approving a plan stays behind the dialog that
+says what it creates. A goal named in two rows gets its buttons once, and a
+row whose goal needs nothing now links to the goal.
+
 **A goal's next steps** (`planner/next_steps.py`). Many goals end nearly
 complete, with more that could be done, and some end short of what was meant:
 a rebrand met its specification and left logos too small to read. So the

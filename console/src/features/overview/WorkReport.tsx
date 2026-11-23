@@ -1,10 +1,12 @@
 // Created by Octofusion in run t-33d72d7e8075:run-1 on harness:pi-lean/claude:claude-sonnet-5-5.
 
 import { useEffect, useRef, useState } from "react";
-import { Button, Group, Paper, Stack, Text, TextInput } from "@mantine/core";
+import { Anchor, Button, Group, Paper, Stack, Text, TextInput } from "@mantine/core";
+import { Link } from "react-router-dom";
 import { api, ApiError } from "../../api";
 import { when } from "../../components/ui";
-import type { ReportItem, WorkAnswer, WorkReportAnswer } from "./api";
+import { NeedButton } from "../goals/needActions";
+import type { GoalAction, ReportItem, WorkAnswer, WorkReportAnswer } from "./api";
 
 const VISIT_KEY = "mh:overview:last-visit";
 // How often the open page asks for a newer report.
@@ -31,14 +33,36 @@ function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.detail : err instanceof Error ? err.message : String(err);
 }
 
-function Items({ title, items }: { title: string; items: ReportItem[] }) {
+// The rows of one part of the report. A row about a goal names it as a link to its page. actions: what each
+// goal needs now, by goal id; given, the first row about a goal carries its buttons, so a need is acted on
+// where it is read. shown: the goals whose buttons an earlier part already carries.
+function Items({ title, items, actions, shown, onDone }: { title: string; items: ReportItem[]; actions?: Record<string, GoalAction[]>; shown?: Set<string>; onDone?: () => void }) {
   if (!items.length) return null;
   return (
-    <Stack gap={2}>
+    <Stack gap={4}>
       <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{title}</Text>
-      {items.map((item, i) => (
-        <Text key={i} size="sm">{item.goal ? item.goal + ": " : ""}{item.what ?? item.why}{item.what && item.why ? " " + item.why : ""}</Text>
-      ))}
+      {items.map((item, i) => {
+        const first = !!actions && !!item.goal_id && !shown?.has(item.goal_id);
+        if (first) shown?.add(item.goal_id);
+        const needs = first ? actions?.[item.goal_id] ?? [] : [];
+        return (
+          <Group key={i} justify="space-between" wrap="wrap" gap="xs" data-testid="report-row">
+            <Text size="sm" style={{ flex: "1 1 320px" }}>
+              {item.goal && (item.goal_id ? <><Anchor component={Link} to={`/goals/${item.goal_id}`}>{item.goal}</Anchor>: </> : item.goal + ": ")}
+              {item.what ?? item.why}{item.what && item.why ? " " + item.why : ""}
+            </Text>
+            {first && (
+              <Group gap="xs" wrap="wrap" data-testid="report-actions">
+                {needs.map((need, n) => (
+                  <NeedButton key={n} need={need} planning={false} goalId={item.goal_id} label={need.label || null} onDone={onDone ?? (() => undefined)} away />
+                ))}
+                {/* Nothing its records call for now: the goal's page is where to look. */}
+                {!needs.length && <Button size="xs" variant="subtle" component={Link} to={`/goals/${item.goal_id}`}>Open the goal</Button>}
+              </Group>
+            )}
+          </Group>
+        );
+      })}
     </Stack>
   );
 }
@@ -84,6 +108,10 @@ export function WorkReport() {
   };
 
   const report = found?.report ?? null;
+  // The goals whose buttons a row already carries, so a goal named twice gets them once.
+  const withButtons = new Set<string>();
+  // After a button acted, the report is read again: what the goal needs has changed.
+  const reread = () => void api.overviewReport().then((got) => setFound((now) => (now ? { ...now, actions: got.actions } : got)), () => undefined);
   return (
     <Paper withBorder p="md" mb="lg" data-testid="work-report">
       <Stack gap="xs">
@@ -97,9 +125,9 @@ export function WorkReport() {
         {report && (
           <>
             <Text fw={600}>{report.headline}</Text>
-            <Items title="Needs you" items={report.needs_you} />
+            <Items title="Needs you" items={report.needs_you} actions={found?.actions ?? {}} shown={withButtons} onDone={reread} />
             <Items title="Moving" items={report.moving} />
-            <Items title="Not moving" items={report.not_moving} />
+            <Items title="Not moving" items={report.not_moving} actions={found?.actions ?? {}} shown={withButtons} onDone={reread} />
             {report.spend && <Text size="sm">{report.spend}</Text>}
             {report.finished && <Text size="sm">{report.finished}</Text>}
           </>

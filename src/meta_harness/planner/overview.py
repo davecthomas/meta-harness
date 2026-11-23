@@ -48,7 +48,7 @@ from pydantic import BaseModel, Field
 
 from meta_harness import db, outbound, retrying
 from meta_harness.outbound import rules as writing_rules
-from meta_harness.planner import drafting, planning, store, updates, voice
+from meta_harness.planner import actions, drafting, planning, plans, store, updates, voice
 from meta_harness.run_service import writing
 from meta_harness.supervisor import ledger
 
@@ -684,6 +684,28 @@ class Overview:
     def view(self, written: bool = False, note: str | None = None, error: str | None = None) -> dict[str, Any]:
         return {"report": self.latest, "written": written, "note": note, "error": error}
 
+    def actions(self, report: dict[str, Any] | None) -> dict[str, list[dict]]:
+        """What each goal the report says needs the operator, or is not moving, needs now: the buttons for its
+        rows, by goal id (actions.for_goal). Read from the records as the report is read, not kept with it,
+        so a button is true now however old the report's words are. A goal that cannot be read gets none."""
+        from meta_harness.planner import suggestions
+
+        rows = [*((report or {}).get("needs_you") or []), *((report or {}).get("not_moving") or [])]
+        found: dict[str, list[dict]] = {}
+        for goal_id in list(dict.fromkeys(row.get("goal_id") or "" for row in rows))[:MAX_GOALS]:
+            if not goal_id:
+                continue
+            try:
+                with db.connect(autocommit=True) as conn:
+                    goal = store.get(conn, goal_id)
+                    links, plan = store.links(conn, goal_id), plans.latest(conn, goal_id)
+                suggestion = suggestions.current(goal_id) if goal["status"] == "planning" else None
+                tasks_of_goal = self.tasks.list(None, goal_id, 500)
+                found[goal_id] = actions.for_goal(goal, links, tasks_of_goal, plan, suggestion)
+            except Exception as err:  # noqa: BLE001 - a row with no button still reads; the next read tries again
+                log.warning("the Overview could not read what goal %s needs now: %s", goal_id, err)
+        return found
+
     async def report(self, since: datetime | None = None) -> dict[str, Any]:
         """The latest report. With since, a new one is written first when the facts changed since the last,
         unless the last is under min_seconds old or today's reports have spent max_usd. A report that cannot
@@ -872,9 +894,11 @@ def register(app: FastAPI, operator: Callable[..., str], overview: Overview) -> 
         except ValueError as err:
             raise HTTPException(status_code=422, detail="since must be a date and time, as ISO 8601") from err
         try:
-            return await overview.report(looked)
+            shown = await overview.report(looked)
         except OverviewError as err:
             raise HTTPException(status_code=502, detail=f"the Overview report could not be read: {err}") from err
+        # What each goal in the report needs now, for the buttons on its rows.
+        return {**shown, "actions": await asyncio.to_thread(overview.actions, shown.get("report"))}
 
     @app.post("/v1/overview/ask")
     async def overview_ask(body: Question, who: str = Depends(operator)) -> dict:

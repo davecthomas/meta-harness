@@ -109,3 +109,41 @@ def actionable(
             },
         )
     return out
+
+
+# The most actions one goal is given at once, for a page that lists many goals.
+MAX_FOR_GOAL = 3
+
+
+def for_goal(
+    goal: dict, links: list[dict], tasks: list[dict], plan: dict | None = None, suggestion: dict | None = None
+) -> list[dict]:
+    """What the goal needs from the operator now, from its records alone, each as the action a page offers:
+    most urgent first, `MAX_FOR_GOAL` at most. No model has a say, so a page that lists goals (the Overview)
+    shows buttons that are true at the moment it is read, whenever its words were written.
+
+    Each is what `actionable` answers, with the goal it is about (`goal_id`) and that goal's label, which
+    splitting a held issue needs."""
+    wanted: list[dict] = []
+    if goal["status"] == "budget_exhausted":
+        wanted.append({"what": "", "ref": "", "action": "raise_budget"})
+    if goal["status"] == "planning" and plan is not None:
+        # `actionable` turns this into the plan's fix when it cannot be approved, and drops it while the
+        # planner writes a new version.
+        wanted.append({"what": "", "ref": "", "action": "approve_plan"})
+    by_id = {task["id"]: task for task in tasks}
+    held = []
+    for link in links:
+        if link.get("state") != "open" or splits.is_replaced(link):
+            continue
+        task = by_id.get(link.get("task_id") or "")
+        if task is None:
+            if (link.get("held_reason") or link.get("refused_reason")) and not _split_already(link):
+                held.append({"what": "", "ref": link["ref"], "action": "open_issue"})
+            continue
+        status = task.get("status")
+        ready = status == "ready" and task.get("pr_url") and not goal.get("auto_merge")
+        if task.get("waiting_on") or status in ("failed", "review_unresolved") or ready:
+            wanted.append({"what": "", "ref": link["ref"], "action": "open_task"})
+    found = actionable([*wanted, *held], goal, links, tasks, suggestion, plan)
+    return [{**need, "goal_id": goal["id"], "label": goal.get("label") or ""} for need in found[:MAX_FOR_GOAL]]

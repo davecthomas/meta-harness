@@ -1,3 +1,4 @@
+import type { Need } from "../goals/needActions";
 import { call, query } from "../../client";
 
 // A pull request on the Overview's Pull requests row: the one a task opened, with its review and fix runs.
@@ -47,6 +48,15 @@ export interface WorkReportAnswer {
   written: boolean;
   note?: string | null;
   error?: string | null;
+  // What each goal named in the report needs now, by goal id, read from its records as the report is read:
+  // the buttons for its rows.
+  actions?: Record<string, GoalAction[]>;
+}
+
+// One thing a goal needs from the operator, as the action a page offers (planner/actions.py).
+export interface GoalAction extends Need {
+  goal_id: string;
+  label: string;
 }
 
 // POST /v1/overview/ask
