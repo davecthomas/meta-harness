@@ -25,6 +25,10 @@ The site the deployment has today is kept as a site throughout: the platform gua
 
 The site names are settings in `deploy/environment.json`, as the first one is, and the deploy checks them at startup.
 
+## Where it stands
+
+The first release is built: the platform stack holds both sites (`console_home_site`, `console_redirect_sites`), the console is served at `octofusion-ai.web.app` beside its old address, `octofusion.web.app` redirects there with a 302, and `MH_CONSOLE_ORIGIN` lists both console addresses. The sites' names are platform variables with defaults, not `deploy/environment.json` settings, so the deploy needs no new secret; Terraform checks each name.
+
 ## How we will know it works
 
 - `octofusion-ai.web.app` serves the console and signs a person in.

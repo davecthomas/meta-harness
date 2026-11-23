@@ -156,7 +156,8 @@ resource "google_cloud_run_v2_service" "edge" {
           MH_EVENTS_URL       = "http://${local.vm_ip}:8301"
           MH_SCHEDULER_URL    = "http://${local.vm_ip}:8304"
           MH_GOOGLE_CLIENT_ID = local.platform.google_client_id
-          MH_CONSOLE_ORIGIN   = local.platform.console_origin
+          # try(): a release applied against a platform state from before the console's new addresses.
+          MH_CONSOLE_ORIGIN = join(",", try(local.platform.console_origins, [local.platform.console_origin]))
           # The edge's own address, which the live event stream uses (Firebase Hosting ends requests at 60s).
           MH_STREAM_ORIGIN     = "https://${local.edge}-${local.platform.project_number}.${local.region}.run.app"
           MH_CONSOLE_OPERATORS = join(",", local.platform.operators)
@@ -216,4 +217,49 @@ resource "google_firebase_hosting_release" "console" {
   site_id      = local.platform.console_site
   version_name = google_firebase_hosting_version.console.name
   message      = "every path to the Cloud Run service ${local.edge}"
+}
+
+# The console's new home address serves it too (docs/specs/octofusion-web-addresses.md). A browser keeps a
+# sign-in for one address, so the old one keeps serving until sign-in works at the new one.
+resource "google_firebase_hosting_version" "home" {
+  provider = google-beta
+  site_id  = local.platform.console_home_site
+  config {
+    rewrites {
+      glob = "**"
+      run {
+        service_id = google_cloud_run_v2_service.edge.name
+        region     = local.region
+      }
+    }
+  }
+}
+
+resource "google_firebase_hosting_release" "home" {
+  provider     = google-beta
+  site_id      = local.platform.console_home_site
+  version_name = google_firebase_hosting_version.home.name
+  message      = "every path to the Cloud Run service ${local.edge}"
+}
+
+# The other new addresses send a visitor on to the home address, path kept. 302 while the move is checked.
+resource "google_firebase_hosting_version" "redirect" {
+  for_each = toset(local.platform.console_redirect_sites)
+  provider = google-beta
+  site_id  = each.value
+  config {
+    redirects {
+      glob        = "/:path*"
+      status_code = 302
+      location    = "https://${local.platform.console_home_site}.web.app/:path"
+    }
+  }
+}
+
+resource "google_firebase_hosting_release" "redirect" {
+  for_each     = google_firebase_hosting_version.redirect
+  provider     = google-beta
+  site_id      = each.key
+  version_name = each.value.name
+  message      = "every path to https://${local.platform.console_home_site}.web.app"
 }
