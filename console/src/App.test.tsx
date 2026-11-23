@@ -134,7 +134,7 @@ test.each([
   expect(items.includes("Repositories") || items.includes("Kill switch")).toBe(false);
 });
 
-test("the header shows the version and the deployed commit, linked", async () => {
+test("the footer ends a signed-in page with the version and the deployed commit, linked, and the header has neither", async () => {
   vi.stubGlobal("fetch", (url: string) => {
     if (url === "/v1/me") return respond({ identity: "operator@example.com", roles: ["operator"] });
     if (url === "/v1/version") return respond({ version: "0.21.1", commit: "4a286e3c0ffee" });
@@ -144,8 +144,42 @@ test("the header shows the version and the deployed commit, linked", async () =>
 
   renderAt("/goals");
 
-  expect((await screen.findByTestId("version")).textContent).toBe("v0.21.1 · 4a286e3");
-  expect(screen.getByRole("link", { name: "4a286e3" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness/commit/4a286e3c0ffee");
+  const footer = within(screen.getByTestId("footer"));
+  expect((await footer.findByTestId("version")).textContent).toBe("v0.21.1 · 4a286e3");
+  expect(footer.getByRole("link", { name: "4a286e3" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness/commit/4a286e3c0ffee");
+  expect(footer.getByRole("link", { name: "GitHub" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness");
+  expect(footer.getByText("The Open Meta-Harness for Coding at Scale")).toBeTruthy();
+  // The footer comes after the page's content, inside the main area.
+  const main = screen.getByRole("main");
+  expect(main.lastElementChild).toBe(screen.getByTestId("footer"));
+  const header = within(screen.getByRole("banner"));
+  expect(header.queryByTestId("version")).toBeNull();
+  expect(header.queryByText(/v0\.21\.1/)).toBeNull();
+  expect(header.queryByRole("link", { name: "4a286e3" })).toBeNull();
+});
+
+test("the sign-in screen ends with the footer, without the version, which needs a session", async () => {
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    if (url === "/v1/me") return respond({ detail: "not signed in" }, 401);
+    if (url === "/auth/config") return respond({ google_client_id: "client.apps.googleusercontent.com" });
+    return respond({ detail: "not stubbed" }, 404);
+  });
+  vi.stubGlobal("google", {
+    accounts: { id: { initialize: () => {}, renderButton: () => {}, disableAutoSelect: () => {} } },
+  });
+
+  renderAt("/");
+
+  const footer = within(await screen.findByTestId("footer"));
+  expect(footer.getByText("Octofusion AI")).toBeTruthy();
+  expect(footer.getByText("The Open Meta-Harness for Coding at Scale")).toBeTruthy();
+  expect(footer.getByRole("link", { name: "GitHub" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness");
+  expect(screen.getByTestId("google-sign-in")).toBeTruthy();
+  // Signed out, the version is not asked for: the edge would refuse it.
+  expect(asked).not.toContain("/v1/version");
+  expect(footer.queryByTestId("version")).toBeNull();
 });
 
 function stubSignedIn() {

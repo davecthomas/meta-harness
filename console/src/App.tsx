@@ -6,6 +6,7 @@ import {
   Anchor,
   AppShell,
   Avatar,
+  Box,
   Burger,
   Button,
   Center,
@@ -35,6 +36,7 @@ import { loadTrackers } from "./features/trackers/refs";
 import { KillSwitchBanner, KillSwitchButton } from "./components/KillSwitch";
 import { TreeItem } from "./components/NavTree";
 import { NewVersion } from "./components/NewVersion";
+import { Footer } from "./components/Footer";
 import lockup from "./brand/octofusion-lockup.svg";
 import symbol from "./brand/octofusion-symbol.svg";
 
@@ -174,7 +176,6 @@ export function App() {
               <Image src={lockup} alt="Octofusion AI" h={32} w="auto" fit="contain" visibleFrom="sm" />
               <Image src={symbol} alt="Octofusion AI" h={32} w="auto" fit="contain" hiddenFrom="sm" />
             </Anchor>
-            {who && <VersionTag />}
           </Group>
           <Group gap="xs" wrap="nowrap">
             {who && <NewVersion />}
@@ -235,7 +236,9 @@ export function App() {
         </AppShell.Section>
       </AppShell.Navbar>
 
-      <AppShell.Main>
+      {/* A column, so the footer sits at the foot of a short page and after the content of a long one. */}
+      <AppShell.Main style={{ display: "flex", flexDirection: "column" }}>
+        <Box style={{ flex: 1 }}>
         {refused ? (
           <Alert color="red" title={notAllowed ? "This account may not open the console" : "The console could not be reached"} maw={640} data-testid="refused">
             <Text size="sm" mb="sm">{refused}</Text>
@@ -264,6 +267,8 @@ export function App() {
           </Routes>
           </AdminProvider>
         )}
+        </Box>
+        <Footer version={who !== null} />
       </AppShell.Main>
     </AppShell>
   );
@@ -321,29 +326,5 @@ function UserMenu({ who }: { who: string }) {
         <Menu.Item onClick={() => void signOut()}>Sign out</Menu.Item>
       </Menu.Dropdown>
     </Menu>
-  );
-}
-
-// The version and the deployed commit, small and dimmed after the title. The commit links to it on GitHub.
-function VersionTag() {
-  const [running, setRunning] = useState<{ version: string; commit: string | null } | null>(null);
-  useEffect(() => {
-    api.version().then(setRunning, () => setRunning(null));
-  }, []);
-  if (!running) return null;
-  return (
-    <Text size="xs" c="dimmed" visibleFrom="xs" data-testid="version">
-      v{running.version}
-      {running.commit && (
-        <>
-          {" · "}
-          <Tooltip label={running.commit}>
-            <Anchor href={`https://github.com/davecthomas/meta-harness/commit/${running.commit}`} target="_blank" c="dimmed" size="xs" ff="monospace">
-              {running.commit.slice(0, 7)}
-            </Anchor>
-          </Tooltip>
-        </>
-      )}
-    </Text>
   );
 }

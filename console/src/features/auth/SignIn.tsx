@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Loader, Paper, Stack, Text } from "@mantine/core";
 import { Splash } from "../../brand/Splash";
+import { Footer } from "../../components/Footer";
 import { api, ApiError } from "../../api";
 
 // Google Identity Services: Google's sign-in button, which hands this page an ID token for the console's
@@ -64,7 +65,8 @@ export function SignIn({ onSignedIn, expired = false }: { onSignedIn: (identity:
 
   return (
     // The splash names the product, above the card. The card is there from the first paint: the splash plays
-    // beside it and never holds sign-in back.
+    // beside it and never holds sign-in back. The footer comes after, without the version: that needs a session.
+    <>
     <Stack align="center" justify="center" gap="md" mih="70vh" py="lg">
       <Splash where="sign-in" />
       <Paper withBorder radius="lg" p="xl" w={380} maw="92vw">
@@ -87,6 +89,8 @@ export function SignIn({ onSignedIn, expired = false }: { onSignedIn: (identity:
         </Stack>
       </Paper>
     </Stack>
+    <Footer version={false} />
+    </>
   );
 }
 
