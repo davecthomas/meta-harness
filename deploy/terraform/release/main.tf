@@ -203,6 +203,12 @@ resource "google_firebase_hosting_version" "console" {
   provider = google-beta
   site_id  = local.platform.console_site
   config {
+    # The bare address first: "/:path*" needs a path to capture, and answered "/" with a 404.
+    redirects {
+      glob        = "/"
+      status_code = 301
+      location    = "https://${local.platform.console_home_site}.web.app/"
+    }
     redirects {
       glob        = "/:path*"
       status_code = 301
@@ -246,6 +252,12 @@ resource "google_firebase_hosting_version" "redirect" {
   provider = google-beta
   site_id  = each.value
   config {
+    # The bare address first: "/:path*" needs a path to capture, and answered "/" with a 404.
+    redirects {
+      glob        = "/"
+      status_code = 301
+      location    = "https://${local.platform.console_home_site}.web.app/"
+    }
     redirects {
       glob        = "/:path*"
       status_code = 301
