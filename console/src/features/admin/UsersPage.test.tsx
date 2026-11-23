@@ -64,7 +64,7 @@ test("an admin invites a user, sets a role, and ends access with a second click"
 
 test("an invitation is text to send by hand, and each change reads plainly in the audit", () => {
   expect(inviteText("pat@example.com", "dave@example.com", "https://console.example")).toBe(
-    "dave@example.com invited you to the meta-harness console. Sign in at https://console.example with your Google account, pat@example.com.",
+    "dave@example.com invited you to the Octofusion console. Sign in at https://console.example with your Google account, pat@example.com.",
   );
   const event = (event_type: string, payload: Record<string, unknown>) => ({ event_type, payload }) as Parameters<typeof describeAudit>[0];
   expect(describeAudit(event("user_invited", { email: "pat@example.com", role: "user" }))).toBe("Invited pat@example.com as a regular user");

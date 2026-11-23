@@ -49,7 +49,7 @@ test("each skill shows what it is for, where it came from and which profiles use
   show({ "pi-careful": { skills: ["no-ai-slop2"] } });
   const row = screen.getByTestId("skill-no-ai-slop2");
   expect(row.textContent).toContain("Evaluate text for AI slop patterns.");
-  expect(row.textContent).toContain("Ships with the meta-harness");
+  expect(row.textContent).toContain("Ships with Octofusion");
   expect(row.textContent).toContain("pi-careful");
   expect((within(row).getByRole("button", { name: "Remove skill no-ai-slop2" }) as HTMLButtonElement).disabled).toBe(true);
   expect(sourceLine(TIDY.source)).toBe("https://github.com/acme/skills / skills/tidy-notes at main (0123456)");
