@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
@@ -208,6 +208,38 @@ test("a row with a task opens the task, and its links open GitHub instead", asyn
   fireEvent.keyDown(screen.getByRole("link", { name: "Open task Fix the crash" }), { key: "Enter" });
 
   expect(await screen.findByText("task page")).toBeTruthy();
+});
+
+test("each issue a row waits on is a link to it in its tracker, and opens there, not the task", async () => {
+  setTrackers({ trackers: [{ scheme: "jira", title: "Jira", issue_url_prefix: "https://example.atlassian.net/browse/" }] } as unknown as Trackers);
+  const running = { ...goal("active"), started_at: "2026-11-08T20:41:00Z", issues: [
+    { ref: "jira:VL-12", repo: "o/r", task_id: "t-7", state: "open", depends_on: ["jira:VL-10", "github:o/r#4", "mh:i-0123456789ab"], refused_reason: null },
+  ] };
+  const task = { id: "t-7", external_ref: "jira:VL-12", repo: "o/r", task_type: "bug", title: "Fix the crash", status: "queued",
+    status_reason: null, cancel_requested: false, goal_id: "g-1", pr_url: null, acceptance_checks: [],
+    created_at: "2026-11-08T20:41:00Z", updated_at: "2026-11-08T20:42:00Z" };
+  vi.stubGlobal("fetch", (url: string) => (url.startsWith("/v1/tasks") ? respond({ tasks: [task], total: 1 }) : respond(running)));
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/g-1"]}>
+        <Routes>
+          <Route path="/goals/:goalId" element={<GoalPage />} />
+          <Route path="/tasks/:taskId" element={<p>task page</p>} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  expect(await screen.findByText("Fix the crash")).toBeTruthy();
+  fireEvent.click(screen.getByText("Table"));
+
+  const waits = within(await screen.findByTestId("waits-on"));
+  expect(waits.getByRole("link", { name: "VL-10" }).getAttribute("href")).toBe("https://example.atlassian.net/browse/VL-10");
+  expect(waits.getByRole("link", { name: "o/r#4" }).getAttribute("href")).toBe("https://github.com/o/r/issues/4");
+  // A task kept here has no page in any tracker: it stays text.
+  expect(waits.getByText("mh:i-0123456789ab").tagName).not.toBe("A");
+  fireEvent.click(waits.getByRole("link", { name: "VL-10" }));
+  expect(screen.queryByText("task page")).toBeNull();
+  setTrackers(null);
 });
 
 test("a goal shows its title over its description, and its title is edited in place", async () => {
