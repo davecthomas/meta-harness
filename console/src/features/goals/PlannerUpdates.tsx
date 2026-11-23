@@ -157,7 +157,7 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
           </Stack>
         </Group>
         {open && (
-          <Button size="xs" variant="subtle" style={{ flexShrink: 0 }} leftSection={<IconRefresh size={14} />} loading={asking} onClick={() => void ask()}>
+          <Button size="xs" variant="default" style={{ flexShrink: 0 }} leftSection={<IconRefresh size={14} />} loading={asking} onClick={() => void ask()}>
             Ask for an update
           </Button>
         )}

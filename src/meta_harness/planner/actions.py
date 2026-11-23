@@ -151,7 +151,60 @@ def for_goal(
         if task.get("waiting_on") or status in ("failed", "review_unresolved") or ready:
             wanted.append({"what": "", "ref": link["ref"], "action": "open_task"})
     found = actionable([*wanted, *held], goal, links, tasks, suggestion, plan)
-    return [{**need, "goal_id": goal["id"], "label": goal.get("label") or ""} for need in found[:most]]
+    # One decision on a plan at a time: while the planner's fix waits, approving would approve the plan
+    # without it. The fix is decided first, and the approval is offered on the version that follows.
+    if any(need["action"] == "accept_fix" for need in found):
+        found = [need for need in found if need["action"] != "approve_plan"]
+    by_ref = {link["ref"]: link for link in links}
+    return [
+        {
+            **need,
+            # What the button beside it is for, said from the records: a button is never shown bare.
+            "what": said(need, goal, by_ref.get(need["ref"]), by_id.get(need["task_id"]), plan),
+            "goal_id": goal["id"],
+            "label": goal.get("label") or "",
+        }
+        for need in found[:most]
+    ]
+
+
+def _short(text: object, most: int = 140) -> str:
+    """One line of a reason, cut at a word, without its last full stop."""
+    line = " ".join(str(text or "").split()).rstrip(".")
+    return line if len(line) <= most else line[:most].rsplit(" ", 1)[0] + "…"
+
+
+def said(need: dict, goal: dict, link: dict | None, task: dict | None, plan: dict | None) -> str:
+    """One sentence on what an action is about, from the goal's records, to read beside its button. The page
+    that lists goals shows it, so "the fix" or "the plan" is never a button with nothing to say which."""
+    name = (task or {}).get("name") or (task or {}).get("title") or (link or {}).get("title") or "A task"
+    action = need["action"]
+    if action == "accept_fix":
+        return "The planner drafted a fix for gaps in this goal's plan. Accepting it makes a new plan version."
+    if action == "approve_plan":
+        count = len((plan or {}).get("drafts") or [])
+        tasks_said = f", with {count} new task{'s' if count != 1 else ''}" if count else ""
+        return f"The plan is ready{tasks_said}. Nothing runs until you approve it."
+    if action == "fix_plan":
+        why = _short(next(iter((plan or {}).get("invalid") or []), ""))
+        return f"The plan can't be approved yet{': ' + why if why else ''}."
+    if action == "raise_budget":
+        return f"The goal has spent its budget of ${goal.get('max_usd')}, so its work has stopped."
+    if action == "merge":
+        return f"{name}: its pull request passed checks and review."
+    if action == "settle_review":
+        return f"{name}: the review found things no fix settled."
+    if action == "retry":
+        why = _short((task or {}).get("status_reason"))
+        return f"{name} failed{': ' + why if why else ''}."
+    if action == "split_or_run":
+        return f"{name} is held as too large for one pull request."
+    if action == "open_task" and (task or {}).get("waiting_on"):
+        return f"{name} waits on your answer: {_short(task['waiting_on'])}."
+    if action == "open_issue":
+        why = _short((link or {}).get("refused_reason") or (link or {}).get("held_reason"))
+        return f"{name} is not running{': ' + why if why else ''}."
+    return f"{name} needs a look."
 
 
 # What an answer may say it suggests, besides `ACTIONS`: looking at a goal's plan, at a goal, or at what a

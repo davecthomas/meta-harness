@@ -39,6 +39,7 @@ import { NewVersion } from "./components/NewVersion";
 import { Footer } from "./components/Footer";
 import lockup from "./brand/octofusion-lockup.svg";
 import symbol from "./brand/octofusion-symbol.svg";
+import { LOGO_HEIGHT } from "./brand/sizes";
 
 // The navigation's entries, from the features, in order; admin entries only for an admin. The Admin section's
 // entries go in one menu at the bottom of the pane.
@@ -70,7 +71,7 @@ function isActive(path: string, to: string): boolean {
 // The header's height, and the logo's in it. At 53 pixels the lockup's name has letters about 22 pixels tall,
 // which read; at the 32 it once had, on artwork with empty margins, they were 7.
 export const HEADER_HEIGHT = 72;
-export const LOGO_HEIGHT = 53;
+export { LOGO_HEIGHT };
 const MENU_HIDDEN = "mh:menu-hidden";
 
 // Whether the menu was hidden last time. Storage that cannot be read leaves it shown.

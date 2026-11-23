@@ -158,7 +158,7 @@ test("a fix the planner drafted is accepted or dismissed from the panel, with wh
 
   const [row] = await screen.findAllByTestId("planner-need");
   expect(row.textContent).toContain("Build api now waits for Build store");
-  fireEvent.click(within(row).getByRole("button", { name: "Accept the fix" }));
+  fireEvent.click(within(row).getByRole("button", { name: "Update the plan" }));
   const dialog = await screen.findByRole("dialog");
   expect(dialog.textContent).toContain("You still approve the plan before anything runs.");
   fireEvent.click(within(dialog).getByRole("button", { name: "Accept" }));
@@ -182,12 +182,12 @@ test("after a fix is accepted the panel says what is happening, in place of the 
   show([{ updates: [{ ...LATEST, needs_you: [fix] }], enabled: true, error: null }], true, slow, true);
 
   const [row] = await screen.findAllByTestId("planner-need");
-  fireEvent.click(within(row).getByRole("button", { name: "Accept the fix" }));
+  fireEvent.click(within(row).getByRole("button", { name: "Update the plan" }));
   fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Accept" }));
 
   const told = await screen.findByTestId("planner-acted");
   expect(told.textContent).toContain("Done. I'm writing what changed");
-  expect(screen.queryByRole("button", { name: "Accept the fix" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Update the plan" })).toBeNull();
   answer(new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
   await waitFor(() => expect(screen.queryByTestId("planner-acted")).toBeNull());
 });

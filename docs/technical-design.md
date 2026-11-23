@@ -3872,8 +3872,14 @@ goal's records as the report is read (`actions.for_goal`, three at most for a
 goal), with no model, and are not kept with the report: a button is true now
 however old the report's words are, and one for a step already taken is gone
 at the next read. The console draws them with the button the planner's panel
-on a goal's page uses (`needActions.tsx`). Merge, Retry, a review's choices
-and a held issue's Split or Run anyway act where they are read. What a goal's
+on a goal's page uses (`needActions.tsx`). Each sits on its own line beside
+one sentence, from the records, on what it is for (`actions.said`): "The
+plan is ready, with 16 new tasks", never a bare button. While the planner's
+fix to a plan waits, the row offers Update the plan, then Dismiss, and not
+the plan's approval: one decision on a plan at a time. The report's "Not
+moving" list is shown as Waiting, without a goal already under Needs you.
+Every secondary button is outlined, in both themes. Merge, Retry, a review's
+choices and a held issue's Split or Run anyway act where they are read. What a goal's
 page does in place opens that page with it asked for, `?do=approve`,
 `replan`, `budget` or `issues`: approving a plan stays behind the dialog that
 says what it creates. A goal named in two rows gets its buttons once, and a

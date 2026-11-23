@@ -52,9 +52,9 @@ def test_a_plan_is_offered_for_approval_only_when_it_can_be_approved():
     resizing = {**planning, "plan_task_id": "t-9"}
     assert _kinds(resizing, [], [], plan={"version": 1, "invalid": ["too large"]}) == []
     fix = {"fixes": ["a gap"], "changes": ["Adds: a task"]}
+    # While the planner's fix waits, the plan is not offered for approval: one decision at a time.
     assert [k for k, _ in _kinds(planning, [], [], plan={"version": 1, "invalid": []}, suggestion=fix)] == [
-        "accept_fix",
-        "approve_plan",
+        "accept_fix"
     ]
     assert _kinds({"status": "budget_exhausted"}, [], []) == [("raise_budget", "")]
 
@@ -78,3 +78,42 @@ def test_a_suggested_step_gets_the_goals_own_needs_of_its_kind_or_the_way_to_the
     assert kinds("open_plan", {**goal, "status": "planning"}, []) == [("open_goal", "plan")]
     assert kinds("next_steps", {**goal, "status": "met"}, []) == [("open_goal", "next_steps")]
     assert kinds("next_steps") == [("open_goal", "goal")], "a running goal has not left anything for later yet"
+
+
+def test_each_action_says_what_its_button_is_for_from_the_records():
+    """A row on the Overview carried "Accept the fix" with nothing to say what fix, or of what."""
+    planning = {"id": "g-1", "label": "mh:x", "status": "planning", "plan_task_id": None}
+    plan = {"version": 2, "invalid": [], "drafts": [{}, {}, {}]}
+    fix = {"fixes": ["a gap"], "changes": ["Adds: track compaction after release"]}
+
+    [accept] = actions.for_goal(planning, [], [], plan, fix)
+    [approve] = actions.for_goal(planning, [], [], plan)
+
+    assert (
+        accept["what"]
+        == "The planner drafted a fix for gaps in this goal's plan. Accepting it makes a new plan version."
+    )
+    assert accept["changes"] == ["Adds: track compaction after release"]
+    assert approve["what"] == "The plan is ready, with 3 new tasks. Nothing runs until you approve it."
+    [stuck] = actions.for_goal(
+        planning, [], [], {**plan, "invalid": ["the task api is too large for one pull request."]}
+    )
+    assert stuck["what"] == "The plan can't be approved yet: the task api is too large for one pull request."
+
+    links = [
+        {"ref": "mh:i-1", "state": "open", "task_id": "t-1", "title": "Export as CSV"},
+        {"ref": "mh:i-2", "state": "open", "task_id": "t-2", "title": "Import"},
+        {"ref": "mh:i-3", "state": "open", "task_id": None, "title": "Search", "held_reason": "sized large: 4 areas"},
+    ]
+    tasks = [
+        {"id": "t-1", "status": "ready", "pr_url": PR, "name": "CSV export"},
+        {"id": "t-2", "status": "failed", "pr_url": None, "title": "Import", "status_reason": "ran out of turns."},
+    ]
+    said = [a["what"] for a in actions.for_goal({"id": "g-1", "status": "active", "auto_merge": False}, links, tasks)]
+    assert said == [
+        "CSV export: its pull request passed checks and review.",
+        "Import failed: ran out of turns.",
+        "Search is held as too large for one pull request.",
+    ]
+    spent = actions.for_goal({"id": "g-1", "status": "budget_exhausted", "max_usd": "40.00"}, [], [])
+    assert spent[0]["what"] == "The goal has spent its budget of $40.00, so its work has stopped."

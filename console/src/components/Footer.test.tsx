@@ -32,7 +32,7 @@ test("the footer holds the lockup at a size its name reads, the tagline, the ver
   const image = within(footer).getByRole("img", { name: "Octofusion AI" });
   expect(image.getAttribute("src")).toContain("octofusion-lockup.svg");
   // The footer's logo was a 20-pixel symbol nobody could make out.
-  expect(FOOTER_LOGO_HEIGHT).toBeGreaterThanOrEqual(38);
+  expect(FOOTER_LOGO_HEIGHT).toBeGreaterThanOrEqual(53);
   expect(image.style.getPropertyValue("--image-height") || image.style.height).toContain(`${FOOTER_LOGO_HEIGHT / 16}rem`);
   expect(within(footer).getByText("The Open Meta-Harness for Coding at Scale")).toBeTruthy();
   expect(within(footer).getByRole("link", { name: "GitHub" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness");

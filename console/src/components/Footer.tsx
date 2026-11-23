@@ -5,10 +5,11 @@ import { Anchor, Flex, Image, Text, Tooltip } from "@mantine/core";
 import { api } from "../api";
 import { TAGLINE } from "../brand/Splash";
 import lockup from "../brand/octofusion-lockup.svg";
+import { LOGO_HEIGHT } from "../brand/sizes";
 
-// The lockup's height in the footer. Its name's letters are about two fifths of that: 16 pixels. At 32 it was still
-// too small to read. The footer once showed a 20-pixel symbol, an octopus of 16.
-export const FOOTER_LOGO_HEIGHT = 38;
+// The lockup's height in the footer: the header's, so the brand is one size wherever it is shown. At 32 and
+// then 38 its name was still too small to read in either theme. The footer once showed a 20-pixel symbol.
+export const FOOTER_LOGO_HEIGHT = LOGO_HEIGHT;
 export const REPOSITORY = "https://github.com/davecthomas/meta-harness";
 
 // The foot of every page, after its content: it scrolls with the page. One dimmed line on a wide screen; on a

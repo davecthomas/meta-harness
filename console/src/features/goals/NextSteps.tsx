@@ -143,7 +143,7 @@ export function NextSteps({ goalId, ended, planning = false, watch = "" }: { goa
             {continues}
           </Stack>
           {read?.enabled && (
-            <Button size="xs" variant="light" color="teal" leftSection={<IconBulb size={14} />} onClick={() => setAsked(true)}>
+            <Button size="xs" variant="default" color="teal" leftSection={<IconBulb size={14} />} onClick={() => setAsked(true)}>
               {written ? "Suggest again" : "Suggest next steps now"}
             </Button>
           )}
@@ -165,7 +165,7 @@ export function NextSteps({ goalId, ended, planning = false, watch = "" }: { goa
           </Stack>
         </Group>
         {!ended && !asked && read?.enabled && (
-          <Button size="xs" variant="light" color="teal" style={{ flexShrink: 0 }} leftSection={<IconBulb size={14} />} onClick={() => setAsked(true)}>
+          <Button size="xs" variant="default" color="teal" style={{ flexShrink: 0 }} leftSection={<IconBulb size={14} />} onClick={() => setAsked(true)}>
             Suggest again
           </Button>
         )}

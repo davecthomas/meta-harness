@@ -196,11 +196,11 @@ export function HeldActions(props: { goalId: string; label: string | null; issue
   return (
     <Stack gap={4} onClick={(e) => e.stopPropagation()}>
       <Group gap={6}>
-        <Button size="compact-xs" variant="light" leftSection={<IconPlayerPlay size={12} />} loading={running} onClick={() => void runAnyway()}>
+        <Button size="compact-xs" variant="default" leftSection={<IconPlayerPlay size={12} />} loading={running} onClick={() => void runAnyway()}>
           Run anyway
         </Button>
         {!split && (
-          <Button size="compact-xs" variant="light" color="orange" leftSection={<IconScissors size={12} />} onClick={() => setSplitting(true)}>
+          <Button size="compact-xs" variant="default" color="orange" leftSection={<IconScissors size={12} />} onClick={() => setSplitting(true)}>
             Split
           </Button>
         )}
