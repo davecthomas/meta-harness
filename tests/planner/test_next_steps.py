@@ -204,3 +204,22 @@ async def test_the_model_is_asked_with_a_schema_its_provider_takes_and_no_more_s
         sent[0]["response_schema"] == next_steps.SCHEMA
         and f"at most {next_steps.MAX_STEPS}" in sent[0]["system_prompt"]
     )
+
+
+def test_what_a_goal_left_for_later_is_where_next_steps_come_from_and_a_new_prompt_writes_them_again(
+    world, monkeypatch
+):
+    """The rebrand goal met its specification, which left the old name on GitHub and Jira and the new web
+    addresses for later. The first prompt read "out of scope" as nothing to suggest, and wrote none."""
+    assert "Those are next steps, not reasons to suggest nothing" in next_steps.PROMPT
+    assert "each of the plan's gaps" in next_steps.PROMPT and "out of scope" in next_steps.PROMPT
+    client, events, tasks, writer = world
+    goal = _feature(client)
+    _read(client, goal["id"])
+    assert len(writer.calls) == 1
+
+    monkeypatch.setattr(next_steps, "PROMPT", next_steps.PROMPT + " A change.")
+    client.get(f"/v1/goals/{goal['id']}/next-steps", headers=OPERATOR)
+    _read(client, goal["id"])
+
+    assert len(writer.calls) == 2 and writer.calls[1][0].endswith("A change.")
