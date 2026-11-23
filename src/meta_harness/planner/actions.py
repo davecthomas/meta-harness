@@ -171,7 +171,7 @@ def for_goal(
 
 
 def waits_on_operator(task: dict, auto_merge: bool = False) -> bool:
-    """Whether the task is the operator's to move. The Task Shepherd looks at every open task and records who
+    """Whether the task is the operator's to move. The Task Manager looks at every open task and records who
     has it (`standing`): its word decides, so a failed task it is about to retry, or one of a goal that is
     not running, is not the operator's whatever its status says. Only a task it has not looked at yet is
     judged by its status."""

@@ -376,7 +376,7 @@ async def test_a_pull_request_the_code_host_would_take_is_merged_once_per_commit
     assert len(tasks.driven) == 2
     refused = _standing(task["id"])
     assert (refused["owner"], refused["situation"]) == ("operator", "merge_refused")
-    assert "refused it when the Task Shepherd asked" in refused["reason"]
+    assert "refused it when the Task Manager asked" in refused["reason"]
 
 
 async def test_an_unresolved_task_behind_a_conflict_is_started_over_once_then_is_an_operators(world):

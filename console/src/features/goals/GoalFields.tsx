@@ -227,7 +227,7 @@ export function ParallelEdit({ goal, readOnly, save, system }: FieldProps & { sy
 // How much the meta-harness does for the goal's tasks without asking: one choice of three, each saying what
 // it does. Full is what auto-merge on used to be.
 export const AUTONOMY: Record<"ask" | "standard" | "full", { label: string; says: string }> = {
-  ask: { label: "Ask me first", says: "The Task Shepherd asks before it retries, sends back or merges a task." },
+  ask: { label: "Ask me first", says: "The Task Manager asks before it retries, sends back or merges a task." },
   standard: { label: "Take the clear steps", says: "It resolves conflicts and retries by itself. A reviewed pull request waits for you to merge." },
   full: { label: "Also merge", says: "It also merges a pull request once its review is clean." },
 };

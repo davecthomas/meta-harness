@@ -3,14 +3,14 @@
     GET /v1/needs    everything that waits on the operator now, most urgent first
 
 The console once worked this out in seven places, each by its own rules: the browser for the Overview's list
-and the header's inbox, the Task Shepherd for a goal's badge, two prompts' facts for the planner's words, and
+and the header's inbox, the Task Manager for a goal's badge, two prompts' facts for the planner's words, and
 more for the buttons. They disagreed on one page: the Overview's report said a plan waited for approval while
 the list under it said nothing needed anyone. So one module decides, from the records, and every page that
 says or counts what needs the operator reads its answer. A model may write the words around it. It does not
 decide whether something needs the operator, or what the button is.
 
 What decides: `actions.for_goal` for a goal (its plan, the planner's fix, its budget, its tasks and its held
-issues) and `actions.for_task` for a task of no goal. For a task, the Task Shepherd's record of who has it
+issues) and `actions.for_task` for a task of no goal. For a task, the Task Manager's record of who has it
 is the word (`actions.waits_on_operator`). Each item has what it asks (`asks`), what it is about (`title`),
 one sentence on why (`what`), the action a page offers for it, and the goal and task it concerns.
 """

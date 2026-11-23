@@ -98,7 +98,7 @@ judged against these rules.
    resolve a conflict or run a flaky check again. The same holds for a retry
    after a failure of the system and a retry with a stronger model. So does a
    merge of what passed the merge test.
-5. **A failing step is not repeated without limit.** The Task Shepherd sends a
+5. **A failing step is not repeated without limit.** The Task Manager sends a
    task back at most three times. Where it can it changes the step: a
    stronger model first, then a person.
 6. **A person is asked only for a decision or a permission that is theirs to
@@ -165,17 +165,17 @@ nothing. They are kept as rules so the same stop does not come back.
 
 ### Who speaks
 
-The Goal Planner and the Task Shepherd talk to a person. Each speaks in the
+The Goal Planner and the Task Manager talk to a person. Each speaks in the
 first person and in one place, with its own mark so a reader knows who is
 talking:
 
-| | Goal Planner | Task Shepherd |
+| | Goal Planner | Task Manager |
 |---|---|---|
 | Job | Decides what work a goal needs: its tasks, their size, split and order | Gets each task to merged: watches every open task, acts, and asks when it must |
 | Speaks on | A goal's page | A task's page |
 | Voice | Friendly and casual, with little technical detail | Brief and factual: what it saw, what it did, what it needs |
 
-The Task Shepherd is the name people see for the supervisor, a name that
+The Task Manager is the name people see for the supervisor, a name that
 read as "the boss". The code, its tables and its events keep `supervisor`.
 
 ### One charter for every model
@@ -2630,7 +2630,7 @@ its pull request's conflict with main". Once it finishes the reason is "its
 conflict with main is resolved, and its checks and a review come next". Both
 are behind the `conflict-status` patch. The task's timeline names the step
 "Resolving the merge conflict", read from the run's recorded prompt, where any
-other fix run is "Fix run". The Task Shepherd's panel shows the status reason
+other fix run is "Fix run". The Task Manager's panel shows the status reason
 for a task its workflow has.
 
 Every try is one record in the ledger (`supervisor/ledger.py`): a
@@ -2789,7 +2789,7 @@ credential.
 | POST | `/v1/goals/{id}/issues/run-anyway` | Planner | Make an issue the sweep held (`ref`) a task whatever its size and gaps. That happens at the next sweep, which an active goal runs at once. 404 for an issue the goal does not hold or removed. 409 for one not held or closed, or for a met or canceled goal. The route reads the issue from GitHub first and records it closed, and answers 502 when it cannot be read. Records `issue_released` | built |
 | POST | `/v1/goals/{id}/issues/split` | Planner | Create the issues a held one (`ref`) splits into, from `issues` (`title`, `body`; 1 to 20), in its repo with the goal's label. A goal with no label holds them by ref. Each body must have acceptance checks and a `Paths:` line (422 names each part and what it lacks), and gets a `Split from` line. The original gets a comment naming its parts and closes once they are done. A refusal by GitHub is a 502 naming the issues created before it, which are recorded as the split. The held issue stays held, saying what it was split into, across sweeps. One split already is refused (409), as is a closed one. One the goal removed is a 404, checked as for run-anyway. Records `issue_split` | built |
 | POST | `/v1/goals/{id}/issues/fix-draft`, `/fix-accept` | Planner | Fix with AI for an issue the goal holds (`ref`). fix-draft: one model call drafts each part its sizing marks missing or doubted, as `drafts` (`part`, `heading`, `doubted`, `reason`, `text`), with `kept` false. Nothing is written. Records `issue_fix_drafted`. When a draft was kept while the issue's task ran, and the task has ended, it answers that draft with `kept` true and no model call; `fresh: true` asks the model anyway. fix-accept: `parts` (`part`, `text`) are added to the issue's description as sections, the issue is labeled and sized again (`issue_sized`), and a kept draft is cleared. 409 while the issue's task has not ended: the issue is left as it is, and fix-accept keeps the edited parts for the next run. 409 also for a heading the description has already, or for a draft of an issue with nothing marked. 422 for an empty part. 502 when the issue cannot be read or the model call fails | built |
-| GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row. Each has its state (in review, waiting, blocked, left open, merged, closed), when it was opened and reached that state, its fix rounds and latest run. It is merged or closed as its `pull_request_merged` and `pull_request_closed` events say. Waiting and blocked mean waiting on the operator, so they follow who the Task Shepherd says has the task (its `standing`), as the console's Needs you does: a task the Shepherd or a planner has is in review, and one that is over with its pull request still open is left open. A task not looked at yet is judged by its status. The follow-up of a goal that is no longer swept reads the pull requests of its canceled, failed and parked tasks until each ends, so one closed or merged by hand stops being counted. The answer holds the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
+| GET | `/v1/activity` | Planner | Every pull request the meta-harness opened in the last `days` (91), oldest first, for the Overview's Pull requests row. Each has its state (in review, waiting, blocked, left open, merged, closed), when it was opened and reached that state, its fix rounds and latest run. It is merged or closed as its `pull_request_merged` and `pull_request_closed` events say. Waiting and blocked mean waiting on the operator, so they follow who the Task Manager says has the task (its `standing`), as the console's Needs you does: a task the Task Manager or a planner has is in review, and one that is over with its pull request still open is left open. A task not looked at yet is judged by its status. The follow-up of a goal that is no longer swept reads the pull requests of its canceled, failed and parked tasks until each ends, so one closed or merged by hand stops being counted. The answer holds the newest 500, with how many older ones are left out. No cost: that is `/v1/costs`'s. From the Task API and the tasks' events | built |
 | GET | `/v1/overview/report` | Planner | The planner's latest Overview report on all running goals (`planner/overview.py`), null before the first. With `since`, an ISO 8601 time when the operator last looked, it first writes a new one when the goals' facts changed, unless the last is under `overview.min_seconds` old or the day's reports reached `overview.max_usd`. The answer's `written` says whether it wrote one, `note` why an older one is shown, and `error` why a new one could not be written | built |
 | POST | `/v1/overview/ask` | Planner | Answers `question`, the operator's question about the work, from the facts the Overview report is written from and the events of any goal or issue it names (`planner/overview.py`). `since` is optional, as for the report. Returns the `answer`, `in_record` (false when the record does not hold the answer), the goals and issues it read, its `model` and `usd_cost`. 429 with when it resets once the day's reports and answers reached `overview.max_usd` | built |
 | GET | `/v1/inputs` | Planner | Queued issues across every registered repo, by repo and by goal, with each one's state | planned |
@@ -3867,7 +3867,7 @@ and tried again at the next pass.
 
 **What needs the operator is decided in one place.** Seven parts of the
 system once each worked it out by their own rules: the browser for the
-Overview's list and the header's inbox, the Task Shepherd for a goal's badge,
+Overview's list and the header's inbox, the Task Manager for a goal's badge,
 two prompts' facts for the planner's words, and more for the buttons. They
 disagreed on one page. The Overview's report said a plan waited for approval,
 with the button for it, while the list under it and its tile said nothing
@@ -3875,7 +3875,7 @@ needed anyone, and the goal's own badge called it held. Each had fresh data;
 the rules differed. So `planner/needs.py` decides, through `actions.for_goal`
 for a goal (its plan, the planner's fix, its budget, its tasks, its held
 issues) and `actions.for_task` for a task of no goal. For a task the Task
-Shepherd's record of who has it is the word (`actions.waits_on_operator`).
+Task Manager's record of who has it is the word (`actions.waits_on_operator`).
 `GET /v1/needs` serves the list, and everything else reads it. The console
 keeps one copy (`needsYou.ts`), read every 30 seconds and again after anything
 the operator does that can change it (`reloadNeeds`). The Overview's list and
@@ -4376,7 +4376,7 @@ section can be linked to (`/help#spend-limits`). An address from when each had
 a page of its own (`/help/<section>`) opens the page there. New goal is the
 entry just above Goals. The text is fixed, in `topics.ts`, and follows Goal
 seeking. It says only what the meta-harness does today. The supervisor is the
-Task Shepherd wherever the console or a status reason names it to a person.
+Task Manager wherever the console or a status reason names it to a person.
 The code, its routes and its events keep `supervisor`.
 
 The Costs page (`console/src/features/performance`, at `/costs`; it was named
@@ -4498,7 +4498,7 @@ board shows this, as do the Overview's Needs you section above its table and a
 failed task's own alert. Where two or more failed tasks can be retried, the
 Overview offers one Retry all N tasks above them. It asks for a confirm first,
 which says the most they can spend together. A task's page opens with the Task
-Shepherd's panel (`ShepherdPanel.tsx`). The panel shows its mark and name. Its
+Task Manager's panel (`ShepherdPanel.tsx`). The panel shows its mark and name. Its
 first line says who has the task: "I need you on this one" or "I have this
 one". Or it says that nothing is the reader's to do. Under that are the
 standing's reason and its account of the reviews. For a task that waits on a
@@ -4512,7 +4512,7 @@ have gone through and to reload before trying again (`afterFailedChange`,
 `console/src/client.ts`). The failure's own message is inside the panel, and offers no buttons
 of its own when the panel offers actions. A standing with none shows its ask
 as a sentence. The Goal Planner's panel on a goal's page shows its mark the
-same way, and Needs you on the Overview shows the Task Shepherd's. The marks
+same way, and Needs you on the Overview shows the Task Manager's. The marks
 are a target with an arrow, and a crook (`components/Voice.tsx`).
 
 For a failed task, where no actions are offered, a message about one task
@@ -5069,7 +5069,7 @@ Overview. A person's Settings page does not repeat the deployment's trackers.
 | Pool | Per-run sandboxes by image and state, warm targets versus actual, lease latency, health failures | |
 | Spend and performance | Cost by goal, modality, repo, model, harness profile and routing tier. Cost per merged pull request and time to merge, by modality. Dollar-hours per completed task over time. Cache hit rate | |
 | Configuration | The active routing tiers, harness profiles, modalities, task policy and repo registry, their version history, and the harness analyzer's pending proposals | Edit any value in place, staged and saved as one reviewed version; roll back a version, approve or reject a proposal |
-| Audit | Two lists, newest first. Changes by people: configuration, the kill switch and user access, with who made each. Decisions: what the meta-harness decided about its work, from its events. That is each task's routing (tier, method and first model), how each run ended on which model, each review's verdict, each merge, and what the Task Shepherd or the Goal Planner did to unstick a task. Each decision links to its task, and a kind can be picked alone | Pick a kind of decision |
+| Audit | Two lists, newest first. Changes by people: configuration, the kill switch and user access, with who made each. Decisions: what the meta-harness decided about its work, from its events. That is each task's routing (tier, method and first model), how each run ended on which model, each review's verdict, each merge, and what the Task Manager or the Goal Planner did to unstick a task. Each decision links to its task, and a kind can be picked alone | Pick a kind of decision |
 
 A task's runs, fallbacks and retries included, run one after another. The
 Tasks view lists them in order with the task's review and fix runs under them.

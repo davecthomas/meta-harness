@@ -7,7 +7,7 @@ import { usd } from "../../money";
 import { candidateName } from "../tasks/path";
 
 // Every decision Octofusion made about its work, newest first: which tier and model each task was routed
-// to, how each run ended, each review's verdict, each merge, and what the Task Shepherd or the Goal Planner did
+// to, how each run ended, each review's verdict, each merge, and what the Task Manager or the Goal Planner did
 // to unstick a task. The Audit page's other list holds the changes people made.
 
 export const DECISIONS: Record<string, string> = {
@@ -39,7 +39,7 @@ export function describeDecision(e: MhEvent): string {
     case "pull_request_merged":
       return `Merged ${String(p.pr_url ?? "").replace(/^https:\/\/github\.com\//, "")}`;
     case "remedy_applied":
-      return `${e.actor === "planner" ? "The Goal Planner" : "The Task Shepherd"}: ${p.did}${p.because ? `, because ${String(p.because).replace(/\.$/, "")}` : ""}`;
+      return `${e.actor === "planner" ? "The Goal Planner" : "The Task Manager"}: ${p.did}${p.because ? `, because ${String(p.because).replace(/\.$/, "")}` : ""}`;
     default:
       return e.event_type;
   }

@@ -65,8 +65,8 @@ resolves those waits itself where it can.
 9. **A spend limit you set is never passed.** Reaching one stops the work and
    asks you. A goal with no budget set has no limit.
 
-The **Goal Planner** and the **Task Shepherd** talk to you. The Goal Planner
-decides what work a goal needs. The Task Shepherd gets each task merged, and acts
+The **Goal Planner** and the **Task Manager** talk to you. The Goal Planner
+decides what work a goal needs. The Task Manager gets each task merged, and acts
 when a task stops. When it must ask you, it lists the actions you can take, best
 first.
 
@@ -136,7 +136,7 @@ the plan or raising the budget.
   pull request links back to them.
 - **Parallel work:** tasks that touch the same files take turns, and a task waits for the issues it
   depends on.
-- **The Task Shepherd:** checks every open task each minute and moves the ones
+- **The Task Manager:** checks every open task each minute and moves the ones
   no one else is moving.
 - **Merging:** goals that allow it merge on a clean review, and the rest wait for your approval.
 - **Costs:** model and cloud costs roll up by goal, task, repo, model and outcome.
@@ -206,7 +206,7 @@ flowchart TB
 | Event service | The ordered audit record of every decision and step | `src/meta_harness/events/` |
 | Task service | Accepts and tracks tasks; serves the Task API | `src/meta_harness/tasks/` |
 | Planner | Plans goals, turns issues into tasks, writes updates, follows pull requests to their end | `src/meta_harness/planner/` |
-| Supervisor (the Task Shepherd) | Finds stuck tasks and moves them | `src/meta_harness/supervisor/` |
+| Supervisor (the Task Manager) | Finds stuck tasks and moves them | `src/meta_harness/supervisor/` |
 | Scheduler | Admits tasks by priority, concurrency, file overlap, dependencies and budget; owns the kill switch | `src/meta_harness/scheduler/` |
 | Run service | Runs each task as a Temporal workflow: route, run, publish, review, fix, merge | `src/meta_harness/run_service/` |
 | Edge | Serves the console and the REST API behind sign-in, with role checks | `src/meta_harness/edge/` |

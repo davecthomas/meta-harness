@@ -85,9 +85,9 @@ test("a task the supervisor sends back for its merge shows where it was parked, 
   expect(parked).toMatchObject({ kind: "parked", column: 4, notes: ["Needs you: Merge the pull request."] });
   expect(Date.parse(parked.end!) - Date.parse(parked.start)).toBe(7260_000);
   const all = rows(path);
-  expect(all[1].steps.map((s) => s.title)).toEqual(["Sent back for its merge by the Task Shepherd", "Fix run", "Review unresolved"]);
+  expect(all[1].steps.map((s) => s.title)).toEqual(["Sent back for its merge by the Task Manager", "Fix run", "Review unresolved"]);
   expect(all[1].steps[0].detail).toBe("its pull request conflicts with its base");
-  expect(all[1].back).toBe("Sent back for its merge by the Task Shepherd");
+  expect(all[1].back).toBe("Sent back for its merge by the Task Manager");
   expect(path.at(-1)).toMatchObject({ title: "Review unresolved", now: true, end: null });
 });
 
@@ -225,7 +225,7 @@ test("a task made blocked waits as Blocked, is Queued once what it waited on is 
     ev("task_driven", { action: "retry", why: "the task failed on its own account" }, 4300),
     ev("remedy_applied", { remedy: "retry_stronger", try: 1, of: 1, did: "ran it again on the complex tier, with a stronger model", next: "if it fails again, I will ask you what to do" }, 4300),
   ]);
-  expect(path.filter((s) => s.column === 0).map((s) => s.title)).toEqual(["Blocked", "Queued", "Sent back for its retry by the Task Shepherd"]);
+  expect(path.filter((s) => s.column === 0).map((s) => s.title)).toEqual(["Blocked", "Queued", "Sent back for its retry by the Task Manager"]);
   expect(path.at(-1)!.notes).toContain("Unstuck: ran it again on the complex tier, with a stronger model (try 1 of 1). Next: if it fails again, I will ask you what to do");
 });
 

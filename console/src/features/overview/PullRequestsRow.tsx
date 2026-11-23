@@ -7,7 +7,7 @@ import type { PullRequestCell, PullRequests } from "./api";
 import { errorText, ReadFailed } from "../../components/ReadFailed";
 
 // What each pull request state means, and its color: the two that need an operator are the strongest. Blocked
-// and waiting count the pull requests whose tasks the Task Shepherd says the operator has, as Needs you does.
+// and waiting count the pull requests whose tasks the Task Manager says the operator has, as Needs you does.
 export const PR_STATES = [
   { key: "blocked", label: "Blocked", color: "var(--mantine-color-red-6)" },
   { key: "waiting", label: "Waiting", color: "var(--mantine-color-orange-5)" },

@@ -455,7 +455,7 @@ def test_a_pull_request_waits_on_the_operator_only_when_the_task_shepherd_says_t
     over = {"owner": "planner", "over": True}
     assert (state("ready", yours), state("failed", yours)) == ("waiting", "blocked")
     assert (state("ready", shepherds), state("failed", shepherds)) == ("in_review", "in_review"), (
-        "the Shepherd is merging or retrying it: nothing waits on a person"
+        "the Task Manager is merging or retrying it: nothing waits on a person"
     )
     assert (state("canceled", over), state("failed", over)) == ("left_open", "left_open"), (
         "its task is over and nobody is asked to act, which is what Needs you says too"
