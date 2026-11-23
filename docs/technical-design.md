@@ -2776,6 +2776,7 @@ credential.
 | POST | `/v1/goals/{id}/resume-budget` | Planner | Raise the budget of a goal that is over it or stopped by it, so it can go on. The raise is `add_usd`, or with no body a worked-out amount. That amount is what it has spent, plus what its issues not yet done are likely to cost, rounded up to a whole dollar. Makes a `budget_exhausted` goal `active` and tells its running tasks held for the goal's budget to look again at once. Answers `{goal, from, to, spent_usd, how, tasks_told}`. 409 for a goal with no budget, one that only warns, one within its budget, or an `add_usd` that leaves it stopped | built |
 | GET | `/v1/goals/{id}/spec` | Planner | The specification a goal was created with: `{name, text, created_by, created_at}`. A goal is created with one as `spec`: a document's `name` and `text` (Markdown or plain text, 200,000 characters at most), or the `ref` of an issue of the goal's tracker, such as a Jira epic, whose description is the specification. Such a goal needs no label and no issues. Its planning task reads the specification between markers, as data, and breaks all of it into tasks sized for one pull request. On approval the tasks are created under one epic: the issue named by `ref`, or one the planner creates for the goal (`create_epic` in the tracker's adapter; an Epic in Jira, by the project's `epic_type`), which carries no goal label. 404 for a goal with none (`planner/specs.py`) On GitHub each of the plan's issues is made a sub-issue of that epic as it is created; one GitHub refuses to place stands alone, and is still the task. The goal's page lists the work that needed no building, with where it already is: what the plan left out as done or as the same work as another issue, and each task that closed as already done (`console/src/features/goals/AlreadyDone.tsx`). | built |
 | GET | `/v1/goals/{id}/narrative`, `/v1/overview/narrative`, `/v1/overview/personas` | Planner | A narrative summary for one kind of reader, `?persona=`: of a goal's work, or one across the running goals' narratives. The readers are the planning configuration's `narratives.personas` (a label and who the reader is), listed by `/v1/overview/personas` for a page to offer. A narrative is written from the facts an update is written from, by one call to the model `narratives.model` names, through the writing pass. It is stored with the digest of those facts (`planner.narrative`) and served from storage until they change, so reading one spends nothing. A read never waits for the model: when a narrative must be written, the read answers at once with what is stored and `writing: true`, the write goes on in the background, and the page reads again until it is there. The Overview's is kept against the goals' digests. Past `narratives.max_usd` for the day, or when the call fails, a stored narrative is served marked `stale` with `why`; with none stored, 503 says what to do. Each one written is a `narrative_written` event with its cost. The goal's page and the Overview show it folded, with the reader picked from the list and a Copy button (`planner/narratives.py`) | built |
+| GET, POST | `/v1/goals/{id}/next-steps`, `/v1/goals/{id}/next-steps/{step}/goal` | Planner | A goal's next steps: up to three things the planner would do next if it carried the work on, each with a title, one sentence on why and the statement of a new goal. Read from storage and written again, in the background, only when the goal's facts change; `?write=false` reads what is stored and writes nothing. The POST starts a new goal from one step, with the first goal's repos, tracker and settings, planned first. A step already started answers with its goal and makes no other | built |
 | GET | `/v1/repos/{owner}/{name}/spec-files`, `/v1/repos/{owner}/{name}/spec-files/text?path=` | Planner | A specification picked from the goal's repo. The first lists a registered repo's Markdown and text files on its default branch, those under `docs/` first, leaving out folders of other people's code; `complete` is false when the repo holds more than are listed. The second reads one as `name` and `text`. Both go through the owner's GitHub App with `contents: read`. The New goal page offers this first, then an issue of the goal's tracker (the adapter's `choices("parent")`: Jira's epics, GitHub's open issues), then a file from the operator's machine. The page sends a picked file's text as the goal's `spec`, so the goal keeps what it was planned from (`planner/spec_files.py`) | built |
 | GET, POST | `/v1/goals/{id}/unstick` | Planner | Get the goal's stuck tasks moving in one action (`planner/unstick_api.py`). Each task that waits on a person takes the first move the supervisor ranked for it, through the Task API under the operator's name: merge, resolve the conflict and merge, retry, retry with a stronger model, or start over. A task held for its own spend limit is raised to what its next run needs, or ended when that is more than one task may spend. GET answers what it would do with nothing done, `{moves, left}`; POST does it and answers `{done, failed, left}`. A task is left, with why, when its first move is one only a person makes, or it waits on its goal's budget. Ending a task and merging one with its findings unfixed are never taken here. The goal's page offers it as one button, "Get N tasks moving", whose dialog names each task and its step first | built |
 | POST | `/v1/goals/{id}/sweep` | Planner | Sweep an active goal's label now, rather than at the next interval; a goal stopped by its budget may be swept too | built |
@@ -3862,6 +3863,32 @@ being written, and asks nothing: a panel once said two tasks were too big to
 approve, under an Approve button, after version 2 had split them. An approved plan's goal
 gets its update as soon as its first sweep has made its tasks. One that cannot be written is logged, said on the page,
 and tried again at the next pass.
+
+**A goal's next steps** (`planner/next_steps.py`). Many goals end nearly
+complete, with more that could be done, and some end short of what was meant:
+a rebrand met its specification and left logos too small to read. So the
+planner writes up to three next steps for a goal, as what it would do if it
+carried the work on. Each has a title, one sentence on why that names the
+record it comes from, and the statement of a new goal that would do it. They
+are written from the facts an update is written from, the goal's
+specification, and the goals already started from this one, so none is
+suggested twice. The planner reads its records and not the product, so what
+only a look at the result would show is not something it suggests. One call
+to the narratives' model writes them, its words go through the writing pass,
+and the cost counts against `narratives.max_usd`, which the two share. Each
+writing is a `next_steps_written` event. They are kept in
+`planner.goal_next_steps` with the digest of their facts and read from there
+until the facts change. The goal's page shows them in a panel under the
+planner's update: by itself once the goal is met or canceled, and on a running
+goal only when the operator asks, since each writing is a model call. Each
+step has one button, Start a goal from this. It creates a goal with the
+step's statement and the first goal's repos, tracker and settings, planned
+from its statement, so nothing runs before its plan is approved. A goal with
+no budget hands on $100: a goal made in one click is not left without a
+limit. The new goal records the goal and step it came from
+(`planner.goal.from_goal`, `from_step`): the step then shows its goal in
+place of the button, the new goal's page links back, and a second click makes
+no second goal.
 
 **The planner's Overview report** (`planner/overview.py`). One report covers
 every running goal (planning, active, stalled or stopped by its budget). It

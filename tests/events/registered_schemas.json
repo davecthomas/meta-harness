@@ -1940,5 +1940,33 @@
       "usd_cost"
     ],
     "additionalProperties": true
+  },
+  "next_steps_written v1": {
+    "type": "object",
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "digest": {
+        "type": "string"
+      },
+      "steps": {
+        "type": "integer"
+      },
+      "model": {
+        "type": "string"
+      },
+      "usd_cost": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "digest",
+      "steps",
+      "model",
+      "usd_cost"
+    ],
+    "additionalProperties": true
   }
 }

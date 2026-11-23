@@ -426,6 +426,21 @@ REGISTRY: list[EventType] = [
             ["scope", "persona", "digest", "model", "usd_cost"],
         ),
     ),
+    # The planner wrote a goal's next steps (planner/next_steps.py): how many, with the one model call's cost.
+    EventType(
+        "next_steps_written",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "digest": {"type": "string"},
+                "steps": {"type": "integer"},
+                "model": {"type": "string"},
+                "usd_cost": {"type": "string"},
+            },
+            ["goal_id", "digest", "steps", "model", "usd_cost"],
+        ),
+    ),
     # The planner answered the operator's question about the work from the Overview's facts (planner/overview.py):
     # the question, the answer, the one model call and what it cost.
     EventType(

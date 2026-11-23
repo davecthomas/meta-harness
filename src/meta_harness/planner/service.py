@@ -48,7 +48,7 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from meta_harness import outbound
 from meta_harness import charter
@@ -74,6 +74,7 @@ from meta_harness.planner import (
     merge_checks,
     naming,
     narratives,
+    next_steps,
     overview,
     plan_api,
     planning,
@@ -306,6 +307,8 @@ def create_app(
     overview_asker: overview.Asker | None = None,
     # What writes a narrative from its prompt: a test's stand-in for the model call.
     narrative_writer: Any = None,
+    # What writes a goal's next steps from its prompt: a test's stand-in for the model call.
+    next_steps_writer: Any = None,
     spec_drafter: Any = None,
 ) -> FastAPI:
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
@@ -1739,6 +1742,15 @@ def create_app(
     app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)
     overview.register(app, operator, app.state.overview)
     narratives.register(app, operator, load, narratives.Narratives(tasks, events, narrative_writer))
+
+    async def start_goal(fields: dict, who: str) -> dict:
+        """Creates a goal as POST /v1/goals does, for one started from a next step."""
+        try:
+            return await create(GoalIn(**fields), who)
+        except ValidationError as err:
+            raise HTTPException(status_code=422, detail=f"the new goal could not be made: {err}") from err
+
+    next_steps.register(app, operator, load, next_steps.NextSteps(tasks, events, next_steps_writer), start_goal)
 
     def admin(key: str = Depends(auth.bearer), role: str | None = Header(default=None, alias="X-MH-Role")) -> bool:
         """Whether the caller is an admin: an operator key is, and the edge names the role of who it acts for."""
