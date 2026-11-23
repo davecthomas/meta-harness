@@ -118,3 +118,36 @@ test("the octopus on the page is the one that moves, through every redraw of the
   expect(screen.getByTestId("splash").querySelector("svg")).toBe(drawing);
   expect(shape()).not.toBe(late);
 });
+
+test("the spacebar turns bubbles behind the octopus on and off, and leaves a field's typing alone", () => {
+  motion(false);
+  render(<Splash where="help" />);
+  const splash = screen.getByTestId("splash");
+  expect(screen.queryByTestId("splash-bubbles")).toBeNull();
+
+  act(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", key: " " }));
+  });
+  const bubbles = screen.getByTestId("splash-bubbles");
+  expect(splash.dataset.bubbles).toBe("true");
+  expect(bubbles.getAttribute("aria-hidden")).toBe("true");
+  // Several, small, of varying sizes, each rising at its own pace.
+  const sizes = [...bubbles.querySelectorAll<HTMLElement>(".splash-bubble")].map((b) => parseInt(b.style.width));
+  expect(sizes.length).toBeGreaterThanOrEqual(8);
+  expect(Math.max(...sizes)).toBeLessThanOrEqual(14);
+  expect(new Set(sizes).size).toBeGreaterThan(4);
+
+  // A space typed into a field is the field's.
+  const field = document.createElement("input");
+  document.body.appendChild(field);
+  act(() => {
+    field.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
+  });
+  expect(screen.getByTestId("splash-bubbles")).toBeTruthy();
+  field.remove();
+
+  act(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", key: " " }));
+  });
+  expect(screen.queryByTestId("splash-bubbles")).toBeNull();
+});

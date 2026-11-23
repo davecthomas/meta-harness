@@ -8,6 +8,23 @@ import "./splash.css";
 export const NAME = "Octofusion AI";
 export const TAGLINE = "The Open Meta-Harness for Coding at Scale";
 
+// The bubbles that rise from behind the octopus: where each starts across its width (percent), its size in
+// pixels, how long one rise takes and when it first starts, in seconds. Fixed, so the splash is the same on
+// every visit and in every test; the different speeds and delays keep them from rising in step.
+export const BUBBLES: { left: number; size: number; rise: number; delay: number }[] = [
+  { left: 18, size: 6, rise: 6.5, delay: 0.4 },
+  { left: 27, size: 11, rise: 8.2, delay: 2.1 },
+  { left: 36, size: 5, rise: 5.6, delay: 3.4 },
+  { left: 44, size: 8, rise: 7.4, delay: 1.2 },
+  { left: 53, size: 4, rise: 5.2, delay: 4.6 },
+  { left: 60, size: 13, rise: 9.0, delay: 0.9 },
+  { left: 68, size: 6, rise: 6.1, delay: 2.8 },
+  { left: 76, size: 9, rise: 7.8, delay: 5.2 },
+  { left: 83, size: 5, rise: 5.9, delay: 1.7 },
+  { left: 31, size: 7, rise: 7.0, delay: 6.0 },
+  { left: 64, size: 4, rise: 5.4, delay: 3.9 },
+];
+
 // When the name comes out of the arms, and when the tagline rolls out from under it, in seconds.
 const NAME_AT = FLAIL_SECONDS + 0.2;
 const TAGLINE_AT = FLAIL_SECONDS + 1.2;
@@ -22,6 +39,20 @@ function reducedMotion(): boolean {
 export function Splash({ where }: { where: string }) {
   const host = useRef<HTMLDivElement>(null);
   const [still] = useState(reducedMotion);
+  // Whether bubbles rise behind the octopus. Off, as the splash has always been; the spacebar turns them on and
+  // off, so the owner can see the two side by side before choosing. Not while typing in a field.
+  const [bubbles, setBubbles] = useState(false);
+  useEffect(() => {
+    const toggle = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || event.repeat) return;
+      const at = event.target as HTMLElement | null;
+      if (at && (at.isContentEditable || ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(at.tagName))) return;
+      event.preventDefault();
+      setBubbles((on) => !on);
+    };
+    window.addEventListener("keydown", toggle);
+    return () => window.removeEventListener("keydown", toggle);
+  }, []);
   // What has come into view: the octopus, the name, the tagline.
   const [shown, setShown] = useState(still ? 3 : 0);
 
@@ -69,9 +100,24 @@ export function Splash({ where }: { where: string }) {
   }, [still]);
 
   return (
-    <div className="splash" data-testid="splash" data-where={where} data-shown={shown} data-still={still || undefined}>
-      {/* Empty to React: the effect above draws the octopus into it and moves its paths. */}
-      <div ref={host} className={`splash-octopus${shown >= 1 ? " in" : ""}`} role="img" aria-label={`${NAME} octopus`} />
+    <div className="splash" data-testid="splash" data-where={where} data-shown={shown} data-still={still || undefined} data-bubbles={bubbles || undefined}>
+      <div className="splash-sea">
+        {/* Bubbles rise from behind the octopus, small and of several sizes. Decoration only, so no reader
+            is told of them, and with reduced motion there are none. */}
+        {!still && bubbles && (
+          <div className={`splash-bubbles${shown >= 1 ? " in" : ""}`} aria-hidden="true" data-testid="splash-bubbles">
+            {BUBBLES.map((b, i) => (
+              <span
+                key={i}
+                className="splash-bubble"
+                style={{ left: `${b.left}%`, width: b.size, height: b.size, animationDuration: `${b.rise}s`, animationDelay: `${b.delay}s` }}
+              />
+            ))}
+          </div>
+        )}
+        {/* Empty to React: the effect above draws the octopus into it and moves its paths. */}
+        <div ref={host} className={`splash-octopus${shown >= 1 ? " in" : ""}`} role="img" aria-label={`${NAME} octopus`} />
+      </div>
       <div className="splash-name">
         <img className={`splash-wordmark${shown >= 2 ? " in" : ""}`} src={wordmark} alt={NAME} />
       </div>
