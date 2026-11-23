@@ -26,7 +26,9 @@ and what is planned.
 - Those two checks are skipped on a pull request that touches only the
   console's source (`console/src`) or the docs, which cannot change what they
   prove (`deploy/checks_scope.py`). Every other pull request runs them, and so
-  does every push to main, which the deploy waits for.
+  does every push to main. The deploy waits for main's checks unless the
+  merged files are exactly the ones the pull request's checks passed on
+  (`deploy/tested_already.py`).
 
 ## Rules
 

@@ -8,6 +8,7 @@ environment file therefore never sets AI_MODELS_CONFIG; the worker unit does.
 
 import json
 import subprocess
+import importlib.util
 import re
 from pathlib import Path
 
@@ -507,3 +508,61 @@ def test_a_newer_merge_never_cancels_the_checks_the_deploy_of_an_earlier_one_wai
         workflow = (WORKFLOWS / name).read_text()
         assert "-${{ github.event_name == 'pull_request' && github.ref || github.sha }}" in workflow, name
         assert "-${{ github.ref }}\n" not in workflow, name
+
+
+def _tested_already():
+    spec = importlib.util.spec_from_file_location("tested_already", ROOT / "deploy" / "tested_already.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_deploy_skips_mains_checks_only_when_the_pull_request_passed_every_one_on_the_same_files():
+    """A deploy spent seven to eight of its eleven minutes waiting for checks that had just passed on the
+    pull request, on exactly the files it merged."""
+    module = _tested_already()
+
+    def runs(**ended: str) -> list[dict]:
+        names = {name: "success" for name in module.REQUIRED} | {k.replace("_", " "): v for k, v in ended.items()}
+        return [{"name": name, "status": "completed", "conclusion": how} for name, how in names.items() if how]
+
+    assert module.tested(runs())
+    # A console-only pull request skips the two slow checks (checks_scope.py): that counts as passed.
+    skipped = {name: "skipped" if name in module.MAY_SKIP else "success" for name in module.REQUIRED}
+    assert module.tested([{"name": n, "status": "completed", "conclusion": how} for n, how in skipped.items()])
+    # Any other check skipped, failed, canceled, still running or never run: the deploy waits.
+    assert not module.tested(runs(control_plane_tests="skipped"))
+    assert not module.tested(runs(console_web_app="failure"))
+    assert not module.tested(runs(harness_server_tests="cancelled"))
+    assert not module.tested(runs(harness_server_tests=""))
+    running = [*runs(), {"name": "control plane tests", "status": "in_progress", "conclusion": None}]
+    assert not module.tested(running)
+    assert not module.tested([]) and not module.tested(
+        runs() + [{"name": "console web app", "status": "completed", "conclusion": "failure"}]
+    )
+    # The checks it asks about are the ones the deploy waits for.
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    assert set(module.REQUIRED) == set(re.search(r'CHECKS: "(.+)"', deploy).group(1).split("|"))
+
+
+def test_the_deploy_trusts_the_pull_requests_checks_only_for_the_same_tree_and_else_waits_for_mains():
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    step = deploy.split("- name: see whether these files already passed their checks on the pull request")[1].split(
+        "- name:"
+    )[0]
+    assert '"$tree" != "$pr_tree"' in step and "git/commits/$SHA" in step and "git/commits/$head" in step
+    assert "python3 deploy/tested_already.py || echo wait" in step, "an answer that cannot be read is a wait"
+    assert "select(.merged_at != null)" in step, "only a pull request that merged counts"
+    wait = deploy.split("- name: wait for main's checks to pass at this commit")[1].split("- name:")[0]
+    assert "if: steps.tested.outputs.already != 'true'" in wait
+
+
+def test_a_deploy_a_newer_merge_replaced_stops_before_it_changes_anything():
+    """A goal that merged fourteen tasks in a row queued a deploy for each, one after another."""
+    deploy = (WORKFLOWS / "deploy.yml").read_text()
+    wait = deploy.split("- name: wait for main's checks to pass at this commit")[1].split("- name:")[0]
+    assert 'gh run cancel "${{ github.run_id }}"' in wait and "actions: write" in deploy
+    assert '"${{ github.event_name }}" = "push"' in wait, "a deploy run by hand is never stopped this way"
+    # It stops while it waits, before the step that first changes the deployment.
+    assert deploy.index("gh run cancel") < deploy.index("- name: apply the platform stack when it changed")
+    assert "cancel-in-progress: false" in deploy, "a deploy that has started changing things always finishes"

@@ -8,7 +8,8 @@ that a task's review then waits on.
 
 Reads the changed files' paths on stdin, one a line, and prints `skip` only when there is at least one and
 every one is the console's source or documentation. Anything else, an empty list included, prints `run`: when
-in doubt, the checks run. A push to main never asks: every check runs there, and the deploy waits for them.
+in doubt, the checks run. A push to main never asks: every check runs there. The deploy waits for them unless
+the merged files are exactly those the pull request's checks passed on (tested_already.py).
 """
 
 import sys

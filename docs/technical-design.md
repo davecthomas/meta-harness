@@ -5214,8 +5214,21 @@ Run from the image built from it.
 
 Every merge to main deploys itself, infrastructure included, so a task's
 merged pull request is all it takes to change either stack.
-`.github/workflows/deploy.yml` waits for main's five checks to pass at the
-merged commit, then:
+`.github/workflows/deploy.yml` first makes sure the merged files have passed
+main's five checks. For a pull request that was up to date with main, the
+merged commit holds exactly the files its last commit held, and the checks
+just passed on them. So the deploy compares the two commits' trees, and when
+they are the same and every check passed on the pull request
+(`deploy/tested_already.py`), it does not wait: running them again cost seven
+to eight minutes of each eleven-minute deploy and told it nothing. A slow
+check the pull request skipped counts only when `deploy/checks_scope.py` may
+skip it. Otherwise, as when main moved under the pull request, the deploy
+waits for main's checks at the merged commit. Main runs its checks at every
+commit either way. One deploy runs at a time, and a newer merge replaces any
+that waits behind it. A deploy still waiting for checks when a newer merge
+reaches main stops itself before it has changed anything, and the newer
+commit's deploy carries both. A deploy that has started changing things
+always finishes. Then:
 
 1. It plans the platform stack. No change applies nothing. A change is
    applied, unless `deploy/platform_guard.py` refuses the plan.
