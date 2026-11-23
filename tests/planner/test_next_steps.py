@@ -1,8 +1,10 @@
 """A goal's next steps: written from its records, kept until they change, and each one click from a new goal."""
 
+import json
 import time
 from decimal import Decimal
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -170,3 +172,35 @@ def test_steps_that_cannot_be_written_say_why_and_what_to_do(world, monkeypatch)
     over = client.get(f"/v1/goals/{goal['id']}/next-steps", headers=OPERATOR)
     assert over.status_code == 503 and "raise narratives.max_usd" in over.json()["detail"]
     assert writer.calls == []
+
+
+async def test_the_model_is_asked_with_a_schema_its_provider_takes_and_no_more_steps_are_kept(monkeypatch):
+    """The first deployed call was refused: "For 'array' type, property 'maxItems' is not supported"."""
+    monkeypatch.setenv("GATEWAY_URL", "http://gateway")
+    monkeypatch.setenv("GATEWAY_API_KEY", "gw-key")
+
+    def keys(node) -> set[str]:
+        if isinstance(node, dict):
+            return set(node) | {k for v in node.values() for k in keys(v)}
+        return {k for v in node for k in keys(v)} if isinstance(node, list) else set()
+
+    assert not keys(next_steps.SCHEMA) & {"maxItems", "minItems", "minLength", "maxLength", "pattern"}
+    sent = []
+    five = [{"title": f"Step {n}", "why": "A gap the plan listed.", "statement": f"Do thing {n}."} for n in range(5)]
+
+    def gateway(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"data": {"steps": five}, "finish_reason": "complete", "usd_cost": "0.002"})
+
+    async def as_written(text, where):
+        return text
+
+    monkeypatch.setattr(next_steps.outbound, "prepare", as_written)
+
+    steps, model, cost = await next_steps.write(next_steps.PROMPT, "--- facts ---", httpx.MockTransport(gateway))
+
+    assert [s["title"] for s in steps] == ["Step 0", "Step 1", "Step 2"] and cost == "0.002"
+    assert (
+        sent[0]["response_schema"] == next_steps.SCHEMA
+        and f"at most {next_steps.MAX_STEPS}" in sent[0]["system_prompt"]
+    )

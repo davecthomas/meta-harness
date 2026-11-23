@@ -913,8 +913,10 @@ SPEC = Supported(
             "assigned",
             "Take issues assigned to Octofusion",
             kind="switch",
-            help="On: the goal also takes every open issue of the project assigned, in Jira, to the account "
-            "Octofusion signs in as, whatever its labels. Assigning an issue there hands it over.",
+            help="Off: the goal works only on the issues that carry its label, the ones you pick, and the ones "
+            "its plan creates. On: it also works on every open issue in this project assigned, in Jira, to the "
+            "account Octofusion signs in as. Those need no label. Turn it on to hand work over from Jira by "
+            "assigning it. Leave it off for a goal planned from a description or a specification.",
         ),
         assignee_setting("the people the goal's project's issues can be assigned to"),
         Setting(
