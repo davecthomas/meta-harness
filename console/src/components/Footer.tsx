@@ -1,11 +1,14 @@
 // Created by the meta-harness in run t-fc9eba5bd270:run-1 on harness:pi-careful/claude:claude-opus-5-5.
 
 import { useEffect, useState } from "react";
-import { Anchor, Flex, Group, Image, Text, Tooltip } from "@mantine/core";
+import { Anchor, Flex, Image, Text, Tooltip } from "@mantine/core";
 import { api } from "../api";
 import { TAGLINE } from "../brand/Splash";
-import symbol from "../brand/octofusion-symbol.svg";
+import lockup from "../brand/octofusion-lockup.svg";
 
+// The lockup's height in the footer. Its name's letters are about two fifths of that: 14 pixels, the least
+// at which the outlined letters read. The footer once showed a 20-pixel symbol, an octopus of 16.
+export const FOOTER_LOGO_HEIGHT = 32;
 export const REPOSITORY = "https://github.com/davecthomas/meta-harness";
 
 // The foot of every page, after its content: it scrolls with the page. One dimmed line on a wide screen; on a
@@ -25,10 +28,7 @@ export function Footer({ version = true }: { version?: boolean }) {
       pb="xs"
       style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}
     >
-      <Group gap={6} wrap="nowrap">
-        <Image src={symbol} alt="" h={20} w={20} fit="contain" />
-        <Text size="xs" c="dimmed" fw={600}>Octofusion AI</Text>
-      </Group>
+      <Image src={lockup} alt="Octofusion AI" h={FOOTER_LOGO_HEIGHT} w="auto" fit="contain" data-testid="footer-logo" />
       <Text size="xs" c="dimmed" ta="center">{TAGLINE}</Text>
       {version && <VersionTag />}
       <Anchor href={REPOSITORY} target="_blank" rel="noreferrer" size="xs" c="dimmed">GitHub</Anchor>

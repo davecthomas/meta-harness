@@ -47,3 +47,19 @@ test("the lockup holds the symbol and the magenta wordmark", () => {
   expect(svg.querySelector("#octofusion-symbol-purple")?.getAttribute("fill")).toBe("#670fdc");
   expect(svg.querySelector("#octofusion-wordmark-purple")?.getAttribute("fill")).toBe("#c402f5");
 });
+
+// The source artwork leaves a tenth of its canvas empty on each side and draws the name at under a third of
+// the octopus's height. Shipped that way, a header-sized logo was an octopus of 25 pixels beside letters of 7.
+test("the shipped artwork fills its canvas, and the lockup's name is most of the octopus's height", () => {
+  const box = (text: string) => parse(text).getAttribute("viewBox")!.split(" ").map(Number);
+  const [x, y, width, height] = box(symbol);
+  expect(x).toBeGreaterThan(100);
+  expect(y).toBeGreaterThan(100);
+  expect(Math.max(width, height)).toBeLessThan(1250);
+  const [, , lockupWidth, lockupHeight] = box(lockup);
+  expect(lockupHeight).toBeLessThan(1200);
+  // The name is drawn larger than its source, so the lockup is over four times as wide as it is tall.
+  expect(lockupWidth / lockupHeight).toBeGreaterThan(4);
+  const scale = /scale\(([\d.]+)\)/.exec(parse(lockup).querySelector("#octofusion-lockup-wordmark")!.getAttribute("transform")!);
+  expect(Number(scale![1])).toBeGreaterThan(1.5);
+});

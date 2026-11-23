@@ -42,8 +42,8 @@ A test reads the console's strings and the strings the services send it, and fai
 
 A script in `console/` builds everything the console ships from `console/brand/source/`, and its output is committed. Running it again changes nothing. It makes:
 
-- the symbol, optimized for the web;
-- a horizontal lockup, the symbol with the magenta wordmark to its right;
+- the symbol, optimized for the web, with the empty canvas around the octopus cut away;
+- a horizontal lockup, the octopus with the magenta wordmark to its right at seven tenths of the octopus's height, on a canvas with no empty space around them;
 - the browser icons below.
 
 Each shipped SVG keeps a `title` that says "Octofusion AI". The symbol ships under 40 KB and the horizontal lockup under 120 KB, before compression.
@@ -62,13 +62,13 @@ Every icon shows the whole octopus, arms included. The head-only crop is not use
 
 ### The header
 
-The header shows the horizontal lockup where it shows the hexagon and "Meta-harness" today. It is 32 pixels tall and links to the Overview. On a phone-width screen the header shows the symbol alone. The image's accessible name is "Octofusion AI". One full-color file serves the light theme and the dark theme, since its cyan and near-black outlines hold on both.
+The header shows the horizontal lockup where it shows the hexagon and "Meta-harness" today. It is 44 pixels tall, in a header of 64, and links to the Overview. The name's letters are then about 18 pixels tall. The first build drew the lockup 32 pixels tall from artwork with a tenth of its canvas empty on each side and the name at its source size, under a third of the octopus's height: the letters came out 7 pixels tall and could not be read. On a phone-width screen the header shows the symbol alone. The image's accessible name is "Octofusion AI". One full-color file serves the light theme and the dark theme, since its cyan and near-black outlines hold on both.
 
 ### The footer
 
 The console has no footer today. Every page gets one at the end of its content, the sign-in screen included. It scrolls with the page and is never fixed to the window. It holds:
 
-- the symbol at 20 pixels and the name;
+- the lockup at 32 pixels, which names the product;
 - the tagline, as text;
 - the version and the deployed commit, which move here from the header;
 - a link to the project on GitHub.
