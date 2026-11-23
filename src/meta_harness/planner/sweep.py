@@ -510,7 +510,7 @@ async def _take_in_one(
     # this hold, since none makes the push go through.
     if workflow_files := [p for p in issue.paths if p.strip().removeprefix("./").startswith(WORKFLOW_FILES)]:
         reason = (
-            f"it changes {', '.join(workflow_files[:3])}, and the meta-harness may not change a workflow file: "
+            f"it changes {', '.join(workflow_files[:3])}, and Octofusion may not change a workflow file: "
             "the code host refuses that push from its App. A person makes this change. Remove the issue from "
             "the goal, or take the workflow file out of its Paths if the rest stands without it"
         )
