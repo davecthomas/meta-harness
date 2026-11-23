@@ -20,7 +20,7 @@ export const TOPICS: Topic[] = [
     title: "Why",
     blocks: [
       { kind: "text", text: "Most code changes spend much of their time waiting. A pull request conflicts with main and sits. A check fails for a reason unrelated to the change. A review asks for one more fix, then another. Each stop waits until a person notices it." },
-      { kind: "text", text: "The meta-harness clears most of those stops itself. You say what you want done, and it writes the code, reviews it, fixes what the review finds and merges it. It comes to you when a decision is yours to make." },
+      { kind: "text", text: "Octofusion AI clears most of those stops itself. You say what you want done, and it writes the code, reviews it, fixes what the review finds and merges it. It comes to you when a decision is yours to make." },
     ],
   },
   {
@@ -49,7 +49,7 @@ export const TOPICS: Topic[] = [
     blocks: [
       { kind: "text", text: "A goal is what you want done, in your words, with the repos it touches and, if you want one, a budget. \"Add CSV export to the reports page\" is a goal." },
       { kind: "text", text: "The Goal Planner turns a goal into tasks. Each task is one change, small enough to review, and each ends as a merged pull request. The goal is met when its tasks have merged." },
-      { kind: "text", text: "When a task stops, the meta-harness asks what would get the task merged." },
+      { kind: "text", text: "When a task stops, Octofusion asks what would get the task merged." },
     ],
   },
   {
@@ -91,7 +91,7 @@ export const TOPICS: Topic[] = [
     slug: "spend-limits",
     title: "Spend limits",
     blocks: [
-      { kind: "text", text: "You can set a spend limit on a task and a budget on a goal. Both are optional. The meta-harness never goes past one you set." },
+      { kind: "text", text: "You can set a spend limit on a task and a budget on a goal. Both are optional. Octofusion never goes past one you set." },
       { kind: "text", text: "A task that reaches its limit stops and asks you. You can raise the limit from its page and the task continues." },
     ],
   },
