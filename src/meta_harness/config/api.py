@@ -151,7 +151,7 @@ def router(
                 raise skills.SkillError("give a git url, or the skill's files")
             if name in skills.locked():
                 raise skills.SkillError(
-                    f"{name} is locked: it ships with the meta-harness and nothing imported may take its name. "
+                    f"{name} is locked: it ships with Octofusion and nothing imported may take its name. "
                     f"Give the imported skill another name, or change {name} with a pull request to "
                     f"config/skills/{name}/"
                 )
