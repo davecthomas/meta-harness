@@ -320,7 +320,7 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
     if redaction is not None and not isinstance(redaction, bool):
         reasons.append(
             "credential_redaction must be true or false. True replaces tokens, keys and passwords with "
-            "[redacted] in what the meta-harness posts. False, or left out, posts the text as it is"
+            "[redacted] in what Octofusion posts. False, or left out, posts the text as it is"
         )
     remedies = document.get("remedies")
     if remedies is not None:
