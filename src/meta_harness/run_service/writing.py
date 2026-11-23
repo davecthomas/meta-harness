@@ -260,7 +260,7 @@ def kept_parts(text: str) -> dict[str, Counter]:
         line.strip() for section in CHECKS_SECTION.findall(prose) for line in section.splitlines() if line.strip()
     ]
     return {
-        "line the meta-harness reads": Counter([line.strip() for line in READ_BACK.findall(prose)] + checks),
+        "line Octofusion reads": Counter([line.strip() for line in READ_BACK.findall(prose)] + checks),
         "code block": Counter(blocks),
         "code span": Counter(spans),
         "heading": Counter(line.rstrip() for line in HEADING.findall(outside)),
