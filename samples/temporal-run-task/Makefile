@@ -89,8 +89,9 @@ UV ?= $(or $(shell command -v uv),$(HOME)/.local/bin/uv)
 DEMO ?=
 CANCEL_AT ?= turn 1 starts
 RESTART_AT ?= turn 2 starts
-# What make image-checks runs in the sandbox: the checks a task on this repo runs.
-IMAGE_CHECKS ?= uv sync && uv run ruff check . && uv run pytest -q && cd console && npm ci --no-audit --no-fund && npm run typecheck && npm test
+# What make image-checks runs in the sandbox: the checks a task on this repo runs. `npm run brand` rebuilds
+# the console's brand artwork, and `git diff --exit-code -- .` fails if that changed a committed console file.
+IMAGE_CHECKS ?= uv sync && uv run ruff check . && uv run pytest -q && cd console && npm ci --no-audit --no-fund && npm run typecheck && npm test && npm run brand && git diff --exit-code -- .
 
 export GATEWAY FAKE_GATEWAY_HOST FAKE_TURN_SECONDS HARNESS_DIR HARNESS_IMAGE EGRESS_IMAGE EGRESS_ALLOW RUNS_DIR GATEWAY_DIR GATEWAY_PORT GATEWAY_URL GATEWAY_API_KEY \
   SANDBOX_GATEWAY_URL REDIS_PORT REDIS_URL TEMPORAL_PORT TEMPORAL_ADDRESS TEMPORAL_UI_URL TEMPORAL_DB \
