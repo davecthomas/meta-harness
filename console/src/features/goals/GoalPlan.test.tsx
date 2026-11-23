@@ -218,7 +218,7 @@ test("Replan takes a note and starts a new planning task", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Plan again" }));
   await waitFor(() => expect(asked.some((a) => a.url.endsWith("/replan"))).toBe(true));
   expect(asked.find((a) => a.url.endsWith("/replan"))!.body).toEqual({ note: "Smaller issues." });
-  expect(await screen.findByText("The planner is working on the plan")).toBeTruthy();
+  expect(await screen.findByText("The planner is writing version 2 of the plan")).toBeTruthy();
 });
 
 // --- A plan over the issues a goal already has ---------------------------------------------------------
@@ -423,4 +423,28 @@ test("a saved entry written as owner/repo#n shows no mark when that issue is lis
   const dialog = await screen.findByRole("dialog", { name: "Edit store" });
   await waitFor(() => expect(within(dialog).getByText(/one of the goal's open issues/)).toBeTruthy());
   expect(within(dialog).queryByText(/No longer a task or open issue/)).toBeNull();
+});
+
+test("until the plan is read, its section says so under its title, not a spinner alone", async () => {
+  vi.stubGlobal("fetch", () => new Promise(() => undefined));
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <GoalPlan goal={GOAL} onApproved={() => undefined} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  expect(screen.getByText("The plan")).toBeTruthy();
+  expect(screen.getByTestId("plan-reading").textContent).toBe("Reading the plan.");
+});
+
+test("while the planner writes a new version, the section says which, and keeps the version it has", async () => {
+  show(planned({}, { planning_task_id: "t-plan-2", planning_asked_at: "2026-11-10T10:05:00Z" } as Partial<Plan>));
+
+  const drafting = await screen.findByTestId("plan-drafting");
+  expect(within(drafting).getByText("The planner is writing version 2 of the plan")).toBeTruthy();
+  expect(drafting.textContent).toContain("Version 1 stays below until the new one is ready, which shows here by itself.");
+  expect(drafting.textContent).toMatch(/Planning for /);
+  expect(screen.getAllByText("Build store").length).toBeGreaterThan(0);
 });
