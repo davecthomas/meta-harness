@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Anchor, Button, Collapse, Group, List, Loader, Paper, Stack, Text, Timeline } from "@mantine/core";
-import { IconCheck, IconRefresh } from "@tabler/icons-react";
-import { ConfirmButton } from "../../components/ConfirmButton";
+import { Alert, Anchor, Button, Collapse, Group, Loader, Paper, Stack, Text, Timeline } from "@mantine/core";
+import { IconRefresh } from "@tabler/icons-react";
 import { VoiceMark } from "../../components/Voice";
 import { api } from "../../api";
-import { issueUrl } from "../trackers/refs";
 import { when } from "../../components/ui";
-import { HeldIssueAction, TaskNeedAction } from "./needActions";
+import { NeedButton, type Need } from "./needActions";
+
+// The need's shape, its actions and the events a need's button sends live with the buttons (needActions.tsx).
+// They are named here too, for the pages that have always read them from the planner's panel.
+export { APPROVE_PLAN, OPEN_SETTINGS, PLAN_CHANGED, REPLAN, SHOW_ISSUES } from "./needActions";
+export type { Need, NeedAction } from "./needActions";
 
 // One update the planner wrote for the goal: where it stands, what changed, what needs the operator and what
 // happens next.
@@ -42,101 +45,6 @@ export function since(iso: string, now = Date.now()): string {
   return when(iso);
 }
 
-// What resolves a need: the page's own button for it. Every need has one.
-export type NeedAction =
-  | "approve_plan" | "accept_fix" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue"
-  | "settle_review" | "retry" | "split_or_run" | "fix_plan";
-// changes: for accept_fix, what the planner's fix changes in the plan, a line each.
-export type Need = { what: string; ref: string; action?: NeedAction | ""; task_id?: string; pr_url?: string; changes?: string[] };
-
-// Events the goal page listens for, so a need is resolved where it is shown: the plan's approval, and the
-// goal's settings (its budget).
-export const APPROVE_PLAN = "mh:approve-plan";
-// Opens the plan's Plan again, for a plan that cannot be approved as it is.
-export const REPLAN = "mh:replan";
-export const OPEN_SETTINGS = "mh:open-settings";
-export const SHOW_ISSUES = "mh:show-issues";
-// Sent once the plan changed from here (a fix accepted or dismissed), so the plan's section reads it again.
-export const PLAN_CHANGED = "mh:plan-changed";
-
-// The button that resolves one need, or takes the operator to where they do.
-// planning: the goal is being planned, so a need written before needs had actions, about no issue, is the
-// plan's approval.
-function NeedAction({ need, planning, goalId, label, onDone }: { need: Need; planning: boolean; goalId: string; label: string | null; onDone: () => void }) {
-  const changed = () => {
-    window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
-    onDone();
-  };
-  const send = (name: string) => () => window.dispatchEvent(new CustomEvent(name));
-  const task = need.task_id ?? "";
-  const action = need.action || (planning && !need.ref ? "approve_plan" : "");
-  switch (action) {
-    case "approve_plan":
-      return <Button size="xs" color="teal" leftSection={<IconCheck size={14} />} onClick={send(APPROVE_PLAN)}>Approve the plan</Button>;
-    case "fix_plan":
-      return <Button size="xs" variant="light" leftSection={<IconRefresh size={14} />} onClick={send(REPLAN)}>Plan again</Button>;
-    case "accept_fix":
-      return (
-        <Group gap="xs" wrap="nowrap">
-          <ConfirmButton
-            size="xs"
-            color="teal"
-            label="Accept the fix"
-            title="Accept the planner's fix?"
-            says={
-              <Stack gap={4}>
-                <Text size="sm">It becomes the plan. You still approve the plan before anything runs.</Text>
-                <List size="sm" spacing={2}>{(need.changes ?? []).map((line) => <List.Item key={line}>{line}</List.Item>)}</List>
-              </Stack>
-            }
-            confirm="Accept"
-            leftSection={<IconCheck size={14} />}
-            onConfirm={async () => {
-              await api.acceptFix(goalId);
-              changed();
-            }}
-          />
-          <Button
-            size="xs"
-            variant="subtle"
-            color="gray"
-            onClick={async () => {
-              await api.dismissFix(goalId);
-              changed();
-            }}
-          >
-            Dismiss
-          </Button>
-        </Group>
-      );
-    // A need about a task gets the buttons its task's state calls for now (needActions.tsx): merge or try
-    // another fix on a review no fix settled, retry a failed task, and none once it is under way again.
-    case "merge":
-    case "review":
-    case "settle_review":
-    case "retry":
-    case "open_task":
-      return task ? <TaskNeedAction taskId={task} onDone={onDone} /> : <Button size="xs" variant="light" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>;
-    case "split_or_run": {
-      const issues = <Button size="xs" variant="light" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>;
-      return need.ref ? <HeldIssueAction goalId={goalId} issueRef={need.ref} label={label} fallback={issues} onDone={onDone} /> : issues;
-    }
-    case "raise_budget":
-      return <Button size="xs" variant="light" onClick={send(OPEN_SETTINGS)}>Raise the budget</Button>;
-    default: {
-      const url = need.ref ? issueUrl(need.ref) : null;
-      const open = url ? (
-        <Button size="xs" variant="light" component="a" href={url} target="_blank" rel="noreferrer">Open the issue</Button>
-      ) : (
-        <Button size="xs" variant="light" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>
-      );
-      // A need about an issue reads the issue as it is now, whatever the update said when it was written: a
-      // held one is split or run as one right here, one with a task gets its task's buttons.
-      return need.ref ? <HeldIssueAction goalId={goalId} issueRef={need.ref} label={label} fallback={open} onDone={onDone} /> : open;
-    }
-  }
-}
-
 // The actions that are about the plan itself.
 const PLAN_ACTIONS: string[] = ["approve_plan", "fix_plan", "accept_fix"];
 
@@ -154,7 +62,7 @@ function NeedsYou({ needs, planning, goalId, label, onDone }: { needs: Need[]; p
                 <Text size="sm" c="dimmed">{(need.changes ?? []).join(" · ")}</Text>
               )}
             </Stack>
-            <NeedAction need={need} planning={planning} goalId={goalId} label={label} onDone={onDone} />
+            <NeedButton need={need} planning={planning} goalId={goalId} label={label} onDone={onDone} />
           </Group>
         ))}
       </Stack>
