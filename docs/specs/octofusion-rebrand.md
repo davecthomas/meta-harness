@@ -12,7 +12,8 @@ The brand's source artwork is in `console/brand/source/`. It was checked before 
 
 - Every file is a path-based SVG with no embedded image. Colors are flat fills: purple `#670fdc`, cyan `#08e7f5`, near-black `#0a0a14`, coral `#fb5b52`, and magenta `#c402f5` in the wordmark.
 - `octofusion-symbol.svg` is the whole octopus on a square canvas of 1418 units, in three color layers.
-- `octofusion-wordmark.svg` is the name, "OCTOFUSION AI", with its magenta fill. The lockup files that came with the artwork fill the name with the octopus's purple, which does not match the approved artwork, so they are not used. A lockup is built from the symbol and this wordmark.
+- `octofusion-wordmark.svg` is the name, "OCTOFUSION AI". It is the second wordmark, from 2026-11-23: a violet fill, one near-black keyline, modest tracking and a plain coral "AI". The first had a heavier letter and a cyan outline around a dark one, which muddied below about 60 pixels of height: the borders ran together and the letters could not be told apart. The octopus is unchanged. A lockup is built from the symbol and this wordmark.
+- `octofusion-full-lockup.svg` is the stacked lockup, with the tagline drawn as paths. The splash's tagline is cut from it.
 - `octofusion-symbol-black.svg`, `octofusion-symbol-white.svg` and the two wordmark files like them are single-color silhouettes.
 - Each color file groups its paths by color, under ids such as `octofusion-symbol-purple`. No file has a text element or a font.
 
@@ -43,7 +44,8 @@ A test reads the console's strings and the strings the services send it, and fai
 A script in `console/` builds everything the console ships from `console/brand/source/`, and its output is committed. Running it again changes nothing. It makes:
 
 - the symbol, optimized for the web, with the empty canvas around the octopus cut away;
-- a horizontal lockup, the octopus with the magenta wordmark to its right at seven tenths of the octopus's height, on a canvas with no empty space around them;
+- a horizontal lockup, the octopus with the wordmark to its right at 55 percent of the octopus's height, the proportion of the designer's own horizontal lockup, on a canvas with no empty space around them. The first wordmark needed seven tenths to be read;
+- the splash's name and its tagline, each a file of its own on a canvas it fills, so the splash brings them in one after the other;
 - the browser icons below.
 
 Each shipped SVG keeps a `title` that says "Octofusion AI". The symbol ships under 40 KB and the horizontal lockup under 120 KB, before compression.

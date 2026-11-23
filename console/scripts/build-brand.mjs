@@ -15,7 +15,8 @@
 // Path precision 2 and the size limits come from docs/specs/octofusion-brand-sizes.md. Artwork is
 // never redrawn or recolored: the optimizer only rewrites numbers and merges same-color paths, and the
 // lockup only places and scales the two drawings.
-// octofusion-full-lockup.svg is not used, since it fills the name with the octopus's purple.
+// It also writes the splash's own two files: src/brand/wordmark.svg, the name alone, and
+// src/brand/tagline.svg, the tagline cut from octofusion-full-lockup.svg, which draws it as paths.
 
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -36,11 +37,17 @@ const PRECISION = 2;
 const SYMBOL_LIMIT = 40_000;
 const LOCKUP_LIMIT = 120_000;
 const BRAND_FILLS = ["#670fdc", "#08e7f5", "#0a0a14", "#fb5b52", "#c402f5"];
+// The tagline's own cyan, in the stacked lockup it is cut from.
+const TAGLINE_FILLS = [...BRAND_FILLS, "#20d9ff"];
+const TAGLINE = "The Open Meta-Harness for Coding at Scale";
+// The splash's name and tagline, each a file of its own so the splash can bring them in one after the other.
+const SPLASH_LIMIT = 60_000;
 // Space between the symbol and the wordmark, in the symbol's units.
 const GAP = 110;
-// How tall the wordmark is drawn in the lockup, as a share of the octopus's height. At its own scale the
-// wordmark was under a third of it: in a 32-pixel header its letters were 7 pixels tall and could not be read.
-const WORDMARK_SHARE = 0.7;
+// How tall the wordmark is drawn in the lockup, as a share of the octopus's height. The designer's own
+// horizontal lockup draws it at about this. The first wordmark, with its heavy outline, needed seven tenths
+// to be read at a header's size; the cleaner one reads at this, and at seven tenths it crowded the octopus.
+const WORDMARK_SHARE = 0.55;
 // Empty space kept around a shipped drawing, in its units, so an outline at the edge is not clipped.
 const PAD = 8;
 // The near-black behind the icons that cannot be transparent, and the browser's theme color.
@@ -160,13 +167,39 @@ function lockup(symbol, wordmark) {
   );
 }
 
-/** Refuses a file that lost its title, passed its limit or holds a fill outside the brand's colors. */
-function check(name, svg, limit) {
+/**
+ * One drawing as a file of its own, on a canvas with no empty space around it: the splash's name, and its
+ * tagline. `inner` is the drawing in the units of `viewBox`, the source file's own.
+ */
+function alone(inner, viewBox, title) {
+  const whole = (box) =>
+    `<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${title}"` +
+    ` shape-rendering="geometricPrecision" viewBox="${box}"><title>${title}</title>${inner}</svg>\n`;
+  const box = drawnBox(whole(viewBox));
+  return whole(`${round(box.x - PAD)} ${round(box.y - PAD)} ${round(box.width + 2 * PAD)} ${round(box.height + 2 * PAD)}`);
+}
+
+/** A source file's viewBox, as written. */
+function viewBoxOf(svg) {
+  const match = /<svg\b[^>]*\bviewBox="([^"]+)"/.exec(svg);
+  if (!match) throw new Error("a brand file has no viewBox");
+  return match[1];
+}
+
+/** The drawing of a source file from one of its top-level groups to its end: the stacked lockup's tagline. */
+function fromGroup(svg, id) {
+  const at = svg.indexOf(`<g id="${id}"`);
+  if (at < 0) throw new Error(`the brand file has no group "${id}": the artwork's layout changed`);
+  return svg.slice(at, svg.lastIndexOf("</svg>"));
+}
+
+/** Refuses a file that lost its title, passed its limit or holds a fill outside the colors it may have. */
+function check(name, svg, limit, title = TITLE, allowed = BRAND_FILLS) {
   const bytes = Buffer.byteLength(svg, "utf8");
   if (bytes >= limit) throw new Error(`${name} is ${bytes} bytes, over its limit of ${limit}`);
-  if (!svg.includes(`>${TITLE}</title>`)) throw new Error(`${name} lost its title "${TITLE}"`);
-  const fills = [...svg.matchAll(/\bfill[=:]"?\s*([^";\s>]+)/g)].map((m) => m[1].toLowerCase());
-  const stray = fills.filter((fill) => !BRAND_FILLS.includes(fill));
+  if (!svg.includes(`>${title}</title>`)) throw new Error(`${name} lost its title "${title}"`);
+  const fills = [...svg.matchAll(/\bfill[=:]"?\s*([^";\s>]+)/g)].map((m) => m[1].toLowerCase()).filter((f) => f !== "none");
+  const stray = fills.filter((fill) => !allowed.includes(fill));
   if (stray.length) throw new Error(`${name} has fills outside the brand's colors: ${[...new Set(stray)]}`);
   return bytes;
 }
@@ -317,15 +350,21 @@ async function main() {
   await startRenderer();
   const symbol = await optimizeSource("octofusion-symbol.svg");
   const wordmark = await optimizeSource("octofusion-wordmark.svg");
+  // The splash's two: the name it brings out of the octopus's arms, and the tagline that rolls out under it,
+  // cut from the stacked lockup, which draws the tagline as paths.
+  const stacked = await optimizeSource("octofusion-full-lockup.svg");
+  const tagline = alone(fromGroup(stacked, "tagline-divider"), viewBoxOf(stacked), TAGLINE);
   const outputs = [
     ["octofusion-symbol.svg", tightSymbol(symbol), SYMBOL_LIMIT],
     ["octofusion-lockup.svg", lockup(symbol, wordmark), LOCKUP_LIMIT],
+    ["wordmark.svg", alone(drawing(wordmark), viewBoxOf(wordmark), TITLE), SPLASH_LIMIT],
+    ["tagline.svg", tagline, SPLASH_LIMIT, TAGLINE, TAGLINE_FILLS],
   ];
-  for (const [name, built, max] of outputs) {
+  for (const [name, built, max, title, allowed] of outputs) {
     const path = join(outDir, name);
     const old = await readFile(path, "utf8").catch(() => null);
     const svg = leadingComments(old) + built;
-    const bytes = check(name, svg, max);
+    const bytes = check(name, svg, max, title, allowed);
     const state = await writeIfChanged(path, svg, old);
     console.log(`${relative(consoleDir, path)}: ${bytes} bytes, ${state}`);
   }
