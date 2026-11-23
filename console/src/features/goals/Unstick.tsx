@@ -8,7 +8,7 @@ import type { UnstickPlan, UnstickResult } from "./api";
 
 const many = (n: number, one: string, more: string) => `${n} ${n === 1 ? one : more}`;
 
-// One button for a goal with several tasks waiting on a person: each takes the step the Task Shepherd
+// One button for a goal with several tasks waiting on a person: each takes the step the Task Manager
 // recommends for it (the planner's POST /v1/goals/{id}/unstick), so nobody presses Retry on each in turn. The
 // dialog names every task and its step before anything runs, and the ones only a person can move. Shown only
 // when at least one task has a step to take.

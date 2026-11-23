@@ -13,7 +13,7 @@ import { theme } from "../theme";
 afterEach(() => vi.unstubAllGlobals());
 
 test.each([
-  ["the Task Shepherd's state", <SupervisorHealth key="s" />, /Could not read how the Task Shepherd is doing, so the list below may be missing something: the planner did not answer/],
+  ["the Task Manager's state", <SupervisorHealth key="s" />, /Could not read how the Task Manager is doing, so the list below may be missing something: the planner did not answer/],
   ["the pull requests", <PullRequestsRow key="p" />, /Could not read the pull requests: the planner did not answer\. Reload the page to try again\./],
   ["today's spend", <TodaySpend key="t" />, /Could not read today's spend: the planner did not answer/],
 ])("a failed read of %s is said, with what to do", async (_, section, said) => {

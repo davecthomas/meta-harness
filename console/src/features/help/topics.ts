@@ -56,12 +56,12 @@ export const TOPICS: Topic[] = [
     slug: "who-is-talking",
     title: "Who is talking",
     blocks: [
-      { kind: "text", text: "The Goal Planner and the Task Shepherd talk to you. Each has its own mark and color, shown beside what it says." },
+      { kind: "text", text: "The Goal Planner and the Task Manager talk to you. Each has its own mark and color, shown beside what it says." },
       {
         kind: "terms",
         items: [
           ["The Goal Planner", "decides what tasks a goal needs and the order they run in. It speaks on a goal's page."],
-          ["The Task Shepherd", "gets each task merged. It acts when a task stops, and asks you when it must. It speaks on a task's page."],
+          ["The Task Manager", "gets each task merged. It acts when a task stops, and asks you when it must. It speaks on a task's page."],
         ],
       },
     ],
@@ -70,7 +70,7 @@ export const TOPICS: Topic[] = [
     slug: "stuck-tasks",
     title: "How a stuck task gets moving",
     blocks: [
-      { kind: "text", text: "For a task that has stopped, the Task Shepherd takes the first action in this list that applies:" },
+      { kind: "text", text: "For a task that has stopped, the Task Manager takes the first action in this list that applies:" },
       {
         kind: "steps",
         items: [

@@ -23,7 +23,7 @@ export function TaskFailure({ task, status, events, onChanged }: { task: Task; s
   const title = TITLES[status];
   if (!title) return null;
   const runs = unfinished(events);
-  // The Task Shepherd's panel, which this sits in, offers the moves when the supervisor ranked any: the ways
+  // The Task Manager's panel, which this sits in, offers the moves when the supervisor ranked any: the ways
   // out are then said once, there.
   const offered = task.standing?.owner === "operator" && (task.standing.moves ?? []).length > 0;
   const found = diagnose({ status, reason: task.status_reason });

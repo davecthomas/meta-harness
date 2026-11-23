@@ -230,7 +230,7 @@ export interface GoalProposal {
 }
 
 // The goals feature's calls; src/api.ts spreads them into `api`.
-// One of a goal's stuck tasks, and the step the Task Shepherd recommends for it (planner/unstick_api.py).
+// One of a goal's stuck tasks, and the step the Task Manager recommends for it (planner/unstick_api.py).
 export interface UnstickMove { task_id: string; name: string; step: string; does: string }
 // A stuck task the action leaves for a person, or could not move, with why.
 export interface UnstickLeft { task_id: string; name: string; why: string }

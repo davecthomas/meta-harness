@@ -64,7 +64,7 @@ def test_a_tasks_place_in_the_list_is_the_task_shepherds_word_not_its_status():
 
     assert actions.waits_on_operator(failed), "not looked at yet: judged by its status"
     assert actions.waits_on_operator({**failed, "standing": mine})
-    assert not actions.waits_on_operator({**failed, "standing": its}), "the Shepherd is about to retry it"
+    assert not actions.waits_on_operator({**failed, "standing": its}), "the Task Manager is about to retry it"
     assert not actions.waits_on_operator({**failed, "standing": {**mine, "situation": "goal_not_active"}})
     assert actions.waits_on_operator({"id": "t-2", "status": "running", "standing": mine}), "stuck, and the operator's"
     assert not actions.waits_on_operator({"id": "t-3", "status": "ready", "pr_url": PR}, auto_merge=True)

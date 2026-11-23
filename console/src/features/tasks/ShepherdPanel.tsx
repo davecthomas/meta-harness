@@ -10,13 +10,13 @@ import { when } from "../../components/ui";
 import { usd } from "../../money";
 import { retryLimit } from "./Remedies";
 
-// The Task Shepherd, at the head of a task's page: who has the task, what the Shepherd saw, and for a task
+// The Task Manager, at the head of a task's page: who has the task, what the Task Manager saw, and for a task
 // that waits on a person, the moves it offers as buttons. The moves and their order are the supervisor's
 // (supervisor/moves.py), worked out from how the pull request really stands. The first is the recommended one.
 
 const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}${/[.!?]$/.test(text) ? "" : "."}`;
 
-// What the Shepherd says first, by who has the task.
+// What the Task Manager says first, by who has the task.
 const OPENING: Record<TaskStanding["owner"], string> = {
   operator: "I need you on this one.",
   supervisor: "I have this one.",
@@ -165,7 +165,7 @@ function Moves({ task, moves, onChanged }: { task: Task; moves: string[]; onChan
 export function ShepherdPanel({ task, status, children, onChanged }: {
   task: Task;
   status: string;
-  // What the task's failure says in full, shown under the Shepherd's words.
+  // What the task's failure says in full, shown under the Task Manager's words.
   children?: ReactNode;
   onChanged?: () => void;
 }) {

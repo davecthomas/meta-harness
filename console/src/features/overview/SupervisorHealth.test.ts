@@ -9,10 +9,10 @@ test("a supervisor that is keeping up has no trouble to say", () => {
 
 test("a supervisor that is off, late, failing or has not run says so", () => {
   expect(supervisorTrouble({ every_seconds: 0, last_pass: null }, now)[0]).toContain("turned off");
-  expect(supervisorTrouble({ every_seconds: 60, last_pass: null }, now)).toEqual(["The Task Shepherd has not finished a pass yet."]);
+  expect(supervisorTrouble({ every_seconds: 60, last_pass: null }, now)).toEqual(["The Task Manager has not finished a pass yet."]);
   expect(supervisorTrouble({ every_seconds: 60, last_pass: { at: "2026-11-12T09:40:00Z" } }, now)).toEqual([
-    "The Task Shepherd last finished a pass 20 minutes ago. It should run every 60 seconds.",
+    "The Task Manager last finished a pass 20 minutes ago. It should run every 60 seconds.",
   ]);
   const failing = supervisorTrouble({ every_seconds: 60, last_pass: { at: "2026-11-12T09:59:30Z", error: "TaskApiError: 503", errors: ["t-1: KeyError"] } }, now);
-  expect(failing).toEqual(["The Task Shepherd's last pass failed: TaskApiError: 503", "It could not look at a task: t-1: KeyError"]);
+  expect(failing).toEqual(["The Task Manager's last pass failed: TaskApiError: 503", "It could not look at a task: t-1: KeyError"]);
 });

@@ -41,11 +41,11 @@ function show(over: Partial<TaskStanding>, status = "review_unresolved", failure
   return sent;
 }
 
-test("a task that waits on a person says so under the Task Shepherd's mark, with what it saw", () => {
+test("a task that waits on a person says so under the Task Manager's mark, with what it saw", () => {
   show({});
 
   const panel = screen.getByTestId("shepherd-panel");
-  expect(screen.getByTestId("voice-mark-shepherd").getAttribute("aria-label")).toBe("Task Shepherd");
+  expect(screen.getByTestId("voice-mark-shepherd").getAttribute("aria-label")).toBe("Task Manager");
   expect(panel.textContent).toContain("I need you on this one.");
   expect(panel.textContent).toContain("Its review loop ended without a clean review, and its pull request conflicts with its base.");
   expect(panel.textContent).toContain("4 of its 12 reviews passed, and the last left 2 findings open.");
@@ -100,7 +100,7 @@ test("the failure's own message sits inside the panel and offers no second set o
   expect(screen.getAllByRole("button", { name: /Retry with a stronger model/ })).toHaveLength(1);
 });
 
-test("a task the Shepherd is moving says what it is doing, in the first person, with no buttons", () => {
+test("a task the Task Manager is moving says what it is doing, in the first person, with no buttons", () => {
   show({ owner: "supervisor", situation: "merge_due", reason: "the code host would take its merge now", ask: null, attempts: 2, moves: [], saw: "" }, "ready");
 
   const panel = screen.getByTestId("shepherd-panel");

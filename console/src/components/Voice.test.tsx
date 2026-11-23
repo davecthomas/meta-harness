@@ -8,7 +8,7 @@ test("each speaker has its own name, color and mark", () => {
   render(<MantineProvider theme={theme}><VoiceMark who="planner" /><VoiceMark who="shepherd" /></MantineProvider>);
 
   expect(screen.getByRole("img", { name: "Goal Planner" })).toBeTruthy();
-  expect(screen.getByRole("img", { name: "Task Shepherd" })).toBeTruthy();
+  expect(screen.getByRole("img", { name: "Task Manager" })).toBeTruthy();
   expect(VOICES.planner.color).not.toBe(VOICES.shepherd.color);
   const drawn = ["planner", "shepherd"].map((who) => screen.getByTestId(`voice-mark-${who}`).querySelector("svg")!.innerHTML);
   expect(drawn[0]).not.toBe(drawn[1]);
@@ -19,6 +19,6 @@ test("a speaker's panel carries its mark and its name over what it says", () => 
 
   const panel = screen.getByTestId("said");
   expect(panel.querySelector('[data-testid="voice-mark-shepherd"]')).toBeTruthy();
-  expect(panel.textContent).toContain("Task Shepherd · looked just now");
+  expect(panel.textContent).toContain("Task Manager · looked just now");
   expect(panel.textContent).toContain("I have this one.");
 });

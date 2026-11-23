@@ -841,7 +841,7 @@ def test_the_supervisor_drives_a_parked_task_a_bounded_number_of_times_with_its_
     assert driven["resume_by"] == "supervisor", "a merge the supervisor asks for is never taken for an operator's"
     assert Decimal(driven["spent_carried_usd"]) == Decimal("2.50")
     assert driven["status_reason"] == (
-        "the code host would take its merge now, so the Task Shepherd asked for its merge (try 1 of 3)"
+        "the code host would take its merge now, so the Task Manager asked for its merge (try 1 of 3)"
     )
     assert ("task_driven", "merge", 1) in [(e[0], e[1].get("action"), e[1].get("drives")) for e in events.events]
     park()
@@ -874,7 +874,7 @@ def test_the_supervisor_starts_a_parked_task_over_with_its_tries_and_spend_count
     body = started.json()
     assert (body["status"], body["resume"], body["resume_by"], body["drives"]) == ("queued", "restart", "supervisor", 0)
     assert Decimal(body["spent_carried_usd"]) == 0
-    assert body["status_reason"].endswith("so the Task Shepherd started it over on the current base (once)")
+    assert body["status_reason"].endswith("so the Task Manager started it over on the current base (once)")
     assert ("task_driven", "restart") in [(e[0], e[1].get("action")) for e in events.events]
 
 
@@ -888,7 +888,7 @@ def test_the_supervisor_retries_a_failed_task_and_only_a_failed_one(api):
     retried = api.post(f"/v1/tasks/{task['id']}/drive", json=retry, headers=_as(SERVICE_KEY)).json()
 
     assert (retried["status"], retried["resume"], retried["drives"]) == ("queued", None, 1)
-    assert retried["status_reason"].endswith("so the Task Shepherd retried it (try 1 of 3)")
+    assert retried["status_reason"].endswith("so the Task Manager retried it (try 1 of 3)")
     assert Decimal(retried["spent_carried_usd"]) == Decimal("1")
     assert retried["complexity"] is None
 

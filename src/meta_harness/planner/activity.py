@@ -46,10 +46,10 @@ def pr_state(task: dict, events: list[dict]) -> str:
     cancel a task and leave its pull request open, to merge or close by hand, and the sweep records that end
     when it comes (sweep.py).
 
-    Waiting and blocked mean waiting on the operator, so they follow who the Task Shepherd says has the task
+    Waiting and blocked mean waiting on the operator, so they follow who the Task Manager says has the task
     (the task's `standing`), as the console's Needs you does: the two then count the same pull requests. A
-    task the Shepherd or a planner has is in review, whatever its status. One that is over, with nothing left
-    to do and its pull request still open, is left open: nobody is asked to act on it. A task the Shepherd
+    task the Task Manager or a planner has is in review, whatever its status. One that is over, with nothing left
+    to do and its pull request still open, is left open: nobody is asked to act on it. A task the Task Manager
     has not looked at yet is judged by its status."""
     kinds = {e["event_type"] for e in events}
     if "pull_request_merged" in kinds or task["status"] == "closed":

@@ -545,7 +545,7 @@ def drive(
         # A start-over is a new attempt at the task, as an operator's is: its tries are counted from nothing.
         restart = action == "restart"
         if counted and not restart and row["drives"] >= MAX_DRIVES:
-            raise TaskError(f"the Task Shepherd has already sent the task back {row['drives']} times")
+            raise TaskError(f"the Task Manager has already sent the task back {row['drives']} times")
         what = {
             "merge": "asked for its merge",
             "review": "sent it back through its review loop",
@@ -562,7 +562,7 @@ def drive(
             "complexity = coalesce(%s, complexity), "
             f"updated_at = now(), status_changed_at = now() WHERE id = %s RETURNING {COLUMNS}",
             (
-                f"{why}, so the Task Shepherd {what} "
+                f"{why}, so the Task Manager {what} "
                 + (
                     "(once)"
                     if restart
@@ -609,7 +609,7 @@ def recover(conn: psycopg.Connection, task_id: str, why: str, spent_usd: Decimal
             )
         else:
             status, resume = "queued", ("review" if row["pr_url"] else None)
-            reason = f"{why}, so the Task Shepherd sent it back to the queue (recovery {row['recoveries'] + 1})"
+            reason = f"{why}, so the Task Manager sent it back to the queue (recovery {row['recoveries'] + 1})"
         recovered = 1 if status == "queued" else 0
         cur.execute(
             "UPDATE tasks.task SET status = %s, status_reason = %s, resume = %s, resume_by = NULL, "

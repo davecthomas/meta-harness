@@ -38,7 +38,7 @@ GOAL_COLUMNS = (
     "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to, strict_issues, tracker, "
     "tracker_settings, planned, provenance, autonomy"
 )
-# How much is done for a goal's tasks without asking. ask: the Task Shepherd asks before each of its own
+# How much is done for a goal's tasks without asking. ask: the Task Manager asks before each of its own
 # actions. standard: it takes the clear next steps itself, and a clean pull request waits for the operator.
 # full: the same, and a clean pull request merges by itself (auto_merge).
 AUTONOMY = ("ask", "standard", "full")

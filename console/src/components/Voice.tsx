@@ -2,14 +2,15 @@ import type { ReactNode } from "react";
 import { Box, Group, Paper, Text } from "@mantine/core";
 
 // Who is talking. Two parts of Octofusion speak to a person, each in one place: the Goal Planner on a
-// goal's page and the Task Shepherd on a task's. Each has a mark and a color of its own, shown in the corner
+// goal's page and the Task Manager on a task's. Each has a mark and a color of its own, shown in the corner
 // of whatever it says, so a reader knows whose words they are before reading them.
 
 export type Speaker = "planner" | "shepherd";
 
 export const VOICES: Record<Speaker, { name: string; color: string }> = {
   planner: { name: "Goal Planner", color: "indigo" },
-  shepherd: { name: "Task Shepherd", color: "teal" },
+  // The brand's purple, as the octopus is. `shepherd` is the name the code has always had for it.
+  shepherd: { name: "Task Manager", color: "grape" },
 };
 
 // The Goal Planner's mark: a target with an arrow in it, since it aims the work at a goal. The owner picked
@@ -26,10 +27,20 @@ function PlannerGlyph() {
   );
 }
 
-// The Task Shepherd's mark: a crook, since it keeps every task moving to its merge.
-function ShepherdGlyph() {
+// The Task Manager's mark: one arm of the octopus, curled at its tip, with its suckers. The octopus is the
+// brand's symbol, and an arm is what it does its work with: this one keeps every task moving to its merge.
+// It was a shepherd's crook while the part was called the Task Shepherd.
+function ManagerGlyph() {
   return (
-    <path d="M12 29 V12.5 a6.5 6.5 0 0 1 13 0 c0 3.5 -4.5 3.5 -4.5 0.5" />
+    <>
+      <path d="M8.5 29 C8.5 18.5 24.5 22.5 24.5 12.5 C24.5 8 18.2 6.6 16.2 10.6 C14.8 13.6 17.6 16 19.8 14.4" />
+      <g fill="currentColor" stroke="none">
+        <circle cx="13.6" cy="25.6" r="1.25" />
+        <circle cx="18.6" cy="23.6" r="1.25" />
+        <circle cx="23.2" cy="20.4" r="1.2" />
+        <circle cx="26.9" cy="15.6" r="1.1" />
+      </g>
+    </>
   );
 }
 
@@ -54,7 +65,7 @@ export function VoiceMark({ who, size = 34 }: { who: Speaker; size?: number }) {
       }}
     >
       <svg viewBox="0 0 34 34" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        {who === "planner" ? <PlannerGlyph /> : <ShepherdGlyph />}
+        {who === "planner" ? <PlannerGlyph /> : <ManagerGlyph />}
       </svg>
     </Box>
   );
