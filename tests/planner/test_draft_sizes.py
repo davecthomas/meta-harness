@@ -1,9 +1,12 @@
 """A plan's new tasks are sized before the plan is shown, and the planner resizes the ones too large."""
 
+import asyncio
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
-from meta_harness.planner import draft_sizes
+from meta_harness.planner import draft_sizes, plan_api, planning
 from meta_harness.planner.sizing import Sized
 
 from .test_planner import OPERATOR, Events, FakeTasks, _no_title, migrated, registry  # noqa: F401
@@ -86,8 +89,11 @@ def test_a_task_too_large_for_one_pull_request_sends_the_planner_back_before_any
     assert resized["plan"]["invalid"] == [] and resized["planning_task_id"] is None
     assert len(_plan_tasks(tasks, goal)) == 2, "sized right, the planner is not sent back again"
     sized = [e for e in events.events if e[0] == "issue_sized"]
-    assert len(sized) == 5 and sized[0][1]["ref"] == f"draft:{goal['id']}:store", (
+    assert len(sized) == 4 and sized[0][1]["ref"] == f"draft:{goal['id']}:store", (
         "each sizing is recorded, with its cost"
+    )
+    assert sizer.asked == ["Build store", "Build api", "Build api-routes", "Build api-models"], (
+        "the task the planner kept as it was is not sized again"
     )
 
 
@@ -121,3 +127,72 @@ def test_a_plan_whose_tasks_are_all_one_runs_work_is_approvable_at_once(world):
     assert shown["plan"]["invalid"] == [] and shown["planning_task_id"] is None
     assert len(_plan_tasks(tasks, goal)) == 1
     assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+
+
+def test_a_task_whose_text_changed_is_sized_again_and_one_that_could_not_be_sized_is_tried_again(world):
+    client, events, tasks, sizer = world
+    goal = _feature(client)
+    sizer.large = {"Build api"}
+    _ends(client, events, tasks, goal, [draft("store"), draft("api", ("store",))])
+
+    # The planner kept api's id and title and rewrote its body: new text, so a new sizing.
+    sizer.large = set()
+    smaller = draft("api", ("store",), body="Build only the routes.\n\n## Acceptance checks\n\n- make test")
+    resized = _ends(client, events, tasks, goal, [draft("store"), smaller])
+
+    assert resized["plan"]["invalid"] == []
+    assert sizer.asked == ["Build store", "Build api", "Build api"]
+
+
+def test_one_plan_is_collected_by_one_caller_at_a_time_so_each_task_is_sized_once(world):
+    """Each read of the plan's page, and the sweep, once started its own sizing of the whole plan: one task
+    was sized five times, and the gateway's request limit refused the rest."""
+    client, events, tasks, sizer = world
+    goal = _feature(client)
+    task = next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])
+    for d in [draft("store"), draft("api", ("store",))]:
+        events.emit("issue_drafted", d, task_id=task["id"])
+    task["status"] = "closed"
+    goal = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+    asked: list[str] = []
+
+    async def slow(issue):
+        asked.append(issue.title)
+        await asyncio.sleep(0.01)
+        return Sized("small", model="m")
+
+    async def five() -> list:
+        return await asyncio.gather(*(planning.collect(goal, tasks, events, sizer=slow) for _ in range(5)))
+
+    saved = [plan for plan in asyncio.run(five()) if plan]
+
+    assert asked == ["Build store", "Build api"], "five callers at once, and each task sized once"
+    assert [plan["version"] for plan in saved] == [1]
+
+
+def test_a_read_of_the_plan_does_not_wait_out_the_sizing_of_its_tasks(world, monkeypatch):
+    """The plan's section was a bare spinner for as long as sizing took: the read was held until every task
+    of the plan was sized."""
+    client, events, tasks, sizer = world
+    goal = _feature(client)
+    monkeypatch.setattr(plan_api, "PLAN_WAIT_SECONDS", 0.05)
+    release = asyncio.Event()
+
+    async def held(issue):
+        await release.wait()
+        return Sized("small", model="m")
+
+    monkeypatch.setattr(type(sizer), "__call__", lambda self, issue: held(issue))
+
+    shown = _ends(client, events, tasks, goal, [draft("store")])
+
+    assert shown["plan"] is None and shown["planning_task_id"], "answered at once: the planner is still working"
+    # The collecting went on behind the read. Once the sizing ends, the next read has the plan.
+    client.portal.call(release.set)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        shown = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+        if shown["plan"] and not shown["planning_task_id"]:
+            break
+        time.sleep(0.02)
+    assert shown["plan"]["version"] == 1 and shown["planning_task_id"] is None

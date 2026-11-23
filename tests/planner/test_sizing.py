@@ -5,6 +5,8 @@ import json
 import uuid
 
 import httpx
+
+from meta_harness import retrying
 import pytest
 
 from meta_harness import db
@@ -1268,3 +1270,61 @@ def test_a_task_canceled_because_a_person_closed_its_pull_request_is_not_taken_u
     tasks.tasks[task["id"]]["status_reason"] = sweep.PULL_REQUEST_CLOSED_REASON
 
     assert _sweep(client, goal)["retaken"] == [] and _task(tasks, ref)["status"] == "canceled"
+
+
+async def test_a_sizing_the_gateway_turns_away_for_its_rate_limit_waits_as_asked_and_is_sent_again(monkeypatch):
+    """A plan's tasks met the gateway's limit of 60 requests a minute. Its 429 asked for 45 seconds, more
+    than the default deadline had left, so no sizing was tried again and every task was left unsized."""
+    monkeypatch.setenv("GATEWAY_URL", "http://gateway")
+    monkeypatch.setenv("GATEWAY_API_KEY", "gw-key")
+    waits: list[float] = []
+
+    async def waited(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr(retrying, "_async_sleep", waited)
+    answer = {"size": "small", "reasons": [], "missing": [], "missing_reason": "", "split": []}
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(429, headers={"Retry-After": "45"}, json={"error": "rate_limited"})
+        return httpx.Response(200, json={"data": answer, "finish_reason": "complete", "usd_cost": "0.0004"})
+
+    sized = await sizing.size_issue(_issue("One change."), httpx.MockTransport(handler))
+
+    assert sized.size == "small" and len(calls) == 2 and waits == [45.0]
+    # With an operator waiting, the default deadline holds: the refusal is reported, with the gateway's words.
+    calls.clear()
+    with pytest.raises(sizing.SizingError, match="answered 429"):
+        await sizing.size_issue(_issue("One change."), httpx.MockTransport(handler), policy=retrying.DEFAULT)
+
+
+async def test_sizing_calls_keep_a_pace_under_the_gateways_request_limit(monkeypatch):
+    monkeypatch.setenv("GATEWAY_URL", "http://gateway")
+    monkeypatch.setenv("GATEWAY_API_KEY", "gw-key")
+    waits: list[float] = []
+
+    async def waited(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr(sizing, "_sleep", waited)
+    answer = {"size": "small", "reasons": [], "missing": [], "missing_reason": "", "split": []}
+    gateway = httpx.MockTransport(lambda r: httpx.Response(200, json={"data": answer, "finish_reason": "complete"}))
+
+    for _ in range(3):
+        await sizing.size_issue(_issue("One change."), gateway)
+
+    each = 60 / sizing.settings()["max_per_minute"]
+    assert len(waits) == 2 and waits[0] == pytest.approx(each, abs=0.2) and waits[1] == pytest.approx(2 * each, abs=0.2)
+
+
+def test_the_sizing_pace_is_checked_at_startup(monkeypatch):
+    shipped = sizing.settings()
+    assert shipped["max_per_minute"] <= 60, "the HTTP Gateway allows one key 60 requests a minute"
+    monkeypatch.setattr(sizing, "settings", lambda: {**shipped, "max_per_minute": 0})
+    with pytest.raises(RuntimeError, match="issue_sizing.max_per_minute must be a positive whole number"):
+        sizing.check_settings()
+    monkeypatch.setattr(sizing, "settings", lambda: {k: v for k, v in shipped.items() if k != "max_per_minute"})
+    sizing.check_settings()

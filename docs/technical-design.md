@@ -2970,6 +2970,21 @@ the issue, the sizing records a doubt (`doubts`) with the model's
 issue, on a strict goal either. The answer is stored on the issue link (`size`, `sizing`) and
 recorded as `issue_sized` with the model and its cost.
 
+Sizing calls keep a pace: at most `issue_sizing.max_per_minute` start in a
+minute (30 when left out), across every goal. The HTTP Gateway allows one key
+60 requests a minute, and the planner's updates, writing pass and naming share
+that key. A sizing the gateway turns away with 429 waits as long as its
+`Retry-After` asks and is sent again, under the `PATIENT` retry policy. The
+sizing an operator waits on (Fix with AI) keeps the default deadline. A plan's
+new tasks are sized when its planning task ends (`planner/draft_sizes.py`). A
+task whose text has not changed since it was sized is not sized again, so a
+resize round sizes only what the planner rewrote. One goal's plan is collected
+by one caller at a time (`planning.collect`), and a read of the plan waits two
+seconds for it at most, then answers that the planner is still working. Each
+read of the plan's page, and the sweep, once started its own sizing of the
+whole plan: a plan of fourteen tasks met the gateway's limit, one task was
+sized five times, and the plan was shown with none of them sized.
+
 An issue opened by someone with no write access to the repo is held before it
 is sized. That is an author whose GitHub `author_association` is not OWNER,
 MEMBER or COLLABORATOR. Anyone may open an issue, and its text becomes an
@@ -4106,7 +4121,9 @@ store, and the HTTP Gateway owns the run grants and per-run spend counters.
 client the services build uses `meta_harness/retrying.py`, an httpx transport.
 It makes up to five tries with exponential backoff and jitter, inside a
 45-second deadline (below Firebase Hosting's 60). It honors `Retry-After` and
-GitHub's rate limit reset. A request that never reached the service, or was
+GitHub's rate limit reset. A call no person waits on can take the `PATIENT`
+policy, whose 150-second deadline outlasts a rate limit's whole window: issue
+sizing does. A request that never reached the service, or was
 turned away with 429 or 503, is always repeated. One that may have been acted
 on (a read timeout, a dropped reply, 500, 502, 504) is repeated only when that
 is harmless. The harmless ones are GET, HEAD, OPTIONS, PUT and DELETE, and the

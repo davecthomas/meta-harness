@@ -10,6 +10,7 @@ Registered by the planner service's create_app, which hands over what the routes
 """
 
 import asyncio
+import logging
 from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -20,6 +21,11 @@ from meta_harness.planner import enrich, planning, plans, specs, store, suggesti
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.trackers.base import TrackerError
 from meta_harness.trackers.own import SCHEME as OWN
+
+log = logging.getLogger("meta_harness.planner")
+# How long a read of the plan waits for an ended planning task's plan to be collected before it answers with
+# what stands.
+PLAN_WAIT_SECONDS = 2.0
 
 
 class DraftIn(BaseModel):
@@ -71,6 +77,17 @@ def register(
     reads the issues the goal has that no task has started on, for its planning task to plan over.
     plan_again(goal_id, who) sends a planned goal that is under way back to planning."""
     enrich.register(app, operator, load, events)
+    # The collectings a read started and did not wait out, kept so they are not dropped half done.
+    pending: set[asyncio.Task] = set()
+
+    def _collected(task: asyncio.Task) -> None:
+        pending.discard(task)
+        if not task.cancelled() and (err := task.exception()):
+            log.error(
+                "the plan a read asked for could not be collected: %s: %s. The next sweep collects it",
+                type(err).__name__,
+                err,
+            )
 
     def planning_goal(goal_id: str) -> dict:
         goal = load(goal_id)
@@ -102,11 +119,16 @@ def register(
 
     @app.get("/v1/goals/{goal_id}/plan")
     async def read_plan(goal_id: str, who: str = Depends(operator)) -> dict:
+        """The goal's plan as it stands. An ended planning task's drafts become the plan when it is first asked
+        for, not only at the next sweep. Sizing a plan's tasks can take a minute, so the answer waits a moment
+        for it and then says the planner is still working: the collecting goes on, and the page asks again."""
         goal = load(goal_id)
-        # An ended planning task's drafts become the plan when it is first asked for, not only at the next sweep.
-        if goal["status"] == "planning" and await planning.collect(
-            goal, tasks, events, sizer=sizer, issues_of=issues_of
-        ):
+        if goal["status"] == "planning" and goal.get("plan_task_id"):
+            collecting = asyncio.create_task(planning.collect(goal, tasks, events, sizer=sizer, issues_of=issues_of))
+            pending.add(collecting)
+            collecting.add_done_callback(_collected)
+            await asyncio.wait({collecting}, timeout=PLAN_WAIT_SECONDS)
+            # Read again whether or not it ended: another caller's collecting may have saved the plan meanwhile.
             goal = load(goal_id)
         return await asyncio.to_thread(shown, goal)
 

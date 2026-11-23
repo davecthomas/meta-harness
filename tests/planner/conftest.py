@@ -14,9 +14,9 @@ def no_gateway(monkeypatch):
     monkeypatch.delenv("GATEWAY_API_KEY", raising=False)
     real = sizing.size_issue
 
-    async def size_issue(issue, transport=None):
+    async def size_issue(issue, transport=None, **how):
         if transport is None and not os.environ.get("GATEWAY_URL"):
             return None
-        return await real(issue, transport)
+        return await real(issue, transport, **how)
 
     monkeypatch.setattr(sizing, "size_issue", size_issue)

@@ -266,6 +266,10 @@ async def start(
     return task
 
 
+# The goals whose ended planning task is being collected now.
+_collecting: set[str] = set()
+
+
 async def collect(
     goal: dict,
     tasks: TaskClient,
@@ -274,7 +278,25 @@ async def collect(
     issues_of: Any = None,
 ) -> dict | None:
     """Turns an ended planning task's drafts into the goal's next plan version. Returns the plan saved, or None
-    when the goal has no planning task, the task still runs, or its plan is saved already.
+    when the goal has no planning task, the task still runs, its plan is saved already, or another collecting
+    of it is under way.
+
+    One goal's plan is collected by one caller at a time. Collecting sizes every new task, a model call
+    each, and both the sweep and each read of the plan's page ask for it: every read once started its own
+    sizing of the whole plan beside the others, which sized one task five times and met the gateway's request
+    limit.
+    """
+    if goal["id"] in _collecting:
+        return None
+    _collecting.add(goal["id"])
+    try:
+        return await _collect(goal, tasks, events, sizer, issues_of)
+    finally:
+        _collecting.discard(goal["id"])
+
+
+async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, issues_of: Any) -> dict | None:
+    """collect, for the one caller that has the goal.
 
     With a sizer, each new task is sized as an issue is before it runs (draft_sizes.py). One that is too
     large for a pull request, or lacks what a run needs, makes the plan not approvable, saying why. With

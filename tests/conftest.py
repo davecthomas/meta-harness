@@ -59,6 +59,11 @@ def no_retry_waits(monkeypatch):
 
     monkeypatch.setattr(retrying, "_sleep", lambda seconds: None)
     monkeypatch.setattr(retrying, "_async_sleep", no_wait)
+    # Nor the pace sizing calls keep between them.
+    from meta_harness.planner import sizing
+
+    monkeypatch.setattr(sizing, "_sleep", no_wait)
+    monkeypatch.setattr(sizing, "_pace", sizing._Pace())
 
 
 @pytest.fixture(autouse=True)
