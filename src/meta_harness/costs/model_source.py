@@ -22,7 +22,7 @@ SOURCE = "model"
 EVENT_TYPES = (
     "attempt_finished,goal_drafted,goal_titled,goal_update_written,issue_sized,plan_fixes_assessed,"
     "failure_diagnosed,split_drafted,task_names_written,writing_checked,overview_report_written,"
-    "overview_question_answered,issue_fix_drafted"
+    "overview_question_answered,issue_fix_drafted,next_steps_written"
 )
 # The events whose own writing pass rides on them, as `writing`.
 CARRIES_WRITING = ("goal_update_written", "overview_report_written", "overview_question_answered")
