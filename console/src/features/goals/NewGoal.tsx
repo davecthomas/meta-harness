@@ -233,7 +233,7 @@ export function NewGoal() {
       return null;
     }
     if (!(plans || untracked || spec) && !label.trim() && !refs.length && !takesAssigned) {
-      setError(`Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to the meta-harness" : ""}.`);
+      setError(`Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to Octofusion" : ""}.`);
       return null;
     }
     setSaving(started);
@@ -388,7 +388,7 @@ export function NewGoal() {
             {untracked ? (
               <Text size="sm" data-testid="untracked-note">
                 With no issue tracker, a planning task reads the repos and writes the goal's tasks from {spec ? `its spec, ${specName(spec)}` : "its description"}. You review, edit
-                and approve the plan before anything runs. The tasks are kept in the meta-harness: nothing is written to any tracker, and
+                and approve the plan before anything runs. The tasks are kept in Octofusion: nothing is written to any tracker, and
                 the pull requests are the only record outside it.
               </Text>
             ) : (

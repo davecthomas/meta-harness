@@ -523,12 +523,12 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
               description={
                 track
                   ? `Each becomes an issue there, with the label ${shown.label}. ${SIGNED_ISSUES}`
-                  : `Off: kept in the meta-harness only. Nothing is written to ${tracker}.`
+                  : `Off: kept in Octofusion only. Nothing is written to ${tracker}.`
               }
             />
           )}
           {base.length > 0 && untracked && (
-            <Text size="sm" c="dimmed">This goal has no issue tracker: its tasks are kept in the meta-harness only.</Text>
+            <Text size="sm" c="dimmed">This goal has no issue tracker: its tasks are kept in Octofusion only.</Text>
           )}
           {error && <Alert color="red" title="The plan was not approved" role="alert" data-testid="approve-error"><Text size="sm">{error}</Text></Alert>}
           <Group justify="flex-end">
@@ -588,7 +588,7 @@ export function ApprovedPlan({ goal, onPlanAgain }: { goal: Goal; onPlanAgain?: 
       <Group gap="sm">
         <Text size="sm" c="dimmed">
           Plan version {plan.version}, approved {when(shown.approved_at)}. {planSentence(drafts, items).replace("Approving this plan", "It")}
-          {drafts.length > 0 && (kept ? " The new tasks are kept in the meta-harness only." : ` The new tasks are issues in ${trackerTitle(goal.tracker ?? "github")}.`)}
+          {drafts.length > 0 && (kept ? " The new tasks are kept in Octofusion only." : ` The new tasks are issues in ${trackerTitle(goal.tracker ?? "github")}.`)}
         </Text>
         {(issues.length > 0 || drafts.length > 0) && (
           <Button size="compact-sm" variant="subtle" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Hide the plan" : "Show the plan"}</Button>
