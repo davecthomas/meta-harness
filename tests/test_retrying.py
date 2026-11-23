@@ -133,3 +133,18 @@ async def test_the_async_transport_retries_too():
     async with httpx.AsyncClient(transport=transport) as client:
         assert (await client.get("https://x.test/read")).status_code == 200
     assert len(seen) == 3
+
+
+def test_a_call_no_person_waits_on_outlasts_a_rate_limits_whole_window(monkeypatch):
+    """The HTTP Gateway's 429 asks for up to its 60-second window. The default deadline gives up on that."""
+    waits = []
+    monkeypatch.setattr(retrying, "_sleep", waits.append)
+
+    def handler(request):
+        if not waits:
+            return httpx.Response(429, headers={"Retry-After": "60"})
+        return httpx.Response(200, json={})
+
+    assert _client(handler).post("https://x.test/v1/structured").status_code == 429
+    assert _client(handler, policy=retrying.PATIENT).post("https://x.test/v1/structured").status_code == 200
+    assert waits == [60.0]

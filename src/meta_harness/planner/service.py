@@ -36,6 +36,7 @@ their end (sweep.follow_up_goal), and so are the canceled tasks of no goal
 
 import asyncio
 import dataclasses
+import functools
 import logging
 import json
 import os
@@ -52,7 +53,7 @@ from pydantic import BaseModel, Field
 from meta_harness import outbound
 from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
-from meta_harness import auth, db
+from meta_harness import auth, db, retrying
 from meta_harness.costs import api as costs_api
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
@@ -1711,7 +1712,9 @@ def create_app(
 
     plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again, sizer=size)
     budget_api.register(app, operator, load, change_with, events, tasks)
-    sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size)
+    # An operator waits on this sizing (Fix with AI sizes the changed issue), so it keeps the default deadline.
+    size_now = sizer or functools.partial(sizing.size_issue, policy=retrying.DEFAULT)
+    sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size_now)
     unstick_api.register(app, operator, load, tasks)
     specs.register(app, operator, load)
     cancel_issues.register(app, operator, load, tracker, tasks)

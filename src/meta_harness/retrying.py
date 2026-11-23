@@ -13,7 +13,8 @@ What may be sent again depends on whether the service can have acted on the firs
   repeating it is harmless: GET, HEAD, OPTIONS, PUT and DELETE, and a POST the client marks with `safe`, such as
   a search.
 
-A wait the service asks for (Retry-After, x-ratelimit-reset) is honored when it fits the deadline. Each retry is
+A wait the service asks for (Retry-After, x-ratelimit-reset) is honored when it fits the deadline. A call no
+person waits on is given the `PATIENT` policy, whose deadline fits a rate limit's whole window. Each retry is
 logged as a warning, a call that recovers at info, and one that gives up as an error, so a recurring failure
 shows in the logs even when no caller reports it. A query string is never logged: it can hold a value a caller
 would not want there.
@@ -52,6 +53,9 @@ class Policy:
 
 
 DEFAULT = Policy()
+# For a call no person waits on (a sweep's, a pass's): long enough to wait out a rate limit's whole window,
+# which a service may ask for. The HTTP Gateway's window is 60 seconds, and DEFAULT gives up on a wait that long.
+PATIENT = Policy(attempts=5, base_seconds=1.0, cap_seconds=15.0, deadline_seconds=150.0)
 # For a call made while someone waits on something else, with a fallback when it fails.
 QUICK = Policy(attempts=3, base_seconds=0.2, cap_seconds=1.0, deadline_seconds=4.0)
 

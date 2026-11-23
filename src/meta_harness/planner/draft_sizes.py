@@ -15,13 +15,17 @@ import re
 from typing import Any
 
 from meta_harness.events.client import stable_event_id
-from meta_harness.planner import sizing
+from meta_harness.planner import copies, sizing
 from meta_harness.planner.tracker import Issue, acceptance_checks, issue_paths
 
 log = logging.getLogger("meta_harness.planner")
 
 # How many times the planner is sent back to resize a plan's tasks, unless the planning configuration says.
 DEFAULT_ROUNDS = 2
+# A goal's tasks as last sized, by a hash of each one's text: a task the planner kept as it was through a
+# resize round is not sized again. Kept in the planner's memory, so a restart sizes a plan's tasks once more.
+_sized: dict[str, dict[str, sizing.Sized]] = {}
+MAX_GOALS_REMEMBERED = 200
 # How a planning task that resizes is told apart: the end of its external ref, with its round.
 _ROUND = re.compile(r":resize(\d+)$")
 LACKS = {
@@ -49,6 +53,12 @@ async def findings(goal: dict, drafts: list[dict[str, Any]], sizer: sizing.Sizer
     if sizer is None:
         return []
     found = []
+    known = _sized.pop(goal["id"], {})
+    kept: dict[str, sizing.Sized] = {}
+    # Put back last, so the goals sized longest ago are the ones forgotten.
+    _sized[goal["id"]] = kept
+    while len(_sized) > MAX_GOALS_REMEMBERED:
+        del _sized[next(iter(_sized))]
     for draft in drafts:
         body = draft.get("body") or ""
         issue = Issue(
@@ -62,29 +72,35 @@ async def findings(goal: dict, drafts: list[dict[str, Any]], sizer: sizing.Sizer
             checks=acceptance_checks(body),
             paths=issue_paths(body),
         )
-        try:
-            sized = await sizer(issue)
-        except Exception as err:  # noqa: BLE001 - a task the sizer fails on is let through, as the sweep does
-            log.warning("goal %s: the plan's task %s could not be sized: %s", goal["id"], draft["draft_id"], err)
-            continue
+        text = copies.text_hash(issue.title, body)
+        sized = known.get(text)
+        fresh = sized is None
+        if fresh:
+            try:
+                sized = await sizer(issue)
+            except Exception as err:  # noqa: BLE001 - a task the sizer fails on is let through, as the sweep does
+                log.warning("goal %s: the plan's task %s could not be sized: %s", goal["id"], draft["draft_id"], err)
+                continue
         if sized is None:
             continue
-        events.emit(
-            "issue_sized",
-            {
-                "ref": issue.ref,
-                "goal_id": goal["id"],
-                "size": sized.size,
-                "reasons": sized.reasons,
-                "missing": sized.missing,
-                "split": sized.split,
-                "model": sized.model,
-                "usd_cost": sized.usd_cost,
-            },
-            actor="planner",
-            tags={"goal_id": goal["id"]},
-            event_id=stable_event_id("issue_sized", issue.ref, goal["id"], str(len(body)), sized.size),
-        )
+        kept[text] = sized
+        if fresh:
+            events.emit(
+                "issue_sized",
+                {
+                    "ref": issue.ref,
+                    "goal_id": goal["id"],
+                    "size": sized.size,
+                    "reasons": sized.reasons,
+                    "missing": sized.missing,
+                    "split": sized.split,
+                    "model": sized.model,
+                    "usd_cost": sized.usd_cost,
+                },
+                actor="planner",
+                tags={"goal_id": goal["id"]},
+                event_id=stable_event_id("issue_sized", issue.ref, goal["id"], str(len(body)), sized.size),
+            )
         # What a task lacks stops it only in a goal that is strict about its issues, as it does an issue the
         # sweep takes in. Too large stops it in any goal.
         missing = sized.missing if goal.get("strict_issues") else []

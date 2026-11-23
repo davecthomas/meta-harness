@@ -26,6 +26,10 @@ What the sweep does with a size (sweep.py):
   on a `Spend limit: $N` line, else the task policy's max_usd_by_size for its
   size.
 
+Sizing calls start at most issue_sizing.max_per_minute a minute (30 when left out), across every goal, and
+one the gateway turns away for its rate limit waits as long as the gateway asks, then is sent again: a plan
+of fourteen tasks once met the gateway's limit of 60 requests a minute and was shown with none of them sized.
+
 issue_sizing.engine "none" turns sizing off: every issue runs unsized, as
 before sizing. A sizing call that fails leaves an issue never sized waiting,
 with no task, for the next sweep to size it again: no issue runs unsized
@@ -34,10 +38,12 @@ while sizing is on.
 Environment: GATEWAY_URL and GATEWAY_API_KEY, the HTTP Gateway the meta-harness calls.
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal, InvalidOperation
 from functools import cache
@@ -75,6 +81,9 @@ SPEND_LINE = re.compile(r"^\s*spend limit:\s*\$?\s*(\d+(?:\.\d+)?)\s*$", re.IGNO
 
 # How much more room a sizing answer cut short by its token limit gets, once.
 LENGTH_RETRY_FACTOR = 4
+# The most sizing calls started in a minute, unless issue_sizing.max_per_minute says. The HTTP Gateway allows a
+# key 60 requests a minute, and the planner's other calls (updates, the writing pass, naming) share that key.
+DEFAULT_PER_MINUTE = 30
 SIZE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -169,10 +178,31 @@ def check_settings() -> None:
         return
     if not isinstance(config.get("model"), str) or not config["model"]:
         raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: issue_sizing.model must name one")
-    for key in ("max_response_tokens", "body_chars"):
-        value = config.get(key)
+    for key in ("max_response_tokens", "body_chars", "max_per_minute"):
+        value = config.get(key, DEFAULT_PER_MINUTE if key == "max_per_minute" else None)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise RuntimeError(f"{PLANNER_CONFIG_PATH.name}: issue_sizing.{key} must be a positive whole number")
+
+
+class _Pace:
+    """Starts sizing calls no closer together than the pace allows, across every goal: a plan's tasks sized
+    one after another, with each sweep's issues, stay under the gateway's request limit."""
+
+    def __init__(self) -> None:
+        self.next_at = 0.0
+
+    async def turn(self, per_minute: int) -> None:
+        """Returns when the caller may start its call."""
+        now = time.monotonic()
+        start = max(now, self.next_at)
+        self.next_at = start + 60.0 / per_minute
+        if start > now:
+            await _sleep(start - now)
+
+
+# Named so tests can take the waiting out.
+_sleep = asyncio.sleep
+_pace = _Pace()
 
 
 def size_prompt(issue: Issue, body_chars: int) -> str:
@@ -216,8 +246,14 @@ def parse(data: dict[str, Any], issue: Issue, model: str, usd_cost: str) -> Size
     )
 
 
-async def size_issue(issue: Issue, transport: httpx.AsyncBaseTransport | None = None) -> Sized | None:
+async def size_issue(
+    issue: Issue, transport: httpx.AsyncBaseTransport | None = None, policy: retrying.Policy = retrying.PATIENT
+) -> Sized | None:
     """One model call that sizes an issue. None when sizing is off.
+
+    Calls are paced (issue_sizing.max_per_minute). A call the gateway turns away for its rate limit waits as
+    the gateway asks and is sent again. policy: how long to keep trying. A sweep's or a plan's sizing waits
+    on no person, so it outlasts the limit's window; a caller with an operator waiting passes the default.
 
     Raises:
         SizingError: The gateway is not set, cannot be reached, refused, or the model gave no usable answer.
@@ -237,10 +273,12 @@ async def size_issue(issue: Issue, transport: httpx.AsyncBaseTransport | None = 
         "response_schema": SIZE_SCHEMA,
         "max_response_tokens": int(config["max_response_tokens"]),
     }
-    async with httpx.AsyncClient(timeout=60, transport=retrying.async_transport(transport)) as http:
+    per_minute = int(config.get("max_per_minute", DEFAULT_PER_MINUTE))
+    async with httpx.AsyncClient(timeout=60, transport=retrying.async_transport(transport, policy)) as http:
         # An answer cut short by its token limit is asked for once more with room to finish: asked the same way
         # at the next sweep it would be cut short again, and the issue would wait forever.
         for limit in (body["max_response_tokens"], body["max_response_tokens"] * LENGTH_RETRY_FACTOR):
+            await _pace.turn(per_minute)
             try:
                 response = await http.post(
                     f"{url}/v1/structured",
