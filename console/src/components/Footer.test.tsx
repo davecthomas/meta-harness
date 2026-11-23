@@ -3,7 +3,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
-import { Footer } from "./Footer";
+import { Footer, FOOTER_LOGO_HEIGHT } from "./Footer";
 import { theme } from "../theme";
 
 function respond(body: unknown, status = 200) {
@@ -20,7 +20,7 @@ function renderFooter(version?: boolean) {
   );
 }
 
-test("the footer holds the symbol, the name, the tagline, the version and the GitHub link", async () => {
+test("the footer holds the lockup at a size its name reads, the tagline, the version and the GitHub link", async () => {
   vi.stubGlobal("fetch", (url: string) =>
     url === "/v1/version" ? respond({ version: "0.21.1", commit: "4a286e3c0ffee" }) : respond({ detail: "not stubbed" }, 404),
   );
@@ -29,9 +29,11 @@ test("the footer holds the symbol, the name, the tagline, the version and the Gi
 
   const footer = screen.getByTestId("footer");
   expect(footer.tagName).toBe("FOOTER");
-  const image = footer.querySelector("img")!;
-  expect(image.getAttribute("src")).toContain("octofusion-symbol.svg");
-  expect(within(footer).getByText("Octofusion AI")).toBeTruthy();
+  const image = within(footer).getByRole("img", { name: "Octofusion AI" });
+  expect(image.getAttribute("src")).toContain("octofusion-lockup.svg");
+  // The footer's logo was a 20-pixel symbol nobody could make out.
+  expect(FOOTER_LOGO_HEIGHT).toBeGreaterThanOrEqual(32);
+  expect(image.style.getPropertyValue("--image-height") || image.style.height).toContain(`${FOOTER_LOGO_HEIGHT / 16}rem`);
   expect(within(footer).getByText("The Open Meta-Harness for Coding at Scale")).toBeTruthy();
   expect(within(footer).getByRole("link", { name: "GitHub" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness");
   expect((await within(footer).findByTestId("version")).textContent).toBe("v0.21.1 · 4a286e3");
@@ -54,7 +56,7 @@ test("without the version the footer asks for none", () => {
 
   renderFooter(false);
 
-  expect(screen.getByTestId("footer").textContent).toContain("Octofusion AI");
+  expect(within(screen.getByTestId("footer")).getByRole("img", { name: "Octofusion AI" })).toBeTruthy();
   expect(screen.queryByTestId("version")).toBeNull();
   expect(fetch).not.toHaveBeenCalled();
 });

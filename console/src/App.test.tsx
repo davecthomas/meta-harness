@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, expect, test, vi } from "vitest";
-import { App } from "./App";
+import { App, HEADER_HEIGHT, LOGO_HEIGHT } from "./App";
 import { theme } from "./theme";
 
 function respond(body: unknown, status = 200) {
@@ -173,7 +173,7 @@ test("the sign-in screen ends with the footer, without the version, which needs 
   renderAt("/");
 
   const footer = within(await screen.findByTestId("footer"));
-  expect(footer.getByText("Octofusion AI")).toBeTruthy();
+  expect(footer.getByRole("img", { name: "Octofusion AI" })).toBeTruthy();
   expect(footer.getByText("The Open Meta-Harness for Coding at Scale")).toBeTruthy();
   expect(footer.getByRole("link", { name: "GitHub" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness");
   expect(screen.getByTestId("google-sign-in")).toBeTruthy();
@@ -210,6 +210,10 @@ test("the header shows the lockup at wide widths and the symbol alone at phone w
   expect(wide.className).toContain("mantine-visible-from-sm");
   expect(phone.getAttribute("src")).toContain("octofusion-symbol.svg");
   expect(phone.className).toContain("mantine-hidden-from-sm");
+  // Large enough to read: at 32 pixels the name's letters were 7 pixels tall.
+  expect(LOGO_HEIGHT).toBeGreaterThanOrEqual(44);
+  expect(HEADER_HEIGHT).toBeGreaterThan(LOGO_HEIGHT);
+  for (const image of images) expect(image.style.getPropertyValue("--image-height") || image.style.height).toContain(`${LOGO_HEIGHT / 16}rem`);
 });
 
 test("an address that is no page's says so and offers the ways on", async () => {

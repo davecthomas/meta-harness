@@ -2,8 +2,9 @@
 
 // Builds the console's brand artwork from console/brand/source: `npm run brand`.
 //
-// It writes src/brand/octofusion-symbol.svg, the symbol optimized for the web, and
-// src/brand/octofusion-lockup.svg, that symbol with the magenta wordmark to its right on one canvas.
+// It writes src/brand/octofusion-symbol.svg, the symbol optimized for the web and cut to the octopus, and
+// src/brand/octofusion-lockup.svg, the octopus with the magenta wordmark to its right, scaled up to read
+// at a header's size, on a canvas with no empty space around them.
 // The outputs are committed. The build is deterministic, so a second run changes no file.
 //
 // It also writes the browser icons and the web app manifest into public/, each showing the whole octopus:
@@ -12,7 +13,8 @@
 // pixels, so the bitmaps come out byte for byte the same on every machine.
 //
 // Path precision 2 and the size limits come from docs/specs/octofusion-brand-sizes.md. Artwork is
-// never redrawn or recolored: the optimizer only rewrites numbers and merges same-color paths.
+// never redrawn or recolored: the optimizer only rewrites numbers and merges same-color paths, and the
+// lockup only places and scales the two drawings.
 // octofusion-full-lockup.svg is not used, since it fills the name with the octopus's purple.
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -35,7 +37,12 @@ const SYMBOL_LIMIT = 40_000;
 const LOCKUP_LIMIT = 120_000;
 const BRAND_FILLS = ["#670fdc", "#08e7f5", "#0a0a14", "#fb5b52", "#c402f5"];
 // Space between the symbol and the wordmark, in the symbol's units.
-const GAP = 120;
+const GAP = 110;
+// How tall the wordmark is drawn in the lockup, as a share of the octopus's height. At its own scale the
+// wordmark was under a third of it: in a 32-pixel header its letters were 7 pixels tall and could not be read.
+const WORDMARK_SHARE = 0.7;
+// Empty space kept around a shipped drawing, in its units, so an outline at the edge is not clipped.
+const PAD = 8;
 // The near-black behind the icons that cannot be transparent, and the browser's theme color.
 const BACKDROP = "#0a0a14";
 const THEME = "#670fdc";
@@ -106,25 +113,49 @@ function drawing(svg) {
   return match[1].replace(/<title\b[^>]*>[\s\S]*?<\/title>/, "").replace(/<desc\b[^>]*>[\s\S]*?<\/desc>/, "");
 }
 
+/** Where an SVG draws, in its own units: the box around everything it paints. */
+function drawnBox(svg) {
+  const renderer = new Resvg(svg, { font: { loadSystemFonts: false } });
+  const box = renderer.getBBox();
+  renderer.free();
+  if (!box) throw new Error("an optimized brand file draws nothing");
+  return { x: round(box.x), y: round(box.y), width: round(box.width), height: round(box.height) };
+}
+
 /**
- * The symbol with the wordmark to its right, the wordmark at its own scale and centered on the symbol.
+ * The symbol with no empty canvas around the octopus. The source leaves a tenth of the canvas empty on each
+ * side, so an image 32 pixels tall drew an octopus of 25.
+ */
+function tightSymbol(symbol) {
+  const box = drawnBox(symbol);
+  const view = `viewBox="${round(box.x - PAD)} ${round(box.y - PAD)} ${round(box.width + 2 * PAD)} ${round(box.height + 2 * PAD)}"`;
+  const framed = symbol.replace(/\bviewBox="[^"]*"/, view);
+  if (framed === symbol) throw new Error("the optimized symbol has no viewBox to reframe");
+  return framed;
+}
+
+/**
+ * The octopus with the wordmark to its right, on a canvas with no empty space around them. The wordmark is
+ * scaled to WORDMARK_SHARE of the octopus's height and centered on it, so the name reads at a header's size.
  * Its title is a plain `<title>`, with no id, and the root names itself with aria-label.
  */
 function lockup(symbol, wordmark) {
-  const s = viewBoxSize(symbol);
-  const w = viewBoxSize(wordmark);
-  const width = s.width + GAP + w.width;
-  const height = Math.max(s.height, w.height);
-  const symbolY = (height - s.height) / 2;
-  const wordmarkY = (height - w.height) / 2;
-  const at = (x, y) => (x || y ? ` transform="translate(${x} ${y})"` : "");
+  const s = drawnBox(symbol);
+  const w = drawnBox(wordmark);
+  const scale = round((s.height * WORDMARK_SHARE) / w.height);
+  const wordWidth = w.width * scale;
+  const wordHeight = w.height * scale;
+  const width = round(PAD + s.width + GAP + wordWidth + PAD);
+  const height = round(s.height + 2 * PAD);
+  const wordX = round(PAD + s.width + GAP - w.x * scale);
+  const wordY = round(PAD + (s.height - wordHeight) / 2 - w.y * scale);
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${TITLE}"` +
     ` shape-rendering="geometricPrecision" viewBox="0 0 ${width} ${height}">` +
     `<title>${TITLE}</title>` +
     `<desc>${DESC}</desc>` +
-    `<g id="octofusion-lockup-symbol"${at(0, symbolY)}>${drawing(symbol)}</g>` +
-    `<g id="octofusion-lockup-wordmark"${at(s.width + GAP, wordmarkY)}>${drawing(wordmark)}</g>` +
+    `<g id="octofusion-lockup-symbol" transform="translate(${round(PAD - s.x)} ${round(PAD - s.y)})">${drawing(symbol)}</g>` +
+    `<g id="octofusion-lockup-wordmark" transform="translate(${wordX} ${wordY}) scale(${scale})">${drawing(wordmark)}</g>` +
     `</svg>\n`
   );
 }
@@ -258,7 +289,6 @@ function manifest() {
 
 /** Writes the browser icons and the manifest into public/. */
 async function writePublic(symbol) {
-  await startRenderer();
   const square = octopusSquare(symbol);
 
   const faviconPath = join(publicDir, "favicon.svg");
@@ -284,10 +314,11 @@ async function writePublic(symbol) {
 }
 
 async function main() {
+  await startRenderer();
   const symbol = await optimizeSource("octofusion-symbol.svg");
   const wordmark = await optimizeSource("octofusion-wordmark.svg");
   const outputs = [
-    ["octofusion-symbol.svg", symbol, SYMBOL_LIMIT],
+    ["octofusion-symbol.svg", tightSymbol(symbol), SYMBOL_LIMIT],
     ["octofusion-lockup.svg", lockup(symbol, wordmark), LOCKUP_LIMIT],
   ];
   for (const [name, built, max] of outputs) {
