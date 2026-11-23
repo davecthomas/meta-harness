@@ -358,7 +358,22 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
     };
   }, [load]);
 
-  if (!shown) return error ? <ErrorAlert error={error} /> : <Loader size="sm" />;
+  // Until the plan is read the section says so, under its own title: a spinner alone said nothing was there.
+  if (!shown) {
+    return (
+      <>
+        <SectionTitle>The plan</SectionTitle>
+        {error ? (
+          <ErrorAlert error={error} />
+        ) : (
+          <Group gap="xs" mb="md" role="status" data-testid="plan-reading">
+            <Loader size="xs" />
+            <Text size="sm">Reading the plan.</Text>
+          </Group>
+        )}
+      </>
+    );
+  }
   const change = (next: PlanDraft[]) => setEdited(next);
   const base = edited ?? plan?.drafts ?? [];
   const canApprove = !!plan && plan.invalid.length === 0 && !dirty && !drafting;
@@ -389,11 +404,14 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
       {unsaved.element}
       <ErrorAlert error={error} />
       {drafting && (
-        <Alert color="blue" mb="md" title="The planner is working on the plan">
+        <Alert color="blue" mb="md" title={plan ? `The planner is writing version ${plan.version + 1} of the plan` : "The planner is working on the plan"} data-testid="plan-drafting">
           <Group gap="xs">
             <Loader size="xs" />
             <Text size="sm">
-              {planningFor(shown.planning_asked_at, now)}Nothing starts until you approve its plan.
+              {planningFor(shown.planning_asked_at, now)}
+              {plan
+                ? `Version ${plan.version} stays below until the new one is ready, which shows here by itself. Nothing starts until you approve a plan.`
+                : "Nothing starts until you approve its plan."}
             </Text>
             <Anchor component={Link} to={`/tasks/${shown.planning_task_id}`} size="sm">Watch its run</Anchor>
           </Group>
