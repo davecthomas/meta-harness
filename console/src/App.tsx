@@ -67,10 +67,10 @@ function isActive(path: string, to: string): boolean {
   return path === to || path.startsWith(to + "/");
 }
 
-// The header's height, and the logo's in it. At 44 pixels the lockup's name has letters about 18 pixels tall,
+// The header's height, and the logo's in it. At 53 pixels the lockup's name has letters about 22 pixels tall,
 // which read; at the 32 it once had, on artwork with empty margins, they were 7.
-export const HEADER_HEIGHT = 64;
-export const LOGO_HEIGHT = 44;
+export const HEADER_HEIGHT = 72;
+export const LOGO_HEIGHT = 53;
 const MENU_HIDDEN = "mh:menu-hidden";
 
 // Whether the menu was hidden last time. Storage that cannot be read leaves it shown.

@@ -6,9 +6,9 @@ import { api } from "../api";
 import { TAGLINE } from "../brand/Splash";
 import lockup from "../brand/octofusion-lockup.svg";
 
-// The lockup's height in the footer. Its name's letters are about two fifths of that: 14 pixels, the least
-// at which the outlined letters read. The footer once showed a 20-pixel symbol, an octopus of 16.
-export const FOOTER_LOGO_HEIGHT = 32;
+// The lockup's height in the footer. Its name's letters are about two fifths of that: 16 pixels. At 32 it was still
+// too small to read. The footer once showed a 20-pixel symbol, an octopus of 16.
+export const FOOTER_LOGO_HEIGHT = 38;
 export const REPOSITORY = "https://github.com/davecthomas/meta-harness";
 
 // The foot of every page, after its content: it scrolls with the page. One dimmed line on a wide screen; on a
