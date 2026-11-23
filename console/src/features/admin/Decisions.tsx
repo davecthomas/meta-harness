@@ -6,7 +6,7 @@ import { DataTable, Empty, ErrorAlert, when } from "../../components/ui";
 import { usd } from "../../money";
 import { candidateName } from "../tasks/path";
 
-// Every decision the meta-harness made about its work, newest first: which tier and model each task was routed
+// Every decision Octofusion made about its work, newest first: which tier and model each task was routed
 // to, how each run ended, each review's verdict, each merge, and what the Task Shepherd or the Goal Planner did
 // to unstick a task. The Audit page's other list holds the changes people made.
 
