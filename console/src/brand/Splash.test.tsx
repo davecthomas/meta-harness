@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { NAME, Splash, TAGLINE } from "./Splash";
 import { createOctopus, energyAt, FLAIL_SECONDS, SETTLE_SECONDS, SPINES } from "./octopus";
@@ -82,4 +82,39 @@ test("with reduced motion nothing moves: the symbol, the name and the tagline sh
   expect(splash.getAttribute("data-shown")).toBe("3");
   expect(splash.hasAttribute("data-still")).toBe(true);
   expect(frames).not.toHaveBeenCalled();
+});
+
+test("the octopus on the page is the one that moves, through every redraw of the splash", async () => {
+  // The splash redraws itself when the name and the tagline come in. A redraw once replaced the octopus's
+  // drawing with a fresh copy, and the arms on the page never moved.
+  motion(false);
+  const queued: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (next: FrameRequestCallback) => queued.push(next));
+  vi.stubGlobal("cancelAnimationFrame", () => undefined);
+  let clock = 1000;
+  vi.spyOn(performance, "now").mockImplementation(() => clock);
+  const frame = (seconds: number) => {
+    clock = 1000 + seconds * 1000;
+    const next = queued.splice(0);
+    act(() => next.forEach((run) => run(clock)));
+  };
+
+  render(<Splash where="sign-in" />);
+  const drawing = screen.getByTestId("splash").querySelector("svg")!;
+  const shape = () => screen.getByTestId("splash").querySelector("svg path")!.getAttribute("d");
+
+  frame(0.5);
+  const early = shape();
+  frame(1.0);
+  expect(shape()).not.toBe(early);
+
+  // Past the moments the name and the tagline come in, each of which redraws the splash.
+  frame(FLAIL_SECONDS + 0.5);
+  frame(FLAIL_SECONDS + 1.5);
+  expect(screen.getByTestId("splash").getAttribute("data-shown")).toBe("3");
+  const late = shape();
+  frame(FLAIL_SECONDS + 2.5);
+
+  expect(screen.getByTestId("splash").querySelector("svg")).toBe(drawing);
+  expect(shape()).not.toBe(late);
 });

@@ -26,7 +26,12 @@ export function Splash({ where }: { where: string }) {
   const [shown, setShown] = useState(still ? 3 : 0);
 
   useEffect(() => {
-    const svg = host.current?.querySelector("svg");
+    const node = host.current;
+    if (!node) return;
+    // The artwork's own markup, from this repository, put in by hand and once. Given to React to render, it
+    // was written again on every render, and the animation went on moving a drawing no longer on the page.
+    node.innerHTML = symbol;
+    const svg = node.querySelector("svg");
     if (!svg) return;
     const octopus = createOctopus(svg as SVGSVGElement);
     if (still || typeof window.requestAnimationFrame !== "function") {
@@ -55,7 +60,7 @@ export function Splash({ where }: { where: string }) {
             if (visible && !frame) frame = window.requestAnimationFrame(tick);
           })
         : null;
-    if (host.current) watcher?.observe(host.current);
+    watcher?.observe(node);
     return () => {
       visible = false;
       window.cancelAnimationFrame(frame);
@@ -65,8 +70,8 @@ export function Splash({ where }: { where: string }) {
 
   return (
     <div className="splash" data-testid="splash" data-where={where} data-shown={shown} data-still={still || undefined}>
-      {/* The artwork's own markup, from this repository: drawn here so its paths can be moved. */}
-      <div ref={host} className={`splash-octopus${shown >= 1 ? " in" : ""}`} role="img" aria-label={`${NAME} octopus`} dangerouslySetInnerHTML={{ __html: symbol }} />
+      {/* Empty to React: the effect above draws the octopus into it and moves its paths. */}
+      <div ref={host} className={`splash-octopus${shown >= 1 ? " in" : ""}`} role="img" aria-label={`${NAME} octopus`} />
       <div className="splash-name">
         <img className={`splash-wordmark${shown >= 2 ? " in" : ""}`} src={wordmark} alt={NAME} />
       </div>
