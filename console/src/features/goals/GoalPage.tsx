@@ -546,7 +546,10 @@ export function GoalPage() {
                 <Table.Td onClick={(e) => e.stopPropagation()}>
                   {task?.pr_url && <PrLink url={task.pr_url} />}
                 </Table.Td>
-                <Table.Td>{i.depends_on.map((d) => <Text ff="monospace" size="xs" key={d}>{d}</Text>)}</Table.Td>
+                {/* Each issue it waits on, as a link to it in its tracker: it opens there, not the task. */}
+                <Table.Td onClick={(e) => e.stopPropagation()} data-testid="waits-on">
+                  <Stack gap={2}>{i.depends_on.map((d) => <IssueLink key={d} issueRef={d} />)}</Stack>
+                </Table.Td>
                 <Table.Td>
                   {!["met", "canceled"].includes(goal.status) && <RemoveIssue goalId={goal.id} issueRef={i.ref} task={task} onRemoved={() => void Promise.all([load(), loadProgress()])} />}
                 </Table.Td>
