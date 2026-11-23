@@ -214,26 +214,24 @@ export function NewGoal() {
     }
   }
 
+  // What the goal still needs before it can be saved, with where to give it; null once it has what it needs.
+  // The save buttons stay off until then, and the line beside them says this, so nothing is pressed for nothing.
+  const lacking: string | null = !statement.trim()
+    ? "Describe the goal, under Description, or choose a spec to draft it from."
+    : !chosen.length
+      ? "Choose at least one repository, under Repositories."
+      : missing.length
+        ? `Choose the goal's ${missing.map((s) => s.label).join(" and ")}.`
+        : where === "spec" && !spec
+          ? 'Choose the spec, under "Plan a goal from a spec or an epic" above, or give another answer under Where its issues come from.'
+          : !(plans || untracked || spec) && !label.trim() && !refs.length && !takesAssigned
+            ? `Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to Octofusion" : ""}.`
+            : null;
+
   // Creates the goal, started or not. Returns its id, or null when it is refused (the form shows why).
   async function create(started: boolean): Promise<string | null> {
-    if (!chosen.length) {
-      setError("Choose at least one repository, under Repositories.");
-      return null;
-    }
-    if (!statement.trim()) {
-      setError("Describe the goal, under Description.");
-      return null;
-    }
-    if (missing.length) {
-      setError(`Choose the goal's ${missing.map((s) => s.label).join(" and ")}.`);
-      return null;
-    }
-    if (where === "spec" && !spec) {
-      setError('Choose the spec, under "Plan a goal from a spec or an epic" above, or give another answer under Where its issues come from.');
-      return null;
-    }
-    if (!(plans || untracked || spec) && !label.trim() && !refs.length && !takesAssigned) {
-      setError(`Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to Octofusion" : ""}.`);
+    if (lacking) {
+      setError(lacking);
       return null;
     }
     setSaving(started);
@@ -537,6 +535,9 @@ export function NewGoal() {
                 <Text size="sm" mt={4}>Nothing was created. Fix what it names, then save again.</Text>
               </Alert>
             )}
+            {lacking && !error && (
+              <Text size="sm" c="dimmed" ta="right" data-testid="goal-lacking">{lacking}</Text>
+            )}
             <Group justify="flex-end">
               <Button variant="default" onClick={() => navigate(-1)}>Cancel</Button>
               <Button
@@ -544,7 +545,7 @@ export function NewGoal() {
                 variant="default"
                 leftSection={<IconDeviceFloppy size={16} />}
                 loading={saving === false}
-                disabled={saving === true}
+                disabled={saving === true || !!lacking}
                 onClick={() => (start.current = false)}
               >
                 Save
@@ -554,7 +555,7 @@ export function NewGoal() {
                 variant="filled"
                 leftSection={<IconPlayerPlay size={16} />}
                 loading={saving === true}
-                disabled={saving === false}
+                disabled={saving === false || !!lacking}
                 onClick={() => (start.current = true)}
               >
                 {plansNow ? "Save and plan" : "Save and start"}
