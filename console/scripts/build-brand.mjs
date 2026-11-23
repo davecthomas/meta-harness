@@ -108,9 +108,17 @@ function check(name, svg, limit) {
   return bytes;
 }
 
+/**
+ * The comments ahead of the root element of a committed output, such as the provenance header the
+ * meta-harness adds to a file a run created. The optimizer drops comments, so the build keeps these, or a
+ * second run, or `npm run brand` in the checks, would remove them and change a committed file.
+ */
+function leadingComments(old) {
+  return /^(?:\s*<!--[\s\S]*?-->)+\s*/.exec(old ?? "")?.[0] ?? "";
+}
+
 /** Writes a file only when its text changed, so a second run touches nothing. */
-async function writeIfChanged(path, text) {
-  const old = await readFile(path, "utf8").catch(() => null);
+async function writeIfChanged(path, text, old) {
   if (old === text) return "unchanged";
   await writeFile(path, text);
   return "written";
@@ -123,10 +131,12 @@ async function main() {
     ["octofusion-symbol.svg", symbol, SYMBOL_LIMIT],
     ["octofusion-lockup.svg", lockup(symbol, wordmark), LOCKUP_LIMIT],
   ];
-  for (const [name, svg, max] of outputs) {
-    const bytes = check(name, svg, max);
+  for (const [name, built, max] of outputs) {
     const path = join(outDir, name);
-    const state = await writeIfChanged(path, svg);
+    const old = await readFile(path, "utf8").catch(() => null);
+    const svg = leadingComments(old) + built;
+    const bytes = check(name, svg, max);
+    const state = await writeIfChanged(path, svg, old);
     console.log(`${relative(consoleDir, path)}: ${bytes} bytes, ${state}`);
   }
 }
