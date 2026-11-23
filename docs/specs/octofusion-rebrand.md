@@ -68,7 +68,7 @@ The header shows the horizontal lockup where it shows the hexagon and "Meta-harn
 
 The console has no footer today. Every page gets one at the end of its content, the sign-in screen included. It scrolls with the page and is never fixed to the window. It holds:
 
-- the lockup at 38 pixels, which names the product;
+- the lockup at 53 pixels, the header's size, which names the product;
 - the tagline, as text;
 - the version and the deployed commit, which move here from the header;
 - a link to the project on GitHub.

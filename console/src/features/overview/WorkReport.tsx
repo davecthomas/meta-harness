@@ -46,21 +46,30 @@ function Items({ title, items, actions, shown, onDone }: { title: string; items:
         if (first) shown?.add(item.goal_id);
         const needs = first ? actions?.[item.goal_id] ?? [] : [];
         return (
-          <Group key={i} justify="space-between" wrap="wrap" gap="xs" data-testid="report-row">
-            <Text size="sm" style={{ flex: "1 1 320px" }}>
+          <Stack key={i} gap={6} data-testid="report-row">
+            <Text size="sm">
               {item.goal && (item.goal_id ? <><Anchor component={Link} to={`/goals/${item.goal_id}`}>{item.goal}</Anchor>: </> : item.goal + ": ")}
               {item.what ?? item.why}{item.what && item.why ? " " + item.why : ""}
             </Text>
             {first && (
-              <Group gap="xs" wrap="wrap" data-testid="report-actions">
+              <Stack gap={6} pl="md" data-testid="report-actions" style={{ borderLeft: "2px solid var(--mantine-color-default-border)" }}>
+                {/* Each thing the goal needs, on a line of its own: what it is, from the records, and the
+                    button that does it, so no button is shown without what it is for. */}
                 {needs.map((need, n) => (
-                  <NeedButton key={n} need={need} planning={false} goalId={item.goal_id} label={need.label || null} onDone={onDone ?? (() => undefined)} away />
+                  <Group key={n} justify="space-between" wrap="wrap" gap="xs" data-testid="report-action">
+                    <Text size="sm" c="dimmed" style={{ flex: "1 1 280px" }}>{need.what}</Text>
+                    <NeedButton need={need} planning={false} goalId={item.goal_id} label={need.label || null} onDone={onDone ?? (() => undefined)} away />
+                  </Group>
                 ))}
                 {/* Nothing its records call for now: the goal's page is where to look. */}
-                {!needs.length && <Button size="xs" variant="subtle" component={Link} to={`/goals/${item.goal_id}`}>Open the goal</Button>}
-              </Group>
+                {!needs.length && (
+                  <Group justify="flex-end">
+                    <Button size="xs" variant="default" component={Link} to={`/goals/${item.goal_id}`}>Open the goal</Button>
+                  </Group>
+                )}
+              </Stack>
             )}
-          </Group>
+          </Stack>
         );
       })}
     </Stack>
@@ -79,7 +88,7 @@ function Suggested({ actions, onDone }: { actions: SuggestedAction[]; onDone: ()
         <Group key={i} gap="sm" wrap="wrap" data-testid="answer-action">
           <Text size="sm" fw={600}>{step.goal}</Text>
           {step.action === "open_goal" ? (
-            <Button size="xs" variant="light" component={Link} to={`/goals/${step.goal_id}`}>{OPENS[step.says ?? "goal"]}</Button>
+            <Button size="xs" variant="default" component={Link} to={`/goals/${step.goal_id}`}>{OPENS[step.says ?? "goal"]}</Button>
           ) : (
             <NeedButton need={step as GoalAction} planning={false} goalId={step.goal_id} label={step.label || null} onDone={onDone} away />
           )}
@@ -149,7 +158,8 @@ export function WorkReport() {
             <Text fw={600}>{report.headline}</Text>
             <Items title="Needs you" items={report.needs_you} actions={found?.actions ?? {}} shown={withButtons} onDone={reread} />
             <Items title="Moving" items={report.moving} />
-            <Items title="Not moving" items={report.not_moving} actions={found?.actions ?? {}} shown={withButtons} onDone={reread} />
+            {/* A goal already under Needs you is not said again here: the report's model writes both lists. */}
+            <Items title="Waiting" items={report.not_moving.filter((row) => !row.goal_id || !report.needs_you.some((n) => n.goal_id === row.goal_id))} actions={found?.actions ?? {}} shown={withButtons} onDone={reread} />
             {report.spend && <Text size="sm">{report.spend}</Text>}
             {report.finished && <Text size="sm">{report.finished}</Text>}
           </>

@@ -22,7 +22,7 @@ export function TaskNeedAction({ taskId, onDone }: { taskId: string; onDone: () 
   useEffect(() => {
     tasksApi.task(taskId).then(setTask, () => setTask(null));
   }, [taskId]);
-  const open = <Button size="xs" variant="subtle" component={Link} to={`/tasks/${taskId}`}>Open the task</Button>;
+  const open = <Button size="xs" variant="default" component={Link} to={`/tasks/${taskId}`}>Open the task</Button>;
   if (!task) return open;
   const run = (act: () => Promise<unknown>) => async () => {
     try {
@@ -47,7 +47,7 @@ export function TaskNeedAction({ taskId, onDone }: { taskId: string; onDone: () 
     />
   );
   const retry = (label: string) => (
-    <Button size="xs" variant="light" leftSection={<IconRefresh size={14} />} onClick={run(() => tasksApi.retryTask(taskId, retryLimit(task, false)))}>
+    <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} onClick={run(() => tasksApi.retryTask(taskId, retryLimit(task, false)))}>
       {label}
     </Button>
   );
@@ -58,14 +58,14 @@ export function TaskNeedAction({ taskId, onDone }: { taskId: string; onDone: () 
         <>
           {merge("Merge as is")}
           {retry("Try another fix")}
-          <Button size="xs" variant="subtle" component={Link} to={findings(taskId)}>See the findings</Button>
+          <Button size="xs" variant="default" component={Link} to={findings(taskId)}>See the findings</Button>
         </>
       ) : (
         <>{retry("Try again")}{open}</>
       );
       break;
     case "ready":
-      buttons = <>{merge("Merge")}<Button size="xs" variant="subtle" component={Link} to={reviewLink(taskId)}>See the changes</Button></>;
+      buttons = <>{merge("Merge")}<Button size="xs" variant="default" component={Link} to={reviewLink(taskId)}>See the changes</Button></>;
       break;
     case "failed":
     case "canceled":
@@ -141,18 +141,18 @@ export function NeedButton({ need, planning, goalId, label, onDone, away = false
     case "approve_plan":
       return <Button size="xs" color="teal" leftSection={<IconCheck size={14} />} onClick={send(APPROVE_PLAN)}>Approve the plan</Button>;
     case "fix_plan":
-      return <Button size="xs" variant="light" leftSection={<IconRefresh size={14} />} onClick={send(REPLAN)}>Plan again</Button>;
+      return <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} onClick={send(REPLAN)}>Plan again</Button>;
     case "accept_fix":
       return (
         <Group gap="xs" wrap="nowrap">
           <ConfirmButton
             size="xs"
             color="teal"
-            label="Accept the fix"
-            title="Accept the planner's fix?"
+            label="Update the plan"
+            title="Update the plan with the planner's fix?"
             says={
               <Stack gap={4}>
-                <Text size="sm">It becomes the plan. You still approve the plan before anything runs.</Text>
+                <Text size="sm">The fix becomes the plan's next version. You still approve the plan before anything runs.</Text>
                 <List size="sm" spacing={2}>{(need.changes ?? []).map((line) => <List.Item key={line}>{line}</List.Item>)}</List>
               </Stack>
             }
@@ -165,7 +165,7 @@ export function NeedButton({ need, planning, goalId, label, onDone, away = false
           />
           <Button
             size="xs"
-            variant="subtle"
+            variant="default"
             color="gray"
             onClick={async () => {
               await api.dismissFix(goalId);
@@ -183,19 +183,19 @@ export function NeedButton({ need, planning, goalId, label, onDone, away = false
     case "settle_review":
     case "retry":
     case "open_task":
-      return task ? <TaskNeedAction taskId={task} onDone={onDone} /> : <Button size="xs" variant="light" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>;
+      return task ? <TaskNeedAction taskId={task} onDone={onDone} /> : <Button size="xs" variant="default" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>;
     case "split_or_run": {
-      const issues = <Button size="xs" variant="light" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>;
+      const issues = <Button size="xs" variant="default" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>;
       return need.ref ? <HeldIssueAction goalId={goalId} issueRef={need.ref} label={label} fallback={issues} onDone={onDone} /> : issues;
     }
     case "raise_budget":
-      return <Button size="xs" variant="light" onClick={send(OPEN_SETTINGS)}>Raise the budget</Button>;
+      return <Button size="xs" variant="default" onClick={send(OPEN_SETTINGS)}>Raise the budget</Button>;
     default: {
       const url = need.ref ? issueUrl(need.ref) : null;
       const open = url ? (
-        <Button size="xs" variant="light" component="a" href={url} target="_blank" rel="noreferrer">Open the issue</Button>
+        <Button size="xs" variant="default" component="a" href={url} target="_blank" rel="noreferrer">Open the issue</Button>
       ) : (
-        <Button size="xs" variant="light" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>
+        <Button size="xs" variant="default" onClick={send(SHOW_ISSUES)}>Show the goal's issues</Button>
       );
       // A need about an issue reads the issue as it is now, whatever the update said when it was written: a
       // held one is split or run as one right here, one with a task gets its task's buttons.

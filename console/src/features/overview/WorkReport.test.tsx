@@ -112,7 +112,7 @@ test("a question shows its answer, and a 429 shows its message", async () => {
   expect(screen.queryByText("Exports merged today.")).toBeNull();
 });
 
-test("a row that needs the operator carries the button that does it, read from the goal's records", async () => {
+test("a row that needs the operator says what each step is and carries the button that does it", async () => {
   const needing = {
     ...report,
     needs_you: [
@@ -122,29 +122,46 @@ test("a row that needs the operator carries the button that does it, read from t
     not_moving: [{ goal_id: "g-2", goal: "Keep tasks through compaction", why: "Its plan waits for you." }, { goal_id: "g-4", goal: "Add search", why: "It waits its turn." }],
   };
   const actions = {
-    "g-2": [{ what: "", ref: "", action: "approve_plan", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2" }],
-    "g-3": [{ what: "", ref: "mh:i-1", action: "merge", task_id: "t-1", pr_url: "https://github.com/o/r/pull/9", goal_id: "g-3", label: "mh:g-3" }],
+    "g-2": [{ what: "The plan is ready, with 16 new tasks. Nothing runs until you approve it.", ref: "", action: "approve_plan", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2" }],
+    "g-3": [{ what: "Imports: its pull request passed checks and review.", ref: "mh:i-1", action: "merge", task_id: "t-1", pr_url: "https://github.com/o/r/pull/9", goal_id: "g-3", label: "mh:g-3" }],
     "g-4": [],
   };
   const calls = renderPanel((url) =>
     url.startsWith("/v1/tasks/t-1") ? json({ id: "t-1", title: "Imports", status: "ready", pr_url: "https://github.com/o/r/pull/9", max_usd: "5" }) : json({ report: needing, written: true, actions }));
 
   const rows = await screen.findAllByTestId("report-row");
-  // The goal's name is a link to its page, and its first row has its button.
+  // A goal already under Needs you is not said again under Waiting: four rows, not five.
+  expect(rows).toHaveLength(4);
+  expect(screen.queryByText("Not moving")).toBeNull();
+  expect(screen.getByText("Waiting")).toBeTruthy();
   expect(within(rows[0]).getByRole("link", { name: "Keep tasks through compaction" }).getAttribute("href")).toBe("/goals/g-2");
-  expect(within(rows[0]).getByRole("button", { name: "Approve the plan" })).toBeTruthy();
-  // A task's button acts where it is read, from the task as it is now.
+  // Each button sits beside the sentence that says what it is for.
+  const [approve] = within(rows[0]).getAllByTestId("report-action");
+  expect(approve.textContent).toContain("The plan is ready, with 16 new tasks.");
+  expect(within(approve).getByRole("button", { name: "Approve the plan" })).toBeTruthy();
   expect(await within(rows[1]).findByRole("button", { name: "Merge" })).toBeTruthy();
-  // A goal named again gets its button once, and one that needs nothing gets the way to its page.
-  expect(within(rows[3]).queryByRole("button")).toBeNull();
-  expect(within(rows[4]).getByRole("link", { name: "Open the goal" }).getAttribute("href")).toBe("/goals/g-4");
-  // The moving rows ask nothing, so they carry no button.
+  expect(within(rows[1]).getByText("Imports: its pull request passed checks and review.")).toBeTruthy();
+  // The moving row asks nothing; a goal that needs nothing now gets the way to its page.
   expect(within(rows[2]).queryByTestId("report-actions")).toBeNull();
+  expect(within(rows[3]).getByRole("link", { name: "Open the goal" }).getAttribute("href")).toBe("/goals/g-4");
 
-  // Approving is the goal page's to do: the button opens it there, with the approval asked for.
-  fireEvent.click(within(rows[0]).getByRole("button", { name: "Approve the plan" }));
+  fireEvent.click(within(approve).getByRole("button", { name: "Approve the plan" }));
   expect((await screen.findByTestId("arrived")).textContent).toBe("/goals/g-2?do=approve");
   expect(calls.some((c) => c.init?.method === "POST")).toBe(false);
+});
+
+test("the planner's fix to a plan is offered as Update the plan, with what it changes, and Dismiss comes last", async () => {
+  const needing = { ...report, needs_you: [{ goal_id: "g-2", goal: "Keep tasks through compaction", what: "Check the plan.", why: "" }] };
+  const actions = {
+    "g-2": [{ what: "The planner drafted a fix for gaps in this goal's plan. Accepting it makes a new plan version.", ref: "", action: "accept_fix", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2", changes: ["Adds: track compaction after release"] }],
+  };
+  renderPanel(() => json({ report: needing, written: true, actions }));
+
+  const [step] = await screen.findAllByTestId("report-action");
+  expect(step.textContent).toContain("The planner drafted a fix for gaps in this goal's plan.");
+  const buttons = within(step).getAllByRole("button").map((b) => b.textContent);
+  expect(buttons).toEqual(["Update the plan", "Dismiss"]);
+  expect(within(step).queryByRole("button", { name: /Accept the fix|Approve the plan/ })).toBeNull();
 });
 
 test("an answer carries the buttons for what it suggests, each beside the goal it is about", async () => {
