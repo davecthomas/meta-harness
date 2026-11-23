@@ -73,7 +73,7 @@ const RULES: Rule[] = [
     test: /refused the run grant \(422\).*spend_limit_usd.*'input': '([0-9.]+)'/s,
     write: (m) => ({
       summary: "The task's run could not start: the HTTP Gateway refused its spend limit",
-      cause: `The run asked for a ${usdText(m[1])} spend limit, and the HTTP Gateway grants at most $999,999.99. Under the track budget policy the meta-harness sent one dollar too many; that is fixed in the control plane. No model was called and nothing was spent.`,
+      cause: `The run asked for a ${usdText(m[1])} spend limit, and the HTTP Gateway grants at most $999,999.99. Under the track budget policy Octofusion sent one dollar too many; that is fixed in the control plane. No model was called and nothing was spent.`,
       fix: "Retry the task. If it fails the same way, the deployed control plane is older than the fix: check the last deploy.",
       remedies: ["retry"],
     }),
