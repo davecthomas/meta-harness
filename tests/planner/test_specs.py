@@ -210,3 +210,46 @@ def test_canceling_a_goal_closes_nothing_in_the_tracker_unless_asked(world):
 
     assert canceled.status_code == 200 and "issues" not in canceled.json()
     assert closed == [] and not getattr(tracker, "comments", [])
+
+
+def test_an_ended_goal_lists_what_it_left_open_and_closes_it_on_request(world):
+    """A goal canceled before a cancel could close anything kept its issues open in the tracker, and its page
+    offered nothing to do about them."""
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks = world
+    closed: list[str] = []
+
+    async def close_unplanned(ref):
+        tracker.issues[ref].state = "closed"
+        closed.append(ref)
+        return True
+
+    tracker.close_unplanned = close_unplanned
+    goal = _goal(client, spec={"name": "exports-prd.md", "text": SPEC})
+    _planned(client, events, tasks, goal, [draft("button"), draft("csv", ("button",))])
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+    made = [i.ref for i in tracker.created]
+    # A part one of them was split into is the goal's own making too.
+    # Numbered like no other run's: the test database outlives a run, and a ref another goal holds is refused.
+    part = tracker.add(REPO, uuid.uuid4().int % 10**15, body="Half of it.", labels=[goal["label"]], title="Half")
+    with db.connect(autocommit=True) as conn:
+        store.add_refs(conn, goal["id"], [(part, REPO)])
+        store.record_split(conn, made[0], [part], "split into parts")
+
+    early = client.post(f"/v1/goals/{goal['id']}/close-left-open", headers=OPERATOR)
+    assert early.status_code == 409 and "Cancel the goal" in early.json()["detail"], (
+        "an open goal's issues are its work"
+    )
+
+    assert client.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR).status_code == 200
+    listed = client.get(f"/v1/goals/{goal['id']}/left-open", headers=OPERATOR).json()["issues"]
+    assert sorted(i["ref"] for i in listed) == sorted([*made, part]) and closed == []
+    assert {i["title"] for i in listed} >= {"Build button", "Build csv"}
+
+    done = client.post(f"/v1/goals/{goal['id']}/close-left-open", headers=OPERATOR)
+
+    assert done.status_code == 200 and sorted(done.json()["closed"]) == sorted([*made, part])
+    assert done.json()["errors"] == [] and sorted(closed) == sorted([*made, part])
+    assert client.get(f"/v1/goals/{goal['id']}/left-open", headers=OPERATOR).json() == {"issues": []}

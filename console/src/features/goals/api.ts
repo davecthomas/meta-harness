@@ -283,6 +283,9 @@ export const goalsApi = {
       method: "POST",
       body: JSON.stringify({ close_issues: closeIssues }),
     }),
+  // What an ended goal left open: the open issues it created, and closing them as not planned.
+  leftOpen: (id: string) => call<{ issues: { ref: string; title: string }[] }>(`/v1/goals/${id}/left-open`),
+  closeLeftOpen: (id: string) => call<{ closed: string[]; errors: string[] }>(`/v1/goals/${id}/close-left-open`, { method: "POST" }),
   goalAction: (id: string, action: "pause" | "resume" | "cancel" | "complete" | "reopen" | "sweep") =>
     call<unknown>(`/v1/goals/${id}/${action}`, { method: "POST" }),
   // A proposed statement for a goal, saved nowhere; and saving the one the operator accepted on a goal.
