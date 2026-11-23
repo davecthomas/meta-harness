@@ -232,7 +232,8 @@ def test_an_ended_goal_lists_what_it_left_open_and_closes_it_on_request(world):
     assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
     made = [i.ref for i in tracker.created]
     # A part one of them was split into is the goal's own making too.
-    part = tracker.add(REPO, 990_000_000 + len(made), body="Half of it.", labels=[goal["label"]], title="Half")
+    # Numbered like no other run's: the test database outlives a run, and a ref another goal holds is refused.
+    part = tracker.add(REPO, uuid.uuid4().int % 10**15, body="Half of it.", labels=[goal["label"]], title="Half")
     with db.connect(autocommit=True) as conn:
         store.add_refs(conn, goal["id"], [(part, REPO)])
         store.record_split(conn, made[0], [part], "split into parts")
