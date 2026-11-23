@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Box, Group, Paper, Text } from "@mantine/core";
 
-// Who is talking. Two parts of the meta-harness speak to a person, each in one place: the Goal Planner on a
+// Who is talking. Two parts of Octofusion speak to a person, each in one place: the Goal Planner on a
 // goal's page and the Task Shepherd on a task's. Each has a mark and a color of its own, shown in the corner
 // of whatever it says, so a reader knows whose words they are before reading them.
 
