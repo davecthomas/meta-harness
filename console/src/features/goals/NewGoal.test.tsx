@@ -5,89 +5,38 @@ import { afterEach, expect, test, vi } from "vitest";
 import { NewGoal } from "./NewGoal";
 import { theme } from "../../theme";
 
+// The New goal page, one decision at a time (docs/specs/new-goal-progressive.md).
+
 function respond(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
 }
 
 afterEach(() => vi.unstubAllGlobals());
 
-function fillAndPress(button: string, created: Record<string, unknown>[]) {
+const BASE = { description: "", settings: [], credentials: [], missing_credentials: [], signed_in: true, configured: true, writes_progress: true, issue_url_prefix: null, goal_settings: [], goal_defaults: {} };
+const TRACKERS = { default: "github", trackers: [{ ...BASE, scheme: "github", title: "GitHub Issues" }, { ...BASE, scheme: "mh", title: "None: no issue tracking", built_in: true }] };
+
+// A fake API over one repo. asked: every call, by method and address; created: each goal posted.
+function stub(created: Record<string, unknown>[], asked: string[] = [], extra: (url: string, init?: RequestInit) => Promise<Response> | null = () => null) {
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    asked.push(`${init?.method ?? "GET"} ${url}`);
+    const answer = extra(url, init);
+    if (answer) return answer;
     if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
-    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
+    if (url === "/v1/trackers") return respond(TRACKERS);
+    if (url.startsWith("/v1/labels")) return respond({ repos: ["o/a"], labels: [{ label: "bug", total: 2, repos: { "o/a": 2 } }] });
+    if (url === "/v1/goals/title") return respond({ title: "Add a CSV export" });
+    if (url === "/v1/goals/draft")
+      return respond({ title: "Fix the save bugs", statement: "Fix the two save bugs users hit.", theme: "", modality: "fix", model: "m", usd_cost: "0", label: "bug", labels: ["bug"], repos: ["o/a"], refs: [] });
     if (url === "/v1/goals" && init?.method === "POST") {
       created.push(JSON.parse(String(init.body)));
       return respond({ id: "g-1" }, 201);
     }
     return respond({ detail: "not stubbed" }, 404);
   });
-  render(
-    <MantineProvider theme={theme}>
-      <MemoryRouter initialEntries={["/goals/new"]}>
-        <Routes>
-          <Route path="/goals/new" element={<NewGoal />} />
-          <Route path="/goals/:goalId" element={<p>Goal page</p>} />
-        </Routes>
-      </MemoryRouter>
-    </MantineProvider>,
-  );
-  return (async () => {
-    await screen.findByRole("checkbox", { name: "o/a", checked: true });
-    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
-    fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
-    fireEvent.click(screen.getByRole("button", { name: button }));
-    expect(await screen.findByText("Goal page")).toBeTruthy();
-  })();
 }
 
-test("a Jira goal starts on the default project, and its issues are read only for a real one", async () => {
-  const asked: string[] = [];
-  const jira = {
-    scheme: "jira", title: "Jira", description: "", settings: [], credentials: [], missing_credentials: [], signed_in: true, configured: true,
-    writes_progress: true, issue_url_prefix: null, goal_defaults: { project: "VL" },
-    goal_settings: [{ name: "project", label: "Jira project", kind: "choice", required: true, help: "" }],
-  };
-  vi.stubGlobal("fetch", (url: string) => {
-    if (url.startsWith("/v1/labels")) {
-      asked.push(url);
-      return respond({ repos: ["o/a"], labels: [{ label: "bug", total: 1, repos: { "o/a": 1 } }] });
-    }
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
-    if (url === "/v1/trackers") return respond({ default: "jira", trackers: [jira] });
-    if (url === "/v1/trackers/jira/choices/project") return respond({ choices: [{ value: "VL", label: "Voltron (VL)" }, { value: "OPS", label: "Operations (OPS)" }] });
-    return respond({ detail: "not stubbed" }, 404);
-  });
-  render(
-    <MantineProvider theme={theme}>
-      <MemoryRouter initialEntries={["/goals/new"]}>
-        <Routes><Route path="/goals/new" element={<NewGoal />} /></Routes>
-      </MemoryRouter>
-    </MantineProvider>,
-  );
-
-  const project = await screen.findByDisplayValue("Voltron (VL)");
-  fireEvent.change(project, { target: { value: "V" } });
-  fireEvent.click(screen.getByRole("button", { name: "Draft a goal from issue labels" }));
-  expect((await screen.findAllByText("bug")).length).toBeGreaterThan(0);
-
-  expect(asked.length).toBeGreaterThan(0);
-  for (const url of asked) expect(decodeURIComponent(url)).toContain('"project":"VL"');
-  expect(screen.queryByRole("alert")).toBeNull();
-});
-
-test("a goal with no tracker asks only for a description, and is saved to be planned", async () => {
-  const created: Record<string, unknown>[] = [];
-  const base = { description: "", settings: [], credentials: [], missing_credentials: [], signed_in: true, configured: true, writes_progress: true, issue_url_prefix: null, goal_settings: [], goal_defaults: {} };
-  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
-    if (url === "/v1/trackers") return respond({ default: "github", trackers: [{ ...base, scheme: "github", title: "GitHub Issues" }, { ...base, scheme: "mh", title: "None: no issue tracking", built_in: true }] });
-    if (url.startsWith("/v1/labels")) return respond({ repos: ["o/a"], labels: [] });
-    if (url === "/v1/goals" && init?.method === "POST") {
-      created.push(JSON.parse(String(init.body)));
-      return respond({ id: "g-1" }, 201);
-    }
-    return respond({ detail: "not stubbed" }, 404);
-  });
+function show() {
   render(
     <MantineProvider theme={theme}>
       <MemoryRouter initialEntries={["/goals/new"]}>
@@ -98,50 +47,163 @@ test("a goal with no tracker asks only for a description, and is saved to be pla
       </MemoryRouter>
     </MantineProvider>,
   );
+}
+
+async function pick(source: "issues" | "spec" | "describe") {
+  const card = await screen.findByTestId(`source-${source}`);
+  await waitFor(() => expect(card.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(card);
+}
+
+async function next(panel: number) {
+  const button = within(screen.getByTestId(`step-${panel}`)).getByRole("button", { name: "Continue" });
+  await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(button);
+}
+
+test("only the first question shows at first, and each answer opens the next", async () => {
+  stub([]);
+  show();
+
+  expect(await screen.findByText("Where does the work come from?")).toBeTruthy();
+  expect(screen.queryByTestId("step-2")).toBeNull();
+  expect(screen.queryByLabelText(/Description/)).toBeNull();
+  expect(screen.queryByRole("button", { name: /Save/ })).toBeNull();
+  expect(screen.getByRole("heading", { name: "New goal" })).toBeTruthy();
+
+  await pick("describe");
+  // The first panel folds to its answer, with a pencil; the second opens.
+  expect(screen.getByTestId("answer-1").textContent).toBe("I'll describe it");
+  expect(screen.getByTestId("step-2").getAttribute("data-open")).toBe("true");
   await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Add CSV export" } });
-  // With a tracker, the goal says where its issues come from.
-  expect(await screen.findByRole("radiogroup", { name: "Where its issues come from" })).toBeTruthy();
+  expect(screen.queryByTestId("step-3")).toBeNull();
+});
 
-  fireEvent.change(screen.getByLabelText("Issue tracker"), { target: { value: "mh" } });
+test("a described goal gets a written title as the page's title, and is saved to be planned", async () => {
+  const created: Record<string, unknown>[] = [];
+  stub(created);
+  show();
+  await pick("describe");
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  await next(2);
 
-  expect((await screen.findByTestId("untracked-note")).textContent).toContain("nothing is written to any tracker");
-  expect(screen.queryByRole("radiogroup", { name: "Where its issues come from" })).toBeNull();
-  expect(screen.queryByRole("combobox", { name: /^Label/ })).toBeNull();
+  fireEvent.change(screen.getByTestId("description"), { target: { value: "Add CSV export" } });
+  await next(3);
+
+  // The title is written from the description and becomes the page's title, with a pencil to change it.
+  expect(await screen.findByRole("heading", { name: "Add a CSV export" })).toBeTruthy();
+  expect(screen.getByText("How much it does without asking")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
+
   expect(await screen.findByText("Goal page")).toBeTruthy();
-  expect(created[0]).toMatchObject({ statement: "Add CSV export", repos: ["o/a"], tracker: "mh", modality: "feature", start: true });
-  expect(created[0]).not.toHaveProperty("label");
-});
-
-test("Save creates the goal without starting it and opens its page", async () => {
-  const created: Record<string, unknown>[] = [];
-  await fillAndPress("Save", created);
-  await waitFor(() => expect(created).toHaveLength(1));
-  expect(created[0]).toMatchObject({ statement: "Fix the save bugs", repos: ["o/a"], label: "bug", start: false });
-});
-
-test("Save and start creates the goal started", async () => {
-  const created: Record<string, unknown>[] = [];
-  await fillAndPress("Save and start", created);
-  expect(created).toHaveLength(1);
-  expect(created[0]).toMatchObject({ label: "bug", start: true });
-});
-
-function editorRouter(created: Record<string, unknown>[]) {
-  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
-    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
-    if (url === "/v1/goals" && init?.method === "POST") {
-      created.push(JSON.parse(String(init.body)));
-      return respond({ id: "g-1" }, 201);
-    }
-    return respond({ detail: "not stubbed" }, 404);
+  expect(created[0]).toMatchObject({
+    title: "Add a CSV export",
+    statement: "Add CSV export",
+    repos: ["o/a"],
+    modality: "feature",
+    autonomy: "standard",
+    start: true,
   });
+});
+
+test("a goal on issues that exist has its description and title written from them, and runs them as they are", async () => {
+  const created: Record<string, unknown>[] = [];
+  const asked: string[] = [];
+  stub(created, asked);
+  show();
+  await pick("issues");
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  await next(2);
+
+  fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
+  await next(3);
+
+  // The system writes the description: the operator typed none.
+  expect(await screen.findByRole("heading", { name: "Fix the save bugs" })).toBeTruthy();
+  expect(asked).toContain("POST /v1/goals/draft");
+  fireEvent.click(await screen.findByRole("button", { name: "Save and start" }));
+
+  expect(await screen.findByText("Goal page")).toBeTruthy();
+  expect(created[0]).toMatchObject({ statement: "Fix the two save bugs users hit.", label: "bug", modality: "fix", title: "Fix the save bugs" });
+});
+
+test("a title the operator wrote with the pencil is kept over one written for them", async () => {
+  const created: Record<string, unknown>[] = [];
+  stub(created);
+  show();
+  await pick("describe");
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  await next(2);
+  fireEvent.change(screen.getByTestId("description"), { target: { value: "Add CSV export" } });
+  await next(3);
+  await screen.findByRole("heading", { name: "Add a CSV export" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Change the goal's title" }));
+  const field = screen.getByLabelText("The goal's title");
+  fireEvent.change(field, { target: { value: "Exports" } });
+  fireEvent.blur(field);
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  expect(await screen.findByText("Goal page")).toBeTruthy();
+  expect(created[0]).toMatchObject({ title: "Exports", start: false });
+});
+
+test("a panel's pencil opens it again, and another source starts the goal's makeup again", async () => {
+  stub([]);
+  show();
+  await pick("describe");
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  await next(2);
+  fireEvent.change(screen.getByTestId("description"), { target: { value: "Add CSV export" } });
+  await next(3);
+  await screen.findByText("How much it does without asking");
+
+  fireEvent.click(screen.getByRole("button", { name: "Change: Where does the work come from?" }));
+  expect(screen.getByTestId("step-1").getAttribute("data-open")).toBe("true");
+  await pick("issues");
+  // The description was the operator's, so it stays; the issues are asked for afresh.
+  expect(screen.getByTestId("answer-1").textContent).toBe("Issues that already exist");
+});
+
+test("issues that exist cannot be chosen with no issue tracker set up, and say why", async () => {
+  stub([], [], (url) => (url === "/v1/trackers" ? respond({ default: "mh", trackers: [{ ...BASE, scheme: "mh", title: "None", built_in: true }] }) : null));
+  show();
+  const card = await screen.findByTestId("source-issues");
+  await waitFor(() => expect(card.hasAttribute("disabled")).toBe(true));
+  expect(card.textContent).toContain("No issue tracker is set up yet");
+});
+
+test("a goal planned from an uploaded spec sends the file, with the title and description written from it", async () => {
+  const created: Record<string, unknown>[] = [];
+  stub(created, [], (url) =>
+    url === "/v1/goals/draft-from-spec" ? respond({ title: "Data export", statement: "Users can export their data as CSV.", spec: "exports-prd.md" }) : null,
+  );
+  show();
+  await pick("spec");
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  await next(2);
+
+  fireEvent.click(screen.getByRole("radio", { name: "Upload a file" }));
+  const file = new File(["# Exports\n\n- An export button.\n"], "exports-prd.md", { type: "text/markdown" });
+  fireEvent.change(screen.getByTestId("spec-field").querySelector("input[type=file]")!, { target: { files: [file] } });
+  await screen.findByTestId("spec-loaded");
+  expect(await screen.findByRole("heading", { name: "Data export" })).toBeTruthy();
+  await next(3);
+  fireEvent.click(await screen.findByRole("button", { name: "Save and plan" }));
+
+  expect(await screen.findByText("Goal page")).toBeTruthy();
+  expect(created[0].spec).toEqual({ name: "exports-prd.md", text: "# Exports\n\n- An export button.\n" });
+  expect(created[0]).toMatchObject({ title: "Data export", statement: "Users can export their data as CSV.", modality: "feature" });
+});
+
+// The form under a data router, so leaving it can be blocked and asked about.
+function editorRouter(created: Record<string, unknown>[]) {
+  stub(created);
   const router = createMemoryRouter(
     [
       { path: "/goals/new", element: <NewGoal /> },
       { path: "/goals", element: <p>Goals list</p> },
+      { path: "/goals/:goalId", element: <p>Goal page</p> },
     ],
     { initialEntries: ["/goals/new"] },
   );
@@ -153,362 +215,23 @@ function editorRouter(created: Record<string, unknown>[]) {
   return router;
 }
 
-test("leaving a filled-in New goal asks first: keep editing stays, discard leaves", async () => {
+test("leaving a started New goal asks first: keep editing stays, discard leaves", async () => {
   const router = editorRouter([]);
-  fireEvent.change(await screen.findByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
+  await pick("describe");
 
   await act(() => router.navigate("/goals"));
   expect(await screen.findByText("Save your changes?")).toBeTruthy();
-  expect(screen.getByText(/the new goal "Fix the save bugs"/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
   await waitFor(() => expect(screen.queryByText("Save your changes?")).toBeNull());
-  expect(screen.queryByText("Goals list")).toBeNull();
 
   await act(() => router.navigate("/goals"));
   fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
   expect(await screen.findByText("Goals list")).toBeTruthy();
 });
 
-test("Save in the prompt saves the goal without starting it, then leaves", async () => {
-  const created: Record<string, unknown>[] = [];
-  const router = editorRouter(created);
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
-  fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
-
-  await act(() => router.navigate("/goals"));
-  const prompt = await screen.findByRole("dialog", { name: "Save your changes?" });
-  fireEvent.click(within(prompt).getByRole("button", { name: "Save" }));
-
-  expect(await screen.findByText("Goals list")).toBeTruthy();
-  expect(created[0]).toMatchObject({ statement: "Fix the save bugs", start: false });
-});
-
-test("an empty New goal leaves without asking", async () => {
+test("an untouched New goal leaves without asking", async () => {
   const router = editorRouter([]);
-  await screen.findByLabelText(/Description/);
+  await screen.findByText("Where does the work come from?");
   await act(() => router.navigate("/goals"));
   expect(await screen.findByText("Goals list")).toBeTruthy();
-});
-
-test("a goal that plans its issues from the description needs no label and is created as a feature goal", async () => {
-  const created: any[] = [];
-  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
-    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
-    if (url === "/v1/goals" && init?.method === "POST") {
-      created.push(JSON.parse(String(init.body)));
-      return respond({ id: "g-9", status: "planning" }, 201);
-    }
-    return respond({ detail: "not stubbed" }, 404);
-  });
-  render(
-    <MantineProvider theme={theme}>
-      <MemoryRouter>
-        <NewGoal />
-      </MemoryRouter>
-    </MantineProvider>,
-  );
-
-  fireEvent.change(await screen.findByLabelText(/Description/), { target: { value: "Let users export their data" } });
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.click(screen.getByText("The description"));
-  expect(screen.getByTestId("where-note").textContent).toContain("splits the description into issues");
-  fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
-
-  await waitFor(() => expect(created).toHaveLength(1));
-  expect(created[0]).toMatchObject({ statement: "Let users export their data", modality: "feature", start: true });
-  expect(created[0].label).toBeUndefined();
-});
-
-test("a goal that cannot be saved says why beside the buttons, and where to fix it", async () => {
-  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
-    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
-    if (url === "/v1/goals" && init?.method === "POST") return respond({ detail: "the label mh:x is held by goal g-9" }, 422);
-    return respond({ detail: "not stubbed" }, 404);
-  });
-  render(
-    <MantineProvider theme={theme}>
-      <MemoryRouter initialEntries={["/goals/new"]}>
-        <Routes>
-          <Route path="/goals/new" element={<NewGoal />} />
-        </Routes>
-      </MemoryRouter>
-    </MantineProvider>,
-  );
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Fix the save bugs" } });
-
-  // Neither a label nor a picked issue: the buttons stay off, and the line beside them says what to fill in.
-  expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
-  const missing = screen.getByTestId("goal-lacking");
-  expect(missing.textContent).toContain("give it a label, or pick issues by hand, under Where its issues come from");
-  expect(within(screen.getByTestId("existing-issues")).getByText(/It needs at least one of the two/)).toBeTruthy();
-
-  // A refusal by the service is said in the same place, with that nothing was created.
-  fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "mh:x" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(screen.getByTestId("goal-not-saved").textContent).toContain("the label mh:x is held by goal g-9"));
-  expect(screen.getByTestId("goal-not-saved").textContent).toContain("Nothing was created");
-});
-
-function showNewGoal(created: Record<string, unknown>[]) {
-  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
-    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
-    if (url === "/v1/goals" && init?.method === "POST") {
-      created.push(JSON.parse(String(init.body)));
-      return respond({ id: "g-1" }, 201);
-    }
-    return respond({ detail: "not stubbed" }, 404);
-  });
-  render(
-    <MantineProvider theme={theme}>
-      <MemoryRouter initialEntries={["/goals/new"]}>
-        <Routes>
-          <Route path="/goals/new" element={<NewGoal />} />
-          <Route path="/goals/:goalId" element={<p>Goal page</p>} />
-        </Routes>
-      </MemoryRouter>
-    </MantineProvider>,
-  );
-}
-
-test("a goal planned from a loaded specification needs no label, and sends the file's name and text", async () => {
-  const created: Record<string, unknown>[] = [];
-  showNewGoal(created);
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "Let users export their data" } });
-
-  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
-  // A file in the repo is offered first; one from this machine is the other way.
-  fireEvent.click(screen.getByRole("radio", { name: "Upload a file" }));
-  const file = new File(["# Exports\n\n- An export button.\n"], "exports-prd.md", { type: "text/markdown" });
-  fireEvent.change(screen.getByTestId("spec-field").querySelector("input[type=file]")!, { target: { files: [file] } });
-
-  expect((await screen.findByTestId("spec-loaded")).textContent).toContain("exports-prd.md, 31 characters.");
-  // A goal with a specification is planned from it: the button says so, and no label is asked for.
-  fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
-  expect(await screen.findByText("Goal page")).toBeTruthy();
-  expect(created[0].spec).toEqual({ name: "exports-prd.md", text: "# Exports\n\n- An export button.\n" });
-  expect(created[0].label).toBeUndefined();
-});
-
-test("the settings most goals leave alone are folded away, and merging automatically sits above the buttons", async () => {
-  showNewGoal([]);
-  await screen.findByRole("checkbox", { name: "o/a" });
-
-  const toggle = screen.getByTestId("more-settings");
-  expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  // The budget is one of them, and the folded line says the one in force.
-  expect(toggle.textContent).toContain("no budget, priority");
-  fireEvent.click(toggle);
-  expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  expect(screen.getByLabelText("Priority")).toBeTruthy();
-  expect(screen.getByLabelText("Budget")).toBeTruthy();
-
-  // The merge switch is on the buttons' side of the form, so it is seen on the way to Save.
-  const beside = screen.getByTestId("auto-merge");
-  expect(within(beside).getByRole("switch", { name: /Merge pull requests automatically/ })).toBeTruthy();
-  expect(beside.getAttribute("style")).toContain("--group-justify: flex-end");
-  // The way to start a goal from a spec comes before the form's own fields, and the merge switch after them all.
-  const order = (el: Element, other: Element) => !!(el.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);
-  const merge = screen.getByLabelText(/Merge pull requests automatically/);
-  expect(order(screen.getByTestId("spec-field"), screen.getByLabelText(/Description/))).toBe(true);
-  // Where the work is comes before both: the repos and the tracker are what they read.
-  expect(order(screen.getByTestId("goal-where"), screen.getByTestId("spec-field"))).toBe(true);
-  expect(within(screen.getByTestId("goal-where")).getByRole("checkbox", { name: "o/a" })).toBeTruthy();
-  expect(order(toggle, merge)).toBe(true);
-  expect(order(merge, screen.getByRole("button", { name: /^Save and/ }))).toBe(true);
-});
-
-
-function showWithRepos(names: string[]) {
-  vi.stubGlobal("fetch", (url: string) => {
-    if (url === "/v1/repos") return respond({ repos: names.map((name) => ({ name })) });
-    if (url === "/v1/labels") return respond({ repos: names, labels: [] });
-    return respond({ detail: "not stubbed" }, 404);
-  });
-  render(
-    <MantineProvider theme={theme}>
-      <MemoryRouter initialEntries={["/goals/new"]}>
-        <Routes>
-          <Route path="/goals/new" element={<NewGoal />} />
-        </Routes>
-      </MemoryRouter>
-    </MantineProvider>,
-  );
-}
-
-test("the only registered repository starts chosen", async () => {
-  showWithRepos(["o/a"]);
-  expect(await screen.findByRole("checkbox", { name: "o/a", checked: true })).toBeTruthy();
-});
-
-test("with several registered repositories none starts chosen", async () => {
-  showWithRepos(["o/a", "o/b"]);
-  expect(await screen.findByRole("checkbox", { name: "o/a", checked: false })).toBeTruthy();
-  expect(screen.getByRole("checkbox", { name: "o/b", checked: false })).toBeTruthy();
-});
-
-// The New goal form over one repo, with a model that drafts a goal from a spec: `drafts` answers each call.
-function showSpecGoal(created: Record<string, unknown>[], drafts: (() => Promise<Response>)[], asked: Record<string, unknown>[] = []) {
-  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
-    if (url === "/v1/labels") return respond({ repos: ["o/a"], labels: [] });
-    if (url === "/v1/goals/draft-from-spec") {
-      asked.push(JSON.parse(String(init?.body)));
-      return (drafts.length > 1 ? drafts.shift()! : drafts[0])();
-    }
-    if (url === "/v1/goals" && init?.method === "POST") {
-      created.push(JSON.parse(String(init.body)));
-      return respond({ id: "g-1" }, 201);
-    }
-    return respond({ detail: "not stubbed" }, 404);
-  });
-  render(
-    <MantineProvider theme={theme}>
-      <MemoryRouter initialEntries={["/goals/new"]}>
-        <Routes>
-          <Route path="/goals/new" element={<NewGoal />} />
-          <Route path="/goals/:goalId" element={<p>Goal page</p>} />
-        </Routes>
-      </MemoryRouter>
-    </MantineProvider>,
-  );
-}
-
-const drafted = () => respond({ title: "Data export", statement: "Users can export their data as CSV.", spec: "exports-prd.md" });
-
-async function uploadSpec() {
-  fireEvent.click(screen.getByRole("radio", { name: "Upload a file" }));
-  const file = new File(["# Exports\n\n- An export button.\n"], "exports-prd.md", { type: "text/markdown" });
-  fireEvent.change(screen.getByTestId("spec-field").querySelector("input[type=file]")!, { target: { files: [file] } });
-  await screen.findByTestId("spec-loaded");
-}
-
-const where = (name: string) => screen.getByRole("radio", { name }) as HTMLInputElement;
-
-test("a loaded spec chooses planning from the spec, and writes the title and description", async () => {
-  const created: Record<string, unknown>[] = [];
-  const asked: Record<string, unknown>[] = [];
-  showSpecGoal(created, [drafted], asked);
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  expect(where("Issues that exist").checked).toBe(true);
-  expect(screen.getByText("Ask for anything. The planner will use this and the goal's issues.")).toBeTruthy();
-
-  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
-  await uploadSpec();
-
-  expect(where("The spec").checked).toBe(true);
-  expect(screen.getByText("Ask for anything. The planner will use this and the loaded spec.")).toBeTruthy();
-  await screen.findByTestId("spec-draft-filled");
-  expect((screen.getByLabelText(/^Title/) as HTMLInputElement).value).toBe("Data export");
-  expect((screen.getByLabelText(/^Description/) as HTMLTextAreaElement).value).toBe("Users can export their data as CSV.");
-  expect(asked[0]).toMatchObject({ spec: { name: "exports-prd.md" }, repos: ["o/a"] });
-  // Where the split into tasks is decided, said before the button is pressed.
-  expect(screen.getByTestId("where-note").textContent).toContain("A planning task reads exports-prd.md and the repos, and splits the work into issues");
-  expect(screen.getByTestId("plan-note").textContent).toContain("Its split into tasks opens on the goal's page");
-
-  fireEvent.click(screen.getByRole("button", { name: "Save and plan" }));
-  expect(await screen.findByText("Goal page")).toBeTruthy();
-  expect(created[0]).toMatchObject({ title: "Data export", statement: "Users can export their data as CSV.", modality: "feature", start: true });
-});
-
-test("a description the operator wrote is kept, with the spec's on offer", async () => {
-  showSpecGoal([], [drafted]);
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: "My own words" } });
-  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
-  await uploadSpec();
-
-  const kept = await screen.findByTestId("spec-draft-kept");
-  expect((screen.getByLabelText(/^Description/) as HTMLTextAreaElement).value).toBe("My own words");
-  expect((screen.getByLabelText(/^Title/) as HTMLInputElement).value).toBe("Data export");
-
-  fireEvent.click(within(kept).getByRole("button", { name: /Use the one written from exports-prd.md/ }));
-  expect((screen.getByLabelText(/^Description/) as HTMLTextAreaElement).value).toBe("Users can export their data as CSV.");
-});
-
-test("a draft that fails says why and tries again, and the goal can still be written by hand", async () => {
-  showSpecGoal([], [() => respond({ detail: "could not draft the goal from exports-prd.md: busy. Try again, or write them yourself" }, 422), drafted]);
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
-  await uploadSpec();
-
-  const failed = await screen.findByTestId("spec-draft-failed");
-  expect(failed.textContent).toContain("could not draft the goal from exports-prd.md: busy");
-  fireEvent.click(within(failed).getByRole("button", { name: "Try again" }));
-  await screen.findByTestId("spec-draft-filled");
-  expect((screen.getByLabelText(/^Title/) as HTMLInputElement).value).toBe("Data export");
-});
-
-test("removing the spec takes back what it wrote and returns to issues that exist", async () => {
-  showSpecGoal([], [drafted]);
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
-  await uploadSpec();
-  await screen.findByTestId("spec-draft-filled");
-
-  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-
-  await waitFor(() => expect((screen.getByLabelText(/^Description/) as HTMLTextAreaElement).value).toBe(""));
-  expect((screen.getByLabelText(/^Title/) as HTMLInputElement).value).toBe("");
-  expect(where("Issues that exist").checked).toBe(true);
-});
-
-test("planning from the spec with none chosen opens the spec's choices, and is not saved without one", async () => {
-  const created: Record<string, unknown>[] = [];
-  showSpecGoal(created, [drafted]);
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: "Let users export their data" } });
-
-  fireEvent.click(screen.getByText("The spec"));
-
-  expect(screen.getByRole("radio", { name: "A file in the repo" })).toBeTruthy();
-  expect(screen.getByTestId("where-note").textContent).toContain("Choose the spec above");
-  expect((screen.getByRole("button", { name: /^Save and/ }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.getByTestId("goal-lacking").textContent).toContain("Choose the spec");
-  expect(created).toEqual([]);
-});
-
-test("another answer to where the issues come from lets go of the spec", async () => {
-  showSpecGoal([], [drafted]);
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.click(screen.getByRole("button", { name: "Plan a goal from a spec or an epic" }));
-  await uploadSpec();
-
-  fireEvent.click(screen.getByText("Issues that exist"));
-
-  expect(screen.queryByTestId("spec-loaded")).toBeNull();
-  expect(where("Issues that exist").checked).toBe(true);
-  expect(screen.getByTestId("existing-issues")).toBeTruthy();
-});
-
-test("an empty form cannot be saved or planned, and says what it needs first", async () => {
-  const created: Record<string, unknown>[] = [];
-  showSpecGoal(created, [drafted]);
-  await screen.findByRole("checkbox", { name: "o/a", checked: true });
-
-  const plan = screen.getByRole("button", { name: /^Save and/ }) as HTMLButtonElement;
-  expect(plan.disabled).toBe(true);
-  expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.getByTestId("goal-lacking").textContent).toBe("Describe the goal, under Description, or choose a spec to draft it from.");
-  fireEvent.click(plan);
-  expect(created).toEqual([]);
-
-  // Spaces are not a description.
-  fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: "   " } });
-  expect(plan.disabled).toBe(true);
-
-  fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: "Let users export their data" } });
-  // On existing issues, a description is not enough: the goal needs to know which issues.
-  expect(screen.getByTestId("goal-lacking").textContent).toContain("Say which issues are the goal's");
-  expect(plan.disabled).toBe(true);
-
-  // Planned from its description, it has all it needs.
-  fireEvent.click(screen.getByText("The description"));
-  await waitFor(() => expect(screen.queryByTestId("goal-lacking")?.textContent ?? null).toBeNull());
-  expect(plan.disabled).toBe(false);
 });

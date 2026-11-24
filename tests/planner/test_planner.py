@@ -663,6 +663,49 @@ def test_a_goal_is_drafted_from_several_labels_issues_each_read_once(parts):
     assert nothing.status_code == 422 and "name the label to draft from" in nothing.json()["detail"]
 
 
+def test_a_goal_is_drafted_from_issues_picked_by_hand_with_no_label(parts):
+    """The New goal page drafts the description from the goal's issues however they were chosen: by hand too."""
+    from meta_harness.planner.drafting import Draft
+
+    _, tracker, _ = parts
+    first = tracker.add(REPO, _number(), labels=[], title="First")
+    second = tracker.add(REPO, _number(), labels=[], title="Second")
+    seen = []
+
+    async def drafter(label_asked, issues):
+        seen.append((label_asked, sorted(i.ref for i in issues)))
+        return Draft(title="T", statement="S", theme="Th", modality="fix", model="claude:m", usd_cost="0.001")
+
+    with _drafting_api(parts, drafter) as client:
+        drafted = client.post("/v1/goals/draft", json={"repos": [REPO], "refs": [first, second]}, headers=OPERATOR)
+
+    assert drafted.status_code == 200, drafted.text
+    assert seen == [("the issues picked by hand", sorted([first, second]))]
+    assert drafted.json()["label"] is None and sorted(drafted.json()["refs"]) == sorted([first, second])
+
+
+def test_a_title_is_written_for_a_description_before_the_goal_is_saved(parts):
+    from meta_harness.planner.drafting import Draft
+
+    events, tracker, tasks = parts
+
+    async def titler(statement):
+        return Draft(title=f"Title of: {statement[:5]}", statement="", theme="", modality="", model="m", usd_cost="0")
+
+    app = create_app(
+        events, tracker, tasks, operator_keys={"op-key": "dave"}, service_keys={}, sweep_seconds=0, titler=titler
+    )
+    with TestClient(app) as client:
+        titled = client.post("/v1/goals/title", json={"statement": "Speed up the slow check."}, headers=OPERATOR)
+        empty = client.post("/v1/goals/title", json={"statement": ""}, headers=OPERATOR)
+    with _drafting_api(parts, None) as client:
+        failed = client.post("/v1/goals/title", json={"statement": "Anything."}, headers=OPERATOR)
+
+    assert titled.status_code == 200 and titled.json() == {"title": "Title of: Speed"}
+    assert empty.status_code == 422
+    assert failed.status_code == 502 and "Type one with the pencil" in failed.json()["detail"]
+
+
 def test_a_draft_the_gateway_could_not_make_is_a_502_with_the_reason(parts):
     from meta_harness.planner.drafting import DraftError
 
