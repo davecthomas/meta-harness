@@ -587,3 +587,16 @@ def test_every_platform_default_passes_its_own_validation():
     # A name of five letters is a site name Firebase accepts.
     site = re.search(r'variable "console_next_site" \{.*?regex\("([^"]+)"', text, re.S).group(1).replace("\\\\", "\\")
     assert re.fullmatch(site, "muxxy") and not re.fullmatch(site, "muxx")
+
+
+def test_no_plan_prints_who_may_use_the_console() -> None:
+    """The lists of people are sensitive, variable and output alike: the deploy's plan is in a public log."""
+    platform = ROOT / "deploy/terraform/platform"
+    for name, text in (
+        ("variable", (platform / "variables.tf").read_text()),
+        ("output", (platform / "outputs.tf").read_text()),
+    ):
+        for who in ("operators", "admins"):
+            block = re.search(rf'{name} "{who}" \{{(.*?)\n\}}', text, re.DOTALL)
+            assert block, f"the platform stack has no {name} {who}"
+            assert re.search(r"sensitive\s*=\s*true", block.group(1)), f"the {name} {who} is not sensitive"

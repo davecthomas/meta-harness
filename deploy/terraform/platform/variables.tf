@@ -53,9 +53,10 @@ variable "operators" {
 }
 
 variable "admins" {
-  description = "Who of the operators may change configuration, use the kill switch and open the Admin menu. Empty: every operator."
+  description = "Who of the operators may change configuration, use the kill switch and open the Admin menu. Empty: every operator. Sensitive, as operators is: a plan in the public Actions log must not print anyone's address."
   type        = list(string)
   default     = []
+  sensitive   = true
 }
 
 variable "secrets" {

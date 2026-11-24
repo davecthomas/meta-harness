@@ -15,7 +15,10 @@ output "operators" {
   value     = var.operators
   sensitive = true
 }
-output "admins" { value = var.admins }
+output "admins" {
+  value     = var.admins
+  sensitive = true
+}
 output "workload_identity_provider" { value = google_iam_workload_identity_pool_provider.github.name }
 output "console_site" { value = google_firebase_hosting_site.console.site_id }
 output "console_origin" { value = "https://${google_firebase_hosting_site.console.site_id}.web.app" }
