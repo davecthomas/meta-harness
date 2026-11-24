@@ -1104,3 +1104,35 @@ def test_the_reviewers_table_reads_every_tasks_review_events_within_the_days_ask
     [row] = [r for r in answer.json()["reviewers"] if r["reviewer"] == reviewer]
     assert (row["rounds"], row["findings"], row["never_judged"]) == (1, 1, 1)
     assert api.get("/v1/reviewers", params={"days": 0}, headers=_as(CALLER_KEY)).status_code == 422
+
+
+def test_the_performance_numbers_are_read_from_the_run_events_of_the_days_asked(api, events):
+    from datetime import datetime, timedelta, timezone
+
+    tid = _ended(api, "ready")["id"]
+    now = datetime.now(timezone.utc)
+    events.emit(
+        "run_prompt",
+        {"run_id": "r-9", "kind": "task"},
+        task_id=tid,
+        run_id="r-9",
+        time_utc=(now - timedelta(hours=2)).isoformat(),
+    )
+    events.emit(
+        "attempt_finished",
+        {"tier": "standard", "spent_usd": "3.00"},
+        task_id=tid,
+        run_id="r-9",
+        time_utc=(now - timedelta(hours=1)).isoformat(),
+    )
+    events.emit("pull_request_merged", {"pr_url": "u", "head_sha": "a"}, task_id=tid, time_utc=now.isoformat())
+    for position, event in enumerate(events.events, start=1):
+        event[2]["position"] = position
+
+    answer = api.get("/v1/performance", params={"days": 7}, headers=_as(CALLER_KEY))
+
+    assert answer.status_code == 200, answer.text
+    found = answer.json()
+    assert found["tasks"] >= 1 and found["merged"] >= 1
+    assert found["cost_per_task"]["count"] >= 1 and found["dollar_hours_per_completed_task"]["median"] is not None
+    assert api.get("/v1/performance", params={"days": 0}, headers=_as(CALLER_KEY)).status_code == 422

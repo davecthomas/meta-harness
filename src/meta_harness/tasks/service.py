@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from meta_harness import auth, budget_request, db, local_repos
 from meta_harness.scheduler import holds
 from meta_harness.supervisor import standing
-from meta_harness.tasks import reviewers, reviews, spend, store
+from meta_harness.tasks import performance, reviewers, reviews, spend, store
 
 
 class Events(Protocol):
@@ -618,6 +618,28 @@ def create_app(
         except Exception as err:  # noqa: BLE001 - the event service is the caller's 502
             raise HTTPException(status_code=502, detail=f"could not read the task's events: {err}") from err
         return {"task_id": task_id, "rounds": reviews.rounds(task, recorded)}
+
+    @app.get("/v1/performance")
+    def performance_numbers(days: int = Query(30, ge=1, le=365), who: Caller = Depends(caller)) -> dict:
+        """What the work cost over the last `days`, for the tasks whose last run finished then: the cost per
+        task, per pull request and per goal, and the dollar-hours per successfully completed task, each as an
+        average and a median, with the total, wasted and review-loop spend (tasks/performance.py)."""
+        until = datetime.now(timezone.utc)
+        since = until - timedelta(days=days)
+        try:
+            recorded = reviewers.read_all(events.read, performance.EVENT_TYPES)
+        except Exception as err:  # noqa: BLE001 - the event service is the caller's 502
+            raise HTTPException(
+                status_code=502, detail=f"could not read the run events: {err}. Reload to try again"
+            ) from err
+        ids = sorted({e["task_id"] for e in recorded if e.get("task_id")})
+        with app.state.pool.connection() as conn:
+            goals = store.goals_of(conn, ids)
+        return {
+            "since": since.isoformat(),
+            "until": until.isoformat(),
+            **performance.summary(recorded, goals, since, until),
+        }
 
     @app.get("/v1/reviewers")
     def reviewers_table(days: int = Query(30, ge=1, le=365), who: Caller = Depends(caller)) -> dict:

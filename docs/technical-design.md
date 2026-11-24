@@ -2814,6 +2814,7 @@ credential.
 | POST | `/v1/proposals/{id}/approve`, `/reject` | Harness analyzer | Decide a proposal; an approved one applies as a new configuration version | planned |
 | GET, POST | `/v1/events` | Event service | Events by run, task, type or source after a position, paged; services append with POST | built |
 | GET | `/v1/events/tail` | Event service | The same filter as server-sent events, resumable from any position | built |
+| GET | `/v1/performance` | Task service | What the work cost over the last `days` (1 to 365, 30 by default), for the tasks whose last run finished then: `cost_per_task`, `cost_per_pull_request`, `cost_per_goal` and `dollar_hours_per_completed_task`, each with `average`, `median` and `count`, and `tasks`, `merged`, `total_usd`, `wasted_usd`, `review_loop_usd` and `hours`. Read from the run events each time (`tasks/performance.py`); the edge routes it to the task service. The Performance page's key numbers | built |
 | GET | `/v1/spend` | Metering service | Spend and dollar-hours grouped by goal, modality, repo, model, harness profile or tier, over a time range | planned |
 | GET | `/v1/pool` | Pool manager | Per-run sandboxes by image and state, warm targets and lease latency | planned |
 | POST | `/v1/webhooks/code-host`, `/v1/webhooks/{tracker}` | Task service, planner | Code-host and issue-tracker webhooks, each checked by its signature | planned |
@@ -4394,9 +4395,21 @@ seeking. It says only what the meta-harness does today. The supervisor is the
 Task Manager wherever the console or a status reason names it to a person.
 The code, its routes and its events keep `supervisor`.
 
-The Costs page (`console/src/features/performance`, at `/costs`; it was named
-Performance, and `/performance` still leads to it) shows what the meta-harness
-costs over time. It opens with figures for the chosen range. They are the
+The Performance page (`console/src/features/performance`, at `/performance`;
+it was named Costs, and `/costs` still leads to it with its filters) shows
+what the work costs. It opens with the key numbers, large, each as a median and
+an average for the tasks whose last run finished in the range
+(`GET /v1/performance`, `tasks/performance.py`): the dollar-hours per
+successfully completed task, the cost per task, per pull request and per goal.
+Under them it says how many tasks finished and merged, what was spent on them,
+how much of it in review and fix runs, and how much on tasks that did not
+merge. Dollar-hours follows Metering's formula, from what is recorded today:
+Di is each run's `attempt_finished` spend, Hi the time from its `run_prompt`
+to its `attempt_finished`, and Ci the share of two checks that passed, the
+code host's checks at the last checked head and the merge. Acceptance checks
+are not recorded apart, so they are not yet a share of their own. The average
+is the formula over the range's tasks; the median is the middle merged task's
+own Σ(D × H). Then come figures for the chosen range. They are the
 total, the daily average, the change from the same number of days before, and
 a month at the current trend. The change has no percentage when less than $1
 was spent then, since a change from almost nothing means nothing. The controls

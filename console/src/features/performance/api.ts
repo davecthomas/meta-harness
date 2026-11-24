@@ -32,7 +32,31 @@ export interface Costs {
 export type CostFilter = "source" | "kind" | "goal" | "repo" | "model" | "label" | "outcome";
 export type CostQuery = { from: string; to: string; bucket: string; group_by: string } & Partial<Record<CostFilter, string>>;
 
+// An average and a median over `count` things; both null with nothing to count.
+export interface Both {
+  average: number | null;
+  median: number | null;
+  count: number;
+}
+
+// The key numbers, from GET /v1/performance, for the tasks whose last run finished in the days asked.
+export interface Performance {
+  since: string;
+  until: string;
+  tasks: number;
+  merged: number;
+  cost_per_task: Both;
+  cost_per_pull_request: Both;
+  cost_per_goal: Both;
+  dollar_hours_per_completed_task: Both;
+  total_usd: string;
+  wasted_usd: string;
+  review_loop_usd: string;
+  hours: number;
+}
+
 // The performance feature's calls; src/api.ts spreads them into `api`.
 export const performanceApi = {
+  performance: (days: number) => call<Performance>("/v1/performance" + query({ days })),
   costs: (params: CostQuery) => call<Costs>("/v1/costs" + query(params)),
 };

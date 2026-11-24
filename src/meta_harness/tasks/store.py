@@ -346,6 +346,14 @@ def list_tasks(
         return rows, cur.fetchone()["n"]
 
 
+def goals_of(conn: psycopg.Connection, task_ids: list[str]) -> dict[str, str | None]:
+    """Each of these tasks' goal, by task id: None for a task of no goal. A task that is gone is left out."""
+    if not task_ids:
+        return {}
+    rows = conn.execute("SELECT id, goal_id FROM tasks.task WHERE id = ANY(%s)", (task_ids,)).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
 def set_status(
     conn: psycopg.Connection, task_id: str, status: str, reason: str | None = None, **fields: Any
 ) -> tuple[dict, str]:
