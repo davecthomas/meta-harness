@@ -2,7 +2,8 @@
 
 A run's cost is its `attempt_finished` event: what the run's grant counted, the figure every other total in
 the meta-harness uses. The planner's own model calls are `goal_drafted`, `goal_titled`, `issue_sized`,
-`issue_fix_drafted` (a goal's) and the
+`issue_fix_drafted` (a goal's, counted as planning), a goal's `narrative_written` and `next_steps_written`
+(counted as narratives) and the
 Overview's `overview_report_written` and `overview_question_answered`, which belong to no goal, and the writing pass's rewrites are `writing_checked`, a task's or, for a plan's issue, a goal's. Each harvest reads
 the events after the position the last one reached, and saves their costs with the new position in one
 transaction, so an event is counted once however a harvest ends.
@@ -22,8 +23,11 @@ SOURCE = "model"
 EVENT_TYPES = (
     "attempt_finished,goal_drafted,goal_titled,goal_update_written,issue_sized,plan_fixes_assessed,"
     "failure_diagnosed,split_drafted,task_names_written,writing_checked,overview_report_written,"
-    "overview_question_answered,issue_fix_drafted,next_steps_written"
+    "overview_question_answered,issue_fix_drafted,next_steps_written,narrative_written"
 )
+# What a goal's narrative, or its next steps, cost: telling the operator about the work, apart from planning it.
+NARRATIVES = "narratives"
+NARRATIVE_EVENTS = ("narrative_written", "next_steps_written")
 # The events whose own writing pass rides on them, as `writing`.
 CARRIES_WRITING = ("goal_update_written", "overview_report_written", "overview_question_answered")
 PAGE = 2000
@@ -104,13 +108,23 @@ def harvest(
             else:
                 usd = Decimal(str(payload.get("usd_cost") or 0))
                 engine, model = model_of(str(payload.get("model") or ""))
-                owner = goal(payload.get("goal_id") or "") or {}
+                # A narrative names what it is about as its scope: a goal's id, or the Overview's, which is no goal's.
+                scope = str(payload.get("scope") or "")
+                about = payload.get("goal_id") or (scope if scope.startswith("g-") else "")
+                owner = goal(about) or {}
+                item = (
+                    WRITING
+                    if event["event_type"] == "writing_checked"
+                    else NARRATIVES
+                    if event["event_type"] in NARRATIVE_EVENTS
+                    else "planning"
+                )
                 cost = Cost(
                     day=_day(event),
                     source=SOURCE,
-                    item=WRITING if event["event_type"] == "writing_checked" else "planning",
+                    item=item,
                     usd=usd,
-                    goal_id=payload.get("goal_id") or "",
+                    goal_id=about,
                     repo=(owner.get("repos") or [""])[0],
                     model=model,
                     engine=engine,

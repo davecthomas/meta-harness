@@ -15,6 +15,10 @@ those: the cost per task, per pull request and per goal, each as an average and 
 A deploy's smoke task is no work and is left out of everything. A goal's planning task is counted in its
 goal's cost and in the total, and is not one of the tasks: it opens no pull request and has nothing to merge.
 
+Beside it, since dollar-hours cannot say why it is high: the tries a merged task took to get to green, its own
+runs and its fix runs (a review run checks the work and is not a try), and the share of merged tasks that got
+there on the first try, with one run and no fix.
+
 The average is that ratio over the range's tasks. The median is the middle task's own Σ(D × H), among the tasks
 that merged. Spend on tasks that did not merge is the wasted spend. Nothing is stored: it is read from the
 events each time (tasks/reviewers.py reads them the same way).
@@ -54,6 +58,7 @@ def per_task(events: list[dict]) -> dict[str, dict]:
             "hours": 0.0,
             "dollar_hours": 0.0,
             "runs": 0,
+            "tries": 0,
             "pr": False,
             "checks": None,
             "merged": False,
@@ -80,6 +85,8 @@ def per_task(events: list[dict]) -> dict[str, dict]:
             task["hours"] += hours
             task["dollar_hours"] += float(usd) * hours
             task["runs"] += 1
+            if payload.get("tier") != "review":
+                task["tries"] += 1
             if at and (task["last"] is None or at > task["last"]):
                 task["last"] = at
         elif kind == "pull_request_opened":
@@ -147,6 +154,13 @@ def summary(
             "average": round(sum(t["dollar_hours"] for t in tasks.values()) / succeeded, 4) if succeeded else None,
             "median": round(median(t["dollar_hours"] for t in merged), 4) if merged else None,
             "count": len(merged),
+        },
+        # How many tries a merged task took: its own runs and its fix runs.
+        "tries_to_green": _both([float(t["tries"]) for t in merged]),
+        "first_try_green": {
+            "rate": round(sum(1 for t in merged if t["tries"] <= 1) / len(merged), 4) if merged else None,
+            "count": sum(1 for t in merged if t["tries"] <= 1),
+            "of": len(merged),
         },
         "total_usd": str(total.quantize(CENT)),
         "wasted_usd": str(wasted.quantize(CENT)),

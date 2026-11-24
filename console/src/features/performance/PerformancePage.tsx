@@ -4,6 +4,7 @@ import { Alert, Anchor, Card, Center, Group, Loader, MultiSelect, NativeSelect, 
 import { IconTrendingDown, IconTrendingUp } from "@tabler/icons-react";
 import { api, type CostFilter, type Costs } from "../../api";
 import { DataTable, Empty, ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
+import { GoalCosts } from "./GoalCosts";
 import { KeyNumbers } from "./KeyNumbers";
 import { CostChart, seriesColor, usd } from "./CostChart";
 
@@ -67,6 +68,8 @@ const NAMES: Record<string, string> = {
   review: "Reviews",
   fix: "Fixes",
   planning: "Planning",
+  narratives: "Narratives",
+  writing: "Writing pass",
   other: "Other",
   "": "Not attributed",
 };
@@ -166,7 +169,6 @@ export function PerformancePage() {
   return (
     <>
       <PageHeader title="Performance" description="What the work costs: per task, per pull request and per goal, over time, and where the money goes." />
-      {!own && <KeyNumbers days={Math.min(365, Math.max(1, Math.round((Date.parse(span.to) - Date.parse(span.from)) / 86_400_000) + 1))} />}
       <ErrorAlert error={error} />
       {own && (
         <Alert color="blue" mb="md" data-testid="own-scope">
@@ -231,6 +233,10 @@ export function PerformancePage() {
           </Group>
         </Stack>
       </Paper>
+
+      {/* Under the filters, so the time in view is plainly theirs too. */}
+      {!own && <KeyNumbers from={span.from} to={span.to} />}
+      {!own && <GoalCosts from={span.from} to={span.to} />}
 
       {!costs && !error && <Center h={240}><Loader /></Center>}
       {costs && (

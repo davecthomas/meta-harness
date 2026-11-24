@@ -14,6 +14,8 @@ const DOLLAR_HOURS =
   "For every run of the tasks in view: its dollars times its hours, added up, then divided by how far the tasks succeeded " +
   "(the share of each task's checks that passed: the code host's checks and the merge). Failed work counts against it.";
 
+const NONE: Both = { average: null, median: null, count: 0 };
+
 function dh(value: number | null): string {
   if (value === null) return "none";
   return value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
@@ -40,20 +42,35 @@ function Big(props: { label: string; both: Both; show: (value: number | null) =>
   );
 }
 
-export function KeyNumbers({ days }: { days: number }) {
+const TRIES =
+  "A merged task's own runs and its fix runs, counted until it merged. A review run checks the work and is not a try. " +
+  "1 means the first run's pull request merged with no fix.";
+
+// from, to: the days in view, the page's own time filter.
+export function KeyNumbers({ from, to }: { from: string; to: string }) {
   const [found, setFound] = useState<Performance | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setError(null);
-    api.performance(days).then(setFound, (err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [days]);
+    api.performance({ from, to }).then(setFound, (err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [from, to]);
   const money = (value: number | null) => (value === null ? "none" : usd(value));
+  const tries = (value: number | null) => (value === null ? "none" : value.toFixed(value % 1 ? 1 : 0));
+  const first = found?.first_try_green;
   if (error) return <ErrorAlert error={error} />;
   if (!found) return null;
   return (
     <>
-      <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }} mb="xs" data-testid="key-numbers">
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} mb="xs" data-testid="key-numbers">
         <Big testid="dollar-hours" label="Dollar-hours per completed task" both={found.dollar_hours_per_completed_task} show={dh} of="merged tasks" help={DOLLAR_HOURS} />
+        <Big testid="tries-to-green" label="Tries to green" both={found.tries_to_green ?? NONE} show={tries} of="merged tasks" help={TRIES} />
+        <Card withBorder padding="lg" data-testid="first-try-green">
+          <Tooltip label="The share of merged tasks whose first run's pull request merged with no fix run." multiline maw={360}>
+            <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Green on the first try</Text>
+          </Tooltip>
+          <Text fz={32} fw={700} lh={1.1} mt={6}>{first?.rate == null ? "none" : `${Math.round(first.rate * 100)}%`}</Text>
+          <Text size="xs" c="dimmed" mt={6}>{first?.of ? `${first.count} of ${first.of} merged tasks` : "No merged tasks in this time"}</Text>
+        </Card>
         <Big testid="cost-per-task" label="Cost per task" both={found.cost_per_task} show={money} of="tasks" />
         <Big testid="cost-per-pr" label="Cost per pull request" both={found.cost_per_pull_request} show={money} of="pull requests" />
         <Big testid="cost-per-goal" label="Cost per goal" both={found.cost_per_goal} show={money} of="goals" />

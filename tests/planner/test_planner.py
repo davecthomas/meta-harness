@@ -702,6 +702,8 @@ def test_a_title_is_written_for_a_description_before_the_goal_is_saved(parts):
         failed = client.post("/v1/goals/title", json={"statement": "Anything."}, headers=OPERATOR)
 
     assert titled.status_code == 200 and titled.json() == {"title": "Title of: Speed"}
+    # Its cost is recorded, though no goal is saved yet.
+    assert [p["title"] for t, p in events.events if t == "goal_titled" and p["goal_id"] == ""] == ["Title of: Speed"]
     assert empty.status_code == 422
     assert failed.status_code == 502 and "Type one with the pencil" in failed.json()["detail"]
 

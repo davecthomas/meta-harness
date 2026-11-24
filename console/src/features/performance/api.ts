@@ -49,6 +49,10 @@ export interface Performance {
   cost_per_pull_request: Both;
   cost_per_goal: Both;
   dollar_hours_per_completed_task: Both;
+  // How many tries a merged task took to get to green: its own runs and its fix runs.
+  tries_to_green?: Both;
+  // The merged tasks that got to green with one run and no fix: how many, of how many, and the share.
+  first_try_green?: { rate: number | null; count: number; of: number };
   total_usd: string;
   wasted_usd: string;
   review_loop_usd: string;
@@ -57,8 +61,18 @@ export interface Performance {
   hours: number;
 }
 
+// What each goal's model cost is made of, from GET /v1/costs/goals, most expensive goal first.
+export interface GoalCosts {
+  from: string;
+  to: string;
+  // The kinds of cost, in the order to show them.
+  kinds: string[];
+  goals: { goal_id: string; title: string; status: string; total: number; parts: Record<string, number> }[];
+}
+
 // The performance feature's calls; src/api.ts spreads them into `api`.
 export const performanceApi = {
-  performance: (days: number) => call<Performance>("/v1/performance" + query({ days })),
+  performance: (span: { from: string; to: string }) => call<Performance>("/v1/performance" + query(span)),
+  goalCosts: (span: { from: string; to: string }) => call<GoalCosts>("/v1/costs/goals" + query(span)),
   costs: (params: CostQuery) => call<Costs>("/v1/costs" + query(params)),
 };
