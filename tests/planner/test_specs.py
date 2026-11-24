@@ -255,6 +255,47 @@ def test_an_ended_goal_lists_what_it_left_open_and_closes_it_on_request(world):
     assert client.get(f"/v1/goals/{goal['id']}/left-open", headers=OPERATOR).json() == {"issues": []}
 
 
+def test_a_met_goals_left_open_issues_are_not_told_it_was_canceled_and_a_copy_names_its_original(world):
+    """Closing what a met goal left open said the goal 'was canceled', and an issue whose work merged under
+    another issue of the goal was closed as plain not planned, with nothing saying which issue did its work."""
+    from meta_harness import db
+    from meta_harness.planner import store
+
+    client, events, tracker, tasks = world
+
+    async def close_unplanned(ref):
+        tracker.issues[ref].state = "closed"
+        return True
+
+    tracker.close_unplanned = close_unplanned
+    goal = _goal(client, spec={"name": "exports-prd.md", "text": SPEC})
+    _planned(client, events, tasks, goal, [draft("button"), draft("csv", ("button",)), draft("pdf", ("button",))])
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 200
+    first, copy, other = [i.ref for i in tracker.created]
+    # The approval's sweep binds each issue to a task in the background, writing its link as open: wait for it.
+    import time
+
+    for _ in range(200):
+        with db.connect(autocommit=True) as conn:
+            if all(link.get("task_id") for link in store.links(conn, goal["id"])):
+                break
+        time.sleep(0.02)
+    tracker.issues[first].state = "closed"
+    with db.connect(autocommit=True) as conn:
+        # The first issue's work merged; the copy is the same work; the goal was met.
+        store.set_link_content(conn, first, goal["id"], "same-work")
+        store.set_link_content(conn, copy, goal["id"], "same-work")
+        store.set_link_state(conn, first, "closed")
+        conn.execute("UPDATE planner.goal SET status = 'met' WHERE id = %s", (goal["id"],))
+
+    done = client.post(f"/v1/goals/{goal['id']}/close-left-open", headers=OPERATOR)
+
+    assert done.status_code == 200 and sorted(done.json()["closed"]) == sorted([copy, other])
+    said = {ref: str(body) for ref, body in tracker.comments}
+    assert f"Closed as a duplicate of {first}" in said[copy]
+    assert "was met without it" in said[other] and "canceled" not in said[other]
+
+
 def test_an_issue_the_goal_signed_counts_as_its_own_though_no_plan_recorded_it(world):
     """Twelve issues of a canceled goal were open and nine were listed: an approval had created three and
     failed to record them. Each still said, in its own text, which goal's plan made it."""
