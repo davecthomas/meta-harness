@@ -207,6 +207,37 @@
     ],
     "type": "object"
   },
+  "finding_resolved v1": {
+    "type": "object",
+    "properties": {
+      "round": {
+        "type": "integer"
+      },
+      "finding": {
+        "type": "integer"
+      },
+      "outcome": {
+        "type": "string",
+        "enum": [
+          "fixed",
+          "not_fixed"
+        ]
+      },
+      "judged_in": {
+        "type": "integer"
+      },
+      "reviewer": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "round",
+      "finding",
+      "outcome",
+      "judged_in"
+    ],
+    "additionalProperties": true
+  },
   "goal_budget_reached v1": {
     "additionalProperties": true,
     "properties": {

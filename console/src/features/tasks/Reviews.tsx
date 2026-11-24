@@ -3,7 +3,7 @@ import { Alert, Anchor, Badge, Button, Card, Group, Modal, Stack, Text, Textarea
 import { Link, useSearchParams } from "react-router-dom";
 import { api, type ReviewRound, type Task } from "../../api";
 import { Empty, when } from "../../components/ui";
-import { CandidateName, VerdictBadge } from "./words";
+import { CandidateName, OutcomeBadge, VerdictBadge } from "./words";
 import { moneyText } from "../../money";
 
 function repoOf(prUrl: string | null): string | null {
@@ -110,6 +110,7 @@ export function Reviews({ task, rounds, onAnswered }: { task: Task; rounds: Revi
                       </Anchor>
                     ) : f.path ? <Text ff="monospace" size="xs">{f.path}</Text> : null}
                     <Text size="sm" td={f.dismissed ? "line-through" : undefined}>{f.body}</Text>
+                    <OutcomeBadge outcome={f.outcome} />
                     {f.dismissed && (
                       <Badge color="gray" variant="light" tt="none" style={{ flexShrink: 0 }} title={f.dismissed.reason}>
                         dismissed{f.dismissed.by ? ` by ${f.dismissed.by}` : ""}: {f.dismissed.reason}

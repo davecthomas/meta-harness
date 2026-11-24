@@ -143,7 +143,7 @@ Each event has `id`, `type`, `run_id`, `time` and `data`.
 | `file_changed` | `path`, `tool`, after a `write` or `edit` that succeeded |
 | `compacted` | `reason` |
 | `turn_finished` | `turn`, `stop_reason`, the assistant `text`, the number of `tool_calls` |
-| `review_submitted` | A review run's `verdict` (`clean` or `changes`), `summary` and `findings`, each a `path`, `line` and `body`, from `submit_review` |
+| `review_submitted` | A review run's `verdict` (`clean` or `changes`), `summary`, `findings`, each a `path`, `line`, `body` and `blocking`, and `previous`, each earlier finding's `id` with `fixed` true or false, from `submit_review` |
 | `heartbeat` | `turns`, `elapsed_ms` |
 | `run_finished` | `status`, `end_reason`, `error`, `turns`, `elapsed_ms`, `usage`, and `review`: the verdict from `submit_review`, or null |
 

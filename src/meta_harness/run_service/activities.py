@@ -1302,14 +1302,16 @@ async def _pr_description(request: LoopPromptRequest) -> str:
     return body if len(body) <= PR_DESCRIPTION_CHARS else body[:PR_DESCRIPTION_CHARS] + "\n(cut short)"
 
 
-def _findings(findings: list[dict]) -> list[str]:
-    """Each finding as a numbered line, with its file and line when it names them."""
+def _findings(findings: list[dict], ids: bool = False) -> list[str]:
+    """Each finding as a numbered line, with its file and line when it names them. ids: lead each that has one
+    with its id (round.number), for a reviewer to judge it by."""
     lines = []
     for n, finding in enumerate(findings, 1):
         where = finding.get("path") or ""
         if where and finding.get("line"):
             where += f" line {finding['line']}"
-        lines.append(f"{n}. {where + ': ' if where else ''}{finding['body']}")
+        named = f"[id {finding['id']}] " if ids and finding.get("id") else ""
+        lines.append(f"{n}. {named}{where + ': ' if where else ''}{finding['body']}")
     return lines
 
 
@@ -1338,7 +1340,8 @@ def _previous(request: LoopPromptRequest) -> str:
     ]
     if request.previous_summary:
         lines += [f"Its summary: {request.previous_summary}", ""]
-    lines += _findings(request.previous_findings)
+    lines += _findings(request.previous_findings, ids=True)
+    judged = [f["id"] for f in request.previous_findings if f.get("id")]
     lines += [
         "--- end of the round before ---",
         "",
@@ -1348,6 +1351,12 @@ def _previous(request: LoopPromptRequest) -> str:
         "so it does not send another fix run. Begin your summary with the count: how many of the round before's "
         "findings are fixed, how many are not, and how many findings are new.",
     ]
+    if judged:
+        lines += [
+            "",
+            "In submit_review, give previous: each of these ids with fixed true or false: "
+            f"{', '.join(judged)}. Your judgments are kept and used to measure reviews.",
+        ]
     return "\n".join(lines)
 
 
@@ -1460,7 +1469,29 @@ async def post_review(request: PostReviewRequest) -> str:
             task_id=request.task_id,
             event_id=events.stable_id(request.task_id, "pull_request_reviewed", request.round_no),
         )
+        for judged in resolved(review.get("previous"), request.round_no):
+            events.emit(
+                "finding_resolved",
+                {**judged, "judged_in": request.round_no, "reviewer": request.reviewer},
+                task_id=request.task_id,
+                event_id=events.stable_id(request.task_id, "finding_resolved", judged["round"], judged["finding"]),
+            )
     return url
+
+
+def resolved(previous: Any, round_no: int) -> list[dict]:
+    """The reviewer's judgments of earlier findings, each as round, finding and outcome. One whose id is not of
+    the round.number form, or names this round or a later one, is left out: the ids came from a model."""
+    found = []
+    for item in previous if isinstance(previous, list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("fixed"), bool):
+            continue
+        made, _, number = str(item.get("id") or "").partition(".")
+        if not (made.isdigit() and number.isdigit()) or not 0 < int(made) < round_no or int(number) < 1:
+            continue
+        outcome = "fixed" if item["fixed"] else "not_fixed"
+        found.append({"round": int(made), "finding": int(number), "outcome": outcome})
+    return found
 
 
 # How far from a changed line a finding still counts as on the change: a finding names the line it is about,

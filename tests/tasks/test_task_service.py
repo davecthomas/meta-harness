@@ -469,7 +469,9 @@ def test_reviews_pair_each_posted_round_with_its_findings_and_say_what_came_next
     shown = api.get(f"/v1/tasks/{tid}/reviews", headers=_as(CALLER_KEY)).json()["rounds"]
 
     assert [(r["round"], r["verdict"], r["run_id"]) for r in shown] == [(1, "changes", "r-2"), (2, "clean", "r-4")]
-    assert shown[0]["findings"] == [{"n": 1, "path": "a.py", "line": 3, "body": "Test it.", "dismissed": None}]
+    assert shown[0]["findings"] == [
+        {"n": 1, "path": "a.py", "line": 3, "body": "Test it.", "dismissed": None, "id": "1.1", "outcome": None}
+    ]
     assert shown[0]["next"] == {"kind": "fix", "run_id": "r-3", "attempt": 3}
     assert shown[1]["next"]["kind"] == "waiting"
 
@@ -613,6 +615,34 @@ def test_a_review_is_answered_only_while_its_task_holds_it_and_through_its_own_e
         f"/v1/tasks/{held['id']}/messages", json={"text": "proceed:1", "when": "review"}, headers=_as(CALLER_KEY)
     )
     assert through_messages.status_code == 422
+
+
+def test_each_finding_has_its_id_and_the_outcome_the_next_reviewer_or_an_operator_gave_it(api, events):
+    """Nothing measured whether a reviewer's findings were right: each now says if it was fixed, not fixed,
+    dismissed, or never judged."""
+    task = _ended(api, "ready")
+    tid = task["id"]
+    findings = [{"path": "a.py", "line": n, "body": f"Finding {n}."} for n in (1, 2, 3, 4)]
+    events.emit(
+        "review_submitted", {"verdict": "changes", "summary": "Four.", "findings": findings}, task_id=tid, run_id="r-1"
+    )
+    events.emit("pull_request_reviewed", {"round": 1, "verdict": "changes", "head_sha": "abc"}, task_id=tid)
+    events.emit("finding_dismissed", {"round": 1, "finding": 3, "reason": "Not ours."}, task_id=tid, actor="dave")
+    events.emit("review_submitted", {"verdict": "clean", "summary": "Done.", "findings": []}, task_id=tid, run_id="r-2")
+    events.emit("pull_request_reviewed", {"round": 2, "verdict": "clean", "head_sha": "def"}, task_id=tid)
+    for n, outcome in ((1, "fixed"), (2, "not_fixed"), (3, "fixed")):
+        events.emit("finding_resolved", {"round": 1, "finding": n, "outcome": outcome, "judged_in": 2}, task_id=tid)
+    for position, event in enumerate(events.events, start=1):
+        event[2]["position"] = position
+
+    first, _ = api.get(f"/v1/tasks/{tid}/reviews", headers=_as(CALLER_KEY)).json()["rounds"]
+
+    assert [(f["id"], f["outcome"]) for f in first["findings"]] == [
+        ("1.1", "fixed"),
+        ("1.2", "not_fixed"),
+        ("1.3", "dismissed"),
+        ("1.4", None),
+    ], "an operator's dismissal stands over the reviewer's judgment; one nobody judged has none"
 
 
 def test_a_rounds_findings_are_numbered_and_say_who_dismissed_them(api, events):

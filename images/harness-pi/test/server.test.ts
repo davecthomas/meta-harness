@@ -462,6 +462,8 @@ test("submit_review records the verdict and ends the review run", async () => {
 		verdict: "changes",
 		summary: "The greeting file is missing its trailing newline.",
 		findings: [{ path: "hello.txt", line: 1, body: "End the file with a newline." }],
+		// The reviewer's judgment of the round before's findings, by the ids the prompt gave them.
+		previous: [{ id: "1.1", fixed: true }, { id: " 1.2 ", fixed: false }],
 	};
 	// A finding marked as a follow-up does not block, so changes with only follow-ups is refused like changes with none.
 	const empty = {
@@ -484,7 +486,11 @@ test("submit_review records the verdict and ends the review run", async () => {
 	const finished = events.at(-1)!;
 	assert.equal(finished.data.status, "FINISHED");
 	// A finding with no mark blocks.
-	const recorded = { ...review, findings: review.findings.map((f) => ({ ...f, blocking: true })) };
+	const recorded = {
+		...review,
+		findings: review.findings.map((f) => ({ ...f, blocking: true })),
+		previous: [{ id: "1.1", fixed: true }, { id: "1.2", fixed: false }],
+	};
 	assert.deepEqual(finished.data.review, recorded);
 	const submitted = events.filter((e) => e.type === "review_submitted");
 	assert.equal(submitted.length, 1);

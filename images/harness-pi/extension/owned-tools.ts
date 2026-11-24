@@ -72,10 +72,18 @@ export interface ReviewFinding {
 	blocking: boolean;
 }
 
+/** The reviewer's judgment of one finding from the round before, named by the id the prompt gave it. */
+export interface Judged {
+	id: string;
+	fixed: boolean;
+}
+
 export interface Review {
 	verdict: "clean" | "changes";
 	summary: string;
 	findings: ReviewFinding[];
+	/** Each finding of the round before, judged: fixed or not. Empty on a first review. */
+	previous: Judged[];
 }
 
 const FindingSchema = Type.Object({
@@ -91,6 +99,11 @@ const FindingSchema = Type.Object({
 	),
 });
 
+const JudgedSchema = Type.Object({
+	id: Type.String({ minLength: 1, description: "The finding's id, as the round before lists it, such as 2.3." }),
+	fixed: Type.Boolean({ description: "true when the change you are reviewing fixes it." }),
+});
+
 const ReviewSchema = Type.Object({
 	verdict: Type.Union([Type.Literal("clean"), Type.Literal("changes")], {
 		description: "clean: no finding blocks the merge. changes: at least one finding blocks it.",
@@ -99,6 +112,13 @@ const ReviewSchema = Type.Object({
 	findings: Type.Array(FindingSchema, {
 		description: "Each change worth making, blocking or follow-up. A clean review may list follow-ups.",
 	}),
+	previous: Type.Optional(
+		Type.Array(JudgedSchema, {
+			description:
+				"On a review after the first: each finding of the round before, by its id, and whether it is fixed. " +
+				"Left out on a first review.",
+		}),
+	),
 });
 
 /** The submit_review tool. `onReview` receives the review once, when pi calls the tool. */
@@ -141,7 +161,8 @@ export function submitReviewTool(onReview: (review: Review) => void): ToolDefini
 				};
 			}
 			submitted = true;
-			onReview({ verdict: params.verdict, summary: params.summary, findings });
+			const previous = (params.previous ?? []).map((p) => ({ id: p.id.trim(), fixed: p.fixed }));
+			onReview({ verdict: params.verdict, summary: params.summary, findings, previous });
 			return {
 				content: [{ type: "text", text: `Review submitted: ${params.verdict}. Stop now.` }],
 				details: undefined,

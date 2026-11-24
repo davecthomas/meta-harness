@@ -1039,7 +1039,10 @@ class RunTask:
                         retry_policy=CODE_HOST_RETRY,
                     )
                     log.info("%s: review round %d by %s: %s", info.workflow_id, reviews, reviewer, review["verdict"])
-                    findings = list(review.get("findings") or [])
+                    # Each finding keeps its id, its round and its number in the reviewer's list, however the
+                    # list is filtered after: the next round's reviewer judges it by that id (finding_resolved).
+                    # Data only: no activity, timer or signal changes, so replay is unaffected.
+                    findings = [{**f, "id": f"{reviews}.{n}"} for n, f in enumerate(review.get("findings") or [], 1)]
                     clean = f"review round {reviews} by {reviewer} came back clean at {loop.head[:12]}"
                     if later:
                         findings = [f for n, f in enumerate(findings) if n not in set(later)]
