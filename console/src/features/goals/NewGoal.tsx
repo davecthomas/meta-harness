@@ -411,6 +411,8 @@ export function NewGoal() {
   const unsaved = useUnsavedChanges({
     dirty,
     describe: `the new goal${title.trim() ? ` "${title.trim().slice(0, 60)}"` : ""}`,
+    // The open panel is in the address: stepping between panels is not leaving.
+    ownsQuery: true,
     // Save here saves the goal without starting it, so leaving never starts work.
     save: async () => (await create(false)) !== null,
     discard: () => {
