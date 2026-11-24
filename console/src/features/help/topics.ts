@@ -20,7 +20,7 @@ export const TOPICS: Topic[] = [
     title: "Why",
     blocks: [
       { kind: "text", text: "Most code changes spend much of their time waiting. A pull request conflicts with main and sits. A check fails for a reason unrelated to the change. A review asks for one more fix, then another. Each stop waits until a person notices it." },
-      { kind: "text", text: "Muxxy AI clears most of those stops itself. You say what you want done, and it writes the code, reviews it, fixes what the review finds and merges it. It comes to you when a decision is yours to make." },
+      { kind: "text", text: "Muxxy clears most of those stops itself. You say what you want done, and it writes the code, reviews it, fixes what the review finds and merges it. It comes to you when a decision is yours to make." },
     ],
   },
   {

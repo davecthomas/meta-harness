@@ -30,8 +30,8 @@ const sourceDir = join(consoleDir, "brand", "source");
 const outDir = join(consoleDir, "src", "brand");
 const publicDir = join(consoleDir, "public");
 
-const TITLE = "Muxxy AI";
-const DESC = "Vector brand artwork for Muxxy AI, the Open Meta-Harness for Coding at Scale.";
+const TITLE = "Muxxy";
+const DESC = "Vector brand artwork for Muxxy, the Open Meta-Harness for Coding at Scale.";
 const PRECISION = 2;
 // 40 KB and 120 KB read as 40,000 and 120,000 bytes, as the size note does.
 const SYMBOL_LIMIT = 40_000;
@@ -76,14 +76,15 @@ const MANIFEST_ICONS = [
 ];
 
 /** svgo's preset-default at the measured precision, keeping the title, the description and the ids. */
-function svgoConfig() {
+function svgoConfig(keepShapes = false) {
   return {
     floatPrecision: PRECISION,
     js2svg: { eol: "lf", finalNewline: true },
     plugins: [
       {
         name: "preset-default",
-        params: { overrides: { removeDesc: false, cleanupIds: false } },
+        // keepShapes: each shape stays its own path, for the splash, which moves the letters one by one.
+        params: { overrides: { removeDesc: false, cleanupIds: false, ...(keepShapes ? { mergePaths: false } : {}) } },
       },
       {
         // svgo drops role="img" from the root; it carries the accessible name.
@@ -101,9 +102,9 @@ function svgoConfig() {
 }
 
 /** Optimizes one source file and returns its text. */
-async function optimizeSource(name) {
+async function optimizeSource(name, keepShapes = false) {
   const text = await readFile(join(sourceDir, name), "utf8");
-  return optimize(text, { path: name, ...svgoConfig() }).data;
+  return optimize(text, { path: name, ...svgoConfig(keepShapes) }).data;
 }
 
 /** The viewBox's width and height of an optimized SVG. */
@@ -352,12 +353,14 @@ async function main() {
   const wordmark = await optimizeSource("muxxy-wordmark.svg");
   // The splash's two: the name it brings out of the octopus's arms, and the tagline that rolls out under it,
   // cut from the stacked lockup, which draws the tagline as paths.
+  const letters = await optimizeSource("muxxy-wordmark.svg", true);
   const stacked = await optimizeSource("muxxy-full-lockup.svg");
   const tagline = alone(fromGroup(stacked, "tagline-divider"), viewBoxOf(stacked), TAGLINE);
   const outputs = [
     ["muxxy-symbol.svg", tightSymbol(symbol), SYMBOL_LIMIT],
     ["muxxy-lockup.svg", lockup(symbol, wordmark), LOCKUP_LIMIT],
-    ["wordmark.svg", alone(drawing(wordmark), viewBoxOf(wordmark), TITLE), SPLASH_LIMIT],
+    // The splash's name keeps each letter its own path, so the splash can bring them in one by one.
+    ["wordmark.svg", alone(drawing(letters), viewBoxOf(letters), TITLE), SPLASH_LIMIT],
     ["tagline.svg", tagline, SPLASH_LIMIT, TAGLINE, TAGLINE_FILLS],
   ];
   for (const [name, built, max, title, allowed] of outputs) {

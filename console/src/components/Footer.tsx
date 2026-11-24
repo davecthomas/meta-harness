@@ -29,7 +29,7 @@ export function Footer({ version = true }: { version?: boolean }) {
       pb="xs"
       style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}
     >
-      <Image src={lockup} alt="Muxxy AI" h={FOOTER_LOGO_HEIGHT} w="auto" fit="contain" data-testid="footer-logo" />
+      <Image src={lockup} alt="Muxxy" h={FOOTER_LOGO_HEIGHT} w="auto" fit="contain" data-testid="footer-logo" />
       <Text size="xs" c="dimmed" ta="center">{TAGLINE}</Text>
       {version && <VersionTag />}
       <Anchor href={REPOSITORY} target="_blank" rel="noreferrer" size="xs" c="dimmed">GitHub</Anchor>

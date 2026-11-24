@@ -29,7 +29,7 @@ test("the footer holds the lockup at a size its name reads, the tagline, the ver
 
   const footer = screen.getByTestId("footer");
   expect(footer.tagName).toBe("FOOTER");
-  const image = within(footer).getByRole("img", { name: "Muxxy AI" });
+  const image = within(footer).getByRole("img", { name: "Muxxy" });
   expect(image.getAttribute("src")).toContain("muxxy-lockup.svg");
   // The footer's logo was a 20-pixel symbol nobody could make out.
   expect(FOOTER_LOGO_HEIGHT).toBeGreaterThanOrEqual(53);
@@ -56,7 +56,7 @@ test("without the version the footer asks for none", () => {
 
   renderFooter(false);
 
-  expect(within(screen.getByTestId("footer")).getByRole("img", { name: "Muxxy AI" })).toBeTruthy();
+  expect(within(screen.getByTestId("footer")).getByRole("img", { name: "Muxxy" })).toBeTruthy();
   expect(screen.queryByTestId("version")).toBeNull();
   expect(fetch).not.toHaveBeenCalled();
 });

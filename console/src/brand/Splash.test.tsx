@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { NAME, Splash, TAGLINE } from "./Splash";
+import { NAME, Splash, TAGLINE, NAME_AT, TAGLINE_AT } from "./Splash";
 import { createOctopus, energyAt, FLAIL_SECONDS, SETTLE_SECONDS, SPINES } from "./octopus";
 import symbol from "./octopus.svg?raw";
 
@@ -64,8 +64,10 @@ test("it plays from the start every time its screen opens", () => {
   motion(false);
   const first = render(<Splash where="help" />);
   expect(Number(screen.getByTestId("splash").getAttribute("data-shown"))).toBeLessThan(2);
-  expect(screen.getByAltText(NAME)).toBeTruthy();
-  expect(screen.getByAltText(TAGLINE)).toBeTruthy();
+  expect(screen.getByTestId("splash-wordmark").getAttribute("aria-label")).toBe(NAME);
+  // The name's letters are each their own path, so each can move on its own.
+  expect(screen.getByTestId("splash-wordmark").querySelectorAll("path.splash-letter").length).toBe(5);
+  expect(screen.getByRole("img", { name: TAGLINE })).toBeTruthy();
   first.unmount();
 
   // Opened again in the same session: from the start again, never already settled.
@@ -109,45 +111,29 @@ test("the octopus on the page is the one that moves, through every redraw of the
   expect(shape()).not.toBe(early);
 
   // Past the moments the name and the tagline come in, each of which redraws the splash.
-  frame(FLAIL_SECONDS + 0.5);
-  frame(FLAIL_SECONDS + 1.5);
+  frame(NAME_AT + 0.3);
+  frame(TAGLINE_AT + 0.3);
   expect(screen.getByTestId("splash").getAttribute("data-shown")).toBe("3");
   const late = shape();
-  frame(FLAIL_SECONDS + 2.5);
+  frame(TAGLINE_AT + 1.3);
 
   expect(screen.getByTestId("splash").querySelector("svg")).toBe(drawing);
   expect(shape()).not.toBe(late);
 });
 
-test("the spacebar turns bubbles behind the octopus on and off, and leaves a field's typing alone", () => {
+test("bubbles rise behind the octopus: several, small, of varying sizes, and only for the eye", () => {
   motion(false);
   render(<Splash where="help" />);
-  const splash = screen.getByTestId("splash");
-  expect(screen.queryByTestId("splash-bubbles")).toBeNull();
-
-  act(() => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", key: " " }));
-  });
   const bubbles = screen.getByTestId("splash-bubbles");
-  expect(splash.dataset.bubbles).toBe("true");
   expect(bubbles.getAttribute("aria-hidden")).toBe("true");
-  // Several, small, of varying sizes, each rising at its own pace.
   const sizes = [...bubbles.querySelectorAll<HTMLElement>(".splash-bubble")].map((b) => parseInt(b.style.width));
   expect(sizes.length).toBeGreaterThanOrEqual(8);
   expect(Math.max(...sizes)).toBeLessThanOrEqual(14);
   expect(new Set(sizes).size).toBeGreaterThan(4);
+});
 
-  // A space typed into a field is the field's.
-  const field = document.createElement("input");
-  document.body.appendChild(field);
-  act(() => {
-    field.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
-  });
-  expect(screen.getByTestId("splash-bubbles")).toBeTruthy();
-  field.remove();
-
-  act(() => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", key: " " }));
-  });
+test("with reduced motion there are no bubbles", () => {
+  motion(true);
+  render(<Splash where="help" />);
   expect(screen.queryByTestId("splash-bubbles")).toBeNull();
 });

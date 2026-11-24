@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import symbol from "./octopus.svg?raw";
-import wordmark from "./wordmark.svg";
-import tagline from "./tagline.svg";
+import wordmark from "./wordmark.svg?raw";
+import tagline from "./tagline.svg?raw";
 import { createOctopus, energyAt, FLAIL_SECONDS } from "./octopus";
+import { spawner, spawnSeconds } from "./spawn";
 import "./splash.css";
 
-export const NAME = "Muxxy AI";
+export const NAME = "Muxxy";
 export const TAGLINE = "The Open Meta-Harness for Coding at Scale";
 
 // The bubbles that rise from behind the octopus: where each starts across its width (percent), its size in
@@ -25,9 +26,10 @@ export const BUBBLES: { left: number; size: number; rise: number; delay: number 
   { left: 64, size: 4, rise: 5.4, delay: 3.9 },
 ];
 
-// When the name comes out of the arms, and when the tagline rolls out from under it, in seconds.
-const NAME_AT = FLAIL_SECONDS + 0.2;
-const TAGLINE_AT = FLAIL_SECONDS + 1.2;
+// When the octopus starts spawning the name's letters, and when the tagline rolls out from under the name once
+// they have all arrived, in seconds. The wordmark has five letters.
+export const NAME_AT = FLAIL_SECONDS * 0.55;
+export const TAGLINE_AT = NAME_AT + spawnSeconds(5) + 0.2;
 function reducedMotion(): boolean {
   return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -39,20 +41,6 @@ function reducedMotion(): boolean {
 export function Splash({ where }: { where: string }) {
   const host = useRef<HTMLDivElement>(null);
   const [still] = useState(reducedMotion);
-  // Whether bubbles rise behind the octopus. Off, as the splash has always been; the spacebar turns them on and
-  // off, so the owner can see the two side by side before choosing. Not while typing in a field.
-  const [bubbles, setBubbles] = useState(false);
-  useEffect(() => {
-    const toggle = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || event.repeat) return;
-      const at = event.target as HTMLElement | null;
-      if (at && (at.isContentEditable || ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(at.tagName))) return;
-      event.preventDefault();
-      setBubbles((on) => !on);
-    };
-    window.addEventListener("keydown", toggle);
-    return () => window.removeEventListener("keydown", toggle);
-  }, []);
   // What has come into view: the octopus, the name, the tagline.
   const [shown, setShown] = useState(still ? 3 : 0);
 
@@ -99,12 +87,73 @@ export function Splash({ where }: { where: string }) {
     };
   }, [still]);
 
+  // The name's letters, one path each: put in once, by hand, as the octopus is, in order from left to right.
+  const name = useRef<HTMLDivElement>(null);
+  const letters = useRef<SVGPathElement[]>([]);
+  useEffect(() => {
+    const node = name.current;
+    if (!node) return;
+    // The box names itself to readers; the drawing inside it is not named again.
+    node.innerHTML = wordmark.replace('role="img"', 'aria-hidden="true"');
+    const paths = [...node.querySelectorAll<SVGPathElement>("path")];
+    const leftOf = (path: SVGPathElement) => {
+      try {
+        return path.getBBox().x;
+      } catch {
+        return paths.indexOf(path);
+      }
+    };
+    letters.current = [...paths].sort((a, b) => leftOf(a) - leftOf(b));
+    letters.current.forEach((path) => path.classList.add("splash-letter"));
+  }, []);
+
+  // The octopus spawns them: each comes out from under its body, small, and swims to its place, writhing as its
+  // arms do (spawn.ts). They start once its arms have begun to settle, and stop as the wordmark.
+  useEffect(() => {
+    const node = name.current;
+    const svg = node?.querySelector("svg");
+    if (shown < 2 || still || !node || !svg || !host.current) {
+      if (shown >= 2 || still) letters.current.forEach((path) => (path.style.opacity = "1"));
+      return;
+    }
+    // Under the octopus's body, in the word's own units: the octopus is drawn above the name and over it. A
+    // browser that cannot measure the drawing (a test's) shows the letters at rest.
+    const box = svg.viewBox?.baseVal;
+    if (!box) {
+      letters.current.forEach((path) => (path.style.opacity = "1"));
+      return;
+    }
+    const there = svg.getBoundingClientRect();
+    const octopus = host.current.getBoundingClientRect();
+    const scale = there.width ? box.width / there.width : 1;
+    const from: [number, number] = [
+      box.x + (octopus.left + octopus.width / 2 - there.left) * scale,
+      box.y + (octopus.top + octopus.height * 0.5 - there.top) * scale,
+    ];
+    const spawn = spawner(letters.current, from);
+    if (!spawn) {
+      letters.current.forEach((path) => (path.style.opacity = "1"));
+      return;
+    }
+    let frame = 0;
+    const began = performance.now();
+    // It goes on drawing after the letters arrive, for their faint wriggle. The browser pauses it in a hidden tab.
+    const step = (now: number) => {
+      spawn.draw((now - began) / 1000);
+      frame = window.requestAnimationFrame(step);
+    };
+    frame = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(frame);
+    // Once: when the name is due. A later stage does not restart it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown >= 2, still]);
+
   return (
-    <div className="splash" data-testid="splash" data-where={where} data-shown={shown} data-still={still || undefined} data-bubbles={bubbles || undefined}>
+    <div className="splash" data-testid="splash" data-where={where} data-shown={shown} data-still={still || undefined}>
       <div className="splash-sea">
         {/* Bubbles rise from behind the octopus, small and of several sizes. Decoration only, so no reader
             is told of them, and with reduced motion there are none. */}
-        {!still && bubbles && (
+        {!still && (
           <div className={`splash-bubbles${shown >= 1 ? " in" : ""}`} aria-hidden="true" data-testid="splash-bubbles">
             {BUBBLES.map((b, i) => (
               <span
@@ -119,10 +168,12 @@ export function Splash({ where }: { where: string }) {
         <div ref={host} className={`splash-octopus${shown >= 1 ? " in" : ""}`} role="img" aria-label={`${NAME} octopus`} />
       </div>
       <div className="splash-name">
-        <img className={`splash-wordmark${shown >= 2 ? " in" : ""}`} src={wordmark} alt={NAME} />
+        {/* Empty to React: the effect below puts the name's letters in, so each can move on its own. */}
+        <div ref={name} className={`splash-wordmark${shown >= 2 ? " in" : ""}`} role="img" aria-label={NAME} data-testid="splash-wordmark" />
       </div>
       <div className="splash-roll">
-        <img className={`splash-tagline${shown >= 3 ? " in" : ""}`} src={tagline} alt={TAGLINE} />
+        {/* Drawn in the page, not as an image, so each theme can color it (splash.css). */}
+        <div className={`splash-tagline${shown >= 3 ? " in" : ""}`} role="img" aria-label={TAGLINE} dangerouslySetInnerHTML={{ __html: tagline.replace('role="img"', 'aria-hidden="true"') }} />
       </div>
     </div>
   );
