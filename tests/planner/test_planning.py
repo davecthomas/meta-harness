@@ -317,6 +317,58 @@ def test_a_second_approval_while_one_runs_is_refused_and_creates_nothing_more(wo
     assert (after["approving"], after["approve_error"], after["status"]) == (False, None, "active")
 
 
+def test_an_approval_that_outlasts_the_claim_keeps_it_and_a_second_is_still_refused(world, monkeypatch):
+    """A claim was taken for dead after 15 minutes, so an approval of a large plan that ran longer could be joined
+    by a second, creating the issues still in progress twice. A running approval now renews its claim."""
+    import threading
+    import time
+
+    from meta_harness import db
+    from meta_harness.planner import plans
+
+    monkeypatch.setattr(plans, "APPROVAL_REFRESH_SECONDS", 0.05)
+    client, events, tracker, tasks = world
+    goal = _feature(client)
+    _planned(client, events, tasks, goal, [draft("store")])
+    create = tracker.create_issue
+    started, go_on = threading.Event(), threading.Event()
+
+    async def slow(*args, **kwargs):
+        # Only the first approval waits here: a second one let in by mistake goes straight through, so the test
+        # fails on its answer instead of hanging.
+        if started.is_set():
+            return await create(*args, **kwargs)
+        started.set()
+        while not go_on.is_set():
+            await asyncio.sleep(0.01)
+        return await create(*args, **kwargs)
+
+    tracker.create_issue = slow
+    answers: list = []
+    first = threading.Thread(
+        target=lambda: answers.append(client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR))
+    )
+    first.start()
+    assert started.wait(10), "the first approval is writing to the tracker"
+    # The claim made 20 minutes ago, past APPROVAL_CLAIM_MINUTES, as by an approval still running that long.
+    with db.connect(autocommit=True) as conn:
+        conn.execute(
+            "UPDATE planner.goal SET approving_at = now() - interval '20 minutes' WHERE id = %s", (goal["id"],)
+        )
+    time.sleep(0.5)
+
+    try:
+        again = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+    finally:
+        # Let the first approval finish whatever happened, or its thread outlives the test.
+        go_on.set()
+        first.join(20)
+
+    assert again.status_code == 409 and "being approved already" in again.json()["detail"]
+    assert answers[0].status_code == 200
+    assert [i.title for i in tracker.created] == ["Build store"], "created once"
+
+
 def test_an_approval_that_stops_lets_its_claim_go_and_keeps_why_for_the_page(world):
     client, events, tracker, tasks = world
     goal = _feature(client)
