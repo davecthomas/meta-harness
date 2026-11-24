@@ -74,6 +74,8 @@ def test_the_deploy_workflow_waits_for_every_check_main_runs():
         jobs |= set(re.findall(r"^    name: (.+)$", (WORKFLOWS / workflow).read_text(), re.M))
     # Not a check of the code: it only says whether a pull request needs the two slow ones.
     jobs.discard("which checks this change needs")
+    # The sandbox check's parts: "sandbox runs this repo's checks" stands for them all, and is the one waited for.
+    jobs = {job for job in jobs if not job.startswith("sandbox check part ")}
     deploy = (WORKFLOWS / "deploy.yml").read_text()
     waited = set(re.search(r'CHECKS: "(.+)"', deploy).group(1).split("|"))
     assert waited == jobs
@@ -383,8 +385,8 @@ def test_only_a_console_source_or_docs_change_skips_the_slow_checks():
 def test_the_slow_checks_skip_only_on_an_explicit_skip_and_never_on_main():
     workflow = (ROOT / ".github" / "workflows" / "e2e.yml").read_text()
     guard = "if: ${{ always() && needs.scope.outputs.slow != 'skip' }}"
-    assert workflow.count(guard) == 2, "the end-to-end check and the sandbox's checks, and no other job"
-    for job in ("  e2e:", "  image-checks:"):
+    assert workflow.count(guard) == 3, "the end-to-end check, the sandbox check's parts and their one result"
+    for job in ("  e2e:", "  image-check-parts:", "  image-checks:"):
         assert guard in workflow.split(job, 1)[1].split("\n    steps:", 1)[0], job
     # Anything but a pull request, a push to main among them, runs them: the deploy waits for all five checks.
     assert 'slow=run\n          if [ "$EVENT" = pull_request ]; then' in workflow
@@ -600,3 +602,25 @@ def test_no_plan_prints_who_may_use_the_console() -> None:
             block = re.search(rf'{name} "{who}" \{{(.*?)\n\}}', text, re.DOTALL)
             assert block, f"the platform stack has no {name} {who}"
             assert re.search(r"sensitive\s*=\s*true", block.group(1)), f"the {name} {who} is not sensitive"
+
+
+def test_the_sandbox_checks_parts_run_everything_the_one_command_runs():
+    """The sandbox check runs in parts, side by side, to cut a pull request's wait. Between them they run what
+    `make image-checks` runs as one command, and the check the deploy waits for passes only when all did."""
+    workflow = (ROOT / ".github" / "workflows" / "e2e.yml").read_text()
+    whole = re.search(
+        r"^IMAGE_CHECKS \?= (.+)$", (ROOT / "samples/temporal-run-task/Makefile").read_text(), re.M
+    ).group(1)
+    parts = dict(re.findall(r"- part: (\S+)\n\s+checks: (.+)", workflow))
+    assert set(parts) == {"python-a", "python-b", "console"}
+    python, console = whole.split(" && cd console && ", 1)
+    assert parts["console"] == f"cd console && {console}"
+    # The two Python parts: the first names some test folders, the second ignores exactly those and runs the rest.
+    named = parts["python-a"].split("uv run pytest -q ", 1)[1].split()
+    assert named and all((ROOT / folder).is_dir() for folder in named)
+    assert parts["python-b"] == "uv sync && uv run pytest -q " + " ".join(f"--ignore={folder}" for folder in named)
+    assert parts["python-a"].replace(" " + " ".join(named), "") == python
+    # One check, under its old name, stands for all the parts.
+    result = workflow.split("  image-checks:", 1)[1].split("\n  harness-server:", 1)[0]
+    assert "name: sandbox runs this repo's checks" in result and "needs: [scope, image-check-parts]" in result
+    assert '[ "$PARTS" = success ]' in result

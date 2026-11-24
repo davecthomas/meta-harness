@@ -106,12 +106,27 @@ jobs:
   # The checks a task on this repo runs, run by pi's bash tool in the built sandbox image, on a clone of this
   # checkout, behind the egress proxy, with a database beside it: what a task's agent meets. It fails when the
   # image or the sandbox cannot run them, as when the image set NODE_ENV=production (#187). No model is called.
-  image-checks:
-    name: sandbox runs this repo's checks
+  #
+  # In parts, side by side: as one command the checks ran one after another for 8.5 minutes, and that set how
+  # long every pull request waited (measured on PR #624). Between them the parts run everything `make
+  # image-checks` runs by itself: the second Python part ignores exactly the test folders the first names, so a
+  # new folder is in it without a change here (tests/test_deploy.py checks that).
+  image-check-parts:
+    name: sandbox check part (${{ matrix.part }})
     needs: scope
     if: ${{ always() && needs.scope.outputs.slow != 'skip' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: python-a
+            checks: uv sync && uv run ruff check . && uv run pytest -q tests/planner tests/run_service tests/events
+          - part: python-b
+            checks: uv sync && uv run pytest -q --ignore=tests/planner --ignore=tests/run_service --ignore=tests/events
+          - part: console
+            checks: cd console && npm ci --no-audit --no-fund && npm run typecheck && npm test && npm run brand && git diff --exit-code -- .
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -128,17 +143,34 @@ jobs:
         working-directory: samples/temporal-run-task
         env:
           FAKE_GATEWAY_HOST: 0.0.0.0
+          IMAGE_CHECKS: ${{ matrix.checks }}
         run: make image-checks
 
       - name: Keep the logs of a failed check
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: image-checks-logs
+          name: image-checks-logs-${{ matrix.part }}
           path: |
             samples/temporal-run-task/*.log
             samples/temporal-run-task/runs/*/harness-server.log
           if-no-files-found: ignore
+
+  # The one check the deploy and the branch's rules wait for, under the name it has always had: it passes when
+  # every part above passed.
+  image-checks:
+    name: sandbox runs this repo's checks
+    needs: [scope, image-check-parts]
+    if: ${{ always() && needs.scope.outputs.slow != 'skip' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every part passed
+        env:
+          PARTS: ${{ needs.image-check-parts.result }}
+        run: |
+          echo "the parts: $PARTS"
+          [ "$PARTS" = success ] || { echo "a part of the sandbox check did not pass: see the 'sandbox check part' jobs"; exit 1; }
 
   harness-server:
     name: harness server tests
