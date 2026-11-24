@@ -1,7 +1,8 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { NAME, Splash, TAGLINE, NAME_AT, TAGLINE_AT } from "./Splash";
-import { createOctopus, energyAt, FLAIL_SECONDS, SETTLE_SECONDS, SPINES } from "./octopus";
+import { NAME, nearBox, Splash, TAGLINE, NAME_AT, TAGLINE_AT } from "./Splash";
+import { armToward, createOctopus, energyAt, FLAIL_SECONDS, SETTLE_SECONDS, SPINES, SWIPE_BACK, SWIPE_HOLD, SWIPE_OUT, swipeAt } from "./octopus";
+import { EYES, lookAt, REACH, RESTS } from "./eyes";
 import symbol from "./octopus.svg?raw";
 
 function motion(reduced: boolean) {
@@ -136,4 +137,39 @@ test("with reduced motion there are no bubbles", () => {
   motion(true);
   render(<Splash where="help" />);
   expect(screen.queryByTestId("splash-bubbles")).toBeNull();
+});
+
+test("the pupils look toward the pointer and stay within their reach", () => {
+  const [rest] = RESTS;
+  expect(lookAt(rest, rest[0], rest[1])).toEqual([0, 0]);
+  const [right] = lookAt(rest, rest[0] + 5000, rest[1]);
+  expect(right).toBeCloseTo(REACH[0], 5);
+  const [, down] = lookAt(rest, rest[0], rest[1] + 5000);
+  expect(down).toBeCloseTo(REACH[1], 5);
+  // Near the eye, it looks only part of the way.
+  expect(Math.abs(lookAt(rest, rest[0] - 50, rest[1])[0])).toBeLessThan(REACH[0] / 2);
+  expect(EYES).toHaveLength(2);
+});
+
+test("a click near the octopus swipes the arm nearest it, which reaches out and comes back", () => {
+  expect(swipeAt(0)).toBe(0);
+  expect(swipeAt(SWIPE_OUT + SWIPE_HOLD / 2)).toBe(1);
+  expect(swipeAt(SWIPE_OUT + SWIPE_HOLD + SWIPE_BACK + 0.01)).toBe(0);
+  // Far down and left: a lower-left arm; far right: a right-hand arm.
+  expect(armToward(100, 1300)).toBeLessThan(4);
+  expect(armToward(1400, 700)).toBeGreaterThanOrEqual(4);
+
+  const rest = drawn(), swiping = drawn();
+  createOctopus(rest).draw(5, 0);
+  const octopus = createOctopus(swiping);
+  octopus.swipe(-400, 1400, 5);
+  octopus.draw(5 + SWIPE_OUT + SWIPE_HOLD / 2, 0);
+  const a = numbers(rest), b = numbers(swiping);
+  let most = 0;
+  for (let i = 0; i < a.length; i += 2) most = Math.max(most, Math.hypot(b[i] - a[i], b[i + 1] - a[i + 1]));
+  expect(most).toBeGreaterThan(100);
+
+  const box = { left: 100, top: 100, width: 200, height: 200 };
+  expect(nearBox(box, 50, 150)).toBe(true);
+  expect(nearBox(box, 450, 150)).toBe(false);
 });
