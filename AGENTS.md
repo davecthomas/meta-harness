@@ -49,8 +49,12 @@ and what is planned.
   failure as an error. A request that may have been acted on is repeated only
   when that is harmless. The console's `call` does the same. A test fails a
   client built without it. Never report a transient failure after one try.
-- Every new or changed setting is checked at service startup, so a bad one
-  stops the service with its name.
+- Every new or changed setting is checked at service startup. A bad one whose
+  default is safe (how often a loop runs, a timeout) falls back to the default
+  through `fallback.py`: the service logs an error naming it, and what needs
+  the operator lists it until it is fixed. A bad one whose default could cost
+  money, widen access, run another model or hide a mistake, and one with no
+  default, stops the service with its name. When unsure, stop.
 - Every text written for people to a tracker or the code host goes through
   `outbound.prepare` (`src/meta_harness/outbound/`): it redacts credentials
   when the task policy turns that on, runs

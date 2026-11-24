@@ -415,10 +415,13 @@ def test_a_regular_user_sees_only_the_model_cost_of_their_own_work(api):
     assert api.get("/v1/costs", params=SPAN, headers=as_admin).json()["scope"] == "all"
 
 
-def test_the_harvest_setting_is_checked_at_startup(monkeypatch):
+def test_a_bad_harvest_setting_falls_back_to_the_default_and_says_so(monkeypatch):
+    from meta_harness import fallback
+
+    monkeypatch.setattr(fallback, "DEFAULTED", {})
     monkeypatch.setenv(costs_api.HARVEST_SETTING, "often")
-    with pytest.raises(RuntimeError, match="MH_COSTS_HARVEST_SECONDS must be a number of seconds"):
-        costs_api.check_settings()
+    assert costs_api.harvest_seconds() == costs_api.DEFAULT_HARVEST_SECONDS
+    assert fallback.DEFAULTED[costs_api.HARVEST_SETTING]["value"] == "often"
     monkeypatch.setenv(costs_api.HARVEST_SETTING, "0")
     assert costs_api.harvest_seconds() == 0
     assert uuid.uuid4()

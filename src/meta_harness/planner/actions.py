@@ -194,6 +194,32 @@ def for_task(task: dict) -> list[dict]:
     return for_goal(alone, [link], [task])
 
 
+def for_settings(reports: list[dict]) -> list[dict]:
+    """What a service's bad settings need: one action for each setting that fell back to its default
+    (fallback.py), from each service's newest `settings_checked` report. An empty report clears its service's."""
+    found = []
+    for report in reports:
+        service = str(report.get("service") or "a service")
+        for item in report.get("defaulted") or []:
+            setting = str(item.get("setting") or "a setting")
+            found.append(
+                {
+                    "what": (
+                        f"The {service} runs on {item.get('default')} for {setting}, since it is set to "
+                        f"{item.get('value')!r}. {item.get('fix')}."
+                    ),
+                    "ref": "",
+                    "action": "fix_setting",
+                    "task_id": "",
+                    "pr_url": "",
+                    "asks": ASKS["fix_setting"],
+                    "title": setting,
+                    "goal_id": "",
+                }
+            )
+    return found
+
+
 def _title(link: dict | None, task: dict | None) -> str:
     """What an action is about, by name: the task's short name or title, else its issue's."""
     return str((task or {}).get("name") or (task or {}).get("title") or (link or {}).get("title") or "")
@@ -212,6 +238,8 @@ ASKS = {
     "review": "Review the changes",
     "open_issue": "Look at the issue",
     "open_task": "Look at",
+    # A setting with a safe default that was set badly, so its service runs on the default (fallback.py).
+    "fix_setting": "Fix a setting",
 }
 
 

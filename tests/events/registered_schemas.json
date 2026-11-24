@@ -1428,6 +1428,45 @@
     ],
     "type": "object"
   },
+  "settings_checked v1": {
+    "type": "object",
+    "properties": {
+      "service": {
+        "type": "string"
+      },
+      "defaulted": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "setting": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "default": {
+              "type": "string"
+            },
+            "fix": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "setting",
+            "value",
+            "default",
+            "fix"
+          ]
+        }
+      }
+    },
+    "required": [
+      "service",
+      "defaulted"
+    ],
+    "additionalProperties": true
+  },
   "split_drafted v1": {
     "additionalProperties": true,
     "properties": {

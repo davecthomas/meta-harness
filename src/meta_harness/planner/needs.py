@@ -58,9 +58,24 @@ def plan_waits(found: list[dict]) -> bool:
     return any(need["action"] in ("approve_plan", "fix_plan", "accept_fix") for need in found)
 
 
-def gather(tasks: Any) -> list[dict]:
+# How many of the newest settings reports are read: each service starts often enough that its newest is among them.
+SETTINGS_REPORTS = 100
+
+
+def settings_reports(events: Any) -> list[dict]:
+    """Each service's newest `settings_checked` report: which of its settings fell back to their default."""
+    page = events.read(0, SETTINGS_REPORTS, before_position=2**62, event_type="settings_checked")["events"]
+    newest: dict[str, dict] = {}
+    for event in sorted(page, key=lambda e: e["position"]):
+        payload = event.get("payload") or {}
+        newest[str(payload.get("service") or "")] = payload
+    return list(newest.values())
+
+
+def gather(tasks: Any, events: Any = None) -> list[dict]:
     """Everything that needs the operator now: each open goal's needs, then each task of no goal that waits
-    on the operator. A goal that cannot be read is logged and left out; the rest are still listed."""
+    on the operator, then each setting a service runs on the default for. A goal that cannot be read is logged
+    and left out; the rest are still listed."""
     found: list[dict] = []
     with db.connect(autocommit=True) as conn:
         goals = store.list_goals(conn, list(OPEN))[:MAX_GOALS]
@@ -79,21 +94,26 @@ def gather(tasks: Any) -> list[dict]:
         alone = []
     for task in alone:
         found += [{**need, "goal": ""} for need in actions.for_task(task)]
+    if events is not None:
+        try:
+            found += [{**need, "goal": ""} for need in actions.for_settings(settings_reports(events))]
+        except Exception as err:  # noqa: BLE001 - the goals' and tasks' needs are still the answer
+            log.warning("could not read the services' settings reports: %s", err)
     return [{**need, "key": _key(need)} for need in found]
 
 
 def _key(need: dict) -> str:
     """A need's name for a page to keep its row by: the task, else the issue, else the goal and what is asked."""
-    about = need.get("task_id") or need.get("ref") or need.get("goal_id") or ""
+    about = need.get("task_id") or need.get("ref") or need.get("goal_id") or need.get("title") or ""
     return f"{need['action']}:{about}"
 
 
-def register(app: FastAPI, operator: Callable[..., str], tasks: Any) -> None:
-    """Adds the route. tasks: the Task API client."""
+def register(app: FastAPI, operator: Callable[..., str], tasks: Any, events: Any = None) -> None:
+    """Adds the route. tasks: the Task API client; events: the event client, for the services' settings reports."""
 
     @app.get("/v1/needs")
     async def needs(who: str = Depends(operator)) -> dict:
         """Everything that needs the operator now, and how many: the one list the console's Needs you, its
         inbox and its counts are drawn from."""
-        found = await asyncio.to_thread(gather, tasks)
+        found = await asyncio.to_thread(gather, tasks, events)
         return {"needs": found, "count": len(found)}

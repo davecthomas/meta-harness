@@ -38,6 +38,7 @@ from pathlib import Path
 
 import httpx
 
+from meta_harness import fallback
 from meta_harness.run_service.paths import REPO_ROOT
 
 IMAGE = os.environ.get("HARNESS_IMAGE", "harness-pi:dev")
@@ -45,7 +46,7 @@ IMAGE = os.environ.get("HARNESS_IMAGE", "harness-pi:dev")
 SANDBOX_GATEWAY_URL = os.environ.get("SANDBOX_GATEWAY_URL", "http://host.docker.internal:8080")
 RUNS_DIR = Path(os.environ.get("RUNS_DIR") or REPO_ROOT / "runs").resolve()
 HEARTBEAT_SECONDS = os.environ.get("SANDBOX_HEARTBEAT_SECONDS", "2")
-READY_SECONDS = float(os.environ.get("SANDBOX_READY_SECONDS", "60"))
+READY_SECONDS = fallback.seconds("SANDBOX_READY_SECONDS", 60.0)
 # Every container and network this sample starts carries this label, so `make down` can find leftovers.
 SAMPLE_LABEL = "meta-harness.sample"
 CONTAINER_PORT = 8090
@@ -135,7 +136,7 @@ PIDS_LIMIT = 4096
 # Its data is in memory and goes with the run. The image is pulled when the machine does not have it.
 DATABASE_IMAGE = os.environ.get("MH_SANDBOX_POSTGRES_IMAGE", "postgres:16-alpine")
 DATABASE_USER = "mh"
-DATABASE_READY_SECONDS = float(os.environ.get("SANDBOX_DATABASE_READY_SECONDS", "60"))
+DATABASE_READY_SECONDS = fallback.seconds("SANDBOX_DATABASE_READY_SECONDS", 60.0)
 SERVICES = ("postgres",)
 
 

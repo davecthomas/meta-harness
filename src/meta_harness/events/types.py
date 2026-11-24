@@ -223,6 +223,31 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("review_proceeded", 1, _object({"round": {"type": "integer"}}, ["round"])),
+    # A service's startup: the settings with a safe default that were set badly, so it runs on the default
+    # (fallback.py). The newest for a service is what needs the operator; an empty list clears it.
+    EventType(
+        "settings_checked",
+        1,
+        _object(
+            {
+                "service": {"type": "string"},
+                "defaulted": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "setting": {"type": "string"},
+                            "value": {"type": "string"},
+                            "default": {"type": "string"},
+                            "fix": {"type": "string"},
+                        },
+                        "required": ["setting", "value", "default", "fix"],
+                    },
+                },
+            },
+            ["service", "defaulted"],
+        ),
+    ),
     # The supervisor: who has a task when that changes, and a task it sent back for want of a workflow
     EventType(
         "task_standing",
