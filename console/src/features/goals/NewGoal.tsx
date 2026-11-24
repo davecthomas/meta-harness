@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Alert, Anchor, Button, Checkbox, Collapse, Group, NativeSelect, NumberInput, Paper, SegmentedControl, SimpleGrid, Stack, Switch, Text, TextInput, Textarea, UnstyledButton } from "@mantine/core";
+import { Alert, Anchor, Button, Checkbox, Collapse, Group, NumberInput, Paper, SegmentedControl, SimpleGrid, Stack, Switch, Text, TextInput, Textarea, UnstyledButton } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
@@ -105,7 +105,6 @@ export function NewGoal() {
   const readable = trackersRead && missing.length === 0;
   const [budget, setBudget] = useState<string | number>("");
   // What the budget does when it is reached, and how far past it a goal that stops may go.
-  const [budgetMode, setBudgetMode] = useState<"block" | "warn">("block");
   const [overage, setOverage] = useState<string | number>(10);
   const [parallel, setParallel] = useState<string | number>("");
   const [systemParallel, setSystemParallel] = useState<number | null>(null);
@@ -246,7 +245,7 @@ export function NewGoal() {
         ...(Object.keys(trackerSettings).length ? { tracker_settings: trackerSettings } : {}),
         refs,
         max_usd: budget === "" ? null : String(budget),
-        ...(budget === "" ? {} : { budget_mode: budgetMode, budget_overage_percent: Number(overage) || 0 }),
+        ...(budget === "" ? {} : { budget_overage_percent: Number(overage) || 0 }),
         max_parallel: parallel === "" ? null : Number(parallel),
         priority: Number(priority) || 0,
         auto_merge: autoMerge,
@@ -465,7 +464,7 @@ export function NewGoal() {
                 <Stack gap="md" mt="sm">
                   <NumberInput
                     label="Budget"
-                    description="What the goal's runs may spend. Leave it empty for none."
+                    description="What the goal's runs may spend. Left empty, the most one goal may spend."
                     prefix="$"
                     min={0}
                     decimalScale={2}
@@ -487,28 +486,17 @@ export function NewGoal() {
                     />
                   </Group>
                   {budget === "" ? (
-                    <Text size="sm" c="dimmed">Give the goal a budget to choose what happens when it is reached.</Text>
+                    <Text size="sm" c="dimmed">With no budget given, the goal gets the most one goal may spend, and stops there.</Text>
                   ) : (
-                    <Group grow align="flex-start">
-                      <NativeSelect
-                        label="When the budget is reached"
-                        description="Stop: no more of its tasks start. Warn: the overrun is recorded and shown, and the goal keeps going."
-                        data={[{ value: "block", label: "Stop" }, { value: "warn", label: "Warn and keep going" }]}
-                        value={budgetMode}
-                        onChange={(e) => setBudgetMode(e.currentTarget.value as "block" | "warn")}
-                      />
-                      {budgetMode === "block" && (
-                        <NumberInput
-                          label="Allowed overage"
-                          description="How far past its budget the goal may go before it stops. 0 stops at the budget exactly."
-                          suffix="%"
-                          min={0}
-                          allowDecimal={false}
-                          value={overage}
-                          onChange={setOverage}
-                        />
-                      )}
-                    </Group>
+                    <NumberInput
+                      label="Allowed overage"
+                      description="How far past its budget the goal may go before it stops, never past the most one goal may spend. 0 stops at the budget exactly."
+                      suffix="%"
+                      min={0}
+                      allowDecimal={false}
+                      value={overage}
+                      onChange={setOverage}
+                    />
                   )}
                 </Stack>
               </Collapse>

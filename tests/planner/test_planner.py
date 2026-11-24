@@ -1237,11 +1237,12 @@ def test_a_budget_sent_as_null_is_cleared_and_other_fields_are_kept(api, parts):
 
     cleared = api.patch(f"/v1/goals/{goal['id']}", json={"max_usd": None}, headers=OPERATOR).json()
 
-    assert cleared["max_usd"] is None and cleared["label"] == goal["label"] and cleared["repos"] == [REPO]
+    # Cleared, the budget is the most one goal may spend: no goal is without a cap.
+    assert cleared["max_usd"] == "100.00" and cleared["label"] == goal["label"] and cleared["repos"] == [REPO]
     moves = [p["changes"] for t, p in events.events if t == "goal_changed" and p["goal_id"] == goal["id"]]
-    assert moves == [{"max_usd": {"from": "12.0000", "to": "None"}}]
+    assert moves == [{"max_usd": {"from": "12.0000", "to": "100.00"}}]
     kept = api.patch(f"/v1/goals/{goal['id']}", json={"priority": 2}, headers=OPERATOR).json()
-    assert kept["max_usd"] is None and kept["priority"] == 2
+    assert kept["max_usd"] == "100.00" and kept["priority"] == 2
 
 
 def test_a_goals_label_and_repos_change_and_its_next_sweep_takes_in_by_them(api, parts):

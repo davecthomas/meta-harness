@@ -333,6 +333,19 @@ def task_spend_ceiling() -> Decimal:
     return ceiling if ceiling.is_finite() and ceiling > 0 else default
 
 
+def goal_spend_ceiling() -> Decimal:
+    """The most one goal may spend: the task policy's max_goal_usd, else GOAL_SPEND_CEILING_USD. Every goal's
+    budget stops at or below it, and a goal with no budget of its own gets it. A policy that cannot be read, or
+    names no usable amount, answers the default: the ceiling never opens because a read failed."""
+    from meta_harness.config.kinds import GOAL_SPEND_CEILING_USD
+
+    try:
+        ceiling = Decimal(str(current_document("task_policy").get("max_goal_usd") or GOAL_SPEND_CEILING_USD))
+    except Exception:  # noqa: BLE001 - an unreadable policy must not unbound anything
+        return GOAL_SPEND_CEILING_USD
+    return ceiling if ceiling.is_finite() and ceiling > 0 else GOAL_SPEND_CEILING_USD
+
+
 # How long budget_policy answers from its last read: the planner asks once for every goal it serves.
 BUDGET_POLICY_SECONDS = 5.0
 _budget_policy: tuple[float, str] | None = None
