@@ -252,3 +252,44 @@ test("an untouched New goal leaves without asking", async () => {
   await act(() => router.navigate("/goals"));
   expect(await screen.findByText("Goals list")).toBeTruthy();
 });
+
+test("backing out to the first question takes the written title with it", async () => {
+  const router = editorRouter([]);
+  await pick("describe");
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  await next(2);
+  fireEvent.change(screen.getByTestId("description"), { target: { value: "Add CSV export" } });
+  await next(3);
+  await screen.findByRole("heading", { name: "Add a CSV export" });
+
+  await act(() => router.navigate("/goals/new"));
+
+  expect(await screen.findByRole("heading", { name: "New goal" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Add a CSV export" })).toBeNull();
+});
+
+test("the autonomy chosen last time is where a new goal starts, and this goal's choice is kept for the next", async () => {
+  const created: Record<string, unknown>[] = [];
+  const put: Record<string, unknown>[] = [];
+  const mine = { planner: { repos: [], modality: "fix", latitude: null, max_usd: null, auto_merge: false, autonomy: "ask" }, appearance: "system", notifications: false };
+  stub(created, [], (url, init) => {
+    if (url !== "/v1/me/settings") return null;
+    if (init?.method === "PUT") put.push(JSON.parse(String(init.body)));
+    return respond(init?.method === "PUT" ? JSON.parse(String(init.body)) : mine);
+  });
+  show();
+  await pick("describe");
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  await next(2);
+  fireEvent.change(screen.getByTestId("description"), { target: { value: "Add CSV export" } });
+  await next(3);
+
+  const levels = await screen.findByRole("radiogroup", { name: "How much it does without asking" });
+  expect((within(levels).getByRole("radio", { name: "Ask" }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(within(levels).getByRole("radio", { name: "Full" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  expect(await screen.findByText("Goal page")).toBeTruthy();
+  expect(created[0]).toMatchObject({ autonomy: "full" });
+  await waitFor(() => expect(put[0]).toMatchObject({ planner: { autonomy: "full", auto_merge: true } }));
+});

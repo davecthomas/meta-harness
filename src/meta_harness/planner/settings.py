@@ -21,6 +21,9 @@ class PlannerDefaults(BaseModel):
     latitude: float | None = Field(default=None, ge=0, le=1)
     max_usd: Decimal | None = Field(default=None, gt=0)
     auto_merge: bool = False
+    # How much a new goal does without asking, as last chosen on New goal: ask, standard or full. None: not
+    # chosen yet, so full when auto_merge is on, else standard.
+    autonomy: Literal["ask", "standard", "full"] | None = None
 
 
 class UserSettings(BaseModel):

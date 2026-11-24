@@ -2,7 +2,7 @@ import { call } from "../../client";
 
 // The signed-in user's own settings, from GET /v1/me/settings.
 export interface UserSettings {
-  planner: { repos: string[]; modality: "fix" | "feature" | "new-system"; latitude: number | null; max_usd: string | null; auto_merge: boolean };
+  planner: { repos: string[]; modality: "fix" | "feature" | "new-system"; latitude: number | null; max_usd: string | null; auto_merge: boolean; autonomy?: "ask" | "standard" | "full" | null };
   appearance: "light" | "dark" | "system";
   notifications: boolean;
 }

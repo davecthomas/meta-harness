@@ -39,7 +39,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Awaitable, Callable
 
-from meta_harness import db
+from meta_harness import db, local_repos
 from meta_harness.events.client import stable_event_id
 from meta_harness.money import usd
 from meta_harness.scheduler import holds
@@ -335,13 +335,16 @@ def kill_switch_state() -> tuple[bool, bool]:
 
 def kill_switch() -> dict:
     """The switch, and how many tasks run now: every admitted task holds at least one area lock row, so the
-    console offers Stop everything only while there is something to stop."""
+    console offers Stop everything only while there is something to stop. A deploy's smoke task is not counted."""
     with db.connect(autocommit=True) as conn:
         row = conn.execute(
             "SELECT engaged, changed_by, reason, changed_at, draining FROM scheduler.kill_switch WHERE id = 1"
         ).fetchone()
+        # A deploy's smoke task is not work an operator would stop: with only one running, nothing is running,
+        # and the console's Stop everything stays away. It showed after every deploy.
         running = conn.execute(
-            "SELECT count(DISTINCT task_id) FROM scheduler.repo_area_lock WHERE expires_at > now()"
+            "SELECT count(DISTINCT task_id) FROM scheduler.repo_area_lock WHERE expires_at > now() AND repo <> %s",
+            (str(local_repos.smoke_repo()),),
         ).fetchone()[0]
     return {
         "engaged": row[0],
