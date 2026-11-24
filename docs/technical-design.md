@@ -4401,9 +4401,10 @@ what the work costs. It opens with the key numbers, large, each as a median and
 an average for the tasks whose last run finished in the range
 (`GET /v1/performance`, `tasks/performance.py`): the dollar-hours per
 successfully completed task, the cost per task, per pull request and per goal.
-Under them it says how many tasks finished and merged, what was spent on them,
-how much of it in review and fix runs, and how much on tasks that did not
-merge. Dollar-hours follows Metering's formula, from what is recorded today:
+Under them it says how many tasks finished and merged, what was spent, how
+much of it in review and fix runs, on planning, and on tasks that did not
+merge. A deploy's smoke task is left out of everything, and a goal's planning
+task counts in its goal's cost and the total and is not one of the tasks. Dollar-hours follows Metering's formula, from what is recorded today:
 Di is each run's `attempt_finished` spend, Hi the time from its `run_prompt`
 to its `attempt_finished`, and Ci the share of two checks that passed, the
 code host's checks at the last checked head and the merge. Acceptance checks

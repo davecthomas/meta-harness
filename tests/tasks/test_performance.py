@@ -45,18 +45,24 @@ def test_the_numbers_are_worked_out_from_each_tasks_runs_checks_and_merge():
         *_run("t-3", "r-4", "standard", "1.00", 4, 3.5),
         # t-4: finished long ago, outside the range.
         *_run("t-4", "r-5", "standard", "50.00", 900, 899),
+        # A deploy's smoke task is no work: left out of everything.
+        *_run("t-5", "r-6", "standard", "0.01", 2, 1.9),
+        # g-1's planning task: part of the goal's cost and the total, and not one of the tasks.
+        *_run("t-6", "r-7", "standard", "2.00", 12, 11.5),
     )
-    goals = {"t-1": "g-1", "t-2": "g-1", "t-3": None, "t-4": "g-2"}
+    goals = {"t-1": "g-1", "t-2": "g-1", "t-3": None, "t-4": "g-2", "t-5": None, "t-6": "g-1"}
+    types = {"t-5": "smoke", "t-6": "plan"}
 
-    found = performance.summary(recorded, goals, NOW - timedelta(days=7), NOW)
+    found = performance.summary(recorded, goals, NOW - timedelta(days=7), NOW, types)
 
     assert (found["tasks"], found["merged"]) == (3, 1)
     assert found["cost_per_task"] == {"average": 5.6667, "median": 6.0, "count": 3}
     assert found["cost_per_pull_request"] == {"average": 8.0, "median": 8.0, "count": 2}
-    assert found["cost_per_goal"] == {"average": 16.0, "median": 16.0, "count": 1}
+    assert found["cost_per_goal"] == {"average": 18.0, "median": 18.0, "count": 1}
     # Σ(D × H) = 4×2 + 2×1 + 10×1 + 1×0.5 = 20.5, over Σ C = 1: failed work counts against the number.
     assert found["dollar_hours_per_completed_task"] == {"average": 20.5, "median": 10.0, "count": 1}
-    assert (found["total_usd"], found["wasted_usd"], found["review_loop_usd"]) == ("17.00", "11.00", "2.00")
+    assert (found["total_usd"], found["wasted_usd"], found["review_loop_usd"]) == ("19.00", "11.00", "2.00")
+    assert found["planning_usd"] == "2.00"
     assert found["hours"] == 4.5
 
 
