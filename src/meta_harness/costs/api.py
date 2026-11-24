@@ -230,7 +230,8 @@ def register(
         return {
             "from": first.isoformat(),
             "to": last.isoformat(),
-            "kinds": ["task", "review", "fix", "planning", "narratives", "writing"],
+            # In the order the work goes through them, from planning to what is posted and told at the end.
+            "kinds": ["planning", "task", "review", "fix", "writing", "narratives"],
             "goals": sorted(found.values(), key=lambda g: -g["total"]),
         }
 
