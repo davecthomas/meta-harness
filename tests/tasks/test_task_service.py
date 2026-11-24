@@ -1078,3 +1078,29 @@ def test_a_message_for_a_run_that_ended_is_dropped_and_never_reaches_a_later_run
         api.post(f"/v1/tasks/{task['id']}/messages", json={"text": "Now."}, headers=_as(CALLER_KEY)).status_code == 202
     )
     assert [m["body"] for m in pending()] == ["Now."]
+
+
+def test_the_reviewers_table_reads_every_tasks_review_events_within_the_days_asked(api, events):
+    from datetime import datetime, timezone
+
+    tid = _ended(api, "ready")["id"]
+    now = datetime.now(timezone.utc).isoformat()
+    reviewer = "harness:pi-review/claude:claude-opus-5-5"
+    events.emit(
+        "review_submitted",
+        {"verdict": "changes", "summary": "One.", "findings": [{"path": None, "line": None, "body": "Fix."}]},
+        task_id=tid,
+        time_utc=now,
+    )
+    events.emit(
+        "pull_request_reviewed", {"round": 1, "verdict": "changes", "reviewer": reviewer}, task_id=tid, time_utc=now
+    )
+    for position, event in enumerate(events.events, start=1):
+        event[2]["position"] = position
+
+    answer = api.get("/v1/reviewers", params={"days": 7}, headers=_as(CALLER_KEY))
+
+    assert answer.status_code == 200
+    [row] = [r for r in answer.json()["reviewers"] if r["reviewer"] == reviewer]
+    assert (row["rounds"], row["findings"], row["never_judged"]) == (1, 1, 1)
+    assert api.get("/v1/reviewers", params={"days": 0}, headers=_as(CALLER_KEY)).status_code == 422

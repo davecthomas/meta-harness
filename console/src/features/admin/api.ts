@@ -19,6 +19,18 @@ export interface ConsoleUser {
   last_sign_in_at: string | null;
 }
 
+// One reviewer's row on the Reviewers page (GET /v1/reviewers).
+export interface ReviewerRow {
+  reviewer: string;
+  rounds: number;
+  findings: number;
+  fixed: number;
+  not_fixed: number;
+  dismissed: number;
+  never_judged: number;
+  cost_usd: string;
+}
+
 // The admin feature's calls; src/api.ts spreads them into `api`.
 export const adminApi = {
   logs: (params: { unit?: string; severity?: string; minutes?: number; q?: string }) =>
@@ -33,5 +45,6 @@ export const adminApi = {
   setUserRole: (email: string, role: string) =>
     call<ConsoleUser>(`/v1/admin/users/${encodeURIComponent(email)}`, { method: "PATCH", body: JSON.stringify({ role }) }),
   deprovisionUser: (email: string) => call<ConsoleUser>(`/v1/admin/users/${encodeURIComponent(email)}`, { method: "DELETE" }),
+  reviewers: (days: number) => call<{ since: string; until: string; reviewers: ReviewerRow[] }>("/v1/reviewers" + query({ days })),
   reposAvailable: () => call<{ repos: { name: string; private: boolean }[]; install_urls: string[] }>("/v1/repos/available"),
 };
