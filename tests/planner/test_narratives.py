@@ -82,7 +82,12 @@ def test_a_goals_narrative_is_written_once_for_each_reader_and_read_from_storage
     first = _read(client, goal["id"], "product").json()
     assert (first["text"], first["label"], first["stale"]) == ("A narrative for product, number 1.", "Product", False)
     system, prompt = writer.calls[0]
-    assert "The reader: A product manager." in system and "Write only what the facts say" in system
+    assert "Write only what the facts say" in system
+    # The reader is the last thing the model reads, after the writing rules: it says what to leave out.
+    assert system.rstrip().endswith("A product manager. They care about what users get.")
+    assert system.index("Write only what the facts say") < system.index(
+        "The reader, whom everything above serves: A product manager."
+    )
     assert "--- facts ---" in prompt and '"statement": "Fix bugs"' in prompt
 
     # Opening the page again spends nothing: the stored narrative is served while the goal stands still.
@@ -154,7 +159,10 @@ def test_the_overviews_summary_is_written_from_the_goals_narratives_and_kept_unt
 
     assert summary["goals"] == 2 and len(writer.calls) == 3, "each goal's narrative, then the one across them"
     system, prompt = writer.calls[-1]
-    assert "one summary across several goals" in system and "The reader: A product manager." in system
+    assert (
+        "one summary across several goals" in system
+        and "The reader, whom everything above serves: A product manager." in system
+    )
     assert "A narrative for product, number 1." in prompt and "A narrative for product, number 2." in prompt
     again = _settled(client, "/v1/overview/narrative", "product").json()
     assert again["text"] == summary["text"] and len(writer.calls) == 3, "nothing changed, so nothing is written"
