@@ -131,6 +131,26 @@ SCENARIOS = {
         "auto_merge": True,
         "bases": ["conflict"],
     },
+    # After the review-dismiss-by-id patch: a held round's second finding is a follow-up, and an operator
+    # dismisses finding 3 as the page numbers it, which the hold matches by the finding's id.
+    "patched-review-dismiss-by-id": {
+        "verdicts": [
+            {
+                "verdict": "changes",
+                "summary": "Three things.",
+                "findings": [
+                    {"path": "pyproject.toml", "line": 3, "body": "Revert the version bump."},
+                    {"path": "README.md", "line": 1, "body": "A later tidy-up.", "blocking": False},
+                    {"path": "app.py", "line": 9, "body": "Off by one."},
+                ],
+            },
+            CLEAN,
+        ],
+        "fix_commits": ["c1"],
+        "goal_id": "g-1",
+        "hold_minutes": 5,
+        "words": ["dismiss:1:3:The test covers it.", "proceed:1"],
+    },
     # After the review-merge-bar patch: the reviewer marked its one finding as a follow-up, so it merges with
     # no fix run.
     "patched-review-merge-bar": {
@@ -253,13 +273,16 @@ async def test_record_a_history(env, name):  # noqa: F811 - env is the fixture i
     auto_merge = scenario.pop("auto_merge", False)
     task_type = scenario.pop("task_type", "")
     claim, operator_verdict = scenario.pop("claim", ""), scenario.pop("operator_verdict", "")
+    # An operator's words to a held review, sent once the round waits for them.
+    words = scenario.pop("words", [])
     script = Script(**scenario)
     script.auto_merge = auto_merge
     workflow_id = f"run-task-{name}"
     activities = [*script.activities(), *_task_activities(review, goal_id, task_type)]
     waiting = asyncio.Event()
-    if claim:
+    if claim or words:
         # An operator's review: the claim arrives with the start, and the verdict once the round waits for it.
+        # Or an operator's words to a review held for them.
         @activity.defn(name="budget_hold")
         async def budget_hold(hold: BudgetHold) -> None:
             if hold.waiting:
@@ -282,6 +305,10 @@ async def test_record_a_history(env, name):  # noqa: F811 - env is the fixture i
         if claim:
             await asyncio.wait_for(waiting.wait(), timeout=30)
             await handle.signal(RunTask.operator_message, review_word(2, f"verdict:{operator_verdict}"))
+        if words:
+            await asyncio.wait_for(waiting.wait(), timeout=30)
+            for n, word in enumerate(words, 1):
+                await handle.signal(RunTask.operator_message, review_word(n, word))
         try:
             await handle.result()
         except Exception:  # noqa: BLE001 - a run that ends in failure is a history all the same

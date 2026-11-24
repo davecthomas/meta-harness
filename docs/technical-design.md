@@ -881,8 +881,10 @@ policy's `review.hold_minutes` is above 0, a review that asks for changes
 waits that long before its fix run. The task stays `running`, marked
 `waiting_on: review`, its status reason saying how many findings wait and for
 how long. The operator dismisses any finding that is wrong, with why
-(`POST /v1/tasks/{id}/reviews/{round}/findings/{n}/dismiss`, `n` from 1), and
-may end the wait at once (`.../reviews/{round}/proceed`). Each reaches the
+(`POST /v1/tasks/{id}/reviews/{round}/findings/{n}/dismiss`, `n` from 1, as
+the reviewer listed it and the page shows it; the hold matches it by the
+finding's id, so a follow-up taken out of the round does not shift the
+numbers), and may end the wait at once (`.../reviews/{round}/proceed`). Each reaches the
 workflow as an operator message. The fix run is asked only for the findings
 not dismissed, and the next review is given those as the round before's. With
 every finding dismissed, the round counts as clean and goes on to the merge.
