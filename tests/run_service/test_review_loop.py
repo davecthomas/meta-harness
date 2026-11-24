@@ -48,6 +48,11 @@ REPO = "owner/repo"
 BRANCH = "mh/test"
 
 
+def _ided(findings: list[dict], round_no: int) -> list[dict]:
+    """Findings as the workflow carries them: each with its id, its round and its number from 1."""
+    return [{**f, "id": f"{round_no}.{n}"} for n, f in enumerate(findings, 1)]
+
+
 def _pair(profile: str, engine: str, model: str) -> Candidate:
     return Candidate(
         label=f"harness:{profile}/{engine}:{model}",
@@ -358,7 +363,7 @@ async def test_changes_go_to_a_fix_on_the_author_and_the_new_head_is_checked_and
     assert fix_run.branch == BRANCH
     assert fix_run.thinking == "medium", "a fix run keeps the routed tier's thinking"
     fix_prompt = next(p for p in script.prompts if p.kind == "fix")
-    assert fix_prompt.findings == CHANGES["findings"] and fix_prompt.summary == "One bug."
+    assert fix_prompt.findings == _ided(CHANGES["findings"], 1) and fix_prompt.summary == "One bug."
     assert fix_prompt.round_no == 1
     assert script.waited_on == ["c0", "c1"]
     assert [(p.round_no, p.head_sha) for p in script.posted] == [(1, "c0"), (2, "c1")]
@@ -609,7 +614,7 @@ async def test_a_review_after_the_first_is_given_the_round_befores_findings(env)
 
     first, second = [p for p in script.prompts if p.kind == "review"]
     assert first.previous_findings == [] and first.round_no == 1
-    assert second.round_no == 2 and second.previous_findings == CHANGES["findings"]
+    assert second.round_no == 2 and second.previous_findings == _ided(CHANGES["findings"], 1)
     assert second.previous_summary == CHANGES["summary"]
     assert first.passed_checks == ["tests"] == second.passed_checks, "each review is told the checks that passed"
 
@@ -785,7 +790,7 @@ async def test_a_later_rounds_new_findings_on_code_it_passed_are_follow_ups_and_
     assert result.outcome == "merged"
     assert _kinds(result) == ["standard", "review", "fix", "review"], "no fix run for follow-ups"
     asked = script.follow_ups_asked[0]
-    assert (asked.since, asked.head_sha) == ("c0", "c1") and asked.previous == CHANGES["findings"]
+    assert (asked.since, asked.head_sha) == ("c0", "c1") and asked.previous == _ided(CHANGES["findings"], 1)
     assert [p.follow_ups for p in script.posted] == [[], [0, 1]]
 
 
@@ -832,7 +837,7 @@ async def test_a_fix_run_gets_the_blocking_findings_and_not_the_ones_marked_foll
 
     assert result.outcome == "clean"
     fix_prompt = next(p for p in script.prompts if p.kind == "fix")
-    assert fix_prompt.findings == [BUG]
+    assert fix_prompt.findings == [{**BUG, "id": "1.1"}], "the follow-up is gone, and the bug keeps its own id"
     assert script.posted[0].follow_ups == [1]
 
 

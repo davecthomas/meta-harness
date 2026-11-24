@@ -8,8 +8,17 @@ export interface ReviewRound {
   reviewer: string | null;
   head_sha: string | null;
   summary: string;
-  // n numbers a round's findings from 1. dismissed: who dismissed the finding and why, when an operator did.
-  findings: { n?: number; path: string | null; line: number | null; body: string; dismissed?: { by: string | null; reason: string } | null }[];
+  // n numbers a round's findings from 1, and id is round.n. dismissed: who dismissed the finding and why, when an
+  // operator did. outcome: fixed or not_fixed as the next round's reviewer judged it, dismissed, or none yet.
+  findings: {
+    n?: number;
+    id?: string;
+    path: string | null;
+    line: number | null;
+    body: string;
+    dismissed?: { by: string | null; reason: string } | null;
+    outcome?: "fixed" | "not_fixed" | "dismissed" | null;
+  }[];
   review_url: string | null;
   reviewed_at: string | null;
   run_id: string | null;

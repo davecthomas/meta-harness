@@ -205,8 +205,8 @@ export function TaskPage() {
     // A hold for budget, or its answer, changes what the task waits on: read the task again.
     // So does a new reason the scheduler holds it for.
     if (["budget_hold", "budget_decision", "review_hold", "review_proceeded", "task_held", "operator_review_claimed", "operator_review_released", "operator_review_submitted"].includes(e.event_type)) void api.task(taskId).then(setTask, () => undefined);
-    // A dismissal shows on its finding: read the rounds again.
-    if (e.event_type === "finding_dismissed" || e.event_type === "review_hold") void api.reviews(taskId).then(setRounds, () => undefined);
+    // A dismissal, or a reviewer's judgment, shows on its finding: read the rounds again.
+    if (["finding_dismissed", "finding_resolved", "review_hold"].includes(e.event_type)) void api.reviews(taskId).then(setRounds, () => undefined);
     if (e.event_type === "task_status_changed") setTask((t) => (t ? { ...t, status: e.payload.to, status_reason: e.payload.reason ?? null } : t));
     if (e.event_type === "pull_request_opened") setTask((t) => (t ? { ...t, pr_url: e.payload.pr_url } : t));
     // A prompt read with every run's prompts may come again on the stream.

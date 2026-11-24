@@ -61,3 +61,23 @@ test("a round named in the address is marked, as a review's box on the timeline 
   expect(screen.getByTestId("review-2").getAttribute("data-asked")).toBe("true");
   expect(screen.getByTestId("review-1").getAttribute("data-asked")).toBeNull();
 });
+
+test("each finding says what became of it: fixed or not by the next reviewer, and nothing when no one judged it", () => {
+  const rounds: ReviewRound[] = [
+    { ...ROUNDS[0], findings: [
+      { n: 1, id: "1.1", path: "a.py", line: 3, body: "Test it.", outcome: "fixed" },
+      { n: 2, id: "1.2", path: null, line: null, body: "Name it.", outcome: "not_fixed" },
+      { n: 3, id: "1.3", path: null, line: null, body: "Doc it.", outcome: null },
+    ] },
+  ];
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <Reviews task={TASK} rounds={rounds} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  expect(within(screen.getByTestId("finding-1-1")).getByText("Fixed")).toBeTruthy();
+  expect(within(screen.getByTestId("finding-1-2")).getByText("Not fixed")).toBeTruthy();
+  expect(within(screen.getByTestId("finding-1-3")).queryByText(/fixed/i)).toBeNull();
+});

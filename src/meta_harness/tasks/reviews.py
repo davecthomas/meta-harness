@@ -5,6 +5,11 @@ reviewer, reviewed commit, review URL) after the review run submitted it
 (the harness's `review_submitted`: verdict, summary, findings). The two
 pair up in order. What came next is read from what the workflow recorded
 after the round: a fix run, the merge, or the task's end.
+
+Each finding has an id, its round and its number in that round's list
+(`2.3`), and an outcome: `dismissed` by an operator (`finding_dismissed`),
+else `fixed` or `not_fixed` as the next round's reviewer judged it
+(`finding_resolved`), else none: never judged.
 """
 
 from typing import Any
@@ -15,7 +20,15 @@ REVIEW_EVENT_TYPES = (
     "attempt_finished",
     "pull_request_merged",
     "finding_dismissed",
+    "finding_resolved",
 )
+
+
+def outcome(dismissed: dict, judged: dict, round_no: int, n: int) -> str | None:
+    """What became of a finding: an operator's dismissal stands over a reviewer's judgment. None: never judged."""
+    if (round_no, n) in dismissed:
+        return "dismissed"
+    return judged.get((round_no, n))
 
 
 def rounds(task: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -34,6 +47,12 @@ def rounds(task: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str,
                 "by": event.get("actor"),
                 "reason": payload.get("reason") or "",
             }
+    # The next round's reviewer's judgment of each finding, by round and number: the newest stands.
+    judged: dict[tuple[int, int], str] = {}
+    for event in ordered:
+        if event["event_type"] == "finding_resolved":
+            payload = event["payload"] or {}
+            judged[(payload.get("round"), payload.get("finding"))] = payload.get("outcome")
     shown = []
     for index, review in enumerate(posted):
         body = (submitted[index]["payload"] if index < len(submitted) else {}) or {}
@@ -55,6 +74,8 @@ def rounds(task: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str,
                         "line": f.get("line"),
                         "body": f.get("body", ""),
                         "dismissed": dismissed.get((review["payload"]["round"], n)),
+                        "id": f"{review['payload']['round']}.{n}",
+                        "outcome": outcome(dismissed, judged, review["payload"]["round"], n),
                     }
                     for n, f in enumerate(body.get("findings") or [], 1)
                 ],

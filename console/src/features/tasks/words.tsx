@@ -14,6 +14,12 @@ const VERDICTS: Record<string, Words> = {
   changes: { label: "Changes asked for", color: "orange", meaning: "The reviewer left findings, listed below, for a fix run or a person to settle." },
 };
 
+// What became of a review finding: the next round's reviewer's judgment, or an operator's dismissal.
+const OUTCOMES: Record<string, Words> = {
+  fixed: { label: "Fixed", color: "teal", meaning: "The next round's reviewer judged that the fix run fixed it." },
+  not_fixed: { label: "Not fixed", color: "orange", meaning: "The next round's reviewer judged that it was still there after the fix run." },
+};
+
 // How one attempt of a task ended (the attempt_finished event's decision).
 const DECISIONS: Record<string, Words> = {
   finished: { label: "Finished", color: "teal", meaning: "Its run finished the work." },
@@ -34,6 +40,12 @@ function WordBadge({ words }: { words: Words }) {
 
 export function VerdictBadge({ verdict }: { verdict: string }) {
   return <WordBadge words={wordsFor(VERDICTS, verdict)} />;
+}
+
+// Nothing for a finding no reviewer has judged yet, or one an operator dismissed (its own badge says so).
+export function OutcomeBadge({ outcome }: { outcome?: string | null }) {
+  if (!outcome || outcome === "dismissed") return null;
+  return <WordBadge words={wordsFor(OUTCOMES, outcome)} />;
 }
 
 export function DecisionBadge({ decision }: { decision: string }) {

@@ -132,11 +132,17 @@ async def test_a_first_review_reads_the_whole_change_and_a_later_one_judges_the_
             kind="review",
             round_no=2,
             previous_summary="One bug.",
-            previous_findings=[{"path": "app.py", "line": 3, "body": "Off by one."}],
+            previous_findings=[
+                {"path": "app.py", "line": 3, "body": "Off by one.", "id": "1.2"},
+                {"path": None, "line": None, "body": "An operator's own finding."},
+            ],
         ),
     )
     assert "This is review round 2." in later and "Its summary: One bug." in later
-    assert "1. app.py line 3: Off by one." in later
+    assert "1. [id 1.2] app.py line 3: Off by one." in later
+    assert "2. An operator's own finding." in later
+    # The reviewer judges each finding that has an id, in submit_review.
+    assert "give previous: each of these ids with fixed true or false: 1.2." in later
     assert "Judge first whether each of those is fixed" in later
     assert "Raise a new finding only for a bug, a failing check, or a part of the task left undone" in later
     assert "$" not in later, "every placeholder is filled"
@@ -264,6 +270,43 @@ async def test_a_review_posts_line_findings_inline_and_the_rest_in_its_body(monk
     finding, _, signed = inline["body"].partition("\n\n")
     assert finding == "Off by one." and signed.startswith("Provenance: meta-harness ")
     assert "`changes`" in body["body"] and "Two things." in body["body"] and "- Docs." in body["body"]
+
+
+async def test_a_later_reviews_judgments_of_earlier_findings_are_recorded_by_id(monkeypatch):
+    """Nothing measured whether a reviewer's findings were right. The next round's reviewer now judges each by
+    its id, and each judgment is a finding_resolved event. Ids are a model's words: a bad one is left out."""
+    from dataclasses import replace
+
+    async def github(repo, permissions, method, path, **kwargs):
+        return {"html_url": "https://github.com/owner/repo/pull/7#pullrequestreview-3"}
+
+    emitted = []
+    monkeypatch.setattr(code_host, "_github", github)
+    monkeypatch.setattr(
+        activities.events, "emit", lambda kind, payload, **fields: emitted.append((kind, payload, fields))
+    )
+    review = {
+        "verdict": "clean",
+        "summary": "Both fixed but one.",
+        "findings": [],
+        "previous": [
+            {"id": "2.1", "fixed": True},
+            {"id": "1.3", "fixed": False},
+            {"id": "3.1", "fixed": True},
+            {"id": "two", "fixed": True},
+            {"id": "2.2", "fixed": "yes"},
+        ],
+    }
+
+    await ActivityEnvironment().run(activities.post_review, replace(_review_request(review), task_id="t-1", round_no=3))
+
+    judged = [(payload, fields["event_id"]) for kind, payload, fields in emitted if kind == "finding_resolved"]
+    reviewer = "harness:pi-review/openai:gpt-6-sol"
+    assert [p for p, _ in judged] == [
+        {"round": 2, "finding": 1, "outcome": "fixed", "judged_in": 3, "reviewer": reviewer},
+        {"round": 1, "finding": 3, "outcome": "not_fixed", "judged_in": 3, "reviewer": reviewer},
+    ], "this round's own id, a malformed one and a non-boolean judgment are left out"
+    assert len({event_id for _, event_id in judged}) == 2, "one stable id per finding"
 
 
 async def test_a_finding_github_cannot_place_moves_into_the_body(monkeypatch):

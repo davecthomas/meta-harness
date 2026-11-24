@@ -206,6 +206,22 @@ REGISTRY: list[EventType] = [
             ["round", "finding", "reason"],
         ),
     ),
+    # A finding's outcome as the next round's reviewer judged it: fixed or not. round and finding name it (its
+    # round, and its number in that round's list from 1); judged_in is the round that judged it.
+    EventType(
+        "finding_resolved",
+        1,
+        _object(
+            {
+                "round": {"type": "integer"},
+                "finding": {"type": "integer"},
+                "outcome": {"type": "string", "enum": ["fixed", "not_fixed"]},
+                "judged_in": {"type": "integer"},
+                "reviewer": {"type": "string"},
+            },
+            ["round", "finding", "outcome", "judged_in"],
+        ),
+    ),
     EventType("review_proceeded", 1, _object({"round": {"type": "integer"}}, ["round"])),
     # The supervisor: who has a task when that changes, and a task it sent back for want of a workflow
     EventType(
