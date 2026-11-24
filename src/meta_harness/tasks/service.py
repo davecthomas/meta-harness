@@ -634,11 +634,11 @@ def create_app(
             ) from err
         ids = sorted({e["task_id"] for e in recorded if e.get("task_id")})
         with app.state.pool.connection() as conn:
-            goals = store.goals_of(conn, ids)
+            goals, types = store.goals_of(conn, ids)
         return {
             "since": since.isoformat(),
             "until": until.isoformat(),
-            **performance.summary(recorded, goals, since, until),
+            **performance.summary(recorded, goals, since, until, types),
         }
 
     @app.get("/v1/reviewers")

@@ -52,6 +52,8 @@ export interface Performance {
   total_usd: string;
   wasted_usd: string;
   review_loop_usd: string;
+  // What the goals' planning tasks cost: in the total and in each goal's cost, and not among the tasks.
+  planning_usd?: string;
   hours: number;
 }
 

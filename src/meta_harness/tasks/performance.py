@@ -12,6 +12,9 @@ those: the cost per task, per pull request and per goal, each as an average and 
   host's checks at the pull request's last checked head, and the merge. A task's acceptance checks run inside
   the review and are not recorded apart, so they are not a share of their own yet.
 
+A deploy's smoke task is no work and is left out of everything. A goal's planning task is counted in its
+goal's cost and in the total, and is not one of the tasks: it opens no pull request and has nothing to merge.
+
 The average is that ratio over the range's tasks. The median is the middle task's own Σ(D × H), among the tasks
 that merged. Spend on tasks that did not merge is the wasted spend. Nothing is stored: it is read from the
 events each time (tasks/reviewers.py reads them the same way).
@@ -100,23 +103,37 @@ def _both(values: list[float]) -> dict[str, Any]:
     return {"average": round(sum(values) / len(values), 4), "median": round(median(values), 4), "count": len(values)}
 
 
-def summary(events: list[dict], goals: dict[str, str | None], since: datetime, until: datetime) -> dict:
+# Task types that are not work on a repo: a deploy's smoke task is left out, and a goal's planning task is only
+# part of its goal's cost.
+SMOKE, PLAN = "smoke", "plan"
+
+
+def summary(
+    events: list[dict],
+    goals: dict[str, str | None],
+    since: datetime,
+    until: datetime,
+    types: dict[str, str] | None = None,
+) -> dict:
     """The Performance page's numbers for the tasks whose last run finished in [since, until). goals: each
-    task's goal, by task id (None for a task of no goal)."""
-    tasks = {
+    task's goal, by task id (None for a task of no goal). types: each task's type, by task id."""
+    types = types or {}
+    ran = {
         task_id: task
         for task_id, task in per_task(events).items()
-        if task["last"] is not None and since <= task["last"] < until and task["runs"]
+        if task["last"] is not None and since <= task["last"] < until and task["runs"] and types.get(task_id) != SMOKE
     }
+    planning = sum((t["usd"] for task_id, t in ran.items() if types.get(task_id) == PLAN), Decimal(0))
+    tasks = {task_id: task for task_id, task in ran.items() if types.get(task_id) != PLAN}
     costs = [float(t["usd"]) for t in tasks.values()]
     with_pr = [float(t["usd"]) for t in tasks.values() if t["pr"]]
     by_goal: dict[str, float] = defaultdict(float)
-    for task_id, task in tasks.items():
+    for task_id, task in ran.items():
         if goals.get(task_id):
             by_goal[goals[task_id]] += float(task["usd"])
     merged = [t for t in tasks.values() if t["merged"]]
     succeeded = sum(t["success"] for t in tasks.values())
-    total = sum((t["usd"] for t in tasks.values()), Decimal(0))
+    total = sum((t["usd"] for t in ran.values()), Decimal(0))
     wasted = sum((t["usd"] for t in tasks.values() if not t["merged"]), Decimal(0))
     review = sum((t["review_usd"] for t in tasks.values()), Decimal(0))
     return {
@@ -134,5 +151,6 @@ def summary(events: list[dict], goals: dict[str, str | None], since: datetime, u
         "total_usd": str(total.quantize(CENT)),
         "wasted_usd": str(wasted.quantize(CENT)),
         "review_loop_usd": str(review.quantize(CENT)),
+        "planning_usd": str(planning.quantize(CENT)),
         "hours": round(sum(t["hours"] for t in tasks.values()), 2),
     }
