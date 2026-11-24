@@ -196,9 +196,45 @@ function turns(index: number, t: number, energy: number, out: Float32Array): voi
   }
 }
 
+// A swipe: one arm whips out straight toward a point and curls back. How long it takes to reach out, to hold
+// there and to come back, in seconds, how far toward straight it goes, and how far its tip trails its base.
+export const SWIPE_OUT = 0.16;
+export const SWIPE_HOLD = 0.1;
+export const SWIPE_BACK = 0.55;
+const SWIPE_MOST = 0.7;
+const SWIPE_LAG = 0.07;
+
+// How far into its swipe an arm is, 0 to 1, at this many seconds after it began.
+export function swipeAt(seconds: number): number {
+  if (seconds <= 0) return 0;
+  if (seconds < SWIPE_OUT) {
+    const u = seconds / SWIPE_OUT;
+    return 1 - (1 - u) * (1 - u);
+  }
+  if (seconds < SWIPE_OUT + SWIPE_HOLD) return 1;
+  const u = Math.min(1, (seconds - SWIPE_OUT - SWIPE_HOLD) / SWIPE_BACK);
+  return 1 - u * u * (3 - 2 * u);
+}
+
+// The arm whose tip, at rest, is nearest a point in the symbol's units: the one that swipes at it.
+export function armToward(x: number, y: number): number {
+  let best = 0, nearest = Infinity;
+  SPINES.forEach((line, a) => {
+    const [tx, ty] = line[line.length - 1];
+    const d = Math.hypot(x - tx, y - ty);
+    if (d < nearest) {
+      nearest = d;
+      best = a;
+    }
+  });
+  return best;
+}
+
 export interface Octopus {
   // Draw the octopus at time t (seconds) with the given energy; an energy below 0 draws the symbol as it is.
   draw: (t: number, energy: number) => void;
+  // Swipe the nearest arm at a point in the symbol's units, starting at time t (the clock draw is given).
+  swipe: (x: number, y: number, t: number) => void;
   points: number;
 }
 
@@ -210,6 +246,11 @@ export function createOctopus(svg: SVGSVGElement): Octopus {
   const qx = arms.map(() => new Float32Array(SAMPLES + 1));
   const qy = arms.map(() => new Float32Array(SAMPLES + 1));
   const rot = arms.map(() => new Float32Array(SAMPLES + 1));
+  let strike: { arm: number; x: number; y: number; at: number } | null = null;
+
+  function swipe(x: number, y: number, t: number): void {
+    strike = { arm: armToward(x, y), x, y, at: t };
+  }
 
   // Draw the octopus at time t with the given energy. energy < 0 draws the symbol as it is.
   function draw(t: number, energy: number): void {
@@ -220,7 +261,18 @@ export function createOctopus(svg: SVGSVGElement): Octopus {
       else turns(a, t, energy, turn);
       qx[a][0] = arm.pts[0][0];
       qy[a][0] = arm.pts[0][1];
+      // A swiping arm straightens toward its target, its tip a moment behind its base.
+      const striking = !still && strike && strike.arm === a ? strike : null;
+      const toward = striking ? Math.atan2(striking.y - arm.pts[0][1], striking.x - arm.pts[0][0]) : 0;
       for (let i = 0; i < SAMPLES; i++) {
+        if (striking) {
+          // The base barely turns, so the skin it shares with the next arm does not tear; the tip does the whipping.
+          const u = i / SAMPLES;
+          const reach = SWIPE_MOST * Math.pow(u, 0.8) * swipeAt(t - striking.at - SWIPE_LAG * u);
+          let off = toward - (arm.angle[i] + turn[i]);
+          off = Math.atan2(Math.sin(off), Math.cos(off));
+          turn[i] += reach * off;
+        }
         rot[a][i] = turn[i];
         const angle = arm.angle[i] + turn[i];
         qx[a][i + 1] = qx[a][i] + arm.step[i] * Math.cos(angle);
@@ -228,6 +280,7 @@ export function createOctopus(svg: SVGSVGElement): Octopus {
       }
       rot[a][SAMPLES] = turn[SAMPLES - 1];
     }
+    if (strike && t - strike.at > SWIPE_OUT + SWIPE_HOLD + SWIPE_BACK + SWIPE_LAG) strike = null;
     for (const shape of shapes) {
       const { xs, ys, ops } = shape;
       let d = "", p = 0;
@@ -260,7 +313,7 @@ export function createOctopus(svg: SVGSVGElement): Octopus {
       shape.path.setAttribute("d", d);
     }
   }
-  return { draw, points: shapes.reduce((n, s) => n + s.xs.length, 0) };
+  return { draw, swipe, points: shapes.reduce((n, s) => n + s.xs.length, 0) };
 }
 
 // The whole splash on a timeline: the arms flail, settle, and keep a slow sway.

@@ -4371,7 +4371,10 @@ specified in `docs/specs/octofusion-splash.md`): the octopus's arms flail and
 settle into a slow sway that never stops, and bubbles rise behind it. It
 spawns the name: each letter comes out from under its body, small, and swims
 to its place writhing as the arms do (`spawn.ts`), keeping a faint wriggle once
-there. The tagline then rolls out from under the name. All of it is drawn
+there. The tagline then rolls out from under the name. Its eyes follow the
+pointer, a slit pupil kept inside each (`eyes.ts`), and a click near it gets a
+swipe from the arm nearest the click, which whips toward it and curls back.
+All of it is drawn
 from the artwork's own SVG paths, whose points are moved on every frame, with
 no video and no library. It plays in full every time its screen opens,
 holds still under the system's reduced-motion setting, and never delays
