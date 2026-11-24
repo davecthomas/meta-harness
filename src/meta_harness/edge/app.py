@@ -91,6 +91,8 @@ ROUTES: list[tuple[str, str, str]] = [
     # The console's users, for admins: every /v1/admin path is an admin's.
     ("/v1/admin/users", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/tasks", "MH_TASKS_URL", "http://127.0.0.1:8302"),
+    # What the work costs, per task, pull request and goal, for the Performance page.
+    ("/v1/performance", "MH_TASKS_URL", "http://127.0.0.1:8302"),
     # How each reviewer's findings turned out, for the Admin menu's Reviewers page.
     ("/v1/reviewers", "MH_TASKS_URL", "http://127.0.0.1:8302"),
     ("/v1/events", "MH_EVENTS_URL", "http://127.0.0.1:8301"),

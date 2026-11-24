@@ -4,6 +4,7 @@ import { Alert, Anchor, Card, Center, Group, Loader, MultiSelect, NativeSelect, 
 import { IconTrendingDown, IconTrendingUp } from "@tabler/icons-react";
 import { api, type CostFilter, type Costs } from "../../api";
 import { DataTable, Empty, ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
+import { KeyNumbers } from "./KeyNumbers";
 import { CostChart, seriesColor, usd } from "./CostChart";
 
 // Performance: what Muxxy costs over time, where the money goes, and where it is heading. An admin
@@ -164,7 +165,8 @@ export function PerformancePage() {
 
   return (
     <>
-      <PageHeader title="Costs" description="What Muxxy costs over time, where the money goes, and where it is heading." />
+      <PageHeader title="Performance" description="What the work costs: per task, per pull request and per goal, over time, and where the money goes." />
+      {!own && <KeyNumbers days={Math.min(365, Math.max(1, Math.round((Date.parse(span.to) - Date.parse(span.from)) / 86_400_000) + 1))} />}
       <ErrorAlert error={error} />
       {own && (
         <Alert color="blue" mb="md" data-testid="own-scope">

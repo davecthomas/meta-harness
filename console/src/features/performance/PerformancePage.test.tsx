@@ -26,9 +26,27 @@ const COSTS: Costs = {
   scope: "all",
 };
 
-function show(costs: Costs, path = "/costs") {
+const NUMBERS = {
+  since: "",
+  until: "",
+  tasks: 12,
+  merged: 9,
+  cost_per_task: { average: 5.6667, median: 4.5, count: 12 },
+  cost_per_pull_request: { average: 6.25, median: 5, count: 10 },
+  cost_per_goal: { average: 34, median: 30, count: 2 },
+  dollar_hours_per_completed_task: { average: 2.345, median: 1.5, count: 9 },
+  total_usd: "68.00",
+  wasted_usd: "11.00",
+  review_loop_usd: "20.00",
+  hours: 14.5,
+};
+
+// asked: the cost reads only, as the tests below count them; the key numbers answer beside them.
+function show(costs: Costs, path = "/performance", numbers: unknown = NUMBERS, all: string[] = []) {
   const asked: string[] = [];
   vi.stubGlobal("fetch", (url: string) => {
+    all.push(url);
+    if (url.startsWith("/v1/performance")) return Promise.resolve(new Response(JSON.stringify(numbers), { status: 200, headers: { "Content-Type": "application/json" } }));
     asked.push(url);
     return Promise.resolve(new Response(JSON.stringify(costs), { status: 200, headers: { "Content-Type": "application/json" } }));
   });
@@ -51,9 +69,9 @@ test("the axis steps are round, a range ends today, and a series keeps its color
   expect(costLabel("task", { labels: {}, group_by: "model" })).toBe("task");
 });
 
-test("the page says what Muxxy costs, under the old name nowhere", async () => {
+test("the page says what the work costs, under the old name nowhere", async () => {
   show(COSTS);
-  expect(await screen.findByText("What Muxxy costs over time, where the money goes, and where it is heading.")).toBeTruthy();
+  expect(await screen.findByText("What the work costs: per task, per pull request and per goal, over time, and where the money goes.")).toBeTruthy();
   expect(document.body.textContent).not.toMatch(/meta-harness/i);
 });
 
@@ -91,7 +109,7 @@ test("an admin sees the totals, the chart with its trend, where the money went a
 });
 
 test("the cost category sets the source, and each category has its own breakdowns and filters", async () => {
-  const asked = show(COSTS, "/costs?category=ai&by=model&model=claude-opus-5-5&goal=g-a");
+  const asked = show(COSTS, "/performance?category=ai&by=model&model=claude-opus-5-5&goal=g-a");
   await screen.findByTestId("cost-stats");
   expect(asked[0]).toContain("group_by=model");
   expect(asked[0]).toContain("model=claude-opus-5-5");
@@ -119,7 +137,7 @@ test("the cost category sets the source, and each category has its own breakdown
 });
 
 test("the breakdown, bucket and filters are asked for from the URL", async () => {
-  const asked = show(COSTS, "/costs?range=7&bucket=week&category=ai&by=model&goal=g-a");
+  const asked = show(COSTS, "/performance?range=7&bucket=week&category=ai&by=model&goal=g-a");
   await screen.findByTestId("cost-stats");
   expect(asked[0]).toContain("bucket=week&group_by=model");
   expect(asked[0]).toContain("goal=g-a");
@@ -144,7 +162,7 @@ test("AI costs are filtered and broken down by the issue's label and by what bec
     series: [{ key: "merged", usd: [0, 3.25, 0], total: 3.25 }, { key: "closed", usd: [0, 0, 1.25], total: 1.25 }],
     choices: { ...COSTS.choices, label: ["bug", "saves"], outcome: ["closed", "merged"] },
   };
-  const asked = show(byOutcome, "/costs?category=ai&by=outcome&label=bug&outcome=merged,closed");
+  const asked = show(byOutcome, "/performance?category=ai&by=outcome&label=bug&outcome=merged,closed");
   const breakdown = await screen.findByTestId("cost-breakdown");
   expect(asked[0]).toContain("group_by=outcome");
   expect(asked[0]).toContain("label=bug");
@@ -165,7 +183,7 @@ test("AI costs are filtered and broken down by the issue's label and by what bec
 
 test("the cloud category breaks the bill down by the service billed", async () => {
   const cloud = { ...COSTS, group_by: "kind", series: [{ key: "Compute Engine", usd: [1, 1.2, 1.1], total: 3.3 }, { key: "Cloud Run", usd: [0.1, 0.1, 0.1], total: 0.3 }] };
-  const asked = show(cloud, "/costs?category=cloud");
+  const asked = show(cloud, "/performance?category=cloud");
   const breakdown = await screen.findByTestId("cost-breakdown");
   expect(asked[0]).toContain("group_by=kind");
   expect(asked[0]).toContain("source=cloud");
@@ -178,4 +196,30 @@ test("too little spent before shows no percentage, and says why", async () => {
   show({ ...COSTS, previous_total: 0.004, change_percent: null });
   const stats = await screen.findByTestId("cost-stats");
   expect(stats.textContent).toContain("Change from the 3 days before–$0.00 then: too little to compare");
+});
+
+test("the key numbers are large, each a median and an average, for the days in view", async () => {
+  const all: string[] = [];
+  show(COSTS, "/performance?range=7", NUMBERS, all);
+
+  const key = await screen.findByTestId("dollar-hours");
+  expect(key.textContent).toContain("Dollar-hours per completed task");
+  expect(key.textContent).toContain("1.50median");
+  expect(key.textContent).toContain("2.35average");
+  expect(key.textContent).toContain("9 merged tasks");
+  expect(screen.getByTestId("cost-per-task").textContent).toContain("$4.50median");
+  expect(screen.getByTestId("cost-per-pr").textContent).toContain("$6.25average");
+  expect(screen.getByTestId("cost-per-goal").textContent).toContain("2 goals");
+  expect(screen.getByTestId("key-numbers-note").textContent).toContain("12 tasks finished in this time, 9 merged");
+  expect(all).toContain("/v1/performance?days=7");
+  expect(screen.getByRole("heading", { name: "Performance" })).toBeTruthy();
+});
+
+test("a time with nothing finished says so in each number", async () => {
+  const none = { average: null, median: null, count: 0 };
+  show(COSTS, "/performance", { ...NUMBERS, tasks: 0, merged: 0, cost_per_task: none, cost_per_pull_request: none, cost_per_goal: none, dollar_hours_per_completed_task: none });
+
+  const key = await screen.findByTestId("dollar-hours");
+  expect(key.textContent).toContain("none");
+  expect(key.textContent).toContain("No merged tasks in this time");
 });
