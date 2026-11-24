@@ -35,7 +35,7 @@ import {
 } from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
-import { api, refLabel, type IssueSource, type LabelIssue, type Tracker } from "../../api";
+import { api, refLabel, type IssueSource, type LabelIssue, type Tracker, type UserSettings } from "../../api";
 import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
 import { ImproveGoal } from "./ImproveGoal";
@@ -211,6 +211,8 @@ export function NewGoal() {
   }, []);
   const [priority, setPriority] = useState<string | number>(0);
   const [autonomy, setAutonomy] = useState("standard");
+  // The operator's settings as read, to keep the autonomy chosen here as the next goal's start.
+  const saved = useRef<UserSettings | null>(null);
   const [spec, setSpec] = useState<GoalSpec | null>(null);
   // The settings most goals leave as they are, folded away until asked for.
   const [more, setMore] = useState(false);
@@ -233,9 +235,12 @@ export function NewGoal() {
     // The form starts from the user's planner defaults, filling only what they haven't touched yet.
     api.settings().then(
       (s) => {
+        saved.current = s;
         setChosen((now) => (now.length ? now : s.planner.repos));
         setBudget((now) => (now === "" && s.planner.max_usd ? Number(s.planner.max_usd) : now));
-        if (s.planner.auto_merge) setAutonomy((now) => (now === "standard" ? "full" : now));
+        // What was chosen last time is where this goal starts.
+        const last = s.planner.autonomy ?? (s.planner.auto_merge ? "full" : "standard");
+        setAutonomy((now) => (now === "standard" ? last : now));
       },
       () => undefined,
     );
@@ -389,6 +394,12 @@ export function NewGoal() {
         // Where its issues come from: issues that exist run as they are; anything else is planned.
         modality: source === "issues" && !untracked ? "fix" : "feature",
       });
+      // The choice made here is the next goal's default. Not saving it is no reason to fail the goal.
+      const mine = saved.current;
+      if (mine && mine.planner.autonomy !== autonomy) {
+        const kept = { ...mine, planner: { ...mine.planner, autonomy: autonomy as "ask" | "standard" | "full", auto_merge: autonomy === "full" } };
+        void api.saveSettings(kept).then((s) => (saved.current = s), () => undefined);
+      }
       return goal.id;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -422,6 +433,15 @@ export function NewGoal() {
       setSpec(null);
     },
   });
+
+  // Backed out to the first question, the goal starts again: the title written for what it was goes too.
+  useEffect(() => {
+    if (step === 1 && !source) {
+      setTitle("");
+      setTitleOwn(false);
+      setEditingTitle(false);
+    }
+  }, [step, source]);
 
   const open = (n: number) => step === n;
   const done = (n: number) => reached > n;

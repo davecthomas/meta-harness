@@ -463,3 +463,28 @@ def test_the_kill_switch_api_takes_a_mode(repo):
         set_kill_switch(False, "test", "reset")
     modes = [p["mode"] for t, p, _ in events.emitted if t == "kill_switch_changed"]
     assert modes == ["drain", "off"]
+
+
+def test_a_deploys_smoke_task_is_not_something_running_to_stop(repo):
+    """Stop everything showed in the header after every deploy with nothing to stop: the deploy's smoke task held
+    a lock, and was counted as a running task."""
+    from meta_harness import local_repos
+    from meta_harness.scheduler.admission import kill_switch
+
+    with db.connect(autocommit=True) as conn:
+        before = kill_switch()["running"]
+        conn.execute(
+            "INSERT INTO scheduler.repo_area_lock (task_id, repo, area, expires_at) "
+            "VALUES (%s, %s, '', now() + interval '5 minutes')",
+            (f"t-smoke-{repo}", str(local_repos.smoke_repo())),
+        )
+        assert kill_switch()["running"] == before, "a smoke task alone leaves nothing to stop"
+        conn.execute(
+            "INSERT INTO scheduler.repo_area_lock (task_id, repo, area, expires_at) "
+            "VALUES (%s, %s, '', now() + interval '5 minutes')",
+            (f"t-work-{repo}", repo),
+        )
+        assert kill_switch()["running"] == before + 1
+        conn.execute(
+            "DELETE FROM scheduler.repo_area_lock WHERE task_id IN (%s, %s)", (f"t-smoke-{repo}", f"t-work-{repo}")
+        )
