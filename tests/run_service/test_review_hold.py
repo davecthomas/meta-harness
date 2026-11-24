@@ -106,3 +106,27 @@ async def test_a_policy_with_no_hold_sends_findings_straight_to_the_fix_run(env)
     result, holds = await _held(env, script, "nohold", [])
 
     assert result.outcome == "clean" and holds == []
+
+
+async def test_a_dismissal_names_the_finding_the_page_shows_though_a_follow_up_was_taken_out(env):  # noqa: F811
+    """The page numbers a round's findings as the reviewer listed them; the hold held them with the follow-ups
+    taken out. With a follow-up second, dismissing finding 3 was refused as no such finding, and dismissing
+    finding 2 dismissed the third. Each held finding now carries its own number (VL-14519)."""
+    three = {
+        "verdict": "changes",
+        "summary": "Three things.",
+        "findings": [
+            {"path": "pyproject.toml", "line": 3, "body": "Revert the version bump."},
+            {"path": "README.md", "line": 1, "body": "A later tidy-up.", "blocking": False},
+            {"path": "app.py", "line": 9, "body": "Off by one."},
+        ],
+    }
+    script = Script(verdicts=[three, CLEAN], fix_commits=["c1"], hold_minutes=30)
+
+    result, holds = await _held(env, script, "by-id", ["dismiss:1:3:The test covers it.", "proceed:1"])
+
+    assert result.outcome == "clean"
+    fix = next(p for p in script.prompts if p.kind == "fix")
+    assert [f["body"] for f in fix.findings] == ["Revert the version bump."], "finding 3 is the one dismissed"
+    [comment] = script.comments
+    assert "- Finding 3 (app.py): dismissed. The test covers it." in comment.body

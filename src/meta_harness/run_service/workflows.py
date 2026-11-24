@@ -1243,6 +1243,16 @@ class RunTask:
         """
         if not self._task_id or not findings or not workflow.patched("review-hold"):
             return findings
+        # A dismissal names a finding by its number in the reviewer's list, as the task's page shows it. The
+        # findings held here have the follow-ups taken out, so their positions can differ: they are matched by
+        # the id each carries (round.number), and only a finding from before ids were kept is matched by place.
+        by_id = workflow.patched("review-dismiss-by-id")
+
+        def number(position: int, finding: dict) -> int:
+            made, _, n = str(finding.get("id") or "").partition(".")
+            return int(n) if by_id and made == str(round_no) and n.isdigit() else position
+
+        numbered = {number(position, f): f for position, f in enumerate(findings, 1)}
         self._review_words = []
         count = f"{len(findings)} {'finding' if len(findings) == 1 else 'findings'}"
         waiting = (
@@ -1269,14 +1279,14 @@ class RunTask:
                     proceed = True
                 elif kind == "dismiss":
                     finding, _, why = rest.partition(":")
-                    if finding.isdigit() and 1 <= int(finding) <= len(findings):
+                    if finding.isdigit() and int(finding) in numbered:
                         dismissed[int(finding)] = why
             left = timedelta(minutes=minutes) - (workflow.now() - started)
-        kept = [f for n, f in enumerate(findings, 1) if n not in dismissed]
+        kept = [f for n, f in numbered.items() if n not in dismissed]
         if dismissed:
             lines = [f"**meta-harness review, round {round_no}**: an operator dismissed {len(dismissed)} of {count}."]
             for n in sorted(dismissed):
-                where = findings[n - 1].get("path") or "the change"
+                where = numbered[n].get("path") or "the change"
                 lines.append(f"- Finding {n} ({where}): dismissed. {dismissed[n]}")
             await workflow.execute_activity(
                 post_comment,
