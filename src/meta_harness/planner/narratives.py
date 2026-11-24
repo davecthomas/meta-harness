@@ -197,18 +197,27 @@ def _key(*parts: str) -> str:
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
+def _for_reader(prompt: str, reader: str) -> str:
+    """The system prompt: the task, then the writing rules, then the reader. The reader comes last because it
+    decides what to leave out (a product manager's leaves out code), and an instruction buried under the rules
+    was ignored: the Product narrative talked about code."""
+    return f"{writing_rules.after(prompt)}\n\nThe reader, whom everything above serves: {reader}"
+
+
 # What writes a narrative: (system prompt, prompt) to (text, model, cost).
 Writer = Callable[[str, str], Awaitable[tuple[str, str, str]]]
 
 
 async def write(system: str, prompt: str, transport: httpx.AsyncBaseTransport | None = None) -> tuple[str, str, str]:
-    """One model call and the writing pass on its words. Returns (text, model, cost)."""
+    """One model call and the writing pass on its words. `system` comes from _for_reader. Returns (text, model,
+    cost)."""
     config = settings()
     engine, _, model = str(config["model"]).partition(":")
     body = {
         "engine": engine,
         "model": model,
-        "system_prompt": writing_rules.after(system),
+        # Already ends with the writing rules and then the reader (_for_reader).
+        "system_prompt": system,
         "prompt": prompt,
         "response_schema": SCHEMA,
         "max_response_tokens": int(config["max_response_tokens"]),
@@ -291,7 +300,7 @@ class Narratives:
         persona = _persona(name)
         found = await asyncio.to_thread(_goal_facts, goal, self.tasks, self.events)
         digest = _key(updates.digest(found), name, persona["reader"], goal["statement"])
-        system = f"{GOAL_PROMPT} The reader: {persona['reader']}"
+        system = _for_reader(GOAL_PROMPT, persona["reader"])
         prompt = f"--- facts ---\n{json.dumps(found, indent=1, default=str)}\n--- end of facts ---"
         return await self._fresh(goal["id"], name, digest, system, prompt, persona["label"])
 
@@ -323,7 +332,7 @@ class Narratives:
             )
         digest = _key(name, persona["reader"], *sorted(f"{g['id']}:{n['digest']}" for g, n in each))
         told = [{"goal": g.get("title") or g["statement"][:80], "narrative": n["text"]} for g, n in each]
-        system = f"{OVERVIEW_PROMPT} The reader: {persona['reader']}"
+        system = _for_reader(OVERVIEW_PROMPT, persona["reader"])
         prompt = f"--- narratives ---\n{json.dumps(told, indent=1)}\n--- end of narratives ---"
         return await self._fresh(OVERVIEW, name, digest, system, prompt, persona["label"]) | {"goals": len(each)}
 
