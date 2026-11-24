@@ -68,5 +68,5 @@ test("any request the edge answers 401 tells the app the session ended; a failed
 test("the sign-in screen says the session ended, when it did", () => {
   vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify({ google_client_id: null }), { status: 200 })));
   show(<SignIn onSignedIn={() => undefined} expired />);
-  expect(screen.getByTestId("session-ended").textContent).toContain("Sessions last 12 hours");
+  expect(screen.getByTestId("session-ended").textContent).toContain("Sessions last 36 hours");
 });

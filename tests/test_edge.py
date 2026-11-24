@@ -209,7 +209,7 @@ def test_signing_in_sets_a_strict_secure_session_and_forwards_as_the_operator(tm
     assert signed.status_code == 200 and signed.json() == {"identity": "dave@example.com"}
     cookie = signed.headers["set-cookie"]
     assert cookie.startswith("__session=")
-    for attribute in ("HttpOnly", "Secure", "SameSite=strict", "Path=/", "Max-Age=43200"):
+    for attribute in ("HttpOnly", "Secure", "SameSite=strict", "Path=/", "Max-Age=129600"):
         assert attribute.lower() in cookie.lower(), attribute
     assert client.get("/v1/me").json()["identity"] == "dave@example.com"
     client.get("/v1/goals")
@@ -526,3 +526,14 @@ def test_a_console_address_that_is_not_https_stops_the_edge_with_its_name(tmp_pa
             dist=tmp_path, google_client_id="client.apps.googleusercontent.com", session_key="k" * 32,
             console_origin=f"{ORIGIN},octofusion-ai.web.app", service_key="key", operators={"dave@example.com"},
         )  # fmt: skip
+
+
+def test_a_session_lasts_36_hours_and_the_console_says_so() -> None:
+    """A sign-in lasts through the next day's work, and the sign-in screen states the same length."""
+    from pathlib import Path
+
+    from meta_harness.edge import app as edge
+
+    assert edge.SESSION_SECONDS == 36 * 3600
+    screen = (Path(__file__).parents[1] / "console/src/features/auth/SignIn.tsx").read_text()
+    assert f"Sessions last {edge.SESSION_SECONDS // 3600} hours." in screen
