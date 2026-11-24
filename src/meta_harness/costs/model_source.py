@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 import psycopg
 
+from meta_harness import local_repos
 from meta_harness.costs import store
 from meta_harness.costs.store import Cost
 
@@ -39,6 +40,12 @@ def model_of(candidate: str) -> tuple[str, str]:
     """The engine and model of a candidate, `harness:<profile>/<engine>:<model>`, or of `<engine>:<model>`."""
     engine, _, model = candidate.rpartition("/")[2].partition(":")
     return (engine, model) if model else ("", engine)
+
+
+def _code_host_repo(repo: str | None) -> str:
+    """The task's repo as a cost names it: owner/name on a code host, or none for a path on the deployment's own
+    machine (the deploy's smoke task's bare repo), which is no repo a person works in."""
+    return "" if not repo or local_repos.is_local(repo) else repo
 
 
 def kind_of(task: dict | None, tier: str | None) -> str:
@@ -82,7 +89,7 @@ def harvest(
                     usd=usd,
                     goal_id=spec.get("goal_id") or "",
                     task_id=event.get("task_id") or "",
-                    repo=spec.get("repo") or "",
+                    repo=_code_host_repo(spec.get("repo")),
                     model=model,
                     engine=engine,
                     # Who the work was for: the operator who created the goal, else whoever submitted the task.
@@ -100,7 +107,7 @@ def harvest(
                     usd=usd,
                     goal_id=spec.get("goal_id") or "",
                     task_id=event["task_id"],
-                    repo=spec.get("repo") or "",
+                    repo=_code_host_repo(spec.get("repo")),
                     model=model,
                     engine=engine,
                     operator=owner.get("created_by") or spec.get("caller") or "",

@@ -561,3 +561,22 @@ def test_the_planners_updates_on_a_goal_are_counted_as_planning_cost(clean):
         "2026-11-11",
     )
     assert _harvest(events) == 1
+
+
+def test_the_smoke_tasks_local_repo_is_no_repository_on_the_performance_page(api):
+    """The Performance page's Repository filter offered /var/lib/meta-harness/smoke/origin.git: the deploy's
+    smoke task works in a bare repo on the machine, which is no repo a person works in."""
+    smoke = "/var/lib/meta-harness/smoke/origin.git"
+    assert model_source._code_host_repo(smoke) == "" and model_source._code_host_repo("o/r") == "o/r"
+    # A row harvested before that, with the path in it, is counted as no repo too.
+    with db.connect(autocommit=True) as conn:
+        store.add(
+            conn, "model",
+            [store.Cost(day=date(2026, 11, 10), source="model", item="task", task_id="smoke-1", repo=smoke, usd=Decimal("0.02"))],
+            10_000,
+        )  # fmt: skip
+    seen = api.get("/v1/costs", params={**SPAN, "group_by": "repo"}, headers=OPERATOR).json()
+    assert smoke not in seen["choices"]["repo"] and "o/r" in seen["choices"]["repo"]
+    assert smoke not in [s["key"] for s in seen["series"]]
+    filtered = api.get("/v1/costs", params={**SPAN, "repo": "o/r"}, headers=OPERATOR).json()
+    assert filtered["total"] > 0

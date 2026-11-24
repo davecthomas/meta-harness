@@ -7,13 +7,15 @@ from decimal import Decimal
 import psycopg
 from psycopg.rows import dict_row
 
-# The dimensions a cost row has, as the API names them, and the column each is.
+# The dimensions a cost row has, as the API names them, and the column (or expression over it) each is.
 DIMENSIONS = {
     "source": "source",
     "kind": "item",
     "goal": "goal_id",
     "task": "task_id",
-    "repo": "repo",
+    # A repo named by a path on the deployment's own machine, such as the deploy's smoke task's bare repo, is no
+    # repo a person works in: it counts as none, so it is never a filter's choice or a series of its own.
+    "repo": "(CASE WHEN left(repo, 1) = '/' THEN '' ELSE repo END)",
     "model": "model",
     "engine": "engine",
     "operator": "operator",
