@@ -73,9 +73,13 @@ export function GoalPage() {
   // The planner's panel resolves a need here: "Raise the budget" opens the settings, and "Show the goal's
   // issues" brings them into view.
   useEffect(() => {
+    // The settings are scrolled to once they have opened. The wait is cleared if the page goes first: it once
+    // fired after a test had torn its page down, and failed the run.
+    let scrolling: ReturnType<typeof setTimeout> | undefined;
     const settings = () => {
       setSettingsOpen(true);
-      window.setTimeout(() => document.getElementById("goal-settings-body")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+      clearTimeout(scrolling);
+      scrolling = window.setTimeout(() => document.getElementById("goal-settings-body")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
     };
     const issuesShown = () => document.getElementById("goal-issues")?.scrollIntoView({ behavior: "smooth", block: "start" });
     window.addEventListener(OPEN_SETTINGS, settings);
@@ -83,6 +87,7 @@ export function GoalPage() {
     return () => {
       window.removeEventListener(OPEN_SETTINGS, settings);
       window.removeEventListener(SHOW_ISSUES, issuesShown);
+      clearTimeout(scrolling);
     };
   }, []);
   // A link from another page can ask for something on arrival, `?do=`: the plan's approval, its Plan again,
