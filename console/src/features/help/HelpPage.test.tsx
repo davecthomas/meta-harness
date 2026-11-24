@@ -39,9 +39,9 @@ test("the page links to each of its sections, and each section can be linked to"
   for (const t of TOPICS) expect(document.getElementById(t.slug)).toBeTruthy();
 });
 
-test("the introduction names the product Muxxy AI and no topic calls it the meta-harness", () => {
+test("the introduction names the product Muxxy and no topic calls it the meta-harness", () => {
   show("/help");
-  expect(screen.getByText(/^Muxxy AI clears most of those stops/)).toBeTruthy();
+  expect(screen.getByText(/^Muxxy clears most of those stops/)).toBeTruthy();
   expect(JSON.stringify(TOPICS)).not.toMatch(/meta-harness/i);
 });
 

@@ -173,7 +173,7 @@ test("the sign-in screen ends with the footer, without the version, which needs 
   renderAt("/");
 
   const footer = within(await screen.findByTestId("footer"));
-  expect(footer.getByRole("img", { name: "Muxxy AI" })).toBeTruthy();
+  expect(footer.getByRole("img", { name: "Muxxy" })).toBeTruthy();
   expect(footer.getByText("The Open Meta-Harness for Coding at Scale")).toBeTruthy();
   expect(footer.getByRole("link", { name: "GitHub" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness");
   expect(screen.getByTestId("google-sign-in")).toBeTruthy();
@@ -190,12 +190,12 @@ function stubSignedIn() {
   });
 }
 
-test("the header has a link to the Overview named Muxxy AI, and no Meta-harness name", async () => {
+test("the header has a link to the Overview named Muxxy, and no Meta-harness name", async () => {
   stubSignedIn();
   renderAt("/goals");
   await screen.findByRole("heading", { name: "Goals" });
   const header = within(screen.getByRole("banner"));
-  expect(header.getByRole("link", { name: "Muxxy AI" }).getAttribute("href")).toBe("/");
+  expect(header.getByRole("link", { name: "Muxxy" }).getAttribute("href")).toBe("/");
   expect(header.queryByText("Meta-harness")).toBeNull();
 });
 
@@ -203,7 +203,7 @@ test("the header shows the lockup at wide widths and the symbol alone at phone w
   stubSignedIn();
   renderAt("/goals");
   await screen.findByRole("heading", { name: "Goals" });
-  const images = within(screen.getByRole("banner")).getAllByRole("img", { name: "Muxxy AI" });
+  const images = within(screen.getByRole("banner")).getAllByRole("img", { name: "Muxxy" });
   expect(images).toHaveLength(2);
   const [wide, phone] = images;
   expect(wide.getAttribute("src")).toContain("muxxy-lockup.svg");

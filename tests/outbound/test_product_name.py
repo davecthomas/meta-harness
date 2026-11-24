@@ -2,7 +2,7 @@
 
 """The console says "meta-harness" only in its tagline.
 
-The product is Muxxy AI. Its tagline, "The Open Meta-Harness for Coding at Scale", is the one place the
+The product is Muxxy. Its tagline, "The Open Meta-Harness for Coding at Scale", is the one place the
 console may say "meta-harness". This test reads the console's strings (console/src, test files left out) and
 every string under src/, since a service's string may reach a console page: a hold's reason, an error's
 remedy, a task's status note. It reuses the extraction in test_fixed_strings.py, which leaves out docstrings,

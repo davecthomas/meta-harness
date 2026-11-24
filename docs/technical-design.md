@@ -4353,10 +4353,12 @@ one ends while a page is open, the first request the edge answers
 session ended, and signing in returns them to the page they were on. The
 sign-in screen and the Help page open on the splash (`console/src/brand/`,
 specified in `docs/specs/octofusion-splash.md`): the octopus's arms flail and
-settle, the name comes out of them and the tagline rolls out under it. It is
-drawn from the symbol's own SVG paths, whose points are moved along each
-arm's centerline on every frame, with no video and no library. It plays in
-full every time its screen opens,
+settle into a slow sway that never stops, and bubbles rise behind it. It
+spawns the name: each letter comes out from under its body, small, and swims
+to its place writhing as the arms do (`spawn.ts`), keeping a faint wriggle once
+there. The tagline then rolls out from under the name. All of it is drawn
+from the artwork's own SVG paths, whose points are moved on every frame, with
+no video and no library. It plays in full every time its screen opens,
 holds still under the system's reduced-motion setting, and never delays
 sign-in: the sign-in card is there from the first paint. Every
 error the console shows says what to do about it. Where the page knows a
