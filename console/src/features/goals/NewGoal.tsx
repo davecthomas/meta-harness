@@ -1,21 +1,70 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Alert, Anchor, Button, Checkbox, Collapse, Group, NumberInput, Paper, SegmentedControl, SimpleGrid, Stack, Switch, Text, TextInput, Textarea, UnstyledButton } from "@mantine/core";
-import { IconChevronDown, IconChevronRight, IconDeviceFloppy, IconListCheck, IconPlayerPlay } from "@tabler/icons-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  ActionIcon,
+  Alert,
+  Anchor,
+  Badge,
+  Button,
+  Checkbox,
+  Collapse,
+  Group,
+  Loader,
+  NumberInput,
+  Paper,
+  SegmentedControl,
+  SimpleGrid,
+  Stack,
+  Text,
+  TextInput,
+  Textarea,
+  Title,
+  UnstyledButton,
+} from "@mantine/core";
+import {
+  IconArrowRight,
+  IconCheck,
+  IconChevronDown,
+  IconChevronRight,
+  IconDeviceFloppy,
+  IconFileDescription,
+  IconListCheck,
+  IconPencil,
+  IconPlayerPlay,
+  IconWriting,
+} from "@tabler/icons-react";
 import { IssuesPicker } from "./IssuesPicker";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
-import { api, refLabel, type GoalDraft, type IssueSource, type LabelIssue, type Tracker } from "../../api";
+import { api, refLabel, type IssueSource, type LabelIssue, type Tracker } from "../../api";
 import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
-import { LabelStart } from "./LabelStart";
 import { ImproveGoal } from "./ImproveGoal";
 import { SpecField, type GoalSpec } from "./SpecField";
 import { specName, useSpecDraft } from "./SpecDraft";
-import { PageHeader } from "../../components/ui";
 import { PARALLEL_HELP } from "./parallel";
+
+// A new goal, one decision at a time (docs/specs/new-goal-progressive.md): where the work comes from, where it
+// is, what the goal is made of, and how it runs. Each panel opens once the one before is answered, and folds to
+// its answer with a pencil to change it. The title is never asked for: it is written from what the goal is, and
+// shown as the page's title, with a pencil.
 
 type LabeledIssue = LabelIssue & { repo: string };
 const SHOWN = 8;
+
+// Where the goal's work comes from: issues that exist, a spec or an epic, or what the operator describes.
+export type Source = "issues" | "spec" | "describe";
+const SOURCES: { value: Source; label: string; says: string; icon: typeof IconListCheck }[] = [
+  { value: "issues", label: "Issues that already exist", says: "Run open issues as they are: by label, picked by hand, or assigned to Muxxy.", icon: IconListCheck },
+  { value: "spec", label: "A spec or an epic", says: "A planner splits a document or an epic into tasks. You approve the plan before anything runs.", icon: IconFileDescription },
+  { value: "describe", label: "I'll describe it", says: "A planner splits your description into tasks. You approve the plan before anything runs.", icon: IconWriting },
+];
+
+// How much the goal does without asking, as the goal page offers it (store.AUTONOMY).
+const AUTONOMY = [
+  { value: "ask", label: "Ask", says: "Every pull request waits for you, and the Task Manager asks before it acts." },
+  { value: "standard", label: "Standard", says: "Every pull request waits for you to merge it." },
+  { value: "full", label: "Full", says: "Muxxy merges each pull request once its checks and review pass." },
+];
 
 // What the goal's label brings in: its open issues in the goal's repos, by title. Issues another goal holds
 // are listed apart, since this goal will not get them.
@@ -41,24 +90,71 @@ export function LabelIssues({ label, issues }: { label: string; issues: LabeledI
   );
 }
 
+// One panel of the flow: its number and question, and once answered and closed, its answer with a pencil.
+function Panel(props: { n: number; question: string; answer: string; open: boolean; done: boolean; onEdit: () => void; children: ReactNode }) {
+  return (
+    <Paper withBorder p="lg" radius="md" maw={960} data-testid={`step-${props.n}`} data-open={props.open || undefined}>
+      <Group justify="space-between" wrap="nowrap" align="center">
+        <Group gap="sm" wrap="nowrap">
+          <Badge size="lg" circle variant={props.done && !props.open ? "light" : "filled"} color={props.done && !props.open ? "teal" : undefined}>
+            {props.done && !props.open ? <IconCheck size={14} /> : props.n}
+          </Badge>
+          <Stack gap={0}>
+            <Text fw={600}>{props.question}</Text>
+            {!props.open && props.done && <Text size="sm" c="dimmed" data-testid={`answer-${props.n}`}>{props.answer}</Text>}
+          </Stack>
+        </Group>
+        {!props.open && props.done && (
+          <ActionIcon variant="subtle" aria-label={`Change: ${props.question}`} onClick={props.onEdit}>
+            <IconPencil size={18} />
+          </ActionIcon>
+        )}
+      </Group>
+      {/* Shown at once, not animated: a panel that opens is where the eye already is. */}
+      {props.open && <Stack gap="md" mt="md">{props.children}</Stack>}
+    </Paper>
+  );
+}
+
 export function NewGoal() {
   const navigate = useNavigate();
+  // Which panel is open, and the source chosen, live in the address: Back steps back one panel.
+  const [params, setParams] = useSearchParams();
+  const step = Math.min(4, Math.max(1, Number(params.get("step")) || 1));
+  const source = (["issues", "spec", "describe"].includes(params.get("from") ?? "") ? params.get("from") : null) as Source | null;
+  function go(next: number, from: Source | null = source) {
+    const kept = new URLSearchParams(params);
+    kept.set("step", String(next));
+    if (from) kept.set("from", from);
+    setParams(kept);
+  }
+  // The furthest panel answered: a panel before it shows its answer, one after it is not reached yet.
+  const [reached, setReached] = useState(1);
+
   const [repos, setRepos] = useState<string[]>([]);
   // Whether the registered repos have been read: only then does "none" mean there are none.
   const [reposRead, setReposRead] = useState(false);
-  const [title, setTitle] = useState("");
-  const [statement, setStatement] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
+  const [title, setTitle] = useState("");
+  // Whether the operator wrote the title: one they wrote is never written over.
+  const [titleOwn, setTitleOwn] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titling, setTitling] = useState(false);
+  const [statement, setStatement] = useState("");
+  // Whether the operator wrote or changed the description: a drafted one is written again as its issues change.
+  const [statementOwn, setStatementOwn] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   // Issues picked by ref: the goal holds these besides its label's, and needs no label when there are some.
   const [refs, setRefs] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
   const [label, setLabel] = useState("");
-  // The issue tracker the goal uses, one for all its issues: the default one, unless another that is set up is
-  // chosen. Empty until the trackers are read; the service then uses the default.
+  // The issue tracker the goal uses, one for all its issues: the default one until another is chosen.
   const [tracker, setTracker] = useState("");
   const [trackers, setTrackers] = useState<Tracker[]>([]);
   // Until the trackers are read, what the goal's tracker asks of it is not known, so no issues are read for it.
   const [trackersRead, setTrackersRead] = useState(false);
+  // What the tracker asks of a goal besides its repos, such as the Jira project its issues are in.
+  const [trackerSettings, setTrackerSettings] = useState<Record<string, string>>({});
   useEffect(() => {
     api.trackers().then(
       (found) => {
@@ -72,8 +168,6 @@ export function NewGoal() {
       () => setTrackersRead(true),
     );
   }, []);
-  // What the tracker asks of a goal besides its repos, such as the Jira project its issues are in.
-  const [trackerSettings, setTrackerSettings] = useState<Record<string, string>>({});
   // Another tracker's issues, or another project's, are other issues: the picked ones start again.
   function chooseTracker(next: string) {
     setTracker(next);
@@ -82,6 +176,7 @@ export function NewGoal() {
     // An issue of the tracker left behind is no longer the specification.
     setSpec((now) => (now && "ref" in now ? null : now));
   }
+  const asked = trackers.find((t) => t.scheme === tracker)?.goal_settings ?? [];
   function chooseSettings(next: Record<string, string>) {
     setTrackerSettings(next);
     // A switch changes which issues come in by themselves, and the assignee who gets them. Neither changes
@@ -89,22 +184,17 @@ export function NewGoal() {
     const places = asked.filter((s) => s.kind !== "switch" && s.name !== "assignee" && s.name !== "parent");
     if (places.some((s) => (next[s.name] ?? "") !== (trackerSettings[s.name] ?? ""))) setRefs([]);
   }
-  const asked = trackers.find((t) => t.scheme === tracker)?.goal_settings ?? [];
-  // No tracker: the goal has no issues to take in, so its tasks are planned from its description, and kept
-  // in the meta-harness.
-  const untracked = !!trackers.find((t) => t.scheme === tracker)?.built_in;
+  // No tracker: the goal has no issues to take in, so its tasks are planned and kept in Muxxy.
+  const builtIn = (scheme: string) => !!trackers.find((t) => t.scheme === scheme)?.built_in;
+  const untracked = builtIn(tracker);
+  const realTrackers = trackers.filter((t) => !t.built_in);
   const missing = asked.filter((s) => s.required && !(trackerSettings[s.name] ?? "").trim());
-  // A goal that takes the issues assigned to the meta-harness in its tracker has issues to take in without a
-  // label or picked ones.
   const takesAssigned = asked.some((s) => s.name === "assigned" && s.kind === "switch") && trackerSettings.assigned === "yes";
-  // Which issues the form reads: none until the tracker has what it asks of a goal.
-  const source = useMemo<IssueSource | undefined>(
-    () => (tracker ? { tracker, settings: trackerSettings } : undefined),
-    [tracker, trackerSettings],
-  );
+  const issueSource = useMemo<IssueSource | undefined>(() => (tracker ? { tracker, settings: trackerSettings } : undefined), [tracker, trackerSettings]);
   const readable = trackersRead && missing.length === 0;
+  const trackerTitle = trackers.find((t) => t.scheme === tracker)?.title ?? "the tracker";
+
   const [budget, setBudget] = useState<string | number>("");
-  // What the budget does when it is reached, and how far past it a goal that stops may go.
   const [overage, setOverage] = useState<string | number>(10);
   const [parallel, setParallel] = useState<string | number>("");
   const [systemParallel, setSystemParallel] = useState<number | null>(null);
@@ -120,8 +210,7 @@ export function NewGoal() {
     );
   }, []);
   const [priority, setPriority] = useState<string | number>(0);
-  const [autoMerge, setAutoMerge] = useState(false);
-  // A specification to plan the goal from: a loaded file, or the goal's parent issue.
+  const [autonomy, setAutonomy] = useState("standard");
   const [spec, setSpec] = useState<GoalSpec | null>(null);
   // The settings most goals leave as they are, folded away until asked for.
   const [more, setMore] = useState(false);
@@ -146,14 +235,13 @@ export function NewGoal() {
       (s) => {
         setChosen((now) => (now.length ? now : s.planner.repos));
         setBudget((now) => (now === "" && s.planner.max_usd ? Number(s.planner.max_usd) : now));
-        setAutoMerge((now) => now || s.planner.auto_merge);
+        if (s.planner.auto_merge) setAutonomy((now) => (now === "standard" ? "full" : now));
       },
       () => undefined,
     );
   }, []);
 
-  // The open issues the goal's label takes, in its repos: read as the label and repos change, so the form
-  // shows what the goal will run and the picker shows them as already in.
+  // The open issues the goal's label takes, in its repos, so the form shows what the goal will run.
   const [labeled, setLabeled] = useState<LabeledIssue[] | null>(null);
   useEffect(() => {
     const name = label.trim();
@@ -163,7 +251,7 @@ export function NewGoal() {
     }
     let stale = false;
     const wait = setTimeout(() => {
-      Promise.all(chosen.map(async (repo) => (await api.labelIssues(repo, name, source)).map((issue) => ({ ...issue, repo })))).then(
+      Promise.all(chosen.map(async (repo) => (await api.labelIssues(repo, name, issueSource)).map((issue) => ({ ...issue, repo })))).then(
         (found) => !stale && setLabeled(found.flat()),
         () => !stale && setLabeled(null),
       );
@@ -172,62 +260,110 @@ export function NewGoal() {
       stale = true;
       clearTimeout(wait);
     };
-  }, [label, chosen, source, readable]);
+  }, [label, chosen, issueSource, readable]);
   const viaLabel = useMemo(() => (labeled ?? []).filter((i) => !i.held_by).map((i) => i.ref), [labeled]);
 
-  // Where the goal's issues come from, as the operator last chose: issues that exist, a spec the planner
-  // breaks into issues, or the description the planner drafts them from. A spec that is loaded decides it.
-  const [from, setFrom] = useState<"fix" | "spec" | "feature">("fix");
-  const where = spec ? "spec" : from;
-  const plans = where === "feature";
-  function chooseWhere(next: string) {
-    setFrom(next as typeof from);
-    // One answer at a time: another one lets go of the spec.
-    if (next !== "spec") setSpec(null);
-  }
-  const trackerTitle = trackers.find((t) => t.scheme === tracker)?.title ?? "the tracker";
-
-  // Whether this goal plans its tasks: asked for, from a specification, or the only way with no tracker.
-  const plansNow = plans || untracked || plansEvery || !!spec;
-  // The issue the goal names as its parent, where its tracker has parents: its description can be the specification.
+  // The issue the goal names as its parent, where its tracker has parents: its description can be the spec.
   const parentAsked = asked.some((s) => s.name === "parent");
   const parent = parentAsked ? (trackerSettings.parent ?? "").trim() : "";
-  // A parent that is no longer chosen is no longer the specification.
   useEffect(() => {
     if (parentAsked) setSpec((now) => (now && "ref" in now && now.ref !== parent ? null : now));
   }, [parent, parentAsked]);
 
-  function fromDraft(draft: GoalDraft) {
-    setTitle(draft.title);
-    setStatement(draft.statement);
-    setChosen(draft.repos);
-    // A draft from labels is a goal on issues that exist.
-    setFrom("fix");
-    setSpec(null);
-    if (draft.label) {
-      setLabel(draft.label);
-    } else {
-      // Drafted from several labels: a goal takes one, so it holds the issues the draft read, picked by hand.
-      setLabel("");
-      setRefs(draft.refs);
+  // A spec that is chosen writes the title and description, where the operator has not.
+  const specDraft = useSpecDraft({
+    spec: source === "spec" ? spec : null,
+    repos: chosen,
+    tracker,
+    trackerSettings,
+    title: titleOwn ? title : "",
+    statement: statementOwn ? statement : "",
+    setTitle: (next) => !titleOwn && setTitle(next),
+    setStatement: (next) => !statementOwn && setStatement(next),
+  });
+
+  // Each panel's answer, and whether it is answered enough to go on.
+  const sourceAnswer = SOURCES.find((s) => s.value === source)?.label ?? "";
+  const whereReady = chosen.length > 0 && missing.length === 0 && (source !== "issues" || !untracked) && (source !== "spec" || !spec || !("ref" in spec) || !untracked);
+  const whereAnswer = `${chosen.join(", ")}${untracked ? " · kept in Muxxy" : ` · ${trackerTitle}`}${asked.filter((s) => s.required).map((s) => trackerSettings[s.name] ? ` ${trackerSettings[s.name]}` : "").join("")}`;
+  const madeReady =
+    source === "issues"
+      ? Boolean(label.trim() || refs.length || takesAssigned)
+      : source === "spec"
+        ? Boolean(spec)
+        : Boolean(statement.trim());
+  const madeAnswer =
+    source === "issues"
+      ? [label.trim() && `label ${label.trim()}${labeled ? ` (${viaLabel.length} open)` : ""}`, refs.length && `${refs.length} picked`, takesAssigned && "assigned to Muxxy"].filter(Boolean).join(" · ")
+      : source === "spec"
+        ? spec ? specName(spec) : ""
+        : statement.trim().slice(0, 90);
+  const autonomyWords = AUTONOMY.find((a) => a.value === autonomy);
+  const runsAnswer = `${autonomyWords?.label}: ${autonomyWords?.says.replace(/\.$/, "").toLowerCase()} · ${budget === "" ? "the most one goal may spend" : `budget $${budget}`}`;
+  const planned = source !== "issues" || plansEvery;
+
+  // The description is always the system's to write, from the issues, the spec, or what the operator typed:
+  // drafted on the way to the last panel, unless the operator wrote their own.
+  async function describe() {
+    if (source === "issues" && !statementOwn) {
+      setDrafting(true);
+      try {
+        const drafted = await api.draftGoal({
+          labels: label.trim() ? [label.trim()] : [],
+          repos: chosen,
+          refs: label.trim() ? [] : refs,
+          ...(tracker ? { tracker } : {}),
+          ...(Object.keys(trackerSettings).length ? { tracker_settings: trackerSettings } : {}),
+        });
+        setStatement(drafted.statement);
+        if (!titleOwn) setTitle(drafted.title);
+      } catch {
+        // A draft that failed leaves the description for the operator, and the goal is titled after it saves.
+        if (!statement.trim()) setStatement(`Run the goal's issues: ${madeAnswer}.`);
+      } finally {
+        setDrafting(false);
+      }
+    }
+    if (source === "describe" && !titleOwn && statement.trim()) {
+      setTitling(true);
+      api.goalTitle(statement).then(
+        (t) => !titleOwn && setTitle(t.title),
+        () => undefined,
+      ).finally(() => setTitling(false));
     }
   }
 
-  // What the goal still needs before it can be saved, with where to give it; null once it has what it needs.
-  // The save buttons stay off until then, and the line beside them says this, so nothing is pressed for nothing.
-  const lacking: string | null = !statement.trim()
-    ? "Describe the goal, under Description, or choose a spec to draft it from."
-    : !chosen.length
-      ? "Choose at least one repository, under Repositories."
-      : missing.length
-        ? `Choose the goal's ${missing.map((s) => s.label).join(" and ")}.`
-        : where === "spec" && !spec
-          ? 'Choose the spec, under "Plan a goal from a spec or an epic" above, or give another answer under Where its issues come from.'
-          : !(plans || untracked || spec) && !label.trim() && !refs.length && !takesAssigned
-            ? `Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to Muxxy" : ""}.`
+  function answer(n: number) {
+    setReached((now) => Math.max(now, n + 1));
+    if (n === 3) void describe();
+    go(n + 1);
+  }
+  function chooseSource(next: Source) {
+    // Another source makes panel 3's answer another question: it starts again, and says so.
+    if (next !== source) {
+      setSpec(null);
+      setLabel("");
+      setRefs([]);
+      if (!statementOwn) setStatement("");
+      if (!titleOwn) setTitle("");
+    }
+    setReached((now) => Math.max(now, 2));
+    go(2, next);
+  }
+
+  // What the goal still needs before it can be saved; null once it has what it needs.
+  const lacking: string | null = !source
+    ? "Choose where the work comes from."
+    : !whereReady
+      ? "Choose the goal's repositories and tracker, in panel 2."
+      : !madeReady
+        ? "Say what the goal is made of, in panel 3."
+        : drafting || specDraft.writing
+          ? "Writing the description…"
+          : !statement.trim()
+            ? "The description is being written. If it does not appear, type one in panel 3."
             : null;
 
-  // Creates the goal, started or not. Returns its id, or null when it is refused (the form shows why).
   async function create(started: boolean): Promise<string | null> {
     if (lacking) {
       setError(lacking);
@@ -236,7 +372,6 @@ export function NewGoal() {
     setSaving(started);
     try {
       const goal = await api.createGoal({
-        // Left empty, the planner's model names the goal from its description.
         ...(title.trim() ? { title: title.trim() } : {}),
         statement,
         repos: chosen,
@@ -248,11 +383,11 @@ export function NewGoal() {
         ...(budget === "" ? {} : { budget_overage_percent: Number(overage) || 0 }),
         max_parallel: parallel === "" ? null : Number(parallel),
         priority: Number(priority) || 0,
-        auto_merge: autoMerge,
+        autonomy,
         start: started,
-        ...(spec ? { spec } : {}),
-        // Where its issues come from, which is not whether it is planned: the planner decides that.
-        modality: plans || untracked || spec ? "feature" : "fix",
+        ...(source === "spec" && spec ? { spec } : {}),
+        // Where its issues come from: issues that exist run as they are; anything else is planned.
+        modality: source === "issues" && !untracked ? "fix" : "feature",
       });
       return goal.id;
     } catch (err) {
@@ -272,286 +407,295 @@ export function NewGoal() {
     }
   }
 
-  // A spec that is chosen writes the title and description, where the operator has not.
-  const specDraft = useSpecDraft({ spec, repos: chosen, tracker, trackerSettings, title, statement, setTitle, setStatement });
-
-  // Anything typed or drafted is worth asking about before it is lost.
-  const dirty = Boolean(title.trim() || statement.trim() || label.trim() || refs.length || budget !== "");
+  const dirty = Boolean(source || statementOwn || label.trim() || refs.length || spec);
   const unsaved = useUnsavedChanges({
     dirty,
-    describe: `the new goal${title.trim() || statement.trim() ? ` "${(title.trim() || statement.trim()).slice(0, 60)}"` : ""}`,
+    describe: `the new goal${title.trim() ? ` "${title.trim().slice(0, 60)}"` : ""}`,
     // Save here saves the goal without starting it, so leaving never starts work.
     save: async () => (await create(false)) !== null,
     discard: () => {
-      setTitle("");
       setStatement("");
       setLabel("");
       setRefs([]);
-      setBudget("");
+      setSpec(null);
     },
   });
 
+  const open = (n: number) => step === n;
+  const done = (n: number) => reached > n;
+
   return (
     <>
-      <PageHeader title="New goal" description="Start from issues that exist, or from a spec or an epic that the planner breaks into tasks. Each task ends as a pull request." />
+      {/* The goal's title is the page's title: "New goal" until one is written from what the goal is. */}
+      <Group gap="xs" mb="lg" wrap="nowrap" data-testid="goal-title">
+        {editingTitle ? (
+          <TextInput
+            autoFocus
+            size="lg"
+            maxLength={80}
+            aria-label="The goal's title"
+            value={title}
+            onChange={(e) => {
+              setTitle(e.currentTarget.value);
+              setTitleOwn(true);
+            }}
+            onBlur={() => setEditingTitle(false)}
+            onKeyDown={(e) => e.key === "Enter" && setEditingTitle(false)}
+            style={{ flex: 1, maxWidth: 720 }}
+          />
+        ) : (
+          <Title order={2}>{title.trim() || "New goal"}</Title>
+        )}
+        {titling && <Loader size="xs" aria-label="Writing a title" />}
+        {!editingTitle && (title.trim() || reached > 3) && (
+          <ActionIcon variant="subtle" aria-label="Change the goal's title" onClick={() => setEditingTitle(true)}>
+            <IconPencil size={18} />
+          </ActionIcon>
+        )}
+      </Group>
       {unsaved.element}
-      {/* Where the work is comes first: both ways to start a goal below read the repos and the tracker. */}
-      <Paper maw={1120} mb="lg" data-testid="goal-where">
-        <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl" verticalSpacing="lg">
-            <Checkbox.Group label="Repositories" description="The repositories the goal may change." withAsterisk value={chosen} onChange={setChosen}>
-              <Stack gap="xs" mt="xs">
-                {reposRead && repos.length === 0 && (
-                  <Text size="sm" c="orange" data-testid="no-repos">
-                    No repository is registered yet, so a goal has nothing to change. An admin adds one under{" "}
-                    <Anchor component={Link} to="/config?kind=repos" size="sm">Configuration, Repositories</Anchor>.
-                  </Text>
-                )}
-                {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
-              </Stack>
-            </Checkbox.Group>
-          <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} repos={chosen} shows={(s) => s.required} />
-        </SimpleGrid>
-      </Paper>
-      {/* The quick ways to start a goal come first: from the issues a label holds, or from a spec or an epic. */}
-      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg" maw={1120}>
-        {readable && !untracked && <LabelStart onDraft={fromDraft} source={source} />}
-        <SpecField
-          value={spec}
-          onChange={setSpec}
-          repos={chosen}
-          tracker={tracker}
-          project={(trackerSettings.project ?? "").trim()}
-          asksProject={asked.some((s) => s.name === "project")}
-          untracked={untracked}
-          parentAsked={parentAsked}
-          parent={parent}
-          open={from === "spec"}
-          onParent={(ref) => {
-            const { parent: _gone, ...rest } = trackerSettings;
-            setTrackerSettings(ref ? { ...rest, parent: ref } : rest);
-          }}
-        />
-      </SimpleGrid>
-      <Paper maw={1120}>
-        <form onSubmit={submit}>
-          <Stack gap="lg">
-            {/* Two columns where there is room, so the whole form is in view: what the goal is on the left,
-                where its work comes from on the right. */}
-            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl" verticalSpacing="lg">
-              <Stack gap="lg">
-            <TextInput
-              label="Title"
-              description="A few words for lists. Leave it empty and a model writes one from the description."
-              maxLength={80}
-              value={title}
-              onChange={(e) => setTitle(e.currentTarget.value)}
-            />
-            <Textarea
-              label="Description"
-              description={
-                where === "spec"
-                  ? "Ask for anything. The planner will use this and the loaded spec."
-                  : plans || untracked
-                    ? "Ask for anything. The planner will plan the work from this."
-                    : "Ask for anything. The planner will use this and the goal's issues."
-              }
-              required
-              autosize
-              minRows={3}
-              value={statement}
-              onChange={(e) => setStatement(e.currentTarget.value)}
-            />
-            {specDraft.element}
-            {/* The new text fills the field above; the goal is saved only by the buttons below. */}
-            <ImproveGoal
-              statement={statement}
-              context={{
-                ...(title.trim() ? { title: title.trim() } : {}),
-                repos: chosen,
-                ...(tracker ? { tracker } : {}),
-                ...(trackerSettings.project ? { project: trackerSettings.project } : {}),
-                ...(label.trim() ? { label: label.trim() } : {}),
-                issues: [
-                  ...(labeled ?? []).filter((i) => !i.held_by).map((i) => ({ ref: i.ref, title: i.title })),
-                  ...refs.filter((r) => !viaLabel.includes(r)).map((ref) => ({ ref })),
-                ].slice(0, 200),
-              }}
-              onAccept={setStatement}
-            />
-              </Stack>
-              <Stack gap="lg">
-            {/* What the tracker asks besides where its issues are: who gets them, and which come in by themselves. */}
-            <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} repos={chosen} settingsOnly shows={(s) => !s.required && s.name !== "parent"} />
-            {untracked ? (
-              <Text size="sm" data-testid="untracked-note">
-                With no issue tracker, a planning task reads the repos and writes the goal's tasks from {spec ? `its spec, ${specName(spec)}` : "its description"}. You review, edit
-                and approve the plan before anything runs. The tasks are kept in Muxxy: nothing is written to any tracker, and
-                the pull requests are the only record outside it.
-              </Text>
-            ) : (
-            <div>
-              <Text size="sm" fw={500} mb={4}>Where its issues come from</Text>
-              <SegmentedControl
-                aria-label="Where its issues come from"
-                fullWidth
-                value={where}
-                onChange={chooseWhere}
-                data={[
-                  { value: "fix", label: "Issues that exist" },
-                  // Short, so all three fit the column: the heading above says what they answer.
-                  { value: "spec", label: "The spec" },
-                  { value: "feature", label: "The description" },
-                ]}
-              />
-              <Text size="sm" c="dimmed" mt={4} data-testid="where-note">
-                {where === "spec"
-                  ? spec
-                    ? `A planning task reads ${specName(spec)} and the repos, and splits the work into issues, each sized for one pull request. That split is the goal's plan: it opens on the goal's page, where you edit and approve it. Nothing is created in ${trackerTitle} and nothing runs before you approve.`
-                    : 'Choose the spec above, under "Plan a goal from a spec or an epic". It can be a file in the repo, an epic, or a file you upload.'
-                  : plans
-                  ? `A planning task reads the repos and splits the description into issues, each sized for one pull request. That split is the goal's plan: it opens on the goal's page, where you edit and approve it. Nothing is created in ${trackerTitle} and nothing runs before you approve.`
-                  : plansEvery
-                    ? "The goal takes the open issues with its label, and any you pick. A planner reads them together and proposes the order, any splits and anything missing; you approve its plan before anything runs."
-                    : "The goal runs the open issues with its label, and any you pick."}
-              </Text>
-            </div>
-            )}
-            {untracked ? null : where === "spec" && !spec ? null : plans || spec ? (
-              <LabelField
-                value={label}
-                onChange={setLabel}
-                repos={chosen}
-                source={readable ? source : null}
-                required={false}
-                fieldProps={{ description: "Optional. Left empty, the goal gets a label of its own for the issues it creates." }}
-              />
-            ) : (
-              // Which issues, for a goal that runs issues that exist: those with its label, ones picked by hand, or both.
-              <Stack gap="md" pl="md" style={{ borderLeft: "2px solid var(--mantine-color-default-border)" }} data-testid="existing-issues">
-                <Text size="sm" c="dimmed">Give the goal a label, pick issues by hand, or both. It needs at least one of the two.</Text>
-                <LabelField value={label} onChange={setLabel} repos={chosen} source={readable ? source : null} required={false} />
-                <LabelIssues label={label} issues={labeled} />
-                <Group gap="sm">
-                  <Button variant="default" leftSection={<IconListCheck size={16} />} disabled={!chosen.length || !readable} onClick={() => setPicking(true)}>
-                    Pick issues
-                  </Button>
-                  <Text size="sm" c="dimmed">
-                    {!chosen.length
-                      ? "Choose a repository above first: issues are picked from the goal's repositories."
-                      : !trackersRead
-                        ? "Reading the issue tracker…"
-                        : !readable
-                        ? `Choose the goal's ${missing.map((s) => s.label).join(" and ")} above first.`
-                        : refs.length
-                          ? `${refs.length} picked by hand: the goal takes these besides its label's, or instead of a label.`
-                          : "Optional: pick open issues for the goal by hand."}
-                  </Text>
-                </Group>
-              </Stack>
-            )}
-              </Stack>
+      <form onSubmit={submit}>
+        <Stack gap="md">
+          <Panel n={1} question="Where does the work come from?" answer={sourceAnswer} open={open(1)} done={!!source} onEdit={() => go(1)}>
+            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
+              {SOURCES.map((s) => {
+                const blocked = s.value === "issues" && trackersRead && !realTrackers.length;
+                return (
+                  <UnstyledButton key={s.value} disabled={blocked} onClick={() => chooseSource(s.value)} data-testid={`source-${s.value}`} aria-pressed={source === s.value}>
+                    <Paper withBorder p="md" radius="md" h="100%" style={{ borderColor: source === s.value ? "var(--mantine-primary-color-filled)" : undefined, opacity: blocked ? 0.5 : 1 }}>
+                      <Stack gap={6}>
+                        <s.icon size={22} />
+                        <Text fw={600}>{s.label}</Text>
+                        <Text size="sm" c="dimmed">{blocked ? "No issue tracker is set up yet. An admin adds one under Configuration, Trackers." : s.says}</Text>
+                      </Stack>
+                    </Paper>
+                  </UnstyledButton>
+                );
+              })}
             </SimpleGrid>
-            <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} source={source} />
-            <div>
-              <UnstyledButton onClick={() => setMore((now) => !now)} aria-expanded={more} data-testid="more-settings">
-                <Group gap={6}>
-                  {more ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
-                  <Text size="sm" fw={500}>More settings</Text>
-                  <Text size="sm" c="dimmed">{budget === "" || budget === 0 ? "no budget" : `budget $${budget}`}, priority, parallel tasks, what the budget does when it is reached</Text>
-                </Group>
-              </UnstyledButton>
-              <Collapse expanded={more}>
-                <Stack gap="md" mt="sm">
-                  <NumberInput
-                    label="Budget"
-                    description="What the goal's runs may spend. Left empty, the most one goal may spend."
-                    prefix="$"
-                    min={0}
-                    decimalScale={2}
-                    maw={260}
-                    value={budget}
-                    onChange={setBudget}
+          </Panel>
+
+          {reached >= 2 && source && (
+            <Panel n={2} question="Where is the work?" answer={whereAnswer} open={open(2)} done={done(2)} onEdit={() => go(2)}>
+              <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
+                <Checkbox.Group label="Repositories" description="The repositories the goal may change." withAsterisk value={chosen} onChange={setChosen}>
+                  <Stack gap="xs" mt="xs">
+                    {reposRead && repos.length === 0 && (
+                      <Text size="sm" c="orange" data-testid="no-repos">
+                        No repository is registered yet, so a goal has nothing to change. An admin adds one under{" "}
+                        <Anchor component={Link} to="/config?kind=repos" size="sm">Configuration, Repositories</Anchor>.
+                      </Text>
+                    )}
+                    {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
+                  </Stack>
+                </Checkbox.Group>
+                <Stack gap="xs">
+                  <GoalTrackerFields
+                    trackers={source === "issues" ? realTrackers : trackers}
+                    tracker={tracker}
+                    onTracker={chooseTracker}
+                    settings={trackerSettings}
+                    onSettings={chooseSettings}
+                    repos={chosen}
+                    shows={(s) => s.required}
                   />
-                  <Group grow align="flex-start">
-                    <NumberInput label="Priority" description="Higher runs first." value={priority} onChange={setPriority} />
-                    <NumberInput
-                      label="Parallel tasks"
-                      description={PARALLEL_HELP}
-                      placeholder={systemParallel ? `System setting: ${systemParallel}` : "System setting"}
-                      min={1}
-                      max={systemParallel ?? undefined}
-                      allowDecimal={false}
-                      value={parallel}
-                      onChange={setParallel}
-                    />
-                  </Group>
-                  {budget === "" ? (
-                    <Text size="sm" c="dimmed">With no budget given, the goal gets the most one goal may spend, and stops there.</Text>
-                  ) : (
-                    <NumberInput
-                      label="Allowed overage"
-                      description="How far past its budget the goal may go before it stops, never past the most one goal may spend. 0 stops at the budget exactly."
-                      suffix="%"
-                      min={0}
-                      allowDecimal={false}
-                      value={overage}
-                      onChange={setOverage}
-                    />
-                  )}
+                  <Text size="sm" c="dimmed">
+                    {source === "issues"
+                      ? "Where the issues are."
+                      : untracked
+                        ? "No tracker: the planned tasks are kept in Muxxy, and the pull requests are the only record outside it."
+                        : `The planned tasks are created as issues in ${trackerTitle}.`}
+                  </Text>
+                  {source === "issues" && untracked && <Text size="sm" c="orange">Choose the tracker the issues are in.</Text>}
                 </Stack>
-              </Collapse>
-            </div>
-            {plansNow && (
-              <Text size="sm" c="dimmed" ta="right" data-testid="plan-note">
-                Save and plan starts the planner. Its split into tasks opens on the goal's page for you to edit and approve before anything runs.
-              </Text>
-            )}
-            {/* The one setting that decides whether a person is in the loop: on the buttons' side of the form and
-                right above them, where the eye is when it reaches for Save. */}
-            <Group justify="flex-end" data-testid="auto-merge">
-              <Switch
-                label="Merge pull requests automatically"
-                description="Off: every pull request waits for you to merge it."
-                checked={autoMerge}
-                onChange={(e) => setAutoMerge(e.currentTarget.checked)}
+              </SimpleGrid>
+              <Group justify="flex-end">
+                <Button rightSection={<IconArrowRight size={16} />} disabled={!whereReady} onClick={() => answer(2)}>Continue</Button>
+              </Group>
+            </Panel>
+          )}
+
+          {reached >= 3 && source && (
+            <Panel n={3} question={source === "issues" ? "Which issues?" : source === "spec" ? "Which spec?" : "What should it do?"} answer={madeAnswer} open={open(3)} done={done(3)} onEdit={() => go(3)}>
+              {source === "issues" && (
+                <Stack gap="md" data-testid="existing-issues">
+                  <Text size="sm" c="dimmed">Give the goal a label, pick issues by hand, or both.</Text>
+                  <LabelField value={label} onChange={setLabel} repos={chosen} source={readable ? issueSource : null} required={false} />
+                  <LabelIssues label={label} issues={labeled} />
+                  <Group gap="sm">
+                    <Button variant="default" leftSection={<IconListCheck size={16} />} disabled={!readable} onClick={() => setPicking(true)}>Pick issues</Button>
+                    <Text size="sm" c="dimmed">{refs.length ? `${refs.length} picked by hand.` : "Optional."}</Text>
+                  </Group>
+                  {/* What the tracker asks besides where the issues are: who gets them, and which come in by themselves. */}
+                  <GoalTrackerFields trackers={trackers} tracker={tracker} onTracker={chooseTracker} settings={trackerSettings} onSettings={chooseSettings} repos={chosen} settingsOnly shows={(s) => !s.required && s.name !== "parent"} />
+                  {plansEvery && <Text size="sm" c="dimmed">A planner reads the issues together first and proposes the order, any splits and anything missing. You approve its plan before anything runs.</Text>}
+                </Stack>
+              )}
+              {source === "spec" && (
+                <SpecField
+                  value={spec}
+                  onChange={setSpec}
+                  repos={chosen}
+                  tracker={tracker}
+                  project={(trackerSettings.project ?? "").trim()}
+                  asksProject={asked.some((s) => s.name === "project")}
+                  untracked={untracked}
+                  parentAsked={parentAsked}
+                  parent={parent}
+                  open
+                  onParent={(ref) => {
+                    const { parent: _gone, ...rest } = trackerSettings;
+                    setTrackerSettings(ref ? { ...rest, parent: ref } : rest);
+                  }}
+                />
+              )}
+              <Textarea
+                label={source === "describe" ? "Description" : "Description"}
+                description={
+                  source === "describe"
+                    ? "Ask for anything. The planner splits it into tasks."
+                    : source === "spec"
+                      ? "Written from the spec. Change it, or add anything the spec leaves out."
+                      : "Written from the issues when you continue. Change it, or add anything they leave out."
+                }
+                required={source === "describe"}
+                autosize
+                minRows={source === "describe" ? 4 : 2}
+                value={statement}
+                onChange={(e) => {
+                  setStatement(e.currentTarget.value);
+                  setStatementOwn(Boolean(e.currentTarget.value.trim()));
+                }}
+                data-testid="description"
               />
-            </Group>
-            {/* Beside the buttons that were pressed: a refusal is never out of sight at the top of a long form. */}
-            {error && (
-              <Alert color="red" title="The goal was not saved" data-testid="goal-not-saved">
-                <Text size="sm">{error}</Text>
-                <Text size="sm" mt={4}>Nothing was created. Fix what it names, then save again.</Text>
-              </Alert>
-            )}
-            {lacking && !error && (
-              <Text size="sm" c="dimmed" ta="right" data-testid="goal-lacking">{lacking}</Text>
-            )}
-            <Group justify="flex-end">
-              <Button variant="default" onClick={() => navigate(-1)}>Cancel</Button>
-              <Button
-                type="submit"
-                variant="default"
-                leftSection={<IconDeviceFloppy size={16} />}
-                loading={saving === false}
-                disabled={saving === true || !!lacking}
-                onClick={() => (start.current = false)}
-              >
-                Save
-              </Button>
-              <Button
-                type="submit"
-                variant="filled"
-                leftSection={<IconPlayerPlay size={16} />}
-                loading={saving === true}
-                disabled={saving === false || !!lacking}
-                onClick={() => (start.current = true)}
-              >
-                {plansNow ? "Save and plan" : "Save and start"}
-              </Button>
-            </Group>
-          </Stack>
-        </form>
-      </Paper>
+              {source === "spec" && specDraft.element}
+              <ImproveGoal
+                statement={statement}
+                context={{
+                  ...(title.trim() ? { title: title.trim() } : {}),
+                  repos: chosen,
+                  ...(tracker ? { tracker } : {}),
+                  ...(trackerSettings.project ? { project: trackerSettings.project } : {}),
+                  ...(label.trim() ? { label: label.trim() } : {}),
+                  issues: [
+                    ...(labeled ?? []).filter((i) => !i.held_by).map((i) => ({ ref: i.ref, title: i.title })),
+                    ...refs.filter((r) => !viaLabel.includes(r)).map((ref) => ({ ref })),
+                  ].slice(0, 200),
+                }}
+                onAccept={(next) => {
+                  setStatement(next);
+                  setStatementOwn(true);
+                }}
+              />
+              <Group justify="flex-end">
+                <Button rightSection={<IconArrowRight size={16} />} disabled={!madeReady} onClick={() => answer(3)}>Continue</Button>
+              </Group>
+            </Panel>
+          )}
+
+          {reached >= 4 && source && (
+            <Panel n={4} question="How does it run?" answer={runsAnswer} open={open(4)} done={done(4) || reached >= 4} onEdit={() => go(4)}>
+              {drafting && (
+                <Group gap="xs" data-testid="drafting">
+                  <Loader size="xs" />
+                  <Text size="sm" c="dimmed">Writing the description from the issues…</Text>
+                </Group>
+              )}
+              <div>
+                <Text size="sm" fw={500} mb={4}>How much it does without asking</Text>
+                <SegmentedControl aria-label="How much it does without asking" value={autonomy} onChange={setAutonomy} data={AUTONOMY.map((a) => ({ value: a.value, label: a.label }))} />
+                <Text size="sm" c="dimmed" mt={4}>{autonomyWords?.says}</Text>
+              </div>
+              <NumberInput
+                label="Budget"
+                description="What the goal's runs may spend. Left empty, the most one goal may spend."
+                prefix="$"
+                min={0}
+                decimalScale={2}
+                maw={260}
+                value={budget}
+                onChange={setBudget}
+              />
+              <div>
+                <UnstyledButton onClick={() => setMore((now) => !now)} aria-expanded={more} data-testid="more-settings">
+                  <Group gap={6}>
+                    {more ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
+                    <Text size="sm" fw={500}>More</Text>
+                    <Text size="sm" c="dimmed">priority, parallel tasks, overage{source !== "issues" ? ", label" : ""}</Text>
+                  </Group>
+                </UnstyledButton>
+                <Collapse expanded={more}>
+                  <Stack gap="md" mt="sm">
+                    <Group grow align="flex-start">
+                      <NumberInput label="Priority" description="Higher runs first." value={priority} onChange={setPriority} />
+                      <NumberInput
+                        label="Parallel tasks"
+                        description={PARALLEL_HELP}
+                        placeholder={systemParallel ? `System setting: ${systemParallel}` : "System setting"}
+                        min={1}
+                        max={systemParallel ?? undefined}
+                        allowDecimal={false}
+                        value={parallel}
+                        onChange={setParallel}
+                      />
+                    </Group>
+                    {budget !== "" && (
+                      <NumberInput
+                        label="Allowed overage"
+                        description="How far past its budget the goal may go before it stops, never past the most one goal may spend. 0 stops at the budget exactly."
+                        suffix="%"
+                        min={0}
+                        allowDecimal={false}
+                        maw={260}
+                        value={overage}
+                        onChange={setOverage}
+                      />
+                    )}
+                    {source !== "issues" && !untracked && (
+                      <LabelField
+                        value={label}
+                        onChange={setLabel}
+                        repos={chosen}
+                        source={readable ? issueSource : null}
+                        required={false}
+                        fieldProps={{ description: "Optional. Left empty, the goal gets a label of its own for the issues it creates." }}
+                      />
+                    )}
+                  </Stack>
+                </Collapse>
+              </div>
+            </Panel>
+          )}
+
+          <IssuesPicker opened={picking} onClose={() => setPicking(false)} repos={chosen} chosen={refs} viaLabel={viaLabel} action="Use these issues" onPick={setRefs} source={issueSource} />
+
+          {reached >= 4 && (
+            <Stack gap="xs" maw={960}>
+              <Text size="sm" c="dimmed" ta="right" data-testid="plan-note">
+                {planned
+                  ? `Save and plan starts the planner. Its split into tasks opens on the goal's page for you to edit and approve before anything runs${untracked ? "" : `, and nothing is created in ${trackerTitle} before then`}.`
+                  : "Save and start runs the goal's issues now. Save keeps it paused until you start it."}
+              </Text>
+              {error && (
+                <Alert color="red" title="The goal was not saved" data-testid="goal-not-saved">
+                  <Text size="sm">{error}</Text>
+                  <Text size="sm" mt={4}>Nothing was created. Fix what it names, then save again.</Text>
+                </Alert>
+              )}
+              {lacking && !error && <Text size="sm" c="dimmed" ta="right" data-testid="goal-lacking">{lacking}</Text>}
+              <Group justify="flex-end">
+                <Button variant="default" onClick={() => navigate(-1)}>Cancel</Button>
+                <Button type="submit" variant="default" leftSection={<IconDeviceFloppy size={16} />} loading={saving === false} disabled={saving === true || !!lacking} onClick={() => (start.current = false)}>
+                  Save
+                </Button>
+                <Button type="submit" variant="filled" leftSection={<IconPlayerPlay size={16} />} loading={saving === true} disabled={saving === false || !!lacking} onClick={() => (start.current = true)}>
+                  {planned ? "Save and plan" : "Save and start"}
+                </Button>
+              </Group>
+            </Stack>
+          )}
+        </Stack>
+      </form>
     </>
   );
 }

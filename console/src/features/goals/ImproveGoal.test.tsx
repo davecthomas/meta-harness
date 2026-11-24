@@ -54,9 +54,12 @@ function description(): HTMLTextAreaElement {
   return screen.getByRole("textbox", { name: /^Description/ }) as HTMLTextAreaElement;
 }
 
+// Through the New goal flow to where a description is asked for: "I'll describe it", then the repositories.
 async function typeAndImprove(text: string) {
+  fireEvent.click(await screen.findByTestId("source-describe"));
   await screen.findByRole("checkbox", { name: "o/a", checked: true });
-  fireEvent.change(description(), { target: { value: text } });
+  fireEvent.click(within(screen.getByTestId("step-2")).getByRole("button", { name: "Continue" }));
+  fireEvent.change(await screen.findByRole("textbox", { name: /^Description/ }), { target: { value: text } });
   fireEvent.click(screen.getByRole("button", { name: "Improve with AI" }));
 }
 
@@ -95,8 +98,8 @@ test("a failed call says so, keeps the text, and the goal can still be saved", a
   expect(description().value).toBe("Fix the save bugs");
   expect(screen.queryByTestId("improve-proposal")).toBeNull();
 
-  fireEvent.change(screen.getByRole("combobox", { name: /^Label/ }), { target: { value: "bug" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  fireEvent.click(within(screen.getByTestId("step-3")).getByRole("button", { name: "Continue" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save" }));
   expect(await screen.findByText("Goal page")).toBeTruthy();
   expect(created[0]).toMatchObject({ statement: "Fix the save bugs" });
 });

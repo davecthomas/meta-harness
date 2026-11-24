@@ -267,6 +267,8 @@ export const goalsApi = {
     call<{ added: string[] }>(`/v1/goals/${goalId}/issues`, { method: "POST", body: JSON.stringify({ refs }) }),
   labelIssues: (repo: string, label: string, source?: IssueSource) =>
     call<{ issues: LabelIssue[] }>(`/v1/repos/${repo}/issues` + query({ label, ...sourceQuery(source) })).then((r) => r.issues),
+  // The title a goal with this description would get, saved nowhere: the New goal page shows it as its title.
+  goalTitle: (statement: string) => call<{ title: string }>("/v1/goals/title", { method: "POST", body: JSON.stringify({ statement }) }),
   draftGoal: (body: { labels: string[]; repos: string[]; refs: string[]; tracker?: string; tracker_settings?: Record<string, string> }) =>
     call<GoalDraft>("/v1/goals/draft", { method: "POST", body: JSON.stringify(body) }),
   // A title and description for the goal a specification asks for, saved nowhere: the form fills them in.

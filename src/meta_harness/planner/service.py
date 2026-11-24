@@ -195,6 +195,10 @@ class RefsIn(BaseModel):
     refs: list[str] = Field(min_length=1, max_length=500)
 
 
+class TitleIn(BaseModel):
+    statement: str = Field(min_length=1, max_length=4000)
+
+
 class DraftIn(BaseModel):
     # The label to draft from, or several in `labels`: the draft reads the open issues of every one.
     label: str | None = Field(default=None, min_length=1)
@@ -1140,22 +1144,45 @@ def create_app(
             ],
         }
 
+    @app.post("/v1/goals/title")
+    async def title_from(body: TitleIn, who: str = Depends(operator)) -> dict:
+        """The title a goal with this description would get, saved nowhere: the New goal page shows it as the
+        page's title before the goal is saved, as the title the goal is then created with."""
+        try:
+            titled = await name(body.statement)
+        except Exception as err:  # noqa: BLE001 - the model is the caller's 502
+            raise HTTPException(
+                status_code=502, detail=f"no title could be written ({err}). Type one with the pencil, or save without"
+            ) from err
+        return {"title": titled.title}
+
     @app.post("/v1/goals/draft")
     async def draft_goal(body: DraftIn, who: str = Depends(operator)) -> dict:
         """A goal drafted by a model from the open issues of one label or of several. Nothing is saved: the
         operator edits it first. A goal takes one label, so a draft from several comes back with `label` null
         and the issues it read in `refs`, for the goal to hold as picked issues."""
         labels = list(dict.fromkeys([name.strip() for name in [*body.labels, body.label or ""] if name.strip()]))
-        if not labels:
-            raise HTTPException(status_code=422, detail="name the label to draft from, in label, or several in labels")
+        if not labels and not body.refs:
+            raise HTTPException(
+                status_code=422,
+                detail="name the label to draft from, in label or labels, or the issues picked by hand, in refs",
+            )
         names = registered(body.repos)
         by_ref: dict[str, Any] = {}
         for name in labels:
             for found in (await open_issues(names, name, body.tracker, body.tracker_settings)).values():
                 by_ref.update({i.ref: i for i in found if i.ref not in by_ref})
+        # Issues picked by hand, with no label: each is read from its tracker.
+        if not labels:
+            source = bound_tracker(body.tracker, names, body.tracker_settings)
+            try:
+                for ref in dict.fromkeys(body.refs):
+                    by_ref[ref] = await source.read(ref)
+            except TrackerError as err:
+                raise HTTPException(status_code=502 if err.retryable else 422, detail=str(err)) from err
         issues = list(by_ref.values())
         # What the model is told the label is, and what the draft is recorded under.
-        said = ", ".join(labels)
+        said = ", ".join(labels) or "the issues picked by hand"
         if body.refs:
             wanted = set(body.refs)
             issues = [i for i in issues if i.ref in wanted]
