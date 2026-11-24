@@ -214,7 +214,7 @@ def stage(link: dict, task: dict | None, auto_merge: bool) -> str:
     if status == "running":
         if task.get("pr_url"):
             return (
-                "its pull request is open, and Octofusion is running its checks and its own review. "
+                "its pull request is open, and Muxxy is running its checks and its own review. "
                 "Nothing is needed from the operator yet"
             )
         return "an agent is writing the change. Nothing is needed from the operator"

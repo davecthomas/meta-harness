@@ -280,20 +280,20 @@ test("approving says what the plan does in numbers, and new tasks can be kept ou
 
   expect(dialog.textContent).toContain("Add the 2 new tasks to jira as issues");
   fireEvent.click(within(dialog).getByRole("switch"));
-  expect(dialog.textContent).toContain("kept in Octofusion only");
+  expect(dialog.textContent).toContain("kept in Muxxy only");
   fireEvent.click(within(dialog).getByRole("button", { name: "Approve and start" }));
 
   await waitFor(() => expect(approved).toHaveLength(1));
   expect(asked.at(-1)).toMatchObject({ url: "/v1/goals/g-1/approve", body: { track: false } });
 });
 
-test("a goal with no tracker is told its tasks stay in Octofusion, with no choice to make", async () => {
+test("a goal with no tracker is told its tasks stay in Muxxy, with no choice to make", async () => {
   const { asked, approved } = show(planned(), { ...GOAL, tracker: "mh" } as Goal);
   fireEvent.click(await screen.findByRole("button", { name: "Approve the plan" }));
   const dialog = await screen.findByRole("dialog", { name: "Approve the plan" });
 
   expect(within(dialog).queryByRole("switch")).toBeNull();
-  expect(dialog.textContent).toContain("This goal has no issue tracker: its tasks are kept in Octofusion only.");
+  expect(dialog.textContent).toContain("This goal has no issue tracker: its tasks are kept in Muxxy only.");
   fireEvent.click(within(dialog).getByRole("button", { name: "Approve and start" }));
   await waitFor(() => expect(approved).toHaveLength(1));
   expect(asked.at(-1)!.body).toEqual({ track: false });
@@ -328,7 +328,7 @@ test("an approved plan stays readable on the goal's page: what the planner said,
   const section = await screen.findByTestId("approved-plan");
   expect(section.textContent).toContain("Plan version 1, approved");
   expect(section.textContent).toContain("It runs 1 issue of the goal's as it is, replaces 1 issue with new tasks, leaves 1 issue out and adds 2 new tasks.");
-  expect(section.textContent).toContain("The new tasks are kept in Octofusion only.");
+  expect(section.textContent).toContain("The new tasks are kept in Muxxy only.");
   expect(screen.queryByTestId("plan-issues")).toBeNull();
 
   fireEvent.click(within(section).getByRole("button", { name: "Show the plan" }));

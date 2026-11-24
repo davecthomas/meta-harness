@@ -14,18 +14,18 @@ export function SummarySource({ issue }: { issue: IssueProgress }) {
       {source && (
         <Tooltip label={`Opening summary: ${provenance(source).says}`} multiline maw={360}>
           <Badge size="xs" variant="light" color={source === "run" ? "teal" : "orange"} tt="none" data-testid="summary-source">
-            {source === "run" ? "summary by the run" : "summary by Octofusion"}
+            {source === "run" ? "summary by the run" : "summary by Muxxy"}
           </Badge>
         </Tooltip>
       )}
       {fixes > 0 && (
         <Tooltip
-          label={`Octofusion wrote the summary of ${rounds}, as ${fixes === 1 ? "its run" : "their runs"} left none usable.`}
+          label={`Muxxy wrote the summary of ${rounds}, as ${fixes === 1 ? "its run" : "their runs"} left none usable.`}
           multiline
           maw={360}
         >
           <Badge size="xs" variant="light" color="orange" tt="none" data-testid="fix-summaries-source">
-            {`${rounds} by Octofusion`}
+            {`${rounds} by Muxxy`}
           </Badge>
         </Tooltip>
       )}

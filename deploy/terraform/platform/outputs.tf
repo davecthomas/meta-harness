@@ -23,6 +23,13 @@ output "console_home_site" { value = google_firebase_hosting_site.home.site_id }
 output "console_redirect_sites" { value = [for s in google_firebase_hosting_site.redirect : s.site_id] }
 # Every address the console is served at, the one people are given first. The edge takes a change from any.
 # Only the home address since console_site became a redirect to it.
-output "console_origins" { value = ["https://${google_firebase_hosting_site.home.site_id}.web.app"] }
+output "console_next_site" { value = google_firebase_hosting_site.next.site_id }
+# The next name's address serves the console too, so a change from it is the console's.
+output "console_origins" {
+  value = [
+    "https://${google_firebase_hosting_site.home.site_id}.web.app",
+    "https://${google_firebase_hosting_site.next.site_id}.web.app",
+  ]
+}
 output "google_client_id" { value = var.google_client_id }
 output "session_key_secret" { value = google_secret_manager_secret.session_key.secret_id }

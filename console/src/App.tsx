@@ -37,8 +37,8 @@ import { KillSwitchBanner, KillSwitchButton } from "./components/KillSwitch";
 import { TreeItem } from "./components/NavTree";
 import { NewVersion } from "./components/NewVersion";
 import { Footer } from "./components/Footer";
-import lockup from "./brand/octofusion-lockup.svg";
-import symbol from "./brand/octofusion-symbol.svg";
+import lockup from "./brand/muxxy-lockup.svg";
+import symbol from "./brand/muxxy-symbol.svg";
 import { LOGO_HEIGHT } from "./brand/sizes";
 
 // The navigation's entries, from the features, in order; admin entries only for an admin. The Admin section's
@@ -177,9 +177,9 @@ export function App() {
           <Group gap="sm" wrap="nowrap">
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Menu" />
             {who && <MenuToggle hidden={hidden} onToggle={toggleMenu} />}
-            <Anchor component={RouterLink} to="/" aria-label="Octofusion AI" display="flex" style={{ lineHeight: 0 }}>
-              <Image src={lockup} alt="Octofusion AI" h={LOGO_HEIGHT} w="auto" fit="contain" visibleFrom="sm" />
-              <Image src={symbol} alt="Octofusion AI" h={LOGO_HEIGHT} w="auto" fit="contain" hiddenFrom="sm" />
+            <Anchor component={RouterLink} to="/" aria-label="Muxxy AI" display="flex" style={{ lineHeight: 0 }}>
+              <Image src={lockup} alt="Muxxy AI" h={LOGO_HEIGHT} w="auto" fit="contain" visibleFrom="sm" />
+              <Image src={symbol} alt="Muxxy AI" h={LOGO_HEIGHT} w="auto" fit="contain" hiddenFrom="sm" />
             </Anchor>
           </Group>
           <Group gap="xs" wrap="nowrap">

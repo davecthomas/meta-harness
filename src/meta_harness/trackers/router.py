@@ -128,7 +128,7 @@ class Trackers:
         if adapter is None:
             supported = ", ".join(sorted(self.adapters)) or "none"
             raise TrackerError(
-                f"{what or 'this'} names the tracker {scheme or '(none)'!r}, which Octofusion does not "
+                f"{what or 'this'} names the tracker {scheme or '(none)'!r}, which Muxxy does not "
                 f"support (supported: {supported}). Choose one of those under Configuration, Issue trackers, "
                 "or for the goal.",
                 retryable=False,

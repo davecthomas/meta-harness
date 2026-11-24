@@ -397,6 +397,14 @@ resource "google_firebase_hosting_site" "home" {
   depends_on = [google_firebase_project.this]
 }
 
+# The console's next name's site, made now so the name is held.
+resource "google_firebase_hosting_site" "next" {
+  provider   = google-beta
+  project    = var.project
+  site_id    = var.console_next_site
+  depends_on = [google_firebase_project.this]
+}
+
 resource "google_firebase_hosting_site" "redirect" {
   for_each   = toset(var.console_redirect_sites)
   provider   = google-beta

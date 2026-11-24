@@ -6,7 +6,7 @@ import { api, type CostFilter, type Costs } from "../../api";
 import { DataTable, Empty, ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
 import { CostChart, seriesColor, usd } from "./CostChart";
 
-// Performance: what Octofusion costs over time, where the money goes, and where it is heading. An admin
+// Performance: what Muxxy costs over time, where the money goes, and where it is heading. An admin
 // sees every cost source; anyone else, the model cost of their own work, and the page says which it is showing.
 // The range, bucket, breakdown and filters live in the URL, so a view can be shared.
 
@@ -164,7 +164,7 @@ export function PerformancePage() {
 
   return (
     <>
-      <PageHeader title="Costs" description="What Octofusion costs over time, where the money goes, and where it is heading." />
+      <PageHeader title="Costs" description="What Muxxy costs over time, where the money goes, and where it is heading." />
       <ErrorAlert error={error} />
       {own && (
         <Alert color="blue" mb="md" data-testid="own-scope">

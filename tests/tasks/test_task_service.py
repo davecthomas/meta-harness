@@ -535,7 +535,7 @@ def test_a_tasks_spend_lists_its_runs_and_totals_against_its_limit(api, events):
 
 def test_a_smoke_task_is_a_services_to_create_and_is_left_out_of_lists_unless_asked(api):
     refused = api.post("/v1/tasks", json=_task(task_type="smoke"), headers=_as(CALLER_KEY))
-    assert refused.status_code == 422 and "only Octofusion creates smoke tasks" in refused.json()["detail"]
+    assert refused.status_code == 422 and "only Muxxy creates smoke tasks" in refused.json()["detail"]
     # As smoke.py sends it: with no acceptance check.
     created = api.post("/v1/tasks", json=_task(task_type="smoke", acceptance_checks=[]), headers=_as(SERVICE_KEY))
     assert created.status_code == 201

@@ -220,7 +220,7 @@ export function GoalPage() {
   useEffect(() => () => clearTimeout(pending.current), []);
 
   useEffect(() => {
-    if (goal) document.title = `${goalTitle(goal)} · Octofusion`;
+    if (goal) document.title = `${goalTitle(goal)} · Muxxy`;
   }, [goal]);
 
   async function act(action: () => Promise<unknown>) {
@@ -414,7 +414,7 @@ export function GoalPage() {
                 "Issue tracker",
                 <Text size="sm">
                   {trackerTitle(goal.tracker ?? "github")}
-                  {Object.entries(goal.tracker_settings ?? {}).filter(([name]) => name !== "assignee" && name !== "parent").map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to Octofusion" : `, ${name} ${value}`)).join("")}
+                  {Object.entries(goal.tracker_settings ?? {}).filter(([name]) => name !== "assignee" && name !== "parent").map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to Muxxy" : `, ${name} ${value}`)).join("")}
                   <Text span size="sm" c="dimmed" display="block">Fixed when the goal was created.</Text>
                 </Text>,
               ],
@@ -567,7 +567,7 @@ export function GoalPage() {
       ) : goal.status === "planning" ? (
         <Empty>No tasks yet: the plan's tasks are made when you approve it.</Empty>
       ) : goal.tracker === "mh" ? (
-        <Empty>No tasks yet. This goal keeps its tasks in Octofusion: its approved plan's tasks appear here within a minute, and Plan again adds more.</Empty>
+        <Empty>No tasks yet. This goal keeps its tasks in Muxxy: its approved plan's tasks appear here within a minute, and Plan again adds more.</Empty>
       ) : (
         <Empty>
           No issues yet. {goal.label ? <>Label an open issue <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> in one of the goal's repos, or pick issues with Add issues.</> : "Pick issues with Add issues."} The planner takes them in within a minute, or now with Take in issues now.

@@ -225,7 +225,7 @@ export function NewGoal() {
         : where === "spec" && !spec
           ? 'Choose the spec, under "Plan a goal from a spec or an epic" above, or give another answer under Where its issues come from.'
           : !(plans || untracked || spec) && !label.trim() && !refs.length && !takesAssigned
-            ? `Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to Octofusion" : ""}.`
+            ? `Say which issues are the goal's: give it a label, or pick issues by hand, under Where its issues come from${asked.some((s) => s.name === "assigned") ? ", or turn on taking the issues assigned to Muxxy" : ""}.`
             : null;
 
   // Creates the goal, started or not. Returns its id, or null when it is refused (the form shows why).
@@ -386,7 +386,7 @@ export function NewGoal() {
             {untracked ? (
               <Text size="sm" data-testid="untracked-note">
                 With no issue tracker, a planning task reads the repos and writes the goal's tasks from {spec ? `its spec, ${specName(spec)}` : "its description"}. You review, edit
-                and approve the plan before anything runs. The tasks are kept in Octofusion: nothing is written to any tracker, and
+                and approve the plan before anything runs. The tasks are kept in Muxxy: nothing is written to any tracker, and
                 the pull requests are the only record outside it.
               </Text>
             ) : (

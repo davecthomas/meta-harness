@@ -37,10 +37,10 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
       <Reasons reasons={s.reasons("default")} />
       <Paper p="md" data-testid="tracker-label">
         <Stack gap={4}>
-          <Text fw={600}>Label on Octofusion's issues</Text>
+          <Text fw={600}>Label on Muxxy's issues</Text>
           <InlineField
             kind="text"
-            label="Label on Octofusion's issues"
+            label="Label on Muxxy's issues"
             value={s.document.label ?? ""}
             monospace
             empty={<Text size="sm" ff="monospace">ai:meta-harness</Text>}
@@ -51,7 +51,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
             onCommit={(v) => stageOptional(s, ["label"], v.trim())}
           />
           <Text size="sm" c="dimmed">
-            Every issue Octofusion creates, comments on or moves gets this label, in every tracker, so its work can be told apart and listed. No spaces. Empty: ai:meta-harness.
+            Every issue Muxxy creates, comments on or moves gets this label, in every tracker, so its work can be told apart and listed. No spaces. Empty: ai:meta-harness.
           </Text>
         </Stack>
       </Paper>

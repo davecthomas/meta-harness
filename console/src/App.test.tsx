@@ -173,7 +173,7 @@ test("the sign-in screen ends with the footer, without the version, which needs 
   renderAt("/");
 
   const footer = within(await screen.findByTestId("footer"));
-  expect(footer.getByRole("img", { name: "Octofusion AI" })).toBeTruthy();
+  expect(footer.getByRole("img", { name: "Muxxy AI" })).toBeTruthy();
   expect(footer.getByText("The Open Meta-Harness for Coding at Scale")).toBeTruthy();
   expect(footer.getByRole("link", { name: "GitHub" }).getAttribute("href")).toBe("https://github.com/davecthomas/meta-harness");
   expect(screen.getByTestId("google-sign-in")).toBeTruthy();
@@ -190,12 +190,12 @@ function stubSignedIn() {
   });
 }
 
-test("the header has a link to the Overview named Octofusion AI, and no Meta-harness name", async () => {
+test("the header has a link to the Overview named Muxxy AI, and no Meta-harness name", async () => {
   stubSignedIn();
   renderAt("/goals");
   await screen.findByRole("heading", { name: "Goals" });
   const header = within(screen.getByRole("banner"));
-  expect(header.getByRole("link", { name: "Octofusion AI" }).getAttribute("href")).toBe("/");
+  expect(header.getByRole("link", { name: "Muxxy AI" }).getAttribute("href")).toBe("/");
   expect(header.queryByText("Meta-harness")).toBeNull();
 });
 
@@ -203,12 +203,12 @@ test("the header shows the lockup at wide widths and the symbol alone at phone w
   stubSignedIn();
   renderAt("/goals");
   await screen.findByRole("heading", { name: "Goals" });
-  const images = within(screen.getByRole("banner")).getAllByRole("img", { name: "Octofusion AI" });
+  const images = within(screen.getByRole("banner")).getAllByRole("img", { name: "Muxxy AI" });
   expect(images).toHaveLength(2);
   const [wide, phone] = images;
-  expect(wide.getAttribute("src")).toContain("octofusion-lockup.svg");
+  expect(wide.getAttribute("src")).toContain("muxxy-lockup.svg");
   expect(wide.className).toContain("mantine-visible-from-sm");
-  expect(phone.getAttribute("src")).toContain("octofusion-symbol.svg");
+  expect(phone.getAttribute("src")).toContain("muxxy-symbol.svg");
   expect(phone.className).toContain("mantine-hidden-from-sm");
   // Large enough to read: at 32 pixels the name's letters were 7 pixels tall.
   expect(LOGO_HEIGHT).toBeGreaterThanOrEqual(53);

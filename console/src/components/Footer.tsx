@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Anchor, Flex, Image, Text, Tooltip } from "@mantine/core";
 import { api } from "../api";
 import { TAGLINE } from "../brand/Splash";
-import lockup from "../brand/octofusion-lockup.svg";
+import lockup from "../brand/muxxy-lockup.svg";
 import { LOGO_HEIGHT } from "../brand/sizes";
 
 // The lockup's height in the footer: the header's, so the brand is one size wherever it is shown. At 32 and
@@ -29,7 +29,7 @@ export function Footer({ version = true }: { version?: boolean }) {
       pb="xs"
       style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}
     >
-      <Image src={lockup} alt="Octofusion AI" h={FOOTER_LOGO_HEIGHT} w="auto" fit="contain" data-testid="footer-logo" />
+      <Image src={lockup} alt="Muxxy AI" h={FOOTER_LOGO_HEIGHT} w="auto" fit="contain" data-testid="footer-logo" />
       <Text size="xs" c="dimmed" ta="center">{TAGLINE}</Text>
       {version && <VersionTag />}
       <Anchor href={REPOSITORY} target="_blank" rel="noreferrer" size="xs" c="dimmed">GitHub</Anchor>

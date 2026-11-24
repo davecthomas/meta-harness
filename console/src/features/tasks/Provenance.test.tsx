@@ -20,10 +20,10 @@ const REVIEWED = (round: string) =>
 test("each post's provenance reads as what wrote it, and a post from before provenance shows none", () => {
   const signed = provenanceOf([event("pull_request_opened", { pr_url: "old" }), OPENED, event("pull_request_merged", { provenance: "x" })]);
   expect(signed.map(provenanceText)).toEqual([
-    "Pull request: Octofusion 0.49.0, model harness:pi-lean/x:y, run run-task-t-1:run-1",
+    "Pull request: Muxxy 0.49.0, model harness:pi-lean/x:y, run run-task-t-1:run-1",
   ]);
   expect(provenanceText({ what: "Line comment", provenance: { kind: "comment", version: "0.49.0", by: "dave" } })).toBe(
-    "Line comment: Octofusion 0.49.0, for dave",
+    "Line comment: Muxxy 0.49.0, for dave",
   );
 });
 
@@ -31,7 +31,7 @@ test("the task's details show the newest of each kind of post, and nothing when 
   expect(provenanceFacts([event("attempt_finished", {})])).toEqual([]);
   render(<MantineProvider theme={theme}><Facts items={provenanceFacts([OPENED, REVIEWED("1"), REVIEWED("2")])} /></MantineProvider>);
   const shown = screen.getByTestId("task-provenance").textContent;
-  expect(shown).toContain("Pull request: Octofusion 0.49.0");
-  expect(shown).toContain("Review: round 2, Octofusion 0.49.0, model harness:pi-review/a:b");
+  expect(shown).toContain("Pull request: Muxxy 0.49.0");
+  expect(shown).toContain("Review: round 2, Muxxy 0.49.0, model harness:pi-review/a:b");
   expect(shown).not.toContain("round 1");
 });

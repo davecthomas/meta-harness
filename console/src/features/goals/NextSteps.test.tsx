@@ -78,8 +78,8 @@ test("an ended goal with nothing left to suggest says so, and one that cannot be
 });
 
 test("a goal being planned says only where it came from", async () => {
-  show(() => read({ continues: { id: "g-0", title: "Octofusion AI branding" } }), { ended: false, planning: true });
-  expect((await screen.findByRole("link", { name: "Octofusion AI branding" })).getAttribute("href")).toBe("/goals/g-0");
+  show(() => read({ continues: { id: "g-0", title: "Muxxy AI branding" } }), { ended: false, planning: true });
+  expect((await screen.findByRole("link", { name: "Muxxy AI branding" })).getAttribute("href")).toBe("/goals/g-0");
   expect(screen.queryByRole("button")).toBeNull();
 });
 

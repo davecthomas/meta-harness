@@ -76,7 +76,7 @@ def test_the_label_is_the_deployments_or_the_usual_one_and_a_label_no_tracker_co
     assert registry.check({"default": "github", "trackers": {"github": {}}}, None) == []
     assert registry.check({"default": "github", "trackers": {"github": {}}, "label": "team-bot"}, None) == []
     [reason] = registry.check({"default": "github", "trackers": {"github": {}}, "label": "meta harness"}, None)
-    assert reason.startswith("label is the label put on every issue Octofusion creates or changes")
+    assert reason.startswith("label is the label put on every issue Muxxy creates or changes")
 
 
 async def test_done_closes_a_github_issue_once_and_a_status_it_has_no_state_for_changes_nothing():
@@ -240,7 +240,7 @@ def test_the_registry_is_each_adapters_own_description_and_checks_a_configuratio
     )
     wrong = {**listed, "projects": {"VL": {"statuses": {"shipped": "Done"}}, "vl": {}}}
     reasons = registry.check({"default": "jira", "trackers": {"jira": wrong}}, None)
-    assert any("projects lists the Jira projects Octofusion works in, each by its key" in r for r in reasons)
+    assert any("projects lists the Jira projects Muxxy works in, each by its key" in r for r in reasons)
     just = {**listed, "projects": {"VL": {"statuses": {"shipped": "Done"}, "issue_type": " "}}}
     reasons = registry.check({"default": "jira", "trackers": {"jira": just}}, None)
     assert any(r.startswith("jira: project VL: statuses names the project's status") for r in reasons)
@@ -275,7 +275,7 @@ def test_the_registry_is_each_adapters_own_description_and_checks_a_configuratio
     # A goal names one of the listed projects; a configuration from before projects were listed allows any.
     assert jira.check_goal({"project": "VL"}, listed) == [] == jira.check_goal({"project": "AB"}, site)
     [unlisted] = jira.check_goal({"project": "AB"}, listed)
-    assert unlisted.startswith("AB is not one of the Jira projects Octofusion works in (OPS, VL)")
+    assert unlisted.startswith("AB is not one of the Jira projects Muxxy works in (OPS, VL)")
     assert "add it under Configuration, Issue trackers, Jira, Projects" in unlisted
 
 

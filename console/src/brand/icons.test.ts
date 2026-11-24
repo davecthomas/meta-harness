@@ -32,8 +32,8 @@ const htmlLinks = Array.from(doc.querySelectorAll("link[rel~='icon'], link[rel='
 const htmlNames = htmlLinks.map((link) => publicName(link.getAttribute("href") ?? ""));
 
 describe("index.html", () => {
-  test("titles the tab Octofusion AI and sets the theme color", () => {
-    expect(doc.title).toBe("Octofusion AI");
+  test("titles the tab Muxxy AI and sets the theme color", () => {
+    expect(doc.title).toBe("Muxxy AI");
     expect(doc.querySelector("meta[name='theme-color']")?.getAttribute("content")).toBe("#670fdc");
   });
 
@@ -49,10 +49,10 @@ describe("index.html", () => {
 });
 
 describe("site.webmanifest", () => {
-  test("is in public/ and names the app Octofusion AI on near-black", () => {
+  test("is in public/ and names the app Muxxy AI on near-black", () => {
     expect(manifest).not.toBeNull();
-    expect(manifest?.name).toBe("Octofusion AI");
-    expect(manifest?.short_name).toBe("Octofusion AI");
+    expect(manifest?.name).toBe("Muxxy AI");
+    expect(manifest?.short_name).toBe("Muxxy AI");
     expect(manifest?.background_color).toBe("#0a0a14");
   });
 

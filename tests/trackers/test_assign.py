@@ -329,7 +329,7 @@ async def test_the_own_tracker_refuses_a_person_who_is_not_a_console_user(person
 async def test_the_own_tracker_says_an_issue_it_does_not_keep_is_not_there():
     own = OwnTracker(connect=People())
 
-    with pytest.raises(TrackerError, match="is not a task Octofusion keeps") as missing:
+    with pytest.raises(TrackerError, match="is not a task Muxxy keeps") as missing:
         await own.assign("mh:i-ffffffffffff", "ana@example.com")
     assert not missing.value.retryable
     with pytest.raises(TrackerError, match="is not mh:i-") as malformed:

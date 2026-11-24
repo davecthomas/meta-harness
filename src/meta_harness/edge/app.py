@@ -531,7 +531,7 @@ def create_app(
                     log.error("%s %s gave up after %.1fs: %s", request.method, request.url.path, waited, why)
                     return private(
                         JSONResponse(
-                            {"detail": f"Octofusion is updating and {base} is not back yet: {why}"},
+                            {"detail": f"Muxxy is updating and {base} is not back yet: {why}"},
                             status_code=503,
                             headers={"Retry-After": "5"},
                         )
