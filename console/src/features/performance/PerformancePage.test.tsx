@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { Costs } from "../../api";
 import { theme } from "../../theme";
 import { axisTicks, bucketLabel, seriesColor } from "./CostChart";
+import { composition } from "./GoalCosts";
 import { PerformancePage, costLabel, rangeDays } from "./PerformancePage";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -29,8 +30,12 @@ const COSTS: Costs = {
 const GOAL_COSTS = {
   from: "",
   to: "",
-  kinds: ["task", "review", "fix", "planning", "narratives", "writing"],
-  goals: [{ goal_id: "g-a", title: "Saves", status: "active", total: 12.5, parts: { task: 8, review: 2, fix: 1.5, planning: 0.9, narratives: 0.1 } }],
+  kinds: ["planning", "task", "review", "fix", "writing", "narratives"],
+  goals: [
+    { goal_id: "g-a", title: "Saves", status: "met", total: 10, parts: { planning: 1, task: 6, review: 2, fix: 1 } },
+    // Still running: not part of the average while a completed goal is.
+    { goal_id: "g-b", title: "Exports", status: "active", total: 40, parts: { task: 40 } },
+  ],
 };
 
 const NUMBERS = {
@@ -241,15 +246,28 @@ test("a time with nothing finished says so in each number", async () => {
   expect(key.textContent).toContain("No merged tasks in this time");
 });
 
-test("each goal's cost says what it is made of: runs, reviews, fixes, planning, narratives and the writing pass", async () => {
+test("Goal Cost Composition shows each stage's average share over the completed goals, with the goals folded under it", async () => {
   show(COSTS);
-  const row = await screen.findByTestId("goal-cost");
-  expect(row.textContent).toContain("Saves");
-  expect(row.textContent).toContain("$12.50");
-  expect(row.textContent).toContain("$8.00");
-  expect(row.textContent).toContain("$0.10");
-  // A kind the goal spent nothing on says so.
-  expect(row.textContent).toContain("none");
-  const head = screen.getByTestId("goal-costs").textContent ?? "";
-  for (const name of ["Task runs", "Reviews", "Fixes", "Planning", "Narratives", "Writing pass"]) expect(head).toContain(name);
+  const section = await screen.findByTestId("goal-costs");
+  expect(section.textContent).toContain("Goal Cost Composition");
+  expect(screen.getByTestId("composition-over").textContent).toBe("The average over 1 completed goal in this time.");
+  // The stages in the order the work goes through them, each with its share and its average dollars.
+  const stages = [...screen.getByTestId("composition").children].map((row) => row.textContent);
+  expect(stages).toEqual(["Planning10%$1.00", "Task runs60%$6.00", "Reviews20%$2.00", "Fixes10%$1.00", "Writing pass0%$0.00", "Narratives0%$0.00"]);
+  // The goals one by one are folded away until asked for, their columns in the same order.
+  const toggle = screen.getByTestId("goal-costs-toggle");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  const head = [...section.querySelectorAll("th")].map((th) => th.textContent);
+  expect(head).toEqual(["Goal", "Total", "Planning", "Task runs", "Reviews", "Fixes", "Writing pass", "Narratives"]);
+});
+
+test("the shares count every goal the same, and only completed goals when there are any", () => {
+  const goal = (total: number, parts: Record<string, number>, status = "met") => ({ goal_id: "g", title: "", status, total, parts });
+  // A $100 goal that is all task runs and a $10 goal that is all planning: half and half, not 91% and 9%.
+  const parts = composition([goal(100, { task: 100 }), goal(10, { planning: 10 })]);
+  expect(parts.find((p) => p.stage === "task")).toEqual({ stage: "task", share: 0.5, usd: 50 });
+  expect(parts.find((p) => p.stage === "planning")).toEqual({ stage: "planning", share: 0.5, usd: 5 });
+  expect(composition([])[0].share).toBe(0);
 });

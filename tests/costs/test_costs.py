@@ -407,7 +407,7 @@ def test_each_goals_cost_says_what_it_is_made_of_most_expensive_first(api):
 
     assert seen.status_code == 200, seen.text
     found = seen.json()
-    assert found["kinds"] == ["task", "review", "fix", "planning", "narratives", "writing"]
+    assert found["kinds"] == ["planning", "task", "review", "fix", "writing", "narratives"]
     assert [(g["goal_id"], g["total"]) for g in found["goals"]] == [("g-a", 3.26), ("g-b", 1.25)]
     assert found["goals"][0]["parts"] == {"task": 2.5, "review": 0.75, "planning": 0.01}
     # A goal that is gone, as these are from the planner's store, is still listed, named by its id.
