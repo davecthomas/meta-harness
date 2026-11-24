@@ -176,7 +176,9 @@ def target_for(path: str) -> str | None:
 GOOGLE_KEYS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
 SESSION_COOKIE = "__session"
-SESSION_SECONDS = 12 * 3600
+# 36 hours: a sign-in in the morning lasts through the next day's work. Length costs little, since every request
+# checks the access list again, so an operator taken off it is refused at once, signed in or not.
+SESSION_SECONDS = 36 * 3600
 # A stream ticket opens the event stream; long enough to cover a reconnect after a dropped connection.
 TICKET_SECONDS = 300
 STREAM_PATH = "/v1/events/tail"

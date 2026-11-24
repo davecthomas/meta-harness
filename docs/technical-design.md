@@ -4347,7 +4347,8 @@ domain events long.
 Operators run and configure the meta-harness from the operator console, a
 cloud web app. Operators sign in with Google at the edge, and the access list
 names who may (see REST API). The operator console owns no store and calls
-only the REST API, as the signed-in operator. A session lasts 12 hours. When
+only the REST API, as the signed-in operator. A session lasts 36 hours, and every request checks the access list again, so
+an operator taken off it is refused at once. When
 one ends while a page is open, the first request the edge answers
 `not signed in` takes the operator to the sign-in screen. The screen says the
 session ended, and signing in returns them to the page they were on. The
