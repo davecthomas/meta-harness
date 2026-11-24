@@ -218,6 +218,19 @@ def register(
             with db.connect(autocommit=True) as conn:
                 plans.end_approval(conn, goal_id, error)
 
+        def keep() -> None:
+            with db.connect(autocommit=True) as conn:
+                plans.keep_approval(conn, goal_id)
+
+        async def alive() -> None:
+            # Renews the claim while the approval runs: one of a large plan can outlast APPROVAL_CLAIM_MINUTES.
+            while True:
+                await asyncio.sleep(plans.APPROVAL_REFRESH_SECONDS)
+                try:
+                    await asyncio.to_thread(keep)
+                except Exception as err:  # A missed renewal is retried at the next; the claim still stands.
+                    log.warning("could not renew the approval claim on goal %s: %s", goal_id, err)
+
         # One approval at a time. It writes each new task to the tracker, which outlasts a browser's wait, and
         # an operator who saw no answer pressed again: each press created every issue once more.
         if not await asyncio.to_thread(claim):
@@ -228,6 +241,7 @@ def register(
                     "shows each as it appears. Nothing more is needed"
                 ),
             )
+        renewing = asyncio.create_task(alive())
         try:
             await planning.approve(
                 goal,
@@ -256,5 +270,7 @@ def register(
                 asyncio.to_thread(end, f"the approval stopped before it finished: {err or type(err).__name__}")
             )
             raise
+        finally:
+            renewing.cancel()
         await asyncio.to_thread(end)
         return await asyncio.to_thread(shown, load(goal_id))

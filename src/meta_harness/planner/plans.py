@@ -378,6 +378,19 @@ def claim_approval(conn: psycopg.Connection, goal_id: str) -> bool:
         return claimed.rowcount == 1
 
 
+# How often a running approval says it is still alive, well inside APPROVAL_CLAIM_MINUTES: an approval of a large
+# plan can run longer than the claim, and must not be taken for dead while it is still creating issues.
+APPROVAL_REFRESH_SECONDS = 60.0
+
+
+def keep_approval(conn: psycopg.Connection, goal_id: str) -> None:
+    """Renew a running approval's claim, so a second approval cannot join it however long it runs."""
+    with conn.transaction():
+        conn.execute(
+            "UPDATE planner.goal SET approving_at = now() WHERE id = %s AND approving_at IS NOT NULL", (goal_id,)
+        )
+
+
 def end_approval(conn: psycopg.Connection, goal_id: str, error: str | None = None) -> None:
     """Let the approval's claim go, keeping why it stopped when it did not finish."""
     with conn.transaction():
