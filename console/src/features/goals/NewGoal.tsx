@@ -432,6 +432,8 @@ export function NewGoal() {
       setTitle("");
       setTitleOwn(false);
       setEditingTitle(false);
+      // Nothing is answered any more: the later panels, and the title's pencil, wait for the first answer again.
+      setReached(1);
     }
   }, [step, source]);
 

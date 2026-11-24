@@ -266,6 +266,9 @@ test("backing out to the first question takes the written title with it", async 
 
   expect(await screen.findByRole("heading", { name: "New goal" })).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Add a CSV export" })).toBeNull();
+  // With nothing answered, there is no title to change and no later panel.
+  expect(screen.queryByRole("button", { name: "Change the goal's title" })).toBeNull();
+  expect(screen.queryByTestId("step-2")).toBeNull();
 });
 
 test("the autonomy chosen last time is where a new goal starts, and this goal's choice is kept for the next", async () => {
