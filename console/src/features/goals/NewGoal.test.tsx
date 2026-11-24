@@ -215,6 +215,23 @@ function editorRouter(created: Record<string, unknown>[]) {
   return router;
 }
 
+test("stepping between panels is not leaving: nothing asks, under the router the console runs", async () => {
+  // On production, Continue changed the address (?step=3) and the leave-page guard asked to save: the guard
+  // runs only under a data router, which the other tests here do not use.
+  const router = editorRouter([]);
+  await pick("describe");
+  await screen.findByRole("checkbox", { name: "o/a", checked: true });
+  await next(2);
+
+  expect(router.state.location.search).toContain("step=3");
+  expect(screen.queryByText("Save your changes?")).toBeNull();
+  expect(screen.getByTestId("step-3").getAttribute("data-open")).toBe("true");
+  fireEvent.change(screen.getByTestId("description"), { target: { value: "Add CSV export" } });
+  await next(3);
+  expect(screen.queryByText("Save your changes?")).toBeNull();
+  expect(await screen.findByText("How much it does without asking")).toBeTruthy();
+});
+
 test("leaving a started New goal asks first: keep editing stays, discard leaves", async () => {
   const router = editorRouter([]);
   await pick("describe");

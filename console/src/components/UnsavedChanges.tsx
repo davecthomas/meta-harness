@@ -15,6 +15,9 @@ export interface UnsavedChangesOptions {
   // Whether save opens the editor's own dialog (such as a review with a note): the prompt steps aside while
   // it is open, and comes back if that dialog closes without saving.
   saveOpensDialog?: boolean;
+  // The editor keeps its place in its own address (a step of a flow, in the query string): a move to another
+  // query on the same page is the editor's own and is not asked about. A move to another page still is.
+  ownsQuery?: boolean;
 }
 
 export interface UnsavedChanges {
@@ -94,7 +97,7 @@ export function useUnsavedChanges(options: UnsavedChangesOptions): UnsavedChange
 
   const element = (
     <>
-      <RouteGuard shouldBlock={shouldBlock} ask={ask} />
+      <RouteGuard shouldBlock={shouldBlock} ask={ask} ownsQuery={!!options.ownsQuery} />
       <Modal opened={pending !== null && !(saving && options.saveOpensDialog)} onClose={keepEditing} title="Save your changes?" centered>
         <Text size="sm" mb="lg">You have unsaved changes to {options.describe}.</Text>
         <Group justify="flex-end" gap="sm">
@@ -117,14 +120,15 @@ export function useUnsavedChanges(options: UnsavedChangesOptions): UnsavedChange
 
 // The router half: blocks in-app navigation while dirty. useBlocker needs a data router; under a plain
 // router (as some tests render) only the browser prompt and confirm guard the editor.
-function RouteGuard(props: { shouldBlock: () => boolean; ask: (go: () => void, stay: () => void) => void }) {
+function RouteGuard(props: { shouldBlock: () => boolean; ask: (go: () => void, stay: () => void) => void; ownsQuery: boolean }) {
   const dataRouter = useContext(UNSAFE_DataRouterContext);
   return dataRouter ? <Blocker {...props} /> : null;
 }
 
-function Blocker(props: { shouldBlock: () => boolean; ask: (go: () => void, stay: () => void) => void }) {
+function Blocker(props: { shouldBlock: () => boolean; ask: (go: () => void, stay: () => void) => void; ownsQuery: boolean }) {
   const blocker = useBlocker(({ currentLocation, nextLocation }) => {
-    const moving = currentLocation.pathname !== nextLocation.pathname || currentLocation.search !== nextLocation.search;
+    const moving =
+      currentLocation.pathname !== nextLocation.pathname || (!props.ownsQuery && currentLocation.search !== nextLocation.search);
     return moving && props.shouldBlock();
   });
   const { ask } = props;
