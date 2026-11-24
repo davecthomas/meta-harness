@@ -77,7 +77,7 @@ variable "console_site" {
 }
 
 variable "console_home_site" {
-  description = "The Firebase Hosting site that becomes the console's address, https://<console_home_site>.web.app (docs/specs/octofusion-web-addresses.md). Unique across Firebase: the plan fails, naming it, when it is taken."
+  description = "The Firebase Hosting site of the console's Octofusion address, https://<console_home_site>.web.app (docs/specs/octofusion-web-addresses.md): its home until 2026-11-24, and since then a redirect to Muxxy's. Unique across Firebase: the plan fails, naming it, when it is taken."
   type        = string
   default     = "octofusion-ai"
   validation {
@@ -87,7 +87,7 @@ variable "console_home_site" {
 }
 
 variable "console_next_site" {
-  description = "The Firebase Hosting site of the console's next name, Muxxy (2026-11-23): it serves the console beside the home site until sign-in works there, and then becomes the home. Unique across Firebase: the plan fails, naming it, when it is taken."
+  description = "The Firebase Hosting site of the console's name, Muxxy: the console's home since 2026-11-24, https://<console_next_site>.web.app. Every other console site sends a visitor on to it. Unique across Firebase: the plan fails, naming it, when it is taken."
   type        = string
   default     = "muxxy"
   validation {

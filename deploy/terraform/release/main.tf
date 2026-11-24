@@ -9,8 +9,8 @@
 # Temporal's history and run workspaces across. The edge gets a new Cloud Run revision from the image,
 # which takes traffic once it is healthy.
 #
-# The console's address is the platform stack's home Firebase Hosting site, https://<console_home_site>.web.app,
-# which forwards every request to the edge. The edge signs operators in with Google itself, so the
+# The console's address is Muxxy's Firebase Hosting site, https://<console_next_site>.web.app, which forwards
+# every request to the edge; every earlier address sends a visitor on to it. The edge signs operators in with Google itself, so the
 # service is open to the internet at the Cloud Run level, and every /v1 request needs its session.
 
 terraform {
@@ -45,6 +45,9 @@ locals {
   region   = local.platform.region
   vm_ip    = local.platform.vm_ip
   edge     = "mh-edge"
+  # Since 2026-11-24 the console's home is Muxxy's site, the platform stack's console_next_site. The sites stay
+  # as the platform stack made them (a deploy never deletes one); only what each serves changed.
+  home_url = "https://${local.platform.console_next_site}.web.app"
 }
 
 provider "google" {
@@ -207,12 +210,12 @@ resource "google_firebase_hosting_version" "console" {
     redirects {
       glob        = "/"
       status_code = 301
-      location    = "https://${local.platform.console_home_site}.web.app/"
+      location    = "${local.home_url}/"
     }
     redirects {
       glob        = "/:path*"
       status_code = 301
-      location    = "https://${local.platform.console_home_site}.web.app/:path"
+      location    = "${local.home_url}/:path"
     }
   }
 }
@@ -221,20 +224,25 @@ resource "google_firebase_hosting_release" "console" {
   provider     = google-beta
   site_id      = local.platform.console_site
   version_name = google_firebase_hosting_version.console.name
-  message      = "every path to https://${local.platform.console_home_site}.web.app"
+  message      = "every path to ${local.home_url}"
 }
 
-# The console's home address: every path goes to the edge.
+# The Octofusion address, the console's home until 2026-11-24, sends a visitor on to Muxxy's, path and
+# query kept, so its links and bookmarks keep working.
 resource "google_firebase_hosting_version" "home" {
   provider = google-beta
   site_id  = local.platform.console_home_site
   config {
-    rewrites {
-      glob = "**"
-      run {
-        service_id = google_cloud_run_v2_service.edge.name
-        region     = local.region
-      }
+    # The bare address first: "/:path*" needs a path to capture, and answered "/" with a 404.
+    redirects {
+      glob        = "/"
+      status_code = 301
+      location    = "${local.home_url}/"
+    }
+    redirects {
+      glob        = "/:path*"
+      status_code = 301
+      location    = "${local.home_url}/:path"
     }
   }
 }
@@ -243,13 +251,13 @@ resource "google_firebase_hosting_release" "home" {
   provider     = google-beta
   site_id      = local.platform.console_home_site
   version_name = google_firebase_hosting_version.home.name
-  message      = "every path to the Cloud Run service ${local.edge}"
+  message      = "every path to ${local.home_url}"
 }
 
-# The console's next name, Muxxy, serves it too. Sign-in works there once the web client lists the address;
-# then a later release makes it the home and the others redirect to it.
+# The console's home: Muxxy's address, where every path goes to the edge.
 resource "google_firebase_hosting_version" "next" {
-  count    = try(local.platform.console_next_site, "") == "" ? 0 : 1
+  # One, kept as a count so the deployed version keeps its address.
+  count    = 1
   provider = google-beta
   site_id  = local.platform.console_next_site
   config {
@@ -271,7 +279,7 @@ resource "google_firebase_hosting_release" "next" {
   message      = "every path to the Cloud Run service ${local.edge}"
 }
 
-# The other new addresses send a visitor on to the home address, path and query kept.
+# The other addresses send a visitor on to the home address, path and query kept.
 resource "google_firebase_hosting_version" "redirect" {
   for_each = toset(local.platform.console_redirect_sites)
   provider = google-beta
@@ -281,12 +289,12 @@ resource "google_firebase_hosting_version" "redirect" {
     redirects {
       glob        = "/"
       status_code = 301
-      location    = "https://${local.platform.console_home_site}.web.app/"
+      location    = "${local.home_url}/"
     }
     redirects {
       glob        = "/:path*"
       status_code = 301
-      location    = "https://${local.platform.console_home_site}.web.app/:path"
+      location    = "${local.home_url}/:path"
     }
   }
 }
@@ -296,5 +304,5 @@ resource "google_firebase_hosting_release" "redirect" {
   provider     = google-beta
   site_id      = each.key
   version_name = each.value.name
-  message      = "every path to https://${local.platform.console_home_site}.web.app"
+  message      = "every path to ${local.home_url}"
 }
