@@ -246,7 +246,7 @@ resource "google_firebase_hosting_release" "home" {
   message      = "every path to the Cloud Run service ${local.edge}"
 }
 
-# The console's next name, Muxtopus, serves it too. Sign-in works there once the web client lists the address;
+# The console's next name, Muxxy, serves it too. Sign-in works there once the web client lists the address;
 # then a later release makes it the home and the others redirect to it.
 resource "google_firebase_hosting_version" "next" {
   count    = try(local.platform.console_next_site, "") == "" ? 0 : 1

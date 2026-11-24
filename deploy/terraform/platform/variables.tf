@@ -87,9 +87,9 @@ variable "console_home_site" {
 }
 
 variable "console_next_site" {
-  description = "The Firebase Hosting site of the console's next name, Muxtopus (2026-11-23): it serves the console beside the home site until sign-in works there, and then becomes the home. Unique across Firebase: the plan fails, naming it, when it is taken."
+  description = "The Firebase Hosting site of the console's next name, Muxxy (2026-11-23): it serves the console beside the home site until sign-in works there, and then becomes the home. Unique across Firebase: the plan fails, naming it, when it is taken."
   type        = string
-  default     = "muxtopus"
+  default     = "muxxy"
   validation {
     condition     = can(regex("^[a-z0-9][a-z0-9-]{4,28}[a-z0-9]$", var.console_next_site))
     error_message = "console_next_site must be 6 to 30 lowercase letters, digits and hyphens, starting and ending with a letter or digit: a Firebase Hosting site name."

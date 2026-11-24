@@ -41,6 +41,6 @@ Both releases are done (2026-11-23). The platform stack holds both sites (`conso
 - A new Google Cloud role the deploy needs goes into the platform stack in a pull request before the one that uses it.
 - Every new or changed setting is checked at service startup.
 
-## The next name: Muxtopus
+## The next name: Muxxy
 
-On 2026-11-23 the owner chose Muxtopus as the platform's name. Its Firebase site, `muxtopus`, was checked creatable with Firebase's create call (`validateOnly`), and the platform stack now holds it (`console_next_site`). It serves the console beside `octofusion-ai.web.app`, and `MH_CONSOLE_ORIGIN` lists both. Once the web client lists `https://muxtopus.web.app` and sign-in works there, a later release makes it the home: every other address redirects to it.
+On 2026-11-23 the owner chose Muxxy as the platform's name, after turning down Octospawn and Muxtopus. Its Firebase site, `muxxy`, was checked creatable with Firebase's create call (`validateOnly`), and the platform stack now holds it (`console_next_site`). It serves the console beside `octofusion-ai.web.app`, and `MH_CONSOLE_ORIGIN` lists both. Once the web client lists `https://muxxy.web.app` and sign-in works there, a later release makes it the home: every other address redirects to it.
