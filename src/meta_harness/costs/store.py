@@ -156,6 +156,17 @@ def top(
     ).fetchall()
 
 
+def by_goal(conn: psycopg.Connection, first: date, last: date, operator: str | None = None) -> list[tuple]:
+    """What each goal's model cost is made of: (goal id, item, dollars) over the days, for every goal with a
+    cost. operator: only the goals that operator's work was for."""
+    where, params = "source = 'model' AND goal_id <> '' AND day BETWEEN %s AND %s", [first, last]
+    if operator:
+        where, params = f"{where} AND operator = %s", [*params, operator]
+    return conn.execute(
+        f"SELECT goal_id, item, sum(usd) FROM costs.daily_cost WHERE {where} GROUP BY goal_id, item", params
+    ).fetchall()
+
+
 def values(conn: psycopg.Connection, dimension: str, filters: dict[str, list[str]]) -> list[str]:
     """Every value a dimension takes, for a filter's choices: within the cost source and operator the filters
     give, but never narrowed by the dimension's own filter, so a value chosen can always be chosen away."""

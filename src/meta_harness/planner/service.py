@@ -1147,6 +1147,12 @@ def create_app(
             raise HTTPException(
                 status_code=502, detail=f"no title could be written ({err}). Type one with the pencil, or save without"
             ) from err
+        # What the title cost is recorded, as a saved goal's is: of no goal yet, so it counts as planning.
+        events.emit(
+            "goal_titled",
+            {"goal_id": "", "title": titled.title, "model": titled.model, "usd_cost": titled.usd_cost},
+            actor=who,
+        )
         return {"title": titled.title}
 
     @app.post("/v1/goals/draft")

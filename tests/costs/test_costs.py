@@ -187,6 +187,25 @@ def test_sizing_an_issue_is_a_planning_cost_of_its_goal(clean):
         ]
 
 
+def test_a_goals_narratives_and_next_steps_are_a_cost_of_their_own_and_the_overviews_are_no_goals(clean):
+    """Narratives were written, and paid for, with no cost recorded anywhere: narrative_written was never
+    harvested. With next steps they are the cost of telling the operator about a goal, apart from planning it."""
+    events = Events()
+    model = "claude:claude-haiku-5"
+    wrote = {"persona": "product", "digest": "d", "model": model}
+    events.add("narrative_written", {**wrote, "scope": "g-a", "usd_cost": "0.007"})
+    events.add("narrative_written", {**wrote, "scope": "overview", "usd_cost": "0.004"})
+    events.add("next_steps_written", {"goal_id": "g-a", "digest": "d", "steps": [], "model": model, "usd_cost": "0.02"})
+
+    assert _harvest(events) == 3
+
+    with db.connect(autocommit=True) as conn:
+        rows = conn.execute("SELECT item, goal_id, usd FROM costs.daily_cost ORDER BY goal_id, usd").fetchall()
+        parts = store.by_goal(conn, date(2026, 11, 1), date(2026, 11, 30))
+    assert rows == [("narratives", "", Decimal("0.004")), ("narratives", "g-a", Decimal("0.027"))]
+    assert parts == [("g-a", "narratives", Decimal("0.027"))], "a goal's breakdown leaves out what is no goal's"
+
+
 def test_cloud_cost_is_read_from_the_billing_export_and_restated_days_replace_what_was_there(clean, monkeypatch):
     asked: list[str] = []
     bill = [("2026-11-10", "Compute Engine", "4.20"), ("2026-11-10", "Cloud Run", "0.30")]
@@ -381,6 +400,20 @@ def api(clean, monkeypatch):
 
 
 SPAN = {"from": "2026-11-09", "to": "2026-11-11"}
+
+
+def test_each_goals_cost_says_what_it_is_made_of_most_expensive_first(api):
+    seen = api.get("/v1/costs/goals", params=SPAN, headers=OPERATOR)
+
+    assert seen.status_code == 200, seen.text
+    found = seen.json()
+    assert found["kinds"] == ["task", "review", "fix", "planning", "narratives", "writing"]
+    assert [(g["goal_id"], g["total"]) for g in found["goals"]] == [("g-a", 3.26), ("g-b", 1.25)]
+    assert found["goals"][0]["parts"] == {"task": 2.5, "review": 0.75, "planning": 0.01}
+    # A goal that is gone, as these are from the planner's store, is still listed, named by its id.
+    assert found["goals"][0]["title"] == "g-a" and found["goals"][1]["parts"] == {"planning": 1.25}
+    backwards = api.get("/v1/costs/goals", params={"from": "2026-11-11", "to": "2026-11-09"}, headers=OPERATOR)
+    assert backwards.status_code == 422
 
 
 def test_an_admin_sees_every_source_as_a_series_with_totals_and_a_trend(api):

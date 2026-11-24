@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal, Protocol
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -620,12 +620,25 @@ def create_app(
         return {"task_id": task_id, "rounds": reviews.rounds(task, recorded)}
 
     @app.get("/v1/performance")
-    def performance_numbers(days: int = Query(30, ge=1, le=365), who: Caller = Depends(caller)) -> dict:
-        """What the work cost over the last `days`, for the tasks whose last run finished then: the cost per
-        task, per pull request and per goal, and the dollar-hours per successfully completed task, each as an
-        average and a median, with the total, wasted and review-loop spend (tasks/performance.py)."""
+    def performance_numbers(
+        days: int = Query(30, ge=1, le=365),
+        first: date | None = Query(default=None, alias="from"),
+        last: date | None = Query(default=None, alias="to"),
+        who: Caller = Depends(caller),
+    ) -> dict:
+        """What the work cost for the tasks whose last run finished in a range: from one day to another (UTC,
+        both included), or with neither the last `days`. The cost per task, per pull request and per goal, the
+        dollar-hours per successfully completed task and the tries to green, each as an average and a median,
+        the first-try green rate, and the total, wasted, review-loop and planning spend (tasks/performance.py)."""
         until = datetime.now(timezone.utc)
         since = until - timedelta(days=days)
+        if first or last:
+            end = last or until.date()
+            start = first or end - timedelta(days=days - 1)
+            if start > end or (end - start).days > 365:
+                raise HTTPException(status_code=422, detail="give a span of 1 to 366 days, from on or before to")
+            since = datetime.combine(start, datetime.min.time(), timezone.utc)
+            until = datetime.combine(end + timedelta(days=1), datetime.min.time(), timezone.utc)
         try:
             recorded = reviewers.read_all(events.read, performance.EVENT_TYPES)
         except Exception as err:  # noqa: BLE001 - the event service is the caller's 502

@@ -26,6 +26,13 @@ const COSTS: Costs = {
   scope: "all",
 };
 
+const GOAL_COSTS = {
+  from: "",
+  to: "",
+  kinds: ["task", "review", "fix", "planning", "narratives", "writing"],
+  goals: [{ goal_id: "g-a", title: "Saves", status: "active", total: 12.5, parts: { task: 8, review: 2, fix: 1.5, planning: 0.9, narratives: 0.1 } }],
+};
+
 const NUMBERS = {
   since: "",
   until: "",
@@ -35,6 +42,8 @@ const NUMBERS = {
   cost_per_pull_request: { average: 6.25, median: 5, count: 10 },
   cost_per_goal: { average: 34, median: 30, count: 2 },
   dollar_hours_per_completed_task: { average: 2.345, median: 1.5, count: 9 },
+  tries_to_green: { average: 1.4, median: 1, count: 9 },
+  first_try_green: { rate: 0.6667, count: 6, of: 9 },
   total_usd: "68.00",
   wasted_usd: "11.00",
   review_loop_usd: "20.00",
@@ -47,6 +56,7 @@ function show(costs: Costs, path = "/performance", numbers: unknown = NUMBERS, a
   vi.stubGlobal("fetch", (url: string) => {
     all.push(url);
     if (url.startsWith("/v1/performance")) return Promise.resolve(new Response(JSON.stringify(numbers), { status: 200, headers: { "Content-Type": "application/json" } }));
+    if (url.startsWith("/v1/costs/goals")) return Promise.resolve(new Response(JSON.stringify(GOAL_COSTS), { status: 200, headers: { "Content-Type": "application/json" } }));
     asked.push(url);
     return Promise.resolve(new Response(JSON.stringify(costs), { status: 200, headers: { "Content-Type": "application/json" } }));
   });
@@ -211,7 +221,14 @@ test("the key numbers are large, each a median and an average, for the days in v
   expect(screen.getByTestId("cost-per-pr").textContent).toContain("$6.25average");
   expect(screen.getByTestId("cost-per-goal").textContent).toContain("2 goals");
   expect(screen.getByTestId("key-numbers-note").textContent).toContain("12 tasks finished in this time, 9 merged");
-  expect(all).toContain("/v1/performance?days=7");
+  // The numbers follow the page's own time filter, and sit under it.
+  expect(all.some((url) => /^\/v1\/performance\?from=\d{4}-\d\d-\d\d&to=\d{4}-\d\d-\d\d$/.test(url))).toBe(true);
+  const range = screen.getByRole("radiogroup", { name: "Range" });
+  expect(range.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByTestId("tries-to-green").textContent).toContain("1median");
+  expect(screen.getByTestId("tries-to-green").textContent).toContain("1.4average");
+  expect(screen.getByTestId("first-try-green").textContent).toContain("67%");
+  expect(screen.getByTestId("first-try-green").textContent).toContain("6 of 9 merged tasks");
   expect(screen.getByRole("heading", { name: "Performance" })).toBeTruthy();
 });
 
@@ -222,4 +239,17 @@ test("a time with nothing finished says so in each number", async () => {
   const key = await screen.findByTestId("dollar-hours");
   expect(key.textContent).toContain("none");
   expect(key.textContent).toContain("No merged tasks in this time");
+});
+
+test("each goal's cost says what it is made of: runs, reviews, fixes, planning, narratives and the writing pass", async () => {
+  show(COSTS);
+  const row = await screen.findByTestId("goal-cost");
+  expect(row.textContent).toContain("Saves");
+  expect(row.textContent).toContain("$12.50");
+  expect(row.textContent).toContain("$8.00");
+  expect(row.textContent).toContain("$0.10");
+  // A kind the goal spent nothing on says so.
+  expect(row.textContent).toContain("none");
+  const head = screen.getByTestId("goal-costs").textContent ?? "";
+  for (const name of ["Task runs", "Reviews", "Fixes", "Planning", "Narratives", "Writing pass"]) expect(head).toContain(name);
 });

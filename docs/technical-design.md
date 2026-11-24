@@ -2814,7 +2814,8 @@ credential.
 | POST | `/v1/proposals/{id}/approve`, `/reject` | Harness analyzer | Decide a proposal; an approved one applies as a new configuration version | planned |
 | GET, POST | `/v1/events` | Event service | Events by run, task, type or source after a position, paged; services append with POST | built |
 | GET | `/v1/events/tail` | Event service | The same filter as server-sent events, resumable from any position | built |
-| GET | `/v1/performance` | Task service | What the work cost over the last `days` (1 to 365, 30 by default), for the tasks whose last run finished then: `cost_per_task`, `cost_per_pull_request`, `cost_per_goal` and `dollar_hours_per_completed_task`, each with `average`, `median` and `count`, and `tasks`, `merged`, `total_usd`, `wasted_usd`, `review_loop_usd` and `hours`. Read from the run events each time (`tasks/performance.py`); the edge routes it to the task service. The Performance page's key numbers | built |
+| GET | `/v1/costs/goals` | Planner | What each goal's model cost is made of from one day to another (`from`, `to`; the last 30 days by default), most expensive first: `parts` by kind (`task`, `review`, `fix`, `planning`, `narratives`, `writing`) and `total`, with the goal's title. An admin sees every goal; anyone else, the goals their own work was for. A goal's `narrative_written` and `next_steps_written` are harvested as `narratives`; before 2026-11-24 next steps were counted as planning and narratives were not counted | built |
+| GET | `/v1/performance` | Task service | What the work cost from one day to another (`from`, `to`), or with neither over the last `days` (1 to 365, 30 by default), for the tasks whose last run finished then: `tries_to_green`, `first_try_green` (`rate`, `count`, `of`), `cost_per_task`, `cost_per_pull_request`, `cost_per_goal` and `dollar_hours_per_completed_task`, each with `average`, `median` and `count`, and `tasks`, `merged`, `total_usd`, `wasted_usd`, `review_loop_usd` and `hours`. Read from the run events each time (`tasks/performance.py`); the edge routes it to the task service. The Performance page's key numbers | built |
 | GET | `/v1/spend` | Metering service | Spend and dollar-hours grouped by goal, modality, repo, model, harness profile or tier, over a time range | planned |
 | GET | `/v1/pool` | Pool manager | Per-run sandboxes by image and state, warm targets and lease latency | planned |
 | POST | `/v1/webhooks/code-host`, `/v1/webhooks/{tracker}` | Task service, planner | Code-host and issue-tracker webhooks, each checked by its signature | planned |
@@ -4397,10 +4398,17 @@ The code, its routes and its events keep `supervisor`.
 
 The Performance page (`console/src/features/performance`, at `/performance`;
 it was named Costs, and `/costs` still leads to it with its filters) shows
-what the work costs. It opens with the key numbers, large, each as a median and
+what the work costs. Its filters come first, and everything under them follows
+the time in view. Then the key numbers, large, each as a median and
 an average for the tasks whose last run finished in the range
 (`GET /v1/performance`, `tasks/performance.py`): the dollar-hours per
-successfully completed task, the cost per task, per pull request and per goal.
+successfully completed task, the tries to green, the cost per task, per pull
+request and per goal, and the share of merged tasks that were green on the
+first try. A try is a task's own run or a fix run, counted until it merged; a
+review run checks the work and is not one. Under the numbers a table says what
+each goal's cost is made of (`GET /v1/costs/goals`): its task runs, reviews,
+fixes, planning (the planning run, and sizing, splitting and fixing its
+issues), narratives (its narratives and next steps) and the writing pass.
 Under them it says how many tasks finished and merged, what was spent, how
 much of it in review and fix runs, on planning, and on tasks that did not
 merge. A deploy's smoke task is left out of everything, and a goal's planning

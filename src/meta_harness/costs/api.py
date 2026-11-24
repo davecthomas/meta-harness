@@ -202,6 +202,38 @@ def register(
             raise HTTPException(status_code=403, detail=f"{who} is not an admin")
         return {"harvested": harvest_now()}
 
+    @app.get("/v1/costs/goals")
+    def goal_costs(
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        who: str = Depends(operator),
+        is_admin: bool = Depends(admin),
+    ) -> dict:
+        """What each goal's model cost is made of over the days, most expensive goal first: its task runs,
+        reviews, fixes, planning, narratives and writing pass (`parts`, by kind) and their `total`. An admin
+        sees every goal; anyone else, the goals their own work was for."""
+        last = end or datetime.now(UTC).date()
+        first = start or last - timedelta(days=29)
+        if first > last or (last - first).days > MAX_DAYS:
+            raise HTTPException(status_code=422, detail=f"give a span of 1 to {MAX_DAYS} days")
+        with db.connect(autocommit=True) as conn:
+            rows = store.by_goal(conn, first, last, None if is_admin else who)
+        found: dict[str, dict] = {}
+        for goal_id, item, usd in rows:
+            entry = found.setdefault(goal_id, {"goal_id": goal_id, "parts": {}, "total": 0.0})
+            entry["parts"][item] = round(float(usd), 4)
+            entry["total"] = round(entry["total"] + float(usd), 4)
+        for entry in found.values():
+            known = goal(entry["goal_id"]) or {}
+            entry["title"] = known.get("title") or (known.get("statement") or entry["goal_id"])[:80]
+            entry["status"] = known.get("status") or ""
+        return {
+            "from": first.isoformat(),
+            "to": last.isoformat(),
+            "kinds": ["task", "review", "fix", "planning", "narratives", "writing"],
+            "goals": sorted(found.values(), key=lambda g: -g["total"]),
+        }
+
     @app.get("/v1/costs")
     def costs(
         start: date | None = Query(default=None, alias="from"),

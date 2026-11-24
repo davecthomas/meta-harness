@@ -63,7 +63,27 @@ def test_the_numbers_are_worked_out_from_each_tasks_runs_checks_and_merge():
     assert found["dollar_hours_per_completed_task"] == {"average": 20.5, "median": 10.0, "count": 1}
     assert (found["total_usd"], found["wasted_usd"], found["review_loop_usd"]) == ("19.00", "11.00", "2.00")
     assert found["planning_usd"] == "2.00"
+    # t-1 merged after one run of its own (its review run is a check, not a try): green on the first try.
+    assert found["tries_to_green"] == {"average": 1.0, "median": 1.0, "count": 1}
+    assert found["first_try_green"] == {"rate": 1.0, "count": 1, "of": 1}
     assert found["hours"] == 4.5
+
+
+def test_a_task_that_needed_a_fix_run_took_two_tries_and_is_not_first_try_green():
+    recorded = _events(
+        *_run("t-1", "r-1", "standard", "4.00", 10, 9),
+        *_run("t-1", "r-2", "review", "1.00", 9, 8.5),
+        *_run("t-1", "r-3", "fix", "2.00", 8, 7),
+        *_run("t-1", "r-4", "review", "1.00", 7, 6.5),
+        ("t-1", None, "pull_request_merged", {"pr_url": "u", "head_sha": "a"}, 6),
+        *_run("t-2", "r-5", "standard", "3.00", 5, 4),
+        ("t-2", None, "pull_request_merged", {"pr_url": "v", "head_sha": "b"}, 4),
+    )
+
+    found = performance.summary(recorded, {}, NOW - timedelta(days=7), NOW)
+
+    assert found["tries_to_green"] == {"average": 1.5, "median": 1.5, "count": 2}
+    assert found["first_try_green"] == {"rate": 0.5, "count": 1, "of": 2}
 
 
 def test_a_range_with_no_finished_task_has_no_numbers_to_show():
