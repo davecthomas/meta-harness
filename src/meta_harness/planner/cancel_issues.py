@@ -32,7 +32,19 @@ from meta_harness.run_service.provenance import parse as parse_provenance
 from meta_harness.trackers.base import Tracker, TrackerError
 
 
-def reason(who: str) -> str:
+def reason(who: str, status: str = "canceled", duplicate_of: str | None = None) -> str:
+    """Why the issue is closed, in its closing comment: a duplicate says which issue did its work; otherwise
+    what became of the goal, which a met goal's issue must not be told was canceled."""
+    if duplicate_of:
+        return (
+            f"Closed as a duplicate of {duplicate_of}: that issue is the same work, from the same goal, and its "
+            "work is the one the goal kept."
+        )
+    if status == "met":
+        return (
+            "Closed as not planned: the goal this issue was created for was met without it, and "
+            f"{who} closed what it left open."
+        )
     return f"Closed as not planned: the goal this issue was created for was canceled by {who}."
 
 
@@ -51,6 +63,22 @@ def _open_links(goal_id: str) -> tuple[list[dict], set[str]]:
         for link in links:
             created.update(link.get("split_into") or [])
         return [link for link in links if link["state"] == "open" and not link.get("dropped")], created
+
+
+def _links(goal_id: str) -> list[dict]:
+    with db.connect(autocommit=True) as conn:
+        return store.links(conn, goal_id)
+
+
+def duplicate_of(link: dict, links: list[dict]) -> str | None:
+    """The other issue of the goal that is the same work as this one (copies.py), preferring one whose work is
+    done (closed): this issue is then its duplicate. None when no other issue shares its work's hash."""
+    content = link.get("content_hash")
+    if not content:
+        return None
+    same = [other for other in links if other["ref"] != link["ref"] and other.get("content_hash") == content]
+    same.sort(key=lambda other: other["state"] == "open")
+    return same[0]["ref"] if same else None
 
 
 def signed_by(body: str, goal_id: str) -> bool:
@@ -88,6 +116,7 @@ async def close_created(goal: dict, tracker: Tracker, who: str, left: list[str])
     closed, the ref with why."""
     done: dict[str, list[str]] = {"closed": [], "errors": []}
     close = getattr(tracker, "close_unplanned", None)
+    every = await asyncio.to_thread(_links, goal["id"])
     for link in await open_created(goal, tracker):
         ref = link["ref"]
         if link.get("task_id") in left:
@@ -98,7 +127,14 @@ async def close_created(goal: dict, tracker: Tracker, who: str, left: list[str])
         try:
             signed = Provenance(COMMENT, goal=goal["id"])
             await tracker.comment(
-                ref, await outbound.for_tracker(reason(who), ref, outbound.COMMENT, outbound.FIXED, provenance=signed)
+                ref,
+                await outbound.for_tracker(
+                    reason(who, goal.get("status", "canceled"), duplicate_of(link, every)),
+                    ref,
+                    outbound.COMMENT,
+                    outbound.FIXED,
+                    provenance=signed,
+                ),
             )
             await close(ref)
         except (TrackerError, ValueError) as err:
