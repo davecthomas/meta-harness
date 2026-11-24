@@ -54,7 +54,10 @@ test("an ended goal shows its next steps by itself, each one click from a new go
   fireEvent.click(within(first).getByRole("button", { name: "Start a goal from this" }));
 
   expect(await screen.findByText("the new goal's page")).toBeTruthy();
-  expect(asked.at(-1)).toEqual({ url: "/v1/goals/g-1/next-steps/abc123abc123/goal", method: "POST" });
+  expect(asked).toContainEqual({ url: "/v1/goals/g-1/next-steps/abc123abc123/goal", method: "POST" });
+  // The new goal's plan needs the operator, so what needs them is read again at once.
+  const started = asked.findIndex((a) => a.method === "POST");
+  expect(asked.slice(started + 1)).toContainEqual({ url: "/v1/needs", method: "GET" });
 });
 
 test("a running goal writes none until asked, then says it is working and shows them", async () => {

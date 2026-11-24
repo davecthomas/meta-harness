@@ -4,6 +4,7 @@ import { IconArrowRight, IconBulb } from "@tabler/icons-react";
 import { Link, useNavigate } from "react-router-dom";
 import { call } from "../../client";
 import { VoiceMark } from "../../components/Voice";
+import { reloadNeeds } from "../overview/needsYou";
 
 // A goal's next steps as the planner serves them (planner/next_steps.py): what it would do next if it carried
 // the work on, each with the statement of a new goal, and the goal started from it when one was.
@@ -42,6 +43,8 @@ function Step({ step, goalId, onStarted }: { step: NextStep; goalId: string; onS
     setError(null);
     try {
       const made = await call<{ goal_id: string }>(`/v1/goals/${goalId}/next-steps/${step.id}/goal`, { method: "POST" });
+      // The new goal's plan waits for approval: every page counting what needs the operator shows it now.
+      void reloadNeeds();
       onStarted(made.goal_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
