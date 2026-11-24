@@ -20,7 +20,7 @@ A deploy replaces the VM. Its boot disk is new every time; the data disk
 `deploy/environment.json` is the deployment's one settings file: `project`,
 `project_number`, `region`, `zone`, `state_bucket`, `console_site` (the
 deployment's first Firebase Hosting site, which now redirects to the console's
-home address, `https://<console_home_site>.web.app`, a platform variable),
+home address, `https://<console_next_site>.web.app`, a platform variable),
 `google_client_id` and `github_repo`. Both stacks, the deploy workflow, the
 Makefile and `deploy/shutdown.sh` read it, and nothing else names a project:
 `tests/test_deploy.py` fails when one does. Moving the deployment to another
