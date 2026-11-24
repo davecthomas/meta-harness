@@ -285,8 +285,8 @@ test("the autonomy chosen last time is where a new goal starts, and this goal's 
   await next(3);
 
   const levels = await screen.findByRole("radiogroup", { name: "How much it does without asking" });
-  expect((within(levels).getByRole("radio", { name: "Ask" }) as HTMLInputElement).checked).toBe(true);
-  fireEvent.click(within(levels).getByRole("radio", { name: "Full" }));
+  expect((within(levels).getByRole("radio", { name: "Chill" }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(within(levels).getByRole("radio", { name: "Assertive" }));
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
   expect(await screen.findByText("Goal page")).toBeTruthy();

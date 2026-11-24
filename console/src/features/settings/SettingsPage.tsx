@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Paper, Text, Title, useMantineColorScheme } from "@mantine/core";
 import { api, type UserSettings } from "../../api";
 import { InlineField } from "../../components/InlineField";
+import { AutonomyPicker, autonomyOf } from "../goals/autonomy";
 import { ErrorAlert, Facts, PageHeader } from "../../components/ui";
 
 const APPEARANCES = [
@@ -70,7 +71,15 @@ export function SettingsPage() {
               "Budget",
               <InlineField kind="number" label="Budget" value={planner.max_usd === null ? null : Number(planner.max_usd)} min={0} decimalScale={2} prefix="$" allowEmpty empty="None" showSaved onCommit={(v) => savePlanner({ max_usd: v === null ? null : String(v) })} />,
             ],
-            ["Merging", <InlineField kind="switch" label="Merge pull requests automatically" switchLabel="Merge pull requests automatically" value={planner.auto_merge} showSaved onCommit={(v) => savePlanner({ auto_merge: v })} />],
+            [
+              "Without asking",
+              <AutonomyPicker
+                size="xs"
+                label="How much a new goal does without asking"
+                value={autonomyOf(planner)}
+                onChange={(v) => void savePlanner({ autonomy: v, auto_merge: v === "full" })}
+              />,
+            ],
           ]}
         />
       </Paper>
