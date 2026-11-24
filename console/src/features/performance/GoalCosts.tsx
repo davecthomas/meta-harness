@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { DataTable, ErrorAlert, SectionTitle } from "../../components/ui";
 import { usd } from "../../money";
-import { seriesColor } from "./CostChart";
+import { CHART_CSS, seriesColor } from "./CostChart";
 import type { GoalCosts as Found } from "./api";
 
 // Goal Cost Composition: of what a goal costs, the share that goes to each stage of its work, averaged over the
@@ -62,7 +62,9 @@ export function GoalCosts({ from, to }: { from: string; to: string }) {
   const percent = (share: number) => `${Math.round(share * 100)}%`;
   const cell = (value: number | undefined) => (value ? usd(value) : <Text span c="dimmed">none</Text>);
   return (
-    <Paper p="md" mb="lg" withBorder data-testid="goal-costs">
+    // cost-viz: the series colors are defined for what carries that class (CHART_CSS), in both themes.
+    <Paper p="md" mb="lg" withBorder className="cost-viz" data-testid="goal-costs">
+      <style>{CHART_CSS}</style>
       <SectionTitle>Goal Cost Composition</SectionTitle>
       <Text size="sm" c="dimmed" mb="md" data-testid="composition-over">
         {done.length

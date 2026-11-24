@@ -250,6 +250,9 @@ test("Goal Cost Composition shows each stage's average share over the completed 
   show(COSTS);
   const section = await screen.findByTestId("goal-costs");
   expect(section.textContent).toContain("Goal Cost Composition");
+  // The ring and its legend were grey on production: the series colors exist only inside what is marked cost-viz.
+  expect(section.classList.contains("cost-viz")).toBe(true);
+  expect(section.querySelector("style")?.textContent).toContain("--series-1");
   expect(screen.getByTestId("composition-over").textContent).toBe("The average over 1 completed goal in this time.");
   // The stages in the order the work goes through them, each with its share and its average dollars.
   const stages = [...screen.getByTestId("composition").children].map((row) => row.textContent);
