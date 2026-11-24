@@ -566,3 +566,24 @@ def test_a_deploy_a_newer_merge_replaced_stops_before_it_changes_anything():
     # It stops while it waits, before the step that first changes the deployment.
     assert deploy.index("gh run cancel") < deploy.index("- name: apply the platform stack when it changed")
     assert "cancel-in-progress: false" in deploy, "a deploy that has started changing things always finishes"
+
+
+def test_every_platform_default_passes_its_own_validation():
+    """`terraform validate` does not apply a variable's validation to its default, so a default that fails its
+    own rule passed CI and stopped the deploy: "muxxy" is 5 letters, and the site rule wanted 6."""
+    text = (ROOT / "deploy" / "terraform" / "platform" / "variables.tf").read_text()
+    checked = 0
+    for name, body in re.findall(r'variable "([\w]+)" \{(.*?)\n\}', text, re.S):
+        rule = re.search(r'regex\("((?:[^"\\]|\\.)*)"', body)
+        default = re.search(r"default\s*=\s*(\[[^\]]*\]|\"[^\"]*\")", body)
+        if not rule or not default:
+            continue
+        pattern = rule.group(1).replace("\\\\", "\\")
+        values = re.findall(r'"([^"]*)"', default.group(1))
+        for value in values:
+            assert re.fullmatch(pattern, value), f"{name}'s default {value!r} fails its own validation {pattern}"
+            checked += 1
+    assert checked >= 3, "the site names' defaults are checked"
+    # A name of five letters is a site name Firebase accepts.
+    site = re.search(r'variable "console_next_site" \{.*?regex\("([^"]+)"', text, re.S).group(1).replace("\\\\", "\\")
+    assert re.fullmatch(site, "muxxy") and not re.fullmatch(site, "muxx")
