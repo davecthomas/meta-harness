@@ -23,9 +23,10 @@ permissions:
   contents: read
 
 jobs:
-  # Whether this change needs the two slow checks below (deploy/checks_scope.py says why and when). A pull
-  # request that touches only the console's source or the docs skips them, so a task's review does not wait
-  # four to six minutes for checks that cannot say anything about it. Every push to main runs them.
+  # Whether this change needs the checks below (deploy/checks_scope.py says why and when). A pull request that
+  # touches only the console's source or the docs skips the two slow ones, and one that touches only the docs
+  # skips every one, so a review does not wait for checks that cannot say anything about it. Every push to main
+  # runs them all.
   scope:
     name: which checks this change needs
     runs-on: ubuntu-24.04
@@ -52,7 +53,7 @@ jobs:
     name: zero-cost end-to-end check
     needs: scope
     # Only an explicit skip skips: if the scope job fails or is canceled, the check still runs.
-    if: ${{ always() && needs.scope.outputs.slow != 'skip' }}
+    if: ${{ always() && (needs.scope.outputs.slow == 'run' || needs.scope.result != 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     # The task-api step runs the task service and event service on this Postgres.
@@ -114,7 +115,7 @@ jobs:
   image-check-parts:
     name: sandbox check part (${{ matrix.part }})
     needs: scope
-    if: ${{ always() && needs.scope.outputs.slow != 'skip' }}
+    if: ${{ always() && (needs.scope.outputs.slow == 'run' || needs.scope.result != 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -161,7 +162,7 @@ jobs:
   image-checks:
     name: sandbox runs this repo's checks
     needs: [scope, image-check-parts]
-    if: ${{ always() && needs.scope.outputs.slow != 'skip' }}
+    if: ${{ always() && (needs.scope.outputs.slow == 'run' || needs.scope.result != 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -174,6 +175,8 @@ jobs:
 
   harness-server:
     name: harness server tests
+    needs: scope
+    if: ${{ always() && needs.scope.outputs.slow != 'docs' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:

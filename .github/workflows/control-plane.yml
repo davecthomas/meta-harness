@@ -19,8 +19,35 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request that touches only documentation runs neither job (deploy/checks_scope.py). Every push to main
+  # runs both.
+  scope:
+    name: which control plane checks this change needs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # A pull request is checked out as its merge with its base: the base is the first parent.
+          fetch-depth: 2
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          scope=run
+          if [ "$EVENT" = pull_request ]; then
+            scope=$(git diff --name-only HEAD^1 HEAD | python3 deploy/checks_scope.py)
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "the checks: $scope"
+
   test:
     name: control plane tests
+    needs: scope
+    # Only an explicit docs answer skips: if the scope job fails or is canceled, the check still runs.
+    if: ${{ always() && needs.scope.outputs.scope != 'docs' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     services:
@@ -58,6 +85,8 @@ jobs:
 
   console:
     name: console web app
+    needs: scope
+    if: ${{ always() && needs.scope.outputs.scope != 'docs' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
