@@ -5,7 +5,7 @@ import tagline from "./tagline.svg";
 import { createOctopus, energyAt, FLAIL_SECONDS } from "./octopus";
 import "./splash.css";
 
-export const NAME = "Octofusion AI";
+export const NAME = "Muxxy AI";
 export const TAGLINE = "The Open Meta-Harness for Coding at Scale";
 
 // The bubbles that rise from behind the octopus: where each starts across its width (percent), its size in

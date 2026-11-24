@@ -41,7 +41,7 @@ export function AuditPage() {
   }, []);
   return (
     <>
-      <PageHeader title="Audit" description="What people changed, and every decision Octofusion made about its work, newest first." />
+      <PageHeader title="Audit" description="What people changed, and every decision Muxxy made about its work, newest first." />
       <Tabs value={view} onChange={(v) => setView(v ?? "changes")} mb="md">
         <Tabs.List>
           <Tabs.Tab value="changes">Changes by people</Tabs.Tab>
@@ -57,7 +57,7 @@ export function AuditPage() {
           {events.map((e) => (
             <Table.Tr key={e.event_id}>
               <Table.Td><Text size="sm" c="dimmed">{when(e.time_utc)}</Text></Table.Td>
-              <Table.Td><Text size="sm">{e.actor ?? "Octofusion"}</Text></Table.Td>
+              <Table.Td><Text size="sm">{e.actor ?? "Muxxy"}</Text></Table.Td>
               <Table.Td><Text size="sm">{describeAudit(e)}</Text></Table.Td>
             </Table.Tr>
           ))}

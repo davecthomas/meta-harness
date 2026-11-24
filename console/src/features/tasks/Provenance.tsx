@@ -45,7 +45,7 @@ function isProvenance(value: unknown): value is Provenance {
 export function provenanceText({ what, provenance: p }: Signed): string {
   const said = [
     p.round && `round ${p.round}`,
-    `Octofusion ${p.version}`,
+    `Muxxy ${p.version}`,
     p.model && `model ${p.model}`,
     p.run && `run ${p.run}`,
     p.by && `for ${p.by}`,

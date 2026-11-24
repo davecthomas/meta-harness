@@ -2,7 +2,7 @@
 
 """The console says "meta-harness" only in its tagline.
 
-The product is Octofusion AI. Its tagline, "The Open Meta-Harness for Coding at Scale", is the one place the
+The product is Muxxy AI. Its tagline, "The Open Meta-Harness for Coding at Scale", is the one place the
 console may say "meta-harness". This test reads the console's strings (console/src, test files left out) and
 every string under src/, since a service's string may reach a console page: a hold's reason, an error's
 remedy, a task's status note. It reuses the extraction in test_fixed_strings.py, which leaves out docstrings,
@@ -111,7 +111,7 @@ def name_hits(strings: list[tuple[str, int, str]]) -> list[str]:
 
 def _fail(found: list[str]) -> str:
     return (
-        f'{len(found)} strings say "meta-harness" outside the tagline. Name the product Octofusion, or reword '
+        f'{len(found)} strings say "meta-harness" outside the tagline. Name the product Muxxy, or reword '
         "the sentence so it needs no name. A code identifier or text written only to GitHub or Jira is named "
         "in ALLOWED_PARTS, ALLOWED_STRINGS or IDENTIFIERS in this file, with its reason:\n" + "\n".join(found)
     )

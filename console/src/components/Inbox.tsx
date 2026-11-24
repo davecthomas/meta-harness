@@ -51,7 +51,7 @@ export function Inbox() {
   useEffect(() => {
     if (!items) return;
     if (seen.current && notify.current && typeof Notification !== "undefined" && Notification.permission === "granted") {
-      for (const item of items) if (!seen.current.has(item.key)) new Notification("Octofusion", { body: `${item.action}: ${item.title}`, tag: item.key });
+      for (const item of items) if (!seen.current.has(item.key)) new Notification("Muxxy", { body: `${item.action}: ${item.title}`, tag: item.key });
     }
     seen.current = new Set(items.map((i) => i.key));
   }, [items]);

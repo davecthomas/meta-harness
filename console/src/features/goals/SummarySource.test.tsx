@@ -14,17 +14,17 @@ test("a card says whose words its pull request's summary is", () => {
   expect(screen.queryByTestId("fix-summaries-source")).toBeNull();
   unmount();
   show({ summary_source: "recorded" });
-  expect(screen.getByTestId("summary-source").textContent).toBe("summary by Octofusion");
+  expect(screen.getByTestId("summary-source").textContent).toBe("summary by Muxxy");
 });
 
-test("fix rounds Octofusion summarized are marked apart, and the run's opening summary stays the run's", () => {
+test("fix rounds Muxxy summarized are marked apart, and the run's opening summary stays the run's", () => {
   const { unmount } = show({ summary_source: "run", fix_summaries_written: 2 });
   expect(screen.getByTestId("summary-source").textContent).toBe("summary by the run");
-  expect(screen.getByTestId("fix-summaries-source").textContent).toBe("2 fix rounds by Octofusion");
+  expect(screen.getByTestId("fix-summaries-source").textContent).toBe("2 fix rounds by Muxxy");
   unmount();
   show({ summary_source: "files", fix_summaries_written: 1 });
-  expect(screen.getByTestId("summary-source").textContent).toBe("summary by Octofusion");
-  expect(screen.getByTestId("fix-summaries-source").textContent).toBe("1 fix round by Octofusion");
+  expect(screen.getByTestId("summary-source").textContent).toBe("summary by Muxxy");
+  expect(screen.getByTestId("fix-summaries-source").textContent).toBe("1 fix round by Muxxy");
 });
 
 test("a pull request with no summary recorded shows nothing", () => {

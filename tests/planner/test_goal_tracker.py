@@ -151,7 +151,7 @@ def test_a_goal_starts_with_jiras_default_project_and_names_only_a_listed_one(wo
     }
     refused = client.post("/v1/goals", json=body, headers=OPERATOR)
     assert refused.status_code == 422
-    assert "AB is not one of the Jira projects Octofusion works in (OPS, VL)" in refused.json()["detail"]
+    assert "AB is not one of the Jira projects Muxxy works in (OPS, VL)" in refused.json()["detail"]
 
 
 def test_a_project_an_open_goal_uses_cannot_leave_the_trackers_configuration(world):
@@ -169,7 +169,7 @@ def test_a_project_an_open_goal_uses_cannot_leave_the_trackers_configuration(wor
 
     assert refused.status_code == 422
     [reason] = [r for r in refused.json()["detail"]["reasons"] if goal["id"] in r]
-    assert reason.startswith("jira: OPS is not one of the Jira projects Octofusion works in (VL)")
+    assert reason.startswith("jira: OPS is not one of the Jira projects Muxxy works in (VL)")
     assert reason.endswith("uses it")
     client.post(f"/v1/goals/{goal['id']}/cancel", headers=OPERATOR)
 
@@ -434,7 +434,7 @@ def test_a_goal_that_asks_takes_an_issue_assigned_to_the_meta_harness_with_no_la
         json={"statement": "Fix bugs", "repos": [REPO], "tracker_settings": {"project": "VL"}},
         headers=OPERATOR,
     )
-    assert refused.status_code == 422 and "assigned to Octofusion" in refused.json()["detail"]
+    assert refused.status_code == 422 and "assigned to Muxxy" in refused.json()["detail"]
 
 
 def test_an_issue_that_is_not_started_is_told_why_in_its_tracker_once_for_each_reason(world):

@@ -138,7 +138,7 @@ async def test_a_push_the_code_host_refuses_for_a_workflow_file_ends_the_task_sa
 
     said = str(refused.value)
     assert not refused.value.retryable
-    assert said.startswith("the run changed .github/workflows/deploy.yml, and Octofusion may not change a workflow")
+    assert said.startswith("the run changed .github/workflows/deploy.yml, and Muxxy may not change a workflow")
     assert "A person makes this change. Cancel the task" in said
     assert failures.kind(f"CodeHostError: {said}") == failures.PERMANENT, "the Task Manager never retries it"
 

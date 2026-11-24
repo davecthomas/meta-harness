@@ -368,7 +368,7 @@ async def publish(
             raise
         changed = ", ".join(f for f in files if f.startswith(".github/workflows/")) or "a workflow file"
         raise CodeHostError(
-            f"the run changed {changed}, and Octofusion may not change a workflow file: the code host "
+            f"the run changed {changed}, and Muxxy may not change a workflow file: the code host "
             "refuses that push from its App. A person makes this change. Cancel the task, and take the "
             "workflow file out of the issue's Paths if the rest stands without it",
             retryable=False,

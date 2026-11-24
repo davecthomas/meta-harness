@@ -1,4 +1,4 @@
-// Created by Octofusion in run t-33d72d7e8075:run-1 on harness:pi-lean/claude:claude-sonnet-5-5.
+// Created by Muxxy in run t-33d72d7e8075:run-1 on harness:pi-lean/claude:claude-sonnet-5-5.
 
 import { useEffect, useRef, useState } from "react";
 import { Anchor, Button, Group, Paper, Stack, Text, TextInput } from "@mantine/core";

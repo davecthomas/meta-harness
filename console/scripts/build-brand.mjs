@@ -2,8 +2,8 @@
 
 // Builds the console's brand artwork from console/brand/source: `npm run brand`.
 //
-// It writes src/brand/octofusion-symbol.svg, the symbol optimized for the web and cut to the octopus, and
-// src/brand/octofusion-lockup.svg, the octopus with the magenta wordmark to its right, scaled up to read
+// It writes src/brand/muxxy-symbol.svg, the symbol optimized for the web and cut to the octopus, and
+// src/brand/muxxy-lockup.svg, the octopus with the magenta wordmark to its right, scaled up to read
 // at a header's size, on a canvas with no empty space around them.
 // The outputs are committed. The build is deterministic, so a second run changes no file.
 //
@@ -16,7 +16,7 @@
 // never redrawn or recolored: the optimizer only rewrites numbers and merges same-color paths, and the
 // lockup only places and scales the two drawings.
 // It also writes the splash's own two files: src/brand/wordmark.svg, the name alone, and
-// src/brand/tagline.svg, the tagline cut from octofusion-full-lockup.svg, which draws it as paths.
+// src/brand/tagline.svg, the tagline cut from muxxy-full-lockup.svg, which draws it as paths.
 
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -30,8 +30,8 @@ const sourceDir = join(consoleDir, "brand", "source");
 const outDir = join(consoleDir, "src", "brand");
 const publicDir = join(consoleDir, "public");
 
-const TITLE = "Octofusion AI";
-const DESC = "Vector brand artwork for Octofusion AI, the Open Meta-Harness for Coding at Scale.";
+const TITLE = "Muxxy AI";
+const DESC = "Vector brand artwork for Muxxy AI, the Open Meta-Harness for Coding at Scale.";
 const PRECISION = 2;
 // 40 KB and 120 KB read as 40,000 and 120,000 bytes, as the size note does.
 const SYMBOL_LIMIT = 40_000;
@@ -161,8 +161,8 @@ function lockup(symbol, wordmark) {
     ` shape-rendering="geometricPrecision" viewBox="0 0 ${width} ${height}">` +
     `<title>${TITLE}</title>` +
     `<desc>${DESC}</desc>` +
-    `<g id="octofusion-lockup-symbol" transform="translate(${round(PAD - s.x)} ${round(PAD - s.y)})">${drawing(symbol)}</g>` +
-    `<g id="octofusion-lockup-wordmark" transform="translate(${wordX} ${wordY}) scale(${scale})">${drawing(wordmark)}</g>` +
+    `<g id="muxxy-lockup-symbol" transform="translate(${round(PAD - s.x)} ${round(PAD - s.y)})">${drawing(symbol)}</g>` +
+    `<g id="muxxy-lockup-wordmark" transform="translate(${wordX} ${wordY}) scale(${scale})">${drawing(wordmark)}</g>` +
     `</svg>\n`
   );
 }
@@ -348,15 +348,15 @@ async function writePublic(symbol) {
 
 async function main() {
   await startRenderer();
-  const symbol = await optimizeSource("octofusion-symbol.svg");
-  const wordmark = await optimizeSource("octofusion-wordmark.svg");
+  const symbol = await optimizeSource("muxxy-symbol.svg");
+  const wordmark = await optimizeSource("muxxy-wordmark.svg");
   // The splash's two: the name it brings out of the octopus's arms, and the tagline that rolls out under it,
   // cut from the stacked lockup, which draws the tagline as paths.
-  const stacked = await optimizeSource("octofusion-full-lockup.svg");
+  const stacked = await optimizeSource("muxxy-full-lockup.svg");
   const tagline = alone(fromGroup(stacked, "tagline-divider"), viewBoxOf(stacked), TAGLINE);
   const outputs = [
-    ["octofusion-symbol.svg", tightSymbol(symbol), SYMBOL_LIMIT],
-    ["octofusion-lockup.svg", lockup(symbol, wordmark), LOCKUP_LIMIT],
+    ["muxxy-symbol.svg", tightSymbol(symbol), SYMBOL_LIMIT],
+    ["muxxy-lockup.svg", lockup(symbol, wordmark), LOCKUP_LIMIT],
     ["wordmark.svg", alone(drawing(wordmark), viewBoxOf(wordmark), TITLE), SPLASH_LIMIT],
     ["tagline.svg", tagline, SPLASH_LIMIT, TAGLINE, TAGLINE_FILLS],
   ];

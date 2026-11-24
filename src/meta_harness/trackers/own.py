@@ -56,7 +56,7 @@ def parse_ref(ref: str) -> str:
     """The id a ref names."""
     match = REF.match(ref)
     if not match:
-        raise ValueError(f"{ref!r} is not mh:i-<12 hex digits>, a task kept in Octofusion")
+        raise ValueError(f"{ref!r} is not mh:i-<12 hex digits>, a task kept in Muxxy")
     return match["id"]
 
 
@@ -115,7 +115,7 @@ class OwnTracker:
         found = self._all(f"SELECT {COLUMNS} FROM planner.own_issue WHERE id = %s", (parse_ref(ref),))
         if not found:
             raise TrackerError(
-                f"{ref} is not a task Octofusion keeps: it may have been removed. Remove it from the goal.",
+                f"{ref} is not a task Muxxy keeps: it may have been removed. Remove it from the goal.",
                 retryable=False,
                 status=404,
             )
@@ -270,8 +270,8 @@ class OwnTracker:
 SPEC = Supported(
     SCHEME,
     "None: no issue tracking",
-    "The goal's tasks are kept in Octofusion and in no outside tracker. Its pull requests are the only "
-    "record outside Octofusion.",
+    "The goal's tasks are kept in Muxxy and in no outside tracker. Its pull requests are the only "
+    "record outside Muxxy.",
     build=OwnTracker,
     writes_progress=True,
     goal_settings=[assignee_setting("the console's users, by email")],

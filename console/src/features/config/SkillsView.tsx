@@ -19,7 +19,7 @@ export function sourceLine(source: SkillEntry["source"]): string {
     return `${source.url}${source.path ? ` / ${source.path}` : ""}${at}${source.commit ? ` (${String(source.commit).slice(0, 7)})` : ""}`;
   }
   if (source?.kind === "upload") return `Uploaded${source.by ? ` by ${source.by}` : ""}`;
-  return "Ships with Octofusion";
+  return "Ships with Muxxy";
 }
 
 // Every file of a skill, each in full: what a run will be given.
@@ -228,7 +228,7 @@ function ImportDialog({ names, onClose, onAdd }: { names: string[]; onClose: () 
 }
 
 // What a locked skill's lock says, on its row and where its files are read.
-export const LOCKED = "Locked: it ships with Octofusion and changes only by a pull request.";
+export const LOCKED = "Locked: it ships with Muxxy and changes only by a pull request.";
 
 // Which profiles name each skill, so a skill in use says so, and cannot be removed until they stop.
 function usedBy(profiles: Record<string, { skills?: string[] }>, name: string): string[] {
@@ -243,7 +243,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
   return (
     <Stack gap="md">
       <Text size="sm" c="dimmed">
-        A harness profile names the skills its runs load. A run is told each one's name and description, and reads the rest when its work needs it. Nothing loads from a task's repo. A skill with a lock ships with Octofusion and cannot be changed or removed here.
+        A harness profile names the skills its runs load. A run is told each one's name and description, and reads the rest when its work needs it. Nothing loads from a task's repo. A skill with a lock ships with Muxxy and cannot be changed or removed here.
       </Text>
       {names.length ? (
         <DataTable head={["Skill", "What it is for", "Source", "Used by", ""]} minWidth={860}>
@@ -301,7 +301,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
             {skills[reading].source?.locked && (
               <Group gap={6} wrap="nowrap">
                 <IconLock size={14} aria-hidden />
-                <Text size="xs">{LOCKED} Octofusion runs its script and adds its writing rules to prompts.</Text>
+                <Text size="xs">{LOCKED} Muxxy runs its script and adds its writing rules to prompts.</Text>
               </Group>
             )}
             <SkillFiles skill={skills[reading]} />

@@ -461,7 +461,7 @@ def test_an_update_from_the_facts_names_each_open_issue_and_where_it_stands():
                 "title": "Describe the change",
                 "state": "open",
                 "replaced_by": None,
-                "where_it_stands": "its pull request is open, and Octofusion is running its checks",
+                "where_it_stands": "its pull request is open, and Muxxy is running its checks",
             },
             {
                 "ref": "jira:ABC-2",
@@ -476,7 +476,7 @@ def test_an_update_from_the_facts_names_each_open_issue_and_where_it_stands():
     plain = updates.from_facts(found, "claude:m", "0.01")
 
     assert plain.headline == "1 issue still open."
-    assert plain.body == "Describe the change: its pull request is open, and Octofusion is running its checks."
+    assert plain.body == "Describe the change: its pull request is open, and Muxxy is running its checks."
     assert (plain.model, plain.usd_cost, plain.needs_you) == ("claude:m", "0.01", [])
     updates.written_true(plain, found)
 

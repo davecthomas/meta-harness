@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1053.84 280" role="img" aria-label="muxxy-wordmark white" shape-rendering="geometricPrecision">
+  <title>Muxxy AI wordmark</title>
+  <g id="muxxy" fill="#ffffff" stroke="#ffffff" stroke-width="12" stroke-linejoin="miter" stroke-miterlimit="3" paint-order="stroke fill" fill-rule="evenodd">
+    <path id="glyph-m-12" d="M0 220V0H52L95 76L138 0H190V220H134V96L95 164L56 96V220Z" transform="translate(12 42)" fill-rule="evenodd" />
+    <path id="glyph-u-220" d="M0 0H58V158L70 170H80L92 158V0H150V188L118 220H32L0 188Z" transform="translate(220 42)" fill-rule="evenodd" />
+    <path id="glyph-x-388" d="M0 0H62L75 52L88 0H150L108 110L150 220H88L75 168L62 220H0L42 110Z" transform="translate(388 42)" fill-rule="evenodd" />
+    <path id="glyph-x-556" d="M0 0H62L75 52L88 0H150L108 110L150 220H88L75 168L62 220H0L42 110Z" transform="translate(556 42)" fill-rule="evenodd" />
+    <path id="glyph-y-724" d="M0 0H60L75 66L90 0H150L105 126V220H45V126Z" transform="translate(724 42)" fill-rule="evenodd" />
+  </g>
+  <g id="ai" fill="#ffffff" fill-rule="evenodd" transform="translate(894.00 4) scale(0.62) skewX(-7)">
+    <path d="M48 0H102L150 220H94L86 172H64L56 220H0ZM72 122H79L75 82Z" fill-rule="evenodd" />
+    <path d="M15 0H70L48 220H-7Z" transform="translate(162 0)" fill-rule="evenodd" />
+  </g>
+</svg>
