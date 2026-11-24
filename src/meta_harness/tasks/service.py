@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal, Protocol
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -28,7 +29,7 @@ from pydantic import BaseModel, Field
 from meta_harness import auth, budget_request, db, local_repos
 from meta_harness.scheduler import holds
 from meta_harness.supervisor import standing
-from meta_harness.tasks import reviews, spend, store
+from meta_harness.tasks import reviewers, reviews, spend, store
 
 
 class Events(Protocol):
@@ -617,6 +618,24 @@ def create_app(
         except Exception as err:  # noqa: BLE001 - the event service is the caller's 502
             raise HTTPException(status_code=502, detail=f"could not read the task's events: {err}") from err
         return {"task_id": task_id, "rounds": reviews.rounds(task, recorded)}
+
+    @app.get("/v1/reviewers")
+    def reviewers_table(days: int = Query(30, ge=1, le=365), who: Caller = Depends(caller)) -> dict:
+        """How each reviewer's findings turned out over the last `days`: rounds, findings, fixed, not fixed,
+        dismissed and never judged, and what its review runs cost (tasks/reviewers.py). Read from the events."""
+        until = datetime.now(timezone.utc)
+        since = until - timedelta(days=days)
+        try:
+            recorded = reviewers.read_all(events.read, reviewers.EVENT_TYPES)
+        except Exception as err:  # noqa: BLE001 - the event service is the caller's 502
+            raise HTTPException(
+                status_code=502, detail=f"could not read the review events: {err}. Reload to try again"
+            ) from err
+        return {
+            "since": since.isoformat(),
+            "until": until.isoformat(),
+            "reviewers": reviewers.table(recorded, since, until),
+        }
 
     @app.get("/v1/tasks/{task_id}/spend")
     def task_spend(task_id: str, who: Caller = Depends(caller)) -> dict:
