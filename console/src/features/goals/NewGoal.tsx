@@ -12,7 +12,6 @@ import {
   Loader,
   NumberInput,
   Paper,
-  SegmentedControl,
   SimpleGrid,
   Stack,
   Text,
@@ -42,6 +41,7 @@ import { ImproveGoal } from "./ImproveGoal";
 import { SpecField, type GoalSpec } from "./SpecField";
 import { specName, useSpecDraft } from "./SpecDraft";
 import { PARALLEL_HELP } from "./parallel";
+import { AUTONOMY, AutonomyPicker, type Autonomy } from "./autonomy";
 
 // A new goal, one decision at a time (docs/specs/new-goal-progressive.md): where the work comes from, where it
 // is, what the goal is made of, and how it runs. Each panel opens once the one before is answered, and folds to
@@ -57,13 +57,6 @@ const SOURCES: { value: Source; label: string; says: string; icon: typeof IconLi
   { value: "issues", label: "Issues that already exist", says: "Run open issues as they are: by label, picked by hand, or assigned to Muxxy.", icon: IconListCheck },
   { value: "spec", label: "A spec or an epic", says: "A planner splits a document or an epic into tasks. You approve the plan before anything runs.", icon: IconFileDescription },
   { value: "describe", label: "I'll describe it", says: "A planner splits your description into tasks. You approve the plan before anything runs.", icon: IconWriting },
-];
-
-// How much the goal does without asking, as the goal page offers it (store.AUTONOMY).
-const AUTONOMY = [
-  { value: "ask", label: "Ask", says: "Every pull request waits for you, and the Task Manager asks before it acts." },
-  { value: "standard", label: "Standard", says: "Every pull request waits for you to merge it." },
-  { value: "full", label: "Full", says: "Muxxy merges each pull request once its checks and review pass." },
 ];
 
 // What the goal's label brings in: its open issues in the goal's repos, by title. Issues another goal holds
@@ -210,7 +203,7 @@ export function NewGoal() {
     );
   }, []);
   const [priority, setPriority] = useState<string | number>(0);
-  const [autonomy, setAutonomy] = useState("standard");
+  const [autonomy, setAutonomy] = useState<Autonomy>("standard");
   // The operator's settings as read, to keep the autonomy chosen here as the next goal's start.
   const saved = useRef<UserSettings | null>(null);
   const [spec, setSpec] = useState<GoalSpec | null>(null);
@@ -303,8 +296,7 @@ export function NewGoal() {
       : source === "spec"
         ? spec ? specName(spec) : ""
         : statement.trim().slice(0, 90);
-  const autonomyWords = AUTONOMY.find((a) => a.value === autonomy);
-  const runsAnswer = `${autonomyWords?.label}: ${autonomyWords?.says.replace(/\.$/, "").toLowerCase()} · ${budget === "" ? "the most one goal may spend" : `budget $${budget}`}`;
+  const runsAnswer = `${AUTONOMY[autonomy].label} · ${budget === "" ? "the most one goal may spend" : `budget $${budget}`}`;
   const planned = source !== "issues" || plansEvery;
 
   // The description is always the system's to write, from the issues, the spec, or what the operator typed:
@@ -397,7 +389,7 @@ export function NewGoal() {
       // The choice made here is the next goal's default. Not saving it is no reason to fail the goal.
       const mine = saved.current;
       if (mine && mine.planner.autonomy !== autonomy) {
-        const kept = { ...mine, planner: { ...mine.planner, autonomy: autonomy as "ask" | "standard" | "full", auto_merge: autonomy === "full" } };
+        const kept = { ...mine, planner: { ...mine.planner, autonomy, auto_merge: autonomy === "full" } };
         void api.saveSettings(kept).then((s) => (saved.current = s), () => undefined);
       }
       return goal.id;
@@ -625,8 +617,7 @@ export function NewGoal() {
               )}
               <div>
                 <Text size="sm" fw={500} mb={4}>How much it does without asking</Text>
-                <SegmentedControl aria-label="How much it does without asking" value={autonomy} onChange={setAutonomy} data={AUTONOMY.map((a) => ({ value: a.value, label: a.label }))} />
-                <Text size="sm" c="dimmed" mt={4}>{autonomyWords?.says}</Text>
+                <AutonomyPicker label="How much it does without asking" value={autonomy} onChange={setAutonomy} />
               </div>
               <NumberInput
                 label="Budget"

@@ -156,7 +156,7 @@ test("a label its sweep's issues came from is kept, and one with a picked issue 
   const patched = renderGoal(goal("active", { issues: [swept] }));
 
   // A goal with issues folds its settings into one line; they open to be edited.
-  expect((await screen.findByTestId("goal-settings-summary")).textContent).toBe("Settings · label mh:fix · o/r · budget $10.00 · take the clear steps");
+  expect((await screen.findByTestId("goal-settings-summary")).textContent).toBe("Settings · label mh:fix · o/r · budget $10.00 · standard");
   expect(screen.queryByRole("button", { name: "Edit label" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Show and edit settings" }));
   fireEvent.click(await screen.findByRole("button", { name: "Edit label" }));
@@ -180,10 +180,13 @@ test("how much is done without asking is one choice of three, saved when picked,
   const patched = renderGoal(goal());
 
   const choice = await screen.findByTestId("autonomy");
-  expect(choice.textContent).toContain("It resolves conflicts and retries by itself. A reviewed pull request waits for you to merge.");
-  fireEvent.click(screen.getByRole("radio", { name: "Ask me first" }));
+  expect(choice.textContent).toContain("It takes the clear steps itself, and a reviewed pull request waits for you to merge.");
+  // Each level is named as a driving profile is, and hovering one says what it does.
+  fireEvent.mouseEnter(screen.getByTestId("autonomy-full"));
+  expect(await screen.findByText(/^Assertive: everything Standard does, and it merges each pull request itself/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("radio", { name: "Chill" }));
   await waitFor(() => expect(patched).toEqual([{ autonomy: "ask" }]));
-  fireEvent.click(screen.getByRole("radio", { name: "Also merge" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Assertive" }));
   await waitFor(() => expect(patched).toEqual([{ autonomy: "ask" }, { autonomy: "full" }]));
 });
 
@@ -260,5 +263,5 @@ test.each(["met", "canceled"])("a %s goal shows its fields read-only", async (st
   expect(screen.queryByRole("button", { name: /^Edit / })).toBeNull();
   expect(screen.queryByRole("switch")).toBeNull();
   expect(screen.queryByRole("radio")).toBeNull();
-  expect(screen.getByText(/^Take the clear steps: It resolves conflicts and retries by itself/)).toBeTruthy();
+  expect(screen.getByText(/^Standard: It takes the clear steps itself/)).toBeTruthy();
 });
