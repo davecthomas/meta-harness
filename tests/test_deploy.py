@@ -72,8 +72,8 @@ def test_the_deploy_workflow_waits_for_every_check_main_runs():
     jobs = set()
     for workflow in ("control-plane.yml", "e2e.yml"):
         jobs |= set(re.findall(r"^    name: (.+)$", (WORKFLOWS / workflow).read_text(), re.M))
-    # Not a check of the code: it only says whether a pull request needs the two slow ones.
-    jobs.discard("which checks this change needs")
+    # Not checks of the code: they only say which checks a pull request needs.
+    jobs -= {"which checks this change needs", "which control plane checks this change needs"}
     # The sandbox check's parts: "sandbox runs this repo's checks" stands for them all, and is the one waited for.
     jobs = {job for job in jobs if not job.startswith("sandbox check part ")}
     deploy = (WORKFLOWS / "deploy.yml").read_text()
@@ -382,14 +382,21 @@ def test_only_a_console_source_or_docs_change_skips_the_slow_checks():
     assert scope.needs_slow_checks([]), "with nothing to go on, the checks run"
 
 
-def test_the_slow_checks_skip_only_on_an_explicit_skip_and_never_on_main():
+def test_the_checks_skip_only_on_an_explicit_answer_and_never_on_main():
     workflow = (ROOT / ".github" / "workflows" / "e2e.yml").read_text()
-    guard = "if: ${{ always() && needs.scope.outputs.slow != 'skip' }}"
+    guard = "if: ${{ always() && (needs.scope.outputs.slow == 'run' || needs.scope.result != 'success') }}"
     assert workflow.count(guard) == 3, "the end-to-end check, the sandbox check's parts and their one result"
     for job in ("  e2e:", "  image-check-parts:", "  image-checks:"):
         assert guard in workflow.split(job, 1)[1].split("\n    steps:", 1)[0], job
+    docs = "if: ${{ always() && needs.scope.outputs.slow != 'docs' }}"
+    assert docs in workflow.split("  harness-server:", 1)[1].split("\n    steps:", 1)[0]
     # Anything but a pull request, a push to main among them, runs them: the deploy waits for all five checks.
     assert 'slow=run\n          if [ "$EVENT" = pull_request ]; then' in workflow
+    control = (ROOT / ".github" / "workflows" / "control-plane.yml").read_text()
+    guard = "if: ${{ always() && needs.scope.outputs.scope != 'docs' }}"
+    for job in ("  test:", "  console:"):
+        assert guard in control.split(job, 1)[1].split("\n    steps:", 1)[0], job
+    assert 'scope=run\n          if [ "$EVENT" = pull_request ]; then' in control
     deploy = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
     assert "sandbox runs this repo's checks" in deploy and "zero-cost end-to-end check" in deploy
 
@@ -529,11 +536,12 @@ def test_a_deploy_skips_mains_checks_only_when_the_pull_request_passed_every_one
         return [{"name": name, "status": "completed", "conclusion": how} for name, how in names.items() if how]
 
     assert module.tested(runs())
-    # A console-only pull request skips the two slow checks (checks_scope.py): that counts as passed.
-    skipped = {name: "skipped" if name in module.MAY_SKIP else "success" for name in module.REQUIRED}
-    assert module.tested([{"name": n, "status": "completed", "conclusion": how} for n, how in skipped.items()])
-    # Any other check skipped, failed, canceled, still running or never run: the deploy waits.
-    assert not module.tested(runs(control_plane_tests="skipped"))
+    # A pull request skips only what checks_scope.py lets it (every check, for documentation alone): that counts
+    # as passed.
+    assert module.tested([{"name": n, "status": "completed", "conclusion": "skipped"} for n in module.REQUIRED])
+    assert module.tested(runs(zero_cost_end_to_end_check="skipped"))
+    # A check failed, canceled, neutral, still running or never run: the deploy waits.
+    assert not module.tested(runs(control_plane_tests="neutral"))
     assert not module.tested(runs(console_web_app="failure"))
     assert not module.tested(runs(harness_server_tests="cancelled"))
     assert not module.tested(runs(harness_server_tests=""))

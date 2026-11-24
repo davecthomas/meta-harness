@@ -8,8 +8,8 @@ checks passed. Main still runs its checks at the merged commit; the deploy does 
 
 Reads the pull request's last commit's check runs on stdin, as GitHub's API answers them
 (`commits/<sha>/check-runs`), and prints `tested` only when every required check passed there. A slow check
-the pull request skipped counts as passed only when it is one `checks_scope.py` may skip, which it does for a
-change that cannot alter what the check proves. Anything else prints `wait`: when in doubt, the deploy waits.
+the pull request skipped counts as passed: only `checks_scope.py` skips one, and it does that only for a
+change that cannot alter what the check proves (a documentation-only change skips them all). Anything else prints `wait`: when in doubt, the deploy waits.
 """
 
 import json
@@ -23,8 +23,8 @@ REQUIRED = (
     "harness server tests",
     "sandbox runs this repo's checks",
 )
-# The two a pull request skips when it touches only the console's source or the docs (checks_scope.py).
-MAY_SKIP = ("zero-cost end-to-end check", "sandbox runs this repo's checks")
+# The checks a pull request may skip (checks_scope.py): all of them, for a documentation-only change.
+MAY_SKIP = REQUIRED
 
 
 def tested(check_runs: list[dict]) -> bool:
