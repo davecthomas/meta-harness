@@ -81,8 +81,8 @@ variable "console_home_site" {
   type        = string
   default     = "octofusion-ai"
   validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{4,28}[a-z0-9]$", var.console_home_site))
-    error_message = "console_home_site must be 6 to 30 lowercase letters, digits and hyphens, starting and ending with a letter or digit: a Firebase Hosting site name."
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{3,28}[a-z0-9]$", var.console_home_site))
+    error_message = "console_home_site must be 5 to 30 lowercase letters, digits and hyphens, starting and ending with a letter or digit: a Firebase Hosting site name."
   }
 }
 
@@ -91,8 +91,8 @@ variable "console_next_site" {
   type        = string
   default     = "muxxy"
   validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{4,28}[a-z0-9]$", var.console_next_site))
-    error_message = "console_next_site must be 6 to 30 lowercase letters, digits and hyphens, starting and ending with a letter or digit: a Firebase Hosting site name."
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{3,28}[a-z0-9]$", var.console_next_site))
+    error_message = "console_next_site must be 5 to 30 lowercase letters, digits and hyphens, starting and ending with a letter or digit: a Firebase Hosting site name."
   }
 }
 
@@ -101,8 +101,8 @@ variable "console_redirect_sites" {
   type        = list(string)
   default     = ["octofusion"]
   validation {
-    condition     = alltrue([for s in var.console_redirect_sites : can(regex("^[a-z0-9][a-z0-9-]{4,28}[a-z0-9]$", s))])
-    error_message = "each of console_redirect_sites must be 6 to 30 lowercase letters, digits and hyphens: a Firebase Hosting site name."
+    condition     = alltrue([for s in var.console_redirect_sites : can(regex("^[a-z0-9][a-z0-9-]{3,28}[a-z0-9]$", s))])
+    error_message = "each of console_redirect_sites must be 5 to 30 lowercase letters, digits and hyphens: a Firebase Hosting site name."
   }
 }
 
