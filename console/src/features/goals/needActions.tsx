@@ -101,7 +101,7 @@ export function HeldIssueAction({ goalId, issueRef, label, fallback, onDone }: {
 
 // What resolves a need: the page's own button for it. Every need has one.
 export type NeedAction =
-  | "approve_plan" | "accept_fix" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue"
+  | "approve_plan" | "accept_fix" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue" | "fix_setting"
   | "settle_review" | "retry" | "split_or_run" | "fix_plan";
 // changes: for accept_fix, what the planner's fix changes in the plan, a line each.
 export type Need = { what: string; ref: string; action?: NeedAction | ""; task_id?: string; pr_url?: string; changes?: string[] };
@@ -190,6 +190,9 @@ export function NeedButton({ need, planning, goalId, label, onDone, away = false
     }
     case "raise_budget":
       return <Button size="xs" variant="default" onClick={send(OPEN_SETTINGS)}>Raise the budget</Button>;
+    // A service's setting that fell back to its default: the logs name it, the value and how to fix it.
+    case "fix_setting":
+      return <Button size="xs" variant="default" component={Link} to="/admin/logs">Open the logs</Button>;
     default: {
       const url = need.ref ? issueUrl(need.ref) : null;
       const open = url ? (

@@ -27,7 +27,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from meta_harness import auth
+from meta_harness import auth, fallback
 from meta_harness.scheduler import admission as admission_module
 from meta_harness.scheduler.admission import Admission
 
@@ -47,7 +47,7 @@ def create_app(
     operator_keys: dict[str, str] | None = None,
     service_keys: dict[str, str] | None = None,
 ) -> FastAPI:
-    every = interval if interval is not None else float(os.environ.get("MH_ADMISSION_SECONDS", "3"))
+    every = interval if interval is not None else fallback.seconds("MH_ADMISSION_SECONDS", 3.0)
     operators = operator_keys if operator_keys is not None else auth.keys_from_env("MH_OPERATOR_KEYS")
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
     state = {"passes": 0, "last_error": None}

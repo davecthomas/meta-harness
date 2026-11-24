@@ -1,6 +1,7 @@
 """`mh`, the meta-harness command line."""
 
 import json
+import logging
 import time
 
 import click
@@ -247,6 +248,23 @@ def _planner_parts():
     return EventClient(source="planner"), trackers.connected(), TaskClient(api_key=os.environ.get("MH_SERVICE_KEY"))
 
 
+def _report_settings(events_client, service: str) -> None:
+    """Record, once at startup, which settings fell back to their default (fallback.py): the planner shows the
+    newest for each service in what needs the operator. One that cannot be recorded is logged; the service runs."""
+    from meta_harness import fallback
+    from meta_harness.costs.api import harvest_seconds
+    from meta_harness.planner.service import supervisor_seconds
+
+    if service == "planner":
+        # Read now, so a bad one is in the report rather than found later.
+        supervisor_seconds()
+        harvest_seconds()
+    try:
+        events_client.emit("settings_checked", fallback.checked(service))
+    except Exception as err:  # noqa: BLE001 - the report is a notice; the service still starts
+        logging.getLogger("meta_harness.settings").warning("could not record %s's settings: %s", service, err)
+
+
 @planner.command("serve")
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--port", default=8303, show_default=True)
@@ -259,8 +277,10 @@ def planner_serve(host: str, port: int) -> None:
 
     events_client, tracker, tasks_client = _planner_parts()
     _serve_logs("planner")
+    app = create_app(events_client, tracker, tasks_client)
+    _report_settings(events_client, "planner")
     uvicorn.run(
-        create_app(events_client, tracker, tasks_client),
+        app,
         host=host,
         port=port,
         log_level="warning",
@@ -516,8 +536,12 @@ def scheduler_serve(host: str, port: int) -> None:
 
     from meta_harness.scheduler.service import create_app
 
+    from meta_harness.events.client import EventClient
+
     _serve_logs("scheduler")
-    uvicorn.run(create_app(_admission()), host=host, port=port, log_level="warning", log_config=None, **SERVE)
+    app = create_app(_admission())
+    _report_settings(EventClient(source="scheduler"), "scheduler")
+    uvicorn.run(app, host=host, port=port, log_level="warning", log_config=None, **SERVE)
 
 
 @scheduler.command("drain")

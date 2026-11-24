@@ -29,7 +29,7 @@ from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 
-from meta_harness import db
+from meta_harness import db, fallback
 from meta_harness.costs import cloud_source, model_source, series, store
 
 log = logging.getLogger("meta_harness.costs")
@@ -69,21 +69,9 @@ def _warn_now(source: str, error: str, warned: dict[str, tuple[str, float]], now
 
 
 def harvest_seconds() -> float:
-    """How often the sources are harvested; 0 turns the loop off.
-
-    Raises:
-        RuntimeError: The setting is not a number, 0 or more.
-    """
-    raw = os.environ.get(HARVEST_SETTING, "").strip()
-    if not raw:
-        return DEFAULT_HARVEST_SECONDS
-    try:
-        seconds = float(raw)
-    except ValueError:
-        seconds = -1
-    if seconds < 0:
-        raise RuntimeError(f"{HARVEST_SETTING} must be a number of seconds, 0 or more, not {raw!r}")
-    return seconds
+    """How often the sources are harvested; 0 turns the loop off. A bad value falls back to the default, and
+    says so (fallback.py)."""
+    return fallback.seconds(HARVEST_SETTING, float(DEFAULT_HARVEST_SECONDS))
 
 
 def check_settings() -> None:

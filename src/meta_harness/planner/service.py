@@ -50,7 +50,7 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError
 
-from meta_harness import outbound
+from meta_harness import fallback, outbound
 from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
 from meta_harness import auth, db, retrying
@@ -280,15 +280,8 @@ def add_shipped_configuration(pool, events: Events) -> None:
 
 def supervisor_seconds() -> float:
     """How often the supervisor looks at every open task, from MH_SUPERVISOR_SECONDS: 60 when it is not set,
-    0 to turn the supervisor off. Raises RuntimeError, naming the setting, for anything else."""
-    raw = os.environ.get("MH_SUPERVISOR_SECONDS", "60")
-    try:
-        seconds = float(raw)
-    except ValueError as err:
-        raise RuntimeError(f"MH_SUPERVISOR_SECONDS must be a number of seconds, 0 or more, not {raw!r}") from err
-    if seconds < 0 or seconds != seconds:
-        raise RuntimeError(f"MH_SUPERVISOR_SECONDS must be a number of seconds, 0 or more, not {raw!r}")
-    return seconds
+    0 to turn the supervisor off. A bad value falls back to 60, and says so (fallback.py)."""
+    return fallback.seconds("MH_SUPERVISOR_SECONDS", 60.0)
 
 
 def create_app(
@@ -320,7 +313,7 @@ def create_app(
     services = service_keys if service_keys is not None else auth.keys_from_env("MH_SERVICE_KEYS")
     if not operators and not services:
         raise RuntimeError("set MH_OPERATOR_KEYS or MH_SERVICE_KEYS: the planner refuses to run without keys")
-    interval = sweep_seconds if sweep_seconds is not None else float(os.environ.get("MH_PLANNER_SWEEP_SECONDS", "60"))
+    interval = sweep_seconds if sweep_seconds is not None else fallback.seconds("MH_PLANNER_SWEEP_SECONDS", 60.0)
 
     # One sweep per goal at a time: the timed sweep, a new goal's first sweep and a requested one never overlap.
     locks: dict[str, asyncio.Lock] = {}
@@ -1783,7 +1776,7 @@ def create_app(
     app.state.overview = overview.Overview(events, tasks, overview_writer, overview_asker)
     overview.register(app, operator, app.state.overview)
     narratives.register(app, operator, load, narratives.Narratives(tasks, events, narrative_writer))
-    needs.register(app, operator, tasks)
+    needs.register(app, operator, tasks, events)
 
     async def start_goal(fields: dict, who: str) -> dict:
         """Creates a goal as POST /v1/goals does, for one started from a next step."""
