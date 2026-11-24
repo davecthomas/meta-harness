@@ -88,23 +88,14 @@ test("resume sends the operator's own amount when they change it, and reads the 
   expect(sent).toEqual([{ url: "/v1/goals/g-1", body: null }, { url: "/v1/goals/g-1/resume-budget", body: { add_usd: "50.00" } }]);
 });
 
-test("a goal whose budget only warns says it keeps going, and offers nothing to resume", () => {
-  inPage(<BudgetAlert goal={goal({ budget_mode: "warn", budget_block_at: null, budget_state: "over", spent_usd: "12.5" })} onResumed={() => undefined} />);
-  expect(screen.getByTestId("budget-alert").textContent).toContain("over budget, and it keeps going");
-  expect(screen.queryByRole("button", { name: "Raise budget" })).toBeNull();
-});
-
-test("the budget, what happens when it is reached, and the overage share one row", () => {
-  const { container, rerender } = inPage(<BudgetRow goal={goal()} readOnly={false} save={async () => undefined} />);
+test("the budget and its overage share one row, with the most one goal may spend", () => {
+  const { container } = inPage(<BudgetRow goal={goal({ budget_ceiling: "100.00" })} readOnly={false} save={async () => undefined} />);
   const row = container.querySelector('[data-testid="budget-row"]')!;
   expect(row.textContent).toContain("$10.00");
-  expect(row.textContent).toContain("Stop");
   expect(row.textContent).toContain("10% over, stops at $11.00");
-  rerender(
-    <MantineProvider theme={theme}><MemoryRouter><BudgetRow goal={goal({ budget_mode: "warn", budget_block_at: null })} readOnly={false} save={async () => undefined} /></MemoryRouter></MantineProvider>,
-  );
-  expect(container.textContent).toContain("Warn and keep going");
-  expect(container.textContent).not.toContain("Overage");
+  expect(row.textContent).toContain("Stops by $100.00 at most");
+  // Every goal's budget stops it: there is no choice to warn and keep going.
+  expect(row.textContent).not.toContain("Warn and keep going");
 });
 
 test("under the track budget policy a goal over its budget keeps going, with nothing to resume", () => {

@@ -5,7 +5,7 @@ import { IconCoin, IconPlayerPlay } from "@tabler/icons-react";
 import { api, type Goal } from "../../api";
 import type { BudgetResume } from "./api";
 import { BudgetEdit, type FieldProps } from "./GoalFields";
-import { InlineEdit, InlineSwitch, refusal } from "./InlineEdit";
+import { InlineEdit, refusal } from "./InlineEdit";
 
 // A goal's budget in the console: where the goal stands against it, the two fields that say what it does when
 // it is reached, the alert for a goal past it, and the one-step Resume that raises it.
@@ -39,9 +39,8 @@ export function budgetWords(goal: Budgeted, spent?: number): string | null {
   return goal.budget_block_at ? `over budget, stops at ${usd(goal.budget_block_at)}` : "over budget, and it keeps going";
 }
 
-// Whether the goal's budget can stop it: it has one, its own mode stops, and the deployment's budget policy does.
-export const budgetStops = (goal: Pick<Goal, "max_usd" | "budget_mode" | "budget_policy">) =>
-  Boolean(goal.max_usd) && goal.budget_mode !== "warn" && goal.budget_policy !== "track";
+// Whether the goal's budget can stop it: every goal's does, unless the deployment's budget policy only tracks.
+export const budgetStops = (goal: Pick<Goal, "max_usd" | "budget_policy">) => Boolean(goal.max_usd) && goal.budget_policy !== "track";
 
 export const budgetColor = (standing: Standing) => (standing === "blocked" ? "red" : standing === "over" ? "orange" : "blue");
 
@@ -50,19 +49,6 @@ export function BudgetMark({ goal }: { goal: Budgeted }) {
   const standing = budgetStanding(goal);
   if (standing === "ok") return null;
   return <Badge color={budgetColor(standing)} variant="light" tt="none">{standing === "blocked" ? "stopped by budget" : "over budget"}</Badge>;
-}
-
-export function BudgetModeEdit({ goal, readOnly, save }: FieldProps) {
-  return (
-    <InlineSwitch
-      label="Stop when the budget is reached"
-      checked={goal.budget_mode !== "warn"}
-      onText="Stop"
-      offText="Warn and keep going"
-      readOnly={readOnly}
-      save={(stop) => save({ budget_mode: stop ? "block" : "warn" })}
-    />
-  );
 }
 
 export function OverageEdit({ goal, readOnly, save }: FieldProps) {
@@ -96,8 +82,8 @@ export function OverageEdit({ goal, readOnly, save }: FieldProps) {
   );
 }
 
-// The goal page's Budget row: the amount, and for a goal with a budget what happens when it is reached and, for
-// one that stops, how far past it the goal may go. One setting, so one row.
+// The goal page's Budget row: the amount, and how far past it the goal may go. Every goal's budget stops it, at or
+// below the most one goal may spend (budget_ceiling). One setting, so one row.
 export function BudgetRow(props: FieldProps) {
   const { goal } = props;
   if (!goal.max_usd) return <BudgetEdit {...props} />;
@@ -111,12 +97,9 @@ export function BudgetRow(props: FieldProps) {
     <Group gap="md" wrap="wrap" align="center" data-testid="budget-row">
       <BudgetEdit {...props} />
       <Text size="sm" c="dimmed">·</Text>
-      {part("When reached", <BudgetModeEdit {...props} />)}
-      {goal.budget_mode !== "warn" && (
-        <>
-          <Text size="sm" c="dimmed">·</Text>
-          {part("Overage", <OverageEdit {...props} />)}
-        </>
+      {part("Overage", <OverageEdit {...props} />)}
+      {goal.budget_ceiling && (
+        <Text size="xs" c="dimmed">Stops by ${goal.budget_ceiling} at most</Text>
       )}
       {goal.budget_policy === "track" && (
         <Text size="sm" c="dimmed" w="100%">

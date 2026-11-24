@@ -221,7 +221,7 @@ class GoalPatch(BaseModel):
     # How much is done without asking: ask, standard or full (store.AUTONOMY). full turns auto_merge on.
     autonomy: Literal["ask", "standard", "full"] | None = None
     priority: int | None = None
-    # Sent as null: the goal has no budget.
+    # Sent as null: the goal's budget is the most one goal may spend (the task policy's max_goal_usd).
     max_usd: Decimal | None = Field(default=None, gt=0)
     budget_mode: Literal["block", "warn"] | None = None
     budget_overage_percent: int | None = Field(default=None, ge=0, le=1000)
@@ -1573,6 +1573,11 @@ def create_app(
                 fields[clearable] = getattr(body, clearable)
         if "max_parallel" in fields and (why := parallel_reason(body.max_parallel)):
             raise HTTPException(status_code=422, detail=why)
+        try:
+            # A bad budget is the request's fault (422), not a clash with the goal's state.
+            store.check_budget(fields.get("budget_mode"), fields.get("budget_overage_percent"), fields.get("max_usd"))
+        except store.GoalError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
         if "repos" in fields:
             unknown = [name for name in fields["repos"] if repos.get(name) is None]
             if unknown:

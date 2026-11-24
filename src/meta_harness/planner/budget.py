@@ -4,7 +4,11 @@ A goal with a budget (`max_usd`) says what the budget does once its runs have sp
 
 - `block`, the default: the goal stops spending at its blocking line, `max_usd` plus `budget_overage_percent`
   of it (10 by default). Between the budget and that line the goal runs on, over budget.
-- `warn`: the goal keeps going. Reaching the budget is recorded and shown, and nothing is held or refused.
+- `warn`: no longer taken. A goal saved with it before every budget became a hard cap is read as `block`.
+
+Every goal's budget is a hard cap at or below the deployment's ceiling, the task policy's `max_goal_usd`
+($100 unless it says otherwise). A goal with no budget of its own is read as having the ceiling, one above it
+as having the ceiling, and its blocking line never passes the ceiling: its overage shrinks to fit (`capped`).
 
 Above every goal is the deployment's budget policy (the task policy's `budget_policy`). Under `track`, no
 goal's budget stops anything, whatever its own mode: each behaves as `warn`, and spend is still recorded and
@@ -15,7 +19,7 @@ serves (`budget_block_at`), so the line is worked out in one place. Nothing here
 budget_api.py does that.
 """
 
-from decimal import ROUND_CEILING, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
 MODES = ("block", "warn")
@@ -48,14 +52,34 @@ def state(max_usd: Any, mode: str, overage_percent: int, spent: Any, status: str
     return "over" if spent >= Decimal(str(max_usd)) else "ok"
 
 
+def capped(goal: dict, ceiling: Decimal) -> dict:
+    """The goal as its budget binds it: never without a budget, never only warning, and never able to spend past
+    the ceiling. A goal saved before budgets became hard caps is read this way, so no stored row needs to
+    change. budget_ceiling says the ceiling, for a page to show."""
+    ceiling = Decimal(str(ceiling)).quantize(CENT)
+    max_usd = Decimal(str(goal["max_usd"])) if goal.get("max_usd") is not None else ceiling
+    max_usd = min(max_usd, ceiling)
+    goal["max_usd"] = str(max_usd)
+    if goal.get("budget_mode") != "block":
+        goal["budget_mode"] = "block"
+    # The overage that keeps the blocking line at or below the ceiling.
+    room = ((ceiling / max_usd - 1) * 100).to_integral_value(rounding=ROUND_FLOOR) if max_usd > 0 else Decimal(0)
+    goal["budget_overage_percent"] = max(0, min(int(goal.get("budget_overage_percent") or 0), int(room)))
+    goal["budget_ceiling"] = str(ceiling)
+    return goal
+
+
 def mode_in_effect(goal: dict) -> str:
     """What the goal's budget does now: its own mode, or warn while the deployment's budget policy is track."""
     return "warn" if goal.get("budget_policy") == "track" else goal["budget_mode"]
 
 
-def view(goal: dict, policy: str = "block") -> dict:
-    """The goal with the deployment's budget_policy, budget_block_at and budget_state, as the API serves it.
-    budget_resume_to shows only for a goal that is over or blocked."""
+def view(goal: dict, policy: str = "block", ceiling: Decimal | None = None) -> dict:
+    """The goal with the deployment's budget_policy, budget_block_at and budget_state, as the API serves it,
+    held to the ceiling when one is given (capped). budget_resume_to shows only for a goal that is over or
+    blocked."""
+    if ceiling is not None:
+        capped(goal, ceiling)
     goal["budget_policy"] = policy
     mode = mode_in_effect(goal)
     line = block_at(goal["max_usd"], mode, goal["budget_overage_percent"])

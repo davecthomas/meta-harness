@@ -111,9 +111,10 @@ judged against these rules.
 8. **A person can always decide differently.** Every offered action stays
    available, and a task can be taken over or paused. A goal's settings say
    how much is done without asking.
-9. **A spend limit that is set is never passed.** Limits are optional: a
-   goal may have no budget. Reaching one is an ask to a person, with
-   raising it as a button.
+9. **A spend limit is never passed, and nothing spends without one.** Every
+   goal's budget is a hard cap at or below the task policy's `max_goal_usd`
+   ($100), and a goal given none gets that. Reaching one is an ask to a
+   person, with raising it as a button.
 
 ### What is tried, in order
 
@@ -530,7 +531,7 @@ The scheduler reads `max_parallel` each admission pass. The run service reads
 out or `true` it is on. `credential_redaction` is a switch too. Only `true`
 turns on the replacing of tokens, keys and passwords in what is posted
 (Credential redaction), and left out or `false` it is off. `max_task_usd` is
-the most one task may spend whatever else is set (Budgets). Those fields are
+the most one task may spend whatever else is set (Budgets). `max_goal_usd`, $100.00 unless set, is the most one goal may spend: every goal's budget stops at or below it. Those fields are
 built today. The policy's other fields are planned.
 
 ```json
@@ -900,9 +901,7 @@ once the other running tasks' grants are taken off, nor more than the task's
 own spend limit. So the grants in force together never pass the line, whether
 the tasks asked at once or one after another. A task that finds everything
 left granted to runs under way holds like any other, says so, and looks again
-every few minutes; the scheduler admits no new task of that goal meanwhile. A
-goal whose budget only warns
-(`budget_mode: warn`) caps no run and holds none. A run needs what the task's
+every few minutes; the scheduler admits no new task of that goal meanwhile.  A run needs what the task's
 last run of that kind spent, and at least $0.10. When the run may spend less
 than that, the task holds. It stays `running`, with its repo-area lock and its
 place in the parallel limit, marked `waiting_on: budget`. Its status reason
@@ -2862,7 +2861,7 @@ capacity by priority.
 | `auto_merge` | Whether a pull request whose review comes back clean merges without an operator. The modality's default when unset |
 | `autonomy` | How much is done for the goal's tasks without asking: `ask`, `standard` or `full`. With `ask`, the supervisor asks before each of its own actions (a merge, a send-back, a retry, a stronger model): the task is the operator's, the ask says what the supervisor would do, and that action is the first button. Housekeeping is done either way: recovering a task with no workflow, a wait, ending a task whose pull request ended. With `standard`, the supervisor takes those actions itself, and a clean pull request waits for the operator. `full` is `standard` with `auto_merge` on. The two fields say one thing between them: setting `autonomy` sets `auto_merge`, and a caller that sets only `auto_merge` moves the goal between `standard` and `full`. A goal from before the setting reads as `full` when its `auto_merge` is on, else `standard`. The goal's page edits it as one choice of three, each saying what it does |
 | `max_usd`, `priority` | One budget and one priority for all the goal's tasks, review and fix runs included |
-| `budget_mode` | What the budget does when the goal's runs have spent it. `block` (the default) stops the goal at its blocking line. `warn` lets it keep going, with the budget reached recorded and shown and nothing held or refused. It has no effect on a goal with no budget |
+| `budget_mode` | What the budget does when the goal's runs have spent it: `block`, the only value taken, stops the goal at its blocking line. `warn` is refused (422). A goal saved with it before budgets became hard caps is read as `block` |
 | `budget_overage_percent` | How far past its budget a `block` goal may go before it stops: a whole number, 0 or more, 10 by default. The goal blocks at `max_usd × (1 + overage / 100)`, and between the budget and that line it runs on, over budget. 0 blocks at the budget exactly. Ignored in `warn` mode |
 | `max_parallel` | The most of the goal's tasks that run at once. Null inherits the task policy's `max_parallel`; a goal may set it lower, never higher. The New goal form sets it, and the Goal page shows the value in use, marked inherited or set, and edits it in place. A change applies at the next admission pass |
 | `strict_issues` | Whether an issue missing acceptance checks, paths or a testable outcome is held instead of run (Issue sizing). False by default: such an issue runs, with the gap on its card. A change applies at the next sweep to the issues not yet made tasks |
@@ -3237,9 +3236,12 @@ meta-harness scheduler admits no more of its tasks and the goal becomes
 `budget_exhausted`. Its running tasks share what it has left before that line,
 run by run. They hold for an operator when that is too little (see the review
 loop's budget hold). So a goal's tasks started together no longer spend
-several times its budget. A `warn` goal keeps going: nothing is held
-or refused for its budget. Each task's own spend limit is unchanged either
-way.
+several times its budget. Each task's own spend limit is unchanged. No
+goal spends without a cap: a goal given no budget has the task policy's
+`max_goal_usd` ($100), and no budget, overage or raise takes a goal past it.
+The cap is applied wherever the planner reads a goal (`planner/budget.py`,
+`capped`), so a goal saved before it, with no budget or one that only warned,
+is read as capped with no change to its row.
 
 The deployment's budget policy governs every goal and task. It is the task
 policy's `budget_policy`, which the Task policy page sets with a switch.
@@ -3267,8 +3269,8 @@ reaches the budget the planner records `goal_budget_reached`, with the spend,
 the budget, the mode and the blocking line. It records it once per budget, so
 raising the budget lets it be recorded again. A `budget_exhausted` goal is
 swept like an active one, so its pull requests are still watched. The goal the
-planner serves has `budget_block_at`: the blocking line in dollars, null in
-`warn` mode or with no budget. Admission and the budget hold read it, so the
+planner serves has `budget_block_at`: the blocking line in dollars, never null,
+and never past `max_goal_usd`. Admission and the budget hold read it, so the
 line is worked out in one place. The goal also has `budget_state` (`ok`,
 `over` for past the budget and still running, or `blocked`). A goal that is
 over or blocked has `budget_resume_to`, the budget a resume would set.
@@ -3285,7 +3287,8 @@ estimate is the average cost of its finished tasks for each such issue, or the
 default task spend limit when none has finished.
 The answer says the old budget, the new one and how it was
 worked out, and the change is recorded as `goal_changed` with
-`resumed: true`. A `warn` goal has nothing to resume. A budget changed by
+`resumed: true`. A raise is held to `max_goal_usd`; one for a goal already
+there is refused (409), saying to raise `max_goal_usd` or start a new goal. A budget changed by
 hand (`PATCH /v1/goals/{id}` with `max_usd`, `budget_mode` or
 `budget_overage_percent`) takes effect at once too. The planner looks at the
 goal's spend as a sweep would before it answers. So the goal's status,
@@ -5062,7 +5065,7 @@ Overview. A person's Settings page does not repeat the deployment's trackers.
 |---|---|---|
 | Overview | Every active goal with its modality, progress against its success criteria, spend against budget and tasks in flight. A "needs you" list: plans and phases to approve, operator issues (releases, deploys) only an operator can close, unresolved reviews, alerts. Run capacity and HTTP Gateway health | Create goal |
 | Inputs | The queued GitHub issues across every registered repo, by repo and by goal. Each one's state: queued, blocked and on what, running, pull request open, in review, merged or failed. Issues no goal has picked up. Which repos each goal is working in now | Add an issue to a goal, drop one |
-| Goals | Each goal with its status, its cost and its budget. A bar shows how much of the budget is used, with "12% used", "over by $4.10" or "stopped at its budget". A goal without a budget reads "no budget". A cost that could not be read shows unknown, with why on hover. Sorted newest first, most expensive first or most budget used first. The listed goals' total cost is below, with their total budget when every one has one. Badges show their whole text | Open a goal, start a new one |
+| Goals | Each goal with its status, its cost and its budget. A bar shows how much of the budget is used, with "12% used", "over by $4.10" or "stopped at its budget". A goal given no budget shows the most one goal may spend. A cost that could not be read shows unknown, with why on hover. Sorted newest first, most expensive first or most budget used first. The listed goals' total cost is below, with their total budget when every one has one. Badges show their whole text | Open a goal, start a new one |
 | Goal | The goal's statement, its modality (with the classifier's confidence, or "set by operator") and its latitude dial. Its issue dependency graph across repos, and the plan or the phase timeline with each phase's criteria. Every success criterion's live state, spend over time, and its tasks. Each planner-drafted issue shows its `latitude_reason`. A goal saved without starting shows Not started, with its label's open issues read but not yet taken in | Start a saved goal, approve plan or phase, set latitude, edit its title, description, label, repos, budget, priority, parallel tasks and auto-merge in place, pause, resume, cancel |
 | Tasks | One task: its issue, every ai-api-unified router routing decision, every run including fallbacks, every check result, the diff and the pull request. Each review round's verdict and findings and the fix run it led to. The merge, and cost per run | Take over, hand back, cancel |
 | Run | Live timeline of the run's events: each turn's model call (model, thinking, tokens, cost, latency) and its ai-api-unified decisions (the model that served it, fallbacks, guardrail blocks, cache hits), tool calls, file changes, test runs, compactions and guardrail blocks, the OpenTelemetry trace, and the per-run sandbox | Take over, cancel |

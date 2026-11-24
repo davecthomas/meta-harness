@@ -126,13 +126,11 @@ def test_a_goal_blocks_by_default_with_ten_percent_overage(world):
     assert Decimal(goal["budget_block_at"]) == Decimal("11") and goal["budget_state"] == "ok"
     assert goal["budget_resume_to"] is None
 
-    warn = client.patch(f"/v1/goals/{goal['id']}", json={"budget_mode": "warn"}, headers=OPERATOR).json()
-    assert warn["budget_mode"] == "warn" and warn["budget_block_at"] is None
     exact = {"budget_mode": "block", "budget_overage_percent": 0}
     assert (
         Decimal(client.patch(f"/v1/goals/{goal['id']}", json=exact, headers=OPERATOR).json()["budget_block_at"]) == 10
     )
-    for bad in ({"budget_mode": "stop"}, {"budget_overage_percent": -1}):
+    for bad in ({"budget_mode": "stop"}, {"budget_mode": "warn"}, {"budget_overage_percent": -1}):
         assert client.patch(f"/v1/goals/{goal['id']}", json=bad, headers=OPERATOR).status_code == 422
 
 
@@ -166,19 +164,56 @@ def test_reaching_the_budget_is_recorded_once_and_the_goal_runs_on_to_its_blocki
     assert {"status": {"from": "active", "to": "budget_exhausted"}} in changes
 
 
-def test_a_warn_goal_records_the_budget_reached_and_never_stops(world):
-    client, events, tracker, tasks = world
-    goal = _goal(client, tracker, budget_mode="warn")
-    _spend(events, tasks, goal, "250")
-    _sweep(client, goal)
+def test_no_goal_spends_without_a_hard_cap(world):
+    """Every spend limit is a hard cap (the owner's rule): a goal had been allowed no budget, a budget that only
+    warned, and overage up to ten times over. The ceiling is the task policy's max_goal_usd, $100."""
+    from meta_harness import db
 
-    shown = _read(client, goal)
-    assert shown["status"] == "active" and shown["budget_state"] == "over" and shown["budget_block_at"] is None
-    assert shown["budget_resume_to"] is None, "a warn goal never stopped: there is nothing to resume"
-    [reached] = [p for t, p in events.events if t == "goal_budget_reached"]
-    assert reached["mode"] == "warn" and reached["block_at"] is None
-    refused = client.post(f"/v1/goals/{goal['id']}/resume-budget", headers=OPERATOR)
-    assert refused.status_code == 409 and "only warns" in refused.json()["detail"]
+    client, _, tracker, _ = world
+    warned = client.post(
+        "/v1/goals",
+        json={"statement": "Fix", "repos": [REPO], "label": "x", "max_usd": "10", "budget_mode": "warn"},
+        headers=OPERATOR,
+    )
+    assert warned.status_code == 422 and "Use block" in warned.json()["detail"]
+    above = client.post(
+        "/v1/goals", json={"statement": "Fix", "repos": [REPO], "label": "x", "max_usd": "150"}, headers=OPERATOR
+    )
+    assert above.status_code == 422 and "raise max_goal_usd in the task policy" in above.json()["detail"]
+
+    # No budget given: the ceiling, and a blocking line that stays at it, its overage shrunk to fit.
+    none = _goal(client, tracker, max_usd=None)
+    assert (none["max_usd"], none["budget_mode"], none["budget_ceiling"]) == ("100.00", "block", "100.00")
+    assert Decimal(none["budget_block_at"]) == Decimal("100") and none["budget_overage_percent"] == 0
+    # A budget near the ceiling keeps only the overage that fits under it.
+    near = _goal(client, tracker, max_usd="95")
+    assert near["budget_overage_percent"] == 5 and Decimal(near["budget_block_at"]) <= Decimal("100")
+
+    # A goal saved before budgets became hard caps, warning only and with no budget, is read as capped.
+    with db.connect(autocommit=True) as conn:
+        conn.execute(
+            "UPDATE planner.goal SET max_usd = NULL, budget_mode = 'warn', budget_overage_percent = 500 WHERE id = %s",
+            (near["id"],),
+        )
+    old = _read(client, near)
+    assert (old["max_usd"], old["budget_mode"], Decimal(old["budget_block_at"])) == ("100.00", "block", Decimal("100"))
+
+
+def test_a_resume_never_raises_a_budget_past_the_ceiling(world):
+    client, events, tracker, tasks = world
+    goal = _goal(client, tracker, issues=3, max_usd="80", budget_overage_percent=0)
+    _spend(events, tasks, goal, "85")
+    _sweep(client, goal)
+    assert _read(client, goal)["status"] == "budget_exhausted"
+
+    raised = client.post(f"/v1/goals/{goal['id']}/resume-budget", json={"add_usd": "50"}, headers=OPERATOR)
+    assert raised.status_code == 200 and Decimal(raised.json()["to"]) == Decimal("100")
+    assert "held to $100.00, the most one goal may spend" in raised.json()["how"]
+
+    _spend(events, tasks, goal, "20")
+    _sweep(client, goal)
+    again = client.post(f"/v1/goals/{goal['id']}/resume-budget", json={"add_usd": "10"}, headers=OPERATOR)
+    assert again.status_code == 409 and "Raise max_goal_usd in the task policy" in again.json()["detail"]
 
 
 def test_a_blocked_goal_goes_on_once_its_budget_is_raised_and_the_warning_can_be_recorded_again(world):
@@ -257,7 +292,7 @@ def test_resume_takes_an_amount_and_refuses_one_that_leaves_the_goal_stopped(wor
 
     no_budget = _goal(client, tracker, max_usd=None)
     refused = client.post(f"/v1/goals/{no_budget['id']}/resume-budget", headers=OPERATOR)
-    assert refused.status_code == 409 and "no budget" in refused.json()["detail"]
+    assert refused.status_code == 409 and "of its $100.00 budget: nothing to resume" in refused.json()["detail"]
 
 
 def test_under_the_track_budget_policy_no_goal_stops_and_spend_is_still_recorded(world, monkeypatch):

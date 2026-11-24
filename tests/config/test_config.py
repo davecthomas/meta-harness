@@ -524,6 +524,20 @@ def test_the_task_policys_ceiling_on_one_tasks_spend_is_an_amount_within_reach(m
     assert shipped["max_task_usd"] == "100.00"
 
 
+def test_the_task_policys_ceiling_on_one_goals_spend_is_an_amount_within_reach(monkeypatch):
+    """Every goal's budget is a hard cap at or below max_goal_usd, so a policy that names an unusable one is
+    refused, and the service stops at startup with its name."""
+    monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
+    policy = {"max_parallel": 4, "review": {"reviewers": ["harness:pi-review/x:y"], "max_rounds": 3}}
+    for good in ("100.00", "25", 250, "1000"):
+        assert kinds.check_task_policy({**policy, "max_goal_usd": good}) == [], good
+    for bad in ("0", "-1", "1000.01", "lots", True, "Infinity"):
+        [reason] = kinds.check_task_policy({**policy, "max_goal_usd": bad})
+        assert reason.startswith("max_goal_usd must be an amount above 0 and at most 1000"), bad
+    shipped = json.loads((REPO_ROOT / "config" / "task_policy.json").read_text())
+    assert shipped["max_goal_usd"] == "100.00"
+
+
 def test_the_task_policys_remedy_tries_are_0_to_3_and_name_a_remedy(monkeypatch):
     monkeypatch.setenv("MH_MAX_SANDBOXES", "8")
     policy = {"max_parallel": 4, "review": {"reviewers": ["harness:pi-review/x:y"], "max_rounds": 3}}

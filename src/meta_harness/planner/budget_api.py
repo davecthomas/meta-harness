@@ -19,6 +19,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from meta_harness import db
+from meta_harness.config import store as config_store
 from meta_harness.events.client import stable_event_id
 from meta_harness.money import usd
 from meta_harness.planner import budget, store
@@ -147,15 +148,9 @@ def register(
         goal's budget are told to look again at once. The answer says the old budget, the new one and how it
         was worked out."""
         goal = await asyncio.to_thread(load, goal_id)
-        if goal["max_usd"] is None:
-            raise HTTPException(status_code=409, detail="the goal has no budget to raise")
         if goal.get("budget_policy") == "track":
             raise HTTPException(
                 status_code=409, detail="the budget policy only tracks spend, so no goal is stopped: nothing to resume"
-            )
-        if goal["budget_mode"] == "warn":
-            raise HTTPException(
-                status_code=409, detail="the goal only warns at its budget, so it never stopped: nothing to resume"
             )
         if goal["status"] not in ("active", "budget_exhausted"):
             raise HTTPException(status_code=409, detail=f"the goal is {goal['status']}, not stopped by its budget")
@@ -173,6 +168,19 @@ def register(
         add = body.add_usd if body else None
         new = old + add if add is not None else Decimal(found["resume"]["to"])
         how = f"{usd(old)} plus the {usd(add)} asked for" if add is not None else found["resume"]["how"]
+        # No raise passes the most one goal may spend: the budget goes as far as the ceiling, and no further.
+        ceiling = Decimal(goal.get("budget_ceiling") or config_store.goal_spend_ceiling())
+        if new > ceiling:
+            if old >= ceiling:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"the goal's budget is already {usd(old)}, the most one goal may spend. Raise max_goal_usd "
+                        "in the task policy (Admin, Configuration) if it needs more, or start a new goal "
+                        "for the work left"
+                    ),
+                )
+            new, how = ceiling, f"{how}, held to {usd(ceiling)}, the most one goal may spend"
         line = budget.block_at(new, mode, percent)
         if spent >= line:
             raise HTTPException(

@@ -203,6 +203,10 @@ BUDGET_POLICIES = ("block", "track")
 # The highest ceiling a task policy may set on one task's spend. A ceiling is a safety limit, so it cannot be
 # set out of reach.
 MAX_TASK_USD = Decimal("1000")
+# The most one goal may spend when the task policy names no max_goal_usd: the owner's rule is that every spend
+# limit is a hard cap, about $100. And the highest a task policy may set it.
+GOAL_SPEND_CEILING_USD = Decimal("100.00")
+MAX_GOAL_USD = Decimal("1000")
 # The sizes the planner gives an issue before it becomes a task (meta_harness.planner.sizing).
 ISSUE_SIZES = ("small", "medium", "large")
 
@@ -309,6 +313,18 @@ def check_task_policy(document: dict[str, Any], others: dict[str, dict[str, Any]
             reasons.append(
                 f"max_task_usd must be an amount above 0 and at most {MAX_TASK_USD}. It is the most one task "
                 "may spend, whatever its own limit or the budget policy says"
+            )
+    goal_ceiling = document.get("max_goal_usd")
+    if goal_ceiling is not None:
+        try:
+            amount = Decimal(str(goal_ceiling))
+            usable = not isinstance(goal_ceiling, bool) and amount.is_finite() and 0 < amount <= MAX_GOAL_USD
+        except InvalidOperation:
+            usable = False
+        if not usable:
+            reasons.append(
+                f'max_goal_usd must be an amount above 0 and at most {MAX_GOAL_USD}, such as "100.00". It is '
+                "the most one goal may spend: every goal's budget stops at or below it"
             )
     writing = document.get("writing_pass")
     if writing is not None and not isinstance(writing, bool):

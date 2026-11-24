@@ -99,9 +99,23 @@ class NewGoal:
     provenance: bool | None = None
 
 
-def _check_budget(mode: str | None, overage_percent: int | None) -> None:
+def check_budget(mode: str | None, overage_percent: int | None, max_usd: Any = None) -> None:
+    """Refuses a budget no goal may have: an unknown or warn-only mode, a negative overage, or one above the
+    most one goal may spend. Raises GoalError saying what to do."""
     if mode is not None and mode not in budget.MODES:
         raise GoalError(f"budget_mode {mode!r} is not one of {list(budget.MODES)}")
+    if mode == "warn":
+        raise GoalError(
+            "budget_mode warn is not taken: every goal's budget stops its spending, so a goal cannot run on past "
+            "it. Use block, and set a budget the work fits in"
+        )
+    ceiling = config_store.goal_spend_ceiling()
+    if max_usd is not None and Decimal(str(max_usd)) > ceiling:
+        raise GoalError(
+            f"a budget of ${Decimal(str(max_usd)):.2f} is above ${ceiling:.2f}, the most one goal may spend. Set "
+            "one at or below it, or raise max_goal_usd in the task policy (Admin, Configuration) if the goal "
+            "needs more"
+        )
     if overage_percent is not None and overage_percent < 0:
         raise GoalError("budget_overage_percent must be 0 or more")
 
@@ -115,7 +129,7 @@ def create(conn: psycopg.Connection, created_by: str, goal: NewGoal) -> dict:
         raise GoalError(f"modality {goal.modality!r} is not one of {sorted(MODALITIES)}")
     if goal.modality not in BUILT_MODALITIES:
         raise GoalError(f"the {goal.modality} modality needs phases, which are not built yet; use fix or feature")
-    _check_budget(goal.budget_mode, goal.budget_overage_percent)
+    check_budget(goal.budget_mode, goal.budget_overage_percent, goal.max_usd)
     planned = goal.planned or goal.modality in PLANNED_MODALITIES
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
@@ -216,7 +230,7 @@ def update(
         raise GoalError(f"a goal update takes only {sorted(allowed)}")
     if "autonomy" in fields and fields["autonomy"] not in AUTONOMY:
         raise GoalError(f"autonomy {fields['autonomy']!r} is not one of {', '.join(AUTONOMY)}")
-    _check_budget(fields.get("budget_mode"), fields.get("budget_overage_percent"))
+    check_budget(fields.get("budget_mode"), fields.get("budget_overage_percent"), fields.get("max_usd"))
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute(f"SELECT {GOAL_COLUMNS} FROM planner.goal WHERE id = %s FOR UPDATE", (goal_id,))
         row = cur.fetchone()
@@ -794,7 +808,7 @@ def _goal(row: dict) -> dict:
     row["latitude"] = float(row["latitude"])
     for key in ("max_usd", "spent_usd", "budget_reached_usd", "budget_resume_to"):
         row[key] = str(row[key]) if row[key] is not None else None
-    return budget.view(row, config_store.budget_policy())
+    return budget.view(row, config_store.budget_policy(), config_store.goal_spend_ceiling())
 
 
 def _link(row: dict) -> dict:

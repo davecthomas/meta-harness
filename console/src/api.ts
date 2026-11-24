@@ -49,6 +49,8 @@ export interface Goal {
   // What the budget does when it is reached: stop the goal (block) or only warn; and how far past it a block
   // goal may go, in percent.
   budget_mode?: "block" | "warn";
+  // The most one goal may spend (the task policy's max_goal_usd): the budget and its overage stop at or below it.
+  budget_ceiling?: string | null;
   // The deployment's budget policy, from the task policy: under "track" no budget stops anything.
   budget_policy?: "block" | "track";
   budget_overage_percent?: number;
