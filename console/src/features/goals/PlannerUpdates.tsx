@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Anchor, Button, Collapse, Group, Loader, Paper, Stack, Text, Timeline } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Collapse, Group, Loader, Paper, Stack, Text, Timeline } from "@mantine/core";
 import { IconRefresh } from "@tabler/icons-react";
 import { VoiceMark } from "../../components/Voice";
 import { api } from "../../api";
@@ -52,6 +52,34 @@ export function since(iso: string, now = Date.now()): string {
 // The actions that are about the plan itself.
 const PLAN_ACTIONS: string[] = ["approve_plan", "fix_plan", "accept_fix"];
 
+// The most reasons a fix shows before it counts the rest: a person deciding reads a few, never a page.
+export const FIX_REASONS_SHOWN = 5;
+
+// What a fix to the plan is, for someone deciding whether to accept it: why it was drafted (each gap with what
+// settles it), then its changes as a count for each kind. Never a line for each task it touches.
+function FixFacts({ need }: { need: Need }) {
+  const fixes = need.fixes ?? [];
+  const changes = need.changes ?? [];
+  if (!fixes.length && !changes.length) return null;
+  const shown = fixes.slice(0, FIX_REASONS_SHOWN);
+  return (
+    <Stack gap={6} data-testid="planner-fix-facts">
+      {shown.map((fix, i) => (
+        <Text key={i} size="sm" data-testid="planner-fix-reason">
+          <Text span fw={600}>{fix.change}</Text>{" "}
+          <Text span c="dimmed">{fix.gap}</Text>
+        </Text>
+      ))}
+      {fixes.length > shown.length && <Text size="sm" c="dimmed">and {fixes.length - shown.length} more</Text>}
+      {changes.length > 0 && (
+        <Group gap={6} data-testid="planner-fix-counts">
+          {changes.map((line) => <Badge key={line} variant="default" tt="none" radius="sm">{line}</Badge>)}
+        </Group>
+      )}
+    </Stack>
+  );
+}
+
 // What an update asks of the operator, each with the button that resolves it.
 function NeedsYou({ needs, planning, goalId, label, onDone }: { needs: Need[]; planning: boolean; goalId: string; label: string | null; onDone: () => void }) {
   if (!needs.length) return null;
@@ -62,9 +90,7 @@ function NeedsYou({ needs, planning, goalId, label, onDone }: { needs: Need[]; p
           <Group key={i} justify="space-between" wrap="wrap" gap="sm" data-testid="planner-need">
             <Stack gap={2} style={{ flex: "1 1 240px" }}>
               <Text size="sm">{need.what}</Text>
-              {need.action === "accept_fix" && (need.changes ?? []).length > 0 && (
-                <Text size="sm" c="dimmed">{(need.changes ?? []).join(" · ")}</Text>
-              )}
+              {need.action === "accept_fix" && <FixFacts need={need} />}
             </Stack>
             <NeedButton need={need} planning={planning} goalId={goalId} label={label} onDone={onDone} />
           </Group>

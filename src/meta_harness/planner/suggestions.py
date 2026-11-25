@@ -272,38 +272,9 @@ async def collect(goal: dict, tasks: Any, events: Any) -> dict | None:
 
 
 def changes(before: dict, after: dict) -> list[str]:
-    """What a revised plan changes, a line each, for the operator to read before accepting it."""
-    lines: list[str] = []
-    old = {d["draft_id"]: d for d in before.get("drafts") or []}
-    new = {d["draft_id"]: d for d in after.get("drafts") or []}
-    titles = {**{i["ref"]: i.get("title") or i["ref"] for i in before.get("issues") or []}}
-    titles.update({k: d["title"] for k, d in {**old, **new}.items()})
-    name = lambda key: titles.get(key, key)  # noqa: E731
-    lines += [f"Adds: {d['title']}" for k, d in new.items() if k not in old]
-    lines += [f"Drops: {d['title']}" for k, d in old.items() if k not in new]
-    for key, draft in new.items():
-        was = old.get(key)
-        if was is None:
-            continue
-        added = [x for x in draft.get("depends_on") or [] if x not in (was.get("depends_on") or [])]
-        if added:
-            lines.append(f"{draft['title']} now waits for {', '.join(name(x) for x in added)}")
-        elif draft["title"] != was["title"] or draft["body"] != was["body"]:
-            lines.append(f"Rewrites: {draft['title']}")
-    old_items = {i["ref"]: i for i in before.get("items") or []}
-    for item in after.get("items") or []:
-        was = old_items.get(item["ref"])
-        if not was:
-            continue
-        if item.get("decision") != was.get("decision"):
-            word = {"keep": "runs as written", "split": "is split", "leave_out": "is left out"}.get(
-                item.get("decision"), item.get("decision")
-            )
-            lines.append(f"{name(item['ref'])} {word}")
-        added = [x for x in item.get("depends_on") or [] if x not in (was.get("depends_on") or [])]
-        if added:
-            lines.append(f"{name(item['ref'])} now waits for {', '.join(name(x) for x in added)}")
-    return lines or ["Rewrites the tasks' descriptions only"]
+    """What a revised plan changes, as a count for each kind of change (plans.diff): a few short lines for
+    the operator to read before accepting it, however many tasks it touches."""
+    return plans.diff_lines(plans.diff(before, after))
 
 
 def current(goal_id: str) -> dict | None:
@@ -325,6 +296,8 @@ def current(goal_id: str) -> dict | None:
         "fixes": row["fixes"],
         "summary": row["summary"],
         "changes": changes(latest, row),
+        # The same, with the tasks of each kind, for a page that lets the operator open a count.
+        "diff": plans.diff(latest, row),
         "created_at": row["created_at"],
     }
 

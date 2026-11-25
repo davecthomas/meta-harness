@@ -92,7 +92,7 @@ def actionable(
                 "action": action,
                 "task_id": (task or {}).get("id") or "",
                 "pr_url": pr,
-                **({"changes": suggestion["changes"]} if action == "accept_fix" and suggestion else {}),
+                **(_fix_facts(suggestion) if action == "accept_fix" and suggestion else {}),
             }
         )
     # A fix waiting to be accepted is always asked about, whatever the model wrote.
@@ -105,7 +105,7 @@ def actionable(
                 "action": "accept_fix",
                 "task_id": "",
                 "pr_url": "",
-                "changes": suggestion["changes"],
+                **_fix_facts(suggestion),
             },
         )
     return out
@@ -223,6 +223,11 @@ def for_settings(reports: list[dict]) -> list[dict]:
 def _title(link: dict | None, task: dict | None) -> str:
     """What an action is about, by name: the task's short name or title, else its issue's."""
     return str((task or {}).get("name") or (task or {}).get("title") or (link or {}).get("title") or "")
+
+
+def _fix_facts(suggestion: dict) -> dict:
+    """What a need to accept a fix says of it: why (each gap with its fix), and its changes as counts."""
+    return {"changes": suggestion["changes"], "fixes": list(suggestion.get("fixes") or [])}
 
 
 # What each action asks of the operator, in a word or three: the label a list of needs leads each with.

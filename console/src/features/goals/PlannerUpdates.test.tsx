@@ -3,7 +3,7 @@ import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import { theme } from "../../theme";
-import { PlannerUpdates, since } from "./PlannerUpdates";
+import { FIX_REASONS_SHOWN, PlannerUpdates, since } from "./PlannerUpdates";
 
 function respond(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
@@ -149,15 +149,29 @@ test("every need comes with the button that resolves it, from its task's state n
   window.removeEventListener("mh:open-settings", settings);
 });
 
+test("a fix shows why it was drafted and its changes as counts, however many tasks it touches", async () => {
+  // A fix for two gaps once showed a line for each of forty tasks, joined into one paragraph nobody could read.
+  const fixes = Array.from({ length: 7 }, (_, i) => ({ gap: `Gap ${i + 1}.`, change: `Fix ${i + 1}.` }));
+  const fix = { what: "I drafted a fix for the plan. Accept it?", ref: "", action: "accept_fix", changes: ["2 tasks added", "38 tasks reworded"], fixes };
+  show([{ updates: [{ ...LATEST, needs_you: [fix] }], enabled: true, error: null }], true, () => respond({}), true);
+
+  const [row] = await screen.findAllByTestId("planner-need");
+  const reasons = within(row).getAllByTestId("planner-fix-reason");
+  expect(reasons).toHaveLength(FIX_REASONS_SHOWN);
+  expect(reasons[0].textContent).toBe("Fix 1. Gap 1.");
+  expect(row.textContent).toContain("and 2 more");
+  expect(within(row).getByTestId("planner-fix-counts").textContent).toBe("2 tasks added38 tasks reworded");
+});
+
 test("a fix the planner drafted is accepted or dismissed from the panel, with what it changes", async () => {
-  const fix = { what: "I can run the api after the store so they don't clash. Accept?", ref: "", action: "accept_fix", changes: ["Build api now waits for Build store"] };
+  const fix = { what: "I can run the api after the store so they don't clash. Accept?", ref: "", action: "accept_fix", changes: ["1 task reordered"] };
   let changed = 0;
   const onChanged = () => (changed += 1);
   window.addEventListener("mh:plan-changed", onChanged);
   const posts = show([{ updates: [{ ...LATEST, needs_you: [fix] }], enabled: true, error: null }], true, () => respond({}), true);
 
   const [row] = await screen.findAllByTestId("planner-need");
-  expect(row.textContent).toContain("Build api now waits for Build store");
+  expect(row.textContent).toContain("1 task reordered");
   fireEvent.click(within(row).getByRole("button", { name: "Update the plan" }));
   const dialog = await screen.findByRole("dialog");
   expect(dialog.textContent).toContain("You still approve the plan before anything runs.");

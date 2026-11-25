@@ -132,6 +132,80 @@ def merge(
     return out, [i for i in decisions if i["ref"] not in was]
 
 
+# The kinds of change to a plan's tasks, in the order they matter to someone deciding on it.
+KINDS = ("added", "removed", "reordered", "changed", "reworded")
+_KIND_WORDS = {
+    "added": "added",
+    "removed": "removed",
+    "reordered": "reordered",
+    "changed": "changed",
+    "reworded": "reworded",
+}
+
+
+def _checks(body: str) -> str:
+    """A task's acceptance checks: its body from that heading to the next, without the spacing."""
+    found = CHECKS_HEADING.search(body or "")
+    if not found:
+        return ""
+    rest = body[found.end() :]
+    return " ".join(re.split(r"^##\s", rest, maxsplit=1, flags=re.MULTILINE)[0].split())
+
+
+def diff(before: dict, after: dict) -> dict[str, list[dict[str, str]]]:
+    """What one plan changes about another, counted by kind, for a person deciding on it: each kind holds the
+    tasks of that kind, by id and title. A task is in one kind, the first that fits.
+
+    added, removed: the task is in one plan only. reordered: it waits for a different set of tasks. changed:
+    its repo or its acceptance checks differ. reworded: only its title or description differ. `decisions`
+    holds the goal's own issues whose decision differs.
+
+    A person shown a line for every changed task, forty of them, cannot tell what the change is. Shown that
+    two were added and thirty-eight reworded, they can.
+    """
+    old = {d["draft_id"]: d for d in before.get("drafts") or []}
+    new = {d["draft_id"]: d for d in after.get("drafts") or []}
+    found: dict[str, list[dict[str, str]]] = {kind: [] for kind in KINDS}
+    found["added"] = [{"id": k, "title": d["title"]} for k, d in new.items() if k not in old]
+    found["removed"] = [{"id": k, "title": d["title"]} for k, d in old.items() if k not in new]
+    for key, draft in new.items():
+        was = old.get(key)
+        if was is None:
+            continue
+        entry = {"id": key, "title": draft["title"]}
+        if set(draft.get("depends_on") or []) != set(was.get("depends_on") or []):
+            found["reordered"].append(entry)
+        elif draft["repo"] != was["repo"] or _checks(draft["body"]) != _checks(was["body"]):
+            found["changed"].append(entry)
+        elif draft["title"] != was["title"] or draft["body"] != was["body"]:
+            found["reworded"].append(entry)
+    titles = {i["ref"]: i.get("title") or i["ref"] for i in before.get("issues") or after.get("issues") or []}
+    decided = {i["ref"]: i for i in before.get("items") or []}
+    found["decisions"] = [
+        {"id": item["ref"], "title": titles.get(item["ref"], item["ref"]), "decision": str(item.get("decision"))}
+        for item in after.get("items") or []
+        if item["ref"] in decided
+        and (
+            item.get("decision") != decided[item["ref"]].get("decision")
+            or set(item.get("depends_on") or []) != set(decided[item["ref"]].get("depends_on") or [])
+        )
+    ]
+    return found
+
+
+def diff_lines(found: dict[str, list[dict[str, str]]]) -> list[str]:
+    """A diff as a few short lines, a count for each kind that has any: "2 tasks added", "38 tasks reworded"."""
+    lines = []
+    for kind in KINDS:
+        n = len(found.get(kind) or [])
+        if n:
+            lines.append(f"{n} task{'' if n == 1 else 's'} {_KIND_WORDS[kind]}")
+    n = len(found.get("decisions") or [])
+    if n:
+        lines.append(f"{n} existing issue{'' if n == 1 else 's'} decided differently")
+    return lines or ["No task changes"]
+
+
 def at(conn: psycopg.Connection, goal_id: str, version: int) -> dict | None:
     """The goal's plan at that version, or None."""
     with conn.cursor(row_factory=dict_row) as cur:
