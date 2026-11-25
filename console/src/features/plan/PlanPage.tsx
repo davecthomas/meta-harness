@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Anchor, Badge, Button, Collapse, Group, List, Loader, Paper, SimpleGrid, Stack, Text, Timeline, UnstyledButton } from "@mantine/core";
+import { Anchor, Badge, Button, Collapse, Group, List, Loader, Paper, SimpleGrid, Stack, Switch, Text, Timeline, UnstyledButton } from "@mantine/core";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, type Goal, type GoalPlan as Plan, type PlanAsk, type PlanGlance, type PlanVersion } from "../../api";
+import { api, type Goal, type GoalPlan as Plan, type PlanAsk, type PlanFinding, type PlanGlance, type PlanVersion } from "../../api";
 import { ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
 import { ApprovedPlan, GoalPlan } from "../goals/GoalPlan";
 import { APPROVE_PLAN, FixFacts, PLAN_CHANGED, REPLAN } from "../goals/PlannerUpdates";
@@ -167,6 +167,125 @@ function UndoFix({ goalId }: { goalId: string }) {
   );
 }
 
+const KIND_NAMES: Record<string, string> = { missing_step: "Missing work", order: "Order", size: "Size", repo: "Repo", check: "Checks", risk: "Risk", scope: "Scope" };
+
+// One problem the review left open, as a card: what is wrong, the change that would settle it, the tasks it
+// names, and the two ways to settle it here. Fixing all of them at once is the decision bar's first button.
+function FindingCard({ finding, busy, onDismiss }: { finding: PlanFinding; busy: boolean; onDismiss: () => void }) {
+  return (
+    <Paper withBorder p="sm" radius="md" data-testid="plan-finding">
+      <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
+        <Stack gap={4} style={{ flex: "1 1 320px" }}>
+          <Group gap={6}>
+            {finding.kind && <Badge variant="light" color="red" tt="none" radius="sm">{KIND_NAMES[finding.kind] ?? finding.kind}</Badge>}
+            {finding.tasks.map((task) => <Badge key={task} variant="outline" tt="none" radius="sm">{task}</Badge>)}
+          </Group>
+          <Text size="sm">{finding.says}</Text>
+          {finding.change && <Text size="sm" c="dimmed">To settle it: {finding.change}</Text>}
+        </Stack>
+        <Button size="xs" variant="default" disabled={busy} onClick={onDismiss}>Not a problem</Button>
+      </Group>
+    </Paper>
+  );
+}
+
+// The plan's adversarial review: a second model's attempt to find what is wrong with the plan. One line says
+// what it found; only the problems still open are shown in full, and past a few they are grouped by kind. What
+// the planner fixed and what was only advice are counts that open.
+export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; onChanged: () => void }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const review = plan.review ?? null;
+  const planning = goal.status === "planning";
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      onChanged();
+    } catch (err) {
+      setError(`${err instanceof Error ? err.message : String(err)}. Reload the page to see where the plan stands.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!planning && !review) return null;
+  const findings = review?.findings ?? [];
+  const still = findings.filter((f) => f.status === "open" && f.severity === "blocking");
+  const advice = findings.filter((f) => f.status === "open" && f.severity === "advice");
+  const fixed = findings.filter((f) => f.status === "fixed" || f.status === "revised");
+  const kinds = [...new Set(still.map((f) => f.kind || "other"))];
+  const grouped = still.length > SHOWN_BEFORE_COUNTING;
+  const said = !review
+    ? "This plan has not been reviewed by a second model."
+    : review.state === "running"
+      ? `${review.model} is reading the plan now.`
+      : review.state === "failed" || review.state === "canceled"
+        ? `The review by ${review.model} did not finish, so it says nothing about the plan.`
+        : review.counts.found === 0
+          ? `${review.model} looked for problems and found none.`
+          : `${review.model} found ${review.counts.found} problem${review.counts.found === 1 ? "" : "s"}: ${review.counts.fixed} fixed, ${review.counts.open} open${review.state === "partial" ? ". It stopped before it finished" : ""}.`;
+  const lists: [string, string, PlanFinding[]][] = [["fixed", `${fixed.length} fixed`, fixed], ["advice", `${advice.length} suggestion${advice.length === 1 ? "" : "s"}`, advice]];
+  return (
+    <div data-testid="plan-review">
+      <SectionTitle
+        right={
+          planning && (
+            <Group gap="md">
+              <Switch
+                size="xs"
+                label="Review this goal's plans"
+                checked={!!goal.adversarial_review}
+                disabled={busy}
+                onChange={(event) => void run(() => api.setPlanReview(goal.id, event.currentTarget.checked))}
+              />
+              {review?.state !== "running" && review?.version !== plan.plan?.version && (
+                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.reviewPlan(goal.id))}>Review this plan</Button>
+              )}
+            </Group>
+          )
+        }
+      >
+        Adversarial review
+      </SectionTitle>
+      <Stack gap="sm">
+        <Text size="sm" data-testid="plan-review-says">{said}</Text>
+        <ErrorAlert error={error} />
+        {!grouped && still.map((f) => <FindingCard key={f.id} finding={f} busy={busy} onDismiss={() => void run(() => api.dismissPlanFinding(goal.id, f.id))} />)}
+        {grouped && (
+          <Group gap={6} data-testid="plan-finding-kinds">
+            {kinds.map((kind) => (
+              <UnstyledButton key={kind} onClick={() => setOpen(open === kind ? null : kind)} aria-expanded={open === kind}>
+                <Badge variant={open === kind ? "filled" : "light"} color="red" tt="none" radius="sm" size="lg" style={{ cursor: "pointer" }}>
+                  {KIND_NAMES[kind] ?? "Other"}: {still.filter((f) => (f.kind || "other") === kind).length}
+                </Badge>
+              </UnstyledButton>
+            ))}
+          </Group>
+        )}
+        {grouped && open && kinds.includes(open) && still.filter((f) => (f.kind || "other") === open).map((f) => <FindingCard key={f.id} finding={f} busy={busy} onDismiss={() => void run(() => api.dismissPlanFinding(goal.id, f.id))} />)}
+        {(fixed.length > 0 || advice.length > 0) && (
+          <Group gap={6}>
+            {lists.filter(([, , items]) => items.length > 0).map(([key, label]) => (
+              <UnstyledButton key={key} onClick={() => setOpen(open === key ? null : key)} aria-expanded={open === key} data-testid={`plan-review-${key}`}>
+                <Badge variant={open === key ? "filled" : "default"} tt="none" radius="sm" style={{ cursor: "pointer" }}>{label}</Badge>
+              </UnstyledButton>
+            ))}
+          </Group>
+        )}
+        <Collapse expanded={open === "fixed" || open === "advice"}>
+          <List size="sm" spacing={4} data-testid="plan-review-list">
+            {(open === "fixed" ? fixed : open === "advice" ? advice : []).map((f) => (
+              <List.Item key={f.id}>{f.says}{f.change ? <Text span c="dimmed"> {f.change}</Text> : null}</List.Item>
+            ))}
+          </List>
+        </Collapse>
+      </Stack>
+    </div>
+  );
+}
+
 // What only the operator can settle, a few at most in view.
 export function OpenQuestions({ gaps }: { gaps: string[] }) {
   const [all, setAll] = useState(false);
@@ -263,7 +382,7 @@ export function PlanPage() {
     setBusy(true);
     setError(null);
     try {
-      await (action === "accept_fix" ? api.acceptFix(goalId) : api.dismissFix(goalId));
+      await (action === "fix_findings" ? api.fixFindings(goalId) : action === "accept_fix" ? api.acceptFix(goalId) : api.dismissFix(goalId));
       window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
       void reloadNeeds();
     } catch (err) {
@@ -292,6 +411,17 @@ export function PlanPage() {
       {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} />}
       {plan?.glance && <Glance glance={plan.glance} />}
       {plan && <WhatChanged plan={plan} />}
+      {plan?.plan && (
+        <ReviewPart
+          plan={plan}
+          goal={goal}
+          onChanged={() => {
+            void load();
+            window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
+            void reloadNeeds();
+          }}
+        />
+      )}
       {planning && plan?.plan && <OpenQuestions gaps={plan.plan.gaps ?? []} />}
       {planning ? (
         <GoalPlan
