@@ -246,5 +246,9 @@ test("a skill imported from git is read in full before it is added, then staged 
 
   fireEvent.click(screen.getByRole("button", { name: "Add the skill" }));
   await waitFor(() => expect(screen.getByTestId("skill-tidy-notes").textContent).toContain("not saved"));
-  expect(screen.getByTestId("skill-tidy-notes").textContent).toContain("No profile yet");
+  // A skill no profile lists is used by no run: the row says so, with the way to change that.
+  const unused = screen.getByTestId("skill-tidy-notes");
+  expect(unused.textContent).toContain("No profile loads it, so no run uses it.");
+  expect(within(unused).getByRole("link", { name: "Add it to a profile" }).getAttribute("href")).toBe("/config?kind=profiles");
+  expect(screen.getByTestId("skills-how").textContent).toContain("Nobody types a command for it in a goal or a task.");
 });

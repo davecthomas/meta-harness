@@ -242,9 +242,12 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
   const names = Object.keys(skills);
   return (
     <Stack gap="md">
-      <Text size="sm" c="dimmed">
-        A harness profile names the skills its runs load. A run is told each one's name and description, and reads the rest when its work needs it. Nothing loads from a task's repo. A skill with a lock ships with Muxxy and cannot be changed or removed here.
-      </Text>
+      <Alert variant="light" color="blue" title="How a skill is used" data-testid="skills-how">
+        <Text size="sm">
+          A skill does nothing until a harness profile lists it. Every run on that profile is then told the skill's name and what it is for, and reads the rest when its work calls for it. Nobody types a command for it in a goal or a task. Nothing loads from a task's repo. A skill with a lock ships with Muxxy and changes only by a pull request.
+        </Text>
+        <Anchor href="/config?kind=profiles" size="sm">Choose which profiles load which skills</Anchor>
+      </Alert>
       {names.length ? (
         <DataTable head={["Skill", "What it is for", "Source", "Used by", ""]} minWidth={860}>
           {names.map((name) => {
@@ -266,7 +269,16 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
                 </Table.Td>
                 <Table.Td maw={420}><Text size="sm" lineClamp={3}>{skill.description}</Text></Table.Td>
                 <Table.Td maw={260}><Text size="xs" c="dimmed" style={{ wordBreak: "break-all" }}>{sourceLine(skill.source)}</Text></Table.Td>
-                <Table.Td><Text size="sm">{users.length ? users.join(", ") : <Text span size="sm" c="dimmed">No profile yet</Text>}</Text></Table.Td>
+                <Table.Td>
+                  {users.length ? (
+                    <Text size="sm">{users.join(", ")}</Text>
+                  ) : (
+                    <Stack gap={0}>
+                      <Text size="sm" c="orange">No profile loads it, so no run uses it.</Text>
+                      <Anchor href="/config?kind=profiles" size="sm">Add it to a profile</Anchor>
+                    </Stack>
+                  )}
+                </Table.Td>
                 <Table.Td>
                   {!s.readOnly && !skill.source?.locked && (
                     <Tooltip label={users.length ? `Named by ${users.join(", ")}: remove it from those profiles first` : `Remove ${name}`}>
@@ -287,7 +299,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
       {!s.readOnly && (
         <Paper p="sm" withBorder>
           <Group justify="space-between">
-            <Text size="sm">Import a skill from a git repository, or from a folder on this machine.</Text>
+            <Text size="sm">Import a skill from a git repository, or from a folder on this machine. Then add it to a profile, and that profile's runs load it.</Text>
             <Button size="xs" leftSection={<IconDownload size={14} />} onClick={() => setImporting(true)}>Import a skill</Button>
           </Group>
         </Paper>
