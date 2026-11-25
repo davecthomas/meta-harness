@@ -6,7 +6,7 @@ import type { SkillEntry } from "../../api";
 import { theme } from "../../theme";
 import type { Staging } from "./ConfigViews";
 import { setIn } from "./staging";
-import { SkillsView, sourceLine } from "./SkillsView";
+import { SkillsView, sourceLine, USED_BY_MUXXY } from "./SkillsView";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -251,4 +251,13 @@ test("a skill imported from git is read in full before it is added, then staged 
   expect(unused.textContent).toContain("No profile loads it, so no run uses it.");
   expect(within(unused).getByRole("link", { name: "Add it to a profile" }).getAttribute("href")).toBe("/config?kind=profiles");
   expect(screen.getByTestId("skills-how").textContent).toContain("Nobody types a command for it in a goal or a task.");
+});
+
+test("a skill Muxxy uses itself says so, whether or not a profile loads it", () => {
+  // The adversarial review's skill is in no profile: the planner puts its text in the review's prompt. Shown as
+  // "No profile yet", it read as a skill nothing uses.
+  const used = (name: string) => USED_BY_MUXXY[name];
+  expect(used("adversarial-plan-review")).toBe("The planner, as the instructions of a plan's adversarial review");
+  expect(used("no-ai-slop2")).toContain("Muxxy's writing pass");
+  expect(used("tidy-notes")).toBeUndefined();
 });
