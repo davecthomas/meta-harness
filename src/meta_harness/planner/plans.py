@@ -28,7 +28,7 @@ EXISTING_REF = re.compile(r"^(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$")
 CHECKS_HEADING = re.compile(r"^##\s+acceptance checks\s*$", re.IGNORECASE | re.MULTILINE)
 PLAN_COLUMNS = (
     "goal_id, version, drafts, invalid, source, task_id, note, created, created_by, created_at, items, summary, "
-    "gaps, issues, tracked"
+    "gaps, issues, tracked, stopped_at"
 )
 # What a plan decides for an issue the goal already had.
 KEEP, SPLIT, LEAVE_OUT = "keep", "split", "leave_out"
@@ -98,6 +98,46 @@ def complete(items: list[dict[str, Any]], issues: list[dict[str, Any]]) -> list[
     known = [issue["ref"] for issue in issues]
     made = [by_ref.get(ref) or clean_item({"ref": ref}) for ref in known]
     return made + [item for item in items if item["ref"] not in known]
+
+
+def merge(
+    previous: list[dict[str, Any]], changed: list[dict[str, Any]], decisions: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A revising run's result: the plan it started from, with the run's changes over it. Returns the tasks, and
+    the decisions that were about the goal's own issues.
+
+    A task the run did not name is the previous one, unchanged, in its place. A task the run recorded again
+    (create_issue with its draft_id) is the run's. A new one follows the rest. A decision the run recorded on
+    a previous task's id (plan_issue: leave_out, or split with what replaces it) removes that task; what waited
+    for it then waits for its replacements, or for nothing.
+
+    A revising run once had to record every task again to keep it, so a fix for two gaps rewrote forty tasks,
+    and the operator was shown forty changes.
+    """
+    was = {d["draft_id"] for d in previous}
+    by_id = {d["draft_id"]: d for d in changed}
+    removed = {
+        i["ref"]: (i.get("replaced_by") or []) if i["decision"] == SPLIT else []
+        for i in decisions
+        if i["ref"] in was and i["ref"] not in by_id and i["decision"] in (SPLIT, LEAVE_OUT)
+    }
+    kept = [by_id.get(d["draft_id"], d) for d in previous if d["draft_id"] not in removed]
+    merged = kept + [d for d in changed if d["draft_id"] not in was]
+    out = []
+    for draft in merged:
+        if any(dep in removed for dep in draft["depends_on"]):
+            waits = [x for dep in draft["depends_on"] for x in (removed[dep] if dep in removed else [dep])]
+            draft = {**draft, "depends_on": [x for x in dict.fromkeys(waits) if x != draft["draft_id"]]}
+        out.append(draft)
+    return out, [i for i in decisions if i["ref"] not in was]
+
+
+def at(conn: psycopg.Connection, goal_id: str, version: int) -> dict | None:
+    """The goal's plan at that version, or None."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT {PLAN_COLUMNS} FROM planner.plan WHERE goal_id = %s AND version = %s", (goal_id, version))
+        row = cur.fetchone()
+    return _plan(row) if row else None
 
 
 def latest_drafts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -268,15 +308,18 @@ def save(
     summary: str = "",
     gaps: list[str] | None = None,
     issues: list[dict[str, Any]] | None = None,
+    stopped_at: str | None = None,
 ) -> dict:
-    """Saves the plan as the goal's next version. source: planned (from a planning task) or edited."""
+    """Saves the plan as the goal's next version. source: planned (from a planning task) or edited.
+    stopped_at: the limit its planning run ended at, when it ended at one."""
     with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT id FROM planner.goal WHERE id = %s FOR UPDATE", (goal_id,))
         cur.execute("SELECT coalesce(max(version), 0) AS v FROM planner.plan WHERE goal_id = %s", (goal_id,))
         version = cur.fetchone()["v"] + 1
         cur.execute(
             "INSERT INTO planner.plan (goal_id, version, drafts, invalid, source, task_id, note, created_by, items, "
-            f"summary, gaps, issues) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {PLAN_COLUMNS}",
+            "summary, gaps, issues, stopped_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"RETURNING {PLAN_COLUMNS}",
             (
                 goal_id,
                 version,
@@ -290,6 +333,7 @@ def save(
                 summary,
                 Jsonb(gaps or []),
                 Jsonb(issues or []),
+                stopped_at,
             ),
         )
         return _plan(cur.fetchone())
@@ -336,15 +380,27 @@ def set_tracked(conn: psycopg.Connection, goal_id: str, version: int, tracked: b
 
 
 def set_plan_task(
-    conn: psycopg.Connection, goal_id: str, task_id: str | None, issues: list[dict[str, Any]] | None = None
+    conn: psycopg.Connection,
+    goal_id: str,
+    task_id: str | None,
+    issues: list[dict[str, Any]] | None = None,
+    base_version: int | None = None,
 ) -> None:
-    """Records the goal's planning task in flight, with the issues it was given; None when it has none. When
-    one is set, the time is kept as when planning was asked for, and stays after the task ends."""
+    """Records the goal's planning task in flight, with the issues it was given and the plan version it revises
+    (base_version; None for one that plans afresh); None when it has none. When one is set, the time is kept
+    as when planning was asked for, and stays after the task ends."""
     with conn.transaction():
         conn.execute(
-            "UPDATE planner.goal SET plan_task_id = %s, plan_issues = %s, updated_at = now(), "
+            "UPDATE planner.goal SET plan_task_id = %s, plan_issues = %s, plan_base_version = %s, "
+            "updated_at = now(), "
             "plan_asked_at = CASE WHEN %s::text IS NULL THEN plan_asked_at ELSE now() END WHERE id = %s",
-            (task_id, Jsonb(issues) if task_id and issues is not None else None, task_id, goal_id),
+            (
+                task_id,
+                Jsonb(issues) if task_id and issues is not None else None,
+                base_version if task_id else None,
+                task_id,
+                goal_id,
+            ),
         )
 
 

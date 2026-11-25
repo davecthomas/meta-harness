@@ -255,8 +255,13 @@ async def collect(goal: dict, tasks: Any, events: Any) -> dict | None:
                 found = cur.fetchone()
             return list((found or {}).get("issues") or [])
 
+        def revises() -> dict | None:
+            with db.connect(autocommit=True) as conn:
+                return plans.at(conn, goal["id"], row["for_version"])
+
         issues = await asyncio.to_thread(given)
-        found = await planning.gather(goal, task, events, issues)
+        # A fix changes what it names: every other task is the plan's own, unchanged (plans.merge).
+        found = await planning.gather(goal, task, events, issues, base=await asyncio.to_thread(revises))
         status = "failed" if found["invalid"] else "open"
         await asyncio.to_thread(_set, goal["id"], row["for_version"], status=status, issues=issues, **found)
         if status == "failed":

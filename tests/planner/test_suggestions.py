@@ -81,7 +81,9 @@ def test_a_plan_with_a_gap_the_planner_can_fix_gets_a_drafted_fix_to_accept(worl
     assert shown["planning_task_id"] is None and shown["suggestion"] is None
     assert _start(goal, plan, tasks, events, assessor) is None and assessor.calls == 1, "one fix per plan version"
 
-    _end(events, tasks, task, [draft("store"), draft("api", ("store",))], [OPEN])
+    # The fix records the one task it changes. The task it does not name is the plan's own, unchanged.
+    assert "--- the plan so far ---" in task["description"]
+    _end(events, tasks, task, [draft("api", ("store",))], [OPEN])
     assert asyncio.run(suggestions.collect(goal, tasks, events))["status"] == "open"
     suggestion = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()["suggestion"]
     assert suggestion["for_version"] == 1 and suggestion["fixes"] == [{"gap": CLASH, "change": "Run api after store."}]

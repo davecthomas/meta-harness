@@ -84,7 +84,17 @@ def test_a_task_too_large_for_one_pull_request_sends_the_planner_back_before_any
     assert "Keep every task that is not named here as it is" in again["description"]
     assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 409
 
-    resized = _ends(client, events, tasks, goal, [draft("store"), draft("api-routes", ("store",)), draft("api-models")])
+    # The run that resizes revises the plan: the tasks are in its prompt in full, it writes the two that replace
+    # the large one and says so, and the task it does not name is kept as it was.
+    assert "--- the plan so far ---" in again["description"] and "## store (" in again["description"]
+    events.emit(
+        "issue_planned",
+        {"ref": "api", "decision": "split", "reason": "Too large.", "replaced_by": ["api-routes", "api-models"]},
+        task_id=again["id"],
+    )
+    resized = _ends(client, events, tasks, goal, [draft("api-routes", ("store",)), draft("api-models")])
+
+    assert [d["draft_id"] for d in resized["plan"]["drafts"]] == ["store", "api-routes", "api-models"]
 
     assert resized["plan"]["invalid"] == [] and resized["planning_task_id"] is None
     assert len(_plan_tasks(tasks, goal)) == 2, "sized right, the planner is not sent back again"

@@ -144,6 +144,11 @@ nothing. They are kept as rules so the same stop does not come back.
   sizer as an incoming issue before the plan is shown. One too large for a
   pull request sends the planner back to resize it, twice at most, before an
   operator is asked (`planner/draft_sizes.py`).
+- **A planning run keeps its work.** A run that reaches a limit leaves its
+  tasks in the plan. The next run starts from them in full and writes only
+  what is missing (`plans.merge`). A run shown only the titles of the tasks
+  before it wrote each one again: a fix for two gaps rewrote forty tasks, and
+  a plan that stopped at its turn limit was paid for twice.
 - **A goal keeps up with its base.** A pull request the code host would take
   is merged whatever its task's tries say. One the base has left behind is
   started over on the current base once before anyone is asked
@@ -2996,6 +3001,19 @@ seconds for it at most, then answers that the planner is still working. Each
 read of the plan's page, and the sweep, once started its own sizing of the
 whole plan: a plan of fourteen tasks met the gateway's limit, one task was
 sized five times, and the plan was shown with none of them sized.
+
+A planning run that starts while the goal has a plan no operator has approved
+revises that plan (`planning.revised`). Its prompt holds the plan's tasks in
+full, and its result is that plan with the run's changes over it
+(`plans.merge`). The run changes a task by recording it again, adds one by
+recording a new one, and removes one by deciding to leave it out or split it.
+Every other task stays as it was. A resize round, a suggested fix and Plan again all
+revise this way. A run after an approved plan plans afresh over the goal's
+issues, since that plan's tasks are issues by then. A planning run that ends
+at its turn, time or spend limit keeps the tasks it recorded. The plan says
+which limit (`stopped_at`) and cannot be approved, and the planner starts one
+run that continues from those tasks. If that run ends at a limit too, Plan
+again continues from what both recorded.
 
 An issue opened by someone with no write access to the repo is held before it
 is sized. That is an author whose GitHub `author_association` is not OWNER,
