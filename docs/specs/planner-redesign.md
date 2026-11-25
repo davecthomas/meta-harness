@@ -319,6 +319,10 @@ Settings, checked at startup:
 |---|---|---|
 | `planning.max_unasked_usd` | `"12.00"` | Stops the service, naming it: a wrong value could cost money |
 
+Configuration, Planning shows the new limit under the existing "Spend limit" row, as "Spend limit without asking:
+$12. For everything planning does on a goal before you next ask it for something." A replan has no limit of its
+own: it is a planning run, and "Spend limit" caps it.
+
 Every migration only adds.
 
 ## Screens and services
@@ -333,6 +337,7 @@ Every migration only adds.
 | Planning tools | `images/harness-pi/extension/owned-tools.ts`, `run_service/prompts/` | `remove_issue`; a new prompt file that holds the previous tasks in full |
 | Spend | `planner/planning.py`, `run_service/prompts/` | The limit on unasked planning, checked before each run and reset by each run the operator asks for. The code notes a run records and the next run reads |
 | Updates | `planner/updates.py` | Fixed progress lines; counts and reasons as facts |
+| Configuration, Planning | `config/PlanningView.tsx` | The new limit's row |
 | Help | `help/topics.ts` | A topic on reading and changing a plan |
 | Design | `docs/technical-design.md`, `config/charter.txt` | The new principle; the Planner and console sections |
 
