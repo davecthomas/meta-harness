@@ -83,7 +83,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from meta_harness import db
+from meta_harness import acting, db
 from meta_harness.config import store as config_store
 from meta_harness.events.client import stable_event_id
 from meta_harness.trackers.base import TrackerError
@@ -182,6 +182,7 @@ async def sweep_goal(
 ) -> SweepResult:
     """One sweep of a goal, as the module says. sizer sizes each issue before it becomes a task; None: none is
     sized, and every issue runs as it did before sizing."""
+    acting.use(goal.get("acts_as"))
     # The goal's tracker, for its repos and what it told the tracker (its Jira project): every call below is its.
     tracker = goal_tracker(tracker, goal)
     result = SweepResult(goal["id"])
@@ -235,6 +236,7 @@ async def follow_up_goal(
     task, record each open one that has closed, and record the end of each pull request its canceled tasks
     left open. A tracker that is told how tasks go is told what changed. Nothing is taken in, and no task or
     goal changes status."""
+    acting.use(goal.get("acts_as"))
     tracker = goal_tracker(tracker, goal)
     result = SweepResult(goal["id"])
     for link in await asyncio.to_thread(_links, goal["id"]):
@@ -891,6 +893,7 @@ async def _watch_pull_requests(goal: dict, tasks: TaskClient, events: Events, ho
 async def follow_up_goalless(tasks: TaskClient, events: Events, host: CodeHost | None = None) -> SweepResult:
     """Record the end of each pull request a canceled task of no goal left open. A task can be made without a
     goal, and no goal's sweep or follow-up lists it, so this watches those, as often as goals are followed up."""
+    acting.use("")
     result = SweepResult("")
     await _watch_canceled_pull_requests(None, tasks, events, host or code_host, result)
     return result

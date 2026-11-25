@@ -53,7 +53,7 @@ from pydantic import BaseModel, Field, ValidationError
 from meta_harness import fallback, outbound
 from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
-from meta_harness import auth, db, github_user, retrying
+from meta_harness import acting, auth, db, github_user, retrying
 from meta_harness.costs import api as costs_api
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
@@ -874,6 +874,8 @@ def create_app(
             repo, number = code_host.pr_number(task["pr_url"])
         except code_host.CodeHostError as err:
             raise HTTPException(status_code=404, detail=str(err)) from err
+        # The rest of this request reads and writes the pull request as the goal's operator, when it has one.
+        acting.use(await asyncio.to_thread(acting.of_goal, task.get("goal_id")))
         return task, repo, number
 
     @app.get("/v1/pulls/{task_id}/attempts")
@@ -1343,6 +1345,11 @@ def create_app(
                     goal, _ = store.update(conn, goal["id"], label=planning.goal_label(goal))
         except store.GoalError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
+        # A goal acts as the operator who created it, once they have connected GitHub: its work on GitHub then
+        # uses their access. With no connection it uses the GitHub App, as before.
+        if await asyncio.to_thread(acting.connected, who):
+            await asyncio.to_thread(acting.set_for, goal["id"], who)
+            goal["acts_as"] = who
         reviewed = body.adversarial_review
         if reviewed is None:
             reviewed = plan_review.default_for(body.autonomy)

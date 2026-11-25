@@ -44,6 +44,7 @@ from meta_harness.run_service.activities import (
     wait_checks,
     wait_merge_checks,
 )
+from meta_harness.run_service.acting_interceptor import ActingInterceptor
 from meta_harness.run_service.base_activities import bring_base
 from meta_harness.run_service.budget_activities import budget_hold, goal_budget
 from meta_harness.run_service.prompt_activities import record_prompt
@@ -118,6 +119,7 @@ async def main() -> None:
         client,
         task_queue=TASK_QUEUE,
         workflows=[RunTask],
+        interceptors=[ActingInterceptor()],
         activities=[
             prepare,
             route,

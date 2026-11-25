@@ -4143,8 +4143,19 @@ planner stops at startup and names them. `GET /v1/repos/reachable`
 `write` or `read`, without the archived ones. The planner holds an operator's
 list for ten minutes (`MH_REACHABLE_REPOS_SECONDS`) and reads it again with
 `?refresh=1`. When it cannot read the list again it serves the last one with
-why. A token GitHub refuses marks the connection broken. Connecting changes
-nothing else yet: goals still reach GitHub through the GitHub App.
+why. A token GitHub refuses marks the connection broken. 
+A goal acts as the operator who created it, when that operator had connected
+GitHub (`goal.acts_as`). Its clones, pushes, pull requests, reviews, checks and
+merges then use the operator's token, so the operator's GitHub account authors
+the pull request. The worker reads the goal's operator before each activity
+(`run_service/acting_interceptor.py`), and the planner and the supervisor name
+it before they read a pull request (`meta_harness/acting.py`). The code host
+(`run_service/code_host.py`) uses the operator's token when one is named and
+the App otherwise. A goal with no operator uses the App: one made before this,
+by a service, or by an operator with no connection. When GitHub refuses the
+token, the connection is marked broken and the task fails with "Connect GitHub
+again in Settings". Creating a goal or a task still checks its repo against
+the repo registry, and the GitHub tracker still reads issues through the App.
 
 **Adversarial plan review** (`planner/plan_review.py`). A goal can have its
 plans reviewed by a second model before the operator approves them
