@@ -179,6 +179,16 @@ umask 077
     echo "MH_JIRA_EMAIL=$jira_email"
     echo "MH_JIRA_TOKEN=$jira_token"
   fi
+  # An operator's own GitHub connection, when the deployment has one: the OAuth app's id and secret and the key
+  # stored tokens are encrypted with. All three or none: with one missing, connecting stays off.
+  github_oauth_id=$(optional_secret MH_GITHUB_OAUTH_CLIENT_ID)
+  github_oauth_secret=$(optional_secret MH_GITHUB_OAUTH_CLIENT_SECRET)
+  github_token_key=$(optional_secret MH_GITHUB_TOKEN_KEY)
+  if [ -n "$github_oauth_id" ] && [ -n "$github_oauth_secret" ] && [ -n "$github_token_key" ]; then
+    echo "MH_GITHUB_OAUTH_CLIENT_ID=$github_oauth_id"
+    echo "MH_GITHUB_OAUTH_CLIENT_SECRET=$github_oauth_secret"
+    echo "MH_GITHUB_TOKEN_KEY=$github_token_key"
+  fi
   # The most per-run sandboxes the VM holds: the ceiling on the task policy's max_parallel.
   # The commit's version, worked out from main's history (versioning.py), for every service.
   # versioning.py is a file a task's pull request can change, so it runs as mh, not as root, and what it

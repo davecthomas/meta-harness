@@ -69,6 +69,11 @@ variable "secrets" {
     # The Jira account the Jira tracker signs in as: its email, and an API token of that account. Optional: a
     # deployment with no value in them has no Jira sign-in, and the console says so.
     "MH_JIRA_EMAIL", "MH_JIRA_TOKEN",
+    # An operator's own GitHub connection (docs/specs/goals-span-repos.md): the OAuth app operators sign in to
+    # GitHub through, as its client id and secret, and the key their stored tokens are encrypted with. Optional:
+    # a deployment with no value in them has no such connection, the console says so, and goals use the GitHub
+    # App as before. All three or none.
+    "MH_GITHUB_OAUTH_CLIENT_ID", "MH_GITHUB_OAUTH_CLIENT_SECRET", "MH_GITHUB_TOKEN_KEY",
   ]
 }
 
