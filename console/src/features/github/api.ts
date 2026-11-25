@@ -11,6 +11,18 @@ export interface GitHubConnection {
   login: string | null;
   scopes: string;
   connected_at: string | null;
+  // The accounts and organizations the operator chose to use. Empty: every one the connection reaches.
+  owners: string[];
+}
+
+// What the connection reaches, from GET /v1/repos/reachable: every account and organization with its repo
+// count, and the ones the operator chose.
+export interface Reachable {
+  repos: { name: string; access: "write" | "read" }[];
+  owners: { name: string; repos: number }[];
+  chosen: string[];
+  stale: boolean;
+  why: string | null;
 }
 
 // The GitHub feature's calls; src/api.ts spreads them into `api`.
@@ -20,5 +32,8 @@ export const githubApi = {
   githubConnect: () => call<{ url: string }>("/v1/github/connect", { method: "POST" }),
   // Finishes it, with what GitHub sent the browser back with.
   githubFinish: (code: string, state: string) => call<GitHubConnection>("/v1/github/connection", { method: "POST", body: JSON.stringify({ code, state }) }),
+  githubReachable: () => call<Reachable>("/v1/repos/reachable"),
+  // Limit the connection to these accounts and organizations; none for all it reaches.
+  githubChooseOwners: (owners: string[]) => call<GitHubConnection>("/v1/github/connection/owners", { method: "PUT", body: JSON.stringify({ owners }) }),
   githubDisconnect: () => call<GitHubConnection>("/v1/github/connection", { method: "DELETE" }),
 };

@@ -12,7 +12,8 @@ afterEach(() => {
 });
 
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
-const CONNECTION = { enabled: true, why_off: null, state: "none", connected: false, login: null, scopes: "", connected_at: null };
+const CONNECTION = { enabled: true, why_off: null, state: "none", connected: false, login: null, scopes: "", connected_at: null, owners: [] as string[] };
+const REACH = { repos: [], owners: [{ name: "acme", repos: 12 }, { name: "octo-dave", repos: 3 }], chosen: [], stale: false, why: null };
 
 function Where() {
   const at = useLocation();
@@ -45,9 +46,11 @@ test("an operator with no connection gets one button, which sends the browser to
 });
 
 test("a connection says who it is as, and a broken one says to reconnect", async () => {
-  vi.stubGlobal("fetch", () => json({ ...CONNECTION, state: "connected", connected: true, login: "octo-dave", scopes: "repo" }));
+  vi.stubGlobal("fetch", (url: string) => (String(url).includes("/v1/repos/reachable") ? json(REACH) : json({ ...CONNECTION, state: "connected", connected: true, login: "octo-dave", scopes: "repo" })));
   show(<GitHubSection />);
   expect((await screen.findByTestId("github-section")).textContent).toContain("Connected as octo-dave");
+  // The accounts to use are picked from what the connection reaches; with none picked, all of them count.
+  await waitFor(() => expect(screen.getByTestId("github-owners").textContent).toContain("Muxxy offers 15 repos"));
   expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
   cleanup();
 
@@ -86,4 +89,24 @@ test("a sign-in GitHub refused, or the service refused, says why and offers to c
   vi.stubGlobal("fetch", () => json({ detail: "this sign-in was not started from your console session. Press Connect GitHub to start again" }, 409));
   show(<GitHubConnected />, "/github/connected?code=abc&state=stolen");
   expect((await screen.findByRole("alert")).textContent).toContain("was not started from your console session");
+});
+
+test("picking accounts saves them, and the count follows", async () => {
+  const sent: string[] = [];
+  let owners: string[] = [];
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (String(url).includes("/v1/repos/reachable")) return json(REACH);
+    if (init?.method === "PUT") {
+      sent.push(String(init.body));
+      owners = JSON.parse(String(init.body)).owners;
+    }
+    return json({ ...CONNECTION, state: "connected", connected: true, login: "octo-dave", owners });
+  });
+  show(<GitHubSection />);
+  const box = (await screen.findByTestId("github-owners")).querySelector("input:not([type=hidden])") as HTMLElement;
+  await waitFor(() => expect(screen.getByTestId("github-owners").textContent).toContain("Muxxy offers 15 repos"));
+  fireEvent.click(box);
+  fireEvent.click(await screen.findByRole("option", { name: "octo-dave (3)", hidden: true }));
+  await waitFor(() => expect(sent).toEqual(['{"owners":["octo-dave"]}']));
+  await waitFor(() => expect(screen.getByTestId("github-owners").textContent).toContain("Muxxy offers 3 repos"));
 });

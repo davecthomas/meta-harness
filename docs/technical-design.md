@@ -4143,7 +4143,12 @@ planner stops at startup and names them. `GET /v1/repos/reachable`
 `write` or `read`, without the archived ones. The planner holds an operator's
 list for ten minutes (`MH_REACHABLE_REPOS_SECONDS`) and reads it again with
 `?refresh=1`. When it cannot read the list again it serves the last one with
-why. A token GitHub refuses marks the connection broken. 
+why. A token GitHub refuses marks the connection broken. An operator can
+limit Muxxy to some of the accounts and organizations their connection reaches
+(`PUT /v1/github/connection/owners`, picked in Settings from the list the
+connection returns). The reachable list then holds only those accounts' repos,
+and still names every account so the choice can change. With none picked, all
+count. 
 A goal acts as the operator who created it, when that operator had connected
 GitHub (`goal.acts_as`). Its clones, pushes, pull requests, reviews, checks and
 merges then use the operator's token, so the operator's GitHub account authors
