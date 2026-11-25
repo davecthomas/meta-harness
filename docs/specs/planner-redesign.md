@@ -1,7 +1,7 @@
 # Planner redesign: a Plan page
 
-Status: asked for by the owner on 2026-11-25, reviewed against the code the same day. Muxxy builds it as a goal
-from this file.
+Status: asked for by the owner on 2026-11-25, reviewed against the code the same day. Built by hand. "Built so far" at
+the end says which parts exist.
 
 ## Why
 
@@ -86,7 +86,9 @@ and dismiss calls, which keep working for a release and answer through the new o
 A revising run of any cause starts from the previous tasks and records its changes over them:
 
 - `create_issue` with an existing id changes that task. With a new id it adds one.
-- A new planning tool, `remove_issue`, removes a task, and records an `issue_removed` event.
+- The existing `plan_issue` tool removes a task: the decision `leave_out` on the task's id, or `split` with the
+  ids of the tasks that replace it. What waited for a removed task then waits for its replacements, or for
+  nothing. This needed no change to the run image, which a new `remove_issue` tool would have.
 - A task the run did not name moves into the result byte for byte. So do the plan's `items`, `summary` and
   `gaps`, unless the run records them again.
 - The run's prompt holds the previous tasks in full. Today it holds their titles only (`planning.py`), which is
@@ -204,7 +206,8 @@ Open blocking review findings are cards here too, with "Fix it" and "Not a probl
 
 - The page groups tasks by stage: those that can start now, then those that wait on them. The operator can
   switch to grouping by repo.
-- A group shows its name, its task count and the most it may spend, folded.
+- A group shows its name, its task count and the most it may spend, folded. A plan of five tasks or fewer shows
+  them all.
 - A task row shows its title, size, repo and what it waits for. It opens to its full text and acceptance checks,
   with Edit and Remove.
 - Marks on a row say what changed about it against the baseline, and how many open problems name it.
@@ -216,7 +219,7 @@ Where the figures come from:
 |---|---|
 | A task's size | `draft_sizes.py` sizes each task. The plan now stores it on the task |
 | The most a task may spend | The task policy's `max_usd_by_size` for its size |
-| The most the plan may spend | The sum over its tasks, shown as "up to", never as an estimate |
+| The most the plan may spend | The sum over its tasks, shown as "up to", never as an estimate. Given only once every task has a size: a guess for unsized tasks made a plan of sixty read as $1,200 |
 | Tasks that can start at once | Tasks that wait for nothing, capped at the goal's parallel limit |
 | Hand-edited | A task now records who last edited it, the planner or an operator |
 
@@ -364,6 +367,25 @@ Every migration only adds.
 - A call against an old version fails with its remedy.
 - The decision-drag test holds every planner ask to two sentences, 280 characters and no list before its first
   button.
+
+## Built so far (2026-11-25)
+
+| Part | State |
+|---|---|
+| A run changes only what it names; the planner continues once a run that ends at a limit | Built (`plans.merge`, `planning.stopped_at`) |
+| Changes as counts by kind, with reasons first | Built (`plans.diff`) |
+| The planner's own fix applies itself, with undo | Built (`suggestions._untouched`, `plan/undo-fix`) |
+| The limit on unasked planning | Built (`planner/planning_spend.py`) |
+| The Plan page: decision bar, tiles, what changed, open questions, stages, history | Built (`console/src/features/plan/`) |
+| The plan's state and buttons from `actions.py` | Built (`actions.plan_decision`) |
+| First principle 10 and the decision-drag test | Built |
+| Proposals for a replan, with Keep and Scope | Not built: Plan again still saves the next version |
+| Open questions as cards with an answer field | Not built: the page lists them, five in view |
+| Grouping tasks by repo; the most a stage may spend | Not built |
+| Code notes carried from one planning run to the next | Not built |
+| Turn limits that grow with a run's input | Not built: batching and the one continuation cover it so far |
+| After approval: a proposal that changes issues already created | Not built |
+| `plan_saved` version 2 | Not needed yet: a revision saves as `planned` |
 
 ## Decided (2026-11-25)
 

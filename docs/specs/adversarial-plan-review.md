@@ -1,8 +1,8 @@
 # Adversarial plan review
 
-Status: approved in outline by the owner on 2026-11-24, reviewed against the code on 2026-11-25. Muxxy builds
-it as a goal from this file, after `docs/specs/planner-redesign.md`, whose Plan page and plan-change model it
-uses.
+Status: approved in outline by the owner on 2026-11-24, reviewed against the code on 2026-11-25, and built by
+hand the same day on `docs/specs/planner-redesign.md`'s Plan page. "As built" at the end says where the code
+differs from this text.
 
 ## Why
 
@@ -428,6 +428,23 @@ Every migration only adds. No existing event type changes.
 - Console tests cover the switch's default, the panel's lines, findings on task cards, change marks and the
   approve button's words.
 - The zero-cost end-to-end check gains a planned goal with review on, against the fake HTTP Gateway.
+
+## As built (2026-11-25)
+
+The review shipped without a change to the run image or the run workflow. Where that differs from the text
+above, the code is right:
+
+| This spec says | Built as |
+|---|---|
+| A task of type `plan_review` | A planning task (type `plan`), told apart by its external ref, `plan-review:` |
+| A new tool, `submit_plan_review` | The existing `submit_review`: `path` is the task a finding is about, and `body` holds the kind in square brackets, what is wrong, and a `Change:` line |
+| A new profile, `pi-plan-review` | The pull request reviewers' profile. Reviewers come from `planning.adversarial_review.reviewers`, else the task policy's `review.reviewers` |
+| The skill loaded by the profile | The skill's text put in the review's prompt by the planner, which is what a locked skill is for |
+| `settle_plan_review` as a need | The plan's decision holds it: "Fix it" and "Approve with N open" on the Plan page. The needs list still shows the plan's approval |
+| "Approve now" cancels a running review | Not built: approving while a review runs leaves the review to end |
+| An edit cancels a running review | Not built: the review ends and stays on the version it read |
+| Findings as the planner redesign's reasons | Kept in `planner.plan_review`, drawn in their own part of the Plan page |
+| A setting in Settings for the operator's default | Not built: the default follows the goal's autonomy |
 
 ## Decided (2026-11-24 and 2026-11-25)
 
