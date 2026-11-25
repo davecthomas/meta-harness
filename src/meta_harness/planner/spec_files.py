@@ -14,13 +14,13 @@ with what to do. Folders of other people's code are left out of the list, since 
 """
 
 import base64
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 
-from meta_harness import local_repos
+from meta_harness import acting, local_repos
 from meta_harness.github_app import GitHubAppError
 from meta_harness.planner import specs
 
@@ -44,12 +44,16 @@ def _order(path: str) -> tuple[int, int, str]:
 
 
 def register(
-    app: FastAPI, operator: Callable[..., str], registered: Callable[[list[str]], list[str]], apps: Any
+    app: FastAPI,
+    operator: Callable[..., str],
+    readable: Callable[[list[str], str], Awaitable[list[str]]],
+    apps: Any,
 ) -> None:
-    """Adds the routes. registered(names) gives the registry's names, or answers 404; apps makes the calls."""
+    """Adds the routes. readable(names, who) gives each repo's name if the caller may read it, or answers 404,
+    and names whose access the calls use; apps makes the calls on the GitHub App."""
 
-    def repo_of(owner: str, name: str) -> str:
-        [repo] = registered([f"{owner}/{name}"])
+    async def repo_of(owner: str, name: str, who: str) -> str:
+        [repo] = await readable([f"{owner}/{name}"], who)
         if local_repos.is_local(repo):
             raise HTTPException(
                 status_code=422,
@@ -71,10 +75,10 @@ def register(
     @app.get("/v1/repos/{owner}/{name}/spec-files")
     async def spec_files(owner: str, name: str, who: str = Depends(operator)) -> dict:
         """The repo's Markdown and text files on its default branch, the likeliest specifications first."""
-        repo = repo_of(owner, name)
+        repo = await repo_of(owner, name, who)
         try:
-            tree = await apps.call(
-                repo, READ_CONTENTS, "GET", f"/repos/{repo}/git/trees/HEAD", params={"recursive": "1"}
+            tree = await acting.github(
+                apps, repo, READ_CONTENTS, "GET", f"/repos/{repo}/git/trees/HEAD", params={"recursive": "1"}
             )
         except GitHubAppError as err:
             raise failed(repo, "file list", err) from err
@@ -98,7 +102,7 @@ def register(
         owner: str, name: str, path: str = Query(min_length=1, max_length=500), who: str = Depends(operator)
     ) -> dict:
         """One document's text, to be the goal's specification."""
-        repo = repo_of(owner, name)
+        repo = await repo_of(owner, name, who)
         path = path.strip().lstrip("/")
         if ".." in path.split("/") or not path.lower().endswith(EXTENSIONS):
             raise HTTPException(
@@ -106,7 +110,7 @@ def register(
                 detail=f"a specification is a Markdown or text file ({', '.join(EXTENSIONS)}), by its path in the repo: {path!r} is not one",
             )
         try:
-            found = await apps.call(repo, READ_CONTENTS, "GET", f"/repos/{repo}/contents/{quote(path)}")
+            found = await acting.github(apps, repo, READ_CONTENTS, "GET", f"/repos/{repo}/contents/{quote(path)}")
         except GitHubAppError as err:
             raise failed(repo, path, err) from err
         if not isinstance(found, dict) or found.get("type") != "file":

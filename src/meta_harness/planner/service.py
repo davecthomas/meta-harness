@@ -708,14 +708,61 @@ def create_app(
     charter.check_settings()
     draft = drafter or drafting.draft_goal
 
-    def registered(names: list[str]) -> list[str]:
-        """The registry's names for the repos asked for, or every registered repo. 404 for an unknown one."""
+    async def goal_repos(names: list[str], who: str) -> list[str]:
+        """The repos a goal may name, each spelled as the registry or GitHub spells it: one in the registry, or
+        one the operator can push to with their own GitHub connection. 422 names each other one and what to do."""
+        found: list[str] = []
+        unknown: list[str] = []
+        reachable: dict[str, str] | None = None
+        for name in names:
+            if listed := repos.get(name):
+                found.append(listed.name)
+                continue
+            if reachable is None:
+                reachable = await pushable(who)
+            if name.lower() in reachable:
+                found.append(reachable[name.lower()])
+            else:
+                unknown.append(name)
+        if unknown:
+            raise HTTPException(status_code=422, detail=unreached(unknown, who))
+        return list(dict.fromkeys(found))
+
+    async def pushable(who: str, write: bool = True) -> dict[str, str]:
+        """The repos the operator can push to with their own connection, or with write False read, lowercased
+        name to name; none when they have no working connection or GitHub cannot be read."""
+        if not await asyncio.to_thread(acting.connected, who):
+            return {}
+        try:
+            found = await reach.reachable(who, transport=github_transport)
+        except github_user.GitHubUserError:
+            return {}
+        return {r["name"].lower(): r["name"] for r in found["repos"] if r["access"] == "write" or not write}
+
+    async def readable(names: list[str], who: str) -> list[str]:
+        """The repos asked for, spelled as the registry or GitHub spells them, or every registered repo when
+        none is asked for. Each must be in the registry or readable with the caller's own GitHub connection;
+        404 otherwise. The rest of the request then reads GitHub as the caller when they have connected it."""
+        connected = await asyncio.to_thread(acting.connected, who)
+        acting.use(who if connected else "")
         if not names:
             return [r.name for r in repos.registry().values()]
-        unknown = [name for name in names if repos.get(name) is None]
+        theirs = await pushable(who, write=False) if any(repos.get(n) is None for n in names) else {}
+        unknown = [n for n in names if repos.get(n) is None and n.lower() not in theirs]
         if unknown:
-            raise HTTPException(status_code=404, detail=f"not in the repo registry: {', '.join(unknown)}")
-        return [repos.get(name).name for name in names]
+            raise HTTPException(status_code=404, detail=unreached(unknown, who).replace("push to", "read", 1))
+        return [repos.get(n).name if repos.get(n) else theirs[n.lower()] for n in names]
+
+    def unreached(names: list[str], who: str) -> str:
+        if not acting.connected(who):
+            return (
+                f"not in the repo registry: {', '.join(names)}. Connect GitHub in Settings to work in any repo you "
+                "can push to"
+            )
+        return (
+            f"your GitHub connection cannot push to {', '.join(names)}. Pick a repo you can push to, or add the "
+            "account that owns it under GitHub in Settings"
+        )
 
     def checked_refs(
         refs: list[str], goal_repos: list[str], scheme: str | None = None, settings: dict | None = None
@@ -858,9 +905,21 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/v1/repos")
-    def registered_repos(who: str = Depends(operator)) -> dict:
-        """The repo registry: the repos a goal may name."""
-        return {"repos": [{"name": r.name, "tracker": r.tracker} for r in repos.registry().values()]}
+    async def registered_repos(
+        pushable_too: bool = Query(False, alias="pushable"), who: str = Depends(operator)
+    ) -> dict:
+        """The repo registry. With pushable=1, also every repo the caller can push to with their own GitHub
+        connection (`registered` false): the repos a goal they create may name."""
+        listed = [{"name": r.name, "tracker": r.tracker, "registered": True} for r in repos.registry().values()]
+        if not pushable_too:
+            return {"repos": listed}
+        known = {r["name"].lower() for r in listed}
+        theirs = [
+            {"name": name, "tracker": "github", "registered": False}
+            for lowered, name in (await pushable(who)).items()
+            if lowered not in known
+        ]
+        return {"repos": listed + theirs}
 
     async def task_pull(task_id: str) -> tuple[dict, str, int]:
         """A task with its pull request's repo and number. 404 when the task has none."""
@@ -1125,7 +1184,7 @@ def create_app(
         """Every label on the open issues of the registered repos, or of one, with its issue counts and how many an
         open goal holds. tracker: which tracker's issues, the default's when left out; settings: what that
         tracker asks of a goal, as JSON (for Jira, {"project": "PROJ"})."""
-        names = registered([repo] if repo else [])
+        names = await readable([repo] if repo else [], who)
         issues = await open_issues(names, None, tracker, goal_settings(settings))
         with app.state.pool.connection() as conn:
             held = store.holders(conn, [i.ref for found in issues.values() for i in found])
@@ -1146,7 +1205,7 @@ def create_app(
         """A registered repo's open issues, with the label if given and the text q in their titles if given,
         newest first, a page at a time from cursor. Each names the open goal that holds it, if any. tracker:
         which tracker's issues; the default's when left out."""
-        [repo] = registered([f"{owner}/{name}"])
+        [repo] = await readable([f"{owner}/{name}"], who)
         issues = (await open_issues([repo], label, tracker, goal_settings(settings)))[repo]
         if q:
             issues = [i for i in issues if q.lower() in i.title.lower()]
@@ -1202,7 +1261,7 @@ def create_app(
                 status_code=422,
                 detail="name the label to draft from, in label or labels, or the issues picked by hand, in refs",
             )
-        names = registered(body.repos)
+        names = await readable(body.repos, who)
         by_ref: dict[str, Any] = {}
         for name in labels:
             for found in (await open_issues(names, name, body.tracker, body.tracker_settings)).values():
@@ -1288,10 +1347,7 @@ def create_app(
 
     @app.post("/v1/goals", status_code=201)
     async def create(body: GoalIn, who: str = Depends(operator)) -> dict:
-        unknown = [name for name in body.repos if repos.get(name) is None]
-        if unknown:
-            raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
-        names = [repos.get(name).name for name in body.repos]
+        names = await goal_repos(body.repos, who)
         # A goal with a specification is planned from it, whatever else it takes in.
         planned = body.modality in store.PLANNED_MODALITIES or body.spec is not None
         # A goal that plans its own issues needs neither: its plan's issues get a label of the goal's own. Nor
@@ -1652,10 +1708,7 @@ def create_app(
         except store.GoalError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
         if "repos" in fields:
-            unknown = [name for name in fields["repos"] if repos.get(name) is None]
-            if unknown:
-                raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
-            fields["repos"] = list(dict.fromkeys(repos.get(name).name for name in fields["repos"]))
+            fields["repos"] = await goal_repos(fields["repos"], who)
         goal = await asyncio.to_thread(lambda: change(goal_id, who, **fields))
         if {"max_usd", "budget_mode", "budget_overage_percent"} & set(fields):
             try:
@@ -1810,11 +1863,12 @@ def create_app(
     unstick_api.register(app, operator, load, tasks)
     specs.register(app, operator, load)
     cancel_issues.register(app, operator, load, tracker, tasks)
-    spec_files.register(app, operator, registered, apps)
+    spec_files.register(app, operator, readable, apps)
 
     async def spec_issue(ref: str, scheme: str | None, names: list[str], settings: dict[str, str]) -> Any:
         """An issue of a goal's tracker, read to draft the goal from: 422 says why it could not be read."""
-        reader = bound_tracker(scheme, registered(names), settings) if hasattr(tracker, "named") else tracker
+        spelled = [repos.get(n).name if repos.get(n) else n for n in names]
+        reader = bound_tracker(scheme, spelled, settings) if hasattr(tracker, "named") else tracker
         try:
             return await reader.read(ref)
         except (TrackerError, ValueError) as err:

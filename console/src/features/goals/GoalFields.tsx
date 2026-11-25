@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { AUTONOMY, AutonomyPicker, autonomyOf } from "./autonomy";
-import { Badge, Checkbox, NumberInput, Stack, Text, TextInput, Textarea } from "@mantine/core";
+import { Badge, NumberInput, Stack, Text, TextInput, Textarea } from "@mantine/core";
 import { api, goalTitle, type Goal } from "../../api";
 import { goalSource } from "../trackers/refs";
 import { InlineEdit, InlineSwitch } from "./InlineEdit";
 import { LabelField } from "./LabelField";
+import { RepoPick } from "./RepoPick";
 import { PARALLEL_HELP, parallelLabel } from "./parallel";
 
 // Each field an operator set on a goal, edited where the goal page shows it. A save sends only that field.
@@ -109,22 +110,15 @@ function RepoChoice({ value, onChange }: { value: string[]; onChange: (repos: st
   const [registered, setRegistered] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    api.repos().then(
+    api.goalRepos().then(
       (r) => setRegistered(r.map((x) => x.name)),
       (err) => setError(err instanceof Error ? err.message : String(err)),
     );
   }, []);
-  const names = [...new Set([...(registered ?? []), ...value])];
   return (
     <Stack gap={4}>
-      <Checkbox.Group aria-label="Repos" value={value} onChange={onChange}>
-        <Stack gap="xs">
-          {names.map((name) => (
-            <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />
-          ))}
-        </Stack>
-      </Checkbox.Group>
-      {error && <Text size="xs" c="red">The registered repos could not be loaded: {error}</Text>}
+      <RepoPick offered={error ? [] : registered} value={value} onChange={onChange} />
+      {error && <Text size="xs" c="red">The repos could not be loaded: {error}. Reload the page to try again.</Text>}
     </Stack>
   );
 }

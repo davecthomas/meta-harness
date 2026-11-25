@@ -239,6 +239,8 @@ export const api = {
   // Where to open the live event stream, and the ticket that opens it (null locally).
   streamTicket: () => call<{ base: string; ticket: string | null }>("/auth/stream-ticket", { method: "POST" }),
   repos: () => call<{ repos: { name: string }[] }>("/v1/repos").then((r) => r.repos),
+  // The repos a goal may name: the registry's, and every one the operator can push to with their GitHub connection.
+  goalRepos: () => call<{ repos: { name: string }[] }>("/v1/repos?pushable=1").then((r) => r.repos),
   // The last `limit` events before `before`, or the newest `limit`, for one task or several.
   events: (taskIds: string[], limit: number, before?: number) =>
     call<{ events: MhEvent[]; latest_position: number }>(

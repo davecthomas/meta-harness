@@ -155,3 +155,15 @@ async def call(
                     status=401,
                 ) from err
             raise ActingError(str(err), retryable=err.retryable, status=err.status) from err
+
+
+async def github(apps: Any, repo: str, permissions: dict[str, str], method: str, path: str, **kwargs: Any) -> Any:
+    """A REST call for the repo: as the operator the running work acts as, else on the GitHub App's
+    installation token with these permissions. Either way a failure is a GitHubAppError, so a caller handles
+    one kind."""
+    if not (who := current()):
+        return await apps.call(repo, permissions, method, path, **kwargs)
+    try:
+        return await call(who, method, path, **kwargs)
+    except ActingError as err:
+        raise github_app.GitHubAppError(str(err), retryable=err.retryable, status=err.status) from err

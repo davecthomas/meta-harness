@@ -99,3 +99,60 @@ async def test_the_code_host_uses_the_acting_operator_and_the_app_for_everyone_e
         assert await code_host._token("acme/api", code_host.WRITE_CODE) == "gho_dave"
         code_host.check_repo("acme/api")  # the operator's access decides: the repo needs no App
     assert acting.current() == "" and calls == [("the app", "GET", "/x"), ("dave", "GET", "/x")]
+
+
+@pytest.mark.db
+def test_a_goal_names_any_repo_its_operator_can_push_to_with_no_registry_entry(reaching):  # noqa: F811
+    client, _ = reaching
+
+    refused = client.post(
+        "/v1/goals", json={"statement": "Fix bugs", "repos": ["acme/api"], "label": "x"}, headers=OPERATOR
+    )
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == (
+        "not in the repo registry: acme/api. Connect GitHub in Settings to work in any repo you can push to"
+    )
+    _connect(client)
+    offered = client.get("/v1/repos?pushable=1", headers=OPERATOR).json()["repos"]
+    assert {"name": "acme/api", "tracker": "github", "registered": False} in offered
+    assert all(r["name"] != "acme/docs" for r in offered), "a repo the operator can only read is not offered"
+    assert all(r["registered"] for r in client.get("/v1/repos", headers=OPERATOR).json()["repos"])
+
+    goal = client.post(
+        "/v1/goals", json={"statement": "Fix bugs", "repos": ["ACME/api"], "label": "x"}, headers=OPERATOR
+    )
+    assert goal.status_code == 201, goal.text
+    assert goal.json()["repos"] == ["acme/api"] and goal.json()["acts_as"] == "dave"
+    read_only = client.patch(f"/v1/goals/{goal.json()['id']}", json={"repos": ["acme/docs"]}, headers=OPERATOR)
+    assert read_only.status_code == 422
+    assert read_only.json()["detail"].startswith("your GitHub connection cannot push to acme/docs. Pick a repo")
+
+
+async def test_a_tracker_or_spec_read_uses_the_acting_operator_and_the_app_otherwise(monkeypatch):
+    from meta_harness import github_app
+
+    seen = []
+
+    class Apps:
+        async def call(self, repo, permissions, method, path, **kwargs):
+            seen.append(("the app", path))
+            return []
+
+    async def as_operator(who, method, path, **kwargs):
+        seen.append((who, path))
+        if path.endswith("/broken"):
+            raise acting.ActingError("GitHub answered 404", status=404)
+        return []
+
+    monkeypatch.setattr(acting, "call", as_operator)
+    await acting.github(Apps(), "acme/api", {}, "GET", "/repos/acme/api/issues")
+    with acting.as_operator("dave"):
+        await acting.github(Apps(), "acme/api", {}, "GET", "/repos/acme/api/issues")
+        with pytest.raises(github_app.GitHubAppError) as err:
+            await acting.github(Apps(), "acme/api", {}, "GET", "/repos/acme/api/broken")
+    assert err.value.status == 404
+    assert seen == [
+        ("the app", "/repos/acme/api/issues"),
+        ("dave", "/repos/acme/api/issues"),
+        ("dave", "/repos/acme/api/broken"),
+    ]
