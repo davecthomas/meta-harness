@@ -3021,6 +3021,14 @@ which limit (`stopped_at`) and cannot be approved, and the planner starts one
 run that continues from those tasks. If that run ends at a limit too, Plan
 again continues from what both recorded.
 
+The runs the planner starts itself share one spend limit on a goal, the
+planning configuration's `max_unasked_usd`, $12 when it is left out
+(`planner/planning_spend.py`). Those runs are the one that continues a
+stopped plan, each resize round and a suggested fix. Once they have spent
+that much, or the goal has spent its budget, the planner starts no more of
+them. The plan stays as it is, and its page asks the operator. Each planning
+run an operator asks for starts the count again.
+
 An issue opened by someone with no write access to the repo is held before it
 is sized. That is an author whose GitHub `author_association` is not OWNER,
 MEMBER or COLLABORATOR. Anyone may open an issue, and its text becomes an

@@ -38,6 +38,7 @@
   "planning": {
     "candidate": "harness:pi-plan/claude:claude-opus-5-5",
     "max_usd": "4.00",
+    "max_unasked_usd": "12.00",
     "goals": "all",
     "max_issues": 60,
     "issue_chars": 4000,

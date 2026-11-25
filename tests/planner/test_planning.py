@@ -1127,3 +1127,44 @@ def test_a_plan_made_after_an_approved_one_starts_afresh():
     assert planning.revised({"drafts": [draft("a")], "created": {}})
     assert not planning.revised({"drafts": [draft("a")], "created": {"a": "o/r#9"}})
     assert not planning.revised({"drafts": [], "created": {}}) and not planning.revised(None)
+
+
+def test_the_planners_own_runs_share_one_spend_limit_and_an_asked_run_starts_the_count_again(world):
+    """A plan, its continuation, its resize rounds and its fix could each spend the planning limit, with
+    nothing over them all."""
+    from decimal import Decimal
+
+    from meta_harness.planner import planning_spend
+
+    client, events, _, tasks = world
+    goal = _feature(client)
+    first = next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])
+    assert not planning_spend.is_unasked(first), "the goal's first plan is asked for"
+    for ref in ("plan:g:1:continue", "plan:g:2:resize1", "plan-fix:g:3"):
+        assert planning_spend.is_unasked({"external_ref": ref}), ref
+    assert planning_spend.limit({}) == Decimal("12.00") and planning_spend.limit({"max_unasked_usd": "5"}) == 5
+    assert planning_spend.check({"max_unasked_usd": "0"}) and not planning_spend.check({})
+
+    # The first run ends at its limit, and the planner continues it, since its own runs have spent nothing yet.
+    events.emit("attempt_finished", {"spent_usd": "4.00"}, task_id=first["id"])
+    first["status_reason"] = "ended ERROR (max_turns): The run passed its 60 turn limit."
+    shown = _planned(client, events, tasks, goal, [draft("store")], status="failed")
+    again = tasks.tasks[shown["planning_task_id"]]
+    assert planning_spend.is_unasked(again)
+    assert planning_spend.unasked(goal["id"], tasks, events) == 0, "what an asked run spent is not counted"
+
+    # The continuation spends all planning may spend unasked, and ends too large: no resize round is started.
+    events.emit("attempt_finished", {"spent_usd": "12.00"}, task_id=again["id"])
+    assert planning_spend.unasked(goal["id"], tasks, events) == Decimal("12.00")
+    refused = planning_spend.refusal(goal, {}, tasks, events)
+    assert refused.startswith("planning has spent $12.00 of the $12.00 it may spend on this goal without asking")
+
+    # Plan again, asked for by the operator, starts the count again.
+    _planned(client, events, tasks, goal, [draft("api")])
+    asked = client.post(f"/v1/goals/{goal['id']}/replan", json={"note": "Finish it."}, headers=OPERATOR)
+    assert asked.status_code == 202, asked.text
+    assert planning_spend.unasked(goal["id"], tasks, events) == 0
+    assert planning_spend.refusal(goal, {}, tasks, events) is None
+    # A goal that has spent its budget starts none either.
+    broke = planning_spend.refusal({**goal, "max_usd": "10.00", "spent_usd": "10.00"}, {}, tasks, events)
+    assert broke.startswith("the goal has spent its $10.00 budget")

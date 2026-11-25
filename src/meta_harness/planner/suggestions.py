@@ -220,6 +220,7 @@ async def maybe_start(
             issues=await issues_of(goal),
             external_ref=f"plan-fix:{goal['id']}:{plan['version']}",
             record=False,
+            unasked=True,
         )
     except planning.PlanError as err:
         await asyncio.to_thread(_set, goal["id"], plan["version"], status="failed")
