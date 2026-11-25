@@ -158,7 +158,7 @@ disagree. The first button is the recommended one.
 | Proposal waiting | "Your replan is ready: 3 tasks added, 9 removed. It may spend up to $48, down from $62." | "Use the new plan", "Keep the current plan" |
 | Cannot be approved | The first reason, and how many more: "t-9 is too large for one pull request, and 2 more." | The button that fixes the most reasons: "Split the 3 large tasks (up to $4)", then "Plan again (up to $4)" |
 | Incomplete | "Planning stopped at its 60-turn limit with 44 tasks drafted, after one more try." | "Carry on planning (up to $4)", "Plan again (up to $4)" |
-| Planning limit reached | "Planning has spent $12 of its $12 limit." | "Raise the limit to $16", "Approve what is there", when it can be approved |
+| Planning limit reached | "Planning has spent the $12 it may spend without asking." | "Carry on (up to $4)", "Approve what is there", when it can be approved |
 | Approved | "Approved by you on Nov 25. 12 of 44 tasks done." | "See the tasks", "Plan again (up to $4)" |
 | No plan | "This goal runs its issues as they are, so it has no plan." | "Plan them together (up to $4)" |
 
@@ -263,10 +263,24 @@ the page is Drafting, and the current plan stays in force. The result is a propo
 ## Spend
 
 - Every planning run has the planning limit, `planning.max_usd`.
-- A new limit, `planning.max_phase_usd`, caps everything planning spends on a goal between one approval and the
-  next: plans, continuations, resizes, gap fixes, reviews, revisions and replans. The planner checks it, and the
-  goal's remaining budget, before it starts each run.
-- Reaching it stops planning and asks the operator, with raising it as the button. Nothing is spent past it.
+- A second limit, `planning.max_unasked_usd`, caps what planning spends on a goal without the operator asking:
+  the first plan's continuation, its resizes, its gap fix, its reviews and their revisions. The planner checks
+  it, and the goal's remaining budget, before it starts each run.
+- Each planning run the operator asks for starts that count again from zero: "Plan again", "Carry on planning",
+  "Fix it", "Send to the planner". A replan can double a plan's size, so it may spend the full amount again.
+- Reaching the limit stops planning and asks the operator, with raising it as the button. Nothing is spent past
+  it, and the goal's budget still bounds everything.
+
+### A later run reuses the earlier one
+
+A replan should cost only what changed.
+
+- Its prompt holds the previous tasks in full, and it changes only what it names, as above.
+- Each planning run ends by recording what it learned about the code: the files it read and what each is for,
+  in a few lines per area. The next run on the goal gets those notes, so it reads only what its note sends it
+  to.
+- The Plan page shows each run's cost in History, so the operator can see whether a replan was cheaper than the
+  plan before it.
 
 ## Two people, and things that go wrong
 
@@ -284,6 +298,7 @@ the page is Drafting, and the current plan stays in force. The result is a propo
 | `plan.baseline_version` | New column: the version "What changed" compares with | The plan's first version |
 | `plan.stopped_at` | New nullable column: the limit a run ended at, `turns`, `time` or `spend` | Null |
 | A task in `plan.drafts` | Gains `size`, `edited_by` and `kept` | Sized on save; `planner`; `false` |
+| `plan.code_notes` | New column, `text`: what the run that made this version learned about the code | Empty |
 | `GET /v1/goals/{id}/plan` | Gains `state`, `decision` (from `actions.py`), `glance`, `changes` against the baseline, and `proposal` | `proposal` absent when none is open |
 | `GET /v1/goals/{id}/plan/versions` | New: each version's maker, time and counts | n/a |
 | `GET /v1/goals/{id}/plan/diff?from=&to=&task=` | New: one task's old and new text | n/a |
@@ -302,7 +317,7 @@ Settings, checked at startup:
 
 | Setting | Default | A bad or missing value |
 |---|---|---|
-| `planning.max_phase_usd` | `"12.00"` | Stops the service, naming it: a wrong value could cost money |
+| `planning.max_unasked_usd` | `"12.00"` | Stops the service, naming it: a wrong value could cost money |
 
 Every migration only adds.
 
@@ -316,7 +331,7 @@ Every migration only adds.
 | Needs | `planner/actions.py`, `planner/needs.py`, `goals/needActions.tsx`, `overview/needsYou.ts` | The plan's states as state actions with their sentences and `ASKS` labels. `accept_fix` goes; `continue_plan`, `use_proposal` and `raise_planning_limit` arrive. `plan_waits` and the rule that a fix comes before approval follow the new states |
 | Proposals and merging | new `planner/proposals.py`; `planner/suggestions.py`, `planner/draft_sizes.py`, `planner/planning.py` | One proposal store and one merge. Gap fixes and resizes apply themselves before the operator acts, and propose after |
 | Planning tools | `images/harness-pi/extension/owned-tools.ts`, `run_service/prompts/` | `remove_issue`; a new prompt file that holds the previous tasks in full |
-| Spend | `planner/planning.py` | The phase limit, checked before each run |
+| Spend | `planner/planning.py`, `run_service/prompts/` | The limit on unasked planning, checked before each run and reset by each run the operator asks for. The code notes a run records and the next run reads |
 | Updates | `planner/updates.py` | Fixed progress lines; counts and reasons as facts |
 | Help | `help/topics.ts` | A topic on reading and changing a plan |
 | Design | `docs/technical-design.md`, `config/charter.txt` | The new principle; the Planner and console sections |
@@ -339,7 +354,8 @@ Every migration only adds.
 - `actions.py` gives each state its sentence and buttons, and the Plan page and `GET /v1/needs` agree for every
   state.
 - Every button that spends names its limit, and no state's first button is a read.
-- Planning stops at the phase limit and asks, with raising it as the button.
+- Planning stops at its unasked limit and asks. A run the operator asks for starts the count again.
+- A replan's prompt holds the earlier run's code notes and the previous tasks in full.
 - A call against an old version fails with its remedy.
 - The decision-drag test holds every planner ask to two sentences, 280 characters and no list before its first
   button.
@@ -351,4 +367,4 @@ Every migration only adds.
 3. Before the operator acts on a plan, the planner's own fixes apply themselves. After, they are proposals.
 4. Changes appear as reasons and counts, with the lists one click away.
 5. A replan is a form on the Plan page, and its result is a proposal.
-6. Planning on a goal has one spend limit over all its runs.
+6. Planning may spend a set amount without asking. Each run the operator asks for starts that amount again.
