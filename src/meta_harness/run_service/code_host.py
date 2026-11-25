@@ -40,7 +40,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from meta_harness import local_repos, outbound
+from meta_harness import acting, local_repos, outbound
 from meta_harness.github_app import GitHubAppError, GitHubApps, git_auth_env
 from meta_harness.run_service.provenance import Provenance, commit_message, stamp
 
@@ -136,6 +136,9 @@ def check_repo(repo: str) -> None:
         return
     if not GITHUB_REPO_PATTERN.match(repo):
         raise CodeHostError(f"REPO {repo!r} must be owner/name on GitHub, or the path of a bare git repo", False)
+    if acting.current():
+        # The goal acts as its operator, whose own access decides; the repo needs no App.
+        return
     try:
         apps().app_for(repo)
     except GitHubAppError as err:
@@ -143,6 +146,13 @@ def check_repo(repo: str) -> None:
 
 
 async def _github(repo: str, permissions: dict[str, str], method: str, path: str, **kwargs):
+    """A REST call for the repo: as the operator the running work acts as (meta_harness.acting), else on the
+    App's installation token with these permissions."""
+    if who := acting.current():
+        try:
+            return await acting.call(who, method, path, **kwargs)
+        except acting.ActingError as err:
+            raise CodeHostError(str(err), retryable=err.retryable, status=err.status) from err
     try:
         return await apps().call(repo, permissions, method, path, **kwargs)
     except GitHubAppError as err:
@@ -150,6 +160,11 @@ async def _github(repo: str, permissions: dict[str, str], method: str, path: str
 
 
 async def _token(repo: str, permissions: dict[str, str]) -> str:
+    if who := acting.current():
+        try:
+            return await asyncio.to_thread(acting.token, who)
+        except acting.ActingError as err:
+            raise CodeHostError(str(err), retryable=err.retryable) from err
     try:
         return await apps().token(repo, permissions)
     except GitHubAppError as err:

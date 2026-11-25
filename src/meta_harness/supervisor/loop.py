@@ -33,7 +33,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol
 
-from meta_harness import db
+from meta_harness import acting, db
 from meta_harness.planner import cost_facts, store as goal_store
 from meta_harness.run_service import code_host
 from meta_harness.run_service.activities import HELD_FOR_OPERATOR
@@ -149,6 +149,7 @@ class Supervisor:
         goals: dict[str, dict | None] = {}
         by_id = {task["id"]: task for task in found}
         for task in found:
+            acting.use(await asyncio.to_thread(acting.of_goal, task.get("goal_id")))
             result.looked_at += 1
             try:
                 goal = await self._goal(task.get("goal_id"), goals)
