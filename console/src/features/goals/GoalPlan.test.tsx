@@ -448,3 +448,21 @@ test("while the planner writes a new version, the section says which, and keeps 
   expect(drafting.textContent).toMatch(/Planning for /);
   expect(screen.getAllByText("Build store").length).toBeGreaterThan(0);
 });
+
+test("a fix the planner applied itself is said in a few lines, with a way to undo it", async () => {
+  const fix = { from_version: 1, fixes: [{ gap: "The api and the store edit the same file.", change: "Run api after store." }], changes: ["1 task reordered"] };
+  const { asked } = show(planned({ version: 2, source: "suggested" }, { applied_fix: fix }));
+
+  const said = await screen.findByTestId("plan-applied-fix");
+  expect(said.textContent).toContain("The planner fixed a gap in its plan");
+  expect(within(said).getByTestId("planner-fix-reason").textContent).toBe("Run api after store. The api and the store edit the same file.");
+  expect(within(said).getByTestId("planner-fix-counts").textContent).toBe("1 task reordered");
+  fireEvent.click(within(said).getByRole("button", { name: "Undo the fix" }));
+  await waitFor(() => expect(asked.some((a) => a.url.endsWith("/plan/undo-fix") && a.method === "POST")).toBe(true));
+});
+
+test("a plan the planner did not fix says nothing of a fix", async () => {
+  show(planned());
+  await screen.findByTestId("draft-store");
+  expect(screen.queryByTestId("plan-applied-fix")).toBeNull();
+});

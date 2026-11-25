@@ -4092,7 +4092,13 @@ added, removed, reordered, changed and reworded. It never shows a line for
 each task. Accepting
 (`POST /v1/goals/{id}/suggestion/accept`) makes it the next plan version,
 source `suggested`, which is still approved as any plan is. Dismissing it, or
-editing the plan or asking for a new one, leaves it behind. At most one fix is
+editing the plan or asking for a new one, leaves it behind.
+A fix to a plan no operator has edited applies itself
+(`suggestions._untouched`). The planner makes it the next version, so the
+operator meets one decision, to approve. The plan then says what the planner
+fixed and why (`applied_fix`), with the same counts.
+`POST /v1/goals/{id}/plan/undo-fix` puts back the version before the fix, as
+the operator's own. At most one fix is
 drafted per plan version and none for a version that was itself a fix. The
 planning configuration's `suggest_fixes` turns them off. The sorting call is a
 `plan_fixes_assessed` event, counted as planning cost; accepting and dismissing

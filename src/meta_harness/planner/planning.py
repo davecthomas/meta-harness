@@ -423,7 +423,7 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
     plan = await asyncio.to_thread(save)
     if plan is None:
         return None
-    _emit_saved(events, plan, "planner")
+    emit_saved(events, plan, "planner")
     if stopped and issues_of is not None and not _CONTINUES.search(str(task.get("external_ref") or "")):
         # The obvious next step, taken without asking: carry on from what the run recorded, once.
         try:
@@ -511,7 +511,7 @@ async def gather(
     return {"drafts": drafts, "items": items, "summary": summary, "gaps": gaps, "invalid": invalid}
 
 
-def _emit_saved(events: Events, plan: dict, who: str) -> None:
+def emit_saved(events: Events, plan: dict, who: str) -> None:
     events.emit(
         "plan_saved",
         {
@@ -556,7 +556,7 @@ def edit(
             gaps=list(before.get("gaps") or []),
             issues=issues,
         )
-    _emit_saved(events, plan, who)
+    emit_saved(events, plan, who)
     return plan
 
 

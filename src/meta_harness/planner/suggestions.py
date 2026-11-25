@@ -78,6 +78,9 @@ class SuggestionError(RuntimeError):
     """A suggestion could not be made, accepted or dismissed. The message says why and what to do."""
 
 
+# Who a plan version is made by when the planner applies its own fix.
+PLANNER = "planner"
+
 # Sorts a plan's gaps: returns the fixes, the model that sorted them, and what it cost.
 Assessor = Callable[[dict[str, Any]], Awaitable[tuple[list[dict[str, str]], str, str]]]
 
@@ -267,8 +270,76 @@ async def collect(goal: dict, tasks: Any, events: Any) -> dict | None:
         if status == "failed":
             log.warning("goal %s: its suggested fix cannot be used: %s", goal["id"], "; ".join(found["invalid"]))
             continue
+        if await asyncio.to_thread(_untouched, goal, row["for_version"]):
+            # Asked once: nobody has acted on this plan yet, so accepting a fix to it and then approving it
+            # would be two decisions where one will do. The fix becomes the plan, the plan says what was fixed
+            # and why, and undo puts back the plan before it.
+            plan = await asyncio.to_thread(accept, goal, PLANNER, events)
+            return {**row, **found, "status": "accepted", "accepted_version": plan["version"]}
         return {**row, **found, "status": status}
     return None
+
+
+def _untouched(goal: dict, version: int) -> bool:
+    """Whether the plan is still the one the planner wrote at that version: no operator has edited it, and no
+    planning task is writing another."""
+    if goal.get("plan_task_id") or goal["status"] != "planning":
+        return False
+    with db.connect(autocommit=True) as conn:
+        latest = plans.latest(conn, goal["id"])
+    return bool(latest and latest["version"] == version and latest["source"] == "planned")
+
+
+def applied(goal_id: str) -> dict | None:
+    """The fix the planner applied to make the goal's latest plan version, with why and what it changed; None
+    when the latest version is not one."""
+    with db.connect(autocommit=True) as conn, conn.cursor(row_factory=dict_row) as cur:
+        latest = plans.latest(conn, goal_id)
+        if latest is None or latest["source"] != "suggested" or latest["created_by"] != PLANNER:
+            return None
+        cur.execute(
+            "SELECT for_version, fixes FROM planner.plan_suggestion WHERE goal_id = %s AND accepted_version = %s",
+            (goal_id, latest["version"]),
+        )
+        row = cur.fetchone()
+        before = plans.at(conn, goal_id, row["for_version"]) if row else None
+    if before is None:
+        return None
+    found = plans.diff(before, latest)
+    return {
+        "from_version": row["for_version"],
+        "fixes": row["fixes"],
+        "changes": plans.diff_lines(found),
+        "diff": found,
+    }
+
+
+def undo(goal: dict, who: str) -> dict:
+    """Puts back the plan the planner's applied fix replaced, as the goal's next version. Returns it.
+
+    Raises:
+        SuggestionError: The goal's latest plan is not a fix the planner applied.
+    """
+    fix = applied(goal["id"])
+    if fix is None:
+        raise SuggestionError(
+            "this goal's plan is not a fix the planner applied, so there is none to undo. Edit the plan, or plan again"
+        )
+    with db.connect(autocommit=True) as conn:
+        before = plans.at(conn, goal["id"], fix["from_version"])
+        return plans.save(
+            conn,
+            goal["id"],
+            before["drafts"],
+            before["invalid"],
+            "edited",
+            who,
+            note=f"Put back version {fix['from_version']}, undoing the planner's fix",
+            items=before["items"],
+            summary=before["summary"],
+            gaps=before["gaps"],
+            issues=before["issues"],
+        )
 
 
 def changes(before: dict, after: dict) -> list[str]:

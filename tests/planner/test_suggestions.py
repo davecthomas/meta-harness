@@ -59,11 +59,18 @@ def _planned(client, events, tasks, gaps=(CLASH, OPEN)) -> tuple[dict, dict]:
     return client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json(), shown["plan"]
 
 
+@pytest.fixture
+def waiting(monkeypatch):
+    """A fix that waits to be accepted, as one does when its plan is no longer the planner's own: a plan nobody
+    has touched takes its fix by itself."""
+    monkeypatch.setattr(suggestions, "_untouched", lambda goal, version: False)
+
+
 def _start(goal, plan, tasks, events, assessor) -> dict | None:
     return asyncio.run(suggestions.maybe_start(goal, plan, tasks, events, _no_issues, assessor))
 
 
-def test_a_plan_with_a_gap_the_planner_can_fix_gets_a_drafted_fix_to_accept(world):
+def test_a_plan_with_a_gap_the_planner_can_fix_gets_a_drafted_fix_to_accept(world, waiting):
     client, events, tasks = world
     goal, plan = _planned(client, events, tasks)
     assessor = Assessor()
@@ -103,7 +110,7 @@ def test_a_plan_with_a_gap_the_planner_can_fix_gets_a_drafted_fix_to_accept(worl
     assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR, json={"track": True}).status_code == 200
 
 
-def test_a_fix_can_be_dismissed_and_one_for_an_older_plan_is_not_offered(world):
+def test_a_fix_can_be_dismissed_and_one_for_an_older_plan_is_not_offered(world, waiting):
     client, events, tasks = world
     goal, plan = _planned(client, events, tasks)
     task = _start(goal, plan, tasks, events, Assessor())
@@ -118,7 +125,7 @@ def test_a_fix_can_be_dismissed_and_one_for_an_older_plan_is_not_offered(world):
     assert refused.status_code == 409 and "Ask for an update" in refused.json()["detail"]
 
 
-def test_an_edit_leaves_a_fix_behind(world):
+def test_an_edit_leaves_a_fix_behind(world, waiting):
     client, events, tasks = world
     goal, plan = _planned(client, events, tasks)
     task = _start(goal, plan, tasks, events, Assessor())
@@ -190,3 +197,59 @@ def test_a_waiting_fix_is_always_asked_about_with_what_it_changes():
         )[0]["action"]
         == "approve_plan"
     )
+
+
+def test_a_fix_to_a_plan_nobody_has_touched_applies_itself_and_can_be_undone(world):
+    """Accepting a fix to a plan the operator had not read yet, and then approving the result, were two
+    decisions where one will do."""
+    client, events, tasks = world
+    goal, plan = _planned(client, events, tasks)
+    task = _start(goal, plan, tasks, events, Assessor())
+    _end(events, tasks, task, [draft("api", ("store",))], [OPEN])
+    goal = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+
+    collected = asyncio.run(suggestions.collect(goal, tasks, events))
+
+    assert collected["status"] == "accepted" and collected["accepted_version"] == 2
+    shown = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    assert (shown["plan"]["version"], shown["plan"]["source"], shown["plan"]["created_by"]) == (
+        2,
+        "suggested",
+        "planner",
+    )
+    assert shown["suggestion"] is None, "nothing is left to accept: the one decision is to approve"
+    fix = shown["applied_fix"]
+    assert fix["from_version"] == 1 and fix["fixes"] == [{"gap": CLASH, "change": "Run api after store."}]
+    assert fix["changes"] == ["1 task reordered"]
+    assert "plan_fix_accepted" in events.types()
+
+    # A person can always decide differently: undo puts back the plan before the fix, as a version of theirs.
+    undone = client.post(f"/v1/goals/{goal['id']}/plan/undo-fix", headers=OPERATOR)
+
+    assert undone.status_code == 200, undone.text
+    back = undone.json()
+    assert (back["plan"]["version"], back["plan"]["source"], back["plan"]["created_by"]) == (3, "edited", "dave")
+    assert back["plan"]["drafts"] == plan["drafts"] and back["applied_fix"] is None
+    again = client.post(f"/v1/goals/{goal['id']}/plan/undo-fix", headers=OPERATOR)
+    assert again.status_code == 409 and "there is none to undo" in again.json()["detail"]
+    # The plan they put back gets no new fix: it is theirs now.
+    goal = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+    assert _start(goal, back["plan"], tasks, events, Assessor()) is None
+
+
+def test_a_fix_to_a_plan_the_operator_edited_is_left_behind(world):
+    client, events, tasks = world
+    goal, plan = _planned(client, events, tasks)
+    task = _start(goal, plan, tasks, events, Assessor())
+    edited = client.put(
+        f"/v1/goals/{goal['id']}/plan", json={"drafts": [draft("store"), draft("api")]}, headers=OPERATOR
+    )
+    assert edited.status_code == 200, edited.text
+    _end(events, tasks, task, [draft("api", ("store",))], [OPEN])
+    goal = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+
+    collected = asyncio.run(suggestions.collect(goal, tasks, events))
+
+    assert collected["status"] == "open", "it is kept as drafted, and does not replace what the operator made"
+    shown = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    assert shown["plan"]["version"] == 2 and shown["plan"]["source"] == "edited" and shown["applied_fix"] is None

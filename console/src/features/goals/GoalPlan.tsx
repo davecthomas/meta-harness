@@ -8,7 +8,8 @@ import { ApiError } from "../../client";
 import { OWN, goalSource, refLabel, trackerTitle } from "../trackers/refs";
 import { SIGNED_ISSUES } from "./provenance";
 import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview";
-import { APPROVE_PLAN, PLAN_CHANGED, REPLAN } from "./PlannerUpdates";
+import { APPROVE_PLAN, FixFacts, PLAN_CHANGED, REPLAN } from "./PlannerUpdates";
+import { reloadNeeds } from "../overview/needsYou";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { ErrorAlert, SectionTitle, when } from "../../components/ui";
 
@@ -421,11 +422,21 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
         <Stack gap="md">
           <Group gap="sm">
             <Text size="sm">
-              {plannedIn(plan, shown.planning_asked_at, drafting, now)}Version {plan.version}, {plan.source === "planned" ? "made by the planner" : plan.source === "suggested" ? `the planner's fix, accepted by ${plan.created_by}` : `edited by ${plan.created_by}`}, {when(plan.created_at)}.
+              {plannedIn(plan, shown.planning_asked_at, drafting, now)}Version {plan.version}, {plan.source === "planned" ? "made by the planner" : plan.source === "suggested" ? (plan.created_by === "planner" ? "with the planner's own fix" : `the planner's fix, accepted by ${plan.created_by}`) : `edited by ${plan.created_by}`}, {when(plan.created_at)}.
               {base.length > 0 && <> Its new tasks will carry the label <Badge variant="outline" tt="none" radius="sm">{shown.label}</Badge></>}
             </Text>
             {plan.task_id && <Anchor component={Link} to={`/tasks/${plan.task_id}`} size="sm">The planning task's run</Anchor>}
           </Group>
+          {shown.applied_fix && !dirty && (
+            <Alert color="blue" variant="light" title={`The planner fixed ${shown.applied_fix.fixes.length === 1 ? "a gap" : `${shown.applied_fix.fixes.length} gaps`} in its plan`} data-testid="plan-applied-fix">
+              <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
+                <div style={{ flex: "1 1 280px" }}><FixFacts need={shown.applied_fix} /></div>
+                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.undoFix(goal.id), () => void reloadNeeds())}>
+                  Undo the fix
+                </Button>
+              </Group>
+            </Alert>
+          )}
           {dirty && (
             <Alert color="yellow" title="Edits not saved yet">
               <Group gap="sm">
