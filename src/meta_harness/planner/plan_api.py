@@ -115,6 +115,9 @@ def register(
             "plan": plan,
             # A fix the planner suggests for this plan, with what it changes; None when there is none.
             "suggestion": suggestions.current(goal["id"]),
+            # A fix the planner applied itself to make this version, with why and what it changed, and which
+            # version undo puts back; None when this version is not one.
+            "applied_fix": suggestions.applied(goal["id"]),
         }
 
     @app.get("/v1/goals/{goal_id}/plan")
@@ -176,6 +179,21 @@ def register(
             suggestions.accept(goal, who, events)
         except suggestions.SuggestionError as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
+        return shown(load(goal_id))
+
+    @app.post("/v1/goals/{goal_id}/plan/undo-fix")
+    def undo_fix(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Put back the plan the planner's applied fix replaced: a person can always decide differently."""
+        goal = planning_goal(goal_id)
+        if goal.get("plan_task_id"):
+            raise HTTPException(
+                status_code=409, detail="a planning task is drafting a new plan: wait for it, then look again"
+            )
+        try:
+            plan = suggestions.undo(goal, who)
+        except suggestions.SuggestionError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        planning.emit_saved(events, plan, who)
         return shown(load(goal_id))
 
     @app.post("/v1/goals/{goal_id}/suggestion/dismiss")

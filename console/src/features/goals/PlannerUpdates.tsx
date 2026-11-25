@@ -57,7 +57,7 @@ export const FIX_REASONS_SHOWN = 5;
 
 // What a fix to the plan is, for someone deciding whether to accept it: why it was drafted (each gap with what
 // settles it), then its changes as a count for each kind. Never a line for each task it touches.
-function FixFacts({ need }: { need: Need }) {
+export function FixFacts({ need }: { need: Pick<Need, "fixes" | "changes"> }) {
   const fixes = need.fixes ?? [];
   const changes = need.changes ?? [];
   if (!fixes.length && !changes.length) return null;

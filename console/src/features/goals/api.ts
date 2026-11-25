@@ -82,6 +82,9 @@ export interface GoalPlan {
   approve_error?: string | null;
   // The label the plan's issues carry.
   label: string;
+  // A fix the planner applied itself to make this version: why (each gap with what settles it), its changes
+  // as a count for each kind, and the version undo puts back. Absent or null when this version is not one.
+  applied_fix?: { from_version: number; fixes: { gap: string; change: string }[]; changes: string[] } | null;
   plan: {
     version: number;
     // The new tasks the planner wrote: they exist only in the plan until it is approved.
@@ -324,6 +327,8 @@ export const goalsApi = {
   // The planner's suggested fix for the plan: make it the plan's next version, or leave it behind.
   acceptFix: (id: string) => call<unknown>(`/v1/goals/${id}/suggestion/accept`, { method: "POST" }),
   dismissFix: (id: string) => call<unknown>(`/v1/goals/${id}/suggestion/dismiss`, { method: "POST" }),
+  // Put back the plan the planner's applied fix replaced.
+  undoFix: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan/undo-fix`, { method: "POST" }),
   replan: (id: string, note: string) =>
     call<GoalPlan>(`/v1/goals/${id}/replan`, { method: "POST", body: JSON.stringify({ note }) }),
   // track: whether the plan's new tasks become issues in the goal's tracker, or are kept in the meta-harness.
