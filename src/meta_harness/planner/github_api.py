@@ -38,10 +38,14 @@ class FinishIn(BaseModel):
     state: str = Field(min_length=1, max_length=200)
 
 
+class OwnersIn(BaseModel):
+    owners: list[str]
+
+
 def row_of(identity: str) -> dict | None:
     with db.connect(autocommit=True) as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            "SELECT identity, login, token, scopes, state, nonce, connected_at, checked_at "
+            "SELECT identity, login, token, scopes, state, nonce, connected_at, checked_at, owners "
             "FROM planner.github_connection WHERE identity = %s",
             (identity,),
         )
@@ -84,7 +88,15 @@ def shown(identity: str) -> dict[str, Any]:
         "login": row["login"] if row and row["login"] else None,
         "scopes": row["scopes"] if connected else "",
         "connected_at": row["connected_at"].isoformat() if row and row["connected_at"] else None,
+        # The accounts and organizations the operator chose to use. Empty: every one they can reach.
+        "owners": list(row["owners"]) if connected else [],
     }
+
+
+def owners_of(identity: str) -> list[str]:
+    """The accounts and organizations the operator limits Muxxy to; empty for all they can reach."""
+    row = row_of(identity)
+    return list(row["owners"]) if row else []
 
 
 def register(
@@ -143,6 +155,33 @@ def register(
             )
         events.emit("github_connected", {"login": login, "scopes": got["scopes"]}, actor=who)
         log.info("%s connected GitHub as %s", who, login)
+        return shown(who)
+
+    @app.put("/v1/github/connection/owners")
+    async def choose_owners(body: OwnersIn, who: str = Depends(operator)) -> dict:
+        """Limit the caller's connection to these accounts and organizations; none for all they can reach.
+        422 for a name their connection cannot reach."""
+        from meta_harness.planner import reach
+
+        row = row_of(who)
+        if not row or row["state"] != "connected":
+            raise HTTPException(status_code=409, detail="you have not connected GitHub. Connect it in Settings")
+        try:
+            known = {o["name"].lower(): o["name"] for o in (await reach.reachable(who, transport=transport))["owners"]}
+        except github_user.GitHubUserError as err:
+            raise HTTPException(status_code=409 if err.reconnect else 502, detail=str(err)) from err
+        unknown = sorted(name for name in body.owners if name.lower() not in known)
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"your GitHub connection reaches no repo of {', '.join(unknown)}. Pick from the list",
+            )
+        chosen = sorted({known[name.lower()] for name in body.owners})
+        with db.connect(autocommit=True) as conn:
+            conn.execute(
+                "UPDATE planner.github_connection SET owners = %s, updated_at = now() WHERE identity = %s",
+                (chosen, who),
+            )
         return shown(who)
 
     @app.delete("/v1/github/connection")

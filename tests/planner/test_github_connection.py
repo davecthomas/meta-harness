@@ -72,7 +72,7 @@ PAT = {"Authorization": "Bearer pat-key"}
 def test_an_operator_connects_github_once_and_the_token_is_stored_encrypted(world, configured):
     client, events, github = world
     assert client.get("/v1/github/connection", headers=OPERATOR).json() == {
-        "enabled": True, "why_off": None, "state": "none", "connected": False, "login": None, "scopes": "", "connected_at": None,
+        "enabled": True, "why_off": None, "state": "none", "connected": False, "login": None, "scopes": "", "connected_at": None, "owners": [],
     }  # fmt: skip
 
     started = client.post("/v1/github/connect", headers=OPERATOR)
@@ -277,3 +277,50 @@ def test_a_token_github_refuses_marks_the_connection_broken_and_says_to_reconnec
     assert refused.status_code == 409
     assert refused.json()["detail"] == "GitHub no longer accepts this connection. Connect GitHub again"
     assert client.get("/v1/github/connection", headers=OPERATOR).json()["state"] == "broken"
+
+
+def test_an_operator_limits_muxxy_to_the_accounts_they_pick(reaching):
+    from meta_harness.planner import reach
+
+    client, github = reaching
+    _connect(client)
+    everything = client.get("/v1/repos/reachable", headers=OPERATOR).json()
+    assert everything["owners"] == [{"name": "acme", "repos": 2}] and everything["chosen"] == []
+
+    wrong = client.put("/v1/github/connection/owners", json={"owners": ["nobody"]}, headers=OPERATOR)
+    assert wrong.status_code == 422
+    assert wrong.json()["detail"] == "your GitHub connection reaches no repo of nobody. Pick from the list"
+    saved = client.put("/v1/github/connection/owners", json={"owners": ["ACME"]}, headers=OPERATOR)
+    assert saved.status_code == 200 and saved.json()["owners"] == ["acme"]
+
+    from meta_harness import db
+
+    with db.connect(autocommit=True) as conn:
+        conn.execute("UPDATE planner.github_connection SET owners = '{elsewhere}'")
+    limited = client.get("/v1/repos/reachable", headers=OPERATOR).json()
+    assert limited["repos"] == [] and limited["chosen"] == ["elsewhere"], "only the chosen accounts' repos are offered"
+    assert limited["owners"] == [{"name": "acme", "repos": 2}], "every account stays in the list to pick from"
+    assert reach.can_push("dave", "acme/api") is False
+    cleared = client.put("/v1/github/connection/owners", json={"owners": []}, headers=OPERATOR)
+    assert cleared.json()["owners"] == [] and reach.can_push("dave", "acme/api") is True
+
+
+async def test_a_long_list_of_repos_is_read_a_few_pages_at_a_time():
+    from meta_harness.planner import reach
+
+    class Many(httpx.AsyncBaseTransport):
+        pages: list[int] = []
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            page = int(request.url.params["page"])
+            self.pages.append(page)
+            count = 100 if page < 8 else 30 if page == 8 else 0
+            return httpx.Response(
+                200, json=[{"full_name": f"acme/r{page}-{i}", "permissions": {"push": True}} for i in range(count)]
+            )
+
+    found = await reach.read("gho_x", Many())
+
+    assert len(found) == 730 and len({r["name"] for r in found}) == 730
+    assert found[0]["name"] == "acme/r1-0" and found[-1]["name"] == "acme/r8-29", "in GitHub's order"
+    assert sorted(Many.pages) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]

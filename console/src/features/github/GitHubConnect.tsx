@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Alert, Anchor, Badge, Button, Group, Loader, Paper, Stack, Text, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, Loader, MultiSelect, Paper, Stack, Text, Title } from "@mantine/core";
 import { IconBrandGithub } from "@tabler/icons-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { api, type GitHubConnection } from "../../api";
+import { api, type GitHubConnection, type Reachable } from "../../api";
 import { ErrorAlert, PageHeader } from "../../components/ui";
 
 // Where the operator was when they pressed Connect, kept across the trip to GitHub and back.
@@ -85,16 +85,63 @@ export function GitHubSection() {
         </Stack>
       )}
       {found?.connected && (
-        <Group justify="space-between" wrap="wrap" gap="sm">
-          <Group gap="xs">
-            <IconBrandGithub size={18} />
-            <Text size="sm">Connected as <b>{found.login}</b></Text>
-            <Badge variant="light" color="teal" tt="none" radius="sm">Connected</Badge>
+        <Stack gap="md">
+          <Group justify="space-between" wrap="wrap" gap="sm">
+            <Group gap="xs">
+              <IconBrandGithub size={18} />
+              <Text size="sm">Connected as <b>{found.login}</b></Text>
+              <Badge variant="light" color="teal" tt="none" radius="sm">Connected</Badge>
+            </Group>
+            <Button size="xs" variant="default" color="red" loading={busy} onClick={() => void disconnect()}>Disconnect</Button>
           </Group>
-          <Button size="xs" variant="default" color="red" loading={busy} onClick={() => void disconnect()}>Disconnect</Button>
-        </Group>
+          <Owners chosen={found.owners} onSaved={setFound} />
+        </Stack>
       )}
     </Paper>
+  );
+}
+
+// Which accounts and organizations Muxxy uses, picked from the ones the connection reaches. None picked: all.
+// Each change saves at once.
+function Owners({ chosen, onSaved }: { chosen: string[]; onSaved: (found: GitHubConnection) => void }) {
+  const [reach, setReach] = useState<Reachable | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    api.githubReachable().then(setReach, (err) => setError(`${say(err)}. Reload the page to try again.`));
+  }, []);
+  const save = async (owners: string[]) => {
+    setSaving(true);
+    setError(null);
+    try {
+      onSaved(await api.githubChooseOwners(owners));
+    } catch (err) {
+      setError(`${say(err)}. Pick again to retry.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const all = reach?.owners ?? [];
+  const used = all.filter((o) => chosen.length === 0 || chosen.includes(o.name)).reduce((sum, o) => sum + o.repos, 0);
+  // A saved name the connection no longer reaches stays in the list, marked, so it can be removed.
+  const gone = chosen.filter((name) => reach !== null && !all.some((o) => o.name === name));
+  return (
+    <Stack gap={6} data-testid="github-owners">
+      <MultiSelect
+        label="Accounts and organizations Muxxy uses"
+        description={reach ? `Muxxy offers ${used} ${used === 1 ? "repo" : "repos"}. Pick none to use every account you can reach.` : "Reading what your connection reaches."}
+        placeholder={chosen.length === 0 ? "All you can reach" : undefined}
+        data={[...all.map((o) => ({ value: o.name, label: `${o.name} (${o.repos})` })), ...gone.map((name) => ({ value: name, label: `${name} (no longer reached)` }))]}
+        value={chosen}
+        onChange={(owners) => void save(owners)}
+        disabled={saving || (reach === null && !error)}
+        searchable
+        clearable
+        nothingFoundMessage="Your connection reaches no account by that name."
+        maw={520}
+      />
+      <ErrorAlert error={error} />
+    </Stack>
   );
 }
 
