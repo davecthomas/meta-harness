@@ -10,6 +10,7 @@ from dataclasses import replace
 from typing import Any
 
 from meta_harness import outbound
+from meta_harness import acting
 from meta_harness.github_app import GitHubAppError, GitHubApps
 from meta_harness.run_service.code_host import acceptance_checks, issue_paths
 from collections.abc import Callable
@@ -126,7 +127,7 @@ class GitHubTracker:
     async def _call(self, repo: str, permissions: dict[str, str], method: str, path: str, **kwargs):
         """One GitHub call, its failure as a TrackerError, so no caller needs to know the tracker is GitHub."""
         try:
-            return await self.apps.call(repo, permissions, method, path, **kwargs)
+            return await acting.github(self.apps, repo, permissions, method, path, **kwargs)
         except GitHubAppError as err:
             raise TrackerError(str(err), retryable=err.retryable, status=err.status) from err
 

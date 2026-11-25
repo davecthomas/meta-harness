@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ActionIcon,
   Alert,
-  Anchor,
   Badge,
   Button,
-  Checkbox,
   Collapse,
   Group,
   Loader,
@@ -38,6 +36,7 @@ import { useUnsavedChanges } from "../../components/UnsavedChanges";
 import { api, refLabel, type IssueSource, type LabelIssue, type Tracker, type UserSettings } from "../../api";
 import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
+import { RepoPick } from "./RepoPick";
 import { ImproveGoal } from "./ImproveGoal";
 import { SpecField, type GoalSpec } from "./SpecField";
 import { specName, useSpecDraft } from "./SpecDraft";
@@ -220,7 +219,7 @@ export function NewGoal() {
   const start = useRef(true);
 
   useEffect(() => {
-    api.repos().then(
+    api.goalRepos().then(
       (r) => {
         const names = r.map((x) => x.name);
         setRepos(names);
@@ -500,17 +499,7 @@ export function NewGoal() {
           {reached >= 2 && source && (
             <Panel n={2} question="Where is the work?" answer={whereAnswer} open={open(2)} done={done(2)} onEdit={() => go(2)}>
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
-                <Checkbox.Group label="Repositories" description="The repositories the goal may change." withAsterisk value={chosen} onChange={setChosen}>
-                  <Stack gap="xs" mt="xs">
-                    {reposRead && repos.length === 0 && (
-                      <Text size="sm" c="orange" data-testid="no-repos">
-                        No repository is registered yet, so a goal has nothing to change. An admin adds one under{" "}
-                        <Anchor component={Link} to="/config?kind=repos" size="sm">Configuration, Repositories</Anchor>.
-                      </Text>
-                    )}
-                    {repos.map((name) => <Checkbox key={name} value={name} label={name} styles={{ label: { fontFamily: "var(--mantine-font-family-monospace)" } }} />)}
-                  </Stack>
-                </Checkbox.Group>
+                <RepoPick offered={reposRead ? repos : null} value={chosen} onChange={setChosen} label="Repositories" description="The repositories the goal may change." required />
                 <Stack gap="xs">
                   <GoalTrackerFields
                     trackers={source === "issues" ? realTrackers : trackers}

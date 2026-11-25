@@ -56,7 +56,7 @@ function show(document: Record<string, any>, reasons: string[] = [], statuses: s
       return respond({ choices: statuses.map((name) => ({ value: name, label: name })) });
     }
     if (url === "/v1/trackers") return respond({ default: document.default, trackers: [GITHUB, JIRA] });
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/r" }] });
+    if (url === "/v1/repos" || url === "/v1/repos?pushable=1") return respond({ repos: [{ name: "o/r" }] });
     return respond({});
   });
   render(

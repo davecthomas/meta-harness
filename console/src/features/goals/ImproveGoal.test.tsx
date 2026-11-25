@@ -27,7 +27,7 @@ const PROPOSAL = {
 // The New goal form, with an enrich call that answers as given; the goals it saves go into `created`.
 function newGoal(enrich: () => Promise<Response>, asked: Record<string, unknown>[] = [], created: Record<string, unknown>[] = []) {
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/repos" || url === "/v1/repos?pushable=1") return respond({ repos: [{ name: "o/a" }] });
     if (url === "/v1/goals/enrich") {
       asked.push(JSON.parse(String(init?.body)));
       return enrich();

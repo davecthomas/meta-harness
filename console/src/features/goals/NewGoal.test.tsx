@@ -22,7 +22,7 @@ function stub(created: Record<string, unknown>[], asked: string[] = [], extra: (
     asked.push(`${init?.method ?? "GET"} ${url}`);
     const answer = extra(url, init);
     if (answer) return answer;
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/a" }] });
+    if (url === "/v1/repos" || url === "/v1/repos?pushable=1") return respond({ repos: [{ name: "o/a" }] });
     if (url === "/v1/trackers") return respond(TRACKERS);
     if (url.startsWith("/v1/labels")) return respond({ repos: ["o/a"], labels: [{ label: "bug", total: 2, repos: { "o/a": 2 } }] });
     if (url === "/v1/goals/title") return respond({ title: "Add a CSV export" });

@@ -61,7 +61,7 @@ function renderGoal(start: Record<string, unknown>, refuse?: string, people?: Li
     }
     if (url.startsWith("/v1/tasks")) return respond({ tasks: [], total: 0 });
     if (url === "/v1/limits") return respond({ max_parallel: 4, max_sandboxes: 8 });
-    if (url === "/v1/repos") return respond({ repos: [{ name: "o/r" }, { name: "o/s" }] });
+    if (url === "/v1/repos" || url === "/v1/repos?pushable=1") return respond({ repos: [{ name: "o/r" }, { name: "o/s" }] });
     if (url.startsWith("/v1/labels")) return respond({ repos: ["o/r"], labels: [] });
     return respond(current);
   });

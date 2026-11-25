@@ -4159,8 +4159,13 @@ it before they read a pull request (`meta_harness/acting.py`). The code host
 the App otherwise. A goal with no operator uses the App: one made before this,
 by a service, or by an operator with no connection. When GitHub refuses the
 token, the connection is marked broken and the task fails with "Connect GitHub
-again in Settings". Creating a goal or a task still checks its repo against
-the repo registry, and the GitHub tracker still reads issues through the App.
+again in Settings". A goal may name a repo in the registry, or any repo its
+operator can push to with their connection, without a registry entry: New
+goal and the goal page offer both (`GET /v1/repos?pushable=1`). The GitHub
+tracker and the spec file reader call GitHub as the acting operator too
+(`acting.github`). The console's issue, label and spec file lists read a repo
+the caller can read with their connection, as them. A task created directly by
+an operator key still needs a registered repo.
 
 **Adversarial plan review** (`planner/plan_review.py`). A goal can have its
 plans reviewed by a second model before the operator approves them
