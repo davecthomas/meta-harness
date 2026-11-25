@@ -188,8 +188,9 @@ The buttons are the Plan page's, and this spec adds none.
   Performance page.
 - `planning.adversarial_review.max_usd` caps one review run, as `planning.max_usd` caps a planning run. Its
   default is the planning limit, because a reviewer reads the same code the planner did.
-- Reviews and revisions count toward the planner redesign's limit on a goal's whole planning phase,
-  `planning.max_phase_usd`. Before each run the planner checks that limit and the goal's remaining budget.
+- Reviews and revisions count toward the planner redesign's limit on what planning spends without asking,
+  `planning.max_unasked_usd`. Before each run the planner checks that limit and the goal's remaining budget.
+  "Fix it" and "Review again" are runs the operator asks for, so each starts the count again.
 - When either cannot cover another run, the review stops there, the plan says so with the figures, and the plan
   stays approvable.
 
@@ -418,7 +419,7 @@ Every migration only adds. No existing event type changes.
 - Approving while a review runs cancels it. An edit cancels it and offers "Review again".
 - A revision applies itself before the operator has acted on the plan, and is a proposal after.
 - `actions.py` decides `settle_plan_review`, and the pull request action `settle_review` behaves as before.
-- Reviews and revisions stop at the planning phase limit.
+- Reviews and revisions stop at the limit on unasked planning.
 - The reviewer is never the plan's own model family. With no other family, the planner skips the review and says
   why.
 - The default follows the autonomy and the operator's setting. A goal that runs issues as they are offers no
