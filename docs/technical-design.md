@@ -4086,7 +4086,10 @@ For the fixes, a second planning task revises the plan with
 them as its note. Its result is kept in `planner.plan_suggestion`, apart from
 the goal's plan versions, so the current plan can still be edited or approved
 while it drafts. The planner's update then asks the operator to accept it
-(`accept_fix`), with a line for each change. Accepting
+(`accept_fix`). The ask shows why the fix exists: each gap beside the change
+that settles it. Then it counts the changes by kind (`plans.diff`): tasks
+added, removed, reordered, changed and reworded. It never shows a line for
+each task. Accepting
 (`POST /v1/goals/{id}/suggestion/accept`) makes it the next plan version,
 source `suggested`, which is still approved as any plan is. Dismissing it, or
 editing the plan or asking for a new one, leaves it behind. At most one fix is

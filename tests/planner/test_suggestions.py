@@ -9,7 +9,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
-from meta_harness.planner import planning, suggestions, updates
+from meta_harness.planner import plans, planning, suggestions, updates
 from meta_harness.planner.service import create_app
 
 from .test_planner import OPERATOR, Events, FakeTasks, _no_title, migrated, registry  # noqa: F401
@@ -87,7 +87,8 @@ def test_a_plan_with_a_gap_the_planner_can_fix_gets_a_drafted_fix_to_accept(worl
     assert asyncio.run(suggestions.collect(goal, tasks, events))["status"] == "open"
     suggestion = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()["suggestion"]
     assert suggestion["for_version"] == 1 and suggestion["fixes"] == [{"gap": CLASH, "change": "Run api after store."}]
-    assert suggestion["changes"] == ["Build api now waits for Build store"]
+    assert suggestion["changes"] == ["1 task reordered"], "a count for each kind of change, never a line a task"
+    assert suggestion["diff"]["reordered"] == [{"id": "api", "title": "Build api"}]
 
     accepted = client.post(f"/v1/goals/{goal['id']}/suggestion/accept", headers=OPERATOR)
 
@@ -157,11 +158,22 @@ def test_the_changes_a_fix_makes_read_a_line_each():
         "items": [{"ref": "jira:VL-1", "decision": "leave_out", "depends_on": []}],
     }
     assert suggestions.changes(before, after) == [
-        "Adds: Build tests",
-        "Drops: Build docs",
-        "Build api now waits for Build store",
-        "Crash on save is left out",
+        "1 task added",
+        "1 task removed",
+        "1 task reordered",
+        "1 existing issue decided differently",
     ]
+    found = plans.diff(before, after)
+    assert found["added"] == [{"id": "tests", "title": "Build tests"}]
+    assert found["decisions"] == [{"id": "jira:VL-1", "title": "Crash on save", "decision": "leave_out"}]
+    # A task is in one kind: its checks changed, or only its words.
+    checks = draft("api")
+    checks["body"] = checks["body"].replace("- make test", "- make test-api")
+    words = draft("store", title="The store")
+    found = plans.diff({"drafts": [draft("store"), draft("api")]}, {"drafts": [words, checks]})
+    assert [e["id"] for e in found["changed"]] == ["api"] and [e["id"] for e in found["reworded"]] == ["store"]
+    assert plans.diff_lines(found) == ["1 task changed", "1 task reworded"]
+    assert plans.diff_lines(plans.diff(before, before)) == ["No task changes"]
 
 
 def test_a_waiting_fix_is_always_asked_about_with_what_it_changes():

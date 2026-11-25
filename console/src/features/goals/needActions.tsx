@@ -104,7 +104,8 @@ export type NeedAction =
   | "approve_plan" | "accept_fix" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue" | "fix_setting"
   | "settle_review" | "retry" | "split_or_run" | "fix_plan";
 // changes: for accept_fix, what the planner's fix changes in the plan, a line each.
-export type Need = { what: string; ref: string; action?: NeedAction | ""; task_id?: string; pr_url?: string; changes?: string[] };
+// changes: a fix's changes as a count for each kind. fixes: why the fix was drafted, each gap with what settles it.
+export type Need = { what: string; ref: string; action?: NeedAction | ""; task_id?: string; pr_url?: string; changes?: string[]; fixes?: { gap: string; change: string }[] };
 
 // Events the goal page listens for, so a need is resolved where it is shown: the plan's approval, and the
 // goal's settings (its budget).
