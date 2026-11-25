@@ -9,6 +9,7 @@ import { configApi } from "./features/config/api";
 import { goalsApi } from "./features/goals/api";
 import { overviewApi } from "./features/overview/api";
 import { settingsApi } from "./features/settings/api";
+import { githubApi } from "./features/github/api";
 import { tasksApi } from "./features/tasks/api";
 
 export { ApiError, call, query };
@@ -20,6 +21,7 @@ export type { IssueSource, Tracker, TrackerSetting, Trackers } from "./features/
 export * from "./features/overview/api";
 export * from "./features/performance/api";
 export * from "./features/settings/api";
+export * from "./features/github/api";
 export * from "./features/tasks/api";
 
 export interface Goal {
@@ -277,6 +279,7 @@ export const api = {
   ...goalsApi,
   ...overviewApi,
   ...settingsApi,
+  ...githubApi,
   ...tasksApi,
 };
 

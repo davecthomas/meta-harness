@@ -814,6 +814,14 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("plan_fix_dismissed", 1, _object({"goal_id": {"type": "string"}}, ["goal_id"])),
+    # An operator connected their own GitHub account to the console, or disconnected it (planner/github_api.py).
+    # The actor is the operator. Never the token.
+    EventType(
+        "github_connected",
+        1,
+        _object({"login": {"type": "string"}, "scopes": {"type": "string"}}, ["login"]),
+    ),
+    EventType("github_disconnected", 1, _object({})),
     # A plan's adversarial review (planner/plan_review.py): a reviewer of another model family than the planner's
     # was started on a plan version, and its run ended with what it found. state: done, partial, failed, canceled.
     EventType(

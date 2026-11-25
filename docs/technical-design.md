@@ -4118,6 +4118,29 @@ planning configuration's `suggest_fixes` turns them off. The sorting call is a
 `plan_fixes_assessed` event, counted as planning cost; accepting and dismissing
 are `plan_fix_accepted` and `plan_fix_dismissed`.
 
+**An operator's GitHub connection** (`github_user.py`,
+`planner/github_api.py`, `console/src/features/github/`). An operator can
+connect their own GitHub account to the console, once, from Settings. The
+console asks the planner to start a sign-in (`POST /v1/github/connect`) and
+sends the browser to GitHub's own sign-in and consent page, for the
+deployment's OAuth app with the `repo` scope. GitHub sends the browser back to
+`/github/connected` with a code and the one-time state the planner made for
+that operator. The console posts both with its own session
+(`POST /v1/github/connection`), so the connection belongs to whoever is
+signed in. The planner refuses a return without that operator's state, and
+asks GitHub for no token. The planner trades the code for the
+operator's token and keeps it in `planner.github_connection`, encrypted with
+the deployment's token key. The token is never sent to the console, logged or
+put in an event. `GET /v1/github/connection` says whether the caller is
+connected and as whom, and `DELETE` forgets it. A connection GitHub refuses is
+marked broken, and the console says to reconnect. The OAuth app's client id
+and secret and the token key are three secrets, read at start
+(`MH_GITHUB_OAUTH_CLIENT_ID`, `MH_GITHUB_OAUTH_CLIENT_SECRET`,
+`MH_GITHUB_TOKEN_KEY`). With none set, connecting is off and the console says
+what to set. With only some set, or a token key that is not a key, the
+planner stops at startup and names them. Connecting changes nothing else yet:
+goals still reach GitHub through the GitHub App.
+
 **Adversarial plan review** (`planner/plan_review.py`). A goal can have its
 plans reviewed by a second model before the operator approves them
 (`goal.adversarial_review`). It is on by default for a goal whose autonomy is

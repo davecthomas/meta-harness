@@ -7,7 +7,8 @@ import { feature as performance } from "./performance";
 import { feature as config } from "./config";
 import { feature as admin } from "./admin";
 import { feature as settings } from "./settings";
+import { feature as github } from "./github";
 import { feature as help } from "./help";
 import type { Feature } from "./types";
 
-export const FEATURES: Feature[] = [overview, goals, plan, tasks, performance, config, admin, settings, help];
+export const FEATURES: Feature[] = [overview, goals, plan, tasks, performance, config, admin, settings, github, help];

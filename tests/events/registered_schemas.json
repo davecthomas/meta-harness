@@ -2125,5 +2125,26 @@
       "how"
     ],
     "additionalProperties": true
+  },
+  "github_connected v1": {
+    "type": "object",
+    "properties": {
+      "login": {
+        "type": "string"
+      },
+      "scopes": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "login"
+    ],
+    "additionalProperties": true
+  },
+  "github_disconnected v1": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": true
   }
 }
