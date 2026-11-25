@@ -178,3 +178,102 @@ def test_a_token_stored_under_another_key_is_lost_and_says_to_connect_again():
     with pytest.raises(github_user.GitHubUserError, match="Connect GitHub again") as refused:
         github_user.decrypt(other, stored)
     assert refused.value.reconnect is True
+
+
+class Repos(GitHub):
+    """GitHub, with the repos the operator can see."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fails = 0
+        self.unauthorized = False
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/user/repos":
+            return await super().handle_async_request(request)
+        self.asked.append((request.method, str(request.url)))
+        if self.unauthorized:
+            return httpx.Response(401, json={"message": "Bad credentials"})
+        if self.fails:
+            self.fails -= 1
+            return httpx.Response(404, json={"message": "nope"})
+        repo = lambda name, push, **more: {  # noqa: E731
+            "full_name": name, "description": f"About {name}", "private": True, "default_branch": "main",
+            "language": "Python", "pushed_at": "2026-11-25T10:00:00Z", "permissions": {"pull": True, "push": push}, **more,
+        }  # fmt: skip
+        return httpx.Response(
+            200, json=[repo("acme/api", True), repo("acme/docs", False), repo("acme/old", True, archived=True)]
+        )
+
+
+@pytest.fixture
+def reaching(migrated, registry, configured):  # noqa: F811
+    from meta_harness import db
+    from meta_harness.planner import reach
+
+    with db.connect(autocommit=True) as conn:
+        conn.execute("DELETE FROM planner.github_connection")
+    reach._held.clear()
+    events, github = Events(), Repos()
+    app = create_app(
+        events, WritingTracker(), FakeTasks(), operator_keys={"op-key": "dave"}, service_keys={},
+        sweep_seconds=0, titler=_no_title, github_transport=github,
+    )  # fmt: skip
+    with TestClient(app) as client:
+        yield client, github
+
+
+def _connect(client) -> None:
+    state = httpx.URL(client.post("/v1/github/connect", headers=OPERATOR).json()["url"]).params["state"]
+    assert (
+        client.post("/v1/github/connection", json={"code": "good-code", "state": state}, headers=OPERATOR).status_code
+        == 200
+    )
+
+
+def test_an_operators_reachable_repos_are_githubs_answer_each_writable_or_read_only(reaching):
+    from meta_harness.planner import reach
+
+    client, github = reaching
+    none = client.get("/v1/repos/reachable", headers=OPERATOR)
+    assert none.status_code == 409 and none.json()["detail"] == "you have not connected GitHub. Connect it in Settings"
+    _connect(client)
+
+    found = client.get("/v1/repos/reachable", headers=OPERATOR).json()
+
+    assert [(r["name"], r["access"]) for r in found["repos"]] == [("acme/api", "write"), ("acme/docs", "read")], (
+        "an archived repo is left out, and one that can only be read says so"
+    )
+    assert found["repos"][0]["description"] == "About acme/api" and found["stale"] is False
+    assert reach.can_push("dave", "ACME/api") is True and reach.can_push("dave", "acme/docs") is False
+    assert reach.can_push("pat", "acme/api") is None, "with no list held, nothing is claimed"
+    # Held for a while: a picker asking as the operator types does not ask GitHub each time.
+    asked = len(github.asked)
+    client.get("/v1/repos/reachable", headers=OPERATOR)
+    assert len(github.asked) == asked
+    client.get("/v1/repos/reachable?refresh=1", headers=OPERATOR)
+    assert len(github.asked) == asked + 1
+
+
+def test_a_list_that_cannot_be_read_again_is_served_as_it_was_with_why(reaching):
+    client, github = reaching
+    _connect(client)
+    client.get("/v1/repos/reachable", headers=OPERATOR)
+    github.fails = 1
+
+    again = client.get("/v1/repos/reachable?refresh=1", headers=OPERATOR).json()
+
+    assert again["stale"] is True and "GitHub answered 404" in again["why"]
+    assert [r["name"] for r in again["repos"]] == ["acme/api", "acme/docs"]
+
+
+def test_a_token_github_refuses_marks_the_connection_broken_and_says_to_reconnect(reaching):
+    client, github = reaching
+    _connect(client)
+    github.unauthorized = True
+
+    refused = client.get("/v1/repos/reachable", headers=OPERATOR)
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "GitHub no longer accepts this connection. Connect GitHub again"
+    assert client.get("/v1/github/connection", headers=OPERATOR).json()["state"] == "broken"

@@ -4138,8 +4138,13 @@ and secret and the token key are three secrets, read at start
 (`MH_GITHUB_OAUTH_CLIENT_ID`, `MH_GITHUB_OAUTH_CLIENT_SECRET`,
 `MH_GITHUB_TOKEN_KEY`). With none set, connecting is off and the console says
 what to set. With only some set, or a token key that is not a key, the
-planner stops at startup and names them. Connecting changes nothing else yet:
-goals still reach GitHub through the GitHub App.
+planner stops at startup and names them. `GET /v1/repos/reachable`
+(`planner/reach.py`) lists the repos the caller's connection can see, each
+`write` or `read`, without the archived ones. The planner holds an operator's
+list for ten minutes (`MH_REACHABLE_REPOS_SECONDS`) and reads it again with
+`?refresh=1`. When it cannot read the list again it serves the last one with
+why. A token GitHub refuses marks the connection broken. Connecting changes
+nothing else yet: goals still reach GitHub through the GitHub App.
 
 **Adversarial plan review** (`planner/plan_review.py`). A goal can have its
 plans reviewed by a second model before the operator approves them
