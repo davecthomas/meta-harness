@@ -319,8 +319,20 @@ jobs:
             echo "$version is already released"
             exit 0
           fi
-          gh release create "$version" --repo "${{ github.repository }}" --target "${{ github.sha }}" \
-            --title "$version" --notes "Deployed ${GITHUB_SHA::7}: $(git log -1 --format=%s "${{ github.sha }}")"
+          # GitHub's API answers 5xx at times. The deploy has succeeded by this step, so a release it could not
+          # publish at once is tried again with a growing wait, before the deploy is called failed for it.
+          for try in 1 2 3 4 5; do
+            if gh release view "$version" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              echo "$version is released"
+              exit 0
+            fi
+            gh release create "$version" --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+              --title "$version" --notes "Deployed ${GITHUB_SHA::7}: $(git log -1 --format=%s "${{ github.sha }}")" && exit 0
+            echo "::warning::could not publish the release $version (try $try of 5); trying again in $((try * 20)) seconds"
+            sleep $((try * 20))
+          done
+          echo "::error::the release $version could not be published after 5 tries. The deploy itself succeeded: run this workflow again to publish it"
+          exit 1
       - name: open an issue for the failed deploy
         # A failed deploy is work: the issue's label lets a goal pick it up and fix it.
         if: failure()

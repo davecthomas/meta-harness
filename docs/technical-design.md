@@ -4130,12 +4130,16 @@ budget is the next button. Under the bar are the plan's figures as tiles
 (`plan_view.glance`): tasks, repos, the most it may spend, how many tasks can
 start at once, and open questions. The most a plan may spend is each task's
 spend limit for its size, summed. The plan keeps each task's size for this
-(`draft_sizes.with_sizes`), and a task not sized yet counts at the largest
-limit, so the figure is an upper bound. Then comes what changed since the
+(`draft_sizes.with_sizes`). The figure is given only once every task has a
+size, and until then the page says how many do not. Then comes what changed
+since the
 plan's baseline version (`plan_view.baseline`): the reasons first,
 then a count for each kind of change, which opens to its tasks. The baseline
-is the last version an operator made, else the planner's first. The tasks and
-the plan's versions (`GET /v1/goals/{id}/plan/versions`) follow. Approve the
+is the last version an operator made, else the planner's first. A fix that
+waits is shown by what accepting it would change. The tasks follow, grouped
+into stages by what each waits for (`stagesOf`): a plan of more than five
+tasks shows each stage as a count that opens. The plan's versions
+(`GET /v1/goals/{id}/plan/versions`) come last. Approve the
 plan and Plan again open this page from every other page.
 
 **Task names** (`planner/naming.py`). A task's id says nothing to a person and

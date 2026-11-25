@@ -92,6 +92,23 @@ test("what changed leads with why, then counts each kind, and lists a kind's tas
   expect(within(part).getByRole("button", { name: "Undo the fix" })).toBeTruthy();
 });
 
+test("a plan with tasks not sized yet names no figure it would have to guess", () => {
+  shown(<Glance glance={{ tasks: 60, repos: ["davecthomas/meta-harness"], may_spend_usd: null, budget_usd: "100.00", can_start: 8, open_questions: 3, unsized: 60 }} />);
+  const tiles = screen.getAllByTestId("plan-tile").map((t) => t.textContent);
+  expect(tiles[0]).toBe("Tasks6060 not sized yet");
+  expect(tiles[2]).toBe("Budget$100what the tasks may spend is known once they are sized");
+});
+
+test("a fix that waits is shown by what accepting it would change, apart from older changes", () => {
+  const waiting = { ...PLAN, applied_fix: null, suggestion: { for_version: 3, fixes: [{ gap: "Gap.", change: "Fix." }], changes: ["2 tasks added"], diff: { added: [{ id: "a", title: "Task a" }, { id: "b", title: "Task b" }] } } } as unknown as Plan;
+  shown(<WhatChanged plan={waiting} />);
+  const part = screen.getByTestId("plan-what-changed");
+  expect(part.textContent).toContain("What the fix would change");
+  expect(part.textContent).toContain("The planner's fix would settle");
+  expect(within(part).getByTestId("plan-change-counts").textContent).toBe("2 added");
+  expect(within(part).queryByRole("button", { name: "Undo the fix" })).toBeNull();
+});
+
 test("a plan that changed nothing shows no such part", () => {
   shown(<WhatChanged plan={{ ...PLAN, applied_fix: null, changes: null } as unknown as Plan} />);
   expect(screen.queryByTestId("plan-what-changed")).toBeNull();

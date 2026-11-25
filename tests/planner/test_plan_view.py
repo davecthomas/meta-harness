@@ -26,8 +26,10 @@ def test_the_plans_figures_are_an_upper_bound_from_each_tasks_size():
     found = plan_view.glance(GOAL, _plan(drafts=sized, gaps=["A question."]), BY_SIZE, parallel=1)
 
     assert found["tasks"] == 3 and found["repos"] == [REPO]
-    assert found["may_spend_usd"] == "31.00", "a task not sized yet counts at the largest size's limit"
-    assert found["budget_usd"] == "100.00" and found["unsized"] == 1
+    assert found["may_spend_usd"] is None and found["unsized"] == 1, "no figure is guessed for a task not sized"
+    whole = plan_view.glance(GOAL, _plan(drafts=sized[:2]), BY_SIZE, parallel=1)
+    assert whole["may_spend_usd"] == "11.00" and whole["unsized"] == 0
+    assert found["budget_usd"] == "100.00"
     assert found["can_start"] == 1, "two wait for nothing, and the goal runs one at a time"
     assert found["open_questions"] == 1
 
@@ -47,7 +49,11 @@ def test_a_version_is_compared_with_the_last_an_operator_made_else_the_planners_
 
 
 def test_a_plan_ready_to_approve_asks_one_thing_and_says_what_it_may_spend():
-    glance = plan_view.glance(GOAL, _plan(), BY_SIZE, parallel=None)
+    sized = [{**draft("store"), "size": "large"}, {**draft("api", ("store",)), "size": "large"}]
+    glance = plan_view.glance(GOAL, _plan(drafts=sized), BY_SIZE, parallel=None)
+    # A plan with a task not sized yet names no figure, on its sentence or its button.
+    bare = actions.plan_decision(GOAL, _plan(), plan_view.glance(GOAL, _plan(), BY_SIZE, None), planning_usd="4.00")
+    assert bare["says"] == "2 tasks in 1 repo." and bare["buttons"][0]["label"] == "Approve and start"
 
     found = actions.plan_decision(GOAL, _plan(), glance, planning_usd="4.00")
 
