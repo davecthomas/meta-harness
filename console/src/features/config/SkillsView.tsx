@@ -230,6 +230,14 @@ function ImportDialog({ names, onClose, onAdd }: { names: string[]; onClose: () 
 // What a locked skill's lock says, on its row and where its files are read.
 export const LOCKED = "Locked: it ships with Muxxy and changes only by a pull request.";
 
+// What Muxxy itself does with a skill it ships, besides any profile that loads it: it runs the skill's script or
+// puts the skill's text in a prompt, which is why such a skill is locked. Said on the skill's row, so a skill no
+// profile lists is not taken for one nothing uses.
+export const USED_BY_MUXXY: Record<string, string> = {
+  "no-ai-slop2": "Muxxy's writing pass, on everything it writes for people",
+  "adversarial-plan-review": "The planner, as the instructions of a plan's adversarial review",
+};
+
 // Which profiles name each skill, so a skill in use says so, and cannot be removed until they stop.
 function usedBy(profiles: Record<string, { skills?: string[] }>, name: string): string[] {
   return Object.entries(profiles).filter(([, p]) => (p.skills ?? []).includes(name)).map(([profile]) => profile);
@@ -242,11 +250,14 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
   const names = Object.keys(skills);
   return (
     <Stack gap="md">
-      <Text size="sm" c="dimmed">
-        A harness profile names the skills its runs load. A run is told each one's name and description, and reads the rest when its work needs it. Nothing loads from a task's repo. A skill with a lock ships with Muxxy and cannot be changed or removed here.
-      </Text>
+      <Alert variant="light" color="blue" title="How a skill is used" data-testid="skills-how">
+        <Text size="sm">
+          A skill does nothing until a harness profile lists it. Every run on that profile is then told the skill's name and what it is for, and reads the rest when its work calls for it. Nobody types a command for it in a goal or a task. Nothing loads from a task's repo. A skill with a lock ships with Muxxy and changes only by a pull request.
+        </Text>
+        <Anchor href="/config?kind=profiles" size="sm">Choose which profiles load which skills</Anchor>
+      </Alert>
       {names.length ? (
-        <DataTable head={["Skill", "What it is for", "Source", "Used by", ""]} minWidth={860}>
+        <DataTable head={["Skill", "What it is for", "Source", "Where used", ""]} minWidth={860}>
           {names.map((name) => {
             const skill = skills[name];
             const users = usedBy(profiles, name);
@@ -254,7 +265,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
               <Table.Tr key={name} data-testid={`skill-${name}`}>
                 <Table.Td>
                   <Group gap={6} wrap="nowrap">
-                    <Anchor component="button" type="button" fw={600} size="sm" onClick={() => setReading(name)}>{name}</Anchor>
+                    <Anchor component="button" type="button" fw={600} size="sm" ta="left" onClick={() => setReading(name)}>{name}</Anchor>
                     {skill.source?.locked && (
                       <Tooltip label={LOCKED}>
                         <IconLock size={14} role="img" aria-label={`${name} is locked`} />
@@ -262,11 +273,22 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
                     )}
                     {s.original.skills?.[name] === undefined && <Badge size="xs" color="yellow" variant="light" tt="none">not saved</Badge>}
                   </Group>
-                  <Text size="xs" c="dimmed">{Object.keys(skill.files).length} files, {kb(skill.files)} KB</Text>
+                  <Text size="xs" c="dimmed">{Object.keys(skill.files).length} file{Object.keys(skill.files).length === 1 ? "" : "s"}, {kb(skill.files)} KB</Text>
                 </Table.Td>
                 <Table.Td maw={420}><Text size="sm" lineClamp={3}>{skill.description}</Text></Table.Td>
-                <Table.Td maw={260}><Text size="xs" c="dimmed" style={{ wordBreak: "break-all" }}>{sourceLine(skill.source)}</Text></Table.Td>
-                <Table.Td><Text size="sm">{users.length ? users.join(", ") : <Text span size="sm" c="dimmed">No profile yet</Text>}</Text></Table.Td>
+                <Table.Td maw={260}><Text size="xs" c="dimmed" style={{ overflowWrap: "break-word" }}>{sourceLine(skill.source)}</Text></Table.Td>
+                <Table.Td>
+                  <Stack gap={2}>
+                    {USED_BY_MUXXY[name] && <Text size="sm">{USED_BY_MUXXY[name]}</Text>}
+                    {users.length > 0 && <Text size="sm">{USED_BY_MUXXY[name] ? "Runs on " : ""}{users.join(", ")}</Text>}
+                    {users.length === 0 && !USED_BY_MUXXY[name] && (
+                      <>
+                        <Text size="sm" c="orange">No profile loads it, so no run uses it.</Text>
+                        <Anchor href="/config?kind=profiles" size="sm">Add it to a profile</Anchor>
+                      </>
+                    )}
+                  </Stack>
+                </Table.Td>
                 <Table.Td>
                   {!s.readOnly && !skill.source?.locked && (
                     <Tooltip label={users.length ? `Named by ${users.join(", ")}: remove it from those profiles first` : `Remove ${name}`}>
@@ -287,7 +309,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
       {!s.readOnly && (
         <Paper p="sm" withBorder>
           <Group justify="space-between">
-            <Text size="sm">Import a skill from a git repository, or from a folder on this machine.</Text>
+            <Text size="sm">Import a skill from a git repository, or from a folder on this machine. Then add it to a profile, and that profile's runs load it.</Text>
             <Button size="xs" leftSection={<IconDownload size={14} />} onClick={() => setImporting(true)}>Import a skill</Button>
           </Group>
         </Paper>
