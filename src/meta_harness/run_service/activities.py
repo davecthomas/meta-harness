@@ -104,6 +104,8 @@ PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 REPO_TEMPLATE = "repo-task-v2"
 # A goal's planning task: the planner wrote what it asks; this wraps it with where the run is and what it may do.
 PLAN_TEMPLATE = "plan-v1"
+# A plan's adversarial review (planner/plan_review.py): a planning task whose pinned profile cannot draft issues.
+PLAN_REVIEW_TEMPLATE = "plan-review-v1"
 
 # The grant outlives the run's own time limit by this much, so it never expires under a run still ending.
 GRANT_GRACE_SECONDS = 300
@@ -156,13 +158,17 @@ async def _prepare_repo_task(request: RunTaskInput, pinned: Any) -> PreparedRun:
         description, checks = text, request.checks
         title = _title_from(text)
     if request.task_type == "plan":
-        template = (PROMPTS_DIR / f"{PLAN_TEMPLATE}.txt").read_text(encoding="utf-8")
+        # A planning task pinned to a profile with no create_issue tool is a plan's review: it reads a plan and
+        # records findings, so it is not told to draft issues, and its instructions are not shut out as data.
+        reviews = pinned is not None and "create_issue" not in (pinned.profile.get("tools") or [])
+        name = PLAN_REVIEW_TEMPLATE if reviews else PLAN_TEMPLATE
+        template = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
         prompt = Template(template).safe_substitute(
             repo=repo, title=title, description=description, writing_rules=_closing()
         )
-        activity.logger.info("prepare: a planning task in %s", repo)
+        activity.logger.info("prepare: a %s task in %s", "plan review" if reviews else "planning", repo)
         return PreparedRun(
-            template=PLAN_TEMPLATE,
+            template=name,
             prompt=prompt.strip(),
             pinned=pinned,
             repo=repo,

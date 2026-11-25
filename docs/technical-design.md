@@ -4128,7 +4128,9 @@ planning configuration's `adversarial_review.reviewers`, else of the task
 policy's pull request reviewers, whose model family is not the planner's.
 With none, the plan is not reviewed and the log says what to configure. The
 review is a planning task, read-only, told apart by its external ref
-(`plan-review:`). Its prompt holds the locked skill `adversarial-plan-review`,
+(`plan-review:`). The run service gives it the review prompt
+(`prompts/plan-review-v1.txt`) in place of the planning one, since its pinned
+profile has no `create_issue` tool. Its prompt holds the locked skill `adversarial-plan-review`,
 the goal, its specification and the plan in full. It records findings with
 `submit_review`: the task a finding is about, whether it blocks, its kind,
 what is wrong and the change that would settle it. The planner keeps them in
