@@ -333,3 +333,25 @@ def test_the_accounts_can_be_read_without_the_repos(reaching):
     found = client.get("/v1/repos/reachable?repos=0", headers=OPERATOR).json()
 
     assert found["repos"] == [] and found["owners"] == [{"name": "acme", "repos": 2}]
+
+
+async def test_settings_lists_the_accounts_at_once_from_the_last_read(reaching):
+    import asyncio
+
+    from meta_harness.planner import github_api, reach
+
+    client, github = reaching
+    _connect(client)
+    first = client.get("/v1/repos/reachable?repos=0", headers=OPERATOR).json()
+    assert first["owners"] == [{"name": "acme", "repos": 2}], "the first time, the read is waited for"
+    assert github_api.reached_of("dave") == [{"name": "acme", "repos": 2}]
+    # The held list has gone (a restart, or ten minutes): the accounts are answered from what was kept, and the
+    # repos are read again behind the answer.
+    reach._held.clear()
+    asked = len(github.asked)
+
+    kept = await reach.accounts("dave", github)
+
+    assert kept["owners"] == [{"name": "acme", "repos": 2}] and kept["repos"] == [] and kept["age_seconds"] is None
+    await asyncio.gather(*reach._tasks)
+    assert len(github.asked) == asked + 1 and "dave" in reach._held and not reach._reading

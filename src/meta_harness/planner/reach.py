@@ -12,6 +12,7 @@ before anything is said; when it still fails, the last good list is served with 
 """
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
@@ -25,6 +26,7 @@ from meta_harness.planner import github_api
 SETTING = "MH_REACHABLE_REPOS_SECONDS"
 DEFAULT_SECONDS = 600
 # The most repos read for one operator: GitHub lists a hundred a page.
+log = logging.getLogger("meta_harness.planner")
 MAX_PAGES = 30
 PAGES_AT_ONCE = 6
 # identity -> (when read, the repos).
@@ -98,7 +100,48 @@ async def reachable(
             return _answer(identity, held, True, str(err))
         raise
     _held[identity] = (time.time(), repos)
-    return _answer(identity, _held[identity], False, None)
+    answer = _answer(identity, _held[identity], False, None)
+    await asyncio.to_thread(github_api.save_reached, identity, answer["owners"])
+    return answer
+
+
+# The operators whose repos are being read behind an answer already given, so one read runs for each at a time.
+_reading: set[str] = set()
+
+
+async def _read_behind(identity: str, transport: httpx.AsyncBaseTransport | None) -> None:
+    try:
+        await reachable(identity, True, transport)
+    except github_user.GitHubUserError as err:
+        log.warning("could not read %s's reachable repos again: %s", identity, err)
+    finally:
+        _reading.discard(identity)
+
+
+async def accounts(identity: str, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
+    """The accounts the operator's connection reaches, without the repos, at once when they are known: from
+    the list held, else as the last read found them while the repos are read again behind this answer. The
+    first time, the read is waited for.
+
+    Raises:
+        github_user.GitHubUserError: As reachable does.
+    """
+    held = _held.get(identity)
+    if held and time.time() - held[0] < hold_seconds():
+        return {**_answer(identity, held, False, None), "repos": []}
+    kept = await asyncio.to_thread(github_api.reached_of, identity)
+    if not kept:
+        return {**await reachable(identity, False, transport), "repos": []}
+    if identity not in _reading:
+        _reading.add(identity)
+        task = asyncio.create_task(_read_behind(identity, transport))
+        _tasks.add(task)
+        task.add_done_callback(_tasks.discard)
+    chosen = await asyncio.to_thread(github_api.owners_of, identity)
+    return {"repos": [], "owners": kept, "chosen": chosen, "age_seconds": None, "stale": False, "why": None}
+
+
+_tasks: set[asyncio.Task] = set()
 
 
 def _owner(repo: dict[str, Any]) -> str:
@@ -148,6 +191,8 @@ def register(app: FastAPI, operator: Callable[..., str], transport: httpx.AsyncB
         accounts: an operator who can reach hundreds of repos waits for the whole list otherwise. 409 when they
         have not connected GitHub."""
         try:
+            if not with_repos and not refresh:
+                return await accounts(who, transport)
             found = await reachable(who, refresh, transport)
             return found if with_repos else {**found, "repos": []}
         except github_user.GitHubUserError as err:

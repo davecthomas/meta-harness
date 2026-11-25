@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from psycopg.types.json import Jsonb
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
@@ -45,7 +46,7 @@ class OwnersIn(BaseModel):
 def row_of(identity: str) -> dict | None:
     with db.connect(autocommit=True) as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            "SELECT identity, login, token, scopes, state, nonce, connected_at, checked_at, owners "
+            "SELECT identity, login, token, scopes, state, nonce, connected_at, checked_at, owners, reached "
             "FROM planner.github_connection WHERE identity = %s",
             (identity,),
         )
@@ -91,6 +92,21 @@ def shown(identity: str) -> dict[str, Any]:
         # The accounts and organizations the operator chose to use. Empty: every one they can reach.
         "owners": list(row["owners"]) if connected else [],
     }
+
+
+def reached_of(identity: str) -> list[dict[str, Any]]:
+    """The accounts the operator's connection reached when its repos were last read; none before a first read."""
+    row = row_of(identity)
+    return list(row["reached"]) if row and row["state"] == "connected" else []
+
+
+def save_reached(identity: str, owners: list[dict[str, Any]]) -> None:
+    """Keep the accounts a read of the operator's repos found."""
+    with db.connect(autocommit=True) as conn:
+        conn.execute(
+            "UPDATE planner.github_connection SET reached = %s, checked_at = now() WHERE identity = %s",
+            (Jsonb(owners), identity),
+        )
 
 
 def owners_of(identity: str) -> list[str]:
