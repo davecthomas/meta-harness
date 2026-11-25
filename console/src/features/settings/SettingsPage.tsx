@@ -1,3 +1,4 @@
+import { GitHubSection } from "../github/GitHubConnect";
 import { useEffect, useRef, useState } from "react";
 import { Paper, Text, Title, useMantineColorScheme } from "@mantine/core";
 import { api, type UserSettings } from "../../api";
@@ -61,6 +62,7 @@ export function SettingsPage() {
     <>
       <PageHeader title="Settings" description="Yours alone: they follow you to any browser you sign in on. Each saves as you change it." />
       <ErrorAlert error={error} />
+      <GitHubSection />
       <Paper p="md" withBorder maw={720} mb="lg">
         <Title order={4} mb="sm">New goal defaults</Title>
         <Text size="sm" c="dimmed" mb="md">The New goal form starts from these. Each goal can still say otherwise.</Text>

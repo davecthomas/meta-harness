@@ -1,0 +1,180 @@
+"""An operator's own GitHub connection: the sign-in, and what the console is told of it. No test calls GitHub."""
+
+import httpx
+import pytest
+from cryptography.fernet import Fernet
+from fastapi.testclient import TestClient
+
+from meta_harness import github_user
+from meta_harness.planner import github_api
+from meta_harness.planner.service import create_app
+
+from .test_planner import OPERATOR, Events, FakeTasks, _no_title, migrated, registry  # noqa: F401
+from .test_planning import WritingTracker
+
+KEY = Fernet.generate_key().decode()
+
+
+class GitHub(httpx.AsyncBaseTransport):
+    """GitHub's sign-in and API, as far as a connection needs them."""
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[str, str]] = []
+        self.refuses_code = False
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.asked.append((request.method, str(request.url)))
+        if str(request.url) == github_user.EXCHANGE:
+            sent = dict(pair.split("=") for pair in request.content.decode().split("&"))
+            assert sent["client_id"] == "cid" and sent["client_secret"] == "shh"
+            if self.refuses_code or sent["code"] != "good-code":
+                return httpx.Response(
+                    200,
+                    json={"error": "bad_verification_code", "error_description": "The code is incorrect or expired."},
+                )
+            return httpx.Response(200, json={"access_token": "gho_secret_token", "scope": "repo"})
+        if request.url.path == "/user":
+            assert request.headers["authorization"] == "Bearer gho_secret_token"
+            return httpx.Response(200, json={"login": "octo-dave"})
+        return httpx.Response(404, json={})
+
+
+@pytest.fixture
+def configured(monkeypatch):
+    for name, value in zip(github_user.ENV, ("cid", "shh", KEY), strict=True):
+        monkeypatch.setenv(name, value)
+
+
+@pytest.fixture
+def world(migrated, registry):  # noqa: F811
+    from meta_harness import db
+
+    with db.connect(autocommit=True) as conn:
+        conn.execute("DELETE FROM planner.github_connection")
+    events, github = Events(), GitHub()
+    app = create_app(
+        events,
+        WritingTracker(),
+        FakeTasks(),
+        operator_keys={"op-key": "dave", "pat-key": "pat"},
+        service_keys={},
+        sweep_seconds=0,
+        titler=_no_title,
+        github_transport=github,
+    )
+    with TestClient(app) as client:
+        yield client, events, github
+
+
+PAT = {"Authorization": "Bearer pat-key"}
+
+
+def test_an_operator_connects_github_once_and_the_token_is_stored_encrypted(world, configured):
+    client, events, github = world
+    assert client.get("/v1/github/connection", headers=OPERATOR).json() == {
+        "enabled": True, "why_off": None, "state": "none", "connected": False, "login": None, "scopes": "", "connected_at": None,
+    }  # fmt: skip
+
+    started = client.post("/v1/github/connect", headers=OPERATOR)
+
+    assert started.status_code == 200
+    url = httpx.URL(started.json()["url"])
+    assert str(url).startswith(github_user.AUTHORIZE) and url.params["client_id"] == "cid"
+    assert url.params["scope"] == "repo" and len(url.params["state"]) >= 32
+    assert "shh" not in str(url), "the app's secret never goes to the browser"
+
+    finished = client.post(
+        "/v1/github/connection", json={"code": "good-code", "state": url.params["state"]}, headers=OPERATOR
+    )
+
+    assert finished.status_code == 200, finished.text
+    shown = finished.json()
+    assert shown["connected"] is True and shown["login"] == "octo-dave" and shown["scopes"] == "repo"
+    assert "gho_secret_token" not in finished.text, "the token is never sent to the console"
+    row = github_api.row_of("dave")
+    assert row["token"] != "gho_secret_token" and "gho_" not in row["token"], "it is stored encrypted"
+    assert github_api.token_of("dave") == "gho_secret_token" and row["nonce"] is None
+    assert ("github_connected", {"login": "octo-dave", "scopes": "repo"}) in events.events
+    assert "gho_secret_token" not in str(events.events), "and never put in an event"
+    # The same return used again is refused: its state was used.
+    again = client.post(
+        "/v1/github/connection", json={"code": "good-code", "state": url.params["state"]}, headers=OPERATOR
+    )
+    assert again.status_code == 409 and "Press Connect GitHub to start again" in again.json()["detail"]
+
+
+def test_a_return_that_another_operator_started_is_refused(world, configured):
+    """Nobody can attach their GitHub account to someone else's console identity."""
+    client, _, github = world
+    state = httpx.URL(client.post("/v1/github/connect", headers=OPERATOR).json()["url"]).params["state"]
+
+    stolen = client.post("/v1/github/connection", json={"code": "good-code", "state": state}, headers=PAT)
+
+    assert stolen.status_code == 409 and "was not started from your console session" in stolen.json()["detail"]
+    assert github.asked == [], "GitHub is not asked for a token"
+    assert client.get("/v1/github/connection", headers=PAT).json()["connected"] is False
+
+
+def test_a_code_github_refuses_says_so_and_connects_nothing(world, configured):
+    client, _, github = world
+    state = httpx.URL(client.post("/v1/github/connect", headers=OPERATOR).json()["url"]).params["state"]
+
+    refused = client.post("/v1/github/connection", json={"code": "stale", "state": state}, headers=OPERATOR)
+
+    assert refused.status_code == 502
+    assert (
+        refused.json()["detail"]
+        == "GitHub did not accept the sign-in (The code is incorrect or expired.). Connect again"
+    )
+    assert client.get("/v1/github/connection", headers=OPERATOR).json()["state"] == "none"
+
+
+def test_disconnecting_forgets_the_token_and_a_broken_connection_says_to_reconnect(world, configured):
+    client, events, _ = world
+    state = httpx.URL(client.post("/v1/github/connect", headers=OPERATOR).json()["url"]).params["state"]
+    client.post("/v1/github/connection", json={"code": "good-code", "state": state}, headers=OPERATOR)
+
+    github_api.mark_broken("dave")
+    broken = client.get("/v1/github/connection", headers=OPERATOR).json()
+    assert broken["state"] == "broken" and broken["connected"] is False and broken["login"] == "octo-dave"
+    assert github_api.token_of("dave") is None, "a broken connection gives no token"
+
+    gone = client.delete("/v1/github/connection", headers=OPERATOR)
+    assert gone.json()["state"] == "none" and github_api.row_of("dave") is None
+    assert ("github_disconnected", {}) in events.events
+
+
+def test_with_no_oauth_app_connecting_is_off_and_says_what_to_set(world, monkeypatch):
+    client, *_ = world
+    for name in github_user.ENV:
+        monkeypatch.delenv(name, raising=False)
+
+    shown = client.get("/v1/github/connection", headers=OPERATOR).json()
+
+    assert shown["enabled"] is False and "An admin sets MH_GITHUB_OAUTH_CLIENT_ID" in shown["why_off"]
+    refused = client.post("/v1/github/connect", headers=OPERATOR)
+    assert refused.status_code == 409 and refused.json()["detail"] == github_api.OFF
+
+
+def test_a_half_configured_connection_stops_the_service_and_names_what_is_missing(monkeypatch):
+    for name in github_user.ENV:
+        monkeypatch.delenv(name, raising=False)
+    github_user.check_settings()
+    monkeypatch.setenv("MH_GITHUB_OAUTH_CLIENT_ID", "cid")
+    with pytest.raises(RuntimeError, match="MH_GITHUB_OAUTH_CLIENT_SECRET, MH_GITHUB_TOKEN_KEY are not set"):
+        github_user.check_settings()
+    monkeypatch.setenv("MH_GITHUB_OAUTH_CLIENT_SECRET", "shh")
+    monkeypatch.setenv("MH_GITHUB_TOKEN_KEY", "not-a-key")
+    with pytest.raises(RuntimeError, match="MH_GITHUB_TOKEN_KEY is not a key tokens can be encrypted with"):
+        github_user.check_settings()
+    monkeypatch.setenv("MH_GITHUB_TOKEN_KEY", KEY)
+    github_user.check_settings()
+
+
+def test_a_token_stored_under_another_key_is_lost_and_says_to_connect_again():
+    stored = github_user.encrypt(github_user.Settings("cid", "shh", KEY), "gho_x")
+    other = github_user.Settings("cid", "shh", Fernet.generate_key().decode())
+
+    with pytest.raises(github_user.GitHubUserError, match="Connect GitHub again") as refused:
+        github_user.decrypt(other, stored)
+    assert refused.value.reconnect is True

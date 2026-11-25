@@ -53,7 +53,7 @@ from pydantic import BaseModel, Field, ValidationError
 from meta_harness import fallback, outbound
 from meta_harness import charter
 from meta_harness.outbound import rules as writing_rules
-from meta_harness import auth, db, retrying
+from meta_harness import auth, db, github_user, retrying
 from meta_harness.costs import api as costs_api
 from meta_harness.config import api as config_api
 from meta_harness.config import store as config_store
@@ -66,6 +66,7 @@ from meta_harness.planner import (
     auto_split,
     follow_ups,
     budget_api,
+    github_api,
     cancel_issues,
     cost_facts,
     drafting,
@@ -307,6 +308,8 @@ def create_app(
     namer: naming.Namer | None = None,
     overview_writer: overview.Writer | None = None,
     overview_asker: overview.Asker | None = None,
+    # A test's stand-in for GitHub, for an operator's own connection (github_api.py).
+    github_transport: Any = None,
     # What writes a narrative from its prompt: a test's stand-in for the model call.
     narrative_writer: Any = None,
     # What writes a goal's next steps from its prompt: a test's stand-in for the model call.
@@ -697,6 +700,7 @@ def create_app(
     costs_api.check_settings()
     planning.check_settings()
     plan_review.check_settings()
+    github_user.check_settings()
     overview.check_settings()
     narratives.check_settings()
     writing_rules.check_settings()
@@ -1790,6 +1794,7 @@ def create_app(
 
     plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again, sizer=size)
     budget_api.register(app, operator, load, change_with, events, tasks)
+    github_api.register(app, operator, events, github_transport)
     # An operator waits on this sizing (Fix with AI sizes the changed issue), so it keeps the default deadline.
     size_now = sizer or functools.partial(sizing.size_issue, policy=retrying.DEFAULT)
     sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size_now)
