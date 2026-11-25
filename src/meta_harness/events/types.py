@@ -814,6 +814,50 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("plan_fix_dismissed", 1, _object({"goal_id": {"type": "string"}}, ["goal_id"])),
+    # A plan's adversarial review (planner/plan_review.py): a reviewer of another model family than the planner's
+    # was started on a plan version, and its run ended with what it found. state: done, partial, failed, canceled.
+    EventType(
+        "plan_review_started",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "version": {"type": "integer"},
+                "round": {"type": "integer"},
+                "task_id": {"type": "string"},
+                "reviewer": {"type": "string"},
+            },
+            ["goal_id", "version", "round", "task_id", "reviewer"],
+        ),
+    ),
+    EventType(
+        "plan_review_finished",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "version": {"type": "integer"},
+                "round": {"type": "integer"},
+                "state": {"type": "string"},
+                "findings": {"type": "integer"},
+                "blocking": {"type": "integer"},
+            },
+            ["goal_id", "version", "round", "state", "findings", "blocking"],
+        ),
+    ),
+    # An operator settled findings of a plan's review: dismissed them, or sent the planner back for them.
+    EventType(
+        "plan_findings_settled",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "findings": {"type": "array", "items": {"type": "string"}},
+                "how": {"type": "string", "enum": ["dismissed", "sent_back"]},
+            },
+            ["goal_id", "findings", "how"],
+        ),
+    ),
     EventType(
         "plan_saved",
         1,

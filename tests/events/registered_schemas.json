@@ -2038,5 +2038,92 @@
       "usd_cost"
     ],
     "additionalProperties": true
+  },
+  "plan_review_started v1": {
+    "type": "object",
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      },
+      "round": {
+        "type": "integer"
+      },
+      "task_id": {
+        "type": "string"
+      },
+      "reviewer": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "version",
+      "round",
+      "task_id",
+      "reviewer"
+    ],
+    "additionalProperties": true
+  },
+  "plan_review_finished v1": {
+    "type": "object",
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      },
+      "round": {
+        "type": "integer"
+      },
+      "state": {
+        "type": "string"
+      },
+      "findings": {
+        "type": "integer"
+      },
+      "blocking": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "goal_id",
+      "version",
+      "round",
+      "state",
+      "findings",
+      "blocking"
+    ],
+    "additionalProperties": true
+  },
+  "plan_findings_settled v1": {
+    "type": "object",
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "how": {
+        "type": "string",
+        "enum": [
+          "dismissed",
+          "sent_back"
+        ]
+      }
+    },
+    "required": [
+      "goal_id",
+      "findings",
+      "how"
+    ],
+    "additionalProperties": true
   }
 }

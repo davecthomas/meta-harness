@@ -4118,6 +4118,35 @@ planning configuration's `suggest_fixes` turns them off. The sorting call is a
 `plan_fixes_assessed` event, counted as planning cost; accepting and dismissing
 are `plan_fix_accepted` and `plan_fix_dismissed`.
 
+**Adversarial plan review** (`planner/plan_review.py`). A goal can have its
+plans reviewed by a second model before the operator approves them
+(`goal.adversarial_review`). It is on by default for a goal whose autonomy is
+`ask`, and `PUT /v1/goals/{id}/plan/review-setting` changes it. Once such a
+goal's plan settles, with no planning run in flight and nothing stopping its
+approval, the planner starts a review. The reviewer is the first of the
+planning configuration's `adversarial_review.reviewers`, else of the task
+policy's pull request reviewers, whose model family is not the planner's.
+With none, the plan is not reviewed and the log says what to configure. The
+review is a planning task, read-only, told apart by its external ref
+(`plan-review:`). Its prompt holds the locked skill `adversarial-plan-review`,
+the goal, its specification and the plan in full. It records findings with
+`submit_review`: the task a finding is about, whether it blocks, its kind,
+what is wrong and the change that would settle it. The planner keeps them in
+`planner.plan_review`, each with an id and a status. When a review has
+findings that block, the planner revises the plan for them, changing only the
+tasks they name, and the reviewer looks again and says which it fixed. A plan
+gets `adversarial_review.max_rounds` reviews this way, two when left out.
+These runs are the planner's own, so they count toward `max_unasked_usd`.
+What is still open after them is the operator's. The plan's decision then
+says how many problems are open, and its buttons are Fix it, which sends the
+planner back for them (`POST /v1/goals/{id}/plan/review/fix`), and Approve
+with them open. A finding can be dismissed
+(`.../plan/review/findings/{id}/dismiss`). While a review runs the plan asks
+nothing. A review whose run ends with nothing recorded counts as failed, never
+as clean. A goal with reviews on gets no suggested fix, since the review
+covers a plan's gaps. `POST /v1/goals/{id}/plan/review` reviews any plan when
+an operator asks.
+
 **The Plan page** (`console/src/features/plan/`, `planner/plan_view.py`). A
 plan has a page of its own, `/goals/<id>/plan`, and the goal's page links to
 it with the plan's one sentence. The page leads with a decision bar: what the

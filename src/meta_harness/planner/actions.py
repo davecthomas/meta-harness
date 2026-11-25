@@ -127,6 +127,7 @@ def plan_decision(
     glance: dict | None = None,
     suggestion: dict | None = None,
     planning_usd: object = None,
+    review: dict | None = None,
 ) -> dict:
     """The plan's state and the one thing it asks of the operator now, from the goal's records: what the Plan
     page's decision bar says, in two sentences at most, and its buttons, the recommended one first.
@@ -135,7 +136,8 @@ def plan_decision(
     may spend. A state that asks nothing has no buttons. The page draws this and decides nothing itself, so
     it cannot disagree with what `for_goal` lists as needing the operator.
 
-    glance: the plan's figures (plan_view.glance). planning_usd: the spend limit of one planning run."""
+    glance: the plan's figures (plan_view.glance). planning_usd: the spend limit of one planning run. review:
+    the plan's adversarial review (plan_review.current), when it has one."""
     again = f" (up to {_usd(planning_usd)})" if planning_usd is not None else ""
     replan = {"action": "replan", "label": f"Plan again{again}"}
     drafting = bool(goal.get("plan_task_id"))
@@ -154,6 +156,13 @@ def plan_decision(
         return {
             "state": "improving",
             "says": f"The planner is revising the plan. It has {_count(tasks, 'task')} so far.",
+            "buttons": [],
+        }
+    if review and review.get("state") == "running" and review.get("version") == plan.get("version"):
+        # Waiting is the recommended course, so nothing is asked while the reviewer reads.
+        return {
+            "state": "improving",
+            "says": f"{review.get('model') or 'A second model'} is checking the plan for problems.",
             "buttons": [],
         }
     if suggestion:
@@ -183,6 +192,33 @@ def plan_decision(
     figures = glance or {}
     repos = len(figures.get("repos") or [])
     spend = figures.get("may_spend_usd")
+    still = [
+        f for f in (review or {}).get("findings") or [] if f.get("status") == "open" and f.get("severity") == "blocking"
+    ]
+    if still:
+        # The review left problems the planner did not settle: the decision is about those, said in full only
+        # when there is one. Having the planner fix them is the recommended step, and approving stays open.
+        found = (review.get("counts") or {}).get("found") or len(still)
+        n = len(still)
+        says = f"The review found {_count(found, 'problem')}, and {n} {'is' if n == 1 else 'are'} still open."
+        first = str(still[0].get("says") or "").strip()
+        if n == 1 and first and len(says) + len(first) < 270:
+            says += f" {first}"
+        cap = None
+        if spend is not None and float(spend) > 0:
+            budget = figures.get("budget_usd")
+            cap = budget if budget is not None and float(spend) > float(budget) else spend
+        return {
+            "state": "ready",
+            "says": says,
+            "buttons": [
+                {"action": "fix_findings", "label": f"{'Fix it' if n == 1 else f'Fix all {n}'}{again}"},
+                {
+                    "action": "approve_plan",
+                    "label": f"Approve with {n} open" + (f" (up to {_usd(cap)})" if cap is not None else ""),
+                },
+            ],
+        }
     says = f"{_count(tasks, 'task')} in {_count(repos, 'repo')}." if repos else f"{_count(tasks, 'task')}."
     approve = "Approve and start"
     buttons = [replan]

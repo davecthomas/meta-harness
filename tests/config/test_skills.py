@@ -88,7 +88,7 @@ def test_the_shipped_skills_seed_the_kind_and_no_ai_slop_is_one_of_them(tmp_path
 
 def test_a_locked_skill_is_always_the_shipped_files_and_every_other_skill_is_open():
     shipped = skills.seed_skills()["skills"]
-    assert skills.locked() == {"no-ai-slop2"}
+    assert skills.locked() == {"no-ai-slop2", "adversarial-plan-review"}
     held = {**shipped, "tidy-notes": _skill()}
     assert skills.check_skills({"skills": held}, {}) == [], "a skill is imported beside a locked one"
 
@@ -98,7 +98,8 @@ def test_a_locked_skill_is_always_the_shipped_files_and_every_other_skill_is_ope
     assert reason.startswith("no-ai-slop2 is locked and cannot be changed here")
     assert "pull request to config/skills/no-ai-slop2/" in reason
 
-    [reason] = skills.check_skills({"skills": {"tidy-notes": _skill()}}, {})
+    kept = {"tidy-notes": _skill(), "adversarial-plan-review": shipped["adversarial-plan-review"]}
+    [reason] = skills.check_skills({"skills": kept}, {})
     assert reason.startswith("no-ai-slop2 is locked and cannot be removed here")
 
     imported = {**held, "no-ai-slop2": {**shipped["no-ai-slop2"], "source": {"kind": "upload"}}}
