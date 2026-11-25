@@ -87,6 +87,8 @@ ROUTES: list[tuple[str, str, str]] = [
     # The edge answers /v1/me itself; the planner keeps each user's settings under it.
     ("/v1/me", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/config", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
+    # An operator's own GitHub connection: connect, see it, disconnect (planner/github_api.py).
+    ("/v1/github", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     ("/v1/costs", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
     # The console's users, for admins: every /v1/admin path is an admin's.
     ("/v1/admin/users", "MH_PLANNER_URL", "http://127.0.0.1:8303"),
