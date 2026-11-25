@@ -17,7 +17,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from meta_harness import db
-from meta_harness.planner import enrich, planning, plans, specs, store, suggestions
+from meta_harness.config import store as config_store
+from meta_harness.planner import actions, enrich, plan_view, planning, plans, specs, store, suggestions
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.trackers.base import TrackerError
 from meta_harness.trackers.own import SCHEME as OWN
@@ -35,6 +36,8 @@ class DraftIn(BaseModel):
     body: str = Field(max_length=60000)
     labels: list[str] = []
     depends_on: list[str] = []
+    # The size the planner gave it, sent back as it was read. An edit to the task's text sizes it again.
+    size: str | None = None
 
 
 class ItemIn(BaseModel):
@@ -59,6 +62,25 @@ class ApproveIn(BaseModel):
 
 class ReplanIn(BaseModel):
     note: str = Field(default="", max_length=4000)
+
+
+def _limits(goal: dict) -> tuple[dict[str, str], int | None]:
+    """What the plan's figures are worked out from: the task policy's spend limit for each task size, and the
+    most of the goal's tasks that run at once. A policy that cannot be read gives none: the figures then count
+    nothing, and the page says the tasks are not sized."""
+    try:
+        policy = config_store.current_document("task_policy")
+    except Exception:  # noqa: BLE001 - the plan is still shown, without what it may spend
+        return {}, goal.get("max_parallel")
+    return dict(policy.get("max_usd_by_size") or {}), goal.get("max_parallel") or policy.get("max_parallel")
+
+
+def _planning_usd() -> str | None:
+    """The spend limit of one planning run, for a button that starts one to name."""
+    try:
+        return str(planning.settings()["max_usd"])
+    except Exception:  # noqa: BLE001 - the button is still offered, without the figure
+        return None
 
 
 def register(
@@ -100,7 +122,16 @@ def register(
             plan = plans.latest(conn, goal["id"])
             approval = plans.approval(conn, goal["id"])
             asked = plans.asked_at(conn, goal["id"])
+            changed = plan_view.changes(conn, goal["id"], plan) if plan else None
+        suggestion = suggestions.current(goal["id"])
+        glance = plan_view.glance(goal, plan, *_limits(goal)) if plan else None
         return {
+            # The plan's state and the one thing it asks now, with its buttons (actions.plan_decision): the Plan
+            # page draws this and decides nothing itself.
+            "decision": actions.plan_decision(goal, plan, glance, suggestion, _planning_usd()),
+            # The plan's figures for a glance, and what it changes about the version it is compared with.
+            "glance": glance,
+            "changes": changed,
             "goal_id": goal["id"],
             "status": goal["status"],
             # An approval is writing the plan's new tasks to the tracker now: `plan.created` grows as each
@@ -114,11 +145,18 @@ def register(
             "label": goal["label"] or planning.goal_label(goal),
             "plan": plan,
             # A fix the planner suggests for this plan, with what it changes; None when there is none.
-            "suggestion": suggestions.current(goal["id"]),
+            "suggestion": suggestion,
             # A fix the planner applied itself to make this version, with why and what it changed, and which
             # version undo puts back; None when this version is not one.
             "applied_fix": suggestions.applied(goal["id"]),
         }
+
+    @app.get("/v1/goals/{goal_id}/plan/versions")
+    def plan_versions(goal_id: str, who: str = Depends(operator)) -> dict:
+        """The plan's versions, oldest first: who or what made each, when, and how many tasks it had."""
+        goal = load(goal_id)
+        with db.connect(autocommit=True) as conn:
+            return {"goal_id": goal["id"], "versions": plan_view.versions(conn, goal["id"])}
 
     @app.get("/v1/goals/{goal_id}/plan")
     async def read_plan(goal_id: str, who: str = Depends(operator)) -> dict:

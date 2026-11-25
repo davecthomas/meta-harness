@@ -35,9 +35,16 @@ KEEP, SPLIT, LEAVE_OUT = "keep", "split", "leave_out"
 DECISIONS = (KEEP, SPLIT, LEAVE_OUT)
 
 
+# The sizes a plan's task may have been given (sizing.py); any other value is dropped.
+SIZES = ("small", "medium", "large")
+
+
 def clean(draft: dict[str, Any]) -> dict[str, Any]:
-    """A draft with exactly the fields a plan keeps, each of the right kind."""
+    """A draft with exactly the fields a plan keeps, each of the right kind. `size` is kept when the task has
+    been sized: the plan says what it may spend from it."""
+    size = str(draft.get("size") or "")
     return {
+        **({"size": size} if size in SIZES else {}),
         "draft_id": str(draft.get("draft_id") or "").strip(),
         "repo": str(draft.get("repo") or "").strip(),
         "title": str(draft.get("title") or "").strip(),

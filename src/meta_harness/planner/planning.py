@@ -397,6 +397,7 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
     drafts, items, summary, gaps, invalid = (found[k] for k in ("drafts", "items", "summary", "gaps", "invalid"))
     stopped = stopped_at(task)
     oversized = await draft_sizes.findings(goal, drafts, sizer, events) if drafts else []
+    drafts = draft_sizes.with_sizes(goal, drafts) if sizer is not None else drafts
     invalid = [*invalid, *draft_sizes.reasons(oversized)]
 
     def save() -> dict | None:
