@@ -135,6 +135,13 @@ def check_planning(document: dict[str, Any], others: dict[str, dict[str, Any]] |
             raise InvalidOperation
     except InvalidOperation:
         reasons.append("max_usd must be an amount above 0: the most a planning task may spend")
+    try:
+        if "max_unasked_usd" in document and Decimal(str(document["max_unasked_usd"])) <= 0:
+            raise InvalidOperation
+    except InvalidOperation:
+        reasons.append(
+            "max_unasked_usd must be an amount above 0: the most planning may spend on a goal without asking"
+        )
     if document.get("goals", "from_description") not in PLANNING_GOALS:
         reasons.append(
             f"goals must be one of {', '.join(PLANNING_GOALS)}: which goals are planned before their tasks run"

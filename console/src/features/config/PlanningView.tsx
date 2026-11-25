@@ -221,6 +221,24 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
           </Stack>,
         ],
         [
+          "Spend limit without asking",
+          <Stack gap={4}>
+            <InlineField
+              kind="number"
+              label="What planning may spend on a goal without asking"
+              value={doc.max_unasked_usd === undefined || doc.max_unasked_usd === null ? 12 : Number(doc.max_unasked_usd)}
+              min={0.01}
+              decimalScale={2}
+              prefix="$"
+              changed={changed(s, ["max_unasked_usd"])}
+              reasons={s.reasons("max_unasked_usd")}
+              readOnly={s.readOnly}
+              onCommit={(v) => s.stage(["max_unasked_usd"], v === null ? undefined : Number(v).toFixed(2))}
+            />
+            <Text size="sm" c="dimmed">For everything planning does on a goal before you next ask it for something. That is carrying on a plan that stopped at a limit, resizing tasks and fixing gaps. Each planning run you ask for starts it again.</Text>
+          </Stack>,
+        ],
+        [
           "What the planner is shown",
           <Stack gap={4}>
             <Group gap="lg">

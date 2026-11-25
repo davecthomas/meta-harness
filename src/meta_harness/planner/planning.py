@@ -25,7 +25,7 @@ from meta_harness.config import kinds as config_kinds
 from meta_harness.config import store as config_store
 from meta_harness.planner import voice
 from meta_harness.trackers.base import TrackerError
-from meta_harness.planner import assignees, draft_sizes, plans, specs, splits, store
+from meta_harness.planner import assignees, draft_sizes, planning_spend, plans, specs, splits, store
 from meta_harness.planner.drafting import PLANNER_CONFIG_PATH
 from meta_harness.planner.tracker import Issue, ref_for, task_text
 from meta_harness.run_service import provenance, writing
@@ -277,12 +277,22 @@ async def start(
     issues: list[Issue] | None = None,
     external_ref: str | None = None,
     record: bool = True,
+    unasked: bool = False,
 ) -> dict:
     """Starts the goal's planning task and records it on the goal, with the issues it was given to plan over
     (issues: those the goal already has). Returns the task. A suggested fix's planning task (suggestions.py)
     passes its own external_ref and record=False: the goal's plan is not being redrafted, so nothing waits on
-    it."""
+    it. unasked: the planner starts this run itself, so it is refused once planning has spent what it may on
+    the goal without asking (planning_spend.py).
+
+    Raises:
+        PlanError: The task could not be started, or the planner may not start one of its own now.
+    """
     config = settings()
+    if unasked:
+        why = await asyncio.to_thread(planning_spend.refusal, goal, config, tasks, events)
+        if why:
+            raise PlanError(why)
 
     def previous() -> dict | None:
         with db.connect(autocommit=True) as conn:
@@ -436,6 +446,7 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
                 note=CONTINUE_NOTE,
                 issues=await issues_of(goal),
                 external_ref=f"plan:{goal['id']}:{plan['version']}:continue",
+                unasked=True,
             )
         except Exception as err:  # noqa: BLE001 - the plan stands, saying where it stopped
             log.error(
@@ -459,6 +470,7 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
                 note=draft_sizes.note(oversized),
                 issues=await issues_of(goal),
                 external_ref=draft_sizes.resize_ref(goal["id"], plan["version"], round_no),
+                unasked=True,
             )
         except Exception as err:  # noqa: BLE001 - the plan stands, saying which tasks are too large
             log.error(
