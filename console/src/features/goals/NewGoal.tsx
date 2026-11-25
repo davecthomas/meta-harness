@@ -14,9 +14,10 @@ import {
   Paper,
   SimpleGrid,
   Stack,
+  Switch,
   Text,
-  TextInput,
   Textarea,
+  TextInput,
   Title,
   UnstyledButton,
 } from "@mantine/core";
@@ -204,6 +205,10 @@ export function NewGoal() {
   }, []);
   const [priority, setPriority] = useState<string | number>(0);
   const [autonomy, setAutonomy] = useState<Autonomy>("standard");
+  // Whether a second model reviews the goal's plan before it is approved. Null: not chosen by hand, so it
+  // follows the autonomy: on for a goal that asks before each step, whose operator chose care over speed.
+  const [reviewed, setReviewed] = useState<boolean | null>(null);
+  const reviews = reviewed ?? autonomy === "ask";
   // The operator's settings as read, to keep the autonomy chosen here as the next goal's start.
   const saved = useRef<UserSettings | null>(null);
   const [spec, setSpec] = useState<GoalSpec | null>(null);
@@ -296,8 +301,8 @@ export function NewGoal() {
       : source === "spec"
         ? spec ? specName(spec) : ""
         : statement.trim().slice(0, 90);
-  const runsAnswer = `${AUTONOMY[autonomy].label} · ${budget === "" ? "the most one goal may spend" : `budget $${budget}`}`;
   const planned = source !== "issues" || plansEvery;
+  const runsAnswer = `${AUTONOMY[autonomy].label}${planned && reviews ? " · adversarial plan review" : ""} · ${budget === "" ? "the most one goal may spend" : `budget $${budget}`}`;
 
   // The description is always the system's to write, from the issues, the spec, or what the operator typed:
   // drafted on the way to the last panel, unless the operator wrote their own.
@@ -381,6 +386,7 @@ export function NewGoal() {
         max_parallel: parallel === "" ? null : Number(parallel),
         priority: Number(priority) || 0,
         autonomy,
+        ...(planned ? { adversarial_review: reviews } : {}),
         start: started,
         ...(source === "spec" && spec ? { spec } : {}),
         // Where its issues come from: issues that exist run as they are; anything else is planned.
@@ -621,6 +627,15 @@ export function NewGoal() {
                 <Text size="sm" fw={500} mb={4}>How much it does without asking</Text>
                 <AutonomyPicker label="How much it does without asking" value={autonomy} onChange={setAutonomy} />
               </div>
+              {planned && (
+                <Switch
+                  label="Adversarial plan review"
+                  description="A second AI model tries to find what is wrong with the plan before you approve it. Adds a few minutes and one or two planning runs."
+                  checked={reviews}
+                  onChange={(event) => setReviewed(event.currentTarget.checked)}
+                  data-testid="new-goal-plan-review"
+                />
+              )}
               <NumberInput
                 label="Budget"
                 description="What the goal's runs may spend. Left empty, the most one goal may spend."

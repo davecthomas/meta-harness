@@ -135,3 +135,64 @@ test("the history lists the plan's versions, newest first, and is left out for a
   shown(<History versions={[v(1, "planned", "planner", 44)]} />);
   expect(screen.queryByTestId("plan-history")).toBeNull();
 });
+
+const GOAL = { id: "g-1", status: "planning", adversarial_review: true } as unknown as import("../../api").Goal;
+const finding = (id: string, more: Partial<import("../../api").PlanFinding> = {}) => ({ id, kind: "order", severity: "blocking", says: `Problem ${id}.`, change: `Change ${id}.`, tasks: ["api"], status: "open", ...more }) as import("../../api").PlanFinding;
+const reviewed = (findings: import("../../api").PlanFinding[], more: object = {}) => ({
+  ...PLAN,
+  review: {
+    model: "gpt-6-sol", rounds: 2, state: "done", version: 2, task_id: "t-r", summary: "", findings,
+    counts: { found: findings.length, fixed: findings.filter((f) => f.status === "fixed").length, open: findings.filter((f) => f.status === "open" && f.severity === "blocking").length, advice: 0, dismissed: 0 },
+    ...more,
+  },
+}) as unknown as Plan;
+
+test("a review says what it found in one line, shows only what is open in full, and counts the rest", async () => {
+  const posts: string[] = [];
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") posts.push(url);
+    return Promise.resolve(new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+  const { ReviewPart } = await import("./PlanPage");
+  const findings = [finding("r1-1", { status: "fixed" }), finding("r1-2", { status: "fixed" }), finding("r2-1"), finding("r2-2", { severity: "advice" })];
+  shown(<ReviewPart plan={reviewed(findings)} goal={GOAL} onChanged={() => undefined} />);
+
+  const part = screen.getByTestId("plan-review");
+  expect(within(part).getByTestId("plan-review-says").textContent).toBe("gpt-6-sol found 4 problems: 2 fixed, 1 open.");
+  const cards = within(part).getAllByTestId("plan-finding");
+  expect(cards).toHaveLength(1);
+  expect(cards[0].textContent).toContain("Problem r2-1.");
+  expect(cards[0].textContent).toContain("To settle it: Change r2-1.");
+  // What the planner fixed is a count until it is opened.
+  expect(within(part).queryByText("Problem r1-1.")).toBeNull();
+  fireEvent.click(within(part).getByTestId("plan-review-fixed"));
+  expect(within(part).getByTestId("plan-review-list").querySelectorAll("li")).toHaveLength(2);
+  fireEvent.click(within(cards[0]).getByRole("button", { name: "Not a problem" }));
+  await vi.waitFor(() => expect(posts).toContain("/v1/goals/g-1/plan/review/findings/r2-1/dismiss"));
+});
+
+test("more open findings than a person reads are grouped by kind, each with its count", async () => {
+  const { ReviewPart } = await import("./PlanPage");
+  const many = [...Array.from({ length: 4 }, (_, i) => finding(`o${i}`)), ...Array.from({ length: 3 }, (_, i) => finding(`c${i}`, { kind: "check" }))];
+  shown(<ReviewPart plan={reviewed(many)} goal={GOAL} onChanged={() => undefined} />);
+
+  const part = screen.getByTestId("plan-review");
+  expect(within(part).queryAllByTestId("plan-finding")).toHaveLength(0);
+  expect(within(part).getByTestId("plan-finding-kinds").textContent).toBe("Order: 4Checks: 3");
+  fireEvent.click(within(part).getByText("Checks: 3"));
+  expect(within(part).getAllByTestId("plan-finding")).toHaveLength(3);
+});
+
+test("a review that is running, failed or found nothing says so, and one that failed is never read as clean", async () => {
+  const { ReviewPart } = await import("./PlanPage");
+  const said = (more: object, findings: import("../../api").PlanFinding[] = []) => {
+    const { unmount } = shown(<ReviewPart plan={reviewed(findings, more)} goal={GOAL} onChanged={() => undefined} />);
+    const text = screen.getByTestId("plan-review-says").textContent;
+    unmount();
+    return text;
+  };
+  expect(said({ state: "running" })).toBe("gpt-6-sol is reading the plan now.");
+  expect(said({ state: "failed" })).toBe("The review by gpt-6-sol did not finish, so it says nothing about the plan.");
+  expect(said({})).toBe("gpt-6-sol looked for problems and found none.");
+  expect(said({ state: "partial" }, [finding("r1-1")])).toBe("gpt-6-sol found 1 problem: 0 fixed, 1 open. It stopped before it finished.");
+});

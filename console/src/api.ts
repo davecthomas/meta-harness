@@ -45,6 +45,8 @@ export interface Goal {
   auto_merge: boolean;
   // How much is done for the goal's tasks without asking. Absent from an older planner.
   autonomy?: "ask" | "standard" | "full";
+  // Whether a second model reviews the goal's plans before they are approved.
+  adversarial_review?: boolean;
   max_usd: string | null;
   // What the budget does when it is reached: stop the goal (block) or only warn; and how far past it a block
   // goal may go, in percent.

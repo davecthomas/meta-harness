@@ -71,7 +71,7 @@ export interface PlanItem {
 export interface PlanAsk {
   state: "none" | "drafting" | "improving" | "fix_waiting" | "incomplete" | "cannot_approve" | "ready" | "approved";
   says: string;
-  buttons: { action: "approve_plan" | "replan" | "accept_fix" | "dismiss_fix" | "raise_budget"; label: string }[];
+  buttons: { action: "approve_plan" | "replan" | "accept_fix" | "dismiss_fix" | "raise_budget" | "fix_findings"; label: string }[];
 }
 
 export interface PlanGlance {
@@ -83,6 +83,29 @@ export interface PlanGlance {
   can_start: number;
   open_questions: number;
   unsized: number;
+}
+
+// One thing a plan's adversarial review found: what is wrong, the change that would settle it, and its status.
+export interface PlanFinding {
+  id: string;
+  kind: string;
+  severity: "blocking" | "advice";
+  says: string;
+  change: string;
+  tasks: string[];
+  status: "open" | "fixed" | "revised" | "dismissed";
+}
+
+// A plan's adversarial review: who reviewed, how many rounds, whether one is running, and its findings.
+export interface PlanReviewShown {
+  model: string;
+  rounds: number;
+  state: "running" | "done" | "partial" | "failed" | "canceled";
+  version: number;
+  task_id: string | null;
+  summary: string;
+  findings: PlanFinding[];
+  counts: { found: number; fixed: number; open: number; advice: number; dismissed: number };
 }
 
 export interface PlanVersion { version: number; source: string; created_by: string; created_at: string; note: string | null; stopped_at: string | null; tasks: number; problems: number }
@@ -105,6 +128,8 @@ export interface GoalPlan {
   // The plan's state and the one thing it asks now, with its buttons, the recommended one first. The service
   // decides it (planner/actions.py): a page draws it and decides nothing.
   decision?: PlanAsk;
+  // The plan's adversarial review; null when it has had none.
+  review?: PlanReviewShown | null;
   // A fix the planner drafted that waits to be accepted; null when none does.
   suggestion?: { for_version: number; fixes: { gap: string; change: string }[]; changes: string[]; diff?: Record<string, { id: string; title: string }[]> } | null;
   // The plan's figures for a glance; null with no plan.
@@ -341,6 +366,12 @@ export const goalsApi = {
   askForGoalUpdate: (id: string) => call<{ update: PlannerUpdate | null }>(`/v1/goals/${id}/updates`, { method: "POST" }),
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
   goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
+  // The plan's adversarial review: ask for one, send the planner back for what is open, dismiss a finding, and
+  // turn the goal's reviews on or off.
+  reviewPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan/review`, { method: "POST" }),
+  fixFindings: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan/review/fix`, { method: "POST" }),
+  dismissPlanFinding: (id: string, finding: string) => call<GoalPlan>(`/v1/goals/${id}/plan/review/findings/${encodeURIComponent(finding)}/dismiss`, { method: "POST" }),
+  setPlanReview: (id: string, on: boolean) => call<Goal>(`/v1/goals/${id}/plan/review-setting`, { method: "PUT", body: JSON.stringify({ on }) }),
   planVersions: (id: string) => call<{ versions: PlanVersion[] }>(`/v1/goals/${id}/plan/versions`),
   // The specification a goal was planned from: its name and text.
   // A repo's Markdown and text files, the likeliest specifications first. complete: false when there are more.
