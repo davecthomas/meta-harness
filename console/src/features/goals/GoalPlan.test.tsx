@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { Goal, GoalPlan as Plan, PlanDraft, PlanItem } from "../../api";
 import { planSentence, tasksOf } from "./PlanReview";
 import { theme } from "../../theme";
-import { ApprovedPlan, GoalPlan, inOrder, splitBody, plannedIn, planningFor } from "./GoalPlan";
+import { ApprovedPlan, GoalPlan, inOrder, splitBody, plannedIn, planningFor, stagesOf } from "./GoalPlan";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -465,4 +465,47 @@ test("a plan the planner did not fix says nothing of a fix", async () => {
   show(planned());
   await screen.findByTestId("draft-store");
   expect(screen.queryByTestId("plan-applied-fix")).toBeNull();
+});
+
+test("a plan's tasks fall into stages by what each waits for", () => {
+  const stages = stagesOf([draft("ui", ["api"]), draft("api", ["store"]), draft("store"), draft("docs"), draft("e2e", ["ui", "docs"]), draft("late", ["o/a#9"])]);
+  expect(stages.map((stage) => stage.map((d) => d.draft_id))).toEqual([["store", "docs", "late"], ["api"], ["ui"], ["e2e"]]);
+  // Two tasks that wait on each other still land somewhere: the plan says elsewhere why it cannot be approved.
+  expect(stagesOf([draft("a", ["b"]), draft("b", ["a"])]).flat()).toHaveLength(2);
+});
+
+test("on its own page a long plan shows stages with counts, and a stage opens to its tasks", async () => {
+  const many = [draft("store"), draft("cache"), draft("api", ["store"]), draft("jobs", ["store"]), draft("ui", ["api"]), draft("docs", ["ui"]), draft("e2e", ["ui"])];
+  vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify(planned({ drafts: many })), { status: 200, headers: { "Content-Type": "application/json" } })));
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <GoalPlan goal={GOAL} embedded onApproved={() => undefined} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+
+  const stages = await screen.findByTestId("plan-stages");
+  expect(within(stages).getByTestId("plan-stage-1").textContent).toContain("Stage 12 taskscan start as soon as you approve");
+  expect(within(stages).getByTestId("plan-stage-2").textContent).toContain("Stage 22 tasksafter stage 1");
+  // Seven tasks are four lines until a stage is opened: no task is named before then.
+  expect(screen.queryByTestId("draft-store")).toBeNull();
+  expect(screen.queryByText("The order of work")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
+  fireEvent.click(within(stages).getByText("Stage 1"));
+  expect(await screen.findByTestId("draft-store")).toBeTruthy();
+  expect(screen.queryByTestId("draft-api")).toBeNull();
+});
+
+test("a plan of a few tasks shows them all on its page", async () => {
+  vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify(planned()), { status: 200, headers: { "Content-Type": "application/json" } })));
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <GoalPlan goal={GOAL} embedded onApproved={() => undefined} />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  expect(await screen.findByTestId("draft-store")).toBeTruthy();
+  expect(screen.getByTestId("draft-ui")).toBeTruthy();
 });

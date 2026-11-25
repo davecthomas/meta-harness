@@ -40,7 +40,7 @@ const dollars = (amount: string | null | undefined): string => {
 export function DecisionBar({ decision, onAct, busy }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean }) {
   const working = decision.state === "drafting" || decision.state === "improving";
   return (
-    <Paper withBorder p="md" radius="md" shadow="sm" data-testid="plan-decision" style={{ position: "sticky", top: 8, zIndex: 5 }}>
+    <Paper withBorder p="md" radius="md" shadow="sm" data-testid="plan-decision" style={{ position: "sticky", top: "calc(var(--app-shell-header-height, 72px) + 8px)", zIndex: 5 }}>
       <Group justify="space-between" wrap="wrap" gap="md">
         <Group gap="sm" wrap="nowrap" style={{ flex: "1 1 320px" }}>
           {working && <Loader size="sm" />}
@@ -71,13 +71,18 @@ function Tile({ label, value, note, warn = false }: { label: string; value: stri
 // The plan's figures, each a tile: read at a glance, before any task is.
 export function Glance({ glance }: { glance: PlanGlance }) {
   const repos = glance.repos.length === 1 ? glance.repos[0].split("/").pop()! : String(glance.repos.length);
-  const over = !!glance.budget_usd && Number(glance.may_spend_usd) > Number(glance.budget_usd);
+  const known = glance.may_spend_usd !== null;
+  const over = known && !!glance.budget_usd && Number(glance.may_spend_usd) > Number(glance.budget_usd);
   const budget = !glance.budget_usd ? "no budget set" : over ? `more than your ${dollars(glance.budget_usd)} budget` : `of your ${dollars(glance.budget_usd)} budget`;
   return (
     <SimpleGrid cols={{ base: 2, sm: 3, lg: 5 }} spacing="sm" data-testid="plan-glance">
       <Tile label="Tasks" value={String(glance.tasks)} note={glance.unsized ? `${glance.unsized} not sized yet` : undefined} />
       <Tile label={glance.repos.length === 1 ? "Repo" : "Repos"} value={repos} />
-      <Tile label="May spend up to" value={dollars(glance.may_spend_usd)} note={budget} warn={over} />
+      {known ? (
+        <Tile label="May spend up to" value={dollars(glance.may_spend_usd)} note={budget} warn={over} />
+      ) : (
+        <Tile label="Budget" value={glance.budget_usd ? dollars(glance.budget_usd) : "None set"} note="what the tasks may spend is known once they are sized" />
+      )}
       <Tile label="Can start at once" value={String(glance.can_start)} />
       <Tile label="Open questions" value={String(glance.open_questions)} />
     </SimpleGrid>
@@ -90,15 +95,18 @@ const KINDS: [string, string][] = [["added", "added"], ["removed", "removed"], [
 // to its tasks. Never a line for each task, which is what nobody reads.
 export function WhatChanged({ plan }: { plan: Plan }) {
   const [open, setOpen] = useState<string | null>(null);
-  const fix = plan.applied_fix ?? plan.suggestion ?? null;
-  const changes = plan.changes ?? null;
+  // A fix that waits is shown by what accepting it would change. With none, the plan is shown against the
+  // version it is compared with, and a fix the planner applied gives the reasons.
+  const waiting = plan.suggestion ?? null;
+  const fix = waiting ?? plan.applied_fix ?? null;
+  const changes = waiting ? null : plan.changes ?? null;
   if (!fix && !changes) return null;
-  const diff = changes?.diff ?? {};
+  const diff = (waiting ? waiting.diff : changes?.diff) ?? {};
   const kinds = KINDS.filter(([kind]) => (diff[kind] ?? []).length > 0);
-  const since = changes?.from_version ?? plan.applied_fix?.from_version;
+  const since = waiting ? undefined : changes?.from_version ?? plan.applied_fix?.from_version;
   return (
     <div data-testid="plan-what-changed">
-      <SectionTitle>{since ? `What changed since version ${since}` : "What the fix changes"}</SectionTitle>
+      <SectionTitle>{since ? `What changed since version ${since}` : "What the fix would change"}</SectionTitle>
       <Paper withBorder p="md" radius="md">
         <Stack gap="sm">
           {fix && fix.fixes.length > 0 && (
@@ -118,7 +126,7 @@ export function WhatChanged({ plan }: { plan: Plan }) {
               ))}
             </Group>
           )}
-          {kinds.length === 0 && !changes && fix && <FixFacts need={{ fixes: [], changes: fix.changes }} />}
+          {kinds.length === 0 && fix && <FixFacts need={{ fixes: [], changes: fix.changes }} />}
           <Collapse expanded={open !== null}>
             <List size="sm" spacing={2} data-testid="plan-change-list">
               {(open ? diff[open] ?? [] : []).map((task) => <List.Item key={task.id}>{task.title}</List.Item>)}

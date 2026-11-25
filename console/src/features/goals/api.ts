@@ -77,8 +77,8 @@ export interface PlanAsk {
 export interface PlanGlance {
   tasks: number;
   repos: string[];
-  // The most the plan's tasks may spend, each at its size's limit: an upper bound.
-  may_spend_usd: string;
+  // The most the plan's tasks may spend, each at its size's limit: an upper bound. Null until every task is sized.
+  may_spend_usd: string | null;
   budget_usd: string | null;
   can_start: number;
   open_questions: number;
@@ -106,7 +106,7 @@ export interface GoalPlan {
   // decides it (planner/actions.py): a page draws it and decides nothing.
   decision?: PlanAsk;
   // A fix the planner drafted that waits to be accepted; null when none does.
-  suggestion?: { for_version: number; fixes: { gap: string; change: string }[]; changes: string[] } | null;
+  suggestion?: { for_version: number; fixes: { gap: string; change: string }[]; changes: string[]; diff?: Record<string, { id: string; title: string }[]> } | null;
   // The plan's figures for a glance; null with no plan.
   glance?: PlanGlance | null;
   // What the plan changes about the version it is compared with: a count for each kind, and each kind's tasks.

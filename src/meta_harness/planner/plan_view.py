@@ -72,18 +72,20 @@ def glance(goal: dict, plan: dict, by_size: dict[str, str], parallel: int | None
     goal's budget, how many can start at once, and how many questions are open.
 
     The most a plan may spend is each task's spend limit for its size, summed: an upper bound, and said as
-    one. A task not sized yet counts at the largest size's limit, so the figure never understates."""
+    one. It is given only when every task has a size: a guess for the ones not sized yet made a plan of sixty
+    such tasks read as $1,200, twelve times its goal's budget. Until then the page says how many are not
+    sized."""
     drafts = plan.get("drafts") or []
     limits = {size: Decimal(str(usd)) for size, usd in (by_size or {}).items()}
-    most = max(limits.values(), default=Decimal(0))
-    may_spend = sum((limits.get(str(d.get("size") or ""), most) for d in drafts), Decimal(0))
+    unsized = sum(1 for d in drafts if str(d.get("size") or "") not in limits)
+    may_spend = sum((limits.get(str(d.get("size") or ""), Decimal(0)) for d in drafts), Decimal(0))
     waiting_for_nothing = sum(1 for d in drafts if not d.get("depends_on"))
     return {
         "tasks": len(drafts),
         "repos": sorted({d["repo"] for d in drafts if d.get("repo")}),
-        "may_spend_usd": str(may_spend.quantize(Decimal("0.01"))),
+        "may_spend_usd": None if unsized or not drafts else str(may_spend.quantize(Decimal("0.01"))),
         "budget_usd": None if goal.get("max_usd") is None else str(goal["max_usd"]),
         "can_start": min(waiting_for_nothing, parallel) if parallel else waiting_for_nothing,
         "open_questions": len(plan.get("gaps") or []),
-        "unsized": sum(1 for d in drafts if not d.get("size")),
+        "unsized": unsized,
     }

@@ -1,7 +1,7 @@
 import { spanWords } from "../tasks/path";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Anchor, Badge, Button, Card, Code, Group, List, Loader, Modal, Select, Stack, Switch, TagsInput, Text, TextInput, Textarea } from "@mantine/core";
-import { IconCheck, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
+import { Alert, Anchor, Badge, Button, Card, Code, Collapse, Group, List, Loader, Modal, Paper, Select, Stack, Switch, TagsInput, Text, TextInput, Textarea, UnstyledButton } from "@mantine/core";
+import { IconCheck, IconChevronDown, IconChevronRight, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanDraft, type PlanItem } from "../../api";
 import { ApiError } from "../../client";
@@ -34,6 +34,62 @@ export function inOrder(drafts: PlanDraft[]): PlanDraft[] {
   return placed;
 }
 
+// The plan's tasks by stage, in the order the work can be done: the first stage waits for none of the plan's
+// tasks, and each later one waits only on tasks in the stages before it. A task that waits on something the
+// plan does not hold (an issue the goal already had) is placed by its other waits.
+export function stagesOf(drafts: PlanDraft[]): PlanDraft[][] {
+  const byId = new Map(drafts.map((d) => [d.draft_id, d]));
+  const level = new Map<string, number>();
+  const depth = (draft: PlanDraft, seen: Set<string>): number => {
+    const known = level.get(draft.draft_id);
+    if (known !== undefined) return known;
+    // A cycle is the plan's own fault, said where the plan says why it cannot be approved: here it ends the walk.
+    if (seen.has(draft.draft_id)) return 0;
+    seen.add(draft.draft_id);
+    const found = Math.max(-1, ...draft.depends_on.filter((dep) => byId.has(dep)).map((dep) => depth(byId.get(dep)!, seen))) + 1;
+    level.set(draft.draft_id, found);
+    return found;
+  };
+  const stages: PlanDraft[][] = [];
+  for (const draft of drafts) (stages[depth(draft, new Set())] ??= []).push(draft);
+  return stages.filter(Boolean);
+}
+
+// The most tasks a plan shows unfolded: past this they are counted by stage, and a stage opens to its tasks.
+export const TASKS_SHOWN_UNFOLDED = 5;
+
+// The plan's tasks as stages, each folded to its count: a plan of sixty tasks reads as a handful of lines, and a
+// stage opens to its tasks. A plan of a few tasks shows them all.
+function Stages({ drafts, card }: { drafts: PlanDraft[]; card: (draft: PlanDraft, index: number) => React.ReactNode }) {
+  const stages = useMemo(() => stagesOf(drafts), [drafts]);
+  const few = drafts.length <= TASKS_SHOWN_UNFOLDED;
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const index = new Map(drafts.map((d, i) => [d.draft_id, i]));
+  return (
+    <Stack gap="sm" data-testid="plan-stages">
+      {stages.map((stage, n) => {
+        const shown = few || open.has(n);
+        const toggle = () => setOpen((now) => { const next = new Set(now); if (next.has(n)) next.delete(n); else next.add(n); return next; });
+        return (
+          <Paper key={n} withBorder radius="md" p="sm" data-testid={`plan-stage-${n + 1}`}>
+            <UnstyledButton onClick={toggle} aria-expanded={shown} disabled={few} style={{ width: "100%" }}>
+              <Group gap="xs" wrap="nowrap">
+                {!few && (shown ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />)}
+                <Text fw={600} size="sm">Stage {n + 1}</Text>
+                <Badge variant="light" tt="none" radius="sm">{stage.length} task{stage.length === 1 ? "" : "s"}</Badge>
+                <Text size="sm" c="dimmed">{n === 0 ? "can start as soon as you approve" : `after stage ${n}`}</Text>
+              </Group>
+            </UnstyledButton>
+            <Collapse expanded={shown}>
+              <Stack gap="sm" mt="sm">{shown && stage.map((draft) => card(draft, index.get(draft.draft_id) ?? 0))}</Stack>
+            </Collapse>
+          </Paper>
+        );
+      })}
+    </Stack>
+  );
+}
+
 // A draft's body as two parts: what to build, and its acceptance checks, which the card sets apart.
 export function splitBody(body: string): { text: string; checks: string | null } {
   const found = CHECKS.exec(body);
@@ -49,13 +105,13 @@ function DraftCard({ draft, index, onEdit, onRemove }: { draft: PlanDraft; index
   return (
     <Card withBorder padding="md" data-testid={`draft-${draft.draft_id}`}>
       <Stack gap="xs">
-        <Group justify="space-between" wrap="nowrap" align="flex-start">
-          <Group gap="xs" wrap="nowrap">
+        <Group justify="space-between" wrap="wrap" align="flex-start" gap="xs">
+          <Group gap="xs" wrap="nowrap" style={{ flex: "1 1 280px", minWidth: 0 }}>
             <Badge variant="light" radius="sm">{index + 1}</Badge>
             <Text fw={650}>{draft.title || "(no title)"}</Text>
             <Badge size="xs" variant="light" color="indigo" tt="none">new</Badge>
           </Group>
-          <Group gap="xs" wrap="nowrap">
+          <Group gap="xs" wrap="wrap" justify="flex-end">
             <Code>{draft.draft_id}</Code>
             <Badge variant="outline" tt="none" radius="sm">{draft.repo}</Badge>
             {onEdit && <Button size="compact-xs" variant="subtle" leftSection={<IconEdit size={14} />} onClick={onEdit} aria-label={`Edit ${draft.draft_id}`}>Edit</Button>}
@@ -463,7 +519,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
               <List size="sm" spacing={2}>{plan.invalid.map((reason) => <List.Item key={reason}>{reason}</List.Item>)}</List>
             </Alert>
           )}
-          {tasks.length > 1 && (
+          {tasks.length > 1 && !embedded && (
             <div>
               <Text fw={600} size="sm" mb={4}>The order of work</Text>
               <OrderOfWork tasks={tasks} />
@@ -486,15 +542,30 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
               </Text>
             </div>
           )}
-          {drafts.map((draft, index) => (
-            <DraftCard
-              key={draft.draft_id}
-              draft={draft}
-              index={index}
-              onEdit={drafting ? undefined : () => setEditing({ draft, isNew: false })}
-              onRemove={drafting ? undefined : () => change(base.filter((d) => d.draft_id !== draft.draft_id))}
+          {embedded ? (
+            <Stages
+              drafts={drafts}
+              card={(draft, index) => (
+                <DraftCard
+                  key={draft.draft_id}
+                  draft={draft}
+                  index={index}
+                  onEdit={drafting ? undefined : () => setEditing({ draft, isNew: false })}
+                  onRemove={drafting ? undefined : () => change(base.filter((d) => d.draft_id !== draft.draft_id))}
+                />
+              )}
             />
-          ))}
+          ) : (
+            drafts.map((draft, index) => (
+              <DraftCard
+                key={draft.draft_id}
+                draft={draft}
+                index={index}
+                onEdit={drafting ? undefined : () => setEditing({ draft, isNew: false })}
+                onRemove={drafting ? undefined : () => change(base.filter((d) => d.draft_id !== draft.draft_id))}
+              />
+            ))
+          )}
           {drafts.length === 0 && issues.length === 0 && <Text size="sm" c="dimmed">The plan has no tasks. Add one, or ask for a new plan.</Text>}
         </Stack>
       )}
