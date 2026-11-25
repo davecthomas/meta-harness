@@ -67,6 +67,26 @@ export interface PlanItem {
   replaced_by: string[];
 }
 
+// What a plan asks of the operator now: its state, a sentence or two, and its buttons.
+export interface PlanAsk {
+  state: "none" | "drafting" | "improving" | "fix_waiting" | "incomplete" | "cannot_approve" | "ready" | "approved";
+  says: string;
+  buttons: { action: "approve_plan" | "replan" | "accept_fix" | "dismiss_fix" | "raise_budget"; label: string }[];
+}
+
+export interface PlanGlance {
+  tasks: number;
+  repos: string[];
+  // The most the plan's tasks may spend, each at its size's limit: an upper bound.
+  may_spend_usd: string;
+  budget_usd: string | null;
+  can_start: number;
+  open_questions: number;
+  unsized: number;
+}
+
+export interface PlanVersion { version: number; source: string; created_by: string; created_at: string; note: string | null; stopped_at: string | null; tasks: number; problems: number }
+
 // A goal's plan as the planner shows it: its newest version, or none while the first is drafted.
 export interface GoalPlan {
   goal_id: string;
@@ -82,6 +102,15 @@ export interface GoalPlan {
   approve_error?: string | null;
   // The label the plan's issues carry.
   label: string;
+  // The plan's state and the one thing it asks now, with its buttons, the recommended one first. The service
+  // decides it (planner/actions.py): a page draws it and decides nothing.
+  decision?: PlanAsk;
+  // A fix the planner drafted that waits to be accepted; null when none does.
+  suggestion?: { for_version: number; fixes: { gap: string; change: string }[]; changes: string[] } | null;
+  // The plan's figures for a glance; null with no plan.
+  glance?: PlanGlance | null;
+  // What the plan changes about the version it is compared with: a count for each kind, and each kind's tasks.
+  changes?: { from_version: number; lines: string[]; diff: Record<string, { id: string; title: string }[]> } | null;
   // A fix the planner applied itself to make this version: why (each gap with what settles it), its changes
   // as a count for each kind, and the version undo puts back. Absent or null when this version is not one.
   applied_fix?: { from_version: number; fixes: { gap: string; change: string }[]; changes: string[] } | null;
@@ -312,6 +341,7 @@ export const goalsApi = {
   askForGoalUpdate: (id: string) => call<{ update: PlannerUpdate | null }>(`/v1/goals/${id}/updates`, { method: "POST" }),
   // A feature goal's plan: read it, save edited drafts as its next version, ask for a new one, approve it.
   goalPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan`),
+  planVersions: (id: string) => call<{ versions: PlanVersion[] }>(`/v1/goals/${id}/plan/versions`),
   // The specification a goal was planned from: its name and text.
   // A repo's Markdown and text files, the likeliest specifications first. complete: false when there are more.
   specFiles: (repo: string) => call<{ files: { path: string }[]; complete: boolean }>(`/v1/repos/${repo}/spec-files`),

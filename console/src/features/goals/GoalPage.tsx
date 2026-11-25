@@ -20,7 +20,8 @@ import { GoalStanding } from "./GoalStanding";
 import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures, failures } from "./GoalFailures";
 import { usd } from "../../money";
-import { ApprovedPlan, GoalPlan } from "./GoalPlan";
+import { ApprovedPlan } from "./GoalPlan";
+import { PlanLink } from "./PlanLink";
 import { NextSteps } from "./NextSteps";
 import { EVENT_BY_DO } from "./needActions";
 import { OPEN_SETTINGS, PlannerUpdates, SHOW_ISSUES } from "./PlannerUpdates";
@@ -100,6 +101,8 @@ export function GoalPage() {
   useEffect(() => {
     if (!asked || !arrived) return;
     const name = EVENT_BY_DO[asked];
+    // The plan's approval and its Plan again are on the plan's own page: an old link here is sent on.
+    if (asked === "approve" || asked === "replan") return void navigate(`/goals/${goalId}/plan?do=${asked}`, { replace: true });
     // After this render's children have mounted and are listening.
     const timer = window.setTimeout(() => {
       if (name) window.dispatchEvent(new CustomEvent(name));
@@ -361,7 +364,7 @@ export function GoalPage() {
       {/* What the planner would do next: by itself once the goal has ended, and when asked while it runs. */}
       <NextSteps goalId={goal.id} ended={!open} planning={goal.status === "planning"} watch={`${goal.status}:${Object.values(tasks).map((t) => t.status).join(",")}`} />
       {/* The plan waiting for approval comes next, above the settings: it is what the operator decides on. */}
-      {goal.status === "planning" && <GoalPlan goal={goal} onApproved={() => void Promise.all([load(), loadProgress()])} />}
+      {goal.status === "planning" && <PlanLink goalId={goal.id} />}
       <IssuesPicker
         opened={picking}
         onClose={() => setPicking(false)}

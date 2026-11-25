@@ -115,6 +115,12 @@ judged against these rules.
    goal's budget is a hard cap at or below the task policy's `max_goal_usd`
    ($100), and a goal given none gets that. Reaching one is an ask to a
    person, with raising it as a button.
+10. **Reduce decision drag.** Everything shown to a person helps them decide,
+    and costs as little reading as the decision allows. The decision comes
+    first, in two sentences at most, beside its buttons. Two asks that always
+    follow each other are one ask. More than five of anything is a count, with
+    the list one click away. A plan, its changes and its approval are in one
+    place, and other pages link there.
 
 ### What is tried, in order
 
@@ -4103,6 +4109,26 @@ drafted per plan version and none for a version that was itself a fix. The
 planning configuration's `suggest_fixes` turns them off. The sorting call is a
 `plan_fixes_assessed` event, counted as planning cost; accepting and dismissing
 are `plan_fix_accepted` and `plan_fix_dismissed`.
+
+**The Plan page** (`console/src/features/plan/`, `planner/plan_view.py`). A
+plan has a page of its own, `/goals/<id>/plan`, and the goal's page links to
+it with the plan's one sentence. The page leads with a decision bar: what the
+plan asks now, in a sentence or two, and its buttons, the recommended one
+first. `actions.plan_decision` decides both from the goal's records, as it
+decides every need, so the page and `GET /v1/needs` cannot disagree. A button
+that spends says the most it may spend. When a plan may need more than the
+goal's budget, the sentence says so, Approve names the budget, and raising the
+budget is the next button. Under the bar are the plan's figures as tiles
+(`plan_view.glance`): tasks, repos, the most it may spend, how many tasks can
+start at once, and open questions. The most a plan may spend is each task's
+spend limit for its size, summed. The plan keeps each task's size for this
+(`draft_sizes.with_sizes`), and a task not sized yet counts at the largest
+limit, so the figure is an upper bound. Then comes what changed since the
+plan's baseline version (`plan_view.baseline`): the reasons first,
+then a count for each kind of change, which opens to its tasks. The baseline
+is the last version an operator made, else the planner's first. The tasks and
+the plan's versions (`GET /v1/goals/{id}/plan/versions`) follow. Approve the
+plan and Plan again open this page from every other page.
 
 **Task names** (`planner/naming.py`). A task's id says nothing to a person and
 its title is a sentence, so each task has a short name. It is two to four

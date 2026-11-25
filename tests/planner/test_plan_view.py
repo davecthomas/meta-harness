@@ -59,7 +59,12 @@ def test_a_plan_ready_to_approve_asks_one_thing_and_says_what_it_may_spend():
     ]
     # A budget is a hard cap, and the plan says when it asks for more.
     tight = actions.plan_decision({**GOAL, "max_usd": "30.00"}, _plan(), {**glance, "budget_usd": "30.00"})
-    assert tight["says"].endswith("may spend up to $40, and your budget of $30 stops work there.")
+    assert tight["says"].endswith("All of them may need up to $40, and your $30 budget stops work before that.")
+    assert [b["label"] for b in tight["buttons"]] == [
+        "Approve and start (up to $30)",
+        "Raise the budget",
+        "Plan again",
+    ], "the button names what approving can spend, and raising the budget is offered beside it"
 
 
 def test_each_state_of_a_plan_has_its_sentence_and_its_buttons_the_recommended_one_first():
