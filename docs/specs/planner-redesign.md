@@ -1,6 +1,7 @@
 # Planner redesign: a Plan page
 
-Status: asked for by the owner on 2026-11-25. Muxxy builds it as a goal from this file.
+Status: asked for by the owner on 2026-11-25, reviewed against the code the same day. Muxxy builds it as a goal
+from this file.
 
 ## Why
 
@@ -16,71 +17,169 @@ The page fails the operator in four ways:
   The run still rewrote most tasks, so most of the list is noise.
 - **The plan has no place of its own.** The goal page holds it in three spots: the planner's update, the "Needs
   you" box inside that update, and "The plan" section under it. Each has its own buttons.
-- **The ask buries the decision.** The operator's choice is "accept this fix or not". The two gaps and their
-  fixes, which are what the choice turns on, get one line. The noise gets the rest of the paragraph.
+- **It asks for a decision nobody needs to make.** The operator had not read version 3 yet. Asking them to
+  accept a fix to it, and then to approve the result, is two decisions where one will do.
 
 ## A new first principle: reduce decision drag
 
-The design's first principles gain this one:
+The design's first principles and `config/charter.txt` gain this one:
 
 > **Reduce decision drag.** Everything shown to a person helps them decide, and costs them as little reading as
 > the decision allows.
 
 It has rules a page can be checked against:
 
-1. **The decision comes first.** The top of the page says what the operator is deciding, in two lines at most,
-   beside the buttons that decide it.
-2. **Count before listing.** A set of more than five things appears as a count with a name ("38 tasks
+1. **The decision comes first.** The top of the page says what the operator is deciding, in two sentences at
+   most, beside the buttons that decide it.
+2. **Ask once.** Work the planner can do before the operator looks, it does. Two asks that always follow each
+   other are one ask.
+3. **Count before listing.** A set of more than five things appears as a count with a name ("38 tasks
    reworded"). The list is one click away.
-3. **Structure before prose.** Things that have parts appear as tiles, groups, tables and chips. A paragraph
+4. **Structure before prose.** Things that have parts appear as tiles, groups, tables and chips. A paragraph
    holds one idea.
-4. **Say what matters, in order.** What changes the outcome comes first: scope, cost, risk, order. Wording
+5. **Say what matters, in order.** What changes the outcome comes first: scope, cost, risk, order. Wording
    changes come last.
-5. **One place for one thing.** A plan, its changes and its approval live on one page. Other pages link there.
-6. **Detail on request.** Every summary opens to its full detail, so the page hides nothing and forces nothing.
+6. **One place for one thing.** A plan, its changes and its approval live on one page. Other pages link there.
+7. **Detail on request.** Every summary opens to its full detail, so the page hides nothing and forces nothing.
 
-A test in the console fails a planner ask that renders more than five lines of text before its first button.
+It works with the sixth principle, which already says an ask takes two lines and offers its actions as buttons,
+best first, each saying what it may spend.
+
+A console test holds every planner ask to rule 1: before its first button an ask renders at most two sentences
+and 280 characters, and no list.
+
+## One way a plan changes
+
+Today a plan changes in three unrelated ways: a gap fix is a `plan_suggestion` row with its own accept call, a
+replan saves a new latest version at once, and a resize round does the same. This spec gives them one model.
+
+### Who may change a plan without asking
+
+- **Before the operator has acted on a plan**, the planner's own improvements apply themselves: a gap fix, a
+  resize, an adversarial review's revision. Each saves a new version. The operator opens the page to one plan
+  and one decision, approve it, and "What changed" says what the planner did since its first draft and why.
+- **After the operator has acted**, by editing a task, answering a question or approving, nothing changes the
+  plan without them. Every later change arrives as a proposal.
+- **A replan the operator asks for** is always a proposal, so the plan they have stays until they accept the new
+  one.
+
+The operator can undo any of it: History offers "Use this version" on every earlier version.
+
+### Proposals
+
+A proposal is a full set of the plan's tasks that is not the plan yet. A goal has at most one open proposal.
+
+| Field | Meaning |
+|---|---|
+| `cause` | `gap_fix`, `review`, `resize` or `replan` |
+| `for_version` | The plan version it would replace |
+| `tasks`, `items`, `summary`, `gaps` | What the plan would hold |
+| `reasons` | Why, in the shape below |
+| `status` | `open`, `accepted`, `discarded`, or `stale` when the plan moved under it |
+
+`planner.plan_proposal` replaces `planner.plan_suggestion`. The old table stays, unread, until a later pull
+request drops it. `POST /v1/goals/{id}/plan/proposal/accept` and `.../discard` replace the suggestion's accept
+and dismiss calls, which keep working for a release and answer through the new ones.
+
+### A run changes only what it names
+
+A revising run of any cause starts from the previous tasks and records its changes over them:
+
+- `create_issue` with an existing id changes that task. With a new id it adds one.
+- A new planning tool, `remove_issue`, removes a task, and records an `issue_removed` event.
+- A task the run did not name moves into the result byte for byte. So do the plan's `items`, `summary` and
+  `gaps`, unless the run records them again.
+- The run's prompt holds the previous tasks in full. Today it holds their titles only (`planning.py`), which is
+  why a revising run rewrites them.
+
+Resize rounds (`draft_sizes.py`), gap fixes, review revisions and replans all merge this way, through one
+function.
+
+### Reasons
+
+Every cause yields reasons, in one shape, and the page draws them the same way whatever their cause.
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable across rounds and versions |
+| `source` | `gap`, `review`, `size` or `operator` |
+| `kind` | For a review finding, its kind; otherwise empty |
+| `says` | What was wrong, in one sentence |
+| `change` | What settles it, in one sentence |
+| `tasks` | The ids of the tasks it names |
+| `severity` | `blocking` or `advice`; a gap, a size problem and an operator's note are `blocking` |
+| `status` | `fixed`, `open`, `disputed` or `dismissed` |
+| `evidence` | Where to look: a file, a spec section, the planner's answer |
+
+| Status | Where it appears | How |
+|---|---|---|
+| `fixed` | "What changed", under "Why it changed" | One row; past five, a count that opens |
+| `open` and `blocking` | The decision bar, and a card under "Open questions" | In full, with its buttons |
+| `open` and `advice` | A count under "Open questions" | Opens to its list |
+| `disputed` | A card under "Open questions" | With the planner's answer beside it |
+| `dismissed` | History | Who dismissed it |
+
+### The baseline of a comparison
+
+"What changed" compares the plan with its baseline: the last version an operator made, accepted or approved. A
+plan no operator has acted on has the planner's first version as its baseline. The plan stores its baseline
+version, so every operator sees the same comparison.
 
 ## The Plan page
 
 A page of its own at `/goals/<id>/plan`. The goal page links to it and no longer holds the plan.
 
-It has these parts, top to bottom:
-
 | Part | What it shows |
 |---|---|
-| Header | The goal's title, the plan's version and state, and what planning has cost so far |
-| Decision bar | The one thing the operator is deciding now, in two lines, with its buttons, best first. It stays in view while the page scrolls |
-| At a glance | Tiles: tasks, repos, estimated cost against the budget, how many tasks can run at once, open questions |
-| What changed | Only when a newer version or a proposed fix exists. See below |
-| Open questions | The gaps only the operator can settle, each with a way to answer it |
+| Header | The goal's title, the plan's version and state, and what planning has cost against its limit |
+| Decision bar | The one thing the operator is deciding now, in two sentences, with its buttons, best first |
+| At a glance | Tiles: tasks, repos, the most the plan may spend against the budget, how many tasks can start at once, open questions |
+| What changed | Only when the plan differs from its baseline, or a proposal is open. See below |
+| Open questions | What only the operator can settle, as cards. See below |
 | Tasks | The plan's tasks in groups, folded. See below |
-| History | The plan's versions as a timeline: who or what made each, when, and its change counts |
+| History | The plan's versions as a timeline: who or what made each, when, its change counts, and "Use this version" |
 
-The plan's states, shown as a chip in the header:
+On a wide screen the decision bar stays at the top while the page scrolls. On a narrow one it stays at the
+foot. `#decision` and `?task=<id>` link into the page, and the browser's Back button returns to where the
+operator came from.
 
-| State | Decision bar |
-|---|---|
-| Drafting | "The planner is writing the plan." Progress and cost so far. A Stop button |
-| Has a proposed fix | "The planner found 2 gaps and drafted a fix." Buttons: Accept the fix, Keep the plan as it is |
-| Ready to approve | "44 tasks in 1 repo, about $62 of your $100 budget." Buttons: Approve, Replan |
-| Cannot be approved | Why, in one line, with the button that fixes it |
-| Incomplete | "Planning stopped at its limit with 44 tasks drafted." Buttons: Carry on, Plan again |
-| Approved | "Approved by you on Nov 25. 12 of 44 tasks done." A link to the goal's tasks |
+### States and their buttons
+
+`planner/actions.py` decides the plan's state and its decision, from the goal's records, as it decides every
+need. The Plan page draws that answer and decides nothing itself, so the page and `GET /v1/needs` cannot
+disagree. The first button is the recommended one.
+
+| State | The decision bar says | Buttons, in order |
+|---|---|---|
+| Drafting | "The planner is writing the plan. 12 tasks so far, $1.40 of $4." | "Stop planning", which keeps the tasks drafted so far |
+| Improving | "The planner is fixing 2 gaps it found." or "gpt-6-sol is checking the plan." | "Approve now", which cancels the run; shown as a link, since waiting is the recommended course |
+| Ready to approve | "44 tasks in 1 repo. Running them may spend up to $62 of your $100 budget." | "Approve and start (up to $62)", "Plan again" |
+| Ready, with open problems | "The review found 5 problems. The planner fixed 4. 1 is open: t-12 would run before the table it needs exists." | "Fix it (up to $4)", "Approve with 1 open (up to $62)", "Not a problem" |
+| Proposal waiting | "Your replan is ready: 3 tasks added, 9 removed. It may spend up to $48, down from $62." | "Use the new plan", "Keep the current plan" |
+| Cannot be approved | The first reason, and how many more: "t-9 is too large for one pull request, and 2 more." | The button that fixes the most reasons: "Split the 3 large tasks (up to $4)", then "Plan again (up to $4)" |
+| Incomplete | "Planning stopped at its 60-turn limit with 44 tasks drafted, after one more try." | "Carry on planning (up to $4)", "Plan again (up to $4)" |
+| Planning limit reached | "Planning has spent $12 of its $12 limit." | "Raise the limit to $16", "Approve what is there", when it can be approved |
+| Approved | "Approved by you on Nov 25. 12 of 44 tasks done." | "See the tasks", "Plan again (up to $4)" |
+| No plan | "This goal runs its issues as they are, so it has no plan." | "Plan them together (up to $4)" |
+
+Rules for the buttons, which the console tests:
+
+- A button that spends says the most it may spend.
+- One action has one name on every page: "Approve and start", "Plan again", "Carry on planning", "Fix it",
+  "Use the new plan", "Stop planning".
+- No button's action is to read. "See the tasks" appears only in a state that asks nothing.
+- With more than one open problem, the first button is "Fix all 3 (up to $4)" and each card has its own.
+- "Approve and start" approves the plan, creates its issues and starts the goal, as approval does today.
 
 ### What changed
 
-This part replaces the paragraph. It compares the version the operator last saw with the proposed one.
-
-- **Why it changed** comes first: one row for each gap, with the gap in a few words and the fix beside it. For
-  the fix above that is two rows.
-- **Counts** come next, as chips: "2 added", "0 removed", "9 reordered", "3 changed", "38 reworded". A chip with
-  a count of zero does not appear.
-- **A chip opens its list.** Each entry is a task's title. A changed or reworded task opens to a side-by-side
-  view of its old and new text.
-- **Cost and time** come last, as one line: "Adds about $4 and 2 tasks to the plan."
-
-The kinds of change, in the order they matter:
+- **Why it changed** comes first: one row for each fixed reason, the problem in a few words and the fix beside
+  it. For the fix that prompted this spec that is two rows.
+- **Counts** come next, as chips: "2 added", "9 reordered", "3 changed", "38 reworded". A chip with a count of
+  zero does not appear.
+- **A chip opens its list.** Each entry is a task's title. A changed or reworded task opens to its old and new
+  text side by side.
+- **Cost** comes last, as one line: "The plan may now spend up to $66, up from $62."
 
 | Kind | Meaning |
 |---|---|
@@ -90,132 +189,166 @@ The kinds of change, in the order they matter:
 | Changed | A task whose repo, acceptance checks or size changed |
 | Reworded | A task whose title or description changed and nothing else |
 
-A fix whose only changes are rewording says so in one line, and its Accept button stays.
+### Open questions
+
+A plan's gaps are plain strings today, so the operator can read them and do nothing with them. Each becomes a
+reason with `source: gap`, and each open one is a card:
+
+- the question, in one sentence, with the tasks it touches;
+- a short answer field, with "Send to the planner (up to $4)", which makes a proposal from that answer alone;
+- "Not a problem", which dismisses it.
+
+Open blocking review findings are cards here too, with "Fix it" and "Not a problem".
 
 ### Tasks
 
-- The page groups tasks by repo, or by stage: the tasks that can start now, then the ones that wait on them.
-  The operator picks the grouping, and by-stage is the default.
-- A group shows its name, its task count and its estimated cost, folded.
+- The page groups tasks by stage: those that can start now, then those that wait on them. The operator can
+  switch to grouping by repo.
+- A group shows its name, its task count and the most it may spend, folded.
 - A task row shows its title, size, repo and what it waits for. It opens to its full text and acceptance checks,
   with Edit and Remove.
-- Marks on a row say what the proposed version does to it: added, changed, reordered, reworded.
+- Marks on a row say what changed about it against the baseline, and how many open problems name it.
 - "Add a task" sits at the foot of each group.
 
-### Replan
+Where the figures come from:
 
-Replanning is work the operator directs, so it gets a form of its own on the Plan page. "Replan" in the decision bar
-opens it.
+| Figure | Source |
+|---|---|
+| A task's size | `draft_sizes.py` sizes each task. The plan now stores it on the task |
+| The most a task may spend | The task policy's `max_usd_by_size` for its size |
+| The most the plan may spend | The sum over its tasks, shown as "up to", never as an estimate |
+| Tasks that can start at once | Tasks that wait for nothing, capped at the goal's parallel limit |
+| Hand-edited | A task now records who last edited it, the planner or an operator |
+
+### Plan again
+
+"Plan again" opens a form on the Plan page.
 
 | Field | Default | Purpose |
 |---|---|---|
-| What is wrong with this plan | Empty, required | The note the planner works from. Chips suggest common reasons: too many tasks, wrong order, missing work, too costly |
-| Keep | Every task the operator edited by hand | Tasks the planner must leave as they are. The operator ticks more in the task list |
+| What should change | Empty. Chips fill it: too many tasks, wrong order, missing work, costs too much | The note the planner works from. Required |
+| Keep | Every task an operator edited, and every task whose issue already has a run | Tasks the planner must leave as they are. The operator ticks more in the task list |
 | Scope | The whole plan | Or only the ticked groups |
-| Spend limit for this run | The planning limit | What the run may cost |
 
-The form shows what the last planning run cost, and a Start button. While the run goes, the page is in the
-Drafting state. The result arrives as a proposed version with its "What changed" part, for the operator to accept
-or discard. A replan never replaces the current plan before the operator accepts it.
+Its button reads "Plan again (up to $4)": the planning limit, which the form cannot raise. While the run goes
+the page is Drafting, and the current plan stays in force. The result is a proposal.
+
+### After approval
+
+- Approving creates the plan's issues, as now. A proposal accepted after that changes them: an added task
+  becomes a new issue; a changed task's issue gets its new text; a removed task's issue closes with a comment,
+  through `outbound.prepare`.
+- A task whose issue already has a run is always kept. The planner cannot change or remove it, and the Keep
+  field shows it ticked and locked.
 
 ## The goal page
 
-- The planner's panel keeps its headline and one or two sentences. Under them sits one button, "Open the plan",
-  with a short line of what is waiting: "A fix is waiting: 2 gaps, 2 tasks added".
-- The "Needs you" box no longer lists a plan's changes. A plan need is one sentence with a button that opens the
-  Plan page at its decision bar.
-- "The plan" section, with its Add a task, Plan again and Approve buttons, moves to the Plan page. The goal page
-  shows the plan's state and task count in its place, as a link.
-- The Overview and the needs list link a plan need to the Plan page.
+- The planner's panel keeps its headline and one or two sentences. Under them sits the plan's decision, drawn
+  by the shared `NeedButton`: its sentence and its first button, named for the decision ("Approve and start").
+  The button opens the Plan page at its decision bar.
+- The "Needs you" box no longer lists a plan's changes.
+- "The plan" section moves to the Plan page. The goal page shows the plan's state and task count in its place,
+  as a link.
+- The Overview and the needs list show a plan need the same way.
+- Old links keep working: `?do=approve` and `?do=replan` on a goal's address open the Plan page.
 
-## What the planner must do differently
+## What the planner writes
 
-- **A fix changes only what it names.** The revising run's result is the previous version's tasks with the run's
-  changes over them. A task the run did not call `create_issue` for moves into the new version byte for byte.
-  The adversarial plan review spec asks the same of its revisions, and one mechanism serves both.
-- **The planner writes for the decision.** Its update on a plan leads with what the operator decides and gives
-  counts. It names no task unless the operator must act on that task.
-- **The service aggregates.** `suggestions.changes()` gives way to a summary the service computes: the gaps and
-  their fixes, the counts by kind, the task ids in each kind, and the cost difference. The console draws it, and
-  no model writes it.
+- The plan-progress lines in the planner's panel are fixed sentences the service fills with counts. No model
+  writes them, and they do not count against a goal's update limit.
+- The update model no longer gets a fix's change lines as a fact (`updates.py`). It gets the counts by kind and
+  the reasons.
+- An update about a plan leads with the decision and names no task, unless the operator must act on that task.
 
-## One model for every reason a plan changes
+## Spend
 
-A plan changes for three causes: the planner's own gap fix, an adversarial review's findings, and an operator's
-replan note. The Plan page draws all three the same way, so a review never shows as one long list.
+- Every planning run has the planning limit, `planning.max_usd`.
+- A new limit, `planning.max_phase_usd`, caps everything planning spends on a goal between one approval and the
+  next: plans, continuations, resizes, gap fixes, reviews, revisions and replans. The planner checks it, and the
+  goal's remaining budget, before it starts each run.
+- Reaching it stops planning and asks the operator, with raising it as the button. Nothing is spent past it.
 
-Each cause yields reasons. A reason has one shape:
+## Two people, and things that go wrong
 
-| Field | Meaning |
-|---|---|
-| `source` | `gap`, `review` or `operator` |
-| `says` | What was wrong, in one sentence |
-| `change` | What settles it, in one sentence |
-| `tasks` | The tasks it names |
-| `severity` | `blocking` or `advice`; a gap and an operator's note are `blocking` |
-| `status` | `fixed`, `open`, `disputed` or `dismissed` |
-| `evidence` | Where to look: a file, a spec section, the planner's answer |
-
-The page treats every reason by its status, whatever its source:
-
-| Status | Where it appears | How |
-|---|---|---|
-| `fixed` | "What changed", under "Why it changed" | One row; past five, a count that opens |
-| `open` and `blocking` | The decision bar's sentence, and a card under "Open questions" | In full, with its buttons |
-| `open` and `advice` | A count under "Open questions" | Opens to its list |
-| `disputed` | A card under "Open questions" | With the planner's answer beside it |
-| `dismissed` | History | Who dismissed it |
-
-The decision bar always states the net result and asks one question. A plan with a review reads "GPT-6 Sol
-found 5 problems. The planner fixed 4. 1 needs you." A plan with a gap fix reads "The planner found 2 gaps and
-drafted a fix."
-
-`docs/specs/adversarial-plan-review.md` supplies review reasons and nothing else for the page: its findings
-map onto this shape field for field. `docs/specs/goals-span-repos.md` supplies the repo tile and the by-repo
-grouping. Each of those specs builds on this page, so this one goes first.
+- Every call that changes a plan names the version the operator was looking at. If the plan has moved, the call fails
+  with "The plan changed while you were looking. Reload to see version 5", and the page offers Reload.
+- A proposal whose plan moved is stale. The page says so and offers "Plan again".
+- Every error on the page says what to do next and offers it as a button, as every console error must.
+- A run that fails for a reason of the system retries with backoff before the page reports anything.
 
 ## Data and API
 
 | Field or call | Change | Default |
 |---|---|---|
-| `GET /v1/goals/{id}/plan` | Gains `state`, `glance` (the tile figures) and, when a proposed version exists, `proposed` with its `change_summary` | `proposed` is absent when there is none |
-| `change_summary` | New: `reasons` (in the shape above), `counts` by kind, `tasks` by kind, `cost_delta_usd` | n/a |
-| `GET /v1/goals/{id}/plan/versions` | New: the versions with who made each, when, and its counts | n/a |
+| `planner.plan_proposal` | New table, as above | No row |
+| `plan.baseline_version` | New column: the version "What changed" compares with | The plan's first version |
+| `plan.stopped_at` | New nullable column: the limit a run ended at, `turns`, `time` or `spend` | Null |
+| A task in `plan.drafts` | Gains `size`, `edited_by` and `kept` | Sized on save; `planner`; `false` |
+| `GET /v1/goals/{id}/plan` | Gains `state`, `decision` (from `actions.py`), `glance`, `changes` against the baseline, and `proposal` | `proposal` absent when none is open |
+| `GET /v1/goals/{id}/plan/versions` | New: each version's maker, time and counts | n/a |
 | `GET /v1/goals/{id}/plan/diff?from=&to=&task=` | New: one task's old and new text | n/a |
-| `POST /v1/goals/{id}/replan` | Gains `keep` (task ids), `scope` (group ids) and `max_usd` | Keep the hand-edited tasks; the whole plan; the planning limit |
-| A need's `changes` list | Stays for old clients, and holds the counts as short lines | n/a |
-| `plan.kept` | New column, `jsonb NOT NULL DEFAULT '[]'`: the task ids a replan must leave alone | `[]` |
+| `POST /v1/goals/{id}/plan/proposal/accept`, `.../discard` | New | n/a |
+| `POST /v1/goals/{id}/plan/use?version=` | New: makes an earlier version the plan | n/a |
+| `POST /v1/goals/{id}/plan/stop` | New: cancels the planning run and keeps its tasks | n/a |
+| `POST /v1/goals/{id}/plan/questions/{id}` | New: answer or dismiss an open question | n/a |
+| `POST /v1/goals/{id}/replan` | Gains `keep` and `scope`; its result is a proposal | Keep as above; the whole plan |
+| A need's `changes` list | Stays for old clients, holding the counts as short lines | n/a |
 
-Every migration only adds. No event type changes.
+Events: `plan_saved` gets a version 2, since version 1 allows only the sources `planned` and `edited`. Version 2
+adds `suggested`, `reviewed`, `resized` and `replanned`. New types at version 1: `issue_removed`,
+`plan_proposed`, `plan_proposal_settled`, `plan_question_settled`. No existing schema changes.
 
-## Screens
+Settings, checked at startup:
 
-| Screen | File | After |
+| Setting | Default | A bad or missing value |
+|---|---|---|
+| `planning.max_phase_usd` | `"12.00"` | Stops the service, naming it: a wrong value could cost money |
+
+Every migration only adds.
+
+## Screens and services
+
+| Area | File | Change |
 |---|---|---|
 | Plan page | new `console/src/features/plan/` | The page above |
-| Goal page | `goals/GoalPage.tsx`, `goals/PlannerUpdates.tsx` | The shorter panel and the link, as above |
+| Goal page | `goals/GoalPage.tsx`, `goals/PlannerUpdates.tsx` | The shorter panel and the plan's decision |
 | Plan section | `goals/GoalPlan.tsx`, `goals/PlanReview.tsx` | Their parts move to the Plan page's files |
-| Needs | `goals/needActions.tsx`, `overview/needsYou.ts` | Plan needs open the Plan page |
+| Needs | `planner/actions.py`, `planner/needs.py`, `goals/needActions.tsx`, `overview/needsYou.ts` | The plan's states as state actions with their sentences and `ASKS` labels. `accept_fix` goes; `continue_plan`, `use_proposal` and `raise_planning_limit` arrive. `plan_waits` and the rule that a fix comes before approval follow the new states |
+| Proposals and merging | new `planner/proposals.py`; `planner/suggestions.py`, `planner/draft_sizes.py`, `planner/planning.py` | One proposal store and one merge. Gap fixes and resizes apply themselves before the operator acts, and propose after |
+| Planning tools | `images/harness-pi/extension/owned-tools.ts`, `run_service/prompts/` | `remove_issue`; a new prompt file that holds the previous tasks in full |
+| Spend | `planner/planning.py` | The phase limit, checked before each run |
+| Updates | `planner/updates.py` | Fixed progress lines; counts and reasons as facts |
 | Help | `help/topics.ts` | A topic on reading and changing a plan |
+| Design | `docs/technical-design.md`, `config/charter.txt` | The new principle; the Planner and console sections |
 
-The Plan page reads what needs the operator through `needsYou.ts` and draws the shared `NeedButton`, as every
-page does.
+## How the other planner specs use this
+
+- `docs/specs/adversarial-plan-review.md` supplies reasons with `source: review`, a revision that merges through
+  the function above, and the "Improving" state while it runs. It adds no screen.
+- `docs/specs/goals-span-repos.md` supplies the repo tile and the by-repo grouping.
+- Both build on this page, so this spec goes first.
 
 ## Tests
 
-- A fix that settles two gaps on a 44-task plan gives two reasons and counts, and its ask renders no task title
-  before its first button.
-- A task the revising run did not touch is byte-identical in the new version.
-- Each kind of change lands in its own count, and a reworded-only fix says so.
-- A replan with kept tasks leaves them unchanged, and its result is a proposal until accepted.
-- The console test for decision drag fails an ask with more than five lines of text before its first button.
-- The Plan page draws each state's decision bar with its buttons.
-- A review with eight open findings draws them grouped by kind with counts, and a review's fixed findings draw
-  as rows under "Why it changed", through the same component a gap fix uses.
+- A gap fix on a plan no operator has touched applies itself, and the page shows one decision, approve.
+- The same fix on a plan an operator edited arrives as a proposal.
+- A revising run that names two tasks leaves every other task, and the plan's items, summary and gaps, byte for
+  byte. `remove_issue` removes a task.
+- Each kind of change lands in its own count.
+- A replan's result is a proposal, and it leaves kept tasks and tasks with a run unchanged.
+- `actions.py` gives each state its sentence and buttons, and the Plan page and `GET /v1/needs` agree for every
+  state.
+- Every button that spends names its limit, and no state's first button is a read.
+- Planning stops at the phase limit and asks, with raising it as the button.
+- A call against an old version fails with its remedy.
+- The decision-drag test holds every planner ask to two sentences, 280 characters and no list before its first
+  button.
 
 ## Decided (2026-11-25)
 
 1. The plan gets a page of its own, and the goal page links to it.
 2. "Reduce decision drag" joins the first principles.
-3. Changes appear as reasons and counts, with the lists one click away.
-4. A replan is a form on the Plan page, and its result is a proposal.
+3. Before the operator acts on a plan, the planner's own fixes apply themselves. After, they are proposals.
+4. Changes appear as reasons and counts, with the lists one click away.
+5. A replan is a form on the Plan page, and its result is a proposal.
+6. Planning on a goal has one spend limit over all its runs.
