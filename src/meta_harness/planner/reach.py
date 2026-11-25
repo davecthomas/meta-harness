@@ -141,9 +141,14 @@ def can_push(identity: str, repo: str) -> bool | None:
 
 def register(app: FastAPI, operator: Callable[..., str], transport: httpx.AsyncBaseTransport | None = None) -> None:
     @app.get("/v1/repos/reachable")
-    async def list_reachable(refresh: bool = Query(False), who: str = Depends(operator)) -> dict:
-        """The caller's repos on GitHub, each `write` or `read`. 409 when they have not connected GitHub."""
+    async def list_reachable(
+        refresh: bool = Query(False), with_repos: bool = Query(True, alias="repos"), who: str = Depends(operator)
+    ) -> dict:
+        """The caller's repos on GitHub, each `write` or `read`. repos=0 leaves the repos out and keeps the
+        accounts: an operator who can reach hundreds of repos waits for the whole list otherwise. 409 when they
+        have not connected GitHub."""
         try:
-            return await reachable(who, refresh, transport)
+            found = await reachable(who, refresh, transport)
+            return found if with_repos else {**found, "repos": []}
         except github_user.GitHubUserError as err:
             raise HTTPException(status_code=409 if err.reconnect else 502, detail=str(err)) from err

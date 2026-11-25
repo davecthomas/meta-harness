@@ -122,6 +122,7 @@ function Owners({ chosen, onSaved }: { chosen: string[]; onSaved: (found: GitHub
     }
   };
   const all = reach?.owners ?? [];
+  // While the accounts are read, the field shows what is saved and waits; an error leaves it usable.
   const used = all.filter((o) => chosen.length === 0 || chosen.includes(o.name)).reduce((sum, o) => sum + o.repos, 0);
   // A saved name the connection no longer reaches stays in the list, marked, so it can be removed.
   const gone = chosen.filter((name) => reach !== null && !all.some((o) => o.name === name));
