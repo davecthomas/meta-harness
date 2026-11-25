@@ -324,3 +324,12 @@ async def test_a_long_list_of_repos_is_read_a_few_pages_at_a_time():
     assert len(found) == 730 and len({r["name"] for r in found}) == 730
     assert found[0]["name"] == "acme/r1-0" and found[-1]["name"] == "acme/r8-29", "in GitHub's order"
     assert sorted(Many.pages) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+
+
+def test_the_accounts_can_be_read_without_the_repos(reaching):
+    client, _ = reaching
+    _connect(client)
+
+    found = client.get("/v1/repos/reachable?repos=0", headers=OPERATOR).json()
+
+    assert found["repos"] == [] and found["owners"] == [{"name": "acme", "repos": 2}]

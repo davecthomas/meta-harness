@@ -32,7 +32,8 @@ export const githubApi = {
   githubConnect: () => call<{ url: string }>("/v1/github/connect", { method: "POST" }),
   // Finishes it, with what GitHub sent the browser back with.
   githubFinish: (code: string, state: string) => call<GitHubConnection>("/v1/github/connection", { method: "POST", body: JSON.stringify({ code, state }) }),
-  githubReachable: () => call<Reachable>("/v1/repos/reachable"),
+  // The accounts the connection reaches, without their repos: the list of repos can be hundreds long.
+  githubReachable: () => call<Reachable>("/v1/repos/reachable?repos=0"),
   // Limit the connection to these accounts and organizations; none for all it reaches.
   githubChooseOwners: (owners: string[]) => call<GitHubConnection>("/v1/github/connection/owners", { method: "PUT", body: JSON.stringify({ owners }) }),
   githubDisconnect: () => call<GitHubConnection>("/v1/github/connection", { method: "DELETE" }),
