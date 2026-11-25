@@ -252,7 +252,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
     <Stack gap="md">
       <Alert variant="light" color="blue" title="How a skill is used" data-testid="skills-how">
         <Text size="sm">
-          A skill does nothing until a harness profile lists it. Every run on that profile is then told the skill's name and what it is for, and reads the rest when its work calls for it. Nobody types a command for it in a goal or a task. Nothing loads from a task's repo. A skill with a lock ships with Muxxy and changes only by a pull request.
+          A skill you import does nothing until a harness profile lists it. Every run on that profile is then told the skill's name and what it is for, and reads the rest when its work calls for it. Nobody types a command for it in a goal or a task. Nothing loads from a task's repo. A skill with a lock ships with Muxxy, which also uses it itself, and changes only by a pull request.
         </Text>
         <Anchor href="/config?kind=profiles" size="sm">Choose which profiles load which skills</Anchor>
       </Alert>

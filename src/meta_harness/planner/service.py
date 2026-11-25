@@ -76,6 +76,7 @@ from meta_harness.planner import (
     naming,
     narratives,
     plan_review,
+    reach,
     needs,
     next_steps,
     overview,
@@ -1795,6 +1796,7 @@ def create_app(
     plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again, sizer=size)
     budget_api.register(app, operator, load, change_with, events, tasks)
     github_api.register(app, operator, events, github_transport)
+    reach.register(app, operator, github_transport)
     # An operator waits on this sizing (Fix with AI sizes the changed issue), so it keeps the default deadline.
     size_now = sizer or functools.partial(sizing.size_issue, policy=retrying.DEFAULT)
     sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size_now)
