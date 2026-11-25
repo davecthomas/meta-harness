@@ -257,7 +257,7 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
         <Anchor href="/config?kind=profiles" size="sm">Choose which profiles load which skills</Anchor>
       </Alert>
       {names.length ? (
-        <DataTable head={["Skill", "What it is for", "Source", "Used by", ""]} minWidth={860}>
+        <DataTable head={["Skill", "What it is for", "Source", "Where used", ""]} minWidth={860}>
           {names.map((name) => {
             const skill = skills[name];
             const users = usedBy(profiles, name);
