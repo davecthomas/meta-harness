@@ -1,6 +1,8 @@
 # Adversarial plan review
 
-Status: approved in outline by the owner on 2026-11-24. Muxxy builds it as a goal from this file.
+Status: approved in outline by the owner on 2026-11-24, reviewed against the code on 2026-11-25. Muxxy builds
+it as a goal from this file, after `docs/specs/planner-redesign.md`, whose Plan page and plan-change model it
+uses.
 
 ## Why
 
@@ -13,8 +15,10 @@ Adversarial plan review gives a plan that reviewer. A second model, from a diffe
 repos and the plan, and looks for what is wrong with it. The planner fixes what it can. Before approving, the
 operator sees what the reviewer found, what changed and what is still open.
 
-It is an option on each goal. It is on by default when the goal's autonomy is *ask*, where the operator already
-approves every step.
+It is an option on each goal, because it costs a planning run or two and some minutes before work starts. It
+is on by default when the goal's autonomy is *ask*: an operator who chose to decide every step has chosen care
+over speed. Every plan needs the operator's approval whatever the autonomy, and the review makes that approval
+better informed.
 
 ## What happens today
 
@@ -26,19 +30,20 @@ approves every step.
   `config/planner.json`).
 - That check reads only the planner's own list of gaps. Nothing independent reads the repos and challenges the
   plan.
-- A planning task that ends at a limit loses its work. It records its drafts as events as it goes, but a task
-  that failed "saves a plan with no drafts and the reason" (`planning.py`), and the next planning task starts
-  from nothing.
+- A planning task that ends at a limit wastes its work. Its tasks survive as a plan the operator cannot
+  approve (`planning.gather`), but the next planning task's prompt holds only their titles (`planning.prompt`),
+  so it writes every task again.
 
 ## What a failed plan showed
 
 On 2026-11-24 the first plan for the goal "Goals that span multiple repositories" (a 27,000-character spec)
 failed. Its events show:
 
-- It recorded 44 drafts, one `create_issue` call a turn, and ended at the planning profile's 60-turn limit with
+- It recorded 44 tasks, one `create_issue` call a turn, and ended at the planning profile's 60-turn limit with
   the plan unfinished. It had also spent $3.04 against a $3.00 limit.
-- The planner discarded all 44 drafts. A second planning task started over and paid for the same reading again.
-- The second task recorded 42 drafts in 27 turns, because it happened to make several tool calls a turn.
+- The 44 tasks became a plan the operator could not approve. A second planning task got their titles only,
+  wrote every task again and paid for the same reading twice.
+- The second task recorded 42 tasks in 27 turns, because it happened to make several tool calls a turn.
 
 A review adds runs to planning: a review, then a revision, then another review. On a plan that size each would
 meet the same limits, so this spec first fixes what that failure showed. The rules below apply to planning,
@@ -49,22 +54,24 @@ revision and review runs alike.
 1. The planner writes the plan, as now.
 2. A plan reviewer, a different model, reads the goal, its spec, the repos and the plan, and records findings.
 3. When a finding blocks, the planner revises the plan with the findings as its note, and the reviewer reviews
-   the revision. This repeats at most `max_rounds` times.
-4. The operator sees the plan with its findings: fixed ones folded, open ones open, and the drafts the review
-   changed marked.
-5. The operator approves, as now. A plan with open blocking findings can still be approved; the button says how
-   many are open.
+   the revision. This repeats at most `max_rounds` times. All of it happens before the page asks the
+   operator anything.
+4. The operator opens the Plan page to one decision. It says what the review found, what the planner fixed and
+   what is still open, as counts, with the open problems in full.
+5. The operator approves, has the planner fix what is open, or dismisses it.
 
 ## What we want
 
 ### Choosing it on a goal
 
 - New goal, panel 4 ("How it runs"), gains a switch: "Adversarial plan review", with the sentence "A second AI
-  model tries to find what is wrong with the plan before you approve it."
+  model tries to find what is wrong with the plan before you approve it. Adds a few minutes and up to $4."
 - Its default follows the goal's autonomy, chosen in the same panel: on for *ask*, off for *standard* and *full*.
   Changing the autonomy changes the switch until the operator sets it by hand.
 - An operator can set their own default in Settings, under the planner defaults: "Follow the autonomy" (the
   default), "Always" or "Never".
+- The service works out the default, so a goal created through the API gets the same one as a goal created in
+  the console.
 - New goal shows the switch only for a goal the planner plans: a spec, a description, or issues with "Plan them
   together first". A goal that runs issues as they are has no plan to review.
 - The panel's folded summary names it when on: "Ask before each step · adversarial plan review · budget $40".
@@ -76,28 +83,32 @@ revision and review runs alike.
 - The review is a task of type `plan_review`, run like a planning task. It gets read-only clones of the repos the
   planning task read, the goal's statement and spec, the plan version, and the planner's own summary and gaps.
   It changes no file and publishes nothing.
+- A review starts only on a settled plan: no planning run in flight, no resize round left, and nothing
+  stopping approval.
 - Its model is the first in `planning.adversarial_review.reviewers` whose model family differs from the model
-  that wrote the plan. When none differs, the planner skips the review and the plan says so. The service checks
+  that wrote the plan. A model's family is the engine in its candidate name, `harness:<profile>/<engine>:<model>`. When none differs, the planner skips the review and the plan says so. The service checks
   at startup that the list holds at least two families.
 - Its prompt tells it to find what is wrong with the plan, and lists what to look for:
-  - a step the goal needs that no draft does;
-  - drafts in an order their dependencies cannot follow, or that edit the same code at once;
-  - a draft too big for one pull request, two that should be one, or a plan cut into more tasks than the work
+  - a step the goal needs that no task does;
+  - tasks in an order their dependencies cannot follow, or that edit the same code at once;
+  - a task too big for one pull request, two that should be one, or a plan cut into more tasks than the work
     needs;
-  - a draft in the wrong repo;
+  - a task in the wrong repo;
   - an acceptance check that would pass without the work being right, or none that tests the goal itself;
   - a risk the plan does not handle: data loss, a breaking change, a migration, a security exposure;
-  - a part of the spec no draft covers, or a draft that does more than the spec asks.
+  - a part of the spec no task covers, or a task that does more than the spec asks.
 - It records every finding in one call of the `submit_plan_review` tool. A finding has:
 
   | Field | Meaning |
   |---|---|
   | `kind` | One of `missing_step`, `order`, `size`, `repo`, `check`, `risk`, `scope` |
   | `severity` | `blocking`: the plan will fail or do harm as written. `advice`: it would be better another way |
-  | `drafts` | The draft ids it is about; empty for the plan as a whole |
+  | `tasks` | The ids of the tasks it is about; empty for the plan as a whole |
   | `says` | What is wrong, in one or two sentences, with the file or spec section that shows it |
   | `change` | The change to the plan that would settle it |
 
+- The service gives each finding an id that stays the same across rounds, and stores it as a reason in the
+  planner redesign's shape, with `source: review`.
 - A review that finds nothing records "No problems found".
 
 ### The reviewer's instructions are a locked skill
@@ -115,68 +126,72 @@ revision and review runs alike.
 
 ### Revising
 
-- When a round has blocking findings, a planning task revises the plan with the findings as its note. The
-  revision is a new plan version with source `reviewed`. The planner also gets the advice, and takes what it
-  agrees with.
+- When a round has blocking findings, a planning run revises the plan with the findings as its note. It merges
+  through the planner redesign's one function: it changes the tasks the findings name, and every other task
+  moves into the result byte for byte. The planner also gets the advice, and takes what it agrees with.
+- The planner sizes the revision as it sizes any plan.
+- Before the operator has acted on the plan, a revision applies itself as a new version with source `reviewed`.
+  After, it arrives as a proposal. The planner redesign sets that rule for every cause of change.
 - The reviewer then reviews the revision. It sees its earlier findings and says of each whether it is now fixed.
 - The review stops after `max_rounds` reviews (default 2), or when a round has no blocking finding. What is still
   open is the operator's.
-- The planner may disagree with a finding. It says why in the revision, and the finding stays open with the
-  planner's answer under it, for the operator to settle.
-- For a goal with adversarial review on, the planner skips the existing gap-sorting suggestion
-  (`suggestions.py`), since the review covers it. Goals without review keep the suggestion.
+- The planner may disagree with a finding. It says why in the revision, and the finding stays open as
+  `disputed`, with the planner's answer under it, for the operator to settle.
+- For a goal with adversarial review on, the planner skips the existing gap fix (`suggestions.py`), since the
+  review covers it. Goals without review keep it.
 
-### When the plan changes by hand
+### When the plan changes while a review runs
 
-- An operator's edit makes a new version (`edited`), as now. The reviewer reviews it only when the operator asks:
-  the plan panel offers "Review again".
-- "Plan again" makes a new planned version, and the review starts again from round one.
+- **The operator approves.** "Approve now" on the Plan page cancels the running review or revision and approves
+  the plan as it stands. The page shows it as a link while a review runs, since waiting is the recommended
+  course.
+- **The operator edits.** The edit makes a new version (`edited`), as now, and cancels the running review, whose
+  findings would be about a plan that is gone. The Plan page offers "Review again (up to $4)".
+- **The operator plans again.** The result is a proposal. The planner reviews it once the operator accepts it.
+- A canceled review keeps the findings it had recorded, marked partial.
 
 ### Approving
 
-- Approve stays one click. While a review is running, the button reads "Approve without the review".
-- With open blocking findings, it reads "Approve with 2 open findings". Nothing else changes about approval.
-- Accepting a single finding ("Fix this") sends it alone to a revision. Dismissing one ("Not a problem")
-  closes it, with who closed it.
+The buttons are the Plan page's, and this spec adds none.
+
+- With no open blocking finding: "Approve and start (up to $62)".
+- With open blocking findings, in order: "Fix it (up to $4)", "Approve with 1 open (up to $62)", "Not a
+  problem". With several, the first reads "Fix all 3 (up to $4)" and each finding's card has its own.
+- "Fix it" sends the open findings to one more revision. "Not a problem" dismisses the finding, with who
+  dismissed it.
 
 ### A run that ends at a limit keeps its work
 
-- A planning, revision or review run that ends at its turn, time or spend limit keeps what it recorded. The
-  planner saves a plan's drafts so far as a version marked incomplete, which the operator cannot approve. A
-  review keeps its findings so far and marks its round partial.
-- The next run continues from there. Its prompt holds the saved drafts in full, says which parts of the spec they
-  cover, and asks for what is missing. It drafts nothing twice.
-- The planner starts one continuation by itself. If that run also ends at a limit, the plan stays incomplete and
-  is the operator's: "Carry on planning" or "Plan again from the start", each a button, with what the two runs
-  cost.
-- The plan never reports a partial review as clean. It says "Review stopped early: 3 findings so far, the drafts
-  after <draft> were not read", with "Carry on reviewing".
+- A planning, revision or review run that ends at its turn, time or spend limit keeps what it recorded. A plan
+  records which limit stopped it (`plan.stopped_at`), and the operator cannot approve it. A review keeps its
+  findings so far and marks its round partial.
+- The next run continues from there. Its prompt holds the saved tasks in full, says which parts of the spec they
+  cover, and asks for what is missing. It writes no task twice.
+- The planner starts one continuation by itself. If that run also ends at a limit, the Plan page's Incomplete
+  state asks the operator: "Carry on planning (up to $4)" or "Plan again (up to $4)".
+- The plan never reports a partial review as clean. It says "The review stopped early: 3 findings so far, 12
+  tasks not read", with "Carry on reviewing (up to $4)".
 
 ### Runs sized to the plan
 
 - The planning and review prompts say to record in batches: several `create_issue` calls, or every finding, in
   one turn, and to batch reads the same way.
-- A revision changes only what the findings name. Its prompt holds the whole plan and the findings. It calls
-  `create_issue` with an existing `draft_id` to change a draft and a new one to add a draft, and records which
-  drafts it removes. Every other draft moves into the new version untouched.
 - The reviewer's prompt holds the whole plan as text, so the reviewer spends its turns reading the code.
 - A run's turn limit grows with its input: the profile's `max_turns`, plus `planning.turns_per_draft` for each
-  draft in a review's or revision's prompt, plus `planning.turns_per_spec_thousand` for each 1,000 characters of
+  task in a review's or revision's prompt, plus `planning.turns_per_spec_thousand` for each 1,000 characters of
   spec in a planning run's prompt, up to `planning.max_turns_ceiling`.
-- A run's spend limit does not grow. Each run, a continuation included, has its own, and the goal's budget
-  bounds them together.
-- Before a review starts, the planner estimates its cost from the planning run's own cost. If the goal's budget
-  or the review's limit cannot cover it, the planner does not start the review, and the plan says so with the
-  figure.
+- A run's spend limit does not grow.
 
 ### Spend
 
 - The review and its revisions are planning work: their cost counts as planning in the goal's costs and on the
-  Performance page, within the goal's budget.
-- `planning.adversarial_review.max_usd` caps one review task, as `planning.max_usd` caps a planning task. Its
+  Performance page.
+- `planning.adversarial_review.max_usd` caps one review run, as `planning.max_usd` caps a planning run. Its
   default is the planning limit, because a reviewer reads the same code the planner did.
-- When the goal's budget cannot cover another round, the review stops there and says so. The plan stays
-  approvable.
+- Reviews and revisions count toward the planner redesign's limit on a goal's whole planning phase,
+  `planning.max_phase_usd`. Before each run the planner checks that limit and the goal's remaining budget.
+- When either cannot cover another run, the review stops there, the plan says so with the figures, and the plan
+  stays approvable.
 
 ## The skill's text
 
@@ -263,7 +278,7 @@ it is `advice`. A plan can be approved with advice open.
 - `change`: the one change to the plan that would settle it, concrete enough to act on: "Make task
   t-12 wait for t-7", "Add a task that migrates the existing rows", "Replace the check with one that
   calls the endpoint as a user with no access".
-- `drafts`: the ids of the tasks it is about. Leave it empty only for a problem with the plan as a
+- `tasks`: the ids of the tasks it is about. Leave it empty only for a problem with the plan as a
   whole.
 - One problem, one finding. Do not split one problem across tasks, and do not fold two into one.
 - No finding about wording, style or naming.
@@ -294,62 +309,62 @@ Say so: call `submit_plan_review` with no findings. Do not invent a finding to h
 
 ### The planner panel
 
-The planner's panel already narrates planning. It gains these steps, each one line:
+The service writes these lines from counts, as the planner redesign specifies for every plan-progress line. No
+model writes them. `<reviewer>` is the reviewer's model name as the configuration spells it.
 
 | When | Line |
 |---|---|
-| A review starts | "Getting GPT-6 Sol to pick holes in the plan." |
+| A review starts | "Getting <reviewer> to pick holes in the plan." |
 | A round ends with blocking findings | "It found 4 problems, 2 serious. Fixing those." |
 | The planner saves a revision | "Version 2 is up, with those fixed." |
 | A round finds nothing that blocks | "Second look done: nothing serious. 1 suggestion for you." |
 | Review stops with blocking findings open | "Two rounds in, 1 serious problem is still open. Your call." |
 | Review skipped | "Skipped the second look: the configuration names no reviewer from another model family." |
 | A run ends at a limit | "Ran out of turns with 44 tasks drafted. Kept them, carrying on from there." |
-| The continuation ends at a limit too | "Still not finished after two goes ($6.10). Want me to carry on or start over?" |
-
-The model's name is the reviewer's display name from the router's catalog. While a review runs the panel shows
-the same progress indicator as planning.
+| The continuation ends at a limit too | "Still not finished after two goes ($6.10). Carry on, or start over?" |
 
 ### The plan
 
 The review appears on the Plan page that `docs/specs/planner-redesign.md` specifies, and follows that spec's
 rules for reducing decision drag. It adds no screen and no list of its own.
 
-- **One sentence in the decision bar.** "GPT-6 Sol found 5 problems. The planner fixed 4. 1 needs you." The
-  buttons are "See the open problem" and "Approve with 1 open".
-- **One tile.** "Review: 5 found · 4 fixed · 1 open", beside the plan's other tiles.
+- **While it runs** the page is in its Improving state: "<reviewer> is checking the plan."
+- **Two sentences in the decision bar.** "The review found 5 problems. The planner fixed 4. 1 is open: t-12
+  would run before the table it needs exists." The buttons follow, as under Approving.
+- **One tile.** "Review: 5 found · 4 fixed · 1 open", beside the plan's other tiles. It names the reviewer and
+  links to the skill it used.
 - **Findings are reasons.** In "What changed", each finding the planner fixed is a row under "Why it changed":
-  the problem in a few words, the fix beside it. The change counts follow, as they do for any proposed version.
-- **Only open findings show in full.** Each is a card: one sentence for what is wrong, one for the change that
-  would settle it, the tasks it names as links, and "Fix this" and "Not a problem". The file or spec section
-  that shows the problem opens from the card.
+  the problem in a few words, the fix beside it. The change counts follow, as they do for any change.
+- **Only open findings show in full.** Each is a card under "Open questions": one sentence for what is wrong,
+  one for the change that would settle it, the tasks it names as links, and "Fix it" and "Not a problem". The
+  file or spec section that shows the problem opens from the card.
 - **More than five open findings group by kind**, each kind with its count, folded: "Order: 4", "Checks: 3".
 - **Fixed findings and advice are counts.** "4 fixed" and "2 suggestions" each open to their list.
-- **Rounds fold into one result.** The operator sees the plan against the version they last saw, with every
-  round's findings merged. The History part holds each round for anyone who wants it.
+- **Rounds fold into one result.** The operator sees the plan against its baseline, with every round's findings
+  merged. History holds each round.
 - **A task row shows a mark, never a finding's text.** The mark says how many open findings name the task, and
   opens them.
 
 ### What needs the operator
 
-A new action in `planner/actions.py`, `settle_review`, with its sentence and `ASKS` label, served through
-`GET /v1/needs`: "The plan has 1 serious problem the review found and the planner could not fix." Its button
-opens the plan at the first open finding. It replaces the plan's approval need while it is open, and approval
-stays on the plan itself.
+`planner/actions.py` already has `settle_review`, for a pull request's review. A plan's review gets its own
+state action, `settle_plan_review`, decided from the goal's records like every plan state: "The plan has 1
+serious problem the review found and the planner could not fix." Its `ASKS` label is "Settle the plan review".
+On the goal page, the Overview and the needs list its button opens the Plan page at the decision bar, where
+"Fix it" is one click.
 
-A second action, `continue_plan`, for a plan or review left incomplete after its one continuation: "The plan
-is not finished: planning stopped at its limit twice." Its buttons are "Carry on planning" and "Plan again".
+The planner redesign supplies `continue_plan` for a plan or review left incomplete.
 
 ## Data and settings
 
 | Field | Where | Default | Existing rows |
 |---|---|---|---|
-| `goal.adversarial_review` | `boolean NOT NULL DEFAULT false` | What New goal sends. The console works out the preselection from the operator's setting and the autonomy; a goal created through the API without it gets `false` | `false`: no existing goal changes |
+| `goal.adversarial_review` | `boolean NOT NULL DEFAULT false` | What the request sends. When it sends none, the service works it out from the creator's setting and the goal's autonomy | `false`: no existing goal changes |
 | `planner.adversarial_review` | user setting | `"follow"`; also `"always"`, `"never"` | `"follow"` |
-| `plan.source` | existing | Gains `reviewed` | Unchanged |
-| `plan.incomplete` | `boolean NOT NULL DEFAULT false` | True for a version saved from a run that ended at a limit. It cannot be approved | `false` |
-| `planner.plan_review` | new table: goal id, plan version, round, task id, reviewer model, findings (`jsonb`), state (`running`, `done`, `partial`, `skipped`), cost, started and ended at | One row per round | None |
-| Finding status | inside `findings` | `open`; then `fixed`, `disputed` or `dismissed` (with who) | n/a |
+| `plan.source` | existing | Gains `reviewed`, recorded through `plan_saved` version 2, which the planner redesign registers | Unchanged |
+| `plan.stopped_at` | from the planner redesign | The limit a run ended at | Null |
+| `planner.plan_review` | new table: goal id, plan version, round, task id, reviewer model, state (`running`, `done`, `partial`, `canceled`, `skipped`), cost, started and ended at | One row per round | None |
+| Findings | Stored as reasons with `source: review`, each with its id, round and status | `open`; then `fixed`, `disputed` or `dismissed` (with who) | n/a |
 | Task type `plan_review` | `tasks/store.py` `TASK_TYPES`, `CHECKLESS_TASK_TYPES` | Runs on the reviewer's profile | n/a |
 
 Events, each a new type at version 1: `plan_review_started`, `plan_review_finished` (round, counts by severity
@@ -373,9 +388,9 @@ tool, no write tools. The pi model client extension gains that tool, beside `upd
 
 | Area | File | Change |
 |---|---|---|
-| Starting a review | new `planner/plan_review.py` | After the planner saves a planned or reviewed version on a goal with review on: pick the reviewer, start the task, record the round |
+| Starting a review | new `planner/plan_review.py` | On a goal with review on, once a plan settles: pick the reviewer, start the task, record the round |
 | Ending a round | `planner/plan_review.py` | Reads the task's findings, decides whether to revise, starts the revision with the findings as its note, or stops |
-| Planning | `planner/planning.py`, `planner/plans.py`, `run_service/prompts/` | A revision is a planning task that saves its plan with source `reviewed`: the previous version's drafts, with the run's changes over them. A task that ended at a limit saves its drafts as an incomplete version, and one continuation starts from them. The prompts say to batch. A new prompt file beside `plan-v1.txt` |
+| Planning | `planner/planning.py`, `planner/plans.py`, `run_service/prompts/` | A revision is a planning task that saves its plan with source `reviewed`: the previous version's tasks, with the run's changes over them. A task that ended at a limit saves its tasks as an incomplete version, and one continuation starts from them. The prompts say to batch. A new prompt file beside `plan-v1.txt` |
 | Turn limits | `run_service`, `planner/planning.py` | The run's turn limit worked out from the profile's base and the run's input |
 | Suggestions | `planner/suggestions.py` | Skipped for a goal with review on |
 | Plan API | `planner/plan_api.py` | `POST /v1/goals/{id}/plan/continue` (carry on planning or reviewing), `POST /v1/goals/{id}/plan/review` (review again), `POST /v1/goals/{id}/plan/findings/{n}` (the Fix this and Not a problem buttons); the plan's GET includes its review rounds and findings |
@@ -394,24 +409,31 @@ Every migration only adds. No existing event type changes.
 - No test calls a model. Tests feed the review a fake task result holding findings.
 - The planner revises a plan with a blocking finding, the reviewer reviews it again, and review stops at
   `max_rounds`. A plan with only advice gets no revision. A review with no findings says "No problems found".
-- A planning task that ends at its turn limit saves its drafts as an incomplete plan, which cannot be approved.
-  A single continuation starts from them and drafts only what is missing. A second failure asks the operator.
-- A revision copies untouched drafts into the new version unchanged.
+- A planning task that ends at its turn limit saves its tasks as an incomplete plan, which cannot be approved.
+  A single continuation starts from them and tasks only what is missing. A second failure asks the operator.
+- A revision copies untouched tasks into the new version unchanged.
 - A review that ends early records its round as partial and never reads as "No problems found".
 - A save that changes the `adversarial-plan-review` skill fails, and the Skills page shows it locked.
+- A review starts only on a settled plan, and never while a resize round is running.
+- Approving while a review runs cancels it. An edit cancels it and offers "Review again".
+- A revision applies itself before the operator has acted on the plan, and is a proposal after.
+- `actions.py` decides `settle_plan_review`, and the pull request action `settle_review` behaves as before.
+- Reviews and revisions stop at the planning phase limit.
 - The reviewer is never the plan's own model family. With no other family, the planner skips the review and says
   why.
 - The default follows the autonomy and the operator's setting. A goal that runs issues as they are offers no
   switch.
 - A goal with review on gets no gap-sorting suggestion; one without keeps it.
-- Console tests cover the switch's default, the panel's lines, findings on draft cards, change marks and the
+- Console tests cover the switch's default, the panel's lines, findings on task cards, change marks and the
   approve button's words.
 - The zero-cost end-to-end check gains a planned goal with review on, against the fake HTTP Gateway.
 
-## Decided (2026-11-24)
+## Decided (2026-11-24 and 2026-11-25)
 
 1. Its name is adversarial plan review.
 2. It is an option on a goal, on by default when the goal's autonomy is *ask*.
 3. The reviewer is always a different model family from the planner.
 4. Approval stays the operator's, one click, whatever the review found.
 5. No run of planning or review throws away what it recorded when it ends at a limit.
+6. The review, its revisions and its display use the planner redesign's proposals, reasons and Plan page, and
+   add none of their own.
