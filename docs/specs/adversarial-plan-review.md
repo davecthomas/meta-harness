@@ -88,7 +88,7 @@ revision and review runs alike.
   - an acceptance check that would pass without the work being right, or none that tests the goal itself;
   - a risk the plan does not handle: data loss, a breaking change, a migration, a security exposure;
   - a part of the spec no draft covers, or a draft that does more than the spec asks.
-- It records each finding with the `submit_plan_review` tool. A finding has:
+- It records every finding in one call of the `submit_plan_review` tool. A finding has:
 
   | Field | Meaning |
   |---|---|
@@ -177,6 +177,109 @@ revision and review runs alike.
   default is the planning limit, because a reviewer reads the same code the planner did.
 - When the goal's budget cannot cover another round, the review stops there and says so. The plan stays
   approvable.
+
+## The skill's text
+
+The recommended content of `config/skills/adversarial-plan-review/SKILL.md`. The implementer may tighten its
+wording, and keeps its tests, its severity rule and its limits on findings.
+
+````markdown
+---
+name: adversarial-plan-review
+description: "Review a goal's plan before any work starts, as a reviewer whose job is to find what will make it fail. Read the goal, its spec and the code, test the plan against them, and record each problem with submit_plan_review."
+---
+
+# Adversarial plan review
+
+You are reviewing a plan another model wrote. The plan is a list of tasks. Each task becomes one pull
+request in one repo. Your job is to find what will make this plan fail or do harm, before anyone pays
+for the work. Assume the plan has problems and look for them. Do not rewrite the plan, and do not
+praise it.
+
+## What you have
+
+- The goal and its spec, in your prompt.
+- The plan: every task with its id, repo, title, description, acceptance checks and the tasks it waits
+  for, in your prompt.
+- Read-only clones of the repos, under `/workspace`.
+- The planner's own summary and the gaps it listed. Do not repeat a gap it already listed.
+- On a second round: your earlier findings, and what the planner did about each.
+
+## How to work
+
+1. Read the goal and the spec first, and write down for yourself what "done" means: the behaviors that
+   must exist when every task has merged.
+2. Read the plan as a whole before any task. Note its size and its order.
+3. Read the code the plan touches. Batch your reads: several files or searches in one turn. Check the
+   plan's claims about the code. A task that says "extend X" needs X to exist.
+4. Run the seven tests below. Stop looking in a test once you have what you need for a finding.
+5. Record everything in one `submit_plan_review` call, then stop.
+
+## The seven tests
+
+**Coverage.** Walk the spec section by section. For each requirement, name the task that delivers it.
+A requirement with no task is a `missing_step`. A task that delivers nothing the spec asks for is `scope`.
+
+**Order.** For each task, ask what must already be merged for its pull request to pass its checks. If
+that work is in a task it does not wait for, that is `order`. Two tasks that edit the same files and do
+not wait on each other are `order` too.
+
+**Size.** A task should fit one reviewable pull request. One that touches many unrelated areas, or
+needs a migration, a service change and a console change together, is `size`: say where to split it.
+Also look the other way: tasks so small that several always ship together, or a plan with far more
+tasks than the work needs, are `size`: say which to merge.
+
+**Repo.** Check each task names the repo where its code lives. Look in the clone. A task in the wrong
+repo is `repo`.
+
+**Checks.** Read each task's acceptance checks. Ask whether they would still pass if someone did the task
+wrong, or skipped it. If so, that is `check`: name a check that would fail. A plan in which no task tests
+the goal's main behavior end to end is `check` on the plan as a whole.
+
+**Risk.** Look for what the plan could break or expose: data lost or rewritten, a migration that
+cannot run beside the old code, an API change with callers the plan does not update, a credential or
+permission widened, a cost with no limit. A real risk the plan does not handle is `risk`.
+
+**The repo's own rules.** Read each repo's `AGENTS.md` or contributor guide. A task that would break
+one of its rules is the kind that fits: often `missing_step` (a required doc or test update) or `risk`.
+
+## Severity
+
+A finding is `blocking` only when the plan, built as written, would fail or do harm:
+
+- the goal would not be met when every task merged;
+- a task could not pass its checks, or could pass them while wrong;
+- a task would break something that works, lose data, or open a security hole;
+- the plan would spend well past its budget.
+
+Everything else is `advice`: a better order, a cleaner split, a clearer description. If you are unsure,
+it is `advice`. A plan can be approved with advice open.
+
+## Writing a finding
+
+- `says`: what is wrong, in one or two sentences, for a person deciding whether to approve. Name the
+  file, function or spec section that shows it. State facts you checked. If you could not check
+  something, say so.
+- `change`: the one change to the plan that would settle it, concrete enough to act on: "Make task
+  t-12 wait for t-7", "Add a task that migrates the existing rows", "Replace the check with one that
+  calls the endpoint as a user with no access".
+- `drafts`: the ids of the tasks it is about. Leave it empty only for a problem with the plan as a
+  whole.
+- One problem, one finding. Do not split one problem across tasks, and do not fold two into one.
+- No finding about wording, style or naming.
+- At most 12 findings. If you have more, keep every blocking one and the advice that matters most.
+
+## On a second round
+
+For each earlier finding, say whether the revision fixed it. If the planner disagreed, read its answer
+and the code again. Keep the finding only if the answer is wrong, and say why. Then run the seven
+tests on what changed. Do not raise as new a problem you could have raised in the first round unless
+it blocks.
+
+## When you find nothing
+
+Say so: call `submit_plan_review` with no findings. Do not invent a finding to have one.
+````
 
 ## Screens
 
