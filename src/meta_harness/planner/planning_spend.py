@@ -10,7 +10,8 @@ that is a person choosing to spend, and a replan can be as large as the plan bef
 starts nothing more: the plan stays as it is, and its page asks the operator, whose asking starts the count
 again.
 
-A run is the planner's own when its external ref says so: `...:continue`, `...:resizeN`, `plan-fix:...`.
+A run is the planner's own when its external ref says so: `...:continue`, `...:resizeN`, `...:reviewN`,
+`plan-fix:...`, `plan-review:...`. A review an operator asks for is `plan-review-asked:...`, and is theirs.
 """
 
 import re
@@ -21,7 +22,7 @@ from typing import Any
 DEFAULT_MAX_UNASKED_USD = Decimal("12.00")
 # The task types that are planning.
 PLANNING_TYPES = ("plan",)
-_UNASKED = re.compile(r"(:continue|:resize\d+)$|^plan-fix:")
+_UNASKED = re.compile(r"(:continue|:resize\d+|:review\d+)$|^plan-fix:|^plan-review:")
 
 
 def is_unasked(task: dict) -> bool:

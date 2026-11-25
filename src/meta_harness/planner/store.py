@@ -36,7 +36,7 @@ GOAL_COLUMNS = (
     "id, created_by, statement, repos, label, modality, modality_source, latitude, auto_merge, max_usd, priority, "
     "status, created_at, updated_at, started_at, closed_at, title, max_parallel, plan_task_id, plan_approved_at, "
     "budget_mode, budget_overage_percent, spent_usd, budget_reached_usd, budget_resume_to, strict_issues, tracker, "
-    "tracker_settings, planned, provenance, autonomy, plan_base_version"
+    "tracker_settings, planned, provenance, autonomy, plan_base_version, adversarial_review"
 )
 # How much is done for a goal's tasks without asking. ask: the Task Manager asks before each of its own
 # actions. standard: it takes the clear next steps itself, and a clean pull request waits for the operator.

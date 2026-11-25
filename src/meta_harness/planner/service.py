@@ -74,6 +74,7 @@ from meta_harness.planner import (
     merge_checks,
     naming,
     narratives,
+    plan_review,
     needs,
     next_steps,
     overview,
@@ -157,6 +158,9 @@ class GoalIn(BaseModel):
     # How much is done without asking: ask, standard or full (store.AUTONOMY). Left out: full when auto_merge
     # is on, else standard.
     autonomy: Literal["ask", "standard", "full"] | None = None
+    # Whether a second model reviews the goal's plans before the operator approves them (plan_review.py). Left
+    # out: yes for a goal whose autonomy is ask.
+    adversarial_review: bool | None = None
     max_usd: Decimal | None = Field(default=None, gt=0)
     # What the budget does when it is reached, and how far past it a block goal may go, in percent (budget.py).
     budget_mode: Literal["block", "warn"] = "block"
@@ -443,10 +447,33 @@ def create_app(
                     return plans.latest(conn, goal["id"])
 
             plan = await asyncio.to_thread(latest)
-            if plan and not goal.get("plan_task_id"):
+            # A goal whose plans are reviewed gets no fix for its own gaps: the review covers them, and more.
+            if plan and not goal.get("plan_task_id") and not goal.get("adversarial_review"):
                 await suggestions.maybe_start(goal, plan, tasks, events, issues_to_plan, fix_assessor)
         except (suggestions.SuggestionError, TrackerError) as err:
             log.error("goal %s: the planner could not suggest a fix for its plan: %s", goal["id"], err)
+
+    # What each goal's plan review last could not do, so the same failure is logged once.
+    review_failures: dict[str, str] = {}
+
+    async def review(goal: dict) -> None:
+        """A planning goal's adversarial review (plan_review.py): an ended review is read into the plan's
+        record and the planner sent back for what blocks, and a settled plan that is due a review gets one.
+        A failure is logged when it changes and leaves the plan as it is, still the operator's to approve."""
+        try:
+            await plan_review.collect(goal, tasks, events, issues_to_plan)
+            fresh = await asyncio.to_thread(load, goal["id"])
+
+            def latest() -> dict | None:
+                with db.connect(autocommit=True) as conn:
+                    return plans.latest(conn, goal["id"])
+
+            await plan_review.maybe_start(fresh, await asyncio.to_thread(latest), tasks, events)
+            review_failures.pop(goal["id"], None)
+        except (plan_review.ReviewError, TrackerError) as err:
+            if review_failures.get(goal["id"]) != str(err):
+                log.error("goal %s: %s", goal["id"], err)
+                review_failures[goal["id"]] = str(err)
 
     async def update_goals(only: list[dict] | None = None) -> None:
         """The planner's update for each goal whose state has changed since its last. One that cannot be
@@ -534,6 +561,7 @@ def create_app(
             async def collect(goal: dict) -> None:
                 await planning.collect(goal, tasks, events, sizer=size, issues_of=issues_to_plan)
                 await suggest(goal)
+                await review(goal)
 
             await each(await listed(planning_goals, "plans"), collect, "collecting of its plan")
             await update_goals()
@@ -668,6 +696,7 @@ def create_app(
     fix_issue.check_settings()
     costs_api.check_settings()
     planning.check_settings()
+    plan_review.check_settings()
     overview.check_settings()
     narratives.check_settings()
     writing_rules.check_settings()
@@ -1288,7 +1317,7 @@ def create_app(
         loaded = await loaded_spec(body, scheme, names)
         pairs = checked_refs(body.refs, names, scheme, body.tracker_settings)
         fields = {
-            **body.model_dump(exclude={"refs", "autonomy", "spec"}),
+            **body.model_dump(exclude={"refs", "autonomy", "spec", "adversarial_review"}),
             # full is auto_merge on, whichever of the two the caller sent.
             "auto_merge": body.auto_merge if body.autonomy is None else body.autonomy == "full",
             "tracker": scheme,
@@ -1309,6 +1338,12 @@ def create_app(
                     goal, _ = store.update(conn, goal["id"], label=planning.goal_label(goal))
         except store.GoalError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
+        reviewed = body.adversarial_review
+        if reviewed is None:
+            reviewed = plan_review.default_for(body.autonomy)
+        if reviewed and goal.get("planned"):
+            await asyncio.to_thread(plan_review.set_enabled, goal["id"], True)
+            goal["adversarial_review"] = True
         events.emit(
             "goal_created",
             {

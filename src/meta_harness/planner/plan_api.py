@@ -18,7 +18,17 @@ from pydantic import BaseModel, Field
 
 from meta_harness import db
 from meta_harness.config import store as config_store
-from meta_harness.planner import actions, enrich, plan_view, planning, plans, specs, store, suggestions
+from meta_harness.planner import (
+    actions,
+    enrich,
+    plan_review,
+    plan_view,
+    planning,
+    plans,
+    specs,
+    store,
+    suggestions,
+)
 from meta_harness.planner.sweep import goal_tracker
 from meta_harness.trackers.base import TrackerError
 from meta_harness.trackers.own import SCHEME as OWN
@@ -125,10 +135,14 @@ def register(
             changed = plan_view.changes(conn, goal["id"], plan) if plan else None
         suggestion = suggestions.current(goal["id"])
         glance = plan_view.glance(goal, plan, *_limits(goal)) if plan else None
+        review = plan_review.current(goal["id"])
         return {
+            # The plan's adversarial review: who reviewed, its rounds, and every finding with its status; None
+            # when the plan has none.
+            "review": review,
             # The plan's state and the one thing it asks now, with its buttons (actions.plan_decision): the Plan
             # page draws this and decides nothing itself.
-            "decision": actions.plan_decision(goal, plan, glance, suggestion, _planning_usd()),
+            "decision": actions.plan_decision(goal, plan, glance, suggestion, _planning_usd(), review),
             # The plan's figures for a glance, and what it changes about the version it is compared with.
             "glance": glance,
             "changes": changed,
@@ -218,6 +232,92 @@ def register(
         except suggestions.SuggestionError as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
         return shown(load(goal_id))
+
+    @app.post("/v1/goals/{goal_id}/plan/review")
+    async def review_again(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Have a second model review the plan as it stands now, whatever the goal's setting and however many
+        reviews it has had: the operator asked."""
+        goal = planning_goal(goal_id)
+        with db.connect(autocommit=True) as conn:
+            plan = plans.latest(conn, goal_id)
+        try:
+            started = await plan_review.maybe_start(goal, plan, tasks, events, asked_by=who)
+        except plan_review.ReviewError as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        if started is None:
+            raise HTTPException(
+                status_code=409,
+                detail="this version of the plan cannot be reviewed now: it is being written, it cannot be "
+                "approved yet, or it was reviewed already. Change the plan, or plan again, and ask then",
+            )
+        return shown(load(goal_id))
+
+    @app.post("/v1/goals/{goal_id}/plan/review/fix")
+    async def fix_findings(goal_id: str, who: str = Depends(operator)) -> dict:
+        """Send the planner back for the review's findings that block and are still open. Its result is the
+        plan's next version, which changes only what the findings name."""
+        goal = planning_goal(goal_id)
+        if goal.get("plan_task_id"):
+            raise HTTPException(
+                status_code=409, detail="a planning task is drafting a new plan: wait for it, then look again"
+            )
+        still = plan_review.open_blocking(goal_id)
+        if not still:
+            raise HTTPException(
+                status_code=409, detail="the review has no open problem to fix. Approve the plan, or plan again"
+            )
+        try:
+            await planning.start(
+                goal, tasks, events, who, note=plan_review.revision_note(still), issues=await issues_of(goal)
+            )
+        except (planning.PlanError, TrackerError) as err:
+            raise HTTPException(status_code=502, detail=str(err)) from err
+        ids = [f["id"] for f in still]
+        await asyncio.to_thread(plan_review.settle, goal_id, ids, plan_review.REVISED)
+        events.emit(
+            "plan_findings_settled",
+            {"goal_id": goal_id, "findings": ids, "how": "sent_back"},
+            actor=who,
+            tags={"goal_id": goal_id},
+        )
+        return await asyncio.to_thread(shown, load(goal_id))
+
+    @app.post("/v1/goals/{goal_id}/plan/review/findings/{finding_id}/dismiss")
+    def dismiss_finding(goal_id: str, finding_id: str, who: str = Depends(operator)) -> dict:
+        """Say a review's finding is not a problem: it stops asking, and the plan's history keeps who said so."""
+        goal = planning_goal(goal_id)
+        if not plan_review.settle(goal_id, [finding_id], plan_review.DISMISSED):
+            raise HTTPException(
+                status_code=404, detail=f"the plan's review has no open finding {finding_id}. Reload the plan"
+            )
+        events.emit(
+            "plan_findings_settled",
+            {"goal_id": goal_id, "findings": [finding_id], "how": "dismissed"},
+            actor=who,
+            tags={"goal_id": goal_id},
+        )
+        return shown(goal)
+
+    class ReviewSettingIn(BaseModel):
+        on: bool
+
+    @app.put("/v1/goals/{goal_id}/plan/review-setting")
+    def review_setting(goal_id: str, body: ReviewSettingIn, who: str = Depends(operator)) -> dict:
+        """Turn the goal's adversarial plan review on or off. On, a plan waiting for approval is reviewed at the
+        planner's next pass."""
+        goal = load(goal_id)
+        plan_review.set_enabled(goal["id"], body.on)
+        events.emit(
+            "goal_changed",
+            {
+                "goal_id": goal_id,
+                "changes": {
+                    "adversarial_review": {"from": str(bool(goal.get("adversarial_review"))), "to": str(body.on)}
+                },
+            },
+            actor=who,
+        )
+        return load(goal_id)
 
     @app.post("/v1/goals/{goal_id}/plan/undo-fix")
     def undo_fix(goal_id: str, who: str = Depends(operator)) -> dict:

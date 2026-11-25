@@ -1,3 +1,6 @@
 {
-  "locked": ["no-ai-slop2"]
+  "locked": [
+    "no-ai-slop2",
+    "adversarial-plan-review"
+  ]
 }

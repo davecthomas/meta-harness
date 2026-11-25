@@ -98,7 +98,11 @@ SYSTEM_PROMPT = (
     "one short sentence each. When the plan has a suggested_fix, ask first whether to accept it, with "
     "action accept_fix, saying in a few words what it changes, and do not list the gaps it fixes. When the plan "
     "has an applied_fix, you fixed those gaps yourself already: say so in one short sentence, with how many, as "
-    "something you did, ask nothing about it, and do not list those gaps. When "
+    "something you did, ask nothing about it, and do not list those gaps. When plan.review.state is running, a "
+    "second model is checking the plan for problems: say so in a few words and ask nothing about the plan yet. "
+    "When plan.review has open above 0, say how many problems the review found and how many are still open, and "
+    "ask in one need to settle them, with action approve_plan. When it has found above 0 and open 0, say in one "
+    "short sentence that a second model checked the plan and its problems are fixed. When "
     "plan.replanning is true, you are writing a new version of the plan yourself (resizing tasks that came out "
     "too large, or planning again as asked): say so in a few words, and ask the operator nothing about the plan. "
     "When plan.cannot_be_approved_because is not empty and plan.replanning is false, do not ask for approval: "
@@ -237,6 +241,7 @@ def facts(
     suggestion: dict | None = None,
     unstuck: list[dict] | None = None,
     applied: dict | None = None,
+    review: dict | None = None,
 ) -> dict[str, Any]:
     """What the planner's records say of the goal now, for an update to be written from. unstuck: what the
     supervisor and the planner did to unstick its work since the last update (supervisor/ledger.py). applied:
@@ -291,6 +296,9 @@ def facts(
             "new_tasks": len((plan or {}).get("drafts") or []),
             # A fix the planner drafted for the plan's gaps, waiting for the operator to accept it.
             "suggested_fix": {"fixes": suggestion["fixes"], "changes": suggestion["changes"]} if suggestion else None,
+            # The plan's adversarial review (plan_review.current): whether a second model is reading it now, and
+            # how many problems it found, the planner fixed and are still open.
+            "review": {"state": review["state"], "model": review["model"], **review["counts"]} if review else None,
             # A fix the planner already applied to make this version: said as done, never asked about.
             "applied_fix": {"fixes": applied["fixes"], "changes": applied["changes"]} if applied else None,
         }
@@ -490,13 +498,16 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
     planning_now = goal["status"] == "planning"
     suggestion = await asyncio.to_thread(suggestions.current, goal["id"]) if planning_now else None
     applied = await asyncio.to_thread(suggestions.applied, goal["id"]) if planning_now else None
+    from meta_harness.planner import plan_review
+
+    reviewed = await asyncio.to_thread(plan_review.current, goal["id"]) if planning_now else None
     tasks_of_goal = await asyncio.to_thread(tasks.list, None, goal["id"], 500)
     earlier = await asyncio.to_thread(latest, goal["id"], 1)
     before = earlier[0] if earlier else None
     since = before["created_at"] if before else ""
     remedies = await asyncio.to_thread(ledger.read, None, goal["id"], 20)
     done = [r for r in remedies if r["created_at"] > since][:10]
-    found = facts(goal, links, tasks_of_goal, plan, suggestion, done, applied)
+    found = facts(goal, links, tasks_of_goal, plan, suggestion, done, applied, reviewed)
     # The issues the tracker would not assign to the person the goal names (assignees.py).
     if unassigned := await asyncio.to_thread(assignees.not_assigned, events, goal["id"], links):
         found["not_assigned"] = unassigned
