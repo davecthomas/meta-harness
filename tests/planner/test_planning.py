@@ -1047,3 +1047,83 @@ def test_the_plan_says_when_planning_was_asked_for_and_keeps_it_after_the_planne
     made = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
     assert made["planning_task_id"] is None and made["planning_asked_at"] == drafting["planning_asked_at"]
     assert made["planning_asked_at"] <= made["plan"]["created_at"], "so the page can say how long the plan took"
+
+
+def test_a_revising_run_changes_only_the_tasks_it_names():
+    """A fix for two gaps once rewrote forty tasks, since a run had to record a task again to keep it."""
+    from meta_harness.planner import plans
+
+    before = [draft("store"), draft("api", ("store",)), draft("ui", ("api",)), draft("docs", ("ui", "api"))]
+    changed = [draft("api", ("store",), title="The API"), draft("api-a"), draft("api-b"), draft("tests")]
+    decisions = [
+        {"ref": "ui", "decision": "split", "reason": "Too large.", "depends_on": [], "replaced_by": ["api-a", "api-b"]},
+        {"ref": "o/r#4", "decision": "keep", "reason": "", "depends_on": [], "replaced_by": []},
+    ]
+
+    merged, about_issues = plans.merge(before, changed, decisions)
+
+    assert [d["draft_id"] for d in merged] == ["store", "api", "docs", "api-a", "api-b", "tests"]
+    assert merged[0] is before[0], "a task the run did not name is the same task, byte for byte"
+    assert merged[1]["title"] == "The API", "a task recorded again is the run's"
+    assert merged[2]["depends_on"] == ["api-a", "api-b", "api"], "what waited for a split task waits for its parts"
+    assert [i["ref"] for i in about_issues] == ["o/r#4"], "a decision on the goal's own issue is still one"
+    # Left out, a task is gone, and nothing waits for it.
+    gone, _ = plans.merge(before, [], [{"ref": "api", "decision": "leave_out", "reason": "Done.", "replaced_by": []}])
+    assert [d["draft_id"] for d in gone] == ["store", "ui", "docs"] and gone[1]["depends_on"] == []
+    # A task both recorded again and decided on is kept: the run rewrote it.
+    kept, _ = plans.merge(
+        before, [draft("api")], [{"ref": "api", "decision": "leave_out", "reason": "", "replaced_by": []}]
+    )
+    assert [d["draft_id"] for d in kept] == ["store", "api", "ui", "docs"]
+
+
+def test_a_planning_run_that_ends_at_its_limit_keeps_its_tasks_and_is_carried_on_once(world):
+    """The first plan of a large spec ended at its 60-turn limit with 44 tasks drafted. The next run was shown
+    their titles only, wrote every task again, and paid for the same reading twice."""
+    client, events, _, tasks = world
+    goal = _feature(client)
+    first = next(t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"])
+    first["status_reason"] = "ended ERROR (max_turns): The run passed its 60 turn limit."
+
+    shown = _planned(client, events, tasks, goal, [draft("store"), draft("api", ("store",))], status="failed")
+
+    plan = shown["plan"]
+    assert [d["draft_id"] for d in plan["drafts"]] == ["store", "api"] and plan["stopped_at"] == "turns"
+    assert plan["invalid"] == [
+        "planning stopped at its turns limit with 2 tasks drafted, so the plan is not finished. Plan again continues "
+        "from these tasks"
+    ]
+    # The planner carries on by itself, from the tasks in full.
+    assert shown["planning_task_id"], "the goal is planning again"
+    again = tasks.tasks[shown["planning_task_id"]]
+    assert again["external_ref"].endswith(":1:continue")
+    assert "ended at its limit before it finished" in again["description"]
+    assert "## api (" in again["description"] and "Build api.\n\n## Acceptance checks" in again["description"]
+    assert "A task you do not name stays exactly as it is" in again["description"]
+
+    # It writes only what is missing, and ends at its limit too: its tasks are kept, and it is not carried on again.
+    again["status_reason"] = "ended ERROR (spend_limit): the run reached its spend limit"
+    second = _planned(client, events, tasks, goal, [draft("ui", ("api",))], status="failed")
+
+    assert [d["draft_id"] for d in second["plan"]["drafts"]] == ["store", "api", "ui"]
+    assert second["plan"]["drafts"][:2] == plan["drafts"], "the tasks it did not name are unchanged"
+    assert second["plan"]["stopped_at"] == "spend" and second["planning_task_id"] is None
+    assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 409
+
+    # Plan again, asked for, carries on from all three.
+    asked = client.post(f"/v1/goals/{goal['id']}/replan", json={"note": "Finish it."}, headers=OPERATOR)
+    third = tasks.tasks[asked.json()["planning_task_id"]]
+    assert "## ui (" in third["description"]
+    done = _planned(client, events, tasks, goal, [draft("docs", ("ui",))])
+    assert [d["draft_id"] for d in done["plan"]["drafts"]] == ["store", "api", "ui", "docs"]
+    assert done["plan"]["invalid"] == [] and done["plan"]["stopped_at"] is None
+
+
+def test_a_plan_made_after_an_approved_one_starts_afresh():
+    """An approved plan's tasks are issues by then: a run after it plans over those, and carries none of them
+    into a new plan, where each would be created a second time."""
+    from meta_harness.planner import planning
+
+    assert planning.revised({"drafts": [draft("a")], "created": {}})
+    assert not planning.revised({"drafts": [draft("a")], "created": {"a": "o/r#9"}})
+    assert not planning.revised({"drafts": [], "created": {}}) and not planning.revised(None)

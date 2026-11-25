@@ -16,6 +16,7 @@ Only the control plane writes to the code host: the planning run proposes, and t
 
 import asyncio
 import logging
+import re
 from typing import Any, Protocol
 
 from meta_harness import outbound
@@ -36,6 +37,17 @@ log = logging.getLogger("meta_harness.planner")
 PLAN_EVENTS = ("issue_drafted", "issue_planned", "plan_summarized")
 # A planning task whose status is one of these has ended, and its drafts are read (closed) or it failed.
 ENDED = {"closed", "failed", "canceled", "ready", "review_unresolved"}
+# The limit a run ended at, as its task's reason names it, and what a plan calls that limit.
+_LIMIT = re.compile(r"\((max_turns|turn_limit|max_minutes|time_limit|spend_limit)\)|(spend limit)", re.IGNORECASE)
+_LIMITS = {"max_turns": "turns", "turn_limit": "turns", "max_minutes": "time", "time_limit": "time"}
+# The planning task that carries on from a plan whose run ended at a limit. One is started for a plan, by the
+# planner itself; if it ends at a limit too, what happens next is the operator's.
+_CONTINUES = re.compile(r":continue$")
+CONTINUE_NOTE = (
+    "The planning run before this one ended at its limit before it finished. Everything it recorded is in the "
+    "plan so far, below. Continue from there. Find the parts of the goal and its specification those tasks do "
+    "not cover yet, and write the tasks that are missing. Then call plan_summary."
+)
 
 
 # How a PlanError for a tracker's refusal starts: the API answers those 502, since asking again may work.
@@ -188,6 +200,9 @@ def prompt(
         "- depends_on names what must be done first: a new task by its draft_id, an existing issue by its ref as",
         "  shown above. Name a dependency only when the work truly needs it: what does not wait runs in parallel.",
         "",
+        "Your turns are limited, and a run that reaches the limit stops unfinished. So work in batches: read",
+        "several files in one turn, and record several tasks or decisions in one turn, with one tool call each.",
+        "",
         "Finish by calling plan_summary: how the plan reaches the goal, for the operator to read before approving",
         "it, and as gaps what the operator should know or decide before approving: anything the goal asks for that",
         "no task covers, and any risk or assumption that could change their decision.",
@@ -197,11 +212,54 @@ def prompt(
         voice.instructions(settings(), "plan"),
     ]
     if note:
-        lines += ["", "An operator asked for this plan to replace the one before it, with this note:", note]
+        lines += ["", "This plan is asked for with this note:", note]
     if previous:
-        lines += ["", "The new tasks of the plan before it, for reference:"]
-        lines += [f"- {d['draft_id']} ({d['repo']}): {d['title']}" for d in previous]
+        lines += ["", *revising_lines(previous)]
     return "\n".join(lines).strip()
+
+
+def revising_lines(previous: list[dict[str, Any]]) -> list[str]:
+    """What a run that revises a plan is told: the plan's tasks in full, and that its result is that plan with
+    its changes over it (plans.merge). With only the titles to go on, a revising run wrote every task again."""
+    lines = [
+        "You are revising a plan, not writing one. Its tasks are between the markers below, in full, and they",
+        "stand. Your result is that plan with your changes over it:",
+        "- A task you do not name stays exactly as it is. Do not record it again.",
+        "- To change a task, call create_issue with its draft_id and its whole new text.",
+        "- To add a task, call create_issue with a new draft_id.",
+        "- To remove a task, call plan_issue with its draft_id as the ref and the decision leave_out.",
+        "- To replace a task with smaller ones, write them with create_issue, then call plan_issue with its",
+        "  draft_id as the ref, the decision split, and their draft_ids in replaced_by.",
+        "- Call plan_summary again only when the summary or the gaps change, with all of the gaps that remain.",
+        "Change what the note asks for and nothing else. Where an instruction above says to write a task for",
+        "each piece of work, it means each piece no task below covers.",
+        "",
+        "--- the plan so far ---",
+    ]
+    for draft in previous:
+        waits = f" Waits for: {', '.join(draft['depends_on'])}." if draft.get("depends_on") else ""
+        lines += [
+            f"## {draft['draft_id']} ({draft['repo']}): {task_text(draft['title'])}.{waits}",
+            draft["body"].strip(),
+            "",
+        ]
+    return [*lines, "--- end of the plan so far ---"]
+
+
+def revised(latest: dict | None) -> bool:
+    """Whether a planning run started now revises that plan: it has tasks, and it was never approved. An
+    approved plan's tasks are issues by now, and a run after it plans over those."""
+    return bool(latest and latest.get("drafts") and not latest.get("created"))
+
+
+def stopped_at(task: dict) -> str | None:
+    """The limit the planning task's run ended at (turns, time or spend); None when it ended otherwise."""
+    if task.get("status") == "closed":
+        return None
+    found = _LIMIT.search(str(task.get("status_reason") or ""))
+    if not found:
+        return None
+    return _LIMITS.get((found.group(1) or "").lower(), "spend")
 
 
 def _plan_count(goal_id: str) -> int:
@@ -226,13 +284,13 @@ async def start(
     it."""
     config = settings()
 
-    def previous() -> list[dict[str, Any]] | None:
+    def previous() -> dict | None:
         with db.connect(autocommit=True) as conn:
-            latest = plans.latest(conn, goal["id"])
-        return latest["drafts"] if latest else None
+            return plans.latest(conn, goal["id"])
 
-    before = await asyncio.to_thread(previous)
-    number = await asyncio.to_thread(_plan_count, goal["id"]) + 1
+    latest = await asyncio.to_thread(previous)
+    before = latest["drafts"] if revised(latest) else None
+    number = (latest["version"] if latest else 0) + 1
     try:
         task = await asyncio.to_thread(
             tasks.create,
@@ -253,7 +311,13 @@ async def start(
 
     def on_goal() -> None:
         with db.connect(autocommit=True) as conn:
-            plans.set_plan_task(conn, goal["id"], task["id"], [plans.clean_issue(vars(i)) for i in issues or []])
+            plans.set_plan_task(
+                conn,
+                goal["id"],
+                task["id"],
+                [plans.clean_issue(vars(i)) for i in issues or []],
+                base_version=latest["version"] if before else None,
+            )
 
     if record:
         await asyncio.to_thread(on_goal)
@@ -322,9 +386,16 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
         with db.connect(autocommit=True) as conn:
             return plans.plan_issues(conn, goal["id"])
 
+    def revises() -> dict | None:
+        if not goal.get("plan_base_version"):
+            return None
+        with db.connect(autocommit=True) as conn:
+            return plans.at(conn, goal["id"], goal["plan_base_version"])
+
     issues = await asyncio.to_thread(issues_given)
-    found = await gather(goal, task, events, issues)
+    found = await gather(goal, task, events, issues, base=await asyncio.to_thread(revises))
     drafts, items, summary, gaps, invalid = (found[k] for k in ("drafts", "items", "summary", "gaps", "invalid"))
+    stopped = stopped_at(task)
     oversized = await draft_sizes.findings(goal, drafts, sizer, events) if drafts else []
     invalid = [*invalid, *draft_sizes.reasons(oversized)]
 
@@ -344,6 +415,7 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
                 summary=summary,
                 gaps=gaps,
                 issues=issues,
+                stopped_at=stopped,
             )
             plans.set_plan_task(conn, goal["id"], None)
             return plan
@@ -352,9 +424,30 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
     if plan is None:
         return None
     _emit_saved(events, plan, "planner")
+    if stopped and issues_of is not None and not _CONTINUES.search(str(task.get("external_ref") or "")):
+        # The obvious next step, taken without asking: carry on from what the run recorded, once.
+        try:
+            await start(
+                goal,
+                tasks,
+                events,
+                "planner",
+                note=CONTINUE_NOTE,
+                issues=await issues_of(goal),
+                external_ref=f"plan:{goal['id']}:{plan['version']}:continue",
+            )
+        except Exception as err:  # noqa: BLE001 - the plan stands, saying where it stopped
+            log.error(
+                "goal %s: planning stopped at its %s limit and could not be continued: %s. The plan holds what "
+                "was drafted; Plan again on the goal's page continues from it",
+                goal["id"],
+                stopped,
+                err,
+            )
+        return plan
     rounds = int(settings().get("resize_rounds", draft_sizes.DEFAULT_ROUNDS))
     round_no = draft_sizes.round_of(task) + 1
-    if oversized and issues_of is not None and round_no <= rounds:
+    if oversized and not stopped and issues_of is not None and round_no <= rounds:
         # Not the operator's to fix yet: the planner resizes its own tasks first.
         try:
             await start(
@@ -376,9 +469,13 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
     return plan
 
 
-async def gather(goal: dict, task: dict, events: Events, issues: list[dict[str, Any]]) -> dict[str, Any]:
+async def gather(
+    goal: dict, task: dict, events: Events, issues: list[dict[str, Any]], base: dict | None = None
+) -> dict[str, Any]:
     """What an ended planning task recorded, as a plan: its drafts, its decisions on the issues it was given,
-    its summary and gaps, and why the plan cannot be approved, if it cannot."""
+    its summary and gaps, and why the plan cannot be approved, if it cannot. base: the plan the run revised,
+    when it revised one; the result is then that plan with the run's changes over it (plans.merge), and what
+    the run did not record again (a decision, the summary, the gaps) is the base's."""
 
     def read() -> list[dict[str, Any]]:
         return events.read(0, 5000, task_id=task["id"], event_type=",".join(PLAN_EVENTS))["events"]
@@ -389,13 +486,26 @@ async def gather(goal: dict, task: dict, events: Events, issues: list[dict[str, 
         return [e for e in recorded if e["event_type"] == event_type]
 
     drafts = plans.latest_drafts(of("issue_drafted"))
-    items = plans.complete(plans.latest_items(of("issue_planned")), issues)
+    decided = plans.latest_items(of("issue_planned"))
     summary, gaps = plans.latest_summary(of("plan_summarized"))
+    if base:
+        drafts, decided = plans.merge(list(base.get("drafts") or []), drafts, decided)
+        again = {item["ref"] for item in decided}
+        decided = [*(i for i in base.get("items") or [] if i["ref"] not in again), *decided]
+        if not of("plan_summarized"):
+            summary, gaps = str(base.get("summary") or ""), list(base.get("gaps") or [])
+    items = plans.complete(decided, issues)
     # A draft that names a whole top-level directory would make every task touching it wait for this one: a
     # gap the planner's suggested fix can settle by naming the files.
     gaps = [*gaps, *plans.broad_path_gaps(drafts)]
     if task["status"] != "closed":
-        invalid = [f"the planning task ended {task['status']}: {task.get('status_reason') or 'no reason was recorded'}"]
+        limit = stopped_at(task)
+        invalid = [
+            f"planning stopped at its {limit} limit with {len(drafts)} task{'' if len(drafts) == 1 else 's'} drafted, "
+            "so the plan is not finished. Plan again continues from these tasks"
+            if limit
+            else f"the planning task ended {task['status']}: {task.get('status_reason') or 'no reason was recorded'}"
+        ]
     else:
         invalid = plans.validate(drafts, goal["repos"], items, issues)
     return {"drafts": drafts, "items": items, "summary": summary, "gaps": gaps, "invalid": invalid}
