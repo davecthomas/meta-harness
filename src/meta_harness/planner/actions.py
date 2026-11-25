@@ -111,6 +111,97 @@ def actionable(
     return out
 
 
+def _usd(amount: object) -> str:
+    """Dollars as a person says them: $62, $3.50."""
+    text = f"{float(amount):.2f}"
+    return "$" + (text[:-3] if text.endswith(".00") else text)
+
+
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def plan_decision(
+    goal: dict,
+    plan: dict | None,
+    glance: dict | None = None,
+    suggestion: dict | None = None,
+    planning_usd: object = None,
+) -> dict:
+    """The plan's state and the one thing it asks of the operator now, from the goal's records: what the Plan
+    page's decision bar says, in two sentences at most, and its buttons, the recommended one first.
+
+    Each button is an action the page performs and a label that names it; one that spends says the most it
+    may spend. A state that asks nothing has no buttons. The page draws this and decides nothing itself, so
+    it cannot disagree with what `for_goal` lists as needing the operator.
+
+    glance: the plan's figures (plan_view.glance). planning_usd: the spend limit of one planning run."""
+    again = f" (up to {_usd(planning_usd)})" if planning_usd is not None else ""
+    replan = {"action": "replan", "label": f"Plan again{again}"}
+    drafting = bool(goal.get("plan_task_id"))
+    if plan is None:
+        if drafting:
+            return {"state": "drafting", "says": "The planner is writing the plan.", "buttons": []}
+        return {"state": "none", "says": "This goal has no plan.", "buttons": []}
+    tasks = len(plan.get("drafts") or [])
+    if goal["status"] != "planning":
+        return {
+            "state": "approved",
+            "says": f"This plan is approved. Its {_count(tasks, 'task')} are the goal's work now.",
+            "buttons": [],
+        }
+    if drafting:
+        return {
+            "state": "improving",
+            "says": f"The planner is revising the plan. It has {_count(tasks, 'task')} so far.",
+            "buttons": [],
+        }
+    if suggestion:
+        gaps = len(suggestion.get("fixes") or [])
+        return {
+            "state": "fix_waiting",
+            "says": f"The planner drafted a fix for {_count(gaps, 'gap')} in this plan.",
+            "buttons": [
+                {"action": "accept_fix", "label": "Accept the fix"},
+                {"action": "dismiss_fix", "label": "Keep the plan as it is"},
+            ],
+        }
+    if plan.get("stopped_at"):
+        return {
+            "state": "incomplete",
+            "says": f"Planning stopped at its {plan['stopped_at']} limit with {_count(tasks, 'task')} drafted.",
+            "buttons": [{"action": "replan", "label": f"Carry on planning{again}"}],
+        }
+    if plan.get("invalid"):
+        reasons = plan["invalid"]
+        more = f" And {len(reasons) - 1} more." if len(reasons) > 1 else ""
+        return {
+            "state": "cannot_approve",
+            "says": f"This plan cannot be approved yet: {str(reasons[0]).rstrip('.')}.{more}",
+            "buttons": [replan],
+        }
+    figures = glance or {}
+    repos = len(figures.get("repos") or [])
+    spend = figures.get("may_spend_usd")
+    says = f"{_count(tasks, 'task')} in {_count(repos, 'repo')}." if repos else f"{_count(tasks, 'task')}."
+    approve = "Approve and start"
+    if spend is not None and float(spend) > 0:
+        budget = figures.get("budget_usd")
+        if budget is not None and float(spend) > float(budget):
+            # A budget is a hard cap: the plan may ask for more than the goal can spend, and the operator
+            # should know before approving that work stops there.
+            says += f" Running them may spend up to {_usd(spend)}, and your budget of {_usd(budget)} stops work there."
+        else:
+            of_budget = f" of your {_usd(budget)} budget" if budget is not None else ""
+            says += f" Running them may spend up to {_usd(spend)}{of_budget}."
+        approve += f" (up to {_usd(spend)})"
+    return {
+        "state": "ready",
+        "says": says,
+        "buttons": [{"action": "approve_plan", "label": approve}, replan],
+    }
+
+
 # The most actions one goal is given at once, for a page that lists many goals.
 MAX_FOR_GOAL = 3
 

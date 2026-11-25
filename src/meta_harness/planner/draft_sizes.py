@@ -35,6 +35,18 @@ LACKS = {
 }
 
 
+def with_sizes(goal: dict, drafts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The drafts, each with the size it was last given (`findings`), so the plan can say what it may spend.
+    One that was not sized, or whose text changed since, has none."""
+    known = _sized.get(goal["id"], {})
+    out = []
+    for draft in drafts:
+        sized = known.get(copies.text_hash(draft.get("title") or draft["draft_id"], draft.get("body") or ""))
+        rest = {k: v for k, v in draft.items() if k != "size"}
+        out.append({**rest, "size": sized.size} if sized is not None else rest)
+    return out
+
+
 def round_of(task: dict) -> int:
     """Which resize round the planning task was: 0 for one that planned afresh."""
     found = _ROUND.search(str(task.get("external_ref") or ""))
