@@ -8,6 +8,9 @@ import { ErrorAlert, PageHeader } from "../../components/ui";
 // Where the operator was when they pressed Connect, kept across the trip to GitHub and back.
 const RETURN_TO = "mh:github-return-to";
 
+// How long "Saved" shows after a change.
+const SAVED_MS = 2500;
+
 const say = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 // Sends the browser to GitHub to sign in and consent. GitHub sends it back to /github/connected.
@@ -107,14 +110,23 @@ function Owners({ chosen, onSaved }: { chosen: string[]; onSaved: (found: GitHub
   const [reach, setReach] = useState<Reachable | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Says "Saved" for a moment after a change is taken: nothing else on the page shows it went through.
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), SAVED_MS);
+    return () => clearTimeout(timer);
+  }, [saved]);
   useEffect(() => {
     api.githubReachable().then(setReach, (err) => setError(`${say(err)}. Reload the page to try again.`));
   }, []);
   const save = async (owners: string[]) => {
     setSaving(true);
+    setSaved(false);
     setError(null);
     try {
       onSaved(await api.githubChooseOwners(owners));
+      setSaved(true);
     } catch (err) {
       setError(`${say(err)}. Pick again to retry.`);
     } finally {
@@ -141,6 +153,9 @@ function Owners({ chosen, onSaved }: { chosen: string[]; onSaved: (found: GitHub
         nothingFoundMessage="Your connection reaches no account by that name."
         maw={520}
       />
+      <Text size="xs" c={saved ? "teal" : "dimmed"} fw={saved ? 500 : 400} data-testid="github-owners-saved" aria-live="polite">
+        {saving ? "Saving…" : saved ? "Saved" : "Each change saves as you make it."}
+      </Text>
       <ErrorAlert error={error} />
     </Stack>
   );
