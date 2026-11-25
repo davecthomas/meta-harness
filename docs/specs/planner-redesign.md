@@ -139,20 +139,47 @@ or discard. A replan never replaces the current plan before the operator accepts
   their fixes, the counts by kind, the task ids in each kind, and the cost difference. The console draws it, and
   no model writes it.
 
-## How this fits the other planner specs
+## One model for every reason a plan changes
 
-- `docs/specs/adversarial-plan-review.md` puts its review summary and findings on a plan. They appear on this
-  page: the summary in the decision bar and "What changed", each finding on its task row.
-- `docs/specs/goals-span-repos.md` lists a plan's repos above its tasks. They appear as the repo tile and the
-  by-repo grouping.
-- Each of those specs builds its plan screens on this page. This one goes first.
+A plan changes for three causes: the planner's own gap fix, an adversarial review's findings, and an operator's
+replan note. The Plan page draws all three the same way, so a review never shows as one long list.
+
+Each cause yields reasons. A reason has one shape:
+
+| Field | Meaning |
+|---|---|
+| `source` | `gap`, `review` or `operator` |
+| `says` | What was wrong, in one sentence |
+| `change` | What settles it, in one sentence |
+| `tasks` | The tasks it names |
+| `severity` | `blocking` or `advice`; a gap and an operator's note are `blocking` |
+| `status` | `fixed`, `open`, `disputed` or `dismissed` |
+| `evidence` | Where to look: a file, a spec section, the planner's answer |
+
+The page treats every reason by its status, whatever its source:
+
+| Status | Where it appears | How |
+|---|---|---|
+| `fixed` | "What changed", under "Why it changed" | One row; past five, a count that opens |
+| `open` and `blocking` | The decision bar's sentence, and a card under "Open questions" | In full, with its buttons |
+| `open` and `advice` | A count under "Open questions" | Opens to its list |
+| `disputed` | A card under "Open questions" | With the planner's answer beside it |
+| `dismissed` | History | Who dismissed it |
+
+The decision bar always states the net result and asks one question. A plan with a review reads "GPT-6 Sol
+found 5 problems. The planner fixed 4. 1 needs you." A plan with a gap fix reads "The planner found 2 gaps and
+drafted a fix."
+
+`docs/specs/adversarial-plan-review.md` supplies review reasons and nothing else for the page: its findings
+map onto this shape field for field. `docs/specs/goals-span-repos.md` supplies the repo tile and the by-repo
+grouping. Each of those specs builds on this page, so this one goes first.
 
 ## Data and API
 
 | Field or call | Change | Default |
 |---|---|---|
 | `GET /v1/goals/{id}/plan` | Gains `state`, `glance` (the tile figures) and, when a proposed version exists, `proposed` with its `change_summary` | `proposed` is absent when there is none |
-| `change_summary` | New: `reasons` (gap and fix pairs), `counts` by kind, `tasks` by kind, `cost_delta_usd` | n/a |
+| `change_summary` | New: `reasons` (in the shape above), `counts` by kind, `tasks` by kind, `cost_delta_usd` | n/a |
 | `GET /v1/goals/{id}/plan/versions` | New: the versions with who made each, when, and its counts | n/a |
 | `GET /v1/goals/{id}/plan/diff?from=&to=&task=` | New: one task's old and new text | n/a |
 | `POST /v1/goals/{id}/replan` | Gains `keep` (task ids), `scope` (group ids) and `max_usd` | Keep the hand-edited tasks; the whole plan; the planning limit |
@@ -183,6 +210,8 @@ page does.
 - A replan with kept tasks leaves them unchanged, and its result is a proposal until accepted.
 - The console test for decision drag fails an ask with more than five lines of text before its first button.
 - The Plan page draws each state's decision bar with its buttons.
+- A review with eight open findings draws them grouped by kind with counts, and a review's fixed findings draw
+  as rows under "Why it changed", through the same component a gap fix uses.
 
 ## Decided (2026-11-25)
 

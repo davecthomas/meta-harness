@@ -186,7 +186,7 @@ revision and review runs alike.
 | Settings, planner defaults | `settings/SettingsPage.tsx` | "Adversarial plan review": Follow the autonomy, Always or Never |
 | Goal page, settings | `goals/GoalFields.tsx` | The switch; turning it on while a plan waits starts a review |
 | Planner panel | `goals/PlannerUpdates.tsx` | The steps below, in the planner's usual voice |
-| Plan | `goals/GoalPlan.tsx`, `goals/PlanReview.tsx` | The review summary, findings on drafts, change marks, and the approve button's words |
+| Plan page | `console/src/features/plan/` (from the planner redesign) | The decision bar's sentence, the review tile, findings as reasons, open findings as cards |
 | What needs the operator | `planner/actions.py`, `planner/needs.py` | The need below |
 
 ### The planner panel
@@ -209,14 +209,23 @@ the same progress indicator as planning.
 
 ### The plan
 
-- Above the drafts, a review summary: "Reviewed by GPT-6 Sol · 2 rounds · 5 found, 4 fixed, 1 open", which
-  expands to every finding, grouped by status.
-- The version line names it: "Version 2, revised after the adversarial review".
-- Each draft card shows its findings under it: fixed ones folded to one line with a check mark, open ones
-  expanded, blocking ones marked as such. A finding about the whole plan sits in the summary.
-- Each draft the review changed shows a mark: "new", "split", "merged", "moved to <repo>", "reordered" or "check
-  changed", against the version before the review. "Show changes" shows the previous version beside it.
-- Each open finding has "Fix this" and "Not a problem".
+The review appears on the Plan page that `docs/specs/planner-redesign.md` specifies, and follows that spec's
+rules for reducing decision drag. It adds no screen and no list of its own.
+
+- **One sentence in the decision bar.** "GPT-6 Sol found 5 problems. The planner fixed 4. 1 needs you." The
+  buttons are "See the open problem" and "Approve with 1 open".
+- **One tile.** "Review: 5 found · 4 fixed · 1 open", beside the plan's other tiles.
+- **Findings are reasons.** In "What changed", each finding the planner fixed is a row under "Why it changed":
+  the problem in a few words, the fix beside it. The change counts follow, as they do for any proposed version.
+- **Only open findings show in full.** Each is a card: one sentence for what is wrong, one for the change that
+  would settle it, the tasks it names as links, and "Fix this" and "Not a problem". The file or spec section
+  that shows the problem opens from the card.
+- **More than five open findings group by kind**, each kind with its count, folded: "Order: 4", "Checks: 3".
+- **Fixed findings and advice are counts.** "4 fixed" and "2 suggestions" each open to their list.
+- **Rounds fold into one result.** The operator sees the plan against the version they last saw, with every
+  round's findings merged. The History part holds each round for anyone who wants it.
+- **A task row shows a mark, never a finding's text.** The mark says how many open findings name the task, and
+  opens them.
 
 ### What needs the operator
 
