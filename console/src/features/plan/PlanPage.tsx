@@ -40,7 +40,7 @@ const dollars = (amount: string | null | undefined): string => {
 export function DecisionBar({ decision, onAct, busy }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean }) {
   const working = decision.state === "drafting" || decision.state === "improving";
   return (
-    <Paper withBorder p="md" radius="md" shadow="sm" data-testid="plan-decision" style={{ position: "sticky", top: "calc(var(--app-shell-header-height, 72px) + 8px)", zIndex: 5 }}>
+    <Paper withBorder p="md" radius="md" shadow="sm" data-testid="plan-decision" style={{ position: "sticky", top: "var(--app-shell-header-height, 72px)", zIndex: 5 }}>
       <Group justify="space-between" wrap="wrap" gap="md">
         <Group gap="sm" wrap="nowrap" style={{ flex: "1 1 320px" }}>
           {working && <Loader size="sm" />}
