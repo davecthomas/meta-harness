@@ -100,6 +100,19 @@ revision and review runs alike.
 
 - A review that finds nothing records "No problems found".
 
+### The reviewer's instructions are a locked skill
+
+- What the reviewer looks for, how it judges severity and how it words a finding live in a skill,
+  `adversarial-plan-review`, shipped in `config/skills/` and named in `config/skills/locked.json`. The
+  `pi-plan-review` profile loads it.
+- The lock works as it does for `no-ai-slop2`: a pull request changes the skill, and a save or an import under
+  its name fails.
+  A deploy sets the stored copy to the shipped files.
+- The operator can read it. Configuration, Skills lists it with the lock, and the plan's review summary links
+  to it: "Reviewed with the adversarial-plan-review skill".
+- Locking it keeps every review to the same standard, so two reviews of the same plan agree and a finding's
+  severity means the same thing on every goal.
+
 ### Revising
 
 - When a round has blocking findings, a planning task revises the plan with the findings as its note. The
@@ -256,6 +269,7 @@ tool, no write tools. The pi model client extension gains that tool, beside `upd
 | Plan API | `planner/plan_api.py` | `POST /v1/goals/{id}/plan/continue` (carry on planning or reviewing), `POST /v1/goals/{id}/plan/review` (review again), `POST /v1/goals/{id}/plan/findings/{n}` (the Fix this and Not a problem buttons); the plan's GET includes its review rounds and findings |
 | Goal create and edit | `planner/service.py`, `planner/store.py` | `adversarial_review` on the goal |
 | User settings | `planner/settings.py` | `adversarial_review` in the planner defaults |
+| Reviewer skill | `config/skills/adversarial-plan-review/`, `config/skills/locked.json` | The locked skill the reviewer loads |
 | Runs | `run_service`, `extension/`, `config/harness_profiles.json` | The `plan_review` task type and its profile. If the RunTask workflow branches on the new type, the branch goes behind `workflow.patched("plan-review")` with a recorded history |
 | Planner voice | `planner/updates.py` | The panel's lines above, through the writing pass |
 | Costs | `costs/model_source.py` | A `plan_review` task's cost is a planning cost |
@@ -272,6 +286,7 @@ Every migration only adds. No existing event type changes.
   A single continuation starts from them and drafts only what is missing. A second failure asks the operator.
 - A revision copies untouched drafts into the new version unchanged.
 - A review that ends early records its round as partial and never reads as "No problems found".
+- A save that changes the `adversarial-plan-review` skill fails, and the Skills page shows it locked.
 - The reviewer is never the plan's own model family. With no other family, the planner skips the review and says
   why.
 - The default follows the autonomy and the operator's setting. A goal that runs issues as they are offers no
