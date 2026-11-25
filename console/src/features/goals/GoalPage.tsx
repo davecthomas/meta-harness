@@ -28,6 +28,7 @@ import { OPEN_SETTINGS, PlannerUpdates, SHOW_ISSUES } from "./PlannerUpdates";
 import { GoalSpend } from "./GoalSpend";
 import { BudgetAlert, BudgetRow, ResumeBudget, budgetStanding, budgetStops } from "./budget";
 import { AUTONOMY } from "./autonomy";
+import { ActsAs } from "./ActsAs";
 import { AssigneeField, AutonomyEdit, DescriptionField, LabelEdit, ParallelEdit, ParentField, PriorityEdit, ReposEdit, TitleField } from "./GoalFields";
 import { HeldActions, StrictIssuesEdit } from "./sizing";
 import { ProvenanceEdit, provenanceSummary, type ProvenanceGoal } from "./provenanceHeaders";
@@ -427,6 +428,7 @@ export function GoalPage() {
               ...(goal.tracker === "jira" ? [["Parent", <ParentField goal={goal} />] as [string, ReactNode]] : []),
               ["Label", <LabelEdit {...editable} />],
               ["Repos", <ReposEdit {...editable} />],
+              ["GitHub access", <ActsAs goal={goal} readOnly={!open} />],
               ["Without asking", <AutonomyEdit {...editable} />],
               // The amount, what happens when it is reached, and the allowed overage, in one row.
               ["Budget", <BudgetRow {...editable} />],

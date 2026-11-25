@@ -4167,7 +4167,11 @@ goal and the goal page offer both (`GET /v1/repos?pushable=1`). The GitHub
 tracker and the spec file reader call GitHub as the acting operator too
 (`acting.github`). The console's issue, label and spec file lists read a repo
 the caller can read with their connection, as them. A task created directly by
-an operator key still needs a registered repo.
+an operator key still needs a registered repo. The goal page says whose
+access a goal uses (`GET /v1/goals/{id}/acts-as`): the operator's GitHub
+account, or the App. Another operator with a connection can take the goal over
+(`POST /v1/goals/{id}/act-as-me`, recorded as `goal_acts_as_changed`), when
+they can push to each of its repos.
 
 **Adversarial plan review** (`planner/plan_review.py`). A goal can have its
 plans reviewed by a second model before the operator approves them

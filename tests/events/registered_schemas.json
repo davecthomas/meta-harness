@@ -2146,5 +2146,24 @@
     "properties": {},
     "required": [],
     "additionalProperties": true
+  },
+  "goal_acts_as_changed v1": {
+    "type": "object",
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "acts_as": {
+        "type": "string"
+      },
+      "was": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "acts_as"
+    ],
+    "additionalProperties": true
   }
 }

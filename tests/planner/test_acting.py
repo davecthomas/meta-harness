@@ -156,3 +156,59 @@ async def test_a_tracker_or_spec_read_uses_the_acting_operator_and_the_app_other
         ("dave", "/repos/acme/api/issues"),
         ("dave", "/repos/acme/api/broken"),
     ]
+
+
+@pytest.mark.db
+def test_the_goal_page_says_whose_access_a_goal_uses_and_another_operator_takes_it_over(migrated, registry, configured):  # noqa: F811
+    from fastapi.testclient import TestClient
+
+    from meta_harness import db
+    from meta_harness.planner import reach
+    from meta_harness.planner.service import create_app
+
+    from .test_github_connection import PAT, Repos
+    from .test_planner import Events, FakeTasks, _no_title
+    from .test_planning import WritingTracker
+
+    with db.connect(autocommit=True) as conn:
+        conn.execute("DELETE FROM planner.github_connection")
+    reach._held.clear()
+    events = Events()
+    app = create_app(
+        events, WritingTracker(), FakeTasks(), operator_keys={"op-key": "dave", "pat-key": "pat"}, service_keys={},
+        sweep_seconds=0, titler=_no_title, github_transport=Repos(),
+    )  # fmt: skip
+    with TestClient(app) as client:
+        goal = _new_goal(client, OPERATOR)
+        at = f"/v1/goals/{goal['id']}"
+        assert client.get(f"{at}/acts-as", headers=OPERATOR).json() == {
+            "acts_as": None, "login": None, "state": None, "mine": False, "can_take": False,
+        }  # fmt: skip
+        none = client.post(f"{at}/act-as-me", headers=PAT)
+        assert (
+            none.status_code == 409 and none.json()["detail"] == "you have not connected GitHub. Connect it in Settings"
+        )
+
+        state = httpx.URL(client.post("/v1/github/connect", headers=PAT).json()["url"]).params["state"]
+        assert (
+            client.post("/v1/github/connection", json={"code": "good-code", "state": state}, headers=PAT).status_code
+            == 200
+        )
+        assert client.get(f"{at}/acts-as", headers=PAT).json()["can_take"] is True
+        # The goal changes a repo pat's connection cannot push to: taking it over is refused, with what to do.
+        refused = client.post(f"{at}/act-as-me", headers=PAT)
+        assert refused.status_code == 422
+        assert refused.json()["detail"].startswith("your GitHub connection cannot push to davecthomas/meta-harness")
+
+        with db.connect(autocommit=True) as conn:
+            conn.execute("UPDATE planner.goal SET repos = '{acme/api}' WHERE id = %s", (goal["id"],))
+        taken = client.post(f"{at}/act-as-me", headers=PAT)
+
+        assert taken.status_code == 200 and taken.json() == {
+            "acts_as": "pat", "login": "octo-dave", "state": "connected", "mine": True, "can_take": False,
+        }  # fmt: skip
+        assert acting.of_goal(goal["id"]) == "pat"
+        changed = [e for e in events.events if e[0] == "goal_acts_as_changed"]
+        assert [e[1] for e in changed] == [{"goal_id": goal["id"], "acts_as": "pat", "was": ""}]
+        # To the operator it is not theirs, and their own connection is missing: nothing to take with.
+        assert client.get(f"{at}/acts-as", headers=OPERATOR).json()["mine"] is False

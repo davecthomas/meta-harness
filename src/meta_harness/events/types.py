@@ -822,6 +822,16 @@ REGISTRY: list[EventType] = [
         _object({"login": {"type": "string"}, "scopes": {"type": "string"}}, ["login"]),
     ),
     EventType("github_disconnected", 1, _object({})),
+    # An operator took a goal over: it uses their GitHub connection from now on (planner/acts_as_api.py). was:
+    # the operator it acted as before, empty for the GitHub App.
+    EventType(
+        "goal_acts_as_changed",
+        1,
+        _object(
+            {"goal_id": {"type": "string"}, "acts_as": {"type": "string"}, "was": {"type": "string"}},
+            ["goal_id", "acts_as"],
+        ),
+    ),
     # A plan's adversarial review (planner/plan_review.py): a reviewer of another model family than the planner's
     # was started on a plan version, and its run ended with what it found. state: done, partial, failed, canceled.
     EventType(
