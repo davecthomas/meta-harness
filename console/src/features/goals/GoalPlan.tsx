@@ -226,8 +226,11 @@ export function plannedIn(plan: { source: string; created_at: string }, asked: s
   return `Planned in ${spanWords(made - Date.parse(asked))}, ${waited}`;
 }
 
-export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => void }) {
+// embedded: the section is part of the Plan page, which draws the plan's decision and its changes itself: the
+// section then shows the tasks alone, with no Approve or Plan again of its own. onShown: told each plan read.
+export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal: Goal; onApproved: () => void; embedded?: boolean; onShown?: (plan: Plan | null) => void }) {
   const [shown, setShown] = useState<Plan | null>(null);
+  useEffect(() => onShown?.(shown), [shown, onShown]);
   // The drafts as edited here and not yet saved; null when they are the saved version's.
   const [edited, setEdited] = useState<PlanDraft[] | null>(null);
   // The decisions on the goal's issues as edited here and not yet saved; null when they are the saved version's.
@@ -394,13 +397,13 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
               <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => setEditing({ draft: { draft_id: "", repo: goal.repos[0], title: "", body: "\n\n## Acceptance checks\n\n- ", labels: [], depends_on: [] }, isNew: true })}>
                 Add a task
               </Button>
-              <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={dirty} onClick={() => setAsking("replan")}>Plan again</Button>
-              <Button size="xs" color="teal" leftSection={<IconCheck size={14} />} disabled={!canApprove} onClick={() => setAsking("approve")}>Approve the plan</Button>
+              {!embedded && <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={dirty} onClick={() => setAsking("replan")}>Plan again</Button>}
+              {!embedded && <Button size="xs" color="teal" leftSection={<IconCheck size={14} />} disabled={!canApprove} onClick={() => setAsking("approve")}>Approve the plan</Button>}
             </Group>
           )
         }
       >
-        The plan
+        {embedded ? "Tasks" : "The plan"}
       </SectionTitle>
       {unsaved.element}
       <ErrorAlert error={error} />
@@ -427,7 +430,7 @@ export function GoalPlan({ goal, onApproved }: { goal: Goal; onApproved: () => v
             </Text>
             {plan.task_id && <Anchor component={Link} to={`/tasks/${plan.task_id}`} size="sm">The planning task's run</Anchor>}
           </Group>
-          {shown.applied_fix && !dirty && (
+          {shown.applied_fix && !dirty && !embedded && (
             <Alert color="blue" variant="light" title={`The planner fixed ${shown.applied_fix.fixes.length === 1 ? "a gap" : `${shown.applied_fix.fixes.length} gaps`} in its plan`} data-testid="plan-applied-fix">
               <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
                 <div style={{ flex: "1 1 280px" }}><FixFacts need={shown.applied_fix} /></div>

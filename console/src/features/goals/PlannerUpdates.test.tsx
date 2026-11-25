@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import { theme } from "../../theme";
 import { FIX_REASONS_SHOWN, PlannerUpdates, since } from "./PlannerUpdates";
@@ -31,6 +31,12 @@ const ISSUES = [{ ref: "jira:VL-9", repo: "o/r", state: "open", depends_on: [], 
 const FIRST = { number: 1, headline: "The plan is ready for you.", body: "Three tasks, in order.", needs_you: [], next: "", created_at: "2026-11-19T11:00:00Z" };
 
 // The panel over a fake API. reads: what each GET answers, the last one repeating. Returns the POSTs made.
+// Where the page is, so a button that takes the operator elsewhere can be seen to.
+function Where() {
+  const at = useLocation();
+  return <span data-testid="where">{at.pathname + at.search}</span>;
+}
+
 function show(reads: unknown[], open = true, ask: () => Promise<Response> = () => respond({ update: LATEST }), planning = false) {
   const posts: string[] = [];
   let read = 0;
@@ -49,6 +55,7 @@ function show(reads: unknown[], open = true, ask: () => Promise<Response> = () =
     <MantineProvider theme={theme}>
       <MemoryRouter>
         <PlannerUpdates goalId="g-1" open={open} planning={planning} />
+        <Where />
       </MemoryRouter>
     </MantineProvider>,
   );
@@ -117,9 +124,12 @@ test("every need comes with the button that resolves it, from its task's state n
   expect(rows).toHaveLength(8);
   for (const row of rows) expect(row.querySelectorAll("a, button").length).toBeGreaterThan(0);
 
-  fireEvent.click(within(rows[0]).getByRole("button", { name: "Approve the plan" }));
   fireEvent.click(within(rows[4]).getByRole("button", { name: "Raise the budget" }));
-  expect(seen).toEqual(["approve", "settings"]);
+  expect(seen).toEqual(["settings"]);
+  // The plan is approved on its own page: the button goes there, and its approval opens on arrival.
+  fireEvent.click(within(rows[0]).getByRole("button", { name: "Approve the plan" }));
+  expect(seen).toEqual(["settings"]);
+  expect(screen.getByTestId("where").textContent).toBe("/goals/g-1/plan?do=approve");
   expect((await within(rows[1]).findByRole("link", { name: "See the changes" })).getAttribute("href")).toBe("/tasks/t-1?tab=changes");
   expect(await within(rows[2]).findByRole("button", { name: "Merge as is" })).toBeTruthy();
   expect(within(rows[2]).getByRole("link", { name: "See the findings" }).getAttribute("href")).toBe("/tasks/t-2?tab=reviews");
@@ -294,6 +304,7 @@ test("a plan that cannot be approved is offered to be planned again, never appro
   fireEvent.click(await screen.findByRole("button", { name: "Plan again" }));
   window.removeEventListener("mh:replan", hear);
 
-  expect(heard).toEqual(["replan"]);
+  expect(heard).toEqual([]);
+  expect(screen.getByTestId("where").textContent).toBe("/goals/g-1/plan?do=replan");
   expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
 });

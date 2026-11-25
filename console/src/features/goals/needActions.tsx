@@ -134,8 +134,11 @@ export function NeedButton({ need, planning, goalId, label, onDone, away = false
   const navigate = useNavigate();
   // On the goal's page a press sends its event; away from it, the same press opens the page with that event
   // sent on arrival (GoalPage reads `do`).
-  const send = (name: string) => () =>
+  // The plan's approval and its Plan again are done on the plan's own page, wherever the button is shown.
+  const send = (name: string) => () => {
+    if (name === APPROVE_PLAN || name === REPLAN) return void navigate(`/goals/${goalId}/plan?do=${DO_BY_EVENT[name]}`);
     void (away ? navigate(`/goals/${goalId}?do=${DO_BY_EVENT[name]}`) : window.dispatchEvent(new CustomEvent(name)));
+  };
   const task = need.task_id ?? "";
   const action = need.action || (planning && !need.ref ? "approve_plan" : "");
   switch (action) {

@@ -45,6 +45,7 @@ function renderPanel(handler: (url: string, init?: RequestInit) => Response) {
         <Routes>
           <Route path="/" element={<WorkReport />} />
           <Route path="/goals/:id" element={<Arrived />} />
+          <Route path="/goals/:id/plan" element={<Arrived />} />
         </Routes>
       </MemoryRouter>
     </MantineProvider>,
@@ -157,7 +158,7 @@ test("a row that needs the operator says what each step is and carries the butto
   expect(within(rows[3]).getByRole("link", { name: "Open the goal" }).getAttribute("href")).toBe("/goals/g-4");
 
   fireEvent.click(within(approve).getByRole("button", { name: "Approve the plan" }));
-  expect((await screen.findByTestId("arrived")).textContent).toBe("/goals/g-2?do=approve");
+  expect((await screen.findByTestId("arrived")).textContent).toBe("/goals/g-2/plan?do=approve");
   expect(calls.some((c) => c.init?.method === "POST")).toBe(false);
 });
 
@@ -190,7 +191,7 @@ test("an answer carries the buttons for what it suggests, each beside the goal i
   expect(open.textContent).toContain("Keep tasks through compaction");
   expect(within(open).getByRole("link", { name: "Open the plan" }).getAttribute("href")).toBe("/goals/g-2");
   fireEvent.click(within(approve).getByRole("button", { name: "Approve the plan" }));
-  expect((await screen.findByTestId("arrived")).textContent).toBe("/goals/g-2?do=approve");
+  expect((await screen.findByTestId("arrived")).textContent).toBe("/goals/g-2/plan?do=approve");
 });
 
 test("an answer that suggests no step has no button", async () => {
