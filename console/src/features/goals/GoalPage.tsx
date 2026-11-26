@@ -17,6 +17,7 @@ import { LeftOpenIssues } from "./LeftOpenIssues";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { NoSuchRecord, isNotFound } from "../../components/NoSuchRecord";
 import { GoalStanding } from "./GoalStanding";
+import { PlanBody } from "../plan/PlanPage";
 import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures, failures } from "./GoalFailures";
 import { usd } from "../../money";
@@ -359,8 +360,13 @@ export function GoalPage() {
       {!open && <LeftOpenIssues goalId={goal.id} tracker={trackerTitle(goal.tracker ?? "github")} onClosed={() => void Promise.all([load(), loadProgress()])} />}
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
       <GoalStanding standing={goal.standing} explained={explained} budgetShown={budgetStanding(goal, spentNow) !== "ok"} planning={goal.status === "planning"} />
-      {/* The planner's word on the goal, ahead of everything the page lists. */}
-      <PlannerUpdates goalId={goal.id} open={open} planning={goal.status === "planning"} label={goal.label ?? null} />
+      {/* A goal being planned shows its plan here, laid out for its decision, so the operator reads it where they
+          land. Otherwise the planner's word on the goal leads the page. */}
+      {goal.status === "planning" ? (
+        <PlanBody goal={goal} onChanged={() => void load(true)} onApproved={() => void load()} />
+      ) : (
+        <PlannerUpdates goalId={goal.id} open={open} label={goal.label ?? null} />
+      )}
       {/* What the planner would do next: by itself once the goal has ended, and when asked while it runs. */}
       <NextSteps goalId={goal.id} ended={!open} planning={goal.status === "planning"} watch={`${goal.status}:${Object.values(tasks).map((t) => t.status).join(",")}`} />
       {/* The plan waiting for approval comes next, above the settings: it is what the operator decides on. */}

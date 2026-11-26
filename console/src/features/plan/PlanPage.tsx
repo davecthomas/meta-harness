@@ -44,7 +44,11 @@ export function DecisionBar({ decision, onAct, busy }: { decision: PlanAsk; onAc
       <Group justify="space-between" wrap="wrap" gap="md">
         <Group gap="sm" wrap="nowrap" style={{ flex: "1 1 320px" }}>
           {working && <Loader size="sm" />}
-          <Text size="lg" fw={600} lh={1.35} data-testid="plan-decision-says">{decision.says}</Text>
+          <Stack gap={2}>
+            <Text size="lg" fw={600} lh={1.35} data-testid="plan-decision-says">{decision.says}</Text>
+            {/* While the planner or its reviewer works, nothing is asked: the page follows it as it goes. */}
+            {working && <Text size="sm" c="dimmed">Nothing needs you until this is done.</Text>}
+          </Stack>
         </Group>
         <Group gap="xs">
           {decision.buttons.map((button, i) => (
@@ -326,48 +330,39 @@ export function History({ versions }: { versions: PlanVersion[] }) {
   );
 }
 
-export function PlanPage() {
-  const { goalId = "" } = useParams();
+// The plan, laid out for its decision: what it asks with its buttons, its figures, what changed, its review,
+// its open questions and its tasks. The goal's page shows this while the goal is planned, so the operator reads
+// the plan where they land; the plan's own page shows it too, with its versions. onApproved: the plan was
+// approved, and the goal is running its tasks now. onChanged: the goal changed (a review, a fix).
+export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal; onApproved: () => void; onChanged: () => void; onShown?: (plan: Plan | null) => void }) {
+  const goalId = goal.id;
   const navigate = useNavigate();
-  const [goal, setGoal] = useState<Goal | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
-  const [versions, setVersions] = useState<PlanVersion[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      setGoal(await api.goal(goalId));
-      setError(null);
-    } catch (err) {
-      setError(`${err instanceof Error ? err.message : String(err)}. Reload the page to try again.`);
-    }
-  }, [goalId]);
-  useEffect(() => void load(), [load]);
+  const shown = useCallback((found: Plan | null) => {
+    setPlan(found);
+    onShown?.(found);
+  }, [onShown]);
 
   // An approved plan's section reads the plan for itself, so the page reads it here for its decision and figures.
-  const approved = !!goal && goal.status !== "planning";
+  const approved = goal.status !== "planning";
   useEffect(() => {
-    if (approved) api.goalPlan(goalId).then(setPlan, () => setPlan(null));
-  }, [approved, goalId]);
-
-  // The versions are read again whenever the plan shown is another one.
-  const version = plan?.plan?.version;
-  useEffect(() => {
-    if (!goalId) return;
-    api.planVersions(goalId).then((found) => setVersions(found.versions), () => setVersions([]));
-  }, [goalId, version]);
+    if (approved) api.goalPlan(goalId).then(shown, () => shown(null));
+  }, [approved, goalId, shown]);
 
   // A link from another page can ask for the approval or for Plan again on arrival (`?do=`): done once the
-  // plan's section is listening, then taken off the address so a reload does not do it again.
+  // plan's section is listening, then taken off the address so a reload does not do it again. Another `do`
+  // (the goal page's own, such as the budget) is left for its page.
   const [search, setSearch] = useSearchParams();
   const asked = search.get("do");
   const ready = !!plan;
   useEffect(() => {
     if (!asked || !ready) return;
     const name = EVENT_BY_DO[asked];
+    if (name !== APPROVE_PLAN && name !== REPLAN) return;
     const timer = window.setTimeout(() => {
-      if (name === APPROVE_PLAN || name === REPLAN) window.dispatchEvent(new CustomEvent(name));
+      window.dispatchEvent(new CustomEvent(name));
       setSearch((now) => { now.delete("do"); return now; }, { replace: true });
     }, 300);
     return () => window.clearTimeout(timer);
@@ -392,8 +387,69 @@ export function PlanPage() {
     }
   };
 
-  if (!goal) return error ? <ErrorAlert error={error} /> : <Loader />;
   const planning = goal.status === "planning";
+  const decision = plan?.decision;
+  return (
+    <Stack gap="lg" data-testid="plan-body">
+      <ErrorAlert error={error} />
+      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} />}
+      {plan?.glance && <Glance glance={plan.glance} />}
+      {plan && <WhatChanged plan={plan} />}
+      {plan?.plan && (
+        <ReviewPart
+          plan={plan}
+          goal={goal}
+          onChanged={() => {
+            onChanged();
+            window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
+            void reloadNeeds();
+          }}
+        />
+      )}
+      {planning && plan?.plan && <OpenQuestions gaps={plan.plan.gaps ?? []} />}
+      {planning ? (
+        <GoalPlan
+          goal={goal}
+          embedded
+          onShown={shown}
+          onApproved={() => {
+            void reloadNeeds();
+            onApproved();
+          }}
+        />
+      ) : (
+        <ApprovedPlan goal={goal} />
+      )}
+    </Stack>
+  );
+}
+
+export function PlanPage() {
+  const { goalId = "" } = useParams();
+  const navigate = useNavigate();
+  const [goal, setGoal] = useState<Goal | null>(null);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [versions, setVersions] = useState<PlanVersion[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setGoal(await api.goal(goalId));
+      setError(null);
+    } catch (err) {
+      setError(`${err instanceof Error ? err.message : String(err)}. Reload the page to try again.`);
+    }
+  }, [goalId]);
+  useEffect(() => void load(), [load]);
+
+  // The versions are read again whenever the plan shown is another one.
+  const version = plan?.plan?.version;
+  useEffect(() => {
+    if (!goalId) return;
+    api.planVersions(goalId).then((found) => setVersions(found.versions), () => setVersions([]));
+  }, [goalId, version]);
+
+  if (!goal) return error ? <ErrorAlert error={error} /> : <Loader />;
   const decision = plan?.decision;
   return (
     <Stack gap="lg" data-testid="plan-page">
@@ -408,34 +464,7 @@ export function PlanPage() {
         }
       />
       <ErrorAlert error={error} />
-      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} />}
-      {plan?.glance && <Glance glance={plan.glance} />}
-      {plan && <WhatChanged plan={plan} />}
-      {plan?.plan && (
-        <ReviewPart
-          plan={plan}
-          goal={goal}
-          onChanged={() => {
-            void load();
-            window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
-            void reloadNeeds();
-          }}
-        />
-      )}
-      {planning && plan?.plan && <OpenQuestions gaps={plan.plan.gaps ?? []} />}
-      {planning ? (
-        <GoalPlan
-          goal={goal}
-          embedded
-          onShown={setPlan}
-          onApproved={() => {
-            void reloadNeeds();
-            navigate(`/goals/${goal.id}`);
-          }}
-        />
-      ) : (
-        <ApprovedPlan goal={goal} />
-      )}
+      <PlanBody goal={goal} onShown={setPlan} onChanged={() => void load()} onApproved={() => navigate(`/goals/${goal.id}`)} />
       <History versions={versions} />
     </Stack>
   );

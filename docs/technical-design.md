@@ -4209,12 +4209,12 @@ as clean. A goal with reviews on gets no suggested fix, since the review
 covers a plan's gaps. `POST /v1/goals/{id}/plan/review` reviews any plan when
 an operator asks.
 
-**The Plan page** (`console/src/features/plan/`, `planner/plan_view.py`). A
-plan has a page of its own, `/goals/<id>/plan`. While a goal is planned, the
-planner's panel on the goal's page says the plan's state in that same one
-sentence, read every five seconds, with one button to the plan's page. An
-update's words show under it only when they are about this version of the plan
-and the plan waits to be decided. While a planning task or a reviewer works on
+**The Plan page** (`console/src/features/plan/`, `planner/plan_view.py`). While a
+goal is planned, its own page shows the plan in place of the planner's
+updates: the decision bar, the figures, what changed, the review, the open
+questions and the tasks (`PlanBody`), so the operator reads the plan where they
+land and decides it there. The plan also has a page of its own,
+`/goals/<id>/plan`, which adds the plan's versions. While a planning task or a reviewer works on
 the plan, nothing about it is asked anywhere: `GET /v1/needs` drops the
 approval too (`plan_review.marked`). The page leads with a decision bar: what the
 plan asks now, in a sentence or two, and its buttons, the recommended one

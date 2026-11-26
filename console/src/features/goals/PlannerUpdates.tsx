@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Anchor, Badge, Button, Collapse, Group, Loader, Paper, Stack, Text, Timeline } from "@mantine/core";
-import { IconArrowRight, IconRefresh } from "@tabler/icons-react";
-import { Link } from "react-router-dom";
+import { IconRefresh } from "@tabler/icons-react";
 import { VoiceMark } from "../../components/Voice";
 import { api } from "../../api";
 import { when } from "../../components/ui";
 import { NeedButton, type Need } from "./needActions";
 import { reloadNeeds } from "../overview/needsYou";
-import { usePlan } from "./PlanLink";
 
 // The need's shape, its actions and the events a need's button sends live with the buttons (needActions.tsx).
 // They are named here too, for the pages that have always read them from the planner's panel.
@@ -113,7 +111,6 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
   const [acted, setActed] = useState(false);
   const [earlier, setEarlier] = useState(false);
   const [, setNow] = useState(0);
-  const plan = usePlan(goalId, planning && open);
 
   const load = useCallback(() => api.goalUpdates(goalId).then(setRead, () => undefined), [goalId]);
 
@@ -163,48 +160,6 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
   if (!read || read.enabled === false || !Array.isArray(read.updates)) return null;
   if (!updates.length && !open) return null;
   const [latest, ...before] = updates;
-  // While a goal is planned, the plan's own state is what this panel says: where the plan stands and the one
-  // thing it asks, decided by the planner service as the page is read (plan.decision). An update is a model's
-  // words from a minute or more ago, and beside the plan's state it said the plan was unwritten while the plan
-  // waited, or asked for an approval while a reviewer was still reading. Its words show only when they are
-  // about this version of the plan and the plan is waiting to be decided.
-  const decision = planning && open ? plan?.decision ?? null : null;
-  if (planning && open) {
-    const working = !decision || decision.buttons.length === 0;
-    const about = latest && plan?.plan && latest.plan_version === plan.plan.version && !working ? latest : null;
-    const approve = decision?.buttons[0]?.action === "approve_plan";
-    const others = (read.needs ?? []).filter((need) => !PLAN_ACTIONS.includes(need.action || (need.ref ? "open_issue" : "approve_plan")));
-    return (
-      <Paper withBorder p="lg" mb="md" radius="md" data-testid="planner-updates" style={{ borderLeft: "5px solid var(--mantine-color-indigo-6)" }}>
-        <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
-          <Group gap="sm" wrap="nowrap" align="flex-start" style={{ flex: "1 1 320px" }}>
-            <VoiceMark who="planner" size={38} />
-            <Stack gap={4}>
-              <Text size="xs" tt="uppercase" fw={700} c="indigo" style={{ letterSpacing: 0.4 }}>
-                Goal Planner{plan?.plan ? ` · the plan, version ${plan.plan.version}` : ""}
-              </Text>
-              <Group gap="xs" wrap="nowrap" align="center" data-testid="planner-plan-state" role="status">
-                {working && <Loader size="xs" />}
-                <Text size="xl" fw={650} lh={1.3} data-testid="planner-headline">{decision?.says ?? "Reading the plan."}</Text>
-              </Group>
-              {working && decision && <Text size="sm" c="dimmed">Nothing needs you until this is done. The page follows it as it goes.</Text>}
-            </Stack>
-          </Group>
-          {plan?.plan && (
-            <Button component={Link} to={`/goals/${goalId}/plan`} size="sm" color={approve ? "teal" : undefined} variant={approve ? "filled" : "default"} rightSection={<IconArrowRight size={14} />} style={{ flexShrink: 0 }}>
-              {approve ? "Review and approve the plan" : working ? "Open the plan" : "Open the plan to decide"}
-            </Button>
-          )}
-        </Group>
-        {(about || others.length > 0) && (
-          <Stack gap="sm" pl={50} mt="xs">
-            {about && <Text size="md" style={{ whiteSpace: "pre-wrap" }}>{about.body}</Text>}
-            <NeedsYou needs={others} planning={planning} goalId={goalId} label={label} onDone={() => void done()} />
-          </Stack>
-        )}
-      </Paper>
-    );
-  }
   // An update is about the plan as it was when written. Once the plan is another version, what the update asks
   // is about a plan that is gone: it asks nothing, and says the next update is on its way. While the planner
   // writes a new version, nothing about the plan is the operator's either.
