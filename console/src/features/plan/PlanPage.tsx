@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Anchor, Badge, Button, Collapse, Group, List, Loader, Paper, SimpleGrid, Stack, Switch, Text, Timeline, UnstyledButton } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Collapse, Group, List, Loader, Paper, SimpleGrid, Stack, Switch, Text, Timeline, UnstyledButton } from "@mantine/core";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanAsk, type PlanFinding, type PlanGlance, type PlanVersion } from "../../api";
 import { ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
@@ -25,6 +25,15 @@ const STATE_NAMES: Record<PlanAsk["state"], string> = {
   approved: "Approved",
 };
 const STATE_COLORS: Partial<Record<PlanAsk["state"], string>> = { ready: "teal", approved: "teal", cannot_approve: "red", incomplete: "yellow", fix_waiting: "yellow" };
+
+// What a review's state is called beside its title.
+const REVIEW_STATES: Record<string, { label: string; color: string }> = {
+  running: { label: "Running", color: "blue" },
+  done: { label: "Done", color: "teal" },
+  partial: { label: "Stopped early", color: "yellow" },
+  failed: { label: "Did not finish", color: "red" },
+  canceled: { label: "Canceled", color: "gray" },
+};
 
 // The most of a list shown before it is counted: a person deciding reads a few, never a page.
 export const SHOWN_BEFORE_COUNTING = 5;
@@ -88,7 +97,7 @@ export function Glance({ glance }: { glance: PlanGlance }) {
         <Tile label="Budget" value={glance.budget_usd ? dollars(glance.budget_usd) : "None set"} note="what the tasks may spend is known once they are sized" />
       )}
       <Tile label="Can start at once" value={String(glance.can_start)} />
-      <Tile label="Open questions" value={String(glance.open_questions)} />
+      {glance.open_questions > 0 && <Tile label="To weigh first" value={String(glance.open_questions)} warn />}
     </SimpleGrid>
   );
 }
@@ -251,7 +260,11 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
           )
         }
       >
-        Adversarial review
+        <Group gap="xs" component="span" display="inline-flex" align="center">
+          Adversarial review
+          {/* Where the review stands, at a glance, beside its name. */}
+          {review && <Badge variant="light" color={REVIEW_STATES[review.state]?.color ?? "gray"} tt="none" radius="sm" data-testid="plan-review-state">{REVIEW_STATES[review.state]?.label ?? review.state}</Badge>}
+        </Group>
       </SectionTitle>
       <Stack gap="sm">
         <Text size="sm" data-testid="plan-review-says">{said}</Text>
@@ -295,16 +308,15 @@ export function OpenQuestions({ gaps }: { gaps: string[] }) {
   const [all, setAll] = useState(false);
   if (!gaps.length) return null;
   const shown = all ? gaps : gaps.slice(0, SHOWN_BEFORE_COUNTING);
+  // What the planner says could change the decision, as a short list under one line. Not every one is a
+  // question, so it is not called that, and each is a line, not a card: it is read in passing, before approving.
   return (
-    <div data-testid="plan-questions">
-      <SectionTitle>{gaps.length === 1 ? "1 open question" : `${gaps.length} open questions`}</SectionTitle>
-      <Stack gap="xs">
-        {shown.map((gap, i) => (
-          <Paper key={i} withBorder p="sm" radius="md"><Text size="sm">{gap}</Text></Paper>
-        ))}
-        {gaps.length > shown.length && <Anchor component="button" size="sm" onClick={() => setAll(true)}>Show the other {gaps.length - shown.length}</Anchor>}
-      </Stack>
-    </div>
+    <Alert color="yellow" variant="light" p="sm" title="Worth weighing before you approve" data-testid="plan-questions">
+      <List size="sm" spacing={4}>
+        {shown.map((gap, i) => <List.Item key={i}>{gap}</List.Item>)}
+      </List>
+      {gaps.length > shown.length && <Anchor component="button" size="sm" mt={4} onClick={() => setAll(true)}>Show the other {gaps.length - shown.length}</Anchor>}
+    </Alert>
   );
 }
 
@@ -389,24 +401,28 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
 
   const planning = goal.status === "planning";
   const decision = plan?.decision;
+  const reviewFirst = plan?.review?.state === "running" || (plan?.review?.counts.open ?? 0) > 0;
+  const review = plan?.plan ? (
+    <ReviewPart
+      plan={plan}
+      goal={goal}
+      onChanged={() => {
+        onChanged();
+        window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
+        void reloadNeeds();
+      }}
+    />
+  ) : null;
   return (
-    <Stack gap="lg" data-testid="plan-body">
+    <Stack gap="xs" data-testid="plan-body">
       <ErrorAlert error={error} />
       {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} />}
-      {plan?.glance && <Glance glance={plan.glance} />}
-      {plan && <WhatChanged plan={plan} />}
-      {plan?.plan && (
-        <ReviewPart
-          plan={plan}
-          goal={goal}
-          onChanged={() => {
-            onChanged();
-            window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
-            void reloadNeeds();
-          }}
-        />
-      )}
+      {/* Right under the decision: it is what could change it. */}
       {planning && plan?.plan && <OpenQuestions gaps={plan.plan.gaps ?? []} />}
+      {plan?.glance && <Glance glance={plan.glance} />}
+      {/* A review that still asks something (it is running, or left a problem open) comes before the tasks.
+          One that is done and settled comes after them: the tasks are what the operator reads to decide. */}
+      {reviewFirst && review}
       {planning ? (
         <GoalPlan
           goal={goal}
@@ -420,6 +436,8 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
       ) : (
         <ApprovedPlan goal={goal} />
       )}
+      {!reviewFirst && review}
+      {plan && <WhatChanged plan={plan} />}
     </Stack>
   );
 }

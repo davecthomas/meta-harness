@@ -64,7 +64,7 @@ test("a plan that is being written asks nothing", () => {
 test("the plan's figures are tiles, with what it may spend said as an upper bound", () => {
   shown(<Glance glance={{ tasks: 44, repos: ["davecthomas/meta-harness"], may_spend_usd: "62.00", budget_usd: "100.00", can_start: 3, open_questions: 2, unsized: 1 }} />);
   const tiles = screen.getAllByTestId("plan-tile").map((t) => t.textContent);
-  expect(tiles).toEqual(["Tasks441 not sized yet", "Repometa-harness", "May spend up to$62of your $100 budget", "Can start at once3", "Open questions2"]);
+  expect(tiles).toEqual(["Tasks441 not sized yet", "Repometa-harness", "May spend up to$62of your $100 budget", "Can start at once3", "To weigh first2"]);
 });
 
 const PLAN = {
@@ -118,7 +118,7 @@ test("open questions show a few and count the rest", () => {
   const gaps = Array.from({ length: 8 }, (_, i) => `Question ${i + 1}?`);
   shown(<OpenQuestions gaps={gaps} />);
   const part = screen.getByTestId("plan-questions");
-  expect(part.textContent).toContain("8 open questions");
+  expect(part.textContent).toContain("Worth weighing before you approve");
   expect(within(part).queryByText(`Question ${SHOWN_BEFORE_COUNTING + 1}?`)).toBeNull();
   fireEvent.click(within(part).getByRole("button", { name: "Show the other 3" }));
   expect(within(part).getByText("Question 8?")).toBeTruthy();
