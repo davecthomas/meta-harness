@@ -85,7 +85,7 @@ test("a narrative being written says so, and appears by itself when it is done",
   );
   fireEvent.click(screen.getByRole("button", { name: "Narrative" }));
 
-  expect((await screen.findByTestId("narrative-writing")).textContent).toContain("Writing it now");
+  expect((await screen.findByTestId("narrative-writing")).textContent).toContain("AI is writing it");
   expect(screen.queryByText(/No goal is running/)).toBeNull();
   // The page asks again by itself.
   expect((await screen.findByTestId("narrative-text", {}, { timeout: 5000 })).textContent).toBe("Users can now export their data.");

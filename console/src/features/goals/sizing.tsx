@@ -4,8 +4,9 @@
 // the gap shown, unless the goal is strict. A doubt, the model's word that the checks or paths an issue has
 // fall short, is shown with its reason and holds nothing.
 
+import { AiTyping, aiWriting } from "../../components/AiWriting";
 import { useEffect, useState } from "react";
-import { Alert, Badge, Button, Group, Loader, Modal, Stack, Text, TextInput, Textarea, Tooltip } from "@mantine/core";
+import { Alert, Badge, Button, Group, Modal, Stack, Text, TextInput, Textarea, Tooltip } from "@mantine/core";
 import { IconPlayerPlay, IconPlus, IconScissors, IconTrash } from "@tabler/icons-react";
 import { api, type Goal, type IssueDoubt, type IssueGap, type IssueProgress, type IssueSize, type SplitDraft } from "../../api";
 import { InlineSwitch } from "./InlineEdit";
@@ -130,7 +131,7 @@ export function SplitModal(props: {
           {props.label ? <> with the label <Badge variant="outline" tt="none" radius="sm">{props.label}</Badge>, so the goal takes it in</> : ", and the goal takes it in"}.
           The issue you split runs as these parts, and closes itself once they are all done. {SIGNED_ISSUES}
         </Text>
-        {drafting && <Group gap="xs"><Loader size="xs" /><Text size="sm">The planner is drafting each part…</Text></Group>}
+        {drafting && <AiTyping>AI is drafting each part</AiTyping>}
         {draftError && <Alert color="orange" variant="light">The planner could not draft the parts: {draftError}. Fill each one in below.</Alert>}
         {drafts.map((d, n) => (
           <Stack key={n} gap={6} data-testid={`split-draft-${n}`}>
@@ -146,6 +147,7 @@ export function SplitModal(props: {
               minRows={4}
               maxRows={14}
               value={d.body}
+              {...aiWriting(drafting, d.body)}
               error={drafting ? undefined : lacks(d) ?? undefined}
               onChange={(e) => set(n, { body: e.currentTarget.value })}
               styles={{ input: { fontFamily: "var(--mantine-font-family-monospace)", fontSize: 13 } }}

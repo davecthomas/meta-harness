@@ -1,6 +1,6 @@
 // Created by the meta-harness in run t-46c9a7c1ad78:run-1 on harness:pi-careful/claude:claude-opus-5-5.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Anchor, Button, Group, List, Stack, Text } from "@mantine/core";
 import { IconSparkles } from "@tabler/icons-react";
 import { api } from "../../api";
@@ -19,6 +19,7 @@ export function ImproveGoal({
   statement,
   context,
   onAccept,
+  onWriting,
 }: {
   // The description as it is now: what the new one is written from.
   statement: string;
@@ -26,8 +27,11 @@ export function ImproveGoal({
   context: Omit<EnrichRequest, "statement">;
   // Takes the new text: fills the form's field, or saves it on the goal. A refusal throws, for this to show.
   onAccept: (statement: string) => Promise<void> | void;
+  // Told when the model starts and stops writing, so the field it fills can say so inside it.
+  onWriting?: (writing: boolean) => void;
 }) {
   const [asking, setAsking] = useState(false);
+  useEffect(() => onWriting?.(asking), [asking, onWriting]);
   const [error, setError] = useState<string | null>(null);
   // What the model wrote and the description it replaced, until the operator moves on.
   const [done, setDone] = useState<(GoalProposal & { original: string }) | null>(null);

@@ -1,3 +1,4 @@
+import { AiTyping } from "../../components/AiWriting";
 import { useEffect, useState } from "react";
 import { Button, Group, Loader, Paper, SegmentedControl, Stack, Text, Title, UnstyledButton } from "@mantine/core";
 import { IconCheck, IconChevronDown, IconChevronRight, IconCopy } from "@tabler/icons-react";
@@ -143,7 +144,7 @@ export function Narrative({ title, path, watch }: {
             <Group gap="xs" data-testid="narrative-writing" role="status">
               <Loader size="xs" />
               <Text size="sm" c="dimmed">
-                {read.text ? "The goal has changed, and a new narrative is on its way. This is the previous one." : "Writing it now. It appears here within a minute."}
+                {read.text ? "The goal has changed, and a new narrative is on its way. This is the previous one." : <AiTyping>AI is writing it</AiTyping>}
               </Text>
             </Group>
           )}

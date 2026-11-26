@@ -8,6 +8,7 @@
 // draft for the next run, and Draft again asks the model anew (fresh).
 // The routes are src/meta_harness/planner/fix_issue.py.
 
+import { aiWriting } from "../../components/AiWriting";
 import { useRef, useState } from "react";
 import { Alert, Button, Group, Modal, SimpleGrid, Stack, Text, Textarea } from "@mantine/core";
 import { IconSparkles } from "@tabler/icons-react";
@@ -198,6 +199,7 @@ export function FixIssue(props: { goalId: string; issue: FixableIssue; onAccepte
                       minRows={3}
                       maxRows={12}
                       value={texts[d.part] ?? ""}
+                      {...aiWriting(drafting, texts[d.part] ?? "")}
                       onChange={(e) => {
                         const value = e.currentTarget.value;
                         setTexts((all) => ({ ...all, [d.part]: value }));

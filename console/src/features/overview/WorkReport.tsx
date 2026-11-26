@@ -8,6 +8,7 @@ import { SubTitle, when } from "../../components/ui";
 import { NeedButton } from "../goals/needActions";
 import { reloadNeeds, useGoalNeeds } from "./needsYou";
 import { useWorkChanged } from "../goals/goalSync";
+import { AiTyping } from "../../components/AiWriting";
 import type { GoalAction, ReportItem, SuggestedAction, WorkAnswer, WorkReportAnswer } from "./api";
 
 const VISIT_KEY = "mh:overview:last-visit";
@@ -168,7 +169,10 @@ export function WorkReport() {
         {report && found?.stale && (
           // The goals have moved since this was written: its words are held back, and what needs the operator
           // is in the list under this, which is read from the records.
-          <Text fw={600} role="status" data-testid="work-report-stale">The work changed since this report. A new one is on its way.</Text>
+          <Stack gap={4}>
+            <Text fw={600} role="status" data-testid="work-report-stale">The work changed since this report. A new one is on its way.</Text>
+            <AiTyping />
+          </Stack>
         )}
         {report && !found?.stale && (
           <>
