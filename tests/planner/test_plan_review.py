@@ -1,10 +1,11 @@
 """Adversarial plan review: a second model tries to find what is wrong with a plan before it is approved."""
 
 import asyncio
+from decimal import Decimal
 
 import pytest
 
-from meta_harness.planner import actions, plan_review, planning_spend
+from meta_harness.planner import actions, plan_review, planning, planning_spend
 
 from .test_planner import OPERATOR, migrated, registry  # noqa: F401
 from .test_planning import _feature, _planned, draft
@@ -242,6 +243,25 @@ def test_with_no_reviewer_of_another_family_the_plan_is_not_reviewed_and_says_wh
         plan_review.ReviewError, match="no reviewer of another model family.*Add one to the task policy"
     ):
         _review(client, tasks, events, goal)
+
+
+@pytest.mark.parametrize("review_max", ["7.5", None])
+def test_the_review_button_shows_the_cap_the_review_runs_under(world, monkeypatch, review_max):  # noqa: F811
+    client, events, _, tasks = world
+    config = dict(planning.settings())
+    config.pop("adversarial_review", None)
+    if review_max:
+        config["adversarial_review"] = {"max_usd": review_max}
+    monkeypatch.setattr(planning, "settings", lambda: config)
+    goal = _feature(client, autonomy="ask")
+    _planned(client, events, tasks, goal, [draft("store")])
+
+    shown = _plan(client, goal)["review_usd"]
+    task = _review(client, tasks, events, goal)
+
+    assert Decimal(shown) == Decimal(str(review_max or config["max_usd"]))
+    assert shown.count(".") == 1 and len(shown.split(".")[1]) == 2
+    assert Decimal(str(task["max_usd"])) == Decimal(shown)
 
 
 def test_the_decision_for_an_open_finding_fits_the_bar():
