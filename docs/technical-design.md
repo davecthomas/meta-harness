@@ -187,7 +187,9 @@ nothing. They are kept as rules so the same stop does not come back.
   before the approval. A goal has one change signal (`console/src/features/goals/goalSync.ts`): an action
   sends it as the service answers, and the goal's event stream (`GET /v1/events/tail?goal_id=`) sends it for
   everything else. Every part showing the goal reads again on it. An update the goal has moved past is held
-  back (`stale`), and the planner writes the new one at once.
+  back (`stale`), and the planner writes the new one at once. Pages that show many goals (the Overview, the
+  menu, a task's page) read again on one stream of the events that change the work (`useWorkStream`), and the
+  Overview's report is held back the same way when the goals have moved past it.
 
 ### Who speaks
 

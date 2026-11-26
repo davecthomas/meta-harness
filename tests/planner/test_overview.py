@@ -124,12 +124,14 @@ def test_two_goals_facts_give_one_report_and_an_unchanged_digest_writes_none(wor
 
     again = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
     assert again["written"] is False and again["report"] == report, "nothing changed: the last report stands"
+    assert again["stale"] is False, "and it is how things stand"
     assert len(gateway.calls) == 1, "and nothing is spent"
 
     # A goal moves: its planning task ends, so its plan waits for approval.
     _planned(client, events, tasks, goals[0], [draft("store")])
     held = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()
     assert held["written"] is False and report["written_at"] in held["note"], "the last is too recent"
+    assert held["stale"] is True, "the goals moved and no new report could be written: the page holds its words back"
     _settings(monkeypatch, min_seconds=1)
     client.app.state.overview.latest["written_at"] = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     moved = client.get("/v1/overview/report", params=SINCE, headers=OPERATOR).json()

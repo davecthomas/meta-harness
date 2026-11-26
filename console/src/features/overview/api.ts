@@ -46,6 +46,9 @@ export interface WorkReportBody {
 export interface WorkReportAnswer {
   report: WorkReportBody | null;
   written: boolean;
+  // The goals have moved since the report was written, and no new one could be written yet: its words are
+  // about how things were.
+  stale?: boolean;
   note?: string | null;
   error?: string | null;
   // What each goal named in the report needs now, by goal id, read from its records as the report is read:

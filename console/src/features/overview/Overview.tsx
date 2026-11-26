@@ -14,6 +14,7 @@ import { FailureGroups, groupFailures } from "../tasks/FailureGroups";
 import { RetryAll, retryAllPlan } from "../tasks/Remedies";
 import { NeedButton } from "../goals/needActions";
 import { needsYouNote, useNeedsYou, type NeedsYouItem } from "./needsYou";
+import { useWorkChanged } from "../goals/goalSync";
 import { WorkReport } from "./WorkReport";
 import { GettingStarted } from "./GettingStarted";
 import { SupervisorHealth } from "./SupervisorHealth";
@@ -31,6 +32,13 @@ export function Overview() {
   const goals = useInfinite((offset, limit) => api.goals(OPEN_GOALS, offset, limit), 1, "open-goals");
   const running = useInfinite((offset, limit) => api.tasks({ statuses: ["running"] }, offset, limit), 1, "running");
   const queued = useInfinite((offset, limit) => api.tasks({ statuses: ["queued", "blocked"] }, offset, limit), 1, "queued");
+
+  // The counts read again the moment anything in the work changes, with the list and the report (goalSync.ts).
+  useWorkChanged(() => {
+    goals.reload();
+    running.reload();
+    queued.reload();
+  });
 
   const needsYou = useRef<HTMLDivElement | null>(null);
   const count = items?.length ?? null;

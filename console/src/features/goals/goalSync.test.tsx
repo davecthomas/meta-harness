@@ -79,3 +79,42 @@ test("a stream that drops is opened again", async () => {
   await act(async () => vi.advanceTimersByTimeAsync(2100));
   expect(FakeStream.opened).toHaveLength(2);
 });
+
+test("the work's stream tells every page something changed, and each goal it named that it changed", async () => {
+  const { useWorkStream, useWorkChanged, WORK_EVENTS, workTailUrl } = await import("./goalSync");
+  const heard: string[] = [];
+  function Shell() {
+    useWorkStream(true);
+    useWorkChanged(() => heard.push("work"));
+    return null;
+  }
+  window.addEventListener(GOAL_CHANGED, (event) => heard.push(`goal ${(event as CustomEvent<string>).detail}`));
+  render(<Shell />);
+  await act(async () => vi.advanceTimersByTimeAsync(10));
+  const stream = FakeStream.opened[0];
+  expect(stream.url).toBe(workTailUrl("https://edge.test", "t1"));
+  // Only what changes a page's words is followed: a run's own chatter is not.
+  expect(WORK_EVENTS).toContain("task_status_changed");
+  expect(WORK_EVENTS).toContain("plan_approved");
+  expect(WORK_EVENTS).not.toContain("model_call");
+  const send = (data: unknown) => (stream.listeners.event as unknown as (m: { data: string }) => void)({ data: JSON.stringify(data) });
+  act(() => {
+    send({ event_type: "plan_approved", payload: { goal_id: "g-1" } });
+    send({ event_type: "task_status_changed", tags: { goal_id: "g-1" }, payload: {} });
+    send({ event_type: "task_status_changed", payload: {} });
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(SETTLE_MS + 10));
+  // One burst: the goal it named is told once, and every page is told once.
+  expect(heard).toEqual(["goal g-1", "work"]);
+});
+
+test("nobody signed in opens no stream", async () => {
+  const { useWorkStream } = await import("./goalSync");
+  function Shell() {
+    useWorkStream(false);
+    return null;
+  }
+  render(<Shell />);
+  await act(async () => vi.advanceTimersByTimeAsync(10));
+  expect(FakeStream.opened).toHaveLength(0);
+});

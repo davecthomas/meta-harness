@@ -27,6 +27,7 @@ import { provenanceFacts } from "./Provenance";
 import { SpendLine, spendOf } from "./Spend";
 import { PROVENANCE_EVENT, RunProvenance } from "./RunProvenance";
 import { useEventStream } from "../../hooks";
+import { useWorkChanged } from "../goals/goalSync";
 import { describe, fold, type Line, type TileFacts } from "../../terminal";
 import { Terminal } from "../../components/Terminal";
 import { ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge } from "../../components/ui";
@@ -216,6 +217,9 @@ export function TaskPage() {
   }, []);
 
   const state = useEventStream(from === null ? [] : [taskId], from, onEvent);
+  // What the task's own events do not say (its goal canceled, its budget raised, what it waits on) is read
+  // again the moment anything in the work changes (goals/goalSync.ts).
+  useWorkChanged(() => void api.task(taskId).then(setTask, () => undefined));
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder.current || exhausted.current || oldest.current === null) return;
