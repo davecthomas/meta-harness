@@ -398,9 +398,11 @@ export function NewGoal() {
         modality: source === "issues" && !untracked ? "fix" : "feature",
       });
       // The choice made here is the next goal's default. Not saving it is no reason to fail the goal.
+      // So are the repos it names: the next New goal starts with them chosen.
       const mine = saved.current;
-      if (mine && mine.planner.autonomy !== autonomy) {
-        const kept = { ...mine, planner: { ...mine.planner, autonomy, auto_merge: autonomy === "full" } };
+      const sameRepos = mine && [...mine.planner.repos].sort().join("\n") === [...chosen].sort().join("\n");
+      if (mine && (mine.planner.autonomy !== autonomy || !sameRepos)) {
+        const kept = { ...mine, planner: { ...mine.planner, autonomy, auto_merge: autonomy === "full", repos: chosen } };
         void api.saveSettings(kept).then((s) => (saved.current = s), () => undefined);
       }
       return goal.id;

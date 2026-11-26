@@ -1100,13 +1100,16 @@ def create_app(
             return settings.read(conn, who).model_dump(mode="json")
 
     @app.put("/v1/me/settings")
-    def save_my_settings(body: settings.UserSettings, who: str = Depends(operator)) -> dict:
-        """Save the signed-in user's own settings. Each user writes only their own row."""
-        unknown = [name for name in body.planner.repos if repos.get(name) is None]
-        if unknown:
-            raise HTTPException(status_code=422, detail=f"not in the repo registry: {', '.join(unknown)}")
-        with app.state.pool.connection() as conn:
-            return settings.write(conn, who, body).model_dump(mode="json")
+    async def save_my_settings(body: settings.UserSettings, who: str = Depends(operator)) -> dict:
+        """Save the signed-in user's own settings. Each user writes only their own row. A default repo is one a
+        goal of theirs could name: in the registry, or one they can push to with their own connection."""
+        body.planner.repos = await goal_repos(body.planner.repos, who)
+
+        def write() -> dict:
+            with app.state.pool.connection() as conn:
+                return settings.write(conn, who, body).model_dump(mode="json")
+
+        return await asyncio.to_thread(write)
 
     @app.get("/v1/repos/available")
     async def available_repos(who: str = Depends(operator)) -> dict:

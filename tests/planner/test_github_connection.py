@@ -381,3 +381,36 @@ async def test_a_picker_is_answered_from_a_list_past_its_time_while_it_is_read_a
     asked = len(github.asked)
     await reach.offered("dave", github)
     assert len(github.asked) == asked + 1
+
+
+async def test_after_a_restart_the_picker_answers_from_the_list_the_last_read_kept(reaching):
+    import asyncio
+
+    from meta_harness.planner import reach
+
+    client, github = reaching
+    _connect(client)
+    client.get("/v1/repos/reachable", headers=OPERATOR)
+    # A restart of the planner: nothing is held in memory.
+    reach._held.clear()
+    asked = len(github.asked)
+
+    found = await reach.offered("dave", github)
+
+    assert [r["name"] for r in found["repos"]] == ["acme/api", "acme/docs"], "answered from what the last read kept"
+    assert len(github.asked) == asked, "with no wait on GitHub"
+    await asyncio.gather(*reach._tasks)
+
+
+def test_a_new_goal_default_repo_may_be_one_the_operator_can_push_to(reaching):
+    client, _ = reaching
+    mine = client.get("/v1/me/settings", headers=OPERATOR).json()
+    refused = client.put(
+        "/v1/me/settings", json={**mine, "planner": {**mine["planner"], "repos": ["acme/api"]}}, headers=OPERATOR
+    )
+    assert refused.status_code == 422, "with no connection, only the registry's repos"
+    _connect(client)
+    saved = client.put(
+        "/v1/me/settings", json={**mine, "planner": {**mine["planner"], "repos": ["ACME/api"]}}, headers=OPERATOR
+    )
+    assert saved.status_code == 200 and saved.json()["planner"]["repos"] == ["acme/api"]
