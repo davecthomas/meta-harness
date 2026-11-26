@@ -1,7 +1,8 @@
 // The octopus inks: a click right on it lets a cloud of ink out from under its body. The cloud is a few hundred
 // soft puffs, each a particle in water: let out over a second or two with a little push, slowed by drag, spread
 // by diffusion (it grows fast at first, then slowly), stirred by eddies, and carried to and fro by a gentle
-// current. Together they billow out over the screen, hang, and dissolve. The name stays on top (splash.css).
+// current. Together they billow out over the screen, hang, and dissolve. The cloud covers the octopus, as ink is
+// for; the name stays on top (splash.css).
 // It is a joke, not a control: it never takes a click, and one cloud runs at a time.
 
 // How long a cloud lasts from the first puff to the last trace, in seconds.
