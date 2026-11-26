@@ -37,7 +37,12 @@ export const ROWS_SHOWN = 25;
 export function SimilarShown() {
   const [found, setFound] = useState<{ shown: ShownRow[]; cutoff: number; model: string } | null>(null);
   useEffect(() => {
-    similarShownApi.similarShown().then(setFound, () => setFound(null));
+    // An answer that comes after the page has gone is dropped.
+    let open = true;
+    similarShownApi.similarShown().then((found) => open && setFound(found), () => open && setFound(null));
+    return () => {
+      open = false;
+    };
   }, []);
   // A page with nothing recorded yet says nothing: the table is for tuning, once there is something to tune by.
   if (!found || !Array.isArray(found.shown) || found.shown.length === 0) return null;

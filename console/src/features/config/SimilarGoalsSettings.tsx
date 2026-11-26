@@ -18,7 +18,15 @@ export function SimilarGoalsSettings({ staging: s }: { staging: Staging }) {
   const [models, setModels] = useState<string[] | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
-    similarSettingsApi.embeddingModels().then(setModels, (err) => setFailed(err instanceof Error ? err.message : String(err)));
+    // An answer that comes after the form has gone is dropped.
+    let open = true;
+    similarSettingsApi.embeddingModels().then(
+      (found) => open && setModels(found),
+      (err) => open && setFailed(err instanceof Error ? err.message : String(err)),
+    );
+    return () => {
+      open = false;
+    };
   }, []);
   const config = (s.document.similar_goals ?? {}) as { enabled?: boolean; model?: string; cutoff?: number; most?: number };
   const on = config.enabled !== false;
