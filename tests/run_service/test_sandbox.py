@@ -162,3 +162,37 @@ def test_the_harness_server_starts_from_a_node_it_can_run_but_not_read():
     assert dockerfile.rstrip().endswith('CMD ["node-server", "server/main.ts"]')
     assert dockerfile.index("chmod 0111") < dockerfile.index("USER node"), "set while the build is still root"
     assert egress_check.SERVER_PROC_ENTRIES == ("mem", "maps", "environ")
+
+
+async def test_a_network_docker_refuses_for_a_moment_is_asked_for_again(monkeypatch, caplog):
+    import pytest
+
+    calls: list[tuple[str, ...]] = []
+    refusals = iter([(1, "", ""), (1, "", "")])
+
+    async def docker(*args: str, env=None):
+        calls.append(args)
+        if args[:2] == ("network", "inspect"):
+            return (1, "", "no such network")
+        if args[:2] == ("network", "create"):
+            return next(refusals, (0, "made", ""))
+        return (0, "", "")
+
+    async def no_wait(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "_docker", docker)
+    monkeypatch.setattr(sandbox.asyncio, "sleep", no_wait)
+
+    await sandbox._ensure_network("mh-run-x", "run-x", "ref")
+
+    assert [c[:2] for c in calls].count(("network", "create")) == 3, "two refusals, then made"
+    assert sum("try" in r.message and "failed, trying again" in r.message for r in caplog.records) == 2
+
+    # Refused every time: the run fails, saying how many times it asked and what docker said.
+    async def never(*args: str, env=None):
+        return (1, "", "") if args[:2] in (("network", "inspect"), ("network", "create")) else (0, "", "")
+
+    monkeypatch.setattr(sandbox, "_docker", never)
+    with pytest.raises(sandbox.SandboxError, match="failed after 4 tries: docker exited 1 and said nothing"):
+        await sandbox._ensure_network("mh-run-y", "run-y", "ref")
