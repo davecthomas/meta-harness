@@ -1,34 +1,89 @@
-import { afterEach, expect, test, vi } from "vitest";
-import { ink, INK_MS, onBox, PUFFS } from "./ink";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { EMIT_SECONDS, emit, ink, INK_SECONDS, LIFE, look, onBox, PUFFS, seeded, siphon, step } from "./ink";
+
+// The test page has no canvas to draw on: the cloud still comes and goes, undrawn.
+beforeEach(() => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+});
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   document.body.innerHTML = "";
   document.body.className = "";
 });
 
-test("a click is on the octopus only inside its box, with no margin round it", () => {
-  const box = { left: 100, top: 100, width: 200, height: 200 };
-  expect(onBox(box, 150, 150)).toBe(true);
-  expect(onBox(box, 300, 300)).toBe(true);
-  expect(onBox(box, 99, 150)).toBe(false);
-  expect(onBox(box, 150, 301)).toBe(false);
+const BOX = { left: 100, top: 100, width: 200, height: 200 };
+
+test("a click is on the octopus only inside its box, and the ink comes from under its middle", () => {
+  expect(onBox(BOX, 150, 150)).toBe(true);
+  expect(onBox(BOX, 99, 150)).toBe(false);
+  expect(onBox(BOX, 150, 301)).toBe(false);
+  expect(siphon(BOX)).toEqual({ x: 200, y: 220 });
 });
 
-test("the ink spreads from the click over the screen, one cloud at a time, and is gone when it fades", () => {
+test("the cloud is let out over a moment, from one place, each puff its own", () => {
+  const puffs = emit(500, 400, 1000, seeded(7));
+  expect(puffs).toHaveLength(PUFFS);
+  expect(puffs.every((p) => p.born >= 0 && p.born <= EMIT_SECONDS && p.life >= LIFE[0] && p.life <= LIFE[1])).toBe(true);
+  expect(puffs.every((p) => Math.abs(p.x - 500) <= 10 && Math.abs(p.y - 400) <= 10)).toBe(true);
+  expect(new Set(puffs.map((p) => p.phase)).size).toBeGreaterThan(PUFFS * 0.9);
+  // The same seed makes the same cloud; another makes another.
+  expect(emit(500, 400, 1000, seeded(7))).toEqual(puffs);
+  expect(emit(500, 400, 1000, seeded(8))).not.toEqual(puffs);
+});
+
+function spread(puffs: { x: number; y: number }[]): { width: number; meanX: number } {
+  const xs = puffs.map((p) => p.x);
+  return { width: Math.max(...xs) - Math.min(...xs), meanX: xs.reduce((a, b) => a + b, 0) / xs.length };
+}
+
+test("the cloud spreads fast at first and then slowly, and the current carries it to and fro", () => {
+  const puffs = emit(500, 400, 1000, seeded(3));
+  const widths: number[] = [], means: number[] = [];
+  for (let t = 0, i = 0; t < 9; t += 1 / 30, i++) {
+    step(puffs, 1 / 30, t, 1000);
+    if (i % 30 === 29) {
+      widths.push(spread(puffs).width);
+      means.push(spread(puffs).meanX);
+    }
+  }
+  // Drag: most of the spreading is done in the first seconds.
+  expect(widths[2] - widths[0]).toBeGreaterThan(widths[8] - widths[6]);
+  expect(widths[8]).toBeGreaterThan(300);
+  // The current: the whole cloud moves one way and then back.
+  const moves = means.slice(1).map((m, i) => Math.sign(m - means[i]));
+  expect(moves).toContain(1);
+  expect(moves).toContain(-1);
+});
+
+test("a puff grows as it ages, more slowly as it goes, and is gone at the end of its life", () => {
+  const [p] = emit(0, 0, 1000, seeded(1));
+  const at = (age: number) => look(p, p.born + age, 1000);
+  expect(look(p, p.born - 0.1, 1000).alpha).toBe(0);
+  expect(at(1).radius).toBeGreaterThan(at(0.25).radius);
+  expect(at(1).radius - at(0.25).radius).toBeGreaterThan(at(4).radius - at(3.25).radius);
+  expect(at(1).alpha).toBeGreaterThan(0);
+  expect(at(p.life * 0.9).alpha).toBeLessThan(at(1).alpha);
+  expect(at(p.life).alpha).toBe(0);
+});
+
+test("one cloud is out at a time, the name is lifted over it, and it is gone when it has dissolved", () => {
   vi.useFakeTimers();
   expect(ink(120, 340)).toBe(true);
   const cloud = document.body.querySelector(".splash-ink") as HTMLElement;
+  expect(cloud.tagName).toBe("CANVAS");
   expect(cloud.getAttribute("aria-hidden")).toBe("true");
-  const puffs = [...cloud.querySelectorAll<HTMLElement>(".splash-ink-puff")];
-  expect(puffs).toHaveLength(PUFFS.length);
-  expect(puffs.every((p) => p.style.left === "120px" && p.style.top === "340px")).toBe(true);
-  // The name is lifted over the ink while it is out.
   expect(document.body.classList.contains("splash-inking")).toBe(true);
   expect(ink(10, 10)).toBe(false);
-  expect(document.body.querySelectorAll(".splash-ink")).toHaveLength(1);
-  vi.advanceTimersByTime(INK_MS);
+  vi.advanceTimersByTime(INK_SECONDS * 1000);
   expect(document.body.querySelector(".splash-ink")).toBeNull();
   expect(document.body.classList.contains("splash-inking")).toBe(false);
-  expect(ink(10, 10)).toBe(true);
+});
+
+test("with reduced motion on, it does not ink", () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  expect(ink(1, 1)).toBe(false);
+  expect(document.body.querySelector(".splash-ink")).toBeNull();
 });

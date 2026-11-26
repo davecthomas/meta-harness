@@ -46,14 +46,7 @@
   .splash * { transition: none !important; }
 }
 
-/* The octopus's ink (ink.ts): puffs of black spread from the click over the whole screen, hold, and fade. It
-   never takes a click. The name is lifted over it while it is out. */
-.splash-ink { position: fixed; inset: 0; z-index: 400; pointer-events: none; overflow: hidden; animation: splash-ink-fade 3.2s ease-in forwards; }
-.splash-ink-puff {
-  position: fixed; width: 60vmax; height: 60vmax; margin: -30vmax 0 0 -30vmax; border-radius: 50%;
-  background: radial-gradient(circle, rgba(6, 6, 14, 0.98) 0 48%, rgba(6, 6, 14, 0.9) 62%, rgba(6, 6, 14, 0) 72%);
-  transform: translate(0, 0) scale(0); animation: splash-ink-spread 1.1s cubic-bezier(0.15, 0.7, 0.2, 1) forwards;
-}
-@keyframes splash-ink-spread { to { transform: translate(var(--dx), var(--dy)) scale(4.2); } }
-@keyframes splash-ink-fade { 0%, 40% { opacity: 1; } 100% { opacity: 0; } }
-.splash-inking .splash-name { z-index: 401; }
+/* The octopus's ink (ink.ts): a canvas over the whole screen that the cloud is drawn on. It never takes a
+   click. The octopus and its name are lifted over it while it is out, so the ink comes from behind him. */
+.splash-ink { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 400; pointer-events: none; }
+.splash-inking .splash-sea, .splash-inking .splash-name { z-index: 401; }
