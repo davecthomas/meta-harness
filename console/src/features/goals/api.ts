@@ -71,7 +71,9 @@ export interface PlanItem {
 export interface PlanAsk {
   state: "none" | "drafting" | "improving" | "fix_waiting" | "incomplete" | "cannot_approve" | "ready" | "approved";
   says: string;
-  buttons: { action: "approve_plan" | "replan" | "accept_fix" | "dismiss_fix" | "raise_budget" | "fix_findings"; label: string }[];
+  buttons: { action: "approve_plan" | "replan" | "accept_fix" | "dismiss_fix" | "raise_budget" | "fix_findings" | "review_plan"; label: string }[];
+  // A second way to act beside a running review: approve the plan as it is now.
+  link?: { action: "approve_plan"; label: string };
 }
 
 export interface PlanGlance {
