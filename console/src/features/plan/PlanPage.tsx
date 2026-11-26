@@ -521,7 +521,8 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
     <Stack gap="xs" mb="md" data-testid="plan-body">
       <ErrorAlert error={error} />
       {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} gaps={planning ? plan?.plan?.gaps ?? [] : []} extra={inBox} />}
-      {plan?.glance && <Glance glance={plan.glance} />}
+      {/* The figures once: not under a decision whose sentence already says what the plan may spend. */}
+      {plan?.glance && !(decision && plan.glance.may_spend_usd !== null && decision.says.includes(dollars(plan.glance.may_spend_usd))) && <Glance glance={plan.glance} />}
       {/* A review that still asks something (it is running, or left a problem open) comes before the tasks.
           One that is done and settled comes after them: the tasks are what the operator reads to decide. */}
       {reviewFirst && review}
