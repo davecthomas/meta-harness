@@ -145,12 +145,12 @@ export function useRows<T>(load: () => Promise<T[]>, key: string): { rows: T[] |
       );
     read();
     const timer = window.setInterval(read, REFRESH_MS);
-    // The menu's lists read again the moment a goal changes, with the page that shows it (goals/goalSync.ts).
-    window.addEventListener("mh:goal-changed", read);
+    // The menu's lists read again the moment anything in the work changes (goals/goalSync.ts).
+    window.addEventListener("mh:work-changed", read);
     return () => {
       live = false;
       window.clearInterval(timer);
-      window.removeEventListener("mh:goal-changed", read);
+      window.removeEventListener("mh:work-changed", read);
     };
     // `load` is a new function each render; `key` names what it reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps

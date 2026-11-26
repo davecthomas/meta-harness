@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useWorkStream } from "./features/goals/goalSync";
 import { NavLink as RouterLink, Route, Routes, useLocation } from "react-router-dom";
 import {
   ActionIcon,
@@ -166,6 +167,8 @@ export function App() {
 
 
   useEffect(close, [location.pathname, close]);
+  // One stream of everything that changes the work, for every page, while someone is signed in.
+  useWorkStream(who !== null);
 
   // After every hook: React needs the same hooks on every render.
   if (signIn) return <SignIn onSignedIn={signedIn} expired={expired} />;

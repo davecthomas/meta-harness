@@ -1,12 +1,13 @@
 // Created by Muxxy in run t-33d72d7e8075:run-1 on harness:pi-lean/claude:claude-sonnet-5-5.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Anchor, Button, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../../api";
 import { SubTitle, when } from "../../components/ui";
 import { NeedButton } from "../goals/needActions";
 import { reloadNeeds, useGoalNeeds } from "./needsYou";
+import { useWorkChanged } from "../goals/goalSync";
 import type { GoalAction, ReportItem, SuggestedAction, WorkAnswer, WorkReportAnswer } from "./api";
 
 const VISIT_KEY = "mh:overview:last-visit";
@@ -112,17 +113,23 @@ export function WorkReport() {
   const [answer, setAnswer] = useState<WorkAnswer | null>(null);
   const [askFailed, setAskFailed] = useState<string | null>(null);
 
-  useEffect(() => {
-    let live = true;
-    const read = () =>
+  const live = useRef(true);
+  const read = useCallback(
+    () =>
       api.overviewReport(since.current).then(
-        (got) => { if (live) { setFound(got); setFailed(null); } },
-        (err) => { if (live) setFailed(errorMessage(err)); },
-      );
-    read();
-    const timer = window.setInterval(read, POLL_MS);
-    return () => { live = false; window.clearInterval(timer); };
-  }, []);
+        (got) => { if (live.current) { setFound(got); setFailed(null); } },
+        (err) => { if (live.current) setFailed(errorMessage(err)); },
+      ),
+    [],
+  );
+  useEffect(() => {
+    live.current = true;
+    void read();
+    const timer = window.setInterval(() => void read(), POLL_MS);
+    return () => { live.current = false; window.clearInterval(timer); };
+  }, [read]);
+  // Read again the moment anything in the work changes, with the rest of the page (goals/goalSync.ts).
+  useWorkChanged(() => void read());
 
   const ask = async () => {
     const text = question.trim();
@@ -158,7 +165,12 @@ export function WorkReport() {
         {failed && <Text size="sm" c="red" role="alert">Could not refresh the report: {failed}.{report ? " The last report stays." : ""}</Text>}
         {found && !report && !failed && <Text size="sm" c="dimmed">No report has been written yet.</Text>}
         {!found && !failed && <Text size="sm" c="dimmed">Loading…</Text>}
-        {report && (
+        {report && found?.stale && (
+          // The goals have moved since this was written: its words are held back, and what needs the operator
+          // is in the list under this, which is read from the records.
+          <Text fw={600} role="status" data-testid="work-report-stale">The work changed since this report. A new one is on its way.</Text>
+        )}
+        {report && !found?.stale && (
           <>
             <Text fw={600}>{report.headline}</Text>
             <Items title="Needs you" items={report.needs_you} actions={actions} shown={withButtons} onDone={reread} />
@@ -170,7 +182,7 @@ export function WorkReport() {
           </>
         )}
         {found?.error && <Text size="xs" c="dimmed">A new report could not be written: {found.error}</Text>}
-        {found?.note && <Text size="xs" c="dimmed">{found.note}</Text>}
+        {found?.note && !found.stale && <Text size="xs" c="dimmed">{found.note}</Text>}
         <form onSubmit={(e) => { e.preventDefault(); void ask(); }}>
           <Group gap="xs" align="flex-end" wrap="nowrap">
             <TextInput style={{ flex: 1 }} aria-label="Ask about the work" placeholder="Ask about the work" value={question}

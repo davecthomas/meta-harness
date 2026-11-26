@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useWorkChanged } from "../goals/goalSync";
 import { useNavigate } from "react-router-dom";
 import { Box, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import { api } from "../../api";
@@ -52,9 +53,9 @@ export function PullRequestsRow() {
   const navigate = useNavigate();
   const [found, setFound] = useState<PullRequests | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
-  useEffect(() => {
-    api.pullRequests().then(setFound, (err) => setFailed(errorText(err)));
-  }, []);
+  const load = () => void api.pullRequests().then(setFound, (err) => setFailed(errorText(err)));
+  useEffect(load, []);
+  useWorkChanged(load);
   if (failed) return <ReadFailed what="the pull requests" error={failed} />;
   if (!found || !found.prs.length) return null;
   const open = (pr: PullRequestCell) =>
