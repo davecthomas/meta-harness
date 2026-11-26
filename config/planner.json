@@ -30,7 +30,10 @@
     "skill": "no-ai-slop2",
     "scanner": "no-ai-slop-scan.py",
     "rules": "WRITING-RULES.md",
-    "names": ["harness", "harnesses"],
+    "names": [
+      "harness",
+      "harnesses"
+    ],
     "engine": "claude",
     "model": "claude-haiku-4-5",
     "max_response_tokens": 8000
@@ -75,6 +78,12 @@
           "reader": "A developer picking the work up. They care about what changed in the code and where, which pull requests merged or are open, what is blocked and why, and what is left to build."
         }
       }
+    },
+    "similar_goals": {
+      "enabled": true,
+      "model": "openai:text-embedding-3-small",
+      "cutoff": 0.7,
+      "most": 3
     }
   }
 }

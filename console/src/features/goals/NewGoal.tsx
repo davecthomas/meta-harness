@@ -37,6 +37,7 @@ import { api, refLabel, type IssueSource, type LabelIssue, type Tracker, type Us
 import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
 import { RepoPick } from "./RepoPick";
+import { useSimilarGoals } from "./SimilarGoals";
 import { ImproveGoal } from "./ImproveGoal";
 import { SpecField, type GoalSpec } from "./SpecField";
 import { specName, useSpecDraft } from "./SpecDraft";
@@ -365,6 +366,8 @@ export function NewGoal() {
             ? "The description is being written. If it does not appear, type one in panel 3."
             : null;
 
+  const similar = useSimilarGoals(statement);
+
   async function create(started: boolean): Promise<string | null> {
     if (lacking) {
       setError(lacking);
@@ -408,8 +411,11 @@ export function NewGoal() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    // A similar open goal still showing is asked about once, before the goal is made.
+    if (!(await similar.beforeSave())) return;
     const id = await create(start.current);
     if (id) {
+      similar.saved(id);
       unsaved.release();
       navigate(`/goals/${id}`);
     }
@@ -579,6 +585,7 @@ export function NewGoal() {
                 }}
                 data-testid="description"
               />
+              {similar.panel}
               {source === "spec" && specDraft.element}
               <ImproveGoal
                 statement={statement}

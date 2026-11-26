@@ -90,6 +90,7 @@ from meta_harness.planner import (
     sizing,
     suggestions,
     updates,
+    similar_goals,
     sizing_api,
     spec_draft,
     spec_files,
@@ -312,6 +313,7 @@ def create_app(
     overview_asker: overview.Asker | None = None,
     # A test's stand-in for GitHub, for an operator's own connection (github_api.py).
     github_transport: Any = None,
+    gateway_transport: Any = None,
     # What writes a narrative from its prompt: a test's stand-in for the model call.
     narrative_writer: Any = None,
     # What writes a goal's next steps from its prompt: a test's stand-in for the model call.
@@ -705,6 +707,7 @@ def create_app(
     github_user.check_settings()
     overview.check_settings()
     narratives.check_settings()
+    similar_goals.check_settings()
     writing_rules.check_settings()
     charter.check_settings()
     draft = drafter or drafting.draft_goal
@@ -1859,6 +1862,7 @@ def create_app(
     github_api.register(app, operator, events, github_transport)
     reach.register(app, operator, github_transport)
     acts_as_api.register(app, operator, load, events, github_transport)
+    similar_goals.register(app, operator, events, gateway_transport)
     # An operator waits on this sizing (Fix with AI sizes the changed issue), so it keeps the default deadline.
     size_now = sizer or functools.partial(sizing.size_issue, policy=retrying.DEFAULT)
     sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size_now)

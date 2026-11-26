@@ -822,6 +822,24 @@ REGISTRY: list[EventType] = [
         _object({"login": {"type": "string"}, "scopes": {"type": "string"}}, ["login"]),
     ),
     EventType("github_disconnected", 1, _object({})),
+    # New goal showed an operator an open goal like the one they were writing, or the operator said what it is
+    # (planner/similar_goals.py). answer: shown, opened, not_duplicate, same_work, different. The cut-off is
+    # set from these. The new goal's description is never recorded.
+    EventType(
+        "goal_similarity_judged",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "score": {"type": "number"},
+                "answer": {"type": "string"},
+                "cutoff": {"type": "number"},
+                "model": {"type": "string"},
+                "new_goal_id": {"type": "string"},
+            },
+            ["goal_id", "score", "answer"],
+        ),
+    ),
     # An operator took a goal over: it uses their GitHub connection from now on (planner/acts_as_api.py). was:
     # the operator it acted as before, empty for the GitHub App.
     EventType(

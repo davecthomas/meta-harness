@@ -179,6 +179,9 @@ nothing. They are kept as rules so the same stop does not come back.
   different moment, so it asked for an approval while a reviewer was still
   reading. Where a plan stands, and what it asks, is `actions.plan_decision`
   alone. A page shows that sentence once and writes no other about the plan.
+- **A new goal is compared with the open ones.** An operator created a goal for work another goal, three
+  days old, already held. New goal embeds the description and shows the open goals it is close to, with what
+  to do about each, and records every answer (`planner/similar_goals.py`, `docs/specs/similar-goals.md`).
 
 ### Who speaks
 

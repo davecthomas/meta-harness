@@ -2165,5 +2165,34 @@
       "acts_as"
     ],
     "additionalProperties": true
+  },
+  "goal_similarity_judged v1": {
+    "type": "object",
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "score": {
+        "type": "number"
+      },
+      "answer": {
+        "type": "string"
+      },
+      "cutoff": {
+        "type": "number"
+      },
+      "model": {
+        "type": "string"
+      },
+      "new_goal_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "score",
+      "answer"
+    ],
+    "additionalProperties": true
   }
 }
