@@ -67,6 +67,7 @@ export function DecisionBar({ decision, onAct, busy, gaps = [] }: { decision: Pl
       {working && <Loader size="sm" />}
       <Stack gap={2}>
         <Text size="lg" fw={600} lh={1.35} data-testid="plan-decision-says">{decision.says}</Text>
+        {decision.link && <Anchor component="button" type="button" size="sm" ta="left" onClick={() => onAct(decision.link!.action)}>{decision.link.label}</Anchor>}
         {/* While the planner or its reviewer works, nothing is asked: the page follows it as it goes. */}
         {working && <Text size="sm" c="dimmed">Nothing needs you until this finishes.</Text>}
       </Stack>
@@ -270,7 +271,9 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
     ? "This plan has not been reviewed by a second model."
     : review.state === "running"
       ? `${review.model} is reading the plan now.`
-      : review.state === "failed" || review.state === "canceled"
+      : review.state === "canceled" && findings.length > 0
+        ? `The review by ${review.model} was canceled. It recorded ${findings.length} problem${findings.length === 1 ? "" : "s"}: ${review.counts.fixed} fixed, ${review.counts.open} open.`
+        : review.state === "failed" || review.state === "canceled"
         ? `The review by ${review.model} did not finish, so it says nothing about the plan.`
         : review.counts.found === 0
           ? `${review.model} looked for problems and found none.`
@@ -289,8 +292,8 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
                 disabled={busy}
                 onChange={(event) => void run(() => api.setPlanReview(goal.id, event.currentTarget.checked))}
               />
-              {review?.state !== "running" && review?.version !== plan.plan?.version && (
-                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.reviewPlan(goal.id))}>{plan.review_usd ? `Review this plan (up to $${plan.review_usd})` : "Review this plan"}</Button>
+              {review?.state !== "running" && (review?.state === "canceled" || review?.version !== plan.plan?.version) && (
+                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.reviewPlan(goal.id))}>{review?.state === "canceled" ? (plan.review_usd ? `Review again (up to $${plan.review_usd})` : "Review again") : plan.review_usd ? `Review this plan (up to $${plan.review_usd})` : "Review this plan"}</Button>
               )}
             </Group>
           )
@@ -426,7 +429,7 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
     setBusy(true);
     setError(null);
     try {
-      await (action === "fix_findings" ? api.fixFindings(goalId) : action === "accept_fix" ? api.acceptFix(goalId) : api.dismissFix(goalId));
+      await (action === "review_plan" ? api.reviewPlan(goalId) : action === "fix_findings" ? api.fixFindings(goalId) : action === "accept_fix" ? api.acceptFix(goalId) : api.dismissFix(goalId));
       window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
       void reloadNeeds();
     } catch (err) {

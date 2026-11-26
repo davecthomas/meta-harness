@@ -236,3 +236,27 @@ test("when the plan's changes are the review's own fixes, the review says them a
   expect(reviewMadeTheChanges({ review: null, changes } as never)).toBe(false);
   expect(changedByReview({ review, changes, applied_fix: { from_version: 1, fixes: [], changes: [] } } as never)).toBe("");
 });
+
+test("a running review offers Approve now as a link, and a ready or link-less decision does not", () => {
+  const acted: string[] = [];
+  const improving: PlanAsk = { state: "improving", says: "gpt-6-sol is checking the plan for problems.", buttons: [], link: { action: "approve_plan", label: "Approve now" } };
+  const first = shown(<DecisionBar decision={improving} busy={false} onAct={(action) => acted.push(action)} />);
+  fireEvent.click(screen.getByText("Approve now"));
+  expect(acted).toEqual(["approve_plan"]);
+  first.unmount();
+  const second = shown(<DecisionBar decision={READY} busy={false} onAct={() => undefined} />);
+  expect(screen.queryByText("Approve now")).toBeNull();
+  second.unmount();
+  shown(<DecisionBar decision={{ ...improving, link: undefined }} busy={false} onAct={() => undefined} />);
+  expect(screen.queryByText("Approve now")).toBeNull();
+});
+
+test("a canceled review shows its state and the findings it recorded, and offers Review again", () => {
+  const plan = { ...reviewed([finding("r1-1")], { state: "canceled" }), review_usd: "4.00" } as unknown as Plan;
+  shown(<ReviewPart plan={plan} goal={GOAL} onChanged={() => undefined} />);
+  const part = screen.getByTestId("plan-review");
+  expect(within(part).getByTestId("plan-review-state").textContent).toBe("Canceled");
+  expect(within(part).getByTestId("plan-review-says").textContent).toContain("was canceled");
+  expect(within(part).getByText("Problem r1-1.")).toBeTruthy();
+  expect(within(part).getByRole("button", { name: "Review again (up to $4.00)" })).toBeTruthy();
+});
