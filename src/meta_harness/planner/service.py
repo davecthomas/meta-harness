@@ -738,7 +738,7 @@ def create_app(
         if not await asyncio.to_thread(acting.connected, who):
             return {}
         try:
-            found = await reach.reachable(who, transport=github_transport)
+            found = await reach.offered(who, transport=github_transport)
         except github_user.GitHubUserError:
             return {}
         return {r["name"].lower(): r["name"] for r in found["repos"] if r["access"] == "write" or not write}

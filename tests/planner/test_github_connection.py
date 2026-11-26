@@ -355,3 +355,29 @@ async def test_settings_lists_the_accounts_at_once_from_the_last_read(reaching):
     assert kept["owners"] == [{"name": "acme", "repos": 2}] and kept["repos"] == [] and kept["age_seconds"] is None
     await asyncio.gather(*reach._tasks)
     assert len(github.asked) == asked + 1 and "dave" in reach._held and not reach._reading
+
+
+async def test_a_picker_is_answered_from_a_list_past_its_time_while_it_is_read_again(reaching):
+    import asyncio
+    import time
+
+    from meta_harness.planner import reach
+
+    client, github = reaching
+    _connect(client)
+    client.get("/v1/repos/reachable", headers=OPERATOR)
+    held_at, repos = reach._held["dave"]
+    # An hour old: past the ten minutes a list is held, well inside the day it may be answered from.
+    reach._held["dave"] = (held_at - 3600, repos)
+    asked = len(github.asked)
+
+    found = await reach.offered("dave", github)
+
+    assert [r["name"] for r in found["repos"]] == ["acme/api", "acme/docs"], "answered at once, from the list held"
+    await asyncio.gather(*reach._tasks)
+    assert len(github.asked) == asked + 1 and time.time() - reach._held["dave"][0] < 60, "and read again behind it"
+    # A list older than a day is not trusted: the read is waited for.
+    reach._held["dave"] = (time.time() - 2 * 86400, repos)
+    asked = len(github.asked)
+    await reach.offered("dave", github)
+    assert len(github.asked) == asked + 1
