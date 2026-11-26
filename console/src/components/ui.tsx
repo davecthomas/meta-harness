@@ -23,7 +23,7 @@ export function PageHeader(props: { title: ReactNode; description?: ReactNode; a
 
 export function SectionTitle(props: { children: ReactNode; right?: ReactNode }) {
   return (
-    <Group justify="space-between" mt="xl" mb="sm">
+    <Group justify="space-between" mt="lg" mb="xs">
       <Title order={4}>{props.children}</Title>
       {props.right}
     </Group>
