@@ -15,7 +15,7 @@ export const BILLOWS = 11;
 export const LIFE = [10, 14.5];
 // A puff's radius grows as the square root of its age, as a diffusing blob does: `GROW` times the screen's
 // longer side at one second old.
-export const GROW = 0.05;
+export const GROW = 0.065;
 // The water's drag: the share of a puff's own speed left after one second.
 export const DRAG = 0.6;
 // The current sways the whole cloud: how far (as a share of the screen's width a second) and how often.
@@ -49,14 +49,14 @@ export function emit(x: number, y: number, side: number, random: () => number = 
   const puffs: Puff[] = [];
   // Each billow leaves at its own moment, in its own direction, with its own strength.
   const billows = Array.from({ length: BILLOWS }, () => ({
-    angle: Math.PI / 2 + (random() - 0.5) * Math.PI * 1.25,
+    angle: Math.PI / 2 + (random() - 0.5) * Math.PI * 1.5,
     strength: 0.35 + random() * 0.65,
     at: random() * EMIT_SECONDS * 0.8,
   }));
   for (let i = 0; i < PUFFS; i++) {
     const billow = billows[Math.floor(random() * BILLOWS)];
     const angle = billow.angle + (random() - 0.5) * 0.7;
-    const push = side * billow.strength * (0.03 + random() * 0.16);
+    const push = side * billow.strength * (0.04 + random() * 0.3);
     puffs.push({
       born: Math.min(EMIT_SECONDS, billow.at + random() * EMIT_SECONDS * 0.2),
       life: LIFE[0] + random() * (LIFE[1] - LIFE[0]),
