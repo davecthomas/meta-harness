@@ -62,6 +62,7 @@ from meta_harness.github_app import GitHubApps
 from meta_harness.run_service import code_host
 from meta_harness.run_service.provenance import COMMENT, Provenance, payload
 from meta_harness.planner import (
+    acts_as_api,
     activity,
     auto_split,
     follow_ups,
@@ -1857,6 +1858,7 @@ def create_app(
     budget_api.register(app, operator, load, change_with, events, tasks)
     github_api.register(app, operator, events, github_transport)
     reach.register(app, operator, github_transport)
+    acts_as_api.register(app, operator, load, events, github_transport)
     # An operator waits on this sizing (Fix with AI sizes the changed issue), so it keeps the default deadline.
     size_now = sizer or functools.partial(sizing.size_issue, policy=retrying.DEFAULT)
     sizing_api.register(app, operator, load, events, tracker, sweep_one, tasks=tasks, sizer=size_now)

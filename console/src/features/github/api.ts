@@ -1,4 +1,5 @@
 import { call } from "../../client";
+import type { ActsAsShown } from "../goals/ActsAs";
 
 // The signed-in operator's own GitHub connection, from GET /v1/github/connection. Never the token.
 export interface GitHubConnection {
@@ -36,5 +37,8 @@ export const githubApi = {
   githubReachable: () => call<Reachable>("/v1/repos/reachable?repos=0"),
   // Limit the connection to these accounts and organizations; none for all it reaches.
   githubChooseOwners: (owners: string[]) => call<GitHubConnection>("/v1/github/connection/owners", { method: "PUT", body: JSON.stringify({ owners }) }),
+  // Whose GitHub access a goal uses, and taking it over as the signed-in operator.
+  goalActsAs: (goalId: string) => call<ActsAsShown>(`/v1/goals/${goalId}/acts-as`),
+  goalActAsMe: (goalId: string) => call<ActsAsShown>(`/v1/goals/${goalId}/act-as-me`, { method: "POST" }),
   githubDisconnect: () => call<GitHubConnection>("/v1/github/connection", { method: "DELETE" }),
 };
