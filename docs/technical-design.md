@@ -182,6 +182,12 @@ nothing. They are kept as rules so the same stop does not come back.
 - **A new goal is compared with the open ones.** An operator created a goal for work another goal, three
   days old, already held. New goal embeds the description and shows the open goals it is close to, with what
   to do about each, and records every answer (`planner/similar_goals.py`, `docs/specs/similar-goals.md`).
+- **A page's parts move together.** An operator approved a plan and the page still read "waiting for you to
+  approve", because each part of a goal's page read on its own clock and the planner's update was words from
+  before the approval. A goal has one change signal (`console/src/features/goals/goalSync.ts`): an action
+  sends it as the service answers, and the goal's event stream (`GET /v1/events/tail?goal_id=`) sends it for
+  everything else. Every part showing the goal reads again on it. An update the goal has moved past is held
+  back (`stale`), and the planner writes the new one at once.
 
 ### Who speaks
 

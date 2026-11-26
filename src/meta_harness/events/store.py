@@ -138,6 +138,16 @@ def _where(filters: dict[str, str]) -> tuple[str, list[Any]]:
     """A filter value with commas matches any of its parts, so one tail can follow many tasks."""
     clauses, params = [], []
     for column, value in filters.items():
+        if column == "goal_id":
+            # An event is a goal's when its tags or its payload name the goal, or it is about one of the goal's
+            # tasks: a run's events name their task and not its goal.
+            goals = [v for v in value.split(",") if v]
+            clauses.append(
+                "(tags->>'goal_id' = ANY(%s) OR payload->>'goal_id' = ANY(%s) "
+                "OR task_id IN (SELECT id FROM tasks.task WHERE goal_id = ANY(%s)))"
+            )
+            params += [goals, goals, goals]
+            continue
         if column not in FILTER_COLUMNS:
             raise ValueError(f"unknown filter {column}")
         values = [v for v in value.split(",") if v]

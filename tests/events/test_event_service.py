@@ -235,3 +235,33 @@ def test_a_service_with_no_key_to_send_stops_at_startup_by_name(monkeypatch):
     monkeypatch.delenv("MH_SERVICE_KEYS")
     monkeypatch.delenv("MH_SERVICE_KEY")
     check_service_key()
+
+
+def test_a_goals_stream_holds_its_own_events_and_its_tasks_events_from_now_on(run_id):
+    goal, other, task = f"g-{uuid.uuid4().hex[:8]}", f"g-{uuid.uuid4().hex[:8]}", f"t-{uuid.uuid4().hex[:8]}"
+    with db.connect(autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO tasks.task (id, caller, external_ref, repo, task_type, goal_id, max_usd, status, title, description) "
+            "VALUES (%s, 'test', %s, 'o/r', 'fix', %s, 1, 'queued', 'A task', 'A task')",
+            (task, f"ref-{task}", goal),
+        )
+    try:
+        with TestClient(create_app(service_keys=KEYS), headers=AUTH) as http:
+            http.post(
+                "/v1/events",
+                json={
+                    "events": [
+                        new_event("debug_ping", "test", {"n": 1}, run_id=run_id, tags={"goal_id": goal}),
+                        new_event("debug_ping", "test", {"n": 2}, run_id=run_id, tags={"goal_id": other}),
+                        # A run's event names its task, not the goal: it is the goal's all the same.
+                        new_event("debug_ping", "test", {"n": 3}, run_id=run_id, task_id=task),
+                    ]
+                },
+            )
+            mine = http.get("/v1/events", params={"goal_id": goal, "run_id": run_id}).json()["events"]
+            assert [e["payload"]["n"] for e in mine] == [1, 3]
+            both = http.get("/v1/events", params={"goal_id": f"{goal},{other}", "run_id": run_id}).json()["events"]
+            assert [e["payload"]["n"] for e in both] == [1, 2, 3]
+    finally:
+        with db.connect(autocommit=True) as conn:
+            conn.execute("DELETE FROM tasks.task WHERE id = %s", (task,))

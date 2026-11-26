@@ -6,6 +6,7 @@ import { api } from "../../api";
 import { SubTitle, when } from "../../components/ui";
 import { NeedButton, type Need } from "./needActions";
 import { reloadNeeds } from "../overview/needsYou";
+import { useGoalChanged } from "./goalSync";
 
 // The need's shape, its actions and the events a need's button sends live with the buttons (needActions.tsx).
 // They are named here too, for the pages that have always read them from the planner's panel.
@@ -30,6 +31,10 @@ export interface PlannerUpdatesRead {
   enabled?: boolean;
   // Why the latest update could not be written, when it could not.
   error?: string | null;
+  // The goal has moved since the latest update was written (a plan approved, a task merged, a goal canceled).
+  // Its words are then about a goal that is gone: they are not shown as how things stand. The planner is
+  // writing the new one, which arrives by itself.
+  stale?: boolean;
   // Where a planning goal's plan stands now: its version, and whether the planner is writing a new one.
   plan?: { version: number | null; replanning: boolean } | null;
   // What the goal needs now, from the one list every page reads (planner/needs.py). The panel's rows and
@@ -113,6 +118,8 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
   const [, setNow] = useState(0);
 
   const load = useCallback(() => api.goalUpdates(goalId).then(setRead, () => undefined), [goalId]);
+  // Read again the moment the goal changes, with the rest of its page (goalSync.ts).
+  useGoalChanged(goalId, () => void load());
 
   useEffect(() => {
     void load();
@@ -160,6 +167,8 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
   if (!read || read.enabled === false || !Array.isArray(read.updates)) return null;
   if (!updates.length && !open) return null;
   const [latest, ...before] = updates;
+  // The goal moved since the latest update: its words are held back until the new one arrives.
+  const moved = open && read.stale === true;
   // An update is about the plan as it was when written. Once the plan is another version, what the update asks
   // is about a plan that is gone: it asks nothing, and says the next update is on its way. While the planner
   // writes a new version, nothing about the plan is the operator's either.
@@ -187,7 +196,12 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
             <Text size="xs" tt="uppercase" fw={700} c="indigo" style={{ letterSpacing: 0.4 }}>
               Goal Planner{latest ? ` · ${since(latest.created_at)}` : ""}
             </Text>
-            {latest ? (
+            {latest && moved ? (
+              <Group gap="xs" wrap="nowrap" role="status" data-testid="planner-moved">
+                <Loader size="xs" />
+                <Text size="xl" fw={650} lh={1.3} data-testid="planner-headline">This goal just changed. I'm writing what's new.</Text>
+              </Group>
+            ) : latest ? (
               <Text size="xl" fw={650} lh={1.3} data-testid="planner-headline">{latest.headline}</Text>
             ) : (
               <Text size="sm">Your planner is looking at this goal. Its first update is a minute or two away.</Text>
@@ -200,7 +214,13 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
           </Button>
         )}
       </Group>
-      {latest && (
+      {latest && moved && (
+        // What needs the operator is read from the records as the page is, so it stays true while the words wait.
+        <Stack gap="sm" pl={50}>
+          <NeedsYou needs={needs} planning={planning} goalId={goalId} label={label} onDone={() => void done()} />
+        </Stack>
+      )}
+      {latest && !moved && (
         <Stack gap="sm" pl={50}>
           <Text size="md" style={{ whiteSpace: "pre-wrap" }}>{latest.body}</Text>
           {acted ? (

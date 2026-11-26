@@ -637,6 +637,9 @@ def create_app(
     app.state.goal_costs = goal_costs.Cache(tasks, events)
     # Why each goal's latest update could not be written, for its page; empty when it was.
     app.state.update_errors = {}
+    # The goals whose update is being written because a page found it out of date, and those writes.
+    app.state.updates_writing = set()
+    app.state.update_tasks = set()
     app.state.each = each
     app.state.supervisor = supervisor
     app.state.title_untitled = title_untitled
@@ -1537,7 +1540,34 @@ def create_app(
         """The planner's updates on the goal, newest first, whether it writes them, why the latest could
         not be written when it could not, and where a planning goal's plan stands now."""
         goal = await asyncio.to_thread(load, goal_id)
+        # An update is a model's words about the goal as it stood when written. Once the goal has moved (a plan
+        # approved, a goal canceled, a task merged), those words are about a goal that is gone: the page is told
+        # so at once, and the planner writes the new one now, not at its next pass.
+        moved = False
+        if updates.settings()["enabled"] and goal["status"] not in ("met", "canceled", "paused"):
+            try:
+                moved = await updates.stale(goal, tasks, events)
+            except Exception as err:  # noqa: BLE001 - the page still shows the last update, as written
+                log.error("goal %s: could not tell whether its update is current: %s", goal_id, err)
+        if moved and goal_id not in app.state.updates_writing:
+            app.state.updates_writing.add(goal_id)
+
+            async def rewrite() -> None:
+                try:
+                    await updates.write(goal, tasks, events, update_writer, asked=True)
+                    app.state.update_errors.pop(goal_id, None)
+                except updates.UpdateError as err:
+                    log.error("goal %s: its update could not be written after the goal moved: %s", goal_id, err)
+                    app.state.update_errors[goal_id] = str(err)
+                finally:
+                    app.state.updates_writing.discard(goal_id)
+
+            task = asyncio.create_task(rewrite())
+            app.state.update_tasks.add(task)
+            task.add_done_callback(app.state.update_tasks.discard)
         return {
+            # True: the goal has moved since the latest update, which is shown as the one before, not as now.
+            "stale": moved,
             "updates": await asyncio.to_thread(updates.latest, goal_id),
             # Where the plan stands now: an update written about a version since replaced asks nothing.
             "plan": await asyncio.to_thread(updates.plan_standing, goal),

@@ -475,18 +475,9 @@ async def _checked(written: Written) -> dict | None:
     return writing.record("update", outbound.writing_outcomes(checked))
 
 
-async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = None, asked: bool = False) -> dict | None:
-    """Writes the goal's next update when its state has changed since the last one. Returns the update saved,
-    or None when there was nothing new to say, updates are off, the goal has had its share of them, or the
-    last one is too recent. asked: an operator asked for one now, so it is written even with nothing changed
-    and however recent the last; the goal's share still holds.
-
-    Raises:
-        UpdateError: The model call failed. The page keeps the update before it.
-    """
-    config = settings()
-    if not config["enabled"]:
-        return None
+async def _now(goal: dict, tasks: Any, events: Any) -> tuple:
+    """The goal as its records stand now: (links, plan, suggestion, its tasks, the update before, the facts an
+    update is written from, and the digest of those facts)."""
 
     def read() -> tuple[list[dict], dict | None]:
         with db.connect(autocommit=True) as conn:
@@ -514,6 +505,30 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
     if unassigned := await asyncio.to_thread(assignees.not_assigned, events, goal["id"], links):
         found["not_assigned"] = unassigned
     state = digest(found)
+    return links, plan, suggestion, tasks_of_goal, before, found, state
+
+
+async def stale(goal: dict, tasks: Any, events: Any) -> bool:
+    """Whether the goal has moved since its latest update was written: that update then describes a goal that
+    is gone, and a page must not show its words as how things stand. False for a goal with no update yet."""
+    *_, before, _found, state = await _now(goal, tasks, events)
+    return bool(before) and before["digest"] != state
+
+
+async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = None, asked: bool = False) -> dict | None:
+    """Writes the goal's next update when its state has changed since the last one. Returns the update saved,
+    or None when there was nothing new to say, updates are off, the goal has had its share of them, or the
+    last one is too recent. asked: an operator asked for one now, so it is written even with nothing changed
+    and however recent the last; the goal's share still holds.
+
+    Raises:
+        UpdateError: The model call failed. The page keeps the update before it.
+    """
+    config = settings()
+    if not config["enabled"]:
+        return None
+
+    links, plan, suggestion, tasks_of_goal, before, found, state = await _now(goal, tasks, events)
     if before and not asked:
         if before["digest"] == state:
             return None
